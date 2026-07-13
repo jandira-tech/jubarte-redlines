@@ -560,9 +560,39 @@ impl Dom {
         }
     }
 
+    /// Centralized validation before a node is attached to a parent.
+    /// - `parent` must be a container (`Element` or `Document`).
+    /// - `node` must not be the same as `parent` (self-attachment).
+    /// - When `node` is unparented it must not be an ancestor of `parent`,
+    ///   which would create a cycle under its own descendant.
+    fn validate_attachment(&self, parent: NodeId, node: NodeId) {
+        if !self.is_element(parent) && !self.is_document(parent) {
+            panic!("cannot attach a node to a non-container parent {parent:?}");
+        }
+        if parent == node {
+            panic!("cannot attach a node to itself");
+        }
+        if self.data(node).parent.is_none() && self.is_ancestor_of(node, parent) {
+            panic!("cannot attach an ancestor beneath its own descendant");
+        }
+    }
+
+    /// True when `ancestor` is strictly above `descendant` on the parent chain.
+    fn is_ancestor_of(&self, ancestor: NodeId, descendant: NodeId) -> bool {
+        let mut cur = self.data(descendant).parent;
+        while let Some(id) = cur {
+            if id == ancestor {
+                return true;
+            }
+            cur = self.data(id).parent;
+        }
+        false
+    }
+
     /// `Add(node)` — append a single node (cloning if already parented).
     pub fn add(&mut self, parent: NodeId, node: NodeId) {
         let n = self.materialize(node);
+        self.validate_attachment(parent, n);
         self.data_mut(n).parent = Some(parent);
         self.data_mut(parent).content.push(n);
     }
@@ -570,6 +600,7 @@ impl Dom {
     /// `Add(text)` — append a fresh text node.
     pub fn add_text(&mut self, parent: NodeId, value: &str) -> NodeId {
         let t = self.new_text(value);
+        self.validate_attachment(parent, t);
         self.data_mut(t).parent = Some(parent);
         self.data_mut(parent).content.push(t);
         t
@@ -578,6 +609,7 @@ impl Dom {
     /// `AddFirst(node)` — prepend.
     pub fn add_first(&mut self, parent: NodeId, node: NodeId) {
         let n = self.materialize(node);
+        self.validate_attachment(parent, n);
         self.data_mut(n).parent = Some(parent);
         self.data_mut(parent).content.insert(0, n);
     }
@@ -601,6 +633,7 @@ impl Dom {
             .index_in_parent(reference)
             .expect("No parent for AddBeforeSelf");
         let n = self.materialize(node);
+        self.validate_attachment(p, n);
         self.data_mut(n).parent = Some(p);
         self.data_mut(p).content.insert(idx, n);
     }
@@ -611,6 +644,7 @@ impl Dom {
             .index_in_parent(reference)
             .expect("No parent for AddAfterSelf");
         let n = self.materialize(node);
+        self.validate_attachment(p, n);
         self.data_mut(n).parent = Some(p);
         self.data_mut(p).content.insert(idx + 1, n);
     }
@@ -623,6 +657,7 @@ impl Dom {
         let mut materialized = Vec::with_capacity(nodes.len());
         for &node in nodes {
             let n = self.materialize(node);
+            self.validate_attachment(p, n);
             self.data_mut(n).parent = Some(p);
             materialized.push(n);
         }
@@ -675,6 +710,7 @@ impl Dom {
         let kids = self.data(id).content.clone();
         for k in kids {
             let ck = self.clone_subtree(k);
+            self.validate_attachment(copy, ck);
             self.data_mut(ck).parent = Some(copy);
             self.data_mut(copy).content.push(ck);
         }

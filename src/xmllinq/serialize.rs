@@ -1,14 +1,15 @@
 //! Port of `serializeElement` / `XDocument.toString` from `lib/xml-linq.ts`.
 //!
-//! Collects every namespace used in the subtree, assigns a prefix (conventional
-//! OOXML prefix when known, else `nsN`), and emits the matching `xmlns:`
-//! declarations on the root, so the output is namespace-valid XML.
+//! Scope-aware namespace serialization: each element inherits its parent
+//! namespace scope and may add/override local `xmlns` declarations, so nested
+//! namespace scopes are not flattened to the root.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use super::{Dom, NodeId, XName};
 
 const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
+const MC_NAMESPACE: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 
 /// Conventional OOXML prefixes (URI → prefix) so output matches Word's shape.
 fn well_known_prefix(ns: &str) -> Option<&'static str> {
@@ -56,193 +57,298 @@ fn well_known_prefix(ns: &str) -> Option<&'static str> {
     })
 }
 
-/// Ordered namespace→prefix registry (insertion order preserved for emission).
-struct PrefixMap {
-    order: Vec<String>, // namespace URIs, in registration order
-    by_ns: HashMap<String, String>,
-    used: HashSet<String>,
+/// Namespace prefix generator state.
+struct State {
     counter: usize,
 }
 
-impl PrefixMap {
-    fn new() -> Self {
-        PrefixMap {
-            order: Vec::new(),
-            by_ns: HashMap::new(),
-            used: HashSet::new(),
-            counter: 0,
-        }
-    }
+/// A scope in the namespace-prefix stack. Each element inherits its parent
+/// scope and may add/override local `xmlns:*`/`xmlns` declarations.
+struct Scope<'a> {
+    parent: Option<&'a Scope<'a>>,
+    local_uri_to_prefix: HashMap<String, String>,
+    local_prefix_to_uri: HashMap<String, String>,
+}
 
-    /// Seed a fixed prefix from an existing `xmlns:` declaration.
-    fn seed(&mut self, ns: &str, prefix: &str) {
-        if prefix.is_empty() || ns.is_empty() || ns == XML_NAMESPACE {
-            return;
+impl Scope<'static> {
+    fn root() -> Scope<'static> {
+        let mut uri_to_prefix = HashMap::new();
+        let mut prefix_to_uri = HashMap::new();
+        uri_to_prefix.insert(XML_NAMESPACE.to_string(), "xml".to_string());
+        prefix_to_uri.insert("xml".to_string(), XML_NAMESPACE.to_string());
+        Scope {
+            parent: None,
+            local_uri_to_prefix: uri_to_prefix,
+            local_prefix_to_uri: prefix_to_uri,
         }
-        if self.used.contains(prefix) || self.by_ns.contains_key(ns) {
-            return;
-        }
-        self.by_ns.insert(ns.to_string(), prefix.to_string());
-        self.used.insert(prefix.to_string());
-        self.order.push(ns.to_string());
-    }
-
-    /// Assign (or look up) a prefix for `ns`.
-    fn assign(&mut self, ns: &str) -> String {
-        if ns.is_empty() {
-            return String::new();
-        }
-        if ns == XML_NAMESPACE {
-            return "xml".to_string();
-        }
-        if let Some(p) = self.by_ns.get(ns) {
-            return p.clone();
-        }
-        let mut p = match well_known_prefix(ns) {
-            Some(p) if !self.used.contains(p) => p.to_string(),
-            _ => {
-                let mut g;
-                loop {
-                    g = format!("ns{}", self.counter);
-                    self.counter += 1;
-                    if !self.used.contains(&g) {
-                        break;
-                    }
-                }
-                g
-            }
-        };
-        // (p may be a well-known or generated prefix)
-        if self.used.contains(&p) {
-            // extremely defensive; should not happen
-            loop {
-                p = format!("ns{}", self.counter);
-                self.counter += 1;
-                if !self.used.contains(&p) {
-                    break;
-                }
-            }
-        }
-        self.by_ns.insert(ns.to_string(), p.clone());
-        self.used.insert(p.clone());
-        self.order.push(ns.to_string());
-        p
     }
 }
 
-/// Serialize an element subtree to an XML string (port of `serializeElement`).
-pub fn serialize_element(dom: &Dom, el: NodeId) -> String {
-    let mut pm = PrefixMap::new();
-
-    // 1. Seed prefixes from EVERY xmlns declaration in the subtree (root-first,
-    //    iterative DFS, children pushed in reverse to keep left-to-right order).
-    let mut stack = vec![el];
-    while let Some(e) = stack.pop() {
+impl<'a> Scope<'a> {
+    fn child(parent: &'a Scope<'a>, dom: &Dom, e: NodeId) -> Scope<'a> {
+        let mut uri_to_prefix = HashMap::new();
+        let mut prefix_to_uri = HashMap::new();
         for (name, value) in dom.attributes(e) {
             if !dom.is_namespace_declaration(&name) {
                 continue;
             }
-            let prefix = if name.local_name() == "xmlns" {
-                String::new()
+            let prefix = if name.local_name() == "xmlns" && name.namespace_name().is_empty() {
+                ""
             } else {
-                name.local_name().to_string()
+                name.local_name()
             };
-            pm.seed(&value, &prefix);
+            // Skip reserved / illegal re-declarations; `xml` is always bound.
+            if prefix == "xml" || prefix == "xmlns" || value == "http://www.w3.org/2000/xmlns/" {
+                continue;
+            }
+            uri_to_prefix.insert(value.clone(), prefix.to_string());
+            prefix_to_uri.insert(prefix.to_string(), value.clone());
         }
-        let kids = dom.nodes(e);
-        for &k in kids.iter().rev() {
-            if dom.is_element(k) {
-                stack.push(k);
+        Scope {
+            parent: Some(parent),
+            local_uri_to_prefix: uri_to_prefix,
+            local_prefix_to_uri: prefix_to_uri,
+        }
+    }
+
+    /// Active prefix→URI binding for `prefix` in this scope (local first, then ancestors).
+    fn active_prefix_uri(&self, prefix: &str) -> Option<&str> {
+        let mut scope = self;
+        loop {
+            if let Some(uri) = scope.local_prefix_to_uri.get(prefix) {
+                return Some(uri);
+            }
+            match scope.parent {
+                Some(parent) => scope = parent,
+                None => return None,
             }
         }
     }
 
-    // 2. Pre-walk to register every used namespace (declared on root).
-    register(dom, el, &mut pm);
+    /// Resolve a prefix token to the URI it is bound to in this scope.
+    fn uri_for_prefix(&self, prefix: &str) -> Option<&str> {
+        self.active_prefix_uri(prefix)
+    }
 
-    // 3. Emit.
+    /// Find the active prefix bound to `uri` in this scope.
+    fn prefix_for_uri(&self, uri: &str) -> Option<&str> {
+        if uri.is_empty() {
+            return Some("");
+        }
+        let mut scope = self;
+        loop {
+            if let Some(prefix) = scope.local_uri_to_prefix.get(uri) {
+                if self.active_prefix_uri(prefix) == Some(uri) {
+                    return Some(prefix);
+                }
+            }
+            match scope.parent {
+                Some(parent) => scope = parent,
+                None => return None,
+            }
+        }
+    }
+
+    /// Assign (or reuse) a prefix for `uri` in this scope.
+    fn assign(&mut self, state: &mut State, uri: &str) -> String {
+        if uri.is_empty() {
+            return String::new();
+        }
+        if uri == XML_NAMESPACE {
+            return "xml".to_string();
+        }
+        if let Some(p) = self.prefix_for_uri(uri) {
+            return p.to_string();
+        }
+        let mut p = if let Some(p) = well_known_prefix(uri) {
+            if self.active_prefix_uri(p).is_none() {
+                p.to_string()
+            } else {
+                Self::next_generated(state, self)
+            }
+        } else {
+            Self::next_generated(state, self)
+        };
+        while self.active_prefix_uri(&p).is_some() {
+            p = Self::next_generated(state, self);
+        }
+        self.local_uri_to_prefix.insert(uri.to_string(), p.clone());
+        self.local_prefix_to_uri.insert(p.clone(), uri.to_string());
+        p
+    }
+
+    fn next_generated(state: &mut State, scope: &Scope<'_>) -> String {
+        loop {
+            let p = format!("ns{}", state.counter);
+            state.counter += 1;
+            if scope.active_prefix_uri(&p).is_none() {
+                return p;
+            }
+        }
+    }
+}
+
+/// True for attributes whose value is a list of namespace prefixes that must be
+/// rewritten when prefixes are rebound in this scope.
+fn is_namespace_prefix_list(name: &XName) -> bool {
+    let ns = name.namespace_name();
+    let local = name.local_name();
+    if ns.is_empty() {
+        return local == "Requires";
+    }
+    ns == MC_NAMESPACE
+        && matches!(
+            local,
+            "Ignorable" | "PreserveAttributes" | "PreserveElements" | "ProcessContent" | "MustUnderstand"
+        )
+}
+
+/// Serialize an element subtree to an XML string (port of `serializeElement`).
+pub fn serialize_element(dom: &Dom, el: NodeId) -> String {
+    let mut state = State { counter: 0 };
+    let root_scope = Scope::root();
     let mut out = String::new();
-    emit(dom, el, true, &mut pm, &mut out);
+    emit(dom, el, &root_scope, &mut state, &mut out);
     out
 }
 
-fn register(dom: &Dom, e: NodeId, pm: &mut PrefixMap) {
-    if let Some(name) = dom.name(e) {
-        pm.assign(name.namespace_name());
-    }
-    for (name, _value) in dom.attributes(e) {
-        if dom.is_namespace_declaration(&name) {
-            continue;
-        }
-        pm.assign(name.namespace_name());
-    }
-    for k in dom.nodes(e) {
-        if dom.is_element(k) {
-            register(dom, k, pm);
-        }
-    }
-}
-
-fn qname(pm: &mut PrefixMap, name: &XName) -> String {
-    let ns = name.namespace_name();
-    if ns.is_empty() {
+fn qname(prefix: &str, name: &XName) -> String {
+    if prefix.is_empty() {
         name.local_name().to_string()
     } else {
-        format!("{}:{}", pm.assign(ns), name.local_name())
+        format!("{}:{}", prefix, name.local_name())
     }
 }
 
-fn emit(dom: &Dom, e: NodeId, is_root: bool, pm: &mut PrefixMap, out: &mut String) {
+fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut String) {
     let ename = dom.name(e).expect("emit: non-element node");
-    let tag = qname(pm, &ename);
+    let mut scope = Scope::child(parent, dom, e);
 
-    // Real attributes (skip stored xmlns declarations; regenerated on root).
-    let mut attrs = String::new();
-    for (name, value) in dom.attributes(e) {
+    // First pass: assign prefixes for the element name, all attribute names,
+    // and all namespaces referenced by QName-list attribute values.
+    scope.assign(state, ename.namespace_name());
+    let attrs = dom.attributes(e);
+    let mut real_attrs: Vec<(XName, String)> = Vec::new();
+    let mut prefix_list_attrs: Vec<(XName, String)> = Vec::new();
+    for (name, value) in attrs {
         if dom.is_namespace_declaration(&name) {
             continue;
         }
-        let qn = qname(pm, &name);
-        attrs.push(' ');
-        attrs.push_str(&qn);
-        attrs.push_str("=\"");
-        attrs.push_str(&escape_attr(&value));
-        attrs.push('"');
+        scope.assign(state, name.namespace_name());
+        if is_namespace_prefix_list(&name) {
+            for token in value.split_whitespace() {
+                if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
+                    scope.assign(state, &uri);
+                }
+            }
+            prefix_list_attrs.push((name, value));
+            continue;
+        }
+        real_attrs.push((name, value));
     }
 
-    // Declare all collected namespaces on the root.
-    if is_root {
-        for ns in pm.order.clone() {
-            if ns.is_empty() || ns == XML_NAMESPACE {
+    // Build the attribute string. Namespace declarations come first, then
+    // real attributes, then the rewritten QName-list attributes.
+    // Sort declarations by prefix so serialization is deterministic.
+    let mut attr_str = String::new();
+    {
+        let mut decls: Vec<(&String, &String)> = scope.local_uri_to_prefix.iter().collect();
+        decls.sort_by(|a, b| a.1.cmp(b.1));
+        for (uri, prefix) in decls {
+            if prefix == "xml" || *uri == XML_NAMESPACE || prefix == "xmlns" {
                 continue;
             }
-            let prefix = pm.by_ns[&ns].clone();
-            attrs.push_str(&format!(" xmlns:{}=\"{}\"", prefix, escape_attr(&ns)));
+            if uri.is_empty() && !prefix.is_empty() {
+                continue;
+            }
+            if prefix.is_empty() {
+                attr_str.push_str(&format!(" xmlns=\"{}\"", escape_attr(uri)));
+            } else {
+                attr_str.push_str(&format!(" xmlns:{}=\"{}\"", prefix, escape_attr(uri)));
+            }
         }
     }
+
+    for (name, value) in real_attrs {
+        let prefix = scope
+            .prefix_for_uri(name.namespace_name())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| scope.assign(state, name.namespace_name()));
+        let qn = qname(&prefix, &name);
+        attr_str.push(' ');
+        attr_str.push_str(&qn);
+        attr_str.push_str("=\"");
+        attr_str.push_str(&escape_attr(&value));
+        attr_str.push('"');
+    }
+
+    for (name, value) in prefix_list_attrs {
+        let prefix = scope
+            .prefix_for_uri(name.namespace_name())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| scope.assign(state, name.namespace_name()));
+        let qn = qname(&prefix, &name);
+        let rewritten = value
+            .split_whitespace()
+            .map(|token| {
+                if let Some(uri) = scope.uri_for_prefix(token) {
+                    if let Some(p) = scope.prefix_for_uri(uri) {
+                        if p != token { p.to_string() } else { token.to_string() }
+                    } else {
+                        token.to_string()
+                    }
+                } else {
+                    token.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        attr_str.push(' ');
+        attr_str.push_str(&qn);
+        attr_str.push_str("=\"");
+        attr_str.push_str(&escape_attr(&rewritten));
+        attr_str.push('"');
+    }
+
+    let tag = {
+        let prefix = scope
+            .prefix_for_uri(ename.namespace_name())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| scope.assign(state, ename.namespace_name()));
+        qname(&prefix, &ename)
+    };
 
     let kids = dom.nodes(e);
     if kids.is_empty() {
         out.push('<');
         out.push_str(&tag);
-        out.push_str(&attrs);
+        out.push_str(&attr_str);
         out.push_str(" />");
         return;
     }
 
     out.push('<');
     out.push_str(&tag);
-    out.push_str(&attrs);
+    out.push_str(&attr_str);
     out.push('>');
     for k in kids {
         if dom.is_element(k) {
-            emit(dom, k, false, pm, out);
+            emit(dom, k, &scope, state, out);
         } else if dom.is_text(k) {
             out.push_str(&escape_text(dom.text_value(k).unwrap_or("")));
         } else if dom.is_comment(k) {
             out.push_str("<!--");
             out.push_str(dom.text_value(k).unwrap_or(""));
             out.push_str("-->");
+        } else if dom.is_pi(k) {
+            out.push_str("<?");
+            out.push_str(dom.pi_target(k).unwrap_or(""));
+            if let Some(data) = dom.pi_data(k) {
+                if !data.is_empty() {
+                    out.push_str(data);
+                }
+            }
+            out.push_str("?>");
         }
     }
     out.push_str("</");
@@ -274,6 +380,15 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
             out.push_str("<!--");
             out.push_str(dom.text_value(k).unwrap_or(""));
             out.push_str("-->");
+        } else if dom.is_pi(k) {
+            out.push_str("<?");
+            out.push_str(dom.pi_target(k).unwrap_or(""));
+            if let Some(data) = dom.pi_data(k) {
+                if !data.is_empty() {
+                    out.push_str(data);
+                }
+            }
+            out.push_str("?>");
         }
     }
     out

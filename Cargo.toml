@@ -42,7 +42,6 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # 
 quick-xml = "0.40.1"
 regex = "1.12.4"
 sha1 = "0.10"
-rustc-hash = "2.1.2"
 clap = { version = "4.5", features = ["derive"], optional = true }
 
 [[bin]]

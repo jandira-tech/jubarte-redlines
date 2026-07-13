@@ -104,11 +104,23 @@ impl<'a> Parser<'a> {
         while self.pos < len {
             self.skip_ws();
             if self.starts_with("<?xml") {
-                let end = self.index_of("?>", self.pos);
-                let decl_str = self.slice(self.pos, end.unwrap_or(len));
-                let decl = parse_declaration(&decl_str);
-                self.dom.set_declaration(doc, Some(decl));
-                self.pos = end.map(|e| e + 2).unwrap_or(len);
+                // Only the real XML declaration looks like `<?xml` followed by
+                // whitespace or `?>`. `<?xml-stylesheet` etc. are PIs.
+                let after = self.pos + 5;
+                let is_declaration = after >= len
+                    || self.c.get(after).map_or(true, |&ch| ch.is_whitespace() || ch == '?');
+                if is_declaration {
+                    let end = self.index_of("?>", self.pos);
+                    let decl_str = self.slice(self.pos, end.unwrap_or(len));
+                    let decl = parse_declaration(&decl_str);
+                    self.dom.set_declaration(doc, Some(decl));
+                    self.pos = end.map(|e| e + 2).unwrap_or(len);
+                    continue;
+                }
+            }
+            if self.starts_with("<?") {
+                let pi = self.parse_pi_node();
+                self.dom.add(doc, pi);
                 continue;
             }
             if self.starts_with("<!--") {
@@ -119,8 +131,8 @@ impl<'a> Parser<'a> {
                 self.pos = end.map(|e| e + 3).unwrap_or(len);
                 continue;
             }
-            if self.starts_with("<?") || self.starts_with("<!") {
-                // PI or DOCTYPE — skip
+            if self.starts_with("<!") {
+                // DOCTYPE — skip
                 let end = self.index_of(">", self.pos);
                 self.pos = end.map(|e| e + 1).unwrap_or(len);
                 continue;
@@ -216,8 +228,8 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.starts_with("<?") {
-                let end = self.index_of("?>", self.pos);
-                self.pos = end.map(|e| e + 2).unwrap_or(len);
+                let pi = self.parse_pi_node();
+                self.dom.add(el, pi);
                 continue;
             }
             if self.cur() == '<' {
@@ -236,6 +248,26 @@ impl<'a> Parser<'a> {
             }
         }
         el
+    }
+
+    /// Parse a processing instruction (`<?target data?>`) into a `Pi` node.
+    /// `self.pos` is on `<?`.
+    fn parse_pi_node(&mut self) -> NodeId {
+        let len = self.len();
+        self.pos += 2; // consume "<?"
+        let target_start = self.pos;
+        while self.pos < len {
+            let ch = self.cur();
+            if ch.is_whitespace() || ch == '?' || ch == '>' {
+                break;
+            }
+            self.pos += 1;
+        }
+        let target = self.slice(target_start, self.pos);
+        let end = self.index_of("?>", self.pos);
+        let data = self.slice(self.pos, end.unwrap_or(len));
+        self.pos = end.map(|e| e + 2).unwrap_or(len);
+        self.dom.new_pi(&target, &data)
     }
 }
 

@@ -32,8 +32,8 @@ static REV_ID: AtomicU64 = AtomicU64::new(1);
 /// `w:instrText` is left untouched — the `W::t()` filter excludes it.
 fn delete_text_in_opaque(dom: &mut Dom, node: NodeId, status: CorrelationStatus) {
     if matches!(status, CorrelationStatus::Deleted) {
-        // Hoist the interned name out of the loop — `W::name` takes the global
-        // intern-pool lock on each call; `XName` is `Arc`-cheap to clone.
+        // Hoist the name out of the loop — `W::name` allocates a fresh `XName`
+        // on each call; `XName` is `Arc`-cheap to clone.
         let del_text = W::name("delText");
         for t in dom.descendants(node, Some(&W::t())) {
             dom.set_name(t, del_text.clone());
