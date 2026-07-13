@@ -70,6 +70,15 @@ top of the PowerTools algorithm; `--powertools-faithful` (or
 `WmlComparerSettings::powertools_faithful()`) reproduces the classic
 behavior instead.
 
+## Performance
+
+Criterion benchmarks over representative document pairs (dense-edit worst
+case, short-into-long, table-heavy, comment-heavy) live in
+[`benches/redline.rs`](benches/redline.rs); run them with `cargo bench`.
+Typical documents redline in tens of milliseconds; runtime scales with the
+number of *differences*, not document size, so a small pair edited in nearly
+every paragraph is the slow shape.
+
 ## Known issues
 
 Open engine defects and unresolved Word-behavior conflicts are tracked in

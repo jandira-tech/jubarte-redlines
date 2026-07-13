@@ -19,6 +19,7 @@ categories = ["text-processing", "parser-implementations", "command-line-utiliti
 # stay in the repository only.
 include = [
   "src/**",
+  "benches/**",
   "Cargo.toml",
   "README.md",
   "CHANGELOG.md",
@@ -49,7 +50,12 @@ name = "jubarte"
 required-features = ["cli"]
 
 [dev-dependencies]
+criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
 ooxmlsdk = { version = "0.11", default-features = false, features = ["parts"] }
 tempfile = "3"
+
+[[bench]]
+name = "redline"
+harness = false
