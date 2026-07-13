@@ -11,26 +11,9 @@ pub mod serialize;
 pub use parse::parse_xdocument;
 pub use serialize::{serialize_document, serialize_element};
 
-use std::sync::{Mutex, OnceLock};
-
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-/// Global string-interning pool so identical namespace URIs / local names share
-/// one allocation (mirrors the `Map`-based interning in the TS).
-fn intern(s: &str) -> Arc<str> {
-    static POOL: OnceLock<Mutex<FxHashMap<String, Arc<str>>>> = OnceLock::new();
-    let pool = POOL.get_or_init(|| Mutex::new(FxHashMap::default()));
-    let mut g = pool.lock().expect("intern pool poisoned");
-    if let Some(a) = g.get(s) {
-        return a.clone();
-    }
-    let a: Arc<str> = Arc::from(s);
-    g.insert(s.to_string(), a.clone());
-    a
-}
-
-/// An XML namespace (just its URI), interned. Port of `XNamespace`.
+/// An XML namespace (just its URI), owned via `Arc<str>`. Port of `XNamespace`.
 #[derive(Clone)]
 pub struct XNamespace {
     name: Arc<str>,
@@ -40,7 +23,7 @@ impl XNamespace {
     /// `XNamespace.get(namespaceName)`.
     pub fn get(namespace_name: &str) -> XNamespace {
         XNamespace {
-            name: intern(namespace_name),
+            name: Arc::from(namespace_name),
         }
     }
 
@@ -87,7 +70,7 @@ impl std::fmt::Debug for XNamespace {
     }
 }
 
-/// An expanded XML name (namespace + local name), interned. Port of `XName`.
+/// An expanded XML name (namespace + local name), owned via `Arc<str>`. Port of `XName`.
 #[derive(Clone)]
 pub struct XName {
     local: Arc<str>,
@@ -98,7 +81,7 @@ impl XName {
     /// `XName.get(localName, namespaceName = "")`.
     pub fn get(local_name: &str, namespace_name: &str) -> XName {
         XName {
-            local: intern(local_name),
+            local: Arc::from(local_name),
             namespace: XNamespace::get(namespace_name),
         }
     }
