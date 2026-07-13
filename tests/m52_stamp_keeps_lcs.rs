@@ -55,7 +55,7 @@ fn m52_stamp_only_overlap_confettis_filename_not_insert_all() {
     );
     // Must not be pure insert of entire next filename as only change in p0 without del
     assert!(
-        !(first.contains("file_189") && !first.contains("delText")),
+        !first.contains("file_189") || first.contains("delText"),
         "must not pure-insert stamp without digit confetti: {first}"
     );
 }

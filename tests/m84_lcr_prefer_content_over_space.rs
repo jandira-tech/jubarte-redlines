@@ -50,10 +50,10 @@ fn para_segments(doc: &str, idx: usize) -> Vec<(char, String)> {
         rest = &after[end + 6..];
         // strip pPr
         let mut c = chunk.to_string();
-        if let Some(i) = c.find("<w:pPr") {
-            if let Some(j) = c[i..].find("</w:pPr>") {
-                c = format!("{}{}", &c[..i], &c[i + j + 8..]);
-            }
+        if let Some(i) = c.find("<w:pPr")
+            && let Some(j) = c[i..].find("</w:pPr>")
+        {
+            c = format!("{}{}", &c[..i], &c[i + j + 8..]);
         }
         let mut segs = Vec::new();
         let mut i = 0usize;

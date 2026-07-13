@@ -31,18 +31,18 @@ fn para_visible(chunk: &str) -> String {
     let mut i = 0;
     while i < chunk.len() {
         let rest = &chunk[i..];
-        if rest.starts_with("<w:t") || rest.starts_with("<w:delText") {
-            if let Some(gt) = rest.find('>') {
-                let end_tag = if rest.starts_with("<w:t") {
-                    "</w:t>"
-                } else {
-                    "</w:delText>"
-                };
-                if let Some(end) = rest[gt + 1..].find(end_tag) {
-                    out.push_str(&rest[gt + 1..gt + 1 + end]);
-                    i += gt + 1 + end + end_tag.len();
-                    continue;
-                }
+        if (rest.starts_with("<w:t") || rest.starts_with("<w:delText"))
+            && let Some(gt) = rest.find('>')
+        {
+            let end_tag = if rest.starts_with("<w:t") {
+                "</w:t>"
+            } else {
+                "</w:delText>"
+            };
+            if let Some(end) = rest[gt + 1..].find(end_tag) {
+                out.push_str(&rest[gt + 1..gt + 1 + end]);
+                i += gt + 1 + end + end_tag.len();
+                continue;
             }
         }
         i += 1;

@@ -69,11 +69,13 @@ fn m75_short_residual_pairs_related_demonstrates_sentences() {
         let has_ins = ps.contains("<w:ins") || ps.contains("w:ins ");
         let has_live = ps.contains("<w:t") && !ps.contains("delText");
         // MIX: del of heading/paragraph style bits + ins of major/features
-        if has_demo && has_del && (has_ins || has_live) {
-            if ps.contains("paragraph style") || ps.contains("major") || ps.contains("features") {
-                found_mix = true;
-                break;
-            }
+        if has_demo
+            && has_del
+            && (has_ins || has_live)
+            && (ps.contains("paragraph style") || ps.contains("major") || ps.contains("features"))
+        {
+            found_mix = true;
+            break;
         }
     }
     assert!(

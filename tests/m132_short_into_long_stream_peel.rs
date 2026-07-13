@@ -49,8 +49,8 @@ fn m132_file_73_peels_numbered_beyond_subtitle() {
         let end = p.find("</w:p>").unwrap_or(0);
         let chunk = &p[..end];
         // strip del blocks
-        let mut s = String::new();
-        let mut in_del = false;
+        let _s = String::new();
+        let _in_del = false;
         // crude: if paragraph has live t containing numbered and also ins/del
         let live: String = {
             // remove del.../del

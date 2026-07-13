@@ -1420,12 +1420,15 @@ fn accept_revisions_for_element_leaves_empty_table_cells_untouched() {
     );
 }
 
-/// CHANGED CODE: `accept_revisions_document` (:312) now delegates to the full
-/// `accept_revisions_for_part_content` pipeline, so calling it on a document
-/// body merges adjacent tables (A.8) — a step the old element-scope pipeline
-/// never performed.
+/// M112 SUPERSESSION (this test originally asserted the pre-M112 PowerTools
+/// contract "the full pipeline merges adjacent tables"): Word Compare does
+/// not merge clean adjacent tables, and A.10 consumes every revision mark
+/// (ins/del/move/cellIns/cellDel) before its merge step runs, so the
+/// document-scope pipeline always sees clean tables — adjacent tables stay
+/// separate. Merging still fires on direct `merge_adjacent_tables_transform`
+/// calls with marked tables (a8).
 #[test]
-fn accept_revisions_document_merges_adjacent_tables_via_full_pipeline() {
+fn accept_revisions_document_keeps_adjacent_tables_separate_post_m112() {
     let mut d = Dom::new();
     let body = two_adjacent_tables_body(&mut d);
     let out = accept_revisions_document(&mut d, body);
@@ -1433,8 +1436,8 @@ fn accept_revisions_document_merges_adjacent_tables_via_full_pipeline() {
     let tbls = d.elements(out, Some(&W::name("tbl")));
     assert_eq!(
         tbls.len(),
-        1,
-        "accept_revisions_document now runs the full A.10 pipeline, which merges adjacent tables"
+        2,
+        "M112: clean adjacent tables stay separate through the full A.10 pipeline"
     );
     let texts: Vec<String> = d
         .descendants(out, Some(&W::t()))
@@ -1473,12 +1476,13 @@ fn accept_revisions_for_element_leaves_adjacent_tables_unmerged() {
     );
 }
 
-/// CHANGED CODE: `reject_revisions_document` (:506) also swapped its final
-/// step from `accept_revisions_for_element` to `accept_revisions_for_part_content`,
-/// so the reject path ALSO now merges adjacent tables (table merging happens
-/// unconditionally, regardless of any tracked revision, per A.8).
+/// M112 SUPERSESSION (this test originally asserted the pre-M112 "reject
+/// path also merges adjacent tables"): `reject_revisions_document`'s final
+/// step is the same A.10 pipeline, whose merge step only ever sees
+/// mark-free tables — so the reject path keeps clean adjacent tables
+/// separate too.
 #[test]
-fn reject_revisions_document_also_merges_adjacent_tables() {
+fn reject_revisions_document_keeps_adjacent_tables_separate_post_m112() {
     let mut d = Dom::new();
     let body = two_adjacent_tables_body(&mut d);
     let out = reject_revisions_document(&mut d, body);
@@ -1486,8 +1490,8 @@ fn reject_revisions_document_also_merges_adjacent_tables() {
     let tbls = d.elements(out, Some(&W::name("tbl")));
     assert_eq!(
         tbls.len(),
-        1,
-        "reject_revisions_document's final step now runs the full A.10 pipeline too"
+        2,
+        "M112: clean adjacent tables stay separate through the reject path too"
     );
 }
 

@@ -167,8 +167,8 @@ fn next_free_revision_id(dom: &Dom, styles_root: NodeId) -> u32 {
 /// - **A bare Normal (no pPr/rPr), B has dd** → leave empty (file_69 / 100).
 /// - **A Normal has rPr or non-spacing pPr, B has dd** → write B's dd
 ///   (file_34 / 104).
-/// When A stores Normal spacing and B does not → B cascade (dd or factory 160/278).
-/// When B stores Normal spacing → B's stored values (file_21).
+/// - When A stores Normal spacing and B does not → B cascade (dd or factory 160/278).
+/// - When B stores Normal spacing → B's stored values (file_21).
 fn merge_normal_style_spacing(
     dom: &mut Dom,
     out_root: NodeId,
@@ -306,20 +306,18 @@ fn merge_normal_style_spacing(
         }
         None => {
             let p = dom.new_element(W::name("pPr"));
-            if m106_same_dd_clear {
-                if let Some((after, line, rule)) = &a_dd {
-                    let spacing = dom.new_element(W::name("spacing"));
-                    if !after.is_empty() {
-                        dom.set_attribute_value(spacing, &W::name("after"), Some(after));
-                    }
-                    if !line.is_empty() {
-                        dom.set_attribute_value(spacing, &W::name("line"), Some(line));
-                    }
-                    if !rule.is_empty() {
-                        dom.set_attribute_value(spacing, &W::name("lineRule"), Some(rule));
-                    }
-                    dom.add(p, spacing);
+            if m106_same_dd_clear && let Some((after, line, rule)) = &a_dd {
+                let spacing = dom.new_element(W::name("spacing"));
+                if !after.is_empty() {
+                    dom.set_attribute_value(spacing, &W::name("after"), Some(after));
                 }
+                if !line.is_empty() {
+                    dom.set_attribute_value(spacing, &W::name("line"), Some(line));
+                }
+                if !rule.is_empty() {
+                    dom.set_attribute_value(spacing, &W::name("lineRule"), Some(rule));
+                }
+                dom.add(p, spacing);
             }
             p
         }
@@ -624,10 +622,10 @@ fn normalize_word_paragraph_style_line(dom: &mut Dom, styles_root: NodeId) -> bo
     if dom.attribute(normal_sp, &W::name("line")).is_none() {
         return false;
     }
-    if let Some(before) = dom.attribute(normal_sp, &W::name("before")) {
-        if before != "0" {
-            return false;
-        }
+    if let Some(before) = dom.attribute(normal_sp, &W::name("before"))
+        && before != "0"
+    {
+        return false;
     }
 
     const TOUCH: &[&str] = &[

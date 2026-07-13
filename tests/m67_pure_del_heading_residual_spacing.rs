@@ -34,11 +34,37 @@ fn m67_file_33_strips_pure_del_heading_residual_spacing() {
     };
     let out = compare_documents(&a, &b, "Arthur Souza Rodrigues").expect("compare ok");
     let xml = document_xml(&out);
-    // Heading residual before=400 after=120 line=240 must not survive on pure-del.
+    // Scope to LIVE formatting only: before=400 recorded inside
+    // `w:pPrChange` is deliberate M78/M81 history (Word keeps the Inserted
+    // pPr live and records A's original spacing in pPrChange; re-promoting
+    // it re-bloats file_33). Only live pPr spacing must not survive.
+    let live = strip_ppr_change(&xml);
     assert!(
-        !xml.contains("w:before=\"400\""),
-        "file_33 pure-del must not keep heading residual before=400"
+        !live.contains("w:before=\"400\""),
+        "file_33 pure-del must not keep heading residual before=400 as LIVE spacing"
     );
+}
+
+/// Remove every `w:pPrChange` span (self-closing or paired) so assertions
+/// see only live formatting, not recorded history.
+fn strip_ppr_change(xml: &str) -> String {
+    let mut s = xml.to_string();
+    while let Some(i) = s.find("<w:pPrChange") {
+        let gt = match s[i..].find('>') {
+            Some(j) => i + j,
+            None => break,
+        };
+        let end = if s[..gt].ends_with('/') {
+            gt + 1
+        } else {
+            match s[gt..].find("</w:pPrChange>") {
+                Some(j) => gt + j + "</w:pPrChange>".len(),
+                None => break,
+            }
+        };
+        s.replace_range(i..end, "");
+    }
+    s
 }
 
 #[test]

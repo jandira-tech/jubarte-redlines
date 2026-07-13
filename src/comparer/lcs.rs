@@ -1027,11 +1027,11 @@ fn stamp_confetti_then_replace(
             // order (Word: pure-del "Heading 1 Style Demo" before the
             // demonstrates MIX).
             let mut early_del = Vec::new();
-            for k in 0..i {
+            for (k, r1) in rest1.iter().enumerate().take(i) {
                 if emitted_i.contains(&k) || paired_i.contains(&k) {
                     continue;
                 }
-                early_del.push(rest1[k].clone());
+                early_del.push(r1.clone());
                 emitted_i.insert(k);
             }
             if !early_del.is_empty() {
@@ -1359,12 +1359,12 @@ fn residual_sets_weakly_related(
     if j + 1e-12 < 0.04 || shared_sig.is_empty() {
         return false;
     }
-    let content_shared = shared_sig.iter().any(|t| {
+
+    shared_sig.iter().any(|t| {
         !M128_BOILERPLATE_SIG
             .iter()
             .any(|b| t.eq_ignore_ascii_case(b))
-    });
-    content_shared
+    })
 }
 
 /// Diagonal stats for M123 gates: `(min_diag, avg_diag, max_body_diag)`.
@@ -2354,7 +2354,7 @@ pub fn detect_unrelated_sources_word_mode(
     //    then pure-D long base. Allow only when short side is **next** (n2==short_n);
     //    short **base** catalog×long next (file_187) Word nests — must keep full LCS.
     let ok_counts = (short_n > 3 && long_n > 3)
-        || (short_n >= 2 && short_n <= 3 && long_n > 3 && !has_table(short_cu))
+        || ((2..=3).contains(&short_n) && long_n > 3 && !has_table(short_cu))
         || (stamped && disjoint && (2..=6).contains(&short_n) && long_n > 6 && n2 == short_n);
     if !ok_counts {
         return None;

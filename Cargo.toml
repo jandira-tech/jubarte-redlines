@@ -17,7 +17,14 @@ keywords = ["docx", "redline", "track-changes", "openxml", "word"]
 categories = ["text-processing", "parser-implementations", "command-line-utilities"]
 # Keep the published package lean: test fixtures/goldens (~3 MB) and dev tools
 # stay in the repository only.
-include = ["src/**", "Cargo.toml", "README.md", "CHANGELOG.md", "LICENSE"]
+include = [
+  "src/**",
+  "Cargo.toml",
+  "README.md",
+  "CHANGELOG.md",
+  "KNOWN_ISSUES.md",
+  "LICENSE",
+]
 
 [package.metadata.docs.rs]
 all-features = true

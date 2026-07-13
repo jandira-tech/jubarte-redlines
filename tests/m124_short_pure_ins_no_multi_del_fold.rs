@@ -24,17 +24,17 @@ fn para_kinds(xml: &str) -> Vec<(bool, bool, String)> {
         let has_del = chunk.contains("<w:del");
         let mut text = String::new();
         for part in chunk.split("<w:t").skip(1) {
-            if let Some(gt) = part.find('>') {
-                if let Some(c) = part[gt + 1..].find("</w:t>") {
-                    text.push_str(&part[gt + 1..gt + 1 + c]);
-                }
+            if let Some(gt) = part.find('>')
+                && let Some(c) = part[gt + 1..].find("</w:t>")
+            {
+                text.push_str(&part[gt + 1..gt + 1 + c]);
             }
         }
         for part in chunk.split("<w:delText").skip(1) {
-            if let Some(gt) = part.find('>') {
-                if let Some(c) = part[gt + 1..].find("</w:delText>") {
-                    text.push_str(&part[gt + 1..gt + 1 + c]);
-                }
+            if let Some(gt) = part.find('>')
+                && let Some(c) = part[gt + 1..].find("</w:delText>")
+            {
+                text.push_str(&part[gt + 1..gt + 1 + c]);
             }
         }
         if text.trim().is_empty() && !has_ins && !has_del {

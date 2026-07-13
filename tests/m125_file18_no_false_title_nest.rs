@@ -41,17 +41,17 @@ fn m125_file_18_sampler_not_mixed_with_track_changes_title() {
         }
         let mut text = String::new();
         for part in chunk.split("<w:t").skip(1) {
-            if let Some(gt) = part.find('>') {
-                if let Some(c) = part[gt + 1..].find("</w:t>") {
-                    text.push_str(&part[gt + 1..gt + 1 + c]);
-                }
+            if let Some(gt) = part.find('>')
+                && let Some(c) = part[gt + 1..].find("</w:t>")
+            {
+                text.push_str(&part[gt + 1..gt + 1 + c]);
             }
         }
         for part in chunk.split("<w:delText").skip(1) {
-            if let Some(gt) = part.find('>') {
-                if let Some(c) = part[gt + 1..].find("</w:delText>") {
-                    text.push_str(&part[gt + 1..gt + 1 + c]);
-                }
+            if let Some(gt) = part.find('>')
+                && let Some(c) = part[gt + 1..].find("</w:delText>")
+            {
+                text.push_str(&part[gt + 1..gt + 1 + c]);
             }
         }
         if text.contains("Sampler") && text.contains("Track Changes") {

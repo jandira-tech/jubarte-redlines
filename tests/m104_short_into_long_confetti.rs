@@ -30,18 +30,18 @@ fn para_visible(chunk: &str) -> String {
     let mut i = 0;
     while i < chunk.len() {
         let rest = &chunk[i..];
-        if rest.starts_with("<w:t") || rest.starts_with("<w:delText") {
-            if let Some(gt) = rest.find('>') {
-                let end_tag = if rest.starts_with("<w:t") {
-                    "</w:t>"
-                } else {
-                    "</w:delText>"
-                };
-                if let Some(end) = rest[gt + 1..].find(end_tag) {
-                    out.push_str(&rest[gt + 1..gt + 1 + end]);
-                    i += gt + 1 + end + end_tag.len();
-                    continue;
-                }
+        if (rest.starts_with("<w:t") || rest.starts_with("<w:delText"))
+            && let Some(gt) = rest.find('>')
+        {
+            let end_tag = if rest.starts_with("<w:t") {
+                "</w:t>"
+            } else {
+                "</w:delText>"
+            };
+            if let Some(end) = rest[gt + 1..].find(end_tag) {
+                out.push_str(&rest[gt + 1..gt + 1 + end]);
+                i += gt + 1 + end + end_tag.len();
+                continue;
             }
         }
         i += 1;
@@ -59,18 +59,16 @@ fn m104_file_130_large_font_title_early_not_at_end() {
     let doc = document_xml(&out);
     let mut idx_title = None;
     let mut idx_ms_title = None;
-    let mut i = 0usize;
-    for chunk in doc.split("</w:p>") {
+    for (i, chunk) in doc.split("</w:p>").enumerate() {
         let vis = para_visible(chunk);
         if vis.contains("Large Font Size Demo") {
             idx_title = Some(i);
         }
-        if vis.contains("Microsoft Word vs") || vis.contains("Google Docs") {
-            if idx_ms_title.is_none() {
-                idx_ms_title = Some(i);
-            }
+        if (vis.contains("Microsoft Word vs") || vis.contains("Google Docs"))
+            && idx_ms_title.is_none()
+        {
+            idx_ms_title = Some(i);
         }
-        i += 1;
     }
     let t = idx_title.expect("Large Font Size Demo residual");
     let m = idx_ms_title.expect("Microsoft Word title");
@@ -124,20 +122,14 @@ fn m108_file_73_five_residual_nests_title_early() {
     let doc = document_xml(&out);
     let mut idx_title = None;
     let mut idx_ms = None;
-    let mut i = 0usize;
-    for chunk in doc.split("</w:p>") {
+    for (i, chunk) in doc.split("</w:p>").enumerate() {
         let vis = para_visible(chunk);
-        if vis.contains("Numbered List") || vis.contains("Italic Demo") {
-            if idx_title.is_none() {
-                idx_title = Some(i);
-            }
+        if (vis.contains("Numbered List") || vis.contains("Italic Demo")) && idx_title.is_none() {
+            idx_title = Some(i);
         }
-        if vis.contains("Microsoft Word vs") || vis.contains("Google Docs") {
-            if idx_ms.is_none() {
-                idx_ms = Some(i);
-            }
+        if (vis.contains("Microsoft Word vs") || vis.contains("Google Docs")) && idx_ms.is_none() {
+            idx_ms = Some(i);
         }
-        i += 1;
     }
     let t = idx_title.expect("Numbered List title residual");
     let m = idx_ms.expect("MS title");

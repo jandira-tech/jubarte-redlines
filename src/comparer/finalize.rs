@@ -5,7 +5,7 @@
 //! FixUpRevisionIds (:2769), IgnorePt14Namespace (:2912),
 //! RemovePowerToolsScratchMarkup (CleanPartTransform :1165).
 
-use crate::namespaces::{MC, PT, W, W14, WP14};
+use crate::namespaces::{MC, PT, R, W, W14, WP14};
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use super::WmlComparerSettings;
@@ -309,17 +309,17 @@ pub fn mark_content_transform(
             {
                 dom.set_attribute_value(ppr, &PT::name("OldPPr"), None);
                 let old_ppr = parse_ppr(dom, Some(&old_s));
-                if dom.element(ppr, &W::name("spacing")).is_none() {
-                    if let Some(old_sp) = dom.element(old_ppr, &W::name("spacing")) {
-                        let after = dom.attribute(old_sp, &W::name("after")).unwrap_or("");
-                        let before = dom.attribute(old_sp, &W::name("before")).unwrap_or("");
-                        let line = dom.attribute(old_sp, &W::name("line")).unwrap_or("");
-                        let after_n: i64 = after.parse().unwrap_or(i64::MAX);
-                        // after-only micro spacing (file_69 after=20)
-                        if before.is_empty() && line.is_empty() && after_n > 0 && after_n <= 40 {
-                            let sp = dom.clone_subtree(old_sp);
-                            dom.add_first(ppr, sp);
-                        }
+                if dom.element(ppr, &W::name("spacing")).is_none()
+                    && let Some(old_sp) = dom.element(old_ppr, &W::name("spacing"))
+                {
+                    let after = dom.attribute(old_sp, &W::name("after")).unwrap_or("");
+                    let before = dom.attribute(old_sp, &W::name("before")).unwrap_or("");
+                    let line = dom.attribute(old_sp, &W::name("line")).unwrap_or("");
+                    let after_n: i64 = after.parse().unwrap_or(i64::MAX);
+                    // after-only micro spacing (file_69 after=20)
+                    if before.is_empty() && line.is_empty() && after_n > 0 && after_n <= 40 {
+                        let sp = dom.clone_subtree(old_sp);
+                        dom.add_first(ppr, sp);
                     }
                 }
                 let chg = dom.new_element(W::name("pPrChange"));
@@ -522,27 +522,26 @@ fn conjoin_transform(dom: &mut Dom, node: NodeId, author: &str, date: &str) -> N
 
         // When live is Inserted, record Deleted in pPrChange (M78).
         // When live is Deleted, do not wrap Deleted into pPrChange — it IS live.
-        if live_is_inserted {
-            if let Some(old) = old_src {
-                if dom.element(ppr, &W::name("pPrChange")).is_none() {
-                    let old_inner = dom.clone_subtree(old);
-                    dom.set_attribute_value(old_inner, &PT::status(), None);
-                    for rpr in dom.elements(old_inner, Some(&W::r_pr())) {
-                        for child in dom.elements(rpr, None) {
-                            let cn = dom.name(child).unwrap();
-                            if cn == W::ins() || cn == W::del() {
-                                dom.remove(child);
-                            }
-                        }
+        if live_is_inserted
+            && let Some(old) = old_src
+            && dom.element(ppr, &W::name("pPrChange")).is_none()
+        {
+            let old_inner = dom.clone_subtree(old);
+            dom.set_attribute_value(old_inner, &PT::status(), None);
+            for rpr in dom.elements(old_inner, Some(&W::r_pr())) {
+                for child in dom.elements(rpr, None) {
+                    let cn = dom.name(child).unwrap();
+                    if cn == W::ins() || cn == W::del() {
+                        dom.remove(child);
                     }
-                    let chg = dom.new_element(W::name("pPrChange"));
-                    dom.set_attribute_value(chg, &W::author(), Some(author));
-                    dom.set_attribute_value(chg, &W::date(), Some(date));
-                    dom.set_attribute_value(chg, &W::id(), Some("0"));
-                    dom.add(chg, old_inner);
-                    dom.add(ppr, chg);
                 }
             }
+            let chg = dom.new_element(W::name("pPrChange"));
+            dom.set_attribute_value(chg, &W::author(), Some(author));
+            dom.set_attribute_value(chg, &W::date(), Some(date));
+            dom.set_attribute_value(chg, &W::id(), Some("0"));
+            dom.add(chg, old_inner);
+            dom.add(ppr, chg);
         }
 
         let p = dom.new_element(W::p());
@@ -619,10 +618,10 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
             let Some(n) = dom.name(d) else { continue };
             if rev_names.contains(&n) {
                 all.push(d);
-            } else if reserved_names.contains(&n) {
-                if let Some(id) = dom.attribute(d, &W::id()).and_then(|s| s.parse().ok()) {
-                    reserved.insert(id);
-                }
+            } else if reserved_names.contains(&n)
+                && let Some(id) = dom.attribute(d, &W::id()).and_then(|s| s.parse().ok())
+            {
+                reserved.insert(id);
             }
         }
     }
@@ -1102,10 +1101,17 @@ pub fn move_paragraph_properties_first(dom: &mut Dom, node: NodeId) {
 /// `w:rStyle w:val="Hyperlink"` (file_21: Word has 0 hyperlinks + 251
 /// Hyperlink-styled runs; we kept 133 live hyperlinks). LO layout of field
 /// anchors differs from Word's plain Hyperlink runs — unwrap for Word-mode.
+///
+/// Only anchor-based internal hyperlinks (TOC/bookmark jumps, no `r:id`) are
+/// unwrapped. An `r:id`-bearing hyperlink is a live external target: dropping
+/// its wrapper here would discard the `r:id` before
+/// `reconcile_dangling_relationships` runs, silently destroying the link
+/// (m16/m29 regression).
 pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
     let hyperlinks: Vec<NodeId> = dom
         .descendants(root, Some(&W::name("hyperlink")))
         .into_iter()
+        .filter(|&hl| dom.attribute(hl, &R::name("id")).is_none())
         .collect();
     for hl in hyperlinks {
         // Ensure every run under the hyperlink carries Hyperlink rStyle.
@@ -1330,10 +1336,10 @@ pub fn trailing_empty_spacing_to_pprchange(
     dom.add(chg, old_inner);
     dom.add(ppr, chg);
     // Drop empty rPr if any leftover.
-    if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
-        if dom.elements(rpr, None).is_empty() {
-            dom.remove(rpr);
-        }
+    if let Some(rpr) = dom.element(ppr, &W::r_pr())
+        && dom.elements(rpr, None).is_empty()
+    {
+        dom.remove(rpr);
     }
 }
 
@@ -1460,9 +1466,8 @@ fn para_is_pure_inserted(dom: &Dom, p: NodeId) -> bool {
     if has_del {
         return false;
     }
-    let has_ins =
-        !dom.descendants(p, Some(&W::ins())).is_empty() || para_mark_revision(dom, p, &W::ins());
-    has_ins
+
+    !dom.descendants(p, Some(&W::ins())).is_empty() || para_mark_revision(dom, p, &W::ins())
 }
 
 /// M86 — fold whitespace-only pure-ins into the following pure-del (file_88).
@@ -1504,39 +1509,37 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                         dom.remove(ins_m);
                     }
                     // If del mark exists on pure-del, clone it into carrier rPr.
-                    if dom.element(rpr, &W::del()).is_none() {
-                        if let Some(dppr) = dom.element(del_p, &W::p_pr()) {
-                            if let Some(drpr) = dom.element(dppr, &W::r_pr()) {
-                                if let Some(dmark) = dom.element(drpr, &W::del()) {
-                                    let cloned = dom.clone_subtree(dmark);
-                                    dom.add(rpr, cloned);
-                                }
-                            }
-                        }
+                    if dom.element(rpr, &W::del()).is_none()
+                        && let Some(dppr) = dom.element(del_p, &W::p_pr())
+                        && let Some(drpr) = dom.element(dppr, &W::r_pr())
+                        && let Some(dmark) = dom.element(drpr, &W::del())
+                    {
+                        let cloned = dom.clone_subtree(dmark);
+                        dom.add(rpr, cloned);
                     }
                     if dom.elements(rpr, None).is_empty() {
                         dom.remove(rpr);
                     }
                 } else if let Some(dppr) = dom.element(del_p, &W::p_pr()) {
                     // Carrier has pPr but no rPr — adopt del's mark shell if any.
-                    if let Some(drpr) = dom.element(dppr, &W::r_pr()) {
-                        if dom.element(drpr, &W::del()).is_some() {
-                            let cloned = dom.clone_subtree(drpr);
-                            dom.add(ppr, cloned);
-                        }
+                    if let Some(drpr) = dom.element(dppr, &W::r_pr())
+                        && dom.element(drpr, &W::del()).is_some()
+                    {
+                        let cloned = dom.clone_subtree(drpr);
+                        dom.add(ppr, cloned);
                     }
                 }
             } else if let Some(dppr) = dom.element(del_p, &W::p_pr()) {
                 // No pPr on pure-ins — clone del's pPr if it has a del mark.
-                if let Some(drpr) = dom.element(dppr, &W::r_pr()) {
-                    if dom.element(drpr, &W::del()).is_some() {
-                        let cloned = dom.clone_subtree(dppr);
-                        // insert pPr as first child
-                        if let Some(first) = dom.elements(ins_p, None).first().copied() {
-                            dom.add_before_self(first, cloned);
-                        } else {
-                            dom.add(ins_p, cloned);
-                        }
+                if let Some(drpr) = dom.element(dppr, &W::r_pr())
+                    && dom.element(drpr, &W::del()).is_some()
+                {
+                    let cloned = dom.clone_subtree(dppr);
+                    // insert pPr as first child
+                    if let Some(first) = dom.elements(ins_p, None).first().copied() {
+                        dom.add_before_self(first, cloned);
+                    } else {
+                        dom.add(ins_p, cloned);
                     }
                 }
             }
@@ -1672,11 +1675,11 @@ pub fn fold_leading_ins_from_mix_into_preceding_pure_del(dom: &mut Dom, root: No
             // Ensure pPr/rPr/del exists when missing (mark-only pure-D may lack pPr).
             if dom.element(del_p, &W::p_pr()).is_none() {
                 // Leave bare when no mark shell — produce path may add later.
-            } else if let Some(ppr) = dom.element(del_p, &W::p_pr()) {
-                if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
-                    // Keep del mark if present (Word file_130).
-                    let _ = rpr;
-                }
+            } else if let Some(ppr) = dom.element(del_p, &W::p_pr())
+                && let Some(rpr) = dom.element(ppr, &W::r_pr())
+            {
+                // Keep del mark if present (Word file_130).
+                let _ = rpr;
             }
             acted = true;
             break;
@@ -1950,9 +1953,7 @@ pub fn last_pure_del_inherit_prev_jc(dom: &mut Dom, root: NodeId) {
         .is_some_and(|inner| dom.element(inner, &W::name("spacing")).is_some())
         || {
             // pPrChange children may be the old pPr directly
-            dom.descendants(ppc, Some(&W::name("spacing")))
-                .first()
-                .is_some()
+            !dom.descendants(ppc, Some(&W::name("spacing"))).is_empty()
         };
     if !ppc_has_spacing {
         return;
@@ -2022,18 +2023,18 @@ pub fn strip_last_pure_del_mark_when_pprchange(dom: &mut Dom, root: NodeId) {
         return;
     }
     // Remove rPr/del mark shell when rPr only carries del.
-    if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
-        if let Some(d) = dom.element(rpr, &W::del()) {
-            // Only strip if rPr has nothing else structural.
-            let rpr_kids = dom.elements(rpr, None);
-            let only_del = rpr_kids.len() == 1 && rpr_kids[0] == d;
-            if only_del {
+    if let Some(rpr) = dom.element(ppr, &W::r_pr())
+        && let Some(d) = dom.element(rpr, &W::del())
+    {
+        // Only strip if rPr has nothing else structural.
+        let rpr_kids = dom.elements(rpr, None);
+        let only_del = rpr_kids.len() == 1 && rpr_kids[0] == d;
+        if only_del {
+            dom.remove(rpr);
+        } else {
+            dom.remove(d);
+            if dom.elements(rpr, None).is_empty() {
                 dom.remove(rpr);
-            } else {
-                dom.remove(d);
-                if dom.elements(rpr, None).is_empty() {
-                    dom.remove(rpr);
-                }
             }
         }
     }
@@ -2488,29 +2489,29 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // Multi-del clusters stay separate (green-underline: 2I+3D).
                 // Whole-doc trailing sole-del always folds (m44), even at
                 // Jaccard 0 — that is the single_paragraph GT shape.
-                if let (Some(d), Some(&last_ins)) = (sole_del, inss.last()) {
-                    if dom.parent(d).is_some() && dom.parent(last_ins).is_some() {
-                        // Strip para-mark revision from the carrier (Word: bare mixed p).
-                        if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
-                            if let Some(irpr) = dom.element(ippr, &W::r_pr()) {
-                                if dom.element(irpr, &W::ins()).is_some()
-                                    || dom.element(irpr, &W::del()).is_some()
-                                {
-                                    dom.remove(irpr);
-                                }
-                            }
-                            // Drop empty pPr that only held the mark revision.
-                            if dom.elements(ippr, None).is_empty() {
-                                dom.remove(ippr);
-                            }
+                if let (Some(d), Some(&last_ins)) = (sole_del, inss.last())
+                    && dom.parent(d).is_some()
+                    && dom.parent(last_ins).is_some()
+                {
+                    // Strip para-mark revision from the carrier (Word: bare mixed p).
+                    if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
+                        if let Some(irpr) = dom.element(ippr, &W::r_pr())
+                            && (dom.element(irpr, &W::ins()).is_some()
+                                || dom.element(irpr, &W::del()).is_some())
+                        {
+                            dom.remove(irpr);
                         }
-                        for c in dom.elements(d, None) {
-                            if dom.name(c) != Some(W::p_pr()) {
-                                dom.add(last_ins, c); // move body del/ins into last ins
-                            }
+                        // Drop empty pPr that only held the mark revision.
+                        if dom.elements(ippr, None).is_empty() {
+                            dom.remove(ippr);
                         }
-                        dom.remove(d);
                     }
+                    for c in dom.elements(d, None) {
+                        if dom.name(c) != Some(W::p_pr()) {
+                            dom.add(last_ins, c); // move body del/ins into last ins
+                        }
+                    }
+                    dom.remove(d);
                 }
                 acted = true;
                 break; // children list is stale — rescan (required)
@@ -2703,12 +2704,11 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         }
                     }
                 } else if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
-                    if let Some(irpr) = dom.element(ippr, &W::r_pr()) {
-                        if dom.element(irpr, &W::ins()).is_some()
-                            || dom.element(irpr, &W::del()).is_some()
-                        {
-                            dom.remove(irpr);
-                        }
+                    if let Some(irpr) = dom.element(ippr, &W::r_pr())
+                        && (dom.element(irpr, &W::ins()).is_some()
+                            || dom.element(irpr, &W::del()).is_some())
+                    {
+                        dom.remove(irpr);
                     }
                     if dom.elements(ippr, None).is_empty() {
                         dom.remove(ippr);

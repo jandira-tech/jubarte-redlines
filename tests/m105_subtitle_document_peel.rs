@@ -40,14 +40,13 @@ fn para_ins_text(chunk: &str) -> String {
             let mut i = 0;
             while i < inner.len() {
                 let rest = &inner[i..];
-                if rest.starts_with("<w:t") {
-                    if let Some(gt) = rest.find('>') {
-                        if let Some(te) = rest[gt + 1..].find("</w:t>") {
-                            out.push_str(&rest[gt + 1..gt + 1 + te]);
-                            i += gt + 1 + te + 6;
-                            continue;
-                        }
-                    }
+                if rest.starts_with("<w:t")
+                    && let Some(gt) = rest.find('>')
+                    && let Some(te) = rest[gt + 1..].find("</w:t>")
+                {
+                    out.push_str(&rest[gt + 1..gt + 1 + te]);
+                    i += gt + 1 + te + 6;
+                    continue;
                 }
                 i += 1;
             }
@@ -62,26 +61,26 @@ fn para_has_equal_document(chunk: &str) -> bool {
     let mut i = 0;
     while i < chunk.len() {
         let rest = &chunk[i..];
-        if rest.starts_with("<w:r ") || rest.starts_with("<w:r>") {
-            if let Some(end) = rest.find("</w:r>") {
-                let run = &rest[..end];
-                if !run.contains("delText")
-                    && run.contains("<w:t")
-                    && run.to_ascii_lowercase().contains("document")
-                {
-                    let before = &chunk[..i];
-                    let ins_open = before.matches("<w:ins").count();
-                    let ins_close = before.matches("</w:ins>").count();
-                    let del_open =
-                        before.matches("<w:del ").count() + before.matches("<w:del>").count();
-                    let del_close = before.matches("</w:del>").count();
-                    if ins_open == ins_close && del_open == del_close {
-                        return true;
-                    }
+        if (rest.starts_with("<w:r ") || rest.starts_with("<w:r>"))
+            && let Some(end) = rest.find("</w:r>")
+        {
+            let run = &rest[..end];
+            if !run.contains("delText")
+                && run.contains("<w:t")
+                && run.to_ascii_lowercase().contains("document")
+            {
+                let before = &chunk[..i];
+                let ins_open = before.matches("<w:ins").count();
+                let ins_close = before.matches("</w:ins>").count();
+                let del_open =
+                    before.matches("<w:del ").count() + before.matches("<w:del>").count();
+                let del_close = before.matches("</w:del>").count();
+                if ins_open == ins_close && del_open == del_close {
+                    return true;
                 }
-                i += end + 6;
-                continue;
             }
+            i += end + 6;
+            continue;
         }
         i += 1;
     }

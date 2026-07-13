@@ -221,9 +221,9 @@ pub fn strip_unresolved_style_refs(
         let victims: Vec<NodeId> = dom
             .descendants(root, Some(&nm))
             .into_iter()
-            .filter(|&e| match dom.attribute(e, &W::val()) {
-                Some(v) if !v.is_empty() && !defined.contains(v) => true,
-                _ => false,
+            .filter(|&e| {
+                matches!(dom.attribute(e, &W::val()),
+                    Some(v) if !v.is_empty() && !defined.contains(v))
             })
             .collect();
         for e in victims {

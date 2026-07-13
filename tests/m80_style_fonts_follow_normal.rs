@@ -36,20 +36,20 @@ fn style_live_chunk(styles: &str, sid: &str) -> String {
     // Strip change tracking for live view.
     let mut live = body.to_string();
     while let Some(i) = live.find("pPrChange") {
-        if let Some(from) = live[..i].rfind('<') {
-            if let Some(close) = live[i..].find("</w:pPrChange>") {
-                live = format!("{}{}", &live[..from], &live[i + close + 14..]);
-                continue;
-            }
+        if let Some(from) = live[..i].rfind('<')
+            && let Some(close) = live[i..].find("</w:pPrChange>")
+        {
+            live = format!("{}{}", &live[..from], &live[i + close + 14..]);
+            continue;
         }
         break;
     }
     while let Some(i) = live.find("rPrChange") {
-        if let Some(from) = live[..i].rfind('<') {
-            if let Some(close) = live[i..].find("</w:rPrChange>") {
-                live = format!("{}{}", &live[..from], &live[i + close + 14..]);
-                continue;
-            }
+        if let Some(from) = live[..i].rfind('<')
+            && let Some(close) = live[i..].find("</w:rPrChange>")
+        {
+            live = format!("{}{}", &live[..from], &live[i + close + 14..]);
+            continue;
         }
         break;
     }

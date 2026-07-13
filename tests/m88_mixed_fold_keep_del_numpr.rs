@@ -74,11 +74,13 @@ fn m88_file_33_unrelated_not_forced_numpr() {
     let out = compare_documents(&a, &b, "Arthur Souza Rodrigues").expect("compare");
     let doc = document_xml(&out);
     for chunk in doc.split("</w:p>") {
-        if chunk.contains(">Summary<") || chunk.contains(">Summary</") {
-            if chunk.contains("Heading") && chunk.contains("delText") && chunk.contains("numPr") {
-                // mixed Summary+Heading with numPr would be wrong
-                panic!("Summary must not fold Heading with numPr: {chunk}");
-            }
+        if (chunk.contains(">Summary<") || chunk.contains(">Summary</"))
+            && chunk.contains("Heading")
+            && chunk.contains("delText")
+            && chunk.contains("numPr")
+        {
+            // mixed Summary+Heading with numPr would be wrong
+            panic!("Summary must not fold Heading with numPr: {chunk}");
         }
     }
 }

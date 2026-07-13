@@ -70,6 +70,12 @@ top of the PowerTools algorithm; `--powertools-faithful` (or
 `WmlComparerSettings::powertools_faithful()`) reproduces the classic
 behavior instead.
 
+## Known issues
+
+Open engine defects and unresolved Word-behavior conflicts are tracked in
+[KNOWN_ISSUES.md](KNOWN_ISSUES.md); their covering tests are marked
+`#[ignore]` and run with `cargo test -- --ignored`.
+
 ## Provenance & attribution
 
 The comparison engine is a Rust port of the `WmlComparer` /

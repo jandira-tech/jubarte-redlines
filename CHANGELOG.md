@@ -22,4 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `jubarte` CLI (default `cli` feature): plain compare plus `revisions` and
   `accept` subcommands.
 
+### Fixed
+
+- External hyperlinks no longer lose their targets in the default
+  (Word-visual) mode: `unwrap_hyperlinks_to_styled_runs` now preserves
+  `r:id`-bearing `w:hyperlink` wrappers and unwraps only anchor-based
+  internal (TOC) hyperlinks, so relationship reconciliation keeps the
+  hyperlink relationship (with `TargetMode="External"`) in the output.
+
+### Known issues
+
+- See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
+  `#[ignore]` with matching reasons.
+
 [0.1.0]: https://github.com/arthrod/jubarte-rs/releases/tag/v0.1.0

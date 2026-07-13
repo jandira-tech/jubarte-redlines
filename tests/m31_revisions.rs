@@ -297,12 +297,17 @@ fn d5_detect_moves_pairs_del_ins() {
     // the unrelated insertion stays untouched
     assert_eq!(revs[1].revision_type, RT::Inserted);
 
-    // gate: with detect_moves off nothing changes
+    // gate: with detect_moves off nothing changes (explicit — the default
+    // flipped to Word-visual moves-ON on 2026-07-03; `powertools_faithful`
+    // keeps the off preset)
     let mut revs2 = vec![
         mk(RT::Deleted, "the quick brown fox jumps over"),
         mk(RT::Inserted, "the quick brown fox jumps over"),
     ];
-    let s_off = WmlComparerSettings::default();
+    let s_off = WmlComparerSettings {
+        detect_moves: false,
+        ..WmlComparerSettings::default()
+    };
     detect_moves(&mut revs2, &s_off);
     assert_eq!(revs2[0].revision_type, RT::Deleted);
 }

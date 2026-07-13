@@ -53,18 +53,18 @@ fn para_kinds_texts(doc: &str) -> Vec<(bool, bool, String)> {
         let mut i = 0;
         while i < chunk.len() {
             let r = &chunk[i..];
-            if r.starts_with("<w:t") || r.starts_with("<w:delText") {
-                if let Some(gt) = r.find('>') {
-                    let close = if r.starts_with("<w:t") {
-                        "</w:t>"
-                    } else {
-                        "</w:delText>"
-                    };
-                    if let Some(c) = r[gt + 1..].find(close) {
-                        text.push_str(&r[gt + 1..gt + 1 + c]);
-                        i += gt + 1 + c + close.len();
-                        continue;
-                    }
+            if (r.starts_with("<w:t") || r.starts_with("<w:delText"))
+                && let Some(gt) = r.find('>')
+            {
+                let close = if r.starts_with("<w:t") {
+                    "</w:t>"
+                } else {
+                    "</w:delText>"
+                };
+                if let Some(c) = r[gt + 1..].find(close) {
+                    text.push_str(&r[gt + 1..gt + 1 + c]);
+                    i += gt + 1 + c + close.len();
+                    continue;
                 }
             }
             i += 1;

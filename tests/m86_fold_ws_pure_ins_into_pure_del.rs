@@ -88,10 +88,11 @@ fn m86_file_33_content_pure_ins_not_folded_into_unrelated_del() {
     // If Summary is present as pure-ins, it should not also contain a Heading del
     // in the same paragraph (unrelated fold).
     for chunk in doc.split("</w:p>") {
-        if chunk.contains(">Summary<") || chunk.contains(">Summary</") {
-            if chunk.contains("Heading") && chunk.contains("delText") {
-                panic!("content pure-ins Summary must not fold unrelated Heading del: {chunk}");
-            }
+        if (chunk.contains(">Summary<") || chunk.contains(">Summary</"))
+            && chunk.contains("Heading")
+            && chunk.contains("delText")
+        {
+            panic!("content pure-ins Summary must not fold unrelated Heading del: {chunk}");
         }
     }
 }

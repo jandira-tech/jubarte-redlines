@@ -30,18 +30,18 @@ fn para_visible(chunk: &str) -> String {
     let mut i = 0;
     while i < chunk.len() {
         let rest = &chunk[i..];
-        if rest.starts_with("<w:t") || rest.starts_with("<w:delText") {
-            if let Some(gt) = rest.find('>') {
-                let end_tag = if rest.starts_with("<w:t") {
-                    "</w:t>"
-                } else {
-                    "</w:delText>"
-                };
-                if let Some(end) = rest[gt + 1..].find(end_tag) {
-                    out.push_str(&rest[gt + 1..gt + 1 + end]);
-                    i += gt + 1 + end + end_tag.len();
-                    continue;
-                }
+        if (rest.starts_with("<w:t") || rest.starts_with("<w:delText"))
+            && let Some(gt) = rest.find('>')
+        {
+            let end_tag = if rest.starts_with("<w:t") {
+                "</w:t>"
+            } else {
+                "</w:delText>"
+            };
+            if let Some(end) = rest[gt + 1..].find(end_tag) {
+                out.push_str(&rest[gt + 1..gt + 1 + end]);
+                i += gt + 1 + end + end_tag.len();
+                continue;
             }
         }
         i += 1;
@@ -59,20 +59,17 @@ fn m109_file_131_justify_title_early_not_only_long_delete_block() {
     let doc = document_xml(&out);
     let mut idx_justify = None;
     let mut idx_ms_del = None;
-    let mut i = 0usize;
-    for chunk in doc.split("</w:p>") {
+    for (i, chunk) in doc.split("</w:p>").enumerate() {
         let vis = para_visible(chunk);
         if vis.contains("Justify Alignment Demo") {
             idx_justify = Some(i);
         }
         if (vis.contains("Microsoft Word") || vis.contains("Google Docs"))
             && chunk.contains("delText")
+            && idx_ms_del.is_none()
         {
-            if idx_ms_del.is_none() {
-                idx_ms_del = Some(i);
-            }
+            idx_ms_del = Some(i);
         }
-        i += 1;
     }
     let j = idx_justify.expect("Justify title pure-I");
     let m = idx_ms_del.expect("MS title as del");

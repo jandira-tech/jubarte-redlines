@@ -22,3 +22,6 @@ target
 
 # macOS
 .DS_Store
+
+# Local sweep outputs
+_scratch/

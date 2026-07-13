@@ -119,16 +119,10 @@ pub fn get_comparison_unit_list(
                 next_index += 1;
             } else if word_mode {
                 // Letter↔digit boundary starts a new word (file_ | 137 | …).
-                let break_boundary = match prev_t_char {
-                    Some(p)
-                        if is_digit_char(p) != is_digit_char(ch)
-                            && (is_digit_char(p) || is_word_letter(p))
-                            && (is_digit_char(ch) || is_word_letter(ch)) =>
-                    {
-                        true
-                    }
-                    _ => false,
-                };
+                let break_boundary = matches!(prev_t_char,
+                    Some(p) if is_digit_char(p) != is_digit_char(ch)
+                        && (is_digit_char(p) || is_word_letter(p))
+                        && (is_digit_char(ch) || is_word_letter(ch)));
                 if break_boundary {
                     next_index += 1;
                 }

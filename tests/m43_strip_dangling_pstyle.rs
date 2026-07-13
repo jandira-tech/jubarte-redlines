@@ -175,22 +175,10 @@ fn batch_heading1_bold_vs_style_no_dangling_pstyle() {
     let b_path = std::path::Path::new(
         "tests/corpus/batch_to_fix/pairs/41_heading_1_bold_demo_id_paraid_overflow_heading_1_style_demo_id_paraid_overflow/next.docx",
     );
-    // Also try corpus paths
-    let corpus_a = std::path::Path::new(
-        "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/heading_1_bold_demo_id_paraid_overflow.docx",
-    );
-    let corpus_b = std::path::Path::new(
-        "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/heading_1_style_demo_id_paraid_overflow.docx",
-    );
     let (a, b) = if a_path.exists() && b_path.exists() {
         (
             std::fs::read(a_path).unwrap(),
             std::fs::read(b_path).unwrap(),
-        )
-    } else if corpus_a.exists() && corpus_b.exists() {
-        (
-            std::fs::read(corpus_a).unwrap(),
-            std::fs::read(corpus_b).unwrap(),
         )
     } else {
         // no fixtures — synthetic test above is the gate
