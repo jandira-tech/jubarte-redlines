@@ -1,0 +1,603 @@
+//! M4.B — preprocess + block-level hashing. Port of `RemoveExistingPowerToolsMarkup`
+//! (:5049), `TestForInvalidContent` (:5037), `CloneForStructureHash` (:5121),
+//! the block hash-string builder (inside `HashBlockLevelContent` :867), and
+//! (later tasks) `CloneBlockLevelContentForHashing`, `AddSha1HashToBlockLevelContent`,
+//! `HashBlockLevelContent`, `PreProcessMarkup`.
+
+use crate::namespaces::{A14, O, PT, R, VML, W, WP};
+use crate::util::group_adjacent;
+use crate::util::sha1::sha1_hex;
+use crate::xmllinq::{Dom, NodeId, XName};
+
+use super::WmlComparerSettings;
+use super::tables::{
+    ATTRIBUTES_TO_TRIM_WHEN_CLONING, S_ELEMENTS_WITH_RELATIONSHIP_IDS,
+    S_RELATIONSHIP_ATTRIBUTE_NAMES,
+};
+
+/// A resolver `rId -> Some(replacement)|None` used by the rel-id clone branch:
+/// `Some(v)` replaces the attribute value (part content-hash / hyperlink URI /
+/// external URI / "NULL Relationship"); `None` drops the attribute (xml part).
+pub type RelHashResolver<'a> = dyn Fn(&str) -> Option<String> + 'a;
+
+/// Default resolver when no OPC package is available: every rId is treated as
+/// unresolvable → "NULL Relationship" (the TS fallback). Real part-hashing is
+/// wired in M4.B.6/M4.I via a package-backed resolver.
+pub fn null_rel_resolver(_r_id: &str) -> Option<String> {
+    Some("NULL Relationship".to_string())
+}
+
+fn is_rsid_attr(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && matches!(
+            name.local_name(),
+            "rsid"
+                | "rsidDel"
+                | "rsidP"
+                | "rsidR"
+                | "rsidRDefault"
+                | "rsidRPr"
+                | "rsidSect"
+                | "rsidTr"
+        )
+}
+
+fn is_pt(name: &XName) -> bool {
+    name.namespace_name() == PT::URI
+}
+
+/// `w14:paraId` / `w14:textId` are volatile per-paragraph ids Word regenerates;
+/// they must not affect content correlation (the golden correlates paragraphs
+/// with differing paraIds → del=0 on pure-additive docs), so strip them from the
+/// block hash.
+fn is_volatile_para_attr(name: &XName) -> bool {
+    name.namespace_name() == crate::namespaces::W14::URI
+        && matches!(name.local_name(), "paraId" | "textId")
+}
+
+/// Whitespace-invariant form for **correlated** block hashes only (Word-visual).
+/// Spacing-stamped variants (file_175×file_176) share letters but not exact
+/// spaces; strip so ProcessCorrelatedHashes can pair them as Unknown and word
+/// LCS can emit space inserts. Exact `pt:SHA1Hash` stays space-sensitive.
+fn whitespace_invariant_for_hash(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn apply_text_transform(text: &str, settings: &WmlComparerSettings) -> String {
+    let mut t = text.to_string();
+    if settings.case_insensitive {
+        t = t.to_uppercase();
+    }
+    if settings.conflate_breaking_and_nonbreaking_spaces {
+        t = t.replace(' ', "\u{00A0}"); // space → NBSP (faithful, :5225/:5533)
+    }
+    t
+}
+
+/// Replace every text node under `root` with whitespace-stripped form.
+fn strip_whitespace_in_clone_text(dom: &mut Dom, root: NodeId) {
+    let nodes: Vec<NodeId> = dom.descendant_nodes(root);
+    for n in nodes {
+        if !dom.is_text(n) {
+            continue;
+        }
+        let raw = dom.text_value(n).unwrap_or("").to_string();
+        let stripped = whitespace_invariant_for_hash(&raw);
+        if stripped != raw {
+            dom.set_text_value(n, &stripped);
+        }
+    }
+}
+
+/// M4.B.4 — `CloneBlockLevelContentForHashing` (:5142): clone for hashing, then
+/// strip every namespace-declaration attribute from the result subtree.
+pub fn clone_block_level_content_for_hashing(
+    dom: &mut Dom,
+    node: NodeId,
+    include_related_parts: bool,
+    settings: &WmlComparerSettings,
+    rel_hash: &RelHashResolver,
+) -> NodeId {
+    let cloned = clone_internal(dom, node, include_related_parts, settings, rel_hash);
+    let root = cloned
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| dom.new_element(dom.name(node).unwrap_or_else(|| W::name("p"))));
+    // remove all namespace-declaration attributes across the result
+    for el in dom.descendants_and_self(root, None) {
+        let nsdecls: Vec<_> = dom
+            .attributes(el)
+            .into_iter()
+            .map(|(n, _)| n)
+            .filter(|n| dom.is_namespace_declaration(n))
+            .collect();
+        for a in nsdecls {
+            dom.set_attribute_value(el, &a, None);
+        }
+    }
+    root
+}
+
+/// Build a new element named `name`, copying `src`'s attributes except those for
+/// which `drop(name)` is true, then appending `children`.
+fn new_with_filtered_attrs(
+    dom: &mut Dom,
+    name: XName,
+    src: NodeId,
+    drop: impl Fn(&XName) -> bool,
+    children: Vec<NodeId>,
+) -> NodeId {
+    let ne = dom.new_element(name);
+    for (an, av) in dom.attributes(src) {
+        if !drop(&an) {
+            dom.set_attribute_value(ne, &an, Some(&av));
+        }
+    }
+    for c in children {
+        dom.add(ne, c);
+    }
+    ne
+}
+
+/// Recurse-clone all child nodes, flattening fragment results.
+fn clone_children(
+    dom: &mut Dom,
+    node: NodeId,
+    include_related_parts: bool,
+    settings: &WmlComparerSettings,
+    rel_hash: &RelHashResolver,
+) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for c in dom.nodes(node) {
+        out.extend(clone_internal(
+            dom,
+            c,
+            include_related_parts,
+            settings,
+            rel_hash,
+        ));
+    }
+    out
+}
+
+/// Port of `CloneBlockLevelContentForHashingInternal` (:5160). Returns 0..n nodes
+/// (drop = empty, `w:r` = a fragment of single-child runs).
+///
+/// M-MOVE S1: `pt:PreDelete`-stamped elements (word-mode flattened
+/// pre-existing deletions) get a salt attribute on the clone so their
+/// block/structure hash can NEVER equal the hash of identical unstamped
+/// (live) content — otherwise the LCS correlates them Equal and both the
+/// deletion history and doc B's real insertions vanish (fresh-p4). Only
+/// PreDelete: `pt:PreIns` carries REQUIRE Equal correlation with B's live
+/// copy (D1 / m32 w18). Unstamped content is untouched (byte-identical hash).
+fn clone_internal(
+    dom: &mut Dom,
+    node: NodeId,
+    include_related_parts: bool,
+    settings: &WmlComparerSettings,
+    rel_hash: &RelHashResolver,
+) -> Vec<NodeId> {
+    let out = clone_internal_unsalted(dom, node, include_related_parts, settings, rel_hash);
+    if dom.is_element(node)
+        && dom.attribute(node, &PT::name("PreDelete")) == Some(super::PREDELETE_STAMP_ORIG)
+    {
+        for &c in &out {
+            if dom.is_element(c) {
+                dom.set_attribute_value(c, &PT::name("PreDeleteSalt"), Some("1"));
+            }
+        }
+    }
+    out
+}
+
+fn clone_internal_unsalted(
+    dom: &mut Dom,
+    node: NodeId,
+    include_related_parts: bool,
+    settings: &WmlComparerSettings,
+    rel_hash: &RelHashResolver,
+) -> Vec<NodeId> {
+    if !dom.is_element(node) {
+        // text-node transform (B.4a)
+        if (settings.case_insensitive || settings.conflate_breaking_and_nonbreaking_spaces)
+            && dom.is_text(node)
+        {
+            let t = apply_text_transform(dom.text_value(node).unwrap_or(""), settings);
+            return vec![dom.new_text(&t)];
+        }
+        return vec![dom.clone_subtree(node)];
+    }
+    let name = dom.name(node).unwrap();
+
+    // ── B.4a: drops + text/run/para ───────────────────────────────────────────
+    if name == W::name("bookmarkStart")
+        || name == W::name("bookmarkEnd")
+        || name == W::p_pr()
+        || name == W::r_pr()
+    {
+        return vec![];
+    }
+    if name.namespace_name() == A14::URI {
+        return vec![];
+    }
+    // footnote/endnote references → bare empty element (drops w:id). First branch
+    // (:5180) shadows the dead :5491 branch.
+    if name == W::name("footnoteReference") || name == W::name("endnoteReference") {
+        return vec![dom.new_element(name)];
+    }
+
+    if name == W::p() {
+        // clone children first
+        let cloned_children = clone_children(dom, node, include_related_parts, settings, rel_hash);
+        let element_children: Vec<NodeId> = cloned_children
+            .into_iter()
+            .filter(|&c| dom.is_element(c))
+            .collect();
+        // group adjacent runs that are a single w:t-run — salted (PreDelete)
+        // and unsalted runs must never merge into one hash run, and the merge
+        // must carry the salt (it rebuilds fresh elements).
+        let salt_name = PT::name("PreDeleteSalt");
+        let grouped = group_adjacent(element_children.iter().copied(), |&e| {
+            if !is_single_t_run(dom, e) {
+                0u8
+            } else if dom.attribute(e, &salt_name).is_some() {
+                2
+            } else {
+                1
+            }
+        });
+        let new_p = new_with_filtered_attrs(
+            dom,
+            W::p(),
+            node,
+            |a| is_rsid_attr(a) || is_pt(a) || is_volatile_para_attr(a),
+            vec![],
+        );
+        for (kind, group) in grouped {
+            if kind != 0 {
+                let text: String = group.iter().map(|&e| dom.value(e)).collect();
+                let text = apply_text_transform(&text, settings);
+                let r = dom.new_element(W::r());
+                if kind == 2 {
+                    dom.set_attribute_value(r, &salt_name, Some("1"));
+                }
+                let t = dom.new_element(W::t());
+                dom.add_text(t, &text);
+                dom.add(r, t);
+                dom.add(new_p, r);
+            } else {
+                for e in group {
+                    dom.add(new_p, e);
+                }
+            }
+        }
+        return vec![new_p];
+    }
+
+    if name == W::r() {
+        // fragment: each non-rPr child element wrapped in its own fresh w:r
+        let mut runs = Vec::new();
+        for rc in dom.elements(node, None) {
+            if dom.name(rc).unwrap() == W::r_pr() {
+                continue;
+            }
+            let inner = clone_internal(dom, rc, include_related_parts, settings, rel_hash);
+            let r = dom.new_element(W::r());
+            for n in inner {
+                dom.add(r, n);
+            }
+            runs.push(r);
+        }
+        return runs;
+    }
+
+    // ── B.4b: table cases ─────────────────────────────────────────────────────
+    if name == W::name("tbl") {
+        let children: Vec<NodeId> = dom
+            .elements(node, Some(&W::name("tr")))
+            .into_iter()
+            .flat_map(|tr| clone_internal(dom, tr, include_related_parts, settings, rel_hash))
+            .collect();
+        let tbl = dom.new_element(W::name("tbl"));
+        for c in children {
+            dom.add(tbl, c);
+        }
+        return vec![tbl];
+    }
+    if name == W::name("tr") {
+        let children: Vec<NodeId> = dom
+            .elements(node, Some(&W::name("tc")))
+            .into_iter()
+            .flat_map(|tc| clone_internal(dom, tc, include_related_parts, settings, rel_hash))
+            .collect();
+        let tr = dom.new_element(W::name("tr"));
+        for c in children {
+            dom.add(tr, c);
+        }
+        return vec![tr];
+    }
+    if name == W::name("tc") {
+        let children =
+            clone_children_elements(dom, node, include_related_parts, settings, rel_hash);
+        let tc = dom.new_element(W::name("tc"));
+        for c in children {
+            dom.add(tc, c);
+        }
+        return vec![tc];
+    }
+    if name == W::name("tcPr") {
+        let children: Vec<NodeId> = dom
+            .elements(node, Some(&W::name("gridSpan")))
+            .into_iter()
+            .flat_map(|gs| clone_internal(dom, gs, include_related_parts, settings, rel_hash))
+            .collect();
+        let tcpr = dom.new_element(W::name("tcPr"));
+        for c in children {
+            dom.add(tcpr, c);
+        }
+        return vec![tcpr];
+    }
+    if name == W::name("gridSpan") {
+        let val = dom.attribute(node, &W::val()).unwrap_or("").to_string();
+        let gs = dom.new_element(W::name("gridSpan"));
+        dom.set_attribute_value(gs, &XName::get("val", ""), Some(&val));
+        return vec![gs];
+    }
+    if name == W::name("txbxContent") {
+        let children =
+            clone_children_elements(dom, node, include_related_parts, settings, rel_hash);
+        let tb = dom.new_element(W::name("txbxContent"));
+        for c in children {
+            dom.add(tb, c);
+        }
+        return vec![tb];
+    }
+
+    // ── B.4c: relationship-id branch ──────────────────────────────────────────
+    if include_related_parts && S_ELEMENTS_WITH_RELATIONSHIP_IDS.contains(&name) {
+        let ne = dom.new_element(name.clone());
+        for (an, av) in dom.attributes(node) {
+            if is_pt(&an) || ATTRIBUTES_TO_TRIM_WHEN_CLONING.contains(&an) {
+                continue;
+            }
+            if S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(&an) {
+                match rel_hash(&av) {
+                    Some(v) => dom.set_attribute_value(ne, &an, Some(&v)),
+                    None => { /* xml part → drop attribute */ }
+                }
+            } else {
+                dom.set_attribute_value(ne, &an, Some(&av));
+            }
+        }
+        for c in clone_children(dom, node, include_related_parts, settings, rel_hash) {
+            dom.add(ne, c);
+        }
+        return vec![ne];
+    }
+
+    // ── B.4d: VML / OLE / object / docPr / default ────────────────────────────
+    if name == VML::name("shape") {
+        let children = clone_children(dom, node, include_related_parts, settings, rel_hash);
+        return vec![new_with_filtered_attrs(
+            dom,
+            name,
+            node,
+            |a| {
+                is_pt(a)
+                    || *a == XName::get("style", "")
+                    || *a == XName::get("id", "")
+                    || *a == XName::get("type", "")
+            },
+            children,
+        )];
+    }
+    if name == O::name("OLEObject") {
+        let children = clone_children(dom, node, include_related_parts, settings, rel_hash);
+        return vec![new_with_filtered_attrs(
+            dom,
+            name,
+            node,
+            |a| is_pt(a) || *a == XName::get("ObjectID", "") || *a == R::name("id"),
+            children,
+        )];
+    }
+    if name == W::name("object") {
+        let children = clone_children(dom, node, include_related_parts, settings, rel_hash);
+        return vec![new_with_filtered_attrs(dom, name, node, is_pt, children)];
+    }
+    if name == WP::name("docPr") {
+        let children = clone_children(dom, node, include_related_parts, settings, rel_hash);
+        return vec![new_with_filtered_attrs(
+            dom,
+            name,
+            node,
+            |a| is_pt(a) || *a == XName::get("id", ""),
+            children,
+        )];
+    }
+
+    // default
+    let children = clone_children(dom, node, include_related_parts, settings, rel_hash);
+    vec![new_with_filtered_attrs(
+        dom,
+        name,
+        node,
+        |a| is_pt(a) || is_volatile_para_attr(a) || ATTRIBUTES_TO_TRIM_WHEN_CLONING.contains(a),
+        children,
+    )]
+}
+
+fn clone_children_elements(
+    dom: &mut Dom,
+    node: NodeId,
+    include_related_parts: bool,
+    settings: &WmlComparerSettings,
+    rel_hash: &RelHashResolver,
+) -> Vec<NodeId> {
+    dom.elements(node, None)
+        .into_iter()
+        .flat_map(|c| clone_internal(dom, c, include_related_parts, settings, rel_hash))
+        .collect()
+}
+
+fn is_single_t_run(dom: &Dom, e: NodeId) -> bool {
+    dom.name(e) == Some(W::r())
+        && dom.elements(e, None).len() == 1
+        && dom.element(e, &W::t()).is_some()
+}
+
+const WML_DEFAULT_XMLNS: &str =
+    " xmlns=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"";
+
+/// M4.B.1 — `RemoveExistingPowerToolsMarkup` (:5049): drop every `pt:*` attribute
+/// EXCEPT `pt:Unid`, across `root` and all descendants.
+pub fn remove_existing_powertools_markup(dom: &mut Dom, root: NodeId) {
+    let unid = PT::unid();
+    for el in dom.descendants_and_self(root, None) {
+        let pt_attrs: Vec<_> = dom
+            .attributes(el)
+            .into_iter()
+            .map(|(n, _)| n)
+            .filter(|n| n.namespace_name() == PT::URI && *n != unid)
+            .collect();
+        for a in pt_attrs {
+            dom.set_attribute_value(el, &a, None);
+        }
+    }
+}
+
+/// M4.B.1 — `TestForInvalidContent` (:5037): the *preprocess* guard, which rejects
+/// only `w:altChunk`, `w:subDoc`, `w:contentPart` (a narrower set than the
+/// atomizer's `VerifyNoInvalidContent`).
+pub fn test_for_invalid_content(dom: &Dom, root: NodeId) -> Result<(), String> {
+    let invalid = [
+        W::name("altChunk"),
+        W::name("subDoc"),
+        W::name("contentPart"),
+    ];
+    for d in dom.descendants(root, None) {
+        if let Some(name) = dom.name(d)
+            && invalid.contains(&name)
+        {
+            return Err(format!("Document contains {}", name.local_name()));
+        }
+    }
+    Ok(())
+}
+
+/// M4.B.2 — the block hash *string*: serialize the clone, then strip the single
+/// re-emitted wordprocessingml default-xmlns declaration (`replacen(.., 1)` —
+/// JS string `.replace` removes only the first occurrence; the wrapper has
+/// already stripped all xmlns decls so exactly one is re-emitted on the root).
+pub fn block_hash_string(dom: &Dom, clone: NodeId) -> String {
+    let serialized = dom.serialize_element(clone);
+    serialized.replacen(WML_DEFAULT_XMLNS, "", 1)
+}
+
+/// M4.B.2 — SHA-1 of the block hash string.
+pub fn block_sha1(dom: &Dom, clone: NodeId) -> String {
+    sha1_hex(&block_hash_string(dom, clone))
+}
+
+/// M4.B.3 — `CloneForStructureHash` (:5121): keep element name + attributes +
+/// element nesting, drop ALL text/value nodes. Returns `None` for non-elements.
+pub fn clone_for_structure_hash(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
+    if !dom.is_element(node) {
+        return None;
+    }
+    let name = dom.name(node).unwrap();
+    let ne = dom.new_element(name);
+    for (an, av) in dom.attributes(node) {
+        dom.set_attribute_value(ne, &an, Some(&av));
+    }
+    for c in dom.nodes(node) {
+        if let Some(child) = clone_for_structure_hash(dom, c) {
+            dom.add(ne, child);
+        }
+    }
+    Some(ne)
+}
+
+use super::tables::ELEMENTS_TO_HAVE_SHA1;
+use std::collections::HashMap;
+
+/// M4.B.5 — `AddSha1HashToBlockLevelContent` (:5080): stamp `pt:SHA1Hash` on every
+/// `ElementsToHaveSha1Hash` descendant; additionally `pt:StructureSHA1Hash` on
+/// `w:tbl`/`w:tr` (computed from the structure-clone of the hashing-clone).
+pub fn add_sha1_hash_to_block_level_content(
+    dom: &mut Dom,
+    content_parent: NodeId,
+    settings: &WmlComparerSettings,
+    rel_hash: &RelHashResolver,
+) {
+    let targets: Vec<NodeId> = dom
+        .descendants(content_parent, None)
+        .into_iter()
+        .filter(|&d| {
+            dom.name(d)
+                .is_some_and(|n| ELEMENTS_TO_HAVE_SHA1.contains(&n))
+        })
+        .collect();
+    for d in targets {
+        let name = dom.name(d).unwrap();
+        let clone = clone_block_level_content_for_hashing(dom, d, true, settings, rel_hash);
+        let sha = block_sha1(dom, clone);
+        dom.set_attribute_value(d, &PT::sha1_hash(), Some(&sha));
+        if (name == W::name("tbl") || name == W::name("tr"))
+            && let Some(sc) = clone_for_structure_hash(dom, clone)
+        {
+            let sha2 = block_sha1(dom, sc);
+            dom.set_attribute_value(d, &PT::structure_sha1_hash(), Some(&sha2));
+        }
+    }
+}
+
+/// M4.B.6 — `HashBlockLevelContent` (:832): hash each block of the `after_proc`
+/// projection and store it as `pt:CorrelatedSHA1Hash` back onto the corresponding
+/// ORIGINAL `source` element (matched by surviving `pt:Unid`). Blocks whose Unid
+/// is absent from `source` (coalesced away by accept/reject) get no hash.
+/// Operates on `w:p`/`w:tbl`/`w:tr`. Returns `Err` on a duplicate Unid in source.
+pub fn hash_block_level_content(
+    dom: &mut Dom,
+    source_root: NodeId,
+    after_proc_root: NodeId,
+    settings: &WmlComparerSettings,
+    rel_hash: &RelHashResolver,
+) -> Result<(), String> {
+    let block = |n: &XName| *n == W::p() || *n == W::name("tbl") || *n == W::name("tr");
+    let unid = PT::unid();
+
+    // sourceUnidDict: Unid -> source element (duplicate Unid is an error).
+    let mut source_by_unid: HashMap<String, NodeId> = HashMap::new();
+    for d in dom.descendants(source_root, None) {
+        if dom.name(d).is_some_and(|n| block(&n))
+            && let Some(u) = dom.attribute(d, &unid)
+            && source_by_unid.insert(u.to_string(), d).is_some()
+        {
+            return Err(format!("duplicate Unid in source: {u}"));
+        }
+    }
+
+    let after_blocks: Vec<NodeId> = dom
+        .descendants(after_proc_root, None)
+        .into_iter()
+        .filter(|&d| dom.name(d).is_some_and(|n| block(&n)))
+        .collect();
+    for b in after_blocks {
+        let clone = clone_block_level_content_for_hashing(dom, b, true, settings, rel_hash);
+        // M122: Word-visual correlated hashes ignore whitespace so spacing-
+        // stamped related paragraphs (file_175) share a CorrelatedSHA1Hash.
+        // Exact pt:SHA1Hash (add_sha1) stays space-sensitive → word LCS after
+        // ProcessCorrelatedHashes Unknown pairing can still emit space inserts.
+        if settings.merge_replaced_paragraphs {
+            strip_whitespace_in_clone_text(dom, clone);
+        }
+        let sha = block_sha1(dom, clone);
+        if let Some(u) = dom.attribute(b, &unid).map(|s| s.to_string())
+            && let Some(&src) = source_by_unid.get(&u)
+        {
+            dom.set_attribute_value(src, &PT::correlated_sha1_hash(), Some(&sha));
+        }
+    }
+    Ok(())
+}

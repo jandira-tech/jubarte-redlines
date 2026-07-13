@@ -1,0 +1,48 @@
+# Standalone workspace (also shields the crate from any enclosing workspace
+# while this checkout sits inside another repo).
+[workspace]
+
+[package]
+name = "jubarte"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "AGPL-3.0-only"
+description = "Lossless DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
+repository = "https://github.com/arthrod/jubarte-rs"
+homepage = "https://github.com/arthrod/jubarte-rs"
+documentation = "https://docs.rs/jubarte"
+readme = "README.md"
+keywords = ["docx", "redline", "track-changes", "openxml", "word"]
+categories = ["text-processing", "parser-implementations", "command-line-utilities"]
+# Keep the published package lean: test fixtures/goldens (~3 MB) and dev tools
+# stay in the repository only.
+include = ["src/**", "Cargo.toml", "README.md", "CHANGELOG.md", "LICENSE"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["cli"]
+# The `jubarte` binary's CLI (clap). Library consumers can opt out with
+# `default-features = false` to keep the dependency tree minimal.
+cli = ["dep:clap"]
+
+[dependencies]
+rdocx-opc = "0.1" # OPC/zip package layer
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # fallback / direct zip access if rdocx-opc's surface is insufficient
+quick-xml = "0.40.1"
+regex = "1.12.4"
+sha1 = "0.10"
+rustc-hash = "2.1.2"
+clap = { version = "4.5", features = ["derive"], optional = true }
+
+[[bin]]
+name = "jubarte"
+required-features = ["cli"]
+
+[dev-dependencies]
+# Round-trip validation of produced .docx files in integration tests; only the
+# `parts` feature (= dep:zip) is built.
+ooxmlsdk = { version = "0.11", default-features = false, features = ["parts"] }
+tempfile = "3"
