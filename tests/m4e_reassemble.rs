@@ -141,7 +141,8 @@ fn m4_e_coalesce_roundtrip() {
     }
     assemble_ancestor_unids(&mut d, &mut atoms);
     let mut id = 1u32;
-    let children = coalesce_recurse(&mut d, &atoms, 0, &s, &mut id);
+    let refs: Vec<&ComparisonUnitAtom> = atoms.iter().collect();
+    let children = coalesce_recurse(&mut d, &refs, 0, &s, &mut id);
     assert_eq!(children.len(), 1, "one paragraph");
     let p = children[0];
     assert_eq!(d.name(p).unwrap(), W::p());
@@ -169,7 +170,8 @@ fn m4_e_coalesce_status_split() {
     atoms[2].correlation_status = CorrelationStatus::Equal;
     assemble_ancestor_unids(&mut d, &mut atoms);
     let mut id = 1u32;
-    let children = coalesce_recurse(&mut d, &atoms, 0, &s, &mut id);
+    let refs: Vec<&ComparisonUnitAtom> = atoms.iter().collect();
+    let children = coalesce_recurse(&mut d, &refs, 0, &s, &mut id);
     let p = children[0];
     let runs = d.elements(p, Some(&W::r()));
     assert_eq!(runs.len(), 2, "status transition splits into two runs");

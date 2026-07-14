@@ -427,19 +427,24 @@ fn status_str(s: CorrelationStatus) -> &'static str {
 }
 
 /// Stable first-key-seen bucket grouping (port of `groupByKey`).
-fn group_by_key_stable<K: Eq + std::hash::Hash + Clone>(
-    items: &[ComparisonUnitAtom],
+fn group_by_key_stable<'a, K: Eq + std::hash::Hash + Clone>(
+    items: &[&'a ComparisonUnitAtom],
     key: impl Fn(&ComparisonUnitAtom) -> K,
-) -> Vec<(K, Vec<ComparisonUnitAtom>)> {
+) -> Vec<(K, Vec<&'a ComparisonUnitAtom>)> {
+    // Groups hold references, not owned atoms: coalesce_recurse re-groups every
+    // atom at every nesting level, and ComparisonUnitAtom is fat (sha1_hash +
+    // ancestor_unids: Vec<String> + a recursive Box<before-atom>), so cloning
+    // per level was the dominant produce-phase allocation (samply). Grouping
+    // semantics are unchanged — only ownership.
     let mut order: Vec<K> = Vec::new();
-    let mut map: std::collections::HashMap<K, Vec<ComparisonUnitAtom>> =
+    let mut map: std::collections::HashMap<K, Vec<&'a ComparisonUnitAtom>> =
         std::collections::HashMap::new();
     for it in items {
         let k = key(it);
         if !map.contains_key(&k) {
             order.push(k.clone());
         }
-        map.entry(k).or_default().push(it.clone());
+        map.entry(k).or_default().push(*it);
     }
     order
         .into_iter()
@@ -498,7 +503,7 @@ fn is_txbx_from_level(dom: &Dom, atom: &ComparisonUnitAtom, level: usize) -> boo
 /// level. `id_gen` is the `s_MaxId` analog (oMath revision ids).
 pub fn coalesce_recurse(
     dom: &mut Dom,
-    atoms: &[ComparisonUnitAtom],
+    atoms: &[&ComparisonUnitAtom],
     level: usize,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
@@ -791,7 +796,7 @@ pub fn coalesce_recurse(
 #[allow(clippy::too_many_arguments)]
 fn reconstruct_element(
     dom: &mut Dom,
-    g: &[ComparisonUnitAtom],
+    g: &[&ComparisonUnitAtom],
     ancestor: NodeId,
     props: &[&str],
     pict_props: bool,
@@ -1104,7 +1109,9 @@ pub fn produce_new_wml_markup_from_correlated_sequence(
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) -> Vec<NodeId> {
-    coalesce_recurse(dom, atoms, 0, settings, id_gen)
+    // Borrow each atom once; coalesce_recurse threads &-slices (no atom clones).
+    let refs: Vec<&ComparisonUnitAtom> = atoms.iter().collect();
+    coalesce_recurse(dom, &refs, 0, settings, id_gen)
 }
 
 #[cfg(test)]
