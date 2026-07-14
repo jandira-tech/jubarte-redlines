@@ -177,7 +177,87 @@ pub fn longest_common_run(
 
 /// Word-mode LCR: when `dom`+`settings` are provided, rank ties by non-separator
 /// content so glue spaces do not steal equal-length content matches.
+///
+/// Dispatches to [`longest_common_run_indexed`] — a hash-indexed rewrite that is
+/// byte-identical to the historical O(n·m) [`longest_common_run_scan`] but skips
+/// the pairs that cannot possibly match (proven by `indexed_matches_scan`).
 fn longest_common_run_with_dom(
+    dom: Option<&Dom>,
+    cul1: &[ComparisonUnit],
+    cul2: &[ComparisonUnit],
+    settings: Option<&WmlComparerSettings>,
+) -> (usize, usize, usize) {
+    longest_common_run_indexed(dom, cul1, cul2, settings)
+}
+
+/// Extend a contiguous common run starting at `(i1, i2)`, returning its length.
+///
+/// Fast pre-filter: the cached u64 keys reject the (dominant) unequal case with a
+/// single int compare; the `sha1()` string stays the source of truth, so this is
+/// exactly `sha1() == sha1()` (equal hashes always share a key), just cheaper. A
+/// u64 collision (same key, different string) stops the run at the string check,
+/// so it is *never* mistaken for a match. See [`ComparisonUnit::sha1_key`].
+#[inline]
+fn extend_common_run(
+    cul1: &[ComparisonUnit],
+    cul2: &[ComparisonUnit],
+    i1: usize,
+    i2: usize,
+) -> usize {
+    let (mut t1, mut t2) = (i1, i2);
+    let mut len = 0;
+    while t1 < cul1.len()
+        && t2 < cul2.len()
+        && cul1[t1].sha1_key() == cul2[t2].sha1_key()
+        && cul1[t1].sha1() == cul2[t2].sha1()
+    {
+        t1 += 1;
+        t2 += 1;
+        len += 1;
+    }
+    len
+}
+
+/// Content score of the run `cul1[i1..i1 + len]`: non-separator character count
+/// in Word mode (`dom`+`settings` present), else the historical pure-length rank.
+#[inline]
+fn common_run_content_score(
+    dom: Option<&Dom>,
+    cul1: &[ComparisonUnit],
+    i1: usize,
+    len: usize,
+    settings: Option<&WmlComparerSettings>,
+) -> usize {
+    if let (Some(d), Some(s)) = (dom, settings) {
+        run_non_separator_text_len(d, &cul1[i1..i1 + len], s)
+    } else {
+        // Faithful / no-dom: pure length ranking (historical).
+        len
+    }
+}
+
+/// Keep the **first-found** candidate maximising `(content_score, len)`. Strict
+/// `>` replacement means ties never displace the incumbent — so the winner is the
+/// earliest one in the enumeration order (`i1` ascending, then `i2` ascending).
+#[inline]
+fn consider_candidate(
+    best: &mut Option<(usize, usize, usize, usize)>,
+    cand: (usize, usize, usize, usize),
+) {
+    let better = match best {
+        None => true,
+        Some(b) => cand.0 > b.0 || (cand.0 == b.0 && cand.1 > b.1),
+    };
+    if better {
+        *best = Some(cand);
+    }
+}
+
+/// Historical O(n·m) reference: scan every `(i1, i2)` start, extend, rank. Kept
+/// as the equivalence oracle for [`longest_common_run_indexed`] (`indexed_matches_scan`);
+/// not compiled into release builds.
+#[cfg(test)]
+fn longest_common_run_scan(
     dom: Option<&Dom>,
     cul1: &[ComparisonUnit],
     cul2: &[ComparisonUnit],
@@ -185,44 +265,58 @@ fn longest_common_run_with_dom(
 ) -> (usize, usize, usize) {
     // best: (content_score, len, i1, i2)
     let mut best: Option<(usize, usize, usize, usize)> = None;
-    let mut i1 = 0;
-    while i1 < cul1.len() {
-        let mut i2 = 0;
-        while i2 < cul2.len() {
-            let mut len = 0;
-            let (mut t1, mut t2) = (i1, i2);
-            // Fast pre-filter: the cached u64 keys reject the (dominant) unequal
-            // case with a single int compare; the sha1() string stays the source
-            // of truth, so this is exactly `sha1() == sha1()` (equal hashes always
-            // share a key), just cheaper. See ComparisonUnit::sha1_key.
-            while t1 < cul1.len()
-                && t2 < cul2.len()
-                && cul1[t1].sha1_key() == cul2[t2].sha1_key()
-                && cul1[t1].sha1() == cul2[t2].sha1()
-            {
-                t1 += 1;
-                t2 += 1;
-                len += 1;
-            }
+    for i1 in 0..cul1.len() {
+        for i2 in 0..cul2.len() {
+            let len = extend_common_run(cul1, cul2, i1, i2);
             if len > 0 {
-                let content = if let (Some(d), Some(s)) = (dom, settings) {
-                    run_non_separator_text_len(d, &cul1[i1..i1 + len], s)
-                } else {
-                    // Faithful / no-dom: pure length ranking (historical).
-                    len
-                };
-                let cand = (content, len, i1, i2);
-                let better = match best {
-                    None => true,
-                    Some(b) => cand.0 > b.0 || (cand.0 == b.0 && cand.1 > b.1),
-                };
-                if better {
-                    best = Some(cand);
-                }
+                let content = common_run_content_score(dom, cul1, i1, len, settings);
+                consider_candidate(&mut best, (content, len, i1, i2));
             }
-            i2 += 1;
         }
-        i1 += 1;
+    }
+    best.map(|(_, len, i1, i2)| (i1, i2, len))
+        .unwrap_or((0, 0, 0))
+}
+
+/// Hash-indexed longest-common-run — the asymptotic fix.
+///
+/// Only `(i1, i2)` starts whose first units share a hash can produce a run, so we
+/// bucket `cul2` positions by their u64 fingerprint key and, for each `i1`, probe
+/// **only** the matching bucket. Buckets are built in ascending `i2` order, so
+/// probing one visits the same starts, in the same `i2`-ascending order, that the
+/// scan would reach for that `i1`. The candidate sequence — and therefore the
+/// first-found winner — is identical to [`longest_common_run_scan`]; the scan
+/// merely also visits the (never-winning) `len == 0` pairs in between. Proven by
+/// `indexed_matches_scan`. Collisions land in a bucket but yield `len == 0` (the
+/// string check in [`extend_common_run`]), exactly as the scan skips them.
+fn longest_common_run_indexed(
+    dom: Option<&Dom>,
+    cul1: &[ComparisonUnit],
+    cul2: &[ComparisonUnit],
+    settings: Option<&WmlComparerSettings>,
+) -> (usize, usize, usize) {
+    // Bucket cul2 positions by their u64 fingerprint key. Pushing in ascending
+    // i2 order keeps each bucket ascending, so a probe reproduces the scan's
+    // i2-ascending visitation for a given i1.
+    let mut index: std::collections::HashMap<u64, Vec<usize>> =
+        std::collections::HashMap::with_capacity(cul2.len());
+    for (i2, u) in cul2.iter().enumerate() {
+        index.entry(u.sha1_key()).or_default().push(i2);
+    }
+
+    // best: (content_score, len, i1, i2) — same tuple/tie-break as the scan.
+    let mut best: Option<(usize, usize, usize, usize)> = None;
+    for i1 in 0..cul1.len() {
+        let Some(positions) = index.get(&cul1[i1].sha1_key()) else {
+            continue;
+        };
+        for &i2 in positions {
+            let len = extend_common_run(cul1, cul2, i1, i2);
+            if len > 0 {
+                let content = common_run_content_score(dom, cul1, i1, len, settings);
+                consider_candidate(&mut best, (content, len, i1, i2));
+            }
+        }
     }
     best.map(|(_, len, i1, i2)| (i1, i2, len))
         .unwrap_or((0, 0, 0))
@@ -2834,4 +2928,121 @@ pub fn lcs(
         )],
         settings,
     )
+}
+
+/// PR2 — the hash-indexed longest-common-run MUST stay byte-identical to the
+/// historical O(n·m) scan it replaces. These tests are the equivalence oracle:
+/// they drive both paths over the same inputs and assert `indexed == scan`,
+/// including the first-found tie-break and forced u64-key collisions. Correctness
+/// on the `dom=Some` (Word-mode) content score is covered by the 139 corpus
+/// byte-identity tests, since both paths share [`common_run_content_score`].
+#[cfg(test)]
+mod indexed_lcr_tests {
+    use super::*;
+    use crate::comparer::atoms::ComparisonUnitWord;
+    use crate::util::sha1::sha1_fingerprint;
+
+    /// A bare word unit carrying a chosen content hash (key = fingerprint(hash),
+    /// the production invariant).
+    fn mk_word(hash: &str) -> ComparisonUnit {
+        ComparisonUnit::Word(ComparisonUnitWord {
+            correlation_status: CorrelationStatus::Nil,
+            contents: Vec::new(),
+            sha1_key: sha1_fingerprint(hash),
+            sha1_hash: hash.to_string(),
+        })
+    }
+
+    /// A word with an EXPLICIT (hash, key) pair — used to simulate a u64
+    /// fingerprint collision (distinct hash strings sharing a key). Real FNV-1a
+    /// keys make this astronomically rare, but the string check must still reject
+    /// it identically in both paths.
+    fn mk_word_key(hash: &str, key: u64) -> ComparisonUnit {
+        ComparisonUnit::Word(ComparisonUnitWord {
+            correlation_status: CorrelationStatus::Nil,
+            contents: Vec::new(),
+            sha1_key: key,
+            sha1_hash: hash.to_string(),
+        })
+    }
+
+    fn mk_seq(hashes: &[&str]) -> Vec<ComparisonUnit> {
+        hashes.iter().map(|h| mk_word(h)).collect()
+    }
+
+    /// Tiny deterministic LCG (Numerical Recipes constants) — no external rng, no
+    /// time/random (both unavailable). Same seed ⇒ same sequence every run.
+    struct Lcg(u64);
+    impl Lcg {
+        fn below(&mut self, n: u32) -> u32 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((self.0 >> 33) as u32) % n
+        }
+    }
+
+    /// The `dom=None` path (content == len) exercises the full candidate ordering
+    /// and first-found tie-break — precisely where the indexed rewrite could
+    /// diverge. A 4-symbol alphabet with lengths 0..=12 ⇒ frequent equal runs and
+    /// ties across thousands of trials.
+    #[test]
+    fn indexed_matches_scan_random() {
+        const ALPHABET: &[&str] = &["A", "B", "C", "D"];
+        let mut rng = Lcg(0x9E37_79B9_7F4A_7C15);
+        for trial in 0..5000 {
+            let n = rng.below(13) as usize;
+            let m = rng.below(13) as usize;
+            let a: Vec<ComparisonUnit> = (0..n)
+                .map(|_| mk_word(ALPHABET[rng.below(ALPHABET.len() as u32) as usize]))
+                .collect();
+            let b: Vec<ComparisonUnit> = (0..m)
+                .map(|_| mk_word(ALPHABET[rng.below(ALPHABET.len() as u32) as usize]))
+                .collect();
+            let expect = longest_common_run_scan(None, &a, &b, None);
+            let got = longest_common_run_indexed(None, &a, &b, None);
+            assert_eq!(
+                got,
+                expect,
+                "trial {trial}: indexed != scan\n a={:?}\n b={:?}",
+                a.iter().map(|u| u.sha1()).collect::<Vec<_>>(),
+                b.iter().map(|u| u.sha1()).collect::<Vec<_>>(),
+            );
+        }
+    }
+
+    #[test]
+    fn indexed_matches_scan_edge_cases() {
+        let cases: &[(Vec<ComparisonUnit>, Vec<ComparisonUnit>)] = &[
+            (mk_seq(&[]), mk_seq(&[])),
+            (mk_seq(&["A"]), mk_seq(&[])),
+            (mk_seq(&[]), mk_seq(&["A"])),
+            (mk_seq(&["A"]), mk_seq(&["A"])),
+            (mk_seq(&["A"]), mk_seq(&["B"])),
+            (mk_seq(&["A", "A", "A"]), mk_seq(&["A", "A"])),
+            (mk_seq(&["A", "B", "C"]), mk_seq(&["C", "B", "A"])),
+            (mk_seq(&["A", "B", "A", "B"]), mk_seq(&["A", "B", "A", "B"])),
+        ];
+        for (a, b) in cases {
+            assert_eq!(
+                longest_common_run_indexed(None, a, b, None),
+                longest_common_run_scan(None, a, b, None),
+            );
+        }
+    }
+
+    /// A forced u64-key collision (distinct hashes, shared key) must NOT be read
+    /// as a match by the bucket probe: the string check keeps the indexed output
+    /// identical to the scan, which relies on the same string check.
+    #[test]
+    fn indexed_handles_key_collision() {
+        let k = 0xDEAD_BEEF_u64;
+        // "X" and "Y" pretend to collide on key k; "Z" is a genuine matching pair.
+        let a = vec![mk_word_key("X", k), mk_word_key("Z", k)];
+        let b = vec![mk_word_key("Y", k), mk_word_key("Z", k)];
+        let got = longest_common_run_indexed(None, &a, &b, None);
+        assert_eq!(got, longest_common_run_scan(None, &a, &b, None));
+        assert_eq!(got, (1, 1, 1), "collision must not fabricate an X==Y match");
+    }
 }
