@@ -56,8 +56,45 @@ Generator + extractor live in `_scratch/perf/`.
 - The LCS track (PR2-audit … PR6) stays **latent** — LCS is 7%, still not the
   bottleneck. Do not start it.
 
-Everything below is retained as prior context. The discipline (exact
-equivalence, named baselines, red/green, no sunk-cost) is unchanged.
+Everything below is retained as prior context. The discipline (named
+baselines, red/green, no sunk-cost) is unchanged, but the correctness oracle
+changes — see the Parity Ledger below.
+
+## Parity Ledger — the correctness contract (supersedes byte / canonical equality)
+
+Goal, stated plainly: **"almost as good as Word, way faster."** Both halves are
+measured, and neither is byte-identity.
+
+**Byte parity is DROPPED.** The engine is non-deterministic run-to-run (HashMap
+seeding → different bytes from the same binary+input), so byte-identity was
+never a real contract and canonical-structural-equality was only a proxy. The
+real question is *"does our redline look like Word's?"* — so the ledger is the
+**neurotic_docx_bench visual score**: render OUR redline to PDF (LibreOffice
+144 dpi) and pixel-score it against Microsoft Word's own redline PDFs
+(`corpus/word_based/pdf_redlines_word`). 0..100, higher = closer to Word.
+
+Runner: `tools/parity_ledger.sh <N|full> [bin]`.
+- **Sample (`N`)** — first N pairs, seconds each. Run freely during dev to
+  catch parity regressions early.
+- **Full (`full`)** — all ~199 pairs, LibreOffice render, minutes. Run **once
+  at the end of each PR**, not in the inner loop.
+
+Ledger rule for a performance PR: **the full-run mean/median must not drop**
+versus the pre-PR baseline (small rendering noise allowed; a real drop blocks
+the PR). Speed is reported alongside (samply user-CPU + wall on the RFP17
+fixtures). A PR ships only when it is *faster AND not less Word-faithful*.
+
+Baselines (jubarte-rust):
+- Recorded corpus best: **~81.0 mean** over 207 fixtures (RESULTS.md
+  `jubarte-rust@cdfef70a`).
+- This session, N=8 sample, post-PR-A binary: **mean 82.24 · median 84.61**
+  (6 scored; the pre-PR-B reference point).
+
+The old "Required equivalence layers" / canonical-package-equality language
+further down is superseded by this ledger for anything the ledger covers
+(whole-document Word fidelity). Keep the pure-function LCR/score equivalence
+tests — they guard internal refactors — but the *ship gate* is the ledger, not
+package bytes.
 
 ---
 
