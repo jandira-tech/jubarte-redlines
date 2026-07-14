@@ -45,14 +45,25 @@ Generator + extractor live in `_scratch/perf/`.
     paging); user CPU is the clean signal.
 
   Gated behind default-on `fast-alloc`.
-- **PR-B (NEXT, structural): cut the produce-phase clone churn.**
-  `reconstruct_element` does `new_element` + attr-copy + `clone_subtree` of
-  every property child, once per output element; `coalesce_recurse` clones
-  group content per atom. Reduce redundant `clone_subtree`/`serialize_element`
-  (e.g. the tblPr/tblGrid serialize-to-compare at produce.rs:893/920 allocates
-  two strings per merged table). Higher value, but touches Word-parity-critical
-  code → full gate: reference structural equality + corpus canonical equality +
-  `parity_ladder.py sweep` + a clean before/after samply delta.
+- **PR-B (DONE, committed `ac08651`): kill produce-phase per-level atom clones.**
+  `coalesce_recurse` re-groups every atom at every nesting level, and
+  `group_by_key_stable` + `group_adjacent` each **cloned** the (fat)
+  `ComparisonUnitAtom` to do it (sha1_hash + `ancestor_unids: Vec<String>` +
+  recursive `Box<before-atom>`). Threaded `&[&ComparisonUnitAtom]` through
+  produce instead — identical grouping semantics, zero atom clones. Full test
+  suite green (canonical equality), parity ledger sample unchanged
+  (82.24/84.61). Measured fixture A (both mimalloc): **142 s → 97.7 s wall
+  (31%), 73.4 s → 58.2 s user (21%)**.
+
+  **Cumulative (PR-A + PR-B) vs original baseline: 148 s → 97.7 s wall (~34%),
+  91.8 s → 58.2 s user (~37%).** Parity unchanged.
+
+- **PR-C (NEXT candidate): the accept/reject pipeline + arena reuse.**
+  `accept_revisions_for_part_content` runs ~12 sequential full-tree functional
+  transforms (each `clone_subtree`s the whole doc); the `Dom` arena only grows
+  (12–14 GB RSS on fixture A — never reclaims discarded trees). Options: reuse a
+  transform's output in place, or a free-list / compaction in the arena. Higher
+  value but the riskiest for parity — full gate + full ledger.
 - The LCS track (PR2-audit … PR6) stays **latent** — LCS is 7%, still not the
   bottleneck. Do not start it.
 
