@@ -58,12 +58,29 @@ Generator + extractor live in `_scratch/perf/`.
   **Cumulative (PR-A + PR-B) vs original baseline: 148 s → 97.7 s wall (~34%),
   91.8 s → 58.2 s user (~37%).** Parity unchanged.
 
-- **PR-C (NEXT candidate): the accept/reject pipeline + arena reuse.**
+### Reprofile after PR-B (samply, fixture A now 98 s, 98.7k samples)
+
+produce **dropped out of the top inclusive list** — PR-B worked. New ranking:
+
+| self / inclusive | phase |
+|---:|---|
+| `drop_in_place<NodeData>` **17%** + `drop_in_place<Attr>` **13%** = **~30% self** | node-drop churn: intermediate trees from the accept pipeline being torn down |
+| `atomize::recurse`/`create_comparison_unit_atom_list`/`annotate_element_with_props` **12.4%** | per-element `dom.elements()`/`dom.attributes()` allocate a fresh `Vec` each call |
+| `parse_xdocument` **8.2%**, `compare_bodies` **8.3%** | |
+
+- **PR-C (NEXT, big/risky): the accept/reject pipeline + arena reuse.**
   `accept_revisions_for_part_content` runs ~12 sequential full-tree functional
-  transforms (each `clone_subtree`s the whole doc); the `Dom` arena only grows
-  (12–14 GB RSS on fixture A — never reclaims discarded trees). Options: reuse a
-  transform's output in place, or a free-list / compaction in the arena. Higher
-  value but the riskiest for parity — full gate + full ledger.
+  transforms (each `clone_subtree`s the whole doc → the ~30% drop churn above);
+  the `Dom` arena only grows (12–14 GB RSS on fixture A — never reclaims
+  discarded trees). Options: reuse a transform's output in place, free-list in
+  `Dom::remove`, or skip the clone when a transform is a no-op on a subtree.
+  Highest value, riskiest for parity — full gate + full ledger, its own PR.
+- **PR-D (NEXT, safe/bounded): non-allocating child/attr iteration on the
+  atomize hot path.** `dom.elements()`/`dom.attributes()` return a fresh `Vec`
+  per call; add a non-allocating iterator (or reusable buffer) variant and use
+  it in `atomize::recurse`/`annotate_element_with_props` only. Bounded, pure-
+  internal (no output change), parity-safe by construction — the PR-B-shaped
+  next step.
 - The LCS track (PR2-audit … PR6) stays **latent** — LCS is 7%, still not the
   bottleneck. Do not start it.
 
