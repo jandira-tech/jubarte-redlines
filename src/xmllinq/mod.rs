@@ -175,13 +175,30 @@ struct Attr {
     value: String,
 }
 
+/// Processing-instruction payload. Boxed inside `NodeKind::Pi` so the rare PI
+/// variant does not size every node (NODE-KIND-01).
+#[derive(Clone, Debug)]
+struct PiData {
+    target: String,
+    data: String,
+}
+
 /// Node kind discriminant + kind-specific data.
+///
+/// The two large-but-rare variants are boxed (NODE-KIND-01): `Pi` (uncommon in
+/// docx) and `Document`'s declaration (one node per document). This keeps the
+/// enum sized by the common `Element { name: XName }` variant (~32 B) instead of
+/// the ~72 B `Document` declaration, shrinking every arena node.
 enum NodeKind {
-    Element { name: XName },
+    Element {
+        name: XName,
+    },
     Text(String),
     Comment(String),
-    Pi { target: String, data: String },
-    Document { declaration: Option<XDeclaration> },
+    Pi(Box<PiData>),
+    Document {
+        declaration: Option<Box<XDeclaration>>,
+    },
 }
 
 struct NodeData {
@@ -249,10 +266,10 @@ impl Dom {
         self.alloc(NodeKind::Comment(value.to_string()))
     }
     pub fn new_pi(&mut self, target: &str, data: &str) -> NodeId {
-        self.alloc(NodeKind::Pi {
+        self.alloc(NodeKind::Pi(Box::new(PiData {
             target: target.to_string(),
             data: data.to_string(),
-        })
+        })))
     }
 
     // ── kind predicates / accessors ───────────────────────────────────────────
@@ -269,7 +286,7 @@ impl Dom {
         matches!(self.data(id).kind, NodeKind::Comment(_))
     }
     pub fn is_pi(&self, id: NodeId) -> bool {
-        matches!(self.data(id).kind, NodeKind::Pi { .. })
+        matches!(self.data(id).kind, NodeKind::Pi(_))
     }
 
     /// `element.Name` — element name, or None for non-elements.
@@ -302,26 +319,26 @@ impl Dom {
 
     pub fn pi_target(&self, id: NodeId) -> Option<&str> {
         match &self.data(id).kind {
-            NodeKind::Pi { target, .. } => Some(target),
+            NodeKind::Pi(pi) => Some(&pi.target),
             _ => None,
         }
     }
     pub fn pi_data(&self, id: NodeId) -> Option<&str> {
         match &self.data(id).kind {
-            NodeKind::Pi { data, .. } => Some(data),
+            NodeKind::Pi(pi) => Some(&pi.data),
             _ => None,
         }
     }
 
     pub fn declaration(&self, id: NodeId) -> Option<&XDeclaration> {
         match &self.data(id).kind {
-            NodeKind::Document { declaration } => declaration.as_ref(),
+            NodeKind::Document { declaration } => declaration.as_deref(),
             _ => None,
         }
     }
     pub fn set_declaration(&mut self, id: NodeId, decl: Option<XDeclaration>) {
         if let NodeKind::Document { declaration } = &mut self.data_mut(id).kind {
-            *declaration = decl;
+            *declaration = decl.map(Box::new);
         }
     }
 
@@ -714,10 +731,7 @@ impl Dom {
             NodeKind::Element { name } => NodeKind::Element { name: name.clone() },
             NodeKind::Text(v) => NodeKind::Text(v.clone()),
             NodeKind::Comment(v) => NodeKind::Comment(v.clone()),
-            NodeKind::Pi { target, data } => NodeKind::Pi {
-                target: target.clone(),
-                data: data.clone(),
-            },
+            NodeKind::Pi(pi) => NodeKind::Pi(pi.clone()),
             NodeKind::Document { declaration } => NodeKind::Document {
                 declaration: declaration.clone(),
             },
@@ -781,7 +795,7 @@ impl Dom {
 }
 
 #[cfg(test)]
-mod ann01_tests {
+mod node_layout_tests {
     use super::*;
 
     /// ANN-01 mechanism counter. `annotations` has no production caller (only the
@@ -797,6 +811,30 @@ mod ann01_tests {
             sz <= 128,
             "NodeData is {sz} bytes; ANN-01 requires <= 128 (annotations must live \
              in the Dom side table, not inline on every node)"
+        );
+    }
+
+    /// NODE-KIND-01 mechanism counter. `NodeKind`'s size is set by its largest
+    /// variant plus a discriminant. `Document{declaration}` (~72 B, one node per
+    /// doc) and `Pi` (~48 B, rare in docx) inflated every node — including the
+    /// common `Element`/`Text`. Boxing those two rare variants drops the max
+    /// payload to `Element{XName}` (32 B); with 5 data-carrying variants Rust
+    /// can't niche the tag, so `NodeKind` = 32 + 8-byte tag = 40 B, and
+    /// `NodeData` falls 128 → 96 (originally 152). The bounds guard against
+    /// regrowth back toward the fat enum.
+    #[test]
+    fn node_kind_rare_variants_are_boxed() {
+        let kind = std::mem::size_of::<NodeKind>();
+        let node = std::mem::size_of::<NodeData>();
+        assert!(
+            kind <= 40,
+            "NodeKind is {kind} bytes; NODE-KIND-01 requires <= 40 (box the rare \
+             Document/Pi variants so they don't size every node)"
+        );
+        assert!(
+            node <= 96,
+            "NodeData is {node} bytes; NODE-KIND-01 requires <= 96 (was 128 after \
+             ANN-01, 152 originally)"
         );
     }
 }
