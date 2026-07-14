@@ -31,10 +31,14 @@ include = [
 all-features = true
 
 [features]
-default = ["cli"]
+default = ["cli", "fast-alloc"]
 # The `jubarte` binary's CLI (clap). Library consumers can opt out with
 # `default-features = false` to keep the dependency tree minimal.
 cli = ["dep:clap"]
+# CLI global allocator (mimalloc). Default-on; disable with
+# `--no-default-features --features cli` to fall back to the system allocator
+# (used for allocator A/B measurement). Library-only builds never pull it in.
+fast-alloc = ["dep:mimalloc"]
 
 [dependencies]
 rdocx-opc = "0.1" # OPC/zip package layer
@@ -43,6 +47,11 @@ quick-xml = "0.40.1"
 regex = "1.12.4"
 sha1 = "0.10"
 clap = { version = "4.5", features = ["derive"], optional = true }
+# CLI-only global allocator. The redline pipeline is ~41% allocation self-time
+# (xmllinq node clone/drop churn, measured via samply on the RFP17 fixtures);
+# mimalloc cuts that per-alloc cost with zero behaviour change. Kept out of the
+# pure-library dependency tree so downstream consumers pick their own allocator.
+mimalloc = { version = "0.1", default-features = false, optional = true }
 
 [[bin]]
 name = "jubarte"
