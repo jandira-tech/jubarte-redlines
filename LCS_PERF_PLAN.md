@@ -100,6 +100,9 @@ Baselines (jubarte-rust):
   `jubarte-rust@cdfef70a`).
 - This session, N=8 sample, post-PR-A binary: **mean 82.24 · median 84.61**
   (6 scored; the pre-PR-B reference point).
+- **Full run, post-PR-B binary: mean 83.77 · median 88.52** (207 generated +
+  rendered, 164 matched). At/above the historical baseline — PR-B (output-
+  preserving) held parity while cutting fixture-A wall time 31%.
 
 The old "Required equivalence layers" / canonical-package-equality language
 further down is superseded by this ledger for anything the ledger covers
