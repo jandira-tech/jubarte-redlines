@@ -1,12 +1,381 @@
-# LCS performance plan — make every comparison cheaper, without changing the winner
+# LCS and comparison performance implementation plan — bank every second without changing the winner
 
-Authored 2026-07-13; revised 2026-07-13 after checking the plan against the
-current branch. Base: `nitpicking` (`eefebac`). Current stack head:
-`perf/lcs-sha1-key` (`044fb37`). Scope: the faithful comparison path in
-`src/comparer/lcs.rs`, plus only the measurement and equivalence tooling needed
-to prove each optimization.
+> **For agentic workers:** execute one measured increment at a time. Use the
+> repository's red/green, coverage, parity-ledger, and performance gates; stop
+> after each accepted increment so the user can review and commit it. Never hide
+> a quality change inside a performance change.
 
-## MEASURED REORDER #2 — 2026-07-14, samply full-run profile (READ THIS FIRST)
+**Goal:** Make Jubarte the quickest Word-faithful redline engine by repeatedly
+reducing end-to-end wall time, total CPU time, allocations, and peak RSS while
+never accepting a Word-validity or Word-parity regression.
+
+**Architecture:** Use a barbell program. One side continuously ships small,
+behavior-identical savings proven by exact reference checks; the other prototypes
+larger reductions in node count and copying behind shadow/reference oracles. A
+measured, quality-clean one-second win is valuable even when it is not the single
+largest hotspot.
+
+**Tech stack:** Rust 1.88+, the existing `xmllinq` arena, `samply`, Criterion,
+nightly `cargo-llvm-cov`, the OOXML SDK validator, LibreOffice rendering, and
+Microsoft Word as the final validity/fidelity oracle.
+
+---
+
+Authored 2026-07-13; revised 2026-07-14 after re-reading the live tree. Base:
+`nitpicking` (`eefebac`). Current measured stack head:
+`perf/atomize-child-iter` (`5eab095`). Scope is now the full faithful comparison
+path, because the current flat profile proves that an LCS-only program cannot
+make the whole tool quickest.
+
+## OPERATING PLAN #4 — 2026-07-14, the one-second ratchet (READ THIS FIRST)
+
+This section supersedes later historical sequencing. The earlier measurements,
+failed experiments, and latent exact-LCS design remain in this document as
+evidence and ready-to-run branches of the program.
+
+### Current truth
+
+| item | status | measured evidence / decision |
+|---|---|---|
+| PR-A: CLI mimalloc | shipped (`10b20e6`) | fixture A user CPU improved about 21%; keep default-on `fast-alloc` |
+| PR-B: remove produce atom clones | shipped (`ac08651`) | fixture A improved about 31% wall and 21% user CPU |
+| PR-D: non-allocating atomize child walk | shipped (`502b6c7`) | fixture A improved about 7% user CPU and 8% wall in the recorded run |
+| PR-C.1: arena free-list/reclaim | measured and reverted | user CPU neutral/slower; peak RSS about 14% worse; do not repeat this design |
+| latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
+| quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
+
+The flat profile changes the strategy. “Only optimize the largest hotspot” is
+no longer sufficient: on a roughly 98-second comparison, every stable 1% slice
+is approximately one second. We will maintain a queue of independent,
+risk-adjusted experiments across the flat top, keep every proven win, and
+reprofile after each accepted change because the ranking will keep moving.
+
+### What “quickest without lower quality” means
+
+Performance and quality are co-equal measured outputs, not tradeable points.
+
+1. **Primary latency metric:** clean-machine median end-to-end wall time for the
+   fixed scenario matrix, with baseline/candidate trials interleaved.
+2. **Primary efficiency metric:** total user + system CPU seconds. A wall-only
+   win produced by extra threads belongs to a separately labelled throughput
+   lane; it is not an efficiency win.
+3. **Memory metric:** peak RSS plus total/peak live nodes and bytes allocated.
+   Given the current 12–14 GB pathology, a confirmed RSS increase greater than
+   the calibrated noise band blocks an ordinary performance PR.
+4. **Throughput metric:** documents/hour and CPU-seconds/document for a batch.
+   This captures sub-second improvements and repeated-baseline caching that a
+   single heroic fixture hides.
+5. **Quality metric:** the candidate must pass the quality ratchet below. Faster
+   output caused by skipping work that changes the selected matches, revision
+   semantics, Word validity, or Word visual fidelity is a failed experiment.
+
+Do not use an absolute machine-dependent duration in a unit test. Record
+absolute seconds for the named machine, but gate on paired evidence and exact
+behavior.
+
+### The quality ratchet — no aggregate score may conceal a regression
+
+The current parity ledger is necessary but not sufficient: mean/median can hide
+a worse individual document, and renderer noise can look like a small change.
+Before the next optimization, extend the quality tooling to produce a paired
+baseline/candidate verdict.
+
+#### Q0 — behavior-identical performance work
+
+Every ordinary performance PR is Q0 and must satisfy all of these:
+
+- the fast pure function equals its retained reference for the exact selected
+  value, ordering, or digest—not merely “similar” output;
+- baseline and candidate DOCX packages are canonically structurally equal on
+  the stable comparison corpus unless the change is explicitly reclassified Q1;
+- `accept(candidate redline)` equals the modified input and
+  `reject(candidate redline)` equals the original wherever those invariants are
+  already supported by the corpus;
+- the Open XML SDK validator reports no new finding, and the real-Word open
+  probe opens every designated hostile/large output without a repair dialog;
+- the paired visual ledger shows no per-pair loss beyond an A/A-calibrated
+  renderer-noise band and no decrease in mean, median, lower-tail percentile,
+  or matched-pair count;
+- all existing exact, corpus, and ignored known-issue tests retain their prior
+  status; never delete or weaken a test to pass the gate.
+
+For visual noise, render the same baseline binary twice, compute the per-pair
+absolute delta distribution, and set the noise band before looking at a
+candidate. A candidate pair outside that band is blocked and manually reviewed
+against Word; gains on other pairs cannot buy it through. This makes “no quality
+decrease” a per-document rule rather than an aggregate aspiration.
+
+#### Q1 — deliberate semantic/quality work
+
+Any change that selects different LCS anchors, changes revision grouping, changes
+visible output, or fails canonical baseline equivalence is Q1. It requires a
+separate design, separate PR, and real-Word adjudication. It may ship only when
+Word fidelity improves or remains demonstrably unchanged per pair. Do not label
+Q1 work a pure speedup even if it is faster.
+
+### The one-second experiment ledger
+
+Create one row before touching production code and close it after measurement:
+
+| field | required content |
+|---|---|
+| experiment id | stable id such as `NAME-01`, `HASH-02`, `ATOM-VIEW-01` |
+| exact hypothesis | the allocation, traversal, clone, or branch to remove |
+| live evidence | profile percentage, allocation count, or source call site |
+| files | exact production/test/harness paths |
+| quality class | Q0 or separately approved Q1 |
+| expected ceiling | Amdahl ceiling from the measured phase; never a promised win |
+| baseline | commit, binary SHA-256, toolchain, machine state, fixture hashes |
+| result | wall, user CPU, system CPU, RSS, node/allocation counters |
+| quality verdict | exact/canonical/validator/Word/paired-visual results |
+| decision | keep, revise, bank for amplified measurement, or revert |
+
+If the expected gain is smaller than end-to-end noise, amplify it instead of
+dismissing it: run a deterministic stage microbenchmark or repeat the same
+comparison in a fixed batch until the delta is observable. Then run the normal
+end-to-end matrix to prove no regression. Never combine unrelated
+micro-optimizations merely to manufacture a measurable number.
+
+### Measurement laboratory that must land before the next risky change
+
+The existing `_scratch/perf/` scripts proved useful but are local and partially
+ad hoc. Convert the durable parts into repository tooling; keep private/large
+documents and generated outputs ignored.
+
+**Files:**
+
+- Modify: `Cargo.toml` — add the non-default `perf-profile` feature only; keep
+  profiling dependencies out of ordinary library builds.
+- Modify: `src/lib.rs` — expose the compiled-out profiling module internally.
+- Modify: `benches/redline.rs` — split short statistical cases from slow trials.
+- Modify: `tools/parity_ledger.sh` — preserve per-pair scores and support named
+  baseline/candidate runs without deleting the first result.
+- Create: `tools/perf/run_trials.sh` — build named binaries, run interleaved
+  trials, capture `/usr/bin/time -l` wall/CPU/RSS, and refuse concurrent load.
+- Create: `tools/perf/summarize.py` — compute median, range, MAD, paired deltas,
+  and a machine-readable verdict.
+- Create: `tools/perf/quality_compare.py` — compare canonical output, validator
+  findings, paired visual scores, and missing/failing pairs.
+- Create: `src/perf.rs` behind a non-default `perf-profile` feature — integer
+  counters plus coarse stage timers compiled out of production builds.
+- Test: `tests/perf_contract.rs` — deterministic counter, output-equivalence,
+  seeded-regression-parser, and harness-failure tests using generated in-memory
+  inputs and existing focused fixtures.
+
+Record these counters by stage and call site:
+
+- nodes allocated by kind, `size_of::<NodeData>()`, content/attribute-count
+  histograms, annotation occupancy, maximum arena length, and live-output nodes;
+- every `clone_subtree` call site, root kind, source node count, cloned node
+  count, bytes of text/attributes cloned, and clone lifetime class;
+- `nodes`/`elements`/`attributes` result-vector count and total capacity;
+- parser input bytes/chars, namespace-scope clones, name/value allocations;
+- synthetic atom nodes, ancestor-path allocations, atom clones, and
+  `descendant_atoms()` temporary vectors;
+- block-hash projection nodes/bytes, serialization bytes, hash-cache hits;
+- accept/reject transform input/output nodes, applicability flag, no-op rate,
+  and stage time;
+- LCS calls/windows, candidate buckets, extensions, scoring walks, unit/atom
+  copies, and worklist shifts;
+- final package open/preprocess/parse/compare/produce/serialize/ZIP times.
+
+The harness uses at least five interleaved `A B B A` rounds for a claimed
+~1-second end-to-end win, more when MAD overlaps the delta. Wall-time acceptance
+runs require an otherwise idle machine; CPU and RSS do not excuse a contaminated
+wall result. Cargo build/test/bench commands remain sequential in the normal
+`target/` directory.
+
+### Risk-adjusted alternative portfolio
+
+The profile is flat, so maintain several ready alternatives. Start the next
+experiment with the highest **measured seconds × confidence ÷ risk**, not the
+most intellectually interesting idea.
+
+#### Lane S — small, exact, independently shippable seconds
+
+| id | live seam and proposed experiment | why it may pay | exact proof |
+|---|---|---|---|
+| `HASH-01` | `src/util/sha1.rs`: replace per-byte `format!("{b:02x}")` with a fixed lowercase hex table | every SHA-1 currently formats 20 tiny strings | digest-string equality over all byte values + existing SHA tests |
+| `HASH-02` | `ComparisonUnitWord::new`: feed each 40-byte atom hash directly into `Sha1` instead of building one concatenated `String` | removes one allocation/copy per word | old concat digest == streaming digest on exhaustive/generated words |
+| `NAME-01` | cache the hottest `W::*`/`PT::*` names in `src/namespaces.rs` | `XName::get` allocates new `Arc<str>` values; the source has hundreds of syntactic name calls | pointer strategy may change, expanded-name equality and serialization must not |
+| `DOM-ITER-01` | add borrowed child/attribute iterators for read-only callers; convert `xmllinq/serialize.rs` first | serializer currently clones every attribute string and every child vector | byte/canonical serializer oracle on namespace-hostile fixtures |
+| `DOM-ITER-02+` | convert one measured `nodes()`/`elements()` call site at a time in `revision_processor.rs`, `finalize.rs`, and preprocess | those files contain the densest allocating traversals; PR-D already proved the pattern | reference transform output equality per converted function |
+| `CLONE-01` | make `clone_subtree` walk children by index and reserve exact child/attribute capacity | removes a temporary child-vector clone and repeated destination growth per cloned node | subtree serialization, parent links, annotations, and attachment tests |
+| `ANN-01` | move annotations from every `NodeData` into a sparse `Dom` side table | no production caller currently adds an annotation, but every node carries an empty `Vec<Box<dyn Any>>` | preserve the public annotation API with multiple-type/order/remove tests |
+| `LCS-ITER-01` | add a non-allocating atom visitor and direct recursive count | `descendant_atoms()` allocates in counts, predicates, and hot LCS scoring | visitor order/content == current vector; exact LCR result |
+| `LCS-SCORE-01` | precompute per-unit non-separator scores and prefix sums per LCR call | current candidate scoring repeatedly walks/allocates descendant atoms | direct score == prefix score for every generated slice |
+| `SER-01` | write tags/attributes directly into the final output buffer, avoiding `attr_str`, `qname`, and `format!` temporaries | serialization remains ~6% inclusive | exact serialized XML for full namespace/QName-list matrix |
+| `ATOM-TEXT-01` | replace repeated `dom.value()` on one-character atoms with a direct atom-text accessor | the current accessor recursively builds a fresh `String` | exact Unicode scalar/text behavior, including whitespace and `delText` |
+
+Each row is a separate red/green experiment. A result below the measurement
+floor is recorded and banked; it is not misreported as “probably faster.”
+
+#### Lane M — medium changes that remove whole classes of work
+
+| id | alternative | staged shape | gate |
+|---|---|---|---|
+| `PARSE-01` | byte-indexed XML scanner | first remove per-call `Vec<char>` creation in `starts_with`/`index_of`; then replace the whole input `Vec<char>` with byte offsets while preserving UTF-8 text slices | old parser == new parser on every XML fixture and round-trip oracle; parse phase must improve |
+| `PARSE-02` | mutable namespace scope stack | replace `HashMap<String,String>::clone()` per element with push/restore of only local declarations | resolved expanded names and serialized output exact; adversarial shadowed-prefix tests |
+| `PARSE-03` | existing `quick-xml` dependency as a parser backend | build an event-to-`Dom` adapter and benchmark it against the optimized hand parser; retain the hand parser as the oracle until declarations, PI/comment/CDATA, namespace shadowing, entity decoding, attribute order, and Unicode all match | full parser/serializer oracle and every package test; keep only a measured CPU/RSS win |
+| `NAME-02` | real name/namespace interning | DOM-local or generated-static interning; reject a global-lock design unless measurement wins under contention | same `XName` equality/hash/API semantics; allocator/profile win |
+| `HASH-STREAM-01` | serialize the existing hash projection directly into `Sha1` | refactor clone projection into events/sink; keep DOM-building sink as the test reference, add hash sink in production | projected string/digest exact for every block and setting |
+| `HASH-STREAM-02` | stream structure hashes | emit element/attribute structure without `clone_for_structure_hash` | exact structure hash vs reference on tables/rows |
+| `HASH-SCRATCH-01` | isolate temporary hash projections in a scratch DOM | bound their lifetime outside the main arena; this is lifetime separation, not the failed free-list | CPU and RSS must both improve; exact digest; revert if scratch reset/drop dominates |
+| `ACCEPT-SCAN-01` | compute one `RevisionFeatureSet` in a non-allocating DFS | determine which of the 15 transforms can possibly change the tree | flags must have zero false negatives against shadow-running every transform |
+| `ACCEPT-SKIP-01+` | skip one proven-inapplicable full-tree transform at a time | clean/ordinary documents should not be rebuilt by table/move/field transforms that cannot fire | skipped output == reference transform output over exhaustive focused + corpus cases |
+| `ACCEPT-INPLACE-01+` | rewrite one simple transform to mutate its owned projection in place | removes a complete intermediate tree and its later drop | exact transform output, parent/order invariants, full parity gate |
+| `STR-01` | shared immutable attribute/text payloads | compare `Arc<str>`/intern IDs against owned `String` for clone-heavy immutable data; mutate by replacement | same public `&str` behavior and XML; CPU/RSS must win, not just allocation count |
+| `PATH-01` | intern/share `ancestor_elements` and `ancestor_unids` paths | every character in a run/paragraph repeats nearly the same vectors | path contents/order exact; output coalescing exact |
+| `ATOM-ID-01` | central atom arena + `AtomId`/ranges | units and correlated sequences currently deep-clone fat atoms | exact atom order/status/before-links; clone counter collapses |
+| `ATOM-VIEW-01` | borrowed text slices instead of two synthetic DOM nodes per Unicode scalar | `atomize::recurse` currently creates a fresh element and text node for every scalar | atom hash, word segmentation, selected matches, reconstructed XML, and Unicode cases exact |
+| `RESULT-DOM-01` | construct/import the final result into a compact output DOM | the output currently shares an arena with all dead intermediates, keeping 12–14 GB resident through serialization/package work | output exact; wall/RSS win must exceed import/drop cost |
+
+`ACCEPT-INPLACE-*`, `ATOM-ID-*`, and `ATOM-VIEW-*` are intentionally split into
+adapter-first steps. Do not flip the production representation in the same PR
+that introduces it.
+
+#### Lane A — architectural bets, shadowed until they beat the bar
+
+1. **Projection overlay instead of copied trees.** Represent accept/reject output
+   as `Keep(NodeId)`, `Drop`, and `Replace` fragments over the immutable source.
+   Hash the overlay without assigning parent pointers or materializing unchanged
+   subtrees. Start with one transform and retain the full-tree reference.
+2. **Kind-specific node layout.** Move `content`/`attrs` into the element/document
+   variants and move annotations to a sparse side table so text/comment/PI nodes
+   do not carry three empty vectors. Before choosing `SmallVec`, `ThinVec`, or a
+   custom layout, record child/attribute histograms and `size_of`; inline storage
+   can enlarge every node and lose despite fewer allocations.
+3. **Structure-of-arrays DOM.** Benchmark compact kind/parent/name/content-index
+   columns against `Vec<NodeData>`. This is a prototype branch until the full
+   API, parser, serializer, clone, and mutation suites pass unchanged.
+4. **Ephemeral bump region.** Only for data redesigned to have no individual
+   destructor obligations. Never put ordinary `String`/`Vec` values in a bump
+   arena and silently skip their drops. Compare a dedicated projection region,
+   not another main-arena free-list.
+5. **Streaming final XML.** Once output assembly no longer needs to revisit built
+   nodes, emit XML events directly into the package part. Preserve the DOM path
+   as a reference until exact namespace/order output is proven.
+
+Architectural work earns production status only after it is faster on the full
+matrix, lower or neutral in CPU and RSS, and Q0-clean. Sunk implementation cost
+is not evidence.
+
+#### Lane O — outside-the-box system and workload wins
+
+These are measured separately because some reduce wall time or batch work rather
+than the single-thread algorithm itself.
+
+1. **Release-codegen bakeoff:** current portable release, ThinLTO, fat LTO with
+   one codegen unit, and `target-cpu=native` for local deployments. Keep a mode
+   only when the same binary passes Q0 and improves representative CPU/wall time.
+2. **PGO:** train on the scenario matrix, including hostile Unicode/namespaces,
+   then compare a PGO binary against the normal release. Never train on only
+   fixture A or publish machine-specific claims as universal.
+3. **Unchanged-input/unchanged-part fast paths:** begin with byte-identical DOCX
+   and exact unchanged XML parts, then expand only with a canonical proof. Do not
+   skip headers, notes, comments, relationships, or pre-existing revisions based
+   only on `document.xml`.
+4. **Prepared-document cache:** for batches comparing many revisions against one
+   base, introduce an immutable `ComparisonSession` keyed by input SHA-256,
+   settings fingerprint, and engine version. Cache parse/preprocess/hash/atom
+   products only after mutation boundaries are explicit; report both warm and
+   cold CPU-seconds/document.
+5. **Batch CLI/API:** a manifest-driven batch can reuse a prepared base and avoid
+   process/startup work. Bound cache memory and isolate individual failures.
+6. **Parallel independent work:** parse/package-preprocess the two inputs or hash
+   independent blocks concurrently only after work reduction. Accept as a
+   default latency win only if total CPU stays inside its calibrated band;
+   otherwise expose it as an opt-in throughput/latency mode.
+7. **Unchanged compressed-part passthrough:** if OPC profiling shows ZIP work,
+   preserve untouched compressed members and recompress only changed parts in
+   `rdocx-opc`. This is a dependency-level change with package-byte and Word-open
+   gates.
+8. **One-shot CLI worker experiment:** measure whether process-isolated compare
+   plus OS bulk reclamation avoids expensive per-node teardown. The library must
+   remain leak-free; never use `ManuallyDrop` as a hidden library optimization.
+
+### Explicit dead ends and forbidden shortcuts
+
+- Do not revisit the main-arena free-list, per-node reclaim, or blind arena
+  reserve; both reserve and reclaim experiments lost on the measured workload.
+- Do not add `SmallVec` because “most nodes are small” without measuring total
+  `NodeData` size and the actual child/attribute distribution.
+- Do not change SHA-1, tie-breaking, iteration order, or semantic anchors in a
+  Q0 PR.
+- Do not use threads to disguise extra total work, unsafe unchecked indexing to
+  chase an unmeasured branch, a global interner lock without contention data, or
+  a memory leak that is safe only because today’s CLI happens to exit.
+- Do not batch multiple mechanisms into one PR; if the result moves, we must know
+  which exact second was saved and which exact change caused it.
+- Do not rely on Criterion prose or exit status as the regression gate.
+- Do not call byte identity, canonical equality, validator success, or a visual
+  mean “Word parity” by itself. The ratchet is the combined oracle stack.
+
+### Recommended execution ladder from the current head
+
+This order maximizes safe information and keeps larger bets moving without
+blocking small wins. Reorder whenever the new profile or ledger says to.
+
+1. **P0.1 — durable A/B and paired-quality harness.** Land the experiment ledger,
+   ABBA trials, A/A visual noise calibration, and seeded-regression tests.
+2. **P0.2 — node/clone/traversal economics.** Add compiled-out counters; publish
+   the first allocation waterfall for fixture A plus one clean medium document.
+3. **S1 — `HASH-01` and `HASH-02` as separate changes.** Tiny exact wins; establish
+   the one-second/amplified-measurement workflow.
+4. **S2 — `DOM-ITER-01` serializer.** Add borrowed read-only APIs and convert only
+   serializer; do not launch a repository-wide mechanical rewrite.
+5. **S3 — `ANN-01` node annotations side table.** Measure `NodeData` size, CPU,
+   and RSS before keeping it.
+6. **M1 — `HASH-STREAM-01` then `HASH-STREAM-02`.** Remove temporary hash strings
+   and projection nodes while the old builder remains the exact reference.
+7. **M2 — `PARSE-01` then `PARSE-02`.** Make parsing allocation-light in two
+   independently measurable steps.
+8. **M3 — `ACCEPT-SCAN-01` and one `ACCEPT-SKIP-*` per transform.** Start with
+   transforms that are provably irrelevant on clean documents; reprofile after
+   every skip.
+9. **S4 — `LCS-ITER-01` and `LCS-SCORE-01`.** LCS is now ~7.5%, enough for a
+   one-second ratchet; keep the exact indexed/reference oracle active.
+10. **M4 — `PATH-01`.** Share repeated ancestor paths before changing atom
+    ownership.
+11. **M5 — `ATOM-ID-01`.** Replace deep atom clones with IDs/ranges behind an
+    adapter; preserve the public behavior until the representation proves itself.
+12. **M6 — `ATOM-VIEW-01`.** Remove per-character synthetic DOM nodes only after
+    every consumer reads through the atom-content abstraction.
+13. **A1 — kind-specific node layout bakeoff.** Choose layout from the recorded
+    histogram, not intuition.
+14. **O1 — PGO/codegen and prepared-base batch experiments.** Keep compiler and
+    workload wins independent from algorithm commits.
+15. **Reprofile and repeat.** Recalculate risk-adjusted seconds, promote the next
+    measured experiment, and keep the latent maximal-diagonal LCS track ready for
+    a candidate-rich fixture.
+
+### Per-increment red/green/measure checklist
+
+- [ ] Record experiment id, exact hypothesis, current-head commit, fixture
+  hashes, and baseline binary hash.
+- [ ] Add the smallest reference/equivalence/counter test and run it through
+  nightly branch coverage; the P0 harness command is
+  `cargo +nightly llvm-cov --branch --test perf_contract --text --summary-only`.
+  Record the exact focused command for every later experiment before running it,
+  then capture the intended RED reason and the coverage summary.
+- [ ] Implement one mechanism only; keep the old path available under
+  `#[cfg(test)]`, a shadow flag, or a benchmark selector where practical.
+- [ ] Rerun the focused covered test GREEN, then the full covered suite; report
+  line and branch coverage.
+- [ ] Run `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings`, and a
+  release CLI `--help` plus small no-op comparison smoke. Cargo commands run
+  sequentially and to completion.
+- [ ] Run exact/canonical/accept-reject/validator gates, the paired ledger sample,
+  and designated real-Word open probes.
+- [ ] Run the short named benchmarks and slow interleaved A/B trials on an idle
+  machine; report wall, user CPU, system CPU, RSS, and mechanism counters.
+- [ ] Run the full paired visual ledger once at the acceptance point.
+- [ ] Close the experiment row with keep/revise/bank/revert. Revert a loss cleanly;
+  do not defend it because implementation was difficult.
+- [ ] Reprofile the accepted binary and choose the next experiment from the new
+  ranking. Hand the verified change to the user for commit.
+
+## MEASURED REORDER #2 — 2026-07-14, samply full-run profile (historical evidence)
 
 The 2026-07-13 reorder below retargeted PR3/PR4 onto `detect_moves` and
 `normalize_run_properties` based on a **40-second Apple `sample` window taken
@@ -81,8 +450,10 @@ produce **dropped out of the top inclusive list** — PR-B worked. New ranking:
   it in `atomize::recurse`/`annotate_element_with_props` only. Bounded, pure-
   internal (no output change), parity-safe by construction — the PR-B-shaped
   next step.
-- The LCS track (PR2-audit … PR6) stays **latent** — LCS is 7%, still not the
-  bottleneck. Do not start it.
+- At this checkpoint the LCS track (PR2-audit … PR6) stayed **latent** because
+  LCS was not the first target. The later flat profile measured LCS at ~7.5%, so
+  OPERATING PLAN #4 now permits exact LCS increments when their risk-adjusted
+  expected saving clears the one-second ratchet.
 
 ## MEASURED #3 — 2026-07-14: PR-C.1 (arena reclaim) FAILED + fresh profile
 
@@ -139,22 +510,22 @@ self-% is inflated; the **ranking is robust** (matches the post-PR-B profile).
 | `serialize_element` | ~6% |
 | `clone_block_level_content_for_hashing` | ~6% |
 
-**Conclusion — the bottleneck is the untyped-arena design itself, not any one
+**Conclusion — the cost center is the untyped-arena design itself, not any one
 phase.** Every node is a heap `NodeData` carrying three inner `Vec`s
 (`content`, `attrs`, `annotations`); the ~35–40% churn is the aggregate cost of
 allocating/copying/freeing millions of them, spread across parse → atomize →
-hash → compare → produce → accept → serialize. No point optimization moves a
-flat profile. The only real levers are **architectural**:
+hash → compare → produce → accept → serialize. No single point optimization
+will transform a flat profile, but several exact one-second changes can compound.
+The two largest long-run levers remain **architectural**:
 
 1. **Cut the node COUNT.** The accept pipeline's ~12 full-tree functional
    transforms each rebuild the whole doc. Rewriting them to mutate in place
    (PR-C proper) removes whole doc-copies — highest value, riskiest for parity,
    needs the full ledger gate.
-2. **Make `NodeData` cheaper per node.** `SmallVec`/inline storage for
-   `attrs`/`content` (most elements have 0–3 of each), drop the
-   `annotations: Vec<Box<dyn Any>>` to an `Option<Box<…>>`, or intern `XName`/
-   attribute strings. Bounded, parity-safe, attacks the per-node constant that
-   the flat profile is made of.
+2. **Make `NodeData` cheaper per node.** Measure kind/child/attribute histograms,
+   then test kind-specific storage, a sparse annotation side table, interned
+   names, and shared immutable strings. Do not assume `SmallVec` wins: inline
+   capacity can enlarge every node even when it removes some heap allocations.
 
 Micro-reclaim / free-lists are dead ends here — do not revisit them.
 
@@ -162,15 +533,16 @@ Everything below is retained as prior context. The discipline (named
 baselines, red/green, no sunk-cost) is unchanged, but the correctness oracle
 changes — see the Parity Ledger below.
 
-## Parity Ledger — the correctness contract (supersedes byte / canonical equality)
+## Parity Ledger — the Word-visual layer of the quality contract
 
-Goal, stated plainly: **"almost as good as Word, way faster."** Both halves are
-measured, and neither is byte-identity.
+Goal, stated plainly: **at least as Word-faithful as the current engine, and much
+faster.** Both halves are measured, and neither is established by byte identity.
 
-**Byte parity is DROPPED.** The engine is non-deterministic run-to-run (HashMap
-seeding → different bytes from the same binary+input), so byte-identity was
-never a real contract and canonical-structural-equality was only a proxy. The
-real question is *"does our redline look like Word's?"* — so the ledger is the
+**Byte parity is not a contract.** The engine is non-deterministic run-to-run
+(HashMap seeding can produce different bytes from the same binary+input), so
+literal byte identity is not a stable oracle. Canonical structural equality
+remains a mandatory Q0 regression detector, while the real user-facing question
+is *"does our redline look like Word's?"* The visual layer is the
 **neurotic_docx_bench visual score**: render OUR redline to PDF (LibreOffice
 144 dpi) and pixel-score it against Microsoft Word's own redline PDFs
 (`corpus/word_based/pdf_redlines_word`). 0..100, higher = closer to Word.
@@ -181,10 +553,11 @@ Runner: `tools/parity_ledger.sh <N|full> [bin]`.
 - **Full (`full`)** — all ~199 pairs, LibreOffice render, minutes. Run **once
   at the end of each PR**, not in the inner loop.
 
-Ledger rule for a performance PR: **the full-run mean/median must not drop**
-versus the pre-PR baseline (small rendering noise allowed; a real drop blocks
-the PR). Speed is reported alongside (samply user-CPU + wall on the RFP17
-fixtures). A PR ships only when it is *faster AND not less Word-faithful*.
+Ledger rule for a performance PR: use the paired baseline/candidate extension
+defined in OPERATING PLAN #4. **No per-pair score may drop beyond the precomputed
+A/A renderer-noise band, and the full-run mean, median, lower tail, and matched
+count must not drop.** Speed is reported alongside. A PR ships only when it is
+faster and no less Word-faithful.
 
 Baselines (jubarte-rust):
 - Recorded corpus best: **~81.0 mean** over 207 fixtures (RESULTS.md
@@ -195,11 +568,9 @@ Baselines (jubarte-rust):
   rendered, 164 matched). At/above the historical baseline — PR-B (output-
   preserving) held parity while cutting fixture-A wall time 31%.
 
-The old "Required equivalence layers" / canonical-package-equality language
-further down is superseded by this ledger for anything the ledger covers
-(whole-document Word fidelity). Keep the pure-function LCR/score equivalence
-tests — they guard internal refactors — but the *ship gate* is the ledger, not
-package bytes.
+The ledger does not supersede exact/reference, canonical-package, accept/reject,
+validator, or real-Word-open checks. Each oracle protects a different failure
+mode; the ship gate is their conjunction.
 
 ---
 
@@ -225,9 +596,10 @@ never profile-confirmed before PR1/PR2 landed.
   text / word-count / Jaccard token-set once; reuse across the pair loop. Pure
   memoization → identical retagging, proven reference-vs-memoized + corpus.
 - **PR4 → memoize `normalize_run_properties`** per distinct `rPr` (fixture A).
-- The LCS track below (PR2-audit, PR3-sparse-index, PR4-maximal-diagonal,
-  PR5-scoring, PR6-dispatch) becomes **latent**: correct and tested, revisit only
-  when a fixture actually profiles LCS-bound. PR1/PR2 are committed
+- At this checkpoint the LCS track below (PR2-audit, PR3-sparse-index,
+  PR4-maximal-diagonal, PR5-scoring, PR6-dispatch) became **latent**. The later
+  flat profile and one-second ratchet supersede the “LCS-bound only” threshold.
+  PR1/PR2 were committed
   (`b0ef8a2`) as correct-but-not-hot LCS work, honestly labelled.
 - All discipline carries over unchanged: exact reference-equivalence (not
   "byte-identical" — the corpus oracle proves *canonical structural equality*),
@@ -239,63 +611,88 @@ optimize; it is simply no longer the *first* thing to optimize.
 
 ## Goal
 
-Incrementally and repeatedly reduce end-to-end comparison wall time on large,
-dissimilar documents while preserving Word validity and the comparer’s selected
-matches. The motivating local cases take roughly 190–265 seconds for documents
-with 25–45 MB `word/document.xml` parts and about 27k–47k paragraphs. Those
-numbers are useful evidence, but they are not yet a reproducible benchmark.
+Incrementally and repeatedly reduce end-to-end wall time, user/system CPU, and
+peak RSS across large dissimilar, large related, repetitive, equal, and normal
+documents while preserving Word validity, the comparer’s selected matches, and
+Word visual fidelity. The motivating local cases originally took roughly
+190–265 seconds; the shipped stack has already reduced fixture A to roughly
+98 seconds in the recorded run, proving that cumulative exact changes work.
 
-The first outcome is therefore a trustworthy performance ladder. The second is
-an exact sparse longest-common-run implementation. The provisional target is at
-least a **10x** speedup on the reproducible pathological case, no statistically
-significant regression greater than 5% on representative small/medium cases,
-and no more than 25% peak-RSS growth. Absolute seconds remain a reported metric,
-not a portable pass/fail threshold.
+The durable target is not one heroic “10x” patch. It is an open-ended ratchet:
+bank every statistically credible saving, including one second, until no Q0
+alternative remains. The near-term target is under 60 seconds and under 8 GB RSS
+for fixture A on the named machine, with no confirmed CPU, RSS, or representative
+latency regression outside the calibrated noise band. Re-baseline and set the
+next target after each major profile shift. Absolute seconds are reported, not
+embedded in machine-dependent unit-test assertions.
 
 ## What the code actually does today
 
-The suspected hotspot is real, but its share of wall time has not been measured.
+The end-to-end path opens/preprocesses both packages, parses bodies and notes
+into one `Dom`, builds accepted/rejected projections for correlation hashes,
+stamps exact block hashes, atomizes to Unicode-scalar atoms, builds hierarchical
+comparison units, resolves LCS windows, produces a new tree, runs finalization,
+serializes it, and writes it back into the original package.
 
-- `compare_bodies_faithful_with_notes` builds block hashes, atomizes both
-  documents, creates `ComparisonUnit`s, then calls `lcs::lcs`
-  (`src/comparer/mod.rs:400-442`).
-- `resolve_correlated_sequences` repeatedly finds the first `Unknown`, removes
-  it from a `Vec`, resolves it, and inserts replacements back into the same
-  `Vec` (`src/comparer/lcs.rs:2892-2912` in the current dirty tree).
-- `do_lcs_algorithm` clones both unit vectors from the `Unknown` before calling
-  the LCR (`src/comparer/lcs.rs:1565-1591` in the current dirty tree).
-- `longest_common_run_with_dom` scans `(i1, i2)` starts in ascending order and
-  extends a contiguous SHA-1-equal run from every start. In Word mode it then
-  walks descendant atoms to compute a non-separator content score.
-- The winner maximizes `(content_score, run_len)`. Because replacement is
-  strict, exact ties keep the first candidate in `i1`-then-`i2` scan order.
+The live seams that justify the new portfolio are concrete:
 
-For one window, the scan performs `n*m` start checks plus all extension work.
-Its worst case is `Theta(n*m*min(n,m))`, not merely `Theta(n*m)`. Repeated LCR
-calls on shrinking `Unknown` windows can compound that cost further. This is a
-credible diagnosis; PR0 must establish the actual attribution before the plan
-claims it is the dominant end-to-end cause.
+- `NodeData` stores `content`, `attrs`, and `annotations` vectors on every node,
+  including leaf text nodes; production has no `add_annotation` caller, so the
+  annotation vector is paid by every node for test/public API capacity only.
+- `parse_xdocument` copies the entire XML into `Vec<char>`;
+  `starts_with`/`index_of` construct another `Vec<char>` per query; and
+  `parse_element` clones the complete namespace `HashMap` for every element.
+- `Dom::nodes`, `elements`, `descendants`, and `attributes` allocate owned
+  vectors; `revision_processor.rs` and `finalize.rs` contain the densest hot
+  traversal/clone use.
+- `xmllinq::serialize::emit` clones every attribute name/value and every child
+  vector, builds intermediate `attr_str`/QName strings, then copies them into the
+  final output.
+- `clone_block_level_content_for_hashing` materializes temporary projection
+  subtrees in the main arena, serializes them to a temporary string, and hashes
+  that string. Structure hashes build another cloned tree.
+- `atomize::recurse` creates a fresh `w:t`/`w:delText` element and text node for
+  every Unicode scalar, then stores repeated ancestor vectors on each atom.
+- `get_comparison_unit_list` clones atoms into words; flattening clones them
+  again, and Equal output stores a boxed clone of the complete before atom.
+- `ComparisonUnit::descendant_atoms()` allocates a vector for many counts,
+  predicates, token extractions, and LCS score walks.
+- `hex_string_from_bytes` formats each SHA-1 byte separately, and word hashing
+  first concatenates every atom’s 40-character hash into a temporary string.
+- `resolve_correlated_sequences` now moves the owned unit vectors into
+  `do_lcs_algorithm` (`e29ca8e`) and splices replacements with one tail shift
+  (`8ec200f`); do not plan those already-shipped clone/worklist fixes again.
+- Production LCR dispatch uses the `HashMap<u64, Vec<usize>>` index, but still
+  extends every matching suffix and repeatedly walks descendant atoms for
+  Word-mode scoring. Strict replacement continues to preserve the earliest
+  `(i1, i2)` on exact ties.
+
+The latest full profile measures these costs as a flat top rather than an
+unverified LCS diagnosis. This is why the next program spans DOM layout,
+parsing, hashing, atom ownership, exact LCS scoring, production, serialization,
+compiler configuration, and batch reuse.
 
 ### Current implementation status
 
-- **PR0 does not exist.** There is no `lcs-profile` feature, phase timing,
-  deterministic large-input generator, or `large_dissimilar` benchmark.
-- **PR1 is committed, not “in progress.”** Commit `044fb37` caches an FNV-1a
-  `u64` beside each hash string and uses `key_eq && string_eq` in the scan.
-- **PR2 exists as an uncommitted candidate.** While this review was in progress,
-  the user-owned dirty `src/comparer/lcs.rs` advanced from a RED stub to a
-  `HashMap<u64, Vec<usize>>` implementation and switched production dispatch to
-  it. The reference is now `#[cfg(test)]`, and three deterministic `dom=None`
-  equivalence tests cover random/edge/collision cases. Preserve that work, but do
-  not treat it as complete: it has no direct Word-mode oracle, no small-window
-  cutoff, no instrumentation, and it still extends every matching suffix.
+- **The durable P0 lab does not exist.** `_scratch/perf/` contains useful local
+  generators/profile extractors, but there is no compiled-out `perf-profile`
+  feature, committed interleaved-trial analyzer, paired quality comparator, or
+  deterministic slow scenario in the benchmark interface.
+- **PR1 and the indexed LCR are shipped in the current stack.** The cached FNV-1a
+  `u64` prefilter and full-string confirmation are in production; the scan is a
+  `#[cfg(test)]` reference and random/edge/collision cases cover `dom=None`.
+  Direct Word-mode/reference coverage, maximal-start pruning, prefix scoring,
+  and an adaptive small-window crossover remain open.
+- **PR-A, PR-B, and PR-D are shipped.** Mimalloc, reference-based production
+  grouping, and the focused atomize child walk have measured wins.
+- **PR-C.1 is rejected.** Its code was reverted; only the result and lesson stay
+  in this plan. Arena free-list/reclaim is not pending work.
 - The existing Criterion matrix has only 4–300 paragraphs per document. It does
   not represent the 27k–47k-paragraph failure shape.
-- The plan’s “139 tests” is stale. PR1’s commit records 614 passing tests; do not
-  hard-code a test count because the suite is growing.
+- Do not hard-code a test count because the suite is growing.
 - `tests/common/mod.rs` proves **canonical structural equality**, deliberately
   ignoring volatile attributes and revision ids. It does not prove literal DOCX
-  byte identity. The plan must name the actual guarantee accurately.
+  byte identity or Word visual fidelity; retain it as one Q0 layer.
 
 ### Baseline observed during this review
 
@@ -335,13 +732,14 @@ If an equivalence test fails, first validate the new test data, fixtures, and
 oracle wiring. If the test is correct, fix the optimization; never weaken or
 delete coverage to make the PR pass.
 
-## PR0 — establish a reproducible performance laboratory
+## Historical PR0 design — establish a reproducible performance laboratory
 
-Do this before accepting or rejecting any optimization already in the stack.
+OPERATING PLAN #4/P0.1–P0.2 supersedes the sequence, but these LCS-specific
+counter requirements remain part of the durable laboratory.
 
 ### 0.1 Add low-overhead, feature-gated measurements
 
-Add an `lcs-profile` feature that compiles instrumentation out of normal builds.
+Add a `perf-profile` feature that compiles instrumentation out of normal builds.
 Time only phase/function boundaries; use integer counters inside hot loops.
 Emit one machine-readable JSON record per comparison, preferably to a caller-
 selected path, so normal library/CLI output stays clean.
@@ -407,8 +805,9 @@ file generation and reads stay outside the measured closure.
   Criterion’s prose diagnosis alone is not a gate.
 - Run the multi-minute end-to-end case with a purpose-built release harness.
   Use one warm diagnostic iteration while developing; at an acceptance point,
-  compare separately built baseline/candidate binaries with three interleaved
-  trials and report median, range/MAD, speedup, CPU time, and peak RSS.
+  compare separately built baseline/candidate binaries with at least five
+  interleaved ABBA rounds for a one-second claim and report median, range/MAD,
+  speedup, CPU time, and peak RSS.
 - Never put a machine-dependent wall-clock assertion in `#[test]`, ignored or
   otherwise. Performance trials are benchmarks, not unit tests.
 
@@ -416,8 +815,9 @@ file generation and reads stay outside the measured closure.
 
 - The same generated parameters reproduce the same DOCX SHA-256 values.
 - Phase times account for the end-to-end total within instrumentation overhead.
-- At least one pathological case shows whether LCR is actually >=60% of wall
-  time. If it is not, reorder this plan around the measured hotspot.
+- The pathological and representative cases expose the full stage distribution.
+  If no phase exceeds 20%, publish a flat-top portfolio ranked by expected
+  seconds, confidence, and risk instead of forcing a single-hotspot sequence.
 - Baseline artifacts name commit, toolchain, CPU, power mode, and scenario.
 - Benchmark regression tooling deliberately detects a seeded slowdown and exits
   nonzero.
@@ -508,15 +908,15 @@ heavy repetition, instead of the scan’s cubic extension behavior. Recursive
 windows can still compound costs, which is why counters remain in place after
 this lands.
 
-### PR2 — audit and finish the current uncommitted candidate
+### PR2 audit — finish the shipped indexed candidate's proof
 
 - Keep the current `longest_common_run_scan` under `#[cfg(test)]`.
 - Extract equality, extension, scoring, and strict winner selection without
   changing the production dispatch.
-- Preserve the existing random/edge/collision tests, and record their original
-  RED evidence rather than manufacturing a new failure after implementation.
+- Preserve the existing random/edge/collision tests and the historical RED
+  evidence; do not manufacture a new failure after implementation.
 - Add direct `dom=Some` tests using the real in-memory `Dom` and settings. The
-  current dirty tests cover only `dom=None`; saying corpus tests cover both
+  current focused tests cover only `dom=None`; saying corpus tests cover both
   implementations is not the same as comparing both implementations.
 - Exhaustively compare all sequence pairs over a tiny alphabet up to a bounded
   length, then add deterministic larger/adversarial cases: empty inputs, all
@@ -526,21 +926,23 @@ this lands.
   test builds and assert exact `(i1, i2, len)` equality. Never shadow-run the
   reference on the multi-minute performance case.
 
-Exit: refactor only; exact oracle coverage exists; no claimed speedup.
+Exit: proof/instrumentation only; exact oracle coverage exists; no speedup is
+claimed unless a separately measured mechanism changes production work.
 
-### PR3 — sparse position index for dissimilar windows
+### PR3 audit — shipped sparse position index for dissimilar windows
 
-- Implement the measured winner from the PR1 key-representation bakeoff.
-- Preallocate deliberately (`HashMap::with_capacity`, position vectors in input
-  order); never iterate map keys, so randomized map iteration cannot affect
-  output order.
-- First enumerate every exact matching start. This isolates the large-dissimilar
-  improvement from the maximal-run optimization and gives counters for `M`.
-- Production stays on the scan for small windows until PR6 establishes a
-  crossover; force each implementation only from tests/benchmarks.
+- Production currently uses `HashMap<u64, Vec<usize>>` for every window and keeps
+  the scan as a test-only reference. Audit preallocation, bucket order, and exact
+  string confirmation; never iterate map keys, so randomized map iteration
+  cannot affect output order.
+- Add counters for exact matching starts `M`, bucket skew, setup time, and index
+  bytes. Benchmark the current key against exact `&str` and sorted-position
+  alternatives before adding more state around the cached fingerprint.
+- Keep production behavior unchanged in the audit. PR6 may later add a measured
+  small-window scan crossover; tests/benchmarks may force either path.
 
-Exit: fast == reference across exact/property/corpus checks; pathological
-dissimilar case improves materially; memory stays within budget.
+Exit: current indexed path == reference across exact/property/corpus checks;
+its named-baseline win/cost and memory use are recorded honestly.
 
 ### PR4 — maximal diagonal starts for repetitive inputs
 
@@ -581,30 +983,32 @@ A hash index has setup/allocation cost and can lose to the scan on tiny windows.
 - Consider monotone upper-bound pruning only after prefix scores exist, and only
   with a proof plus reference-equivalence tests.
 
-Exit: no significant >5% regression on small cases, while large cases keep the
-indexed wins.
+Exit: no small-case regression outside the calibrated noise band, while large
+cases keep the indexed wins.
 
-## Reprofile checkpoint — choose the next hotspot, not the next pet idea
+## Reprofile checkpoint — choose the best risk-adjusted second
 
 After every production optimization, rerun the stage profile and publish an
-Amdahl-style table: old/new end-to-end time, LCS share, candidate/extension
-counts, score walks, clone/worklist counts, and peak RSS. The next PR must target
-the largest measured remaining contributor.
+Amdahl-style table: old/new end-to-end time, phase shares, candidate/extension
+counts, score walks, clone/worklist counts, and peak RSS. The next PR targets the
+highest measured-seconds × confidence ÷ risk experiment. On a flat profile this
+may be a safe 6% phase before a risky 13% phase.
 
 Likely exact follow-ups, only if measurements justify them:
 
-1. **Clone reduction.** `do_lcs_algorithm` clones both sides from an owned
-   `CorrelatedSequence`; move or borrow data through the resolver where semantics
-   allow.
-2. **Worklist mechanics.** `position + Vec::remove + repeated Vec::insert` shifts
-   elements on every resolution. Replace it only with an order-preserving queue
-   or cursor design, because resolver order mutates DOM state.
+1. **Completed clone reduction.** `do_lcs_algorithm` moves both sides from the
+   owned `CorrelatedSequence` (`e29ca8e`); keep its counter to detect regressions.
+2. **Completed insertion reduction.** resolved sequences use one `Vec::splice`
+   tail shift (`8ec200f`). The remaining first-Unknown search/remove is eligible
+   only if counters show it matters.
 3. **Index reuse/range representation.** Rebuilding the right-side index for
    shrinking windows may become dominant. Reusing an index likely requires
    stable backing storage plus ranges rather than cloned vectors; treat this as
    a separately proven structural refactor.
-4. **Non-allocating descendant traversal.** Expand beyond scoring only if
-   allocation profiling shows it remains hot.
+4. **Non-allocating descendant traversal.** Start with scoring/counts and expand
+   one caller at a time while allocation profiling keeps it material.
+5. **Atom ownership.** Replace repeated deep atom clones with stable IDs/ranges
+   before attempting broader worklist borrowing.
 
 Each follow-up is its own red/green PR with the same equivalence and performance
 gates. Do not batch them.
@@ -686,25 +1090,35 @@ For each performance PR, report a table with named baseline and candidate:
 
 - median/estimate and confidence interval or range;
 - relative speedup;
-- total/LCS phase time;
+- absolute wall/CPU seconds banked and total/all-phase times;
 - starts, exact matches, maximal starts, extension steps, score walks;
-- peak RSS;
-- significant regressions over 5%.
+- node/clone/allocation counts and peak RSS;
+- every representative regression outside the calibrated noise band;
+- the complete Q0 quality verdict, including paired per-pair visual deltas.
 
-Accept only when at least one target shape materially improves, no representative
-shape regresses beyond the noise policy, and counters explain *why*. If a PR only
-improves an internal counter without wall-time movement, do not claim a speedup.
+Accept when at least one target shape or amplified batch shows a statistically
+credible wall and/or CPU saving, the companion efficiency metrics do not regress
+outside policy, every representative shape is non-regressing, and counters
+explain *why*. A measured one-second win is material. If a PR only improves an
+internal counter without observable stage, batch, or end-to-end movement, record
+the result but do not claim or ship it as a speedup.
 
 ## Stop/reorder rules
 
-- If PR0 says LCS is not the dominant phase, reorder around the measured hotspot.
+- The flat profile already proved LCS is not dominant. Maintain the risk-adjusted
+  portfolio; do not wait for any phase to exceed an arbitrary dominance threshold.
 - If PR1’s key loses, remove it before building more state around it.
-- If PR3 does not substantially improve large-dissimilar inputs, inspect bucket
-  skew, shrinking-window rebuilds, and phase attribution before proceeding.
+- If the PR3 audit does not confirm a useful large-dissimilar win, inspect bucket
+  skew, shrinking-window rebuilds, and phase attribution before adding more index
+  complexity.
 - If any exact PR changes the selected LCR or canonical package output, stop and
-  minimize the counterexample; do not bless it as performance fallout.
-- If the exact track reaches the target, stop. Do not add semantic anchors or
-  structural range refactors simply because they are listed.
+  minimize the counterexample; reclassify it Q1 only with separate approval.
+- If a change saves less than the measurement floor, amplify the workload. Bank
+  or revert it if the amplified test still cannot show an effect.
+- If wall improves but CPU or RSS regresses, classify it as a wall-only experiment
+  and do not make it the default without an explicit user-facing trade-off.
+- If the current near-term target is reached, re-baseline and set the next target;
+  do not stop while exact measured alternatives remain.
 - If only a semantic change can achieve the remaining target, start the separate
   anchoring design and judge it against Word.
 
@@ -727,12 +1141,15 @@ improves an internal counter without wall-time movement, do not claim a speedup.
 
 ## Deliverable order
 
-1. PR0 measurement lab and reproducible generated scenarios.
-2. PR1 audit: key invariant plus keep/remove decision backed by named baselines.
-3. PR2 audit of the uncommitted index plus direct Word-mode equivalence.
-4. PR3 sparse index for dissimilar inputs.
-5. PR4 maximal diagonal starts for repetitive inputs.
-6. PR5 prefix scoring and non-allocating hot-path traversal.
-7. PR6 adaptive dispatch.
-8. Reprofile; choose only the next measured exact hotspot.
-9. Semantic anchoring design only if exact optimizations miss the target.
+The authoritative sequence is **Recommended execution ladder from the current
+head** in OPERATING PLAN #4. The LCS branch retained here contributes these
+ready increments when its measured priority rises:
+
+1. direct Word-mode indexed/reference equivalence and cached-key invariant audit;
+2. non-allocating descendant traversal plus prefix scoring;
+3. maximal matching-diagonal starts for repetitive/candidate-rich windows;
+4. measured adaptive scan/index dispatch and index-workspace reuse;
+5. semantic anchoring only as a separately approved Q1 design.
+
+After every item, reprofile the whole tool and return to the cross-phase
+one-second ledger rather than completing the LCS list by inertia.
