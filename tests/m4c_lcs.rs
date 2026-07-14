@@ -105,11 +105,11 @@ fn m4_c3_do_lcs_step() {
 
     let l = vec![w(&mut d, "a"), w(&mut d, "b"), w(&mut d, "c")];
     let r = vec![w(&mut d, "x"), w(&mut d, "b"), w(&mut d, "c")];
-    let res = do_lcs_algorithm(&d, &mk(l, r), &s);
+    let res = do_lcs_algorithm(&d, mk(l, r), &s);
     assert_eq!(res[0].correlation_status, CorrelationStatus::Unknown);
     assert_eq!(res[1].correlation_status, CorrelationStatus::Equal);
 
-    assert!(do_lcs_algorithm(&d, &mk(vec![], vec![]), &s).is_empty());
+    assert!(do_lcs_algorithm(&d, mk(vec![], vec![]), &s).is_empty());
 }
 
 /// M4.C.4 — para-mark helpers + Step C (never start common run on a pPr).
@@ -142,7 +142,7 @@ fn m4_c4_para_mark_guards() {
     let l = vec![pmark(&mut d, "p"), w(&mut d, "a")];
     let r = vec![pmark(&mut d, "p"), w(&mut d, "a")];
     let cs = CorrelatedSequence::paired(CorrelationStatus::Unknown, l, r);
-    let res = do_lcs_algorithm(&d, &cs, &s);
+    let res = do_lcs_algorithm(&d, cs, &s);
     // leading pmark → its own Unknown, then Equal([a]) (I.6 may append empty
     // Unknowns that the driver drops — assert the meaningful prefix).
     assert_eq!(
@@ -169,7 +169,7 @@ fn m4_c7_voiding_guards() {
     let l = vec![w_text(&mut d, "sp", " ")];
     let r = vec![w_text(&mut d, "sp", " ")];
     let cs = CorrelatedSequence::paired(CorrelationStatus::Unknown, l, r);
-    let res = do_lcs_algorithm(&d, &cs, &s);
+    let res = do_lcs_algorithm(&d, cs, &s);
     assert!(
         !statuses(&res).contains(&CorrelationStatus::Equal),
         "single separator word must not match (Step F)"
@@ -219,7 +219,7 @@ fn m4_c8_step_h1_word_row() {
     let wa = w(&mut d, "a");
     let row_l = group(ComparisonUnitGroupType::Row, vec![], "rL");
     let row_r = group(ComparisonUnitGroupType::Row, vec![], "rR");
-    let res = do_lcs_algorithm(&d, &unk(vec![wa, row_l], vec![row_r]), &s);
+    let res = do_lcs_algorithm(&d, unk(vec![wa, row_l], vec![row_r]), &s);
     // Inserted([rR]) then Deleted([wa]) + Deleted([rowL]) (faithful H1 outcome)
     assert_eq!(
         statuses(&res),
@@ -246,7 +246,7 @@ fn m4_c9_step_h4_flatten() {
         vec![w(&mut d, "b"), pmark(&mut d, "p2")],
         "ph2",
     );
-    let res = do_lcs_algorithm(&d, &unk(vec![pg1], vec![pg2]), &s);
+    let res = do_lcs_algorithm(&d, unk(vec![pg1], vec![pg2]), &s);
     assert_eq!(res.len(), 1);
     assert_eq!(res[0].correlation_status, CorrelationStatus::Unknown);
     // flattened to the paragraph children (word + pmark) on each side
@@ -264,7 +264,7 @@ fn m4_c10_step_h5_row_cells() {
     let cell_a2 = group(ComparisonUnitGroupType::Cell, vec![w(&mut d, "ca2")], "cA2");
     let row_l = group(ComparisonUnitGroupType::Row, vec![cell_a, cell_b], "rowL");
     let row_r = group(ComparisonUnitGroupType::Row, vec![cell_a2], "rowR");
-    let res = do_lcs_algorithm(&d, &unk(vec![row_l], vec![row_r]), &s);
+    let res = do_lcs_algorithm(&d, unk(vec![row_l], vec![row_r]), &s);
     // 2 cells vs 1: [Unknown(cellA,cellA2), Deleted(cellB contents)]
     assert_eq!(
         statuses(&res),

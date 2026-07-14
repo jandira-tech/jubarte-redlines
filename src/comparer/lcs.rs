@@ -1565,11 +1565,15 @@ fn cascade(
 /// a no-common-run resolves to Deleted+Inserted (the H9 fallback).
 pub fn do_lcs_algorithm(
     dom: &Dom,
-    unknown: &CorrelatedSequence,
+    unknown: CorrelatedSequence,
     settings: &WmlComparerSettings,
 ) -> Vec<CorrelatedSequence> {
-    let cul1 = unknown.com_units_1.clone().unwrap_or_default();
-    let cul2 = unknown.com_units_2.clone().unwrap_or_default();
+    // Owned `unknown`: MOVE the unit vectors out instead of cloning them — the
+    // caller already owns the worklist entry it removed. Behaviour-identical
+    // (same Vecs, just not deep-cloned); kills the per-call ComparisonUnitAtom
+    // clone that dominated fixture A's allocation profile.
+    let cul1 = unknown.com_units_1.unwrap_or_default();
+    let cul2 = unknown.com_units_2.unwrap_or_default();
     let mut out = Vec::new();
 
     // Step A — empty fast paths.
@@ -2904,9 +2908,16 @@ pub fn resolve_correlated_sequences(
         };
         let unknown = cs_list.remove(idx);
         set_after_unids(dom, &unknown);
-        let resolved = process_correlated_hashes(&unknown)
-            .or_else(|| find_common_at_beginning_and_end(dom, &unknown, settings))
-            .unwrap_or_else(|| do_lcs_algorithm(dom, &unknown, settings));
+        // Borrow for the two hash/anchor fast paths; if neither resolves, MOVE
+        // `unknown` into do_lcs_algorithm (a match, not or_else, so the borrows
+        // end before the move).
+        let resolved = match process_correlated_hashes(&unknown) {
+            Some(r) => r,
+            None => match find_common_at_beginning_and_end(dom, &unknown, settings) {
+                Some(r) => r,
+                None => do_lcs_algorithm(dom, unknown, settings),
+            },
+        };
         // Splice the resolved items in at `idx` in ONE tail-shift, instead of an
         // insert-per-item loop that memmoves the (large) tail once per item.
         // Same final order and the same first-Unknown processing order.
