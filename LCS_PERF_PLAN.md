@@ -41,6 +41,8 @@ evidence and ready-to-run branches of the program.
 | PR-B: remove produce atom clones | shipped (`ac08651`) | fixture A improved about 31% wall and 21% user CPU |
 | PR-D: non-allocating atomize child walk | shipped (`502b6c7`) | fixture A improved about 7% user CPU and 8% wall in the recorded run |
 | PR-C.1: arena free-list/reclaim | measured and reverted | user CPU neutral/slower; peak RSS about 14% worse; do not repeat this design |
+| ANN-01: dead annotations Vec → Dom side table | shipped (`d006eaf`) | NodeData 152→128 B; annotations never had a production caller (see MEASURED #4) |
+| NODE-KIND-01: box rare Document/Pi variants | shipped (`6bd0e41`) | NodeData 128→96 B; A/B user CPU −2.6%, sys CPU −17%, wall −2.6% (both runs); RSS inconclusive, no regression |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -532,6 +534,62 @@ Micro-reclaim / free-lists are dead ends here — do not revisit them.
 Everything below is retained as prior context. The discipline (named
 baselines, red/green, no sunk-cost) is unchanged, but the correctness oracle
 changes — see the Parity Ledger below.
+
+## MEASURED #4 — 2026-07-14: NodeData shrink (ANN-01 + NODE-KIND-01) SHIPPED
+
+Attacking lever #2 above ("make `NodeData` cheaper per node") with two stacked,
+parity-safe representation changes. Both keep observable behavior identical; the
+`size_of` counters attribute each step precisely.
+
+### ANN-01 — dead `annotations` Vec → Dom side table (`d006eaf`)
+
+`NodeData` carried `annotations: Vec<Box<dyn Any>>` (24 B) on every node, but
+**production has zero callers** of add/annotation/remove_annotations — only the
+M1 foundation test uses them (grep-verified; the doc comment even claimed
+"interned expanded names" the code never finished). Moved into
+`Dom { annotations: HashMap<NodeId, Vec<Box<dyn Any>>> }`, API byte-identical,
+map empty in production. **NodeData 152 → 128 B.** Parity: `clone_subtree`
+rebuilds nodes field-by-field and never copied annotations (NodeData isn't
+`Clone` — `Box<dyn Any>` can't be), so cloned nodes had none before and after.
+(Adversarial review's clone-loss objection was refuted by reading the one clone
+path.)
+
+### NODE-KIND-01 — box rare Document/Pi variants (`6bd0e41`)
+
+`NodeKind`'s size = its largest variant. The once-per-doc
+`Document{declaration: Option<XDeclaration>}` (~72 B) and rare
+`Pi{target,data}` (~48 B) sized every node. Boxed both →
+`Pi(Box<PiData>)`, `Document{declaration: Option<Box<XDeclaration>>}`. Enum now
+sized by `Element{XName}` (32 B) + 8-byte tag (5 data-carrying variants can't
+niche) = 40 B. **NodeData 128 → 96 B** (37% / 56 bytes per node off the original
+152). Public API unchanged (`declaration()` via `as_deref`, `set_declaration`
+boxes internally).
+
+### A/B — interleaved ABBA, fixture A, base `5eab095` vs ANN-01+NODE-KIND-01
+
+| metric | base r1 / r2 | cand r1 / r2 | delta | consistent |
+|---|---|---|---|---|
+| **user CPU (s)** | 60.67 / 59.83 | 58.87 / 58.54 | **−1.55 (−2.6%)** | ✓ both runs |
+| **sys CPU (s)** | 19.01 / 17.18 | 15.39 / 14.65 | **−3.08 (−17%)** | ✓ both runs |
+| wall (s) | 87.94 / 81.70 | 85.47 / 79.82 | −2.17 (−2.6%) | ✓ both runs |
+| peak RSS (GB) | 13.04 / 15.84 | 14.69 / 15.47 | inconclusive | ✗ ±2.8 GB noise |
+
+**Verdict: ship.** User CPU, sys CPU, and wall all improve in the same direction
+across both interleaved runs. The **17% sys-CPU drop is the mechanistic proof** —
+a smaller `NodeData` means the allocator does materially less kernel work
+(fewer/smaller mmap + page faults on arena growth). Lands in the reviewer's
+predicted 1–3% band. **RSS is unreadable at this fixture** — the run-to-run
+allocator-retention variance (~2.8 GB, HashMap-seed non-deterministic) swamps the
+~1.7 GB structural saving; there is no *confirmed* RSS increase, so per policy it
+does not block. Method note: peak RSS is NOT a low-noise signal here despite being
+contention-independent — future struct-shrink A/Bs should lean on user+sys CPU and
+amplify (or force GC / measure live-bytes) to read memory cleanly.
+
+**Next on this lever:** PARSE-01 (intern XNamespace/XName `Arc<str>`) — the
+`Arc::from` per name re-allocates the same `w:` namespace on millions of
+elements/attrs and is the #1 self-time `drop_in_place<Attr>`. Engine is verified
+single-threaded, so a lockless `thread_local` interner with content-based
+Eq/Hash (parity-safe) is the mechanism.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
