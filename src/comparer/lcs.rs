@@ -178,9 +178,10 @@ pub fn longest_common_run(
 /// Word-mode LCR: when `dom`+`settings` are provided, rank ties by non-separator
 /// content so glue spaces do not steal equal-length content matches.
 ///
-/// Dispatches to [`longest_common_run_indexed`] — a hash-indexed rewrite that is
-/// byte-identical to the historical O(n·m) [`longest_common_run_scan`] but skips
-/// the pairs that cannot possibly match (proven by `indexed_matches_scan`).
+/// Dispatches to [`longest_common_run_indexed`] — a hash-indexed rewrite that
+/// returns the exact same `(i1, i2, len)` as the historical O(n·m)
+/// [`longest_common_run_scan`] but skips the pairs that cannot possibly match
+/// (proven by `indexed_matches_scan`).
 fn longest_common_run_with_dom(
     dom: Option<&Dom>,
     cul1: &[ComparisonUnit],
@@ -2930,12 +2931,13 @@ pub fn lcs(
     )
 }
 
-/// PR2 — the hash-indexed longest-common-run MUST stay byte-identical to the
-/// historical O(n·m) scan it replaces. These tests are the equivalence oracle:
-/// they drive both paths over the same inputs and assert `indexed == scan`,
-/// including the first-found tie-break and forced u64-key collisions. Correctness
-/// on the `dom=Some` (Word-mode) content score is covered by the 139 corpus
-/// byte-identity tests, since both paths share [`common_run_content_score`].
+/// PR2 — the hash-indexed longest-common-run MUST return the exact same
+/// `(i1, i2, len)` as the historical O(n·m) scan it replaces. These tests are the
+/// equivalence oracle: they drive both paths over the same inputs and assert
+/// `indexed == scan`, including the first-found tie-break and forced u64-key
+/// collisions. Correctness on the `dom=Some` (Word-mode) content score is covered
+/// by the corpus canonical-structural-equality suite, since both paths share
+/// [`common_run_content_score`].
 #[cfg(test)]
 mod indexed_lcr_tests {
     use super::*;
