@@ -693,6 +693,16 @@ mod memoized_moves_tests {
                 move_similarity_threshold: 0.8,
                 ..WmlComparerSettings::default()
             },
+            // Closes a review gap: exercise case-insensitive tokenization and a
+            // custom word-separator set (shared by both paths, previously untested).
+            WmlComparerSettings {
+                detect_moves: true,
+                case_insensitive: true,
+                word_separators: " -".chars().collect(),
+                move_minimum_word_count: 2,
+                move_similarity_threshold: 0.6,
+                ..WmlComparerSettings::default()
+            },
         ];
         let mut rng = Lcg(0x0C0F_FEE1_2345_6789);
         for trial in 0..3000 {
