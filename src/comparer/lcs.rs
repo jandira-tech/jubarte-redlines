@@ -191,7 +191,15 @@ fn longest_common_run_with_dom(
         while i2 < cul2.len() {
             let mut len = 0;
             let (mut t1, mut t2) = (i1, i2);
-            while t1 < cul1.len() && t2 < cul2.len() && cul1[t1].sha1() == cul2[t2].sha1() {
+            // Fast pre-filter: the cached u64 keys reject the (dominant) unequal
+            // case with a single int compare; the sha1() string stays the source
+            // of truth, so this is exactly `sha1() == sha1()` (equal hashes always
+            // share a key), just cheaper. See ComparisonUnit::sha1_key.
+            while t1 < cul1.len()
+                && t2 < cul2.len()
+                && cul1[t1].sha1_key() == cul2[t2].sha1_key()
+                && cul1[t1].sha1() == cul2[t2].sha1()
+            {
                 t1 += 1;
                 t2 += 1;
                 len += 1;
@@ -1119,7 +1127,7 @@ fn token_jaccard(
 /// Rehash word units by concatenated `w:t` text only (ignore rPr). Used so
 /// residual short×short LCS can Equal shared tokens across format demos.
 fn rehash_words_by_text_content(dom: &Dom, units: &mut [ComparisonUnit]) {
-    use crate::util::sha1::sha1_hex;
+    use crate::util::sha1::{sha1_fingerprint, sha1_hex};
     for u in units.iter_mut() {
         if let ComparisonUnit::Word(w) = u {
             let mut text = String::new();
@@ -1130,6 +1138,8 @@ fn rehash_words_by_text_content(dom: &Dom, units: &mut [ComparisonUnit]) {
             }
             if !text.is_empty() {
                 w.sha1_hash = sha1_hex(&text);
+                // keep the cached fingerprint in sync with the mutated hash
+                w.sha1_key = sha1_fingerprint(&w.sha1_hash);
             }
         }
     }

@@ -1,6 +1,6 @@
 //! Comparison-unit types (M4.0/M4.2). Port of the `ComparisonUnit*` hierarchy.
 
-use crate::util::sha1::sha1_hex;
+use crate::util::sha1::{sha1_fingerprint, sha1_hex};
 use crate::xmllinq::NodeId;
 
 use super::{ComparisonUnitGroupType, CorrelationStatus, WmlComparerRevisionType};
@@ -79,14 +79,19 @@ pub struct ComparisonUnitWord {
     pub correlation_status: CorrelationStatus,
     pub contents: Vec<ComparisonUnitAtom>,
     pub sha1_hash: String,
+    /// Cached `u64` fingerprint of `sha1_hash` — a cheap pre-filter for the LCS
+    /// hot path. MUST be kept in sync with `sha1_hash` (recompute on mutation).
+    pub sha1_key: u64,
 }
 
 impl ComparisonUnitWord {
     pub fn new(contents: Vec<ComparisonUnitAtom>) -> Self {
         let concat: String = contents.iter().map(|a| a.sha1_hash.as_str()).collect();
+        let sha1_hash = sha1_hex(&concat);
         ComparisonUnitWord {
             correlation_status: CorrelationStatus::Nil,
-            sha1_hash: sha1_hex(&concat),
+            sha1_key: sha1_fingerprint(&sha1_hash),
+            sha1_hash,
             contents,
         }
     }
@@ -104,6 +109,8 @@ pub struct ComparisonUnitGroup {
     pub contents: Vec<ComparisonUnit>,
     pub level: usize,
     pub sha1_hash: String,
+    /// Cached `u64` fingerprint of `sha1_hash` — see [`ComparisonUnitWord`].
+    pub sha1_key: u64,
     pub correlated_sha1_hash: Option<String>,
     /// `pt:StructureSHA1Hash` — only stamped on `w:tbl`/`w:tr` (M4.0/M4.D).
     pub structure_sha1_hash: Option<String>,
@@ -121,6 +128,17 @@ impl ComparisonUnit {
         match self {
             ComparisonUnit::Word(w) => &w.sha1_hash,
             ComparisonUnit::Group(g) => &g.sha1_hash,
+        }
+    }
+    /// Cached `u64` fingerprint of [`Self::sha1`] — a cheap pre-filter for the
+    /// LCS hot path. Because it is a pure function of the hash string, equal
+    /// hashes always yield equal keys; the string remains the source of truth,
+    /// so `a.sha1_key() == b.sha1_key() && a.sha1() == b.sha1()` is exactly
+    /// `a.sha1() == b.sha1()` while skipping the string compare when keys differ.
+    pub fn sha1_key(&self) -> u64 {
+        match self {
+            ComparisonUnit::Word(w) => w.sha1_key,
+            ComparisonUnit::Group(g) => g.sha1_key,
         }
     }
     pub fn correlated_sha1(&self) -> Option<&str> {
