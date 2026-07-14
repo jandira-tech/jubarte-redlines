@@ -65,6 +65,28 @@ pub fn are_run_properties_equal(dom: &mut Dom, a: Option<NodeId>, b: Option<Node
     dom.serialize_element(na) == dom.serialize_element(nb)
 }
 
+/// Cached `serialize(normalize_run_properties(rpr))` keyed by the `rPr` NodeId.
+///
+/// [`are_run_properties_equal`] normalizes AND serializes both operands on every
+/// call. In [`detect_format_changes_in_atom_list`] the same handful of distinct
+/// `rPr` elements recur across thousands of `Equal` atoms (runs share one `rPr`),
+/// so caching the normalized serialization collapses O(atoms) normalizations to
+/// O(distinct rPr). The value equals `are_run_properties_equal`'s per-operand
+/// serialization exactly, so a cached `==` of two such strings is that predicate.
+fn normalized_rpr_serialized(
+    dom: &mut Dom,
+    cache: &mut std::collections::HashMap<Option<NodeId>, String>,
+    rpr: Option<NodeId>,
+) -> String {
+    if let Some(s) = cache.get(&rpr) {
+        return s.clone();
+    }
+    let ne = normalize_run_properties(dom, rpr);
+    let s = dom.serialize_element(ne);
+    cache.insert(rpr, s.clone());
+    s
+}
+
 /// `GetFriendlyPropertyName`.
 pub fn friendly_property_name(local: &str) -> String {
     let s = match local {
@@ -246,6 +268,11 @@ pub fn detect_format_changes_in_atom_list(
     }
     let mut run_changes: Vec<PendingRunFormatChange> = Vec::new();
     let mut para_changes: Vec<PendingParaFormatChange> = Vec::new();
+    // Cache each distinct rPr's normalized serialization: runs share one rPr, so
+    // this collapses O(Equal atoms) normalizations to O(distinct rPr). See
+    // [`normalized_rpr_serialized`].
+    let mut norm_cache: std::collections::HashMap<Option<NodeId>, String> =
+        std::collections::HashMap::new();
     for (i, atom) in atoms.iter().enumerate() {
         if atom.correlation_status != CorrelationStatus::Equal {
             continue;
@@ -289,7 +316,12 @@ pub fn detect_format_changes_in_atom_list(
         }
         let old = get_run_properties_from_atom(dom, &before);
         let new = get_run_properties_from_atom(dom, atom);
-        if !are_run_properties_equal(dom, old, new) {
+        // Behavior-identical to `!are_run_properties_equal(dom, old, new)`: that
+        // predicate is `serialize(normalize(old)) == serialize(normalize(new))`,
+        // and the cache stores exactly those per-operand strings.
+        if normalized_rpr_serialized(dom, &mut norm_cache, old)
+            != normalized_rpr_serialized(dom, &mut norm_cache, new)
+        {
             let changed = get_changed_property_names(dom, old, new);
             run_changes.push((i, old, new, changed));
         }
@@ -331,5 +363,58 @@ pub fn detect_format_changes_in_atom_list(
             old_para_properties: Some(old_ppr),
             changed_properties: vec!["paragraphFormatting".into()],
         });
+    }
+}
+
+/// PR4 — the per-`rPr` serialization cache MUST return exactly what a direct
+/// `normalize_run_properties` + `serialize_element` produces, on the first call
+/// and on cache hits, so that swapping [`are_run_properties_equal`] for a cached
+/// `==` in [`detect_format_changes_in_atom_list`] is behavior-preserving.
+#[cfg(test)]
+mod format_change_cache_tests {
+    use super::*;
+
+    fn rpr_with(dom: &mut Dom, children: &[(&str, &[(&str, &str)])]) -> NodeId {
+        let rpr = dom.new_element(W::r_pr());
+        for (local, attrs) in children {
+            let c = dom.new_element(W::name(local));
+            for (an, av) in *attrs {
+                dom.set_attribute_value(c, &W::name(an), Some(av));
+            }
+            dom.add(rpr, c);
+        }
+        rpr
+    }
+
+    fn direct(dom: &mut Dom, rpr: Option<NodeId>) -> String {
+        let ne = normalize_run_properties(dom, rpr);
+        dom.serialize_element(ne)
+    }
+
+    #[test]
+    fn format_changes_cache_matches_direct() {
+        let mut dom = Dom::new();
+        let bold = rpr_with(&mut dom, &[("b", &[])]);
+        let bold_sz = rpr_with(&mut dom, &[("b", &[]), ("sz", &[("val", "24")])]);
+        // Same props, different source order — normalization must canonicalize both.
+        let sz_bold = rpr_with(&mut dom, &[("sz", &[("val", "24")]), ("b", &[])]);
+        let empty = dom.new_element(W::r_pr());
+        let cases = [Some(bold), Some(bold_sz), Some(sz_bold), Some(empty), None];
+
+        let mut cache = std::collections::HashMap::new();
+        for &rpr in &cases {
+            let want = direct(&mut dom, rpr);
+            let got = normalized_rpr_serialized(&mut dom, &mut cache, rpr);
+            assert_eq!(got, want, "cached != direct for {rpr:?}");
+            // Cache hit must return the same value, not diverge.
+            let got2 = normalized_rpr_serialized(&mut dom, &mut cache, rpr);
+            assert_eq!(got2, want, "cache-hit != direct for {rpr:?}");
+        }
+        // bold_sz and sz_bold have identical properties ⇒ identical normal form.
+        assert_eq!(
+            normalized_rpr_serialized(&mut dom, &mut cache, Some(bold_sz)),
+            normalized_rpr_serialized(&mut dom, &mut cache, Some(sz_bold)),
+            "canonicalization must ignore source child order"
+        );
     }
 }
