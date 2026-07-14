@@ -84,6 +84,80 @@ produce **dropped out of the top inclusive list** — PR-B worked. New ranking:
 - The LCS track (PR2-audit … PR6) stays **latent** — LCS is 7%, still not the
   bottleneck. Do not start it.
 
+## MEASURED #3 — 2026-07-14: PR-C.1 (arena reclaim) FAILED + fresh profile
+
+**PR-D shipped** (`502b6c7`, atomize child iter). PR-C was then split; the
+first, lowest-risk increment was attempted and **reverted on measurement**.
+
+### PR-C.1 — Dom arena free-list + reclaim ephemeral hashing clones — REVERTED
+
+Hypothesis: `add_sha1_hash_to_block_level_content` / `hash_block_level_content`
+deep-clone every `w:p`/`w:tbl`/`w:tr` into the arena just to compute a hash,
+then never free the clone (≈ one extra doc-copy of permanent garbage). Added a
+free-list to `xmllinq::Dom` (`alloc` recycles, new `free_subtree`) and freed
+those clones right after the hash is read. Parity-safe by construction (freed
+nodes are never read again; full test suite stayed green — canonical equality
+held). Red/green unit test proved the reclaim + slot reuse + source integrity.
+
+**Result: measured REGRESSION → reverted.** Clean interleaved A/B on fixture A
+(base=`502b6c7` vs PR-C.1, back-to-back, 2 rounds each, same machine; wall was
+noisy from a concurrent `tauri build`, so judge on contention-independent
+signals — user CPU and peak RSS):
+
+| binary | user CPU (avg) | peak RSS (avg) |
+|---|---:|---:|
+| baseline (shipped PR-D) | **62.8 s** | **11.75 GB** |
+| PR-C.1 (arena reclaim) | **63.55 s** | **13.37 GB** (worst run 14.04) |
+
+User CPU ~neutral (+1.2%), **RSS ~14% WORSE**. Why it backfired: **mimalloc
+already recycles the freed node memory**, so an explicit arena free-list is
+redundant — it *adds* the `free_subtree` traversal and forces per-slot re-alloc
+of the inner `content`/`attrs` `Vec`s on reuse, worsening allocator
+fragmentation (→ higher peak RSS). Same verdict as the earlier arena-`reserve`
+experiment: **micro-managing the arena does not help; mimalloc owns that layer.**
+
+### Fresh full profile (samply, shipped PR-D binary, fixture A, 96k samples)
+
+Caveat: taken under a concurrent `tauri build` (LTO), so absolute alloc/memmove
+self-% is inflated; the **ranking is robust** (matches the post-PR-B profile).
+
+**Self-time is ≈35–40% diffuse allocation/copy/free/drop of xmllinq nodes:**
+`mi_free` ~9% · libsystem `memmove/memset` ~12% · `drop_in_place<Attr>` 4.7% ·
+`drop_in_place<NodeData>` ~4.9% · `mi_malloc_aligned` ~4% ·
+`mi_page_free_list_extend` 1.2%.
+
+**Inclusive time is FLAT — no single dominant phase:**
+
+| phase (inclusive) | % |
+|---|---:|
+| `atomize::recurse` / `create_comparison_unit_atom_list` / `annotate_element_with_props` | ~13% |
+| `parse_xdocument` / `parse_element` | ~10% |
+| `compare_bodies_faithful_with_notes` | ~9% |
+| `lcs::lcs` | ~7.5% |
+| `produce` + `coalesce_recurse` | ~6% |
+| `accept_revisions` | ~6% |
+| `serialize_element` | ~6% |
+| `clone_block_level_content_for_hashing` | ~6% |
+
+**Conclusion — the bottleneck is the untyped-arena design itself, not any one
+phase.** Every node is a heap `NodeData` carrying three inner `Vec`s
+(`content`, `attrs`, `annotations`); the ~35–40% churn is the aggregate cost of
+allocating/copying/freeing millions of them, spread across parse → atomize →
+hash → compare → produce → accept → serialize. No point optimization moves a
+flat profile. The only real levers are **architectural**:
+
+1. **Cut the node COUNT.** The accept pipeline's ~12 full-tree functional
+   transforms each rebuild the whole doc. Rewriting them to mutate in place
+   (PR-C proper) removes whole doc-copies — highest value, riskiest for parity,
+   needs the full ledger gate.
+2. **Make `NodeData` cheaper per node.** `SmallVec`/inline storage for
+   `attrs`/`content` (most elements have 0–3 of each), drop the
+   `annotations: Vec<Box<dyn Any>>` to an `Option<Box<…>>`, or intern `XName`/
+   attribute strings. Bounded, parity-safe, attacks the per-node constant that
+   the flat profile is made of.
+
+Micro-reclaim / free-lists are dead ends here — do not revisit them.
+
 Everything below is retained as prior context. The discipline (named
 baselines, red/green, no sunk-cost) is unchanged, but the correctness oracle
 changes — see the Parity Ledger below.
