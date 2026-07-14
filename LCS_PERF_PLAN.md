@@ -6,7 +6,62 @@ current branch. Base: `nitpicking` (`eefebac`). Current stack head:
 `src/comparer/lcs.rs`, plus only the measurement and equivalence tooling needed
 to prove each optimization.
 
-## MEASURED REORDER — 2026-07-13, post-profiling (READ FIRST)
+## MEASURED REORDER #2 — 2026-07-14, samply full-run profile (READ THIS FIRST)
+
+The 2026-07-13 reorder below retargeted PR3/PR4 onto `detect_moves` and
+`normalize_run_properties` based on a **40-second Apple `sample` window taken
+under CPU contention** — which over-weighted the early accept-revisions phase.
+PR3/PR4 shipped and are correct (moves memoization is a real 15.1× on
+move-heavy input), but a **clean, full-run, symbolicated `samply` profile of
+fixture A** (RFP17 × its redlined self, 137 s) shows they optimized *secondary*
+costs. The true hotspot is elsewhere:
+
+| rank | phase (inclusive %) | why |
+|---|---:|---|
+| 1 | `produce::coalesce_recurse` **16.5%** + `produce::reconstruct_element` **16.1%** (≈33% together) | markup PRODUCTION rebuilds the output tree node-by-node |
+| 2 | `atomize::recurse` / `create_comparison_unit_atom_list` **9.4%** | building comparison units |
+| 3 | `xmllinq::parse` **8.4%**, `lcs::lcs` **7.1%**, `clone_block_level_content_for_hashing` **5.2%**, `serialize_element` **5.0%** | |
+
+`normalize_run_properties`/formatchg is **absent from the profile**; LCS is
+~7% (not 0). **Self-time** is ≈**41% allocation/copy/free/drop of xmllinq
+nodes** (`libsystem_malloc` + memcpy + `drop_in_place<Attr>` 5.9% +
+`drop_in_place<NodeData>` 4.6% + `__rdl_alloc`). Fixture A peaks at **13.5 GB
+RSS** — the functional-transform / produce clone churn is the real cost.
+
+Profiling method (proper tools, not grep-guessing): `samply record` on a
+release build with debuginfo → Firefox-profiler JSON → precise self/inclusive
+per function via `_scratch/perf/prof_extract2.py` (atos-symbolicated per lib).
+Generator + extractor live in `_scratch/perf/`.
+
+**Retarget again:**
+
+- **PR-A (DONE, committed `10b20e6`): mimalloc global allocator for the CLI.**
+  Attacks the 41% alloc self-time with zero semantic change. Clean A/B,
+  identical output size, repeatable:
+  - 15k-paragraph pair (interleaved): 31.5 s → 24.3 s wall (**~23%**),
+    29.9 s → 23.0 s user.
+  - fixture A (uncontended): 148 s → 132 s wall (**~11%**), 91.8 s → 72.2 s
+    user (**~21%**). Smaller wall win here is memory-bound (13.5 GB RSS →
+    paging); user CPU is the clean signal.
+
+  Gated behind default-on `fast-alloc`.
+- **PR-B (NEXT, structural): cut the produce-phase clone churn.**
+  `reconstruct_element` does `new_element` + attr-copy + `clone_subtree` of
+  every property child, once per output element; `coalesce_recurse` clones
+  group content per atom. Reduce redundant `clone_subtree`/`serialize_element`
+  (e.g. the tblPr/tblGrid serialize-to-compare at produce.rs:893/920 allocates
+  two strings per merged table). Higher value, but touches Word-parity-critical
+  code → full gate: reference structural equality + corpus canonical equality +
+  `parity_ladder.py sweep` + a clean before/after samply delta.
+- The LCS track (PR2-audit … PR6) stays **latent** — LCS is 7%, still not the
+  bottleneck. Do not start it.
+
+Everything below is retained as prior context. The discipline (exact
+equivalence, named baselines, red/green, no sunk-cost) is unchanged.
+
+---
+
+## MEASURED REORDER — 2026-07-13, post-profiling (superseded by #2 above)
 
 This plan's own **Stop/reorder rule #1** says: *"If PR0 says LCS is not the
 dominant phase, reorder around the measured hotspot."* We now have the
