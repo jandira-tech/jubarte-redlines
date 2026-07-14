@@ -604,13 +604,7 @@ mod memoized_moves_tests {
     fn sig(atoms: &[ComparisonUnitAtom]) -> Vec<(CorrelationStatus, Option<u32>, Option<String>)> {
         atoms
             .iter()
-            .map(|a| {
-                (
-                    a.correlation_status,
-                    a.move_group_id,
-                    a.move_name.clone(),
-                )
-            })
+            .map(|a| (a.correlation_status, a.move_group_id, a.move_name.clone()))
             .collect()
     }
 
@@ -748,10 +742,36 @@ mod memoized_moves_tests {
     fn memoized_speedup_report() {
         use std::time::Instant;
         const VOCAB: &[&str] = &[
-            "the", "party", "shall", "deliver", "goods", "within", "thirty", "days", "of",
-            "receipt", "written", "notice", "and", "any", "failure", "to", "perform", "under",
-            "this", "agreement", "constitutes", "material", "breach", "subject", "termination",
-            "remedies", "at", "law", "or", "equity",
+            "the",
+            "party",
+            "shall",
+            "deliver",
+            "goods",
+            "within",
+            "thirty",
+            "days",
+            "of",
+            "receipt",
+            "written",
+            "notice",
+            "and",
+            "any",
+            "failure",
+            "to",
+            "perform",
+            "under",
+            "this",
+            "agreement",
+            "constitutes",
+            "material",
+            "breach",
+            "subject",
+            "termination",
+            "remedies",
+            "at",
+            "law",
+            "or",
+            "equity",
         ];
         let (dom, words, ppr) = make_pool(VOCAB);
         let mut rng = Lcg(0x0BAD_C0FF_EE12_3456);
@@ -760,14 +780,20 @@ mod memoized_moves_tests {
         let mut base = Vec::new();
         for _ in 0..n_para {
             for _ in 0..para_words {
-                base.push(atom(words[rng.below(words.len())], CorrelationStatus::Deleted));
+                base.push(atom(
+                    words[rng.below(words.len())],
+                    CorrelationStatus::Deleted,
+                ));
             }
             base.push(atom(ppr, CorrelationStatus::Deleted));
         }
         base.push(atom(words[0], CorrelationStatus::Equal));
         for _ in 0..n_para {
             for _ in 0..para_words {
-                base.push(atom(words[rng.below(words.len())], CorrelationStatus::Inserted));
+                base.push(atom(
+                    words[rng.below(words.len())],
+                    CorrelationStatus::Inserted,
+                ));
             }
             base.push(atom(ppr, CorrelationStatus::Inserted));
         }
@@ -788,7 +814,11 @@ mod memoized_moves_tests {
         detect_moves_memoized(&dom, &mut a_memo, &settings);
         let memo_ms = t1.elapsed().as_secs_f64() * 1000.0;
 
-        assert_eq!(sig(&a_ref), sig(&a_memo), "speedup workload must stay equivalent");
+        assert_eq!(
+            sig(&a_ref),
+            sig(&a_memo),
+            "speedup workload must stay equivalent"
+        );
         eprintln!(
             "[perf] detect_moves {n_para}x{n_para} paras: reference={ref_ms:.1}ms \
              memoized={memo_ms:.1}ms speedup={:.1}x",

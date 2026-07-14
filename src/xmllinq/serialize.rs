@@ -199,7 +199,11 @@ fn is_namespace_prefix_list(name: &XName) -> bool {
     ns == MC_NAMESPACE
         && matches!(
             local,
-            "Ignorable" | "PreserveAttributes" | "PreserveElements" | "ProcessContent" | "MustUnderstand"
+            "Ignorable"
+                | "PreserveAttributes"
+                | "PreserveElements"
+                | "ProcessContent"
+                | "MustUnderstand"
         )
 }
 
@@ -293,7 +297,11 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut Strin
             .map(|token| {
                 if let Some(uri) = scope.uri_for_prefix(token) {
                     if let Some(p) = scope.prefix_for_uri(uri) {
-                        if p != token { p.to_string() } else { token.to_string() }
+                        if p != token {
+                            p.to_string()
+                        } else {
+                            token.to_string()
+                        }
                     } else {
                         token.to_string()
                     }

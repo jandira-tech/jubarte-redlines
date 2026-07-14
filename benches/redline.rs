@@ -44,7 +44,9 @@ fn bench_compare_documents(c: &mut Criterion) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut group = c.benchmark_group("compare_documents");
     // Real-document compares run 10ms–1s; trade sample count for wall time.
-    group.sample_size(20).measurement_time(Duration::from_secs(15));
+    group
+        .sample_size(20)
+        .measurement_time(Duration::from_secs(15));
     for (id, a_rel, b_rel) in PAIRS {
         let (a_path, b_path) = (root.join(a_rel), root.join(b_rel));
         if !a_path.is_file() || !b_path.is_file() {

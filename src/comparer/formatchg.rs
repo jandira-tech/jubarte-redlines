@@ -480,12 +480,12 @@ mod format_change_cache_tests {
         let mut dom = Dom::new();
         // (before rPr, after rPr) per Equal atom.
         let specs: &[(Props, Props)] = &[
-            (&[("b", &[])], &[("b", &[]), ("i", &[])]),                   // add italic
-            (&[("b", &[])], &[("b", &[])]),                               // identical
-            (&[("sz", &[("val", "20")])], &[("sz", &[("val", "24")])]),   // size change
-            (&[], &[]),                                                   // both empty
-            (&[("b", &[]), ("i", &[])], &[("i", &[]), ("b", &[])]),       // reordered = same
-            (&[("color", &[("val", "FF0000")])], &[]),                    // remove color
+            (&[("b", &[])], &[("b", &[]), ("i", &[])]), // add italic
+            (&[("b", &[])], &[("b", &[])]),             // identical
+            (&[("sz", &[("val", "20")])], &[("sz", &[("val", "24")])]), // size change
+            (&[], &[]),                                 // both empty
+            (&[("b", &[]), ("i", &[])], &[("i", &[]), ("b", &[])]), // reordered = same
+            (&[("color", &[("val", "FF0000")])], &[]),  // remove color
         ];
         let mut atoms = Vec::new();
         for (before_props, after_props) in specs {
@@ -506,7 +506,9 @@ mod format_change_cache_tests {
                 .map(|a| {
                     (
                         a.correlation_status,
-                        a.format_change.as_ref().map(|f| f.changed_properties.clone()),
+                        a.format_change
+                            .as_ref()
+                            .map(|f| f.changed_properties.clone()),
                     )
                 })
                 .collect()

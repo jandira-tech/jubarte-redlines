@@ -108,7 +108,10 @@ impl<'a> Parser<'a> {
                 // whitespace or `?>`. `<?xml-stylesheet` etc. are PIs.
                 let after = self.pos + 5;
                 let is_declaration = after >= len
-                    || self.c.get(after).map_or(true, |&ch| ch.is_whitespace() || ch == '?');
+                    || self
+                        .c
+                        .get(after)
+                        .map_or(true, |&ch| ch.is_whitespace() || ch == '?');
                 if is_declaration {
                     let end = self.index_of("?>", self.pos);
                     let decl_str = self.slice(self.pos, end.unwrap_or(len));

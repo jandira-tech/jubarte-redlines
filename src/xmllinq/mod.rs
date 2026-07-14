@@ -154,6 +154,7 @@ impl std::fmt::Debug for XName {
 // ─────────────────────────────────────────────────────────────────────────────
 
 use std::any::Any;
+use std::collections::HashMap;
 
 /// Handle into the `Dom` arena.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -190,8 +191,6 @@ struct NodeData {
     content: Vec<NodeId>,
     /// Attributes (elements only).
     attrs: Vec<Attr>,
-    /// Typed annotation store, keyed by `TypeId` at lookup time.
-    annotations: Vec<Box<dyn Any>>,
 }
 
 impl NodeData {
@@ -201,7 +200,6 @@ impl NodeData {
             parent: None,
             content: Vec::new(),
             attrs: Vec::new(),
-            annotations: Vec::new(),
         }
     }
 }
@@ -210,11 +208,18 @@ impl NodeData {
 #[derive(Default)]
 pub struct Dom {
     nodes: Vec<NodeData>,
+    /// Typed annotations, keyed by `NodeId`. Kept off `NodeData` because no
+    /// production path stores annotations (only the M1 foundation test), so the
+    /// common case is an empty map and every node avoids a 24-byte inline `Vec`.
+    annotations: HashMap<NodeId, Vec<Box<dyn Any>>>,
 }
 
 impl Dom {
     pub fn new() -> Self {
-        Dom { nodes: Vec::new() }
+        Dom {
+            nodes: Vec::new(),
+            annotations: HashMap::new(),
+        }
     }
 
     fn alloc(&mut self, kind: NodeKind) -> NodeId {
@@ -733,20 +738,31 @@ impl Dom {
     }
 
     // ── annotations ───────────────────────────────────────────────────────────
+    // Stored in a `Dom` side table keyed by `NodeId` rather than inline on every
+    // `NodeData` (ANN-01): production never annotates, so the map stays empty and
+    // the hot per-node struct keeps its 24 bytes. Behavior is identical.
     /// `AddAnnotation(obj)`.
     pub fn add_annotation<T: Any + 'static>(&mut self, id: NodeId, annotation: T) {
-        self.data_mut(id).annotations.push(Box::new(annotation));
+        self.annotations
+            .entry(id)
+            .or_default()
+            .push(Box::new(annotation));
     }
     /// `Annotation<T>()` — first annotation of type `T`.
     pub fn annotation<T: Any + 'static>(&self, id: NodeId) -> Option<&T> {
-        self.data(id)
-            .annotations
+        self.annotations
+            .get(&id)?
             .iter()
             .find_map(|a| a.downcast_ref::<T>())
     }
     /// `RemoveAnnotations<T>()`.
     pub fn remove_annotations<T: Any + 'static>(&mut self, id: NodeId) {
-        self.data_mut(id).annotations.retain(|a| !a.is::<T>());
+        if let Some(v) = self.annotations.get_mut(&id) {
+            v.retain(|a| !a.is::<T>());
+            if v.is_empty() {
+                self.annotations.remove(&id);
+            }
+        }
     }
 
     // ── parse / serialize convenience (delegate to the submodules) ─────────────
@@ -761,5 +777,26 @@ impl Dom {
     /// Serialize a whole document (declaration + root) (M1.4).
     pub fn serialize_document(&self, doc: NodeId) -> String {
         serialize::serialize_document(self, doc)
+    }
+}
+
+#[cfg(test)]
+mod ann01_tests {
+    use super::*;
+
+    /// ANN-01 mechanism counter. `annotations` has no production caller (only the
+    /// M1 foundation test), so carrying a `Vec<Box<dyn Any>>` on every node is pure
+    /// per-node bloat: 24 bytes × N nodes of arena-realloc memcpy and RSS. After
+    /// moving it to a `Dom` side table, `NodeData` must drop by one `Vec` (24 B),
+    /// from 152 → 128 on this target. The bound (not an exact equality) guards
+    /// against silently regrowing the hot per-node struct.
+    #[test]
+    fn node_data_excludes_annotations_vec() {
+        let sz = std::mem::size_of::<NodeData>();
+        assert!(
+            sz <= 128,
+            "NodeData is {sz} bytes; ANN-01 requires <= 128 (annotations must live \
+             in the Dom side table, not inline on every node)"
+        );
     }
 }
