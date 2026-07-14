@@ -340,6 +340,21 @@ impl Dom {
     }
 
     /// `Elements()` / `Elements(name)` — child elements, optionally filtered.
+    /// Number of direct children of `id` (all node kinds). Cheap O(1) index —
+    /// paired with [`child_at`](Self::child_at) for non-allocating child
+    /// iteration on hot paths where [`elements`](Self::elements)' per-call
+    /// `Vec` is the cost (atomize). Re-read the count each loop step: it is
+    /// stable while the caller does not add/remove children of `id`.
+    pub fn child_count(&self, id: NodeId) -> usize {
+        self.data(id).content.len()
+    }
+
+    /// The `i`-th direct child of `id` (all node kinds). Panics out of bounds.
+    /// See [`child_count`](Self::child_count).
+    pub fn child_at(&self, id: NodeId, i: usize) -> NodeId {
+        self.data(id).content[i]
+    }
+
     pub fn elements(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
         self.data(id)
             .content

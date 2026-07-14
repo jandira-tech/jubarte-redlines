@@ -257,17 +257,29 @@ fn recurse(
         || name == W::name("hdr")
         || name == W::name("ftr")
     {
-        for item in dom.elements(element, None) {
-            recurse(dom, item, list, settings);
+        // Non-allocating child walk (see Dom::child_at): recurse does not
+        // add/remove children of `element`, so its content is stable and the
+        // index sequence equals `elements(element, None)` — without the Vec.
+        let mut i = 0;
+        while i < dom.child_count(element) {
+            let item = dom.child_at(element, i);
+            i += 1;
+            if dom.name(item).is_some() {
+                recurse(dom, item, list, settings);
+            }
         }
         return;
     }
 
     if name == W::p() {
-        // children except pPr
-        for item in dom.elements(element, None) {
-            if dom.name(item).unwrap() != W::p_pr() {
-                recurse(dom, item, list, settings);
+        // children except pPr (non-allocating; see the body branch above)
+        let mut i = 0;
+        while i < dom.child_count(element) {
+            let item = dom.child_at(element, i);
+            i += 1;
+            match dom.name(item) {
+                Some(n) if n != W::p_pr() => recurse(dom, item, list, settings),
+                _ => {}
             }
         }
         // the paragraph mark atom (pPr, or a fresh empty pPr). Faithful to
@@ -285,9 +297,14 @@ fn recurse(
     }
 
     if name == W::r() {
-        for item in dom.elements(element, None) {
-            if dom.name(item).unwrap() != W::r_pr() {
-                recurse(dom, item, list, settings);
+        // children except rPr (non-allocating; see the body branch above)
+        let mut i = 0;
+        while i < dom.child_count(element) {
+            let item = dom.child_at(element, i);
+            i += 1;
+            match dom.name(item) {
+                Some(n) if n != W::r_pr() => recurse(dom, item, list, settings),
+                _ => {}
             }
         }
         return;
