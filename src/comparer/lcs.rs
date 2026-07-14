@@ -2907,9 +2907,10 @@ pub fn resolve_correlated_sequences(
         let resolved = process_correlated_hashes(&unknown)
             .or_else(|| find_common_at_beginning_and_end(dom, &unknown, settings))
             .unwrap_or_else(|| do_lcs_algorithm(dom, &unknown, settings));
-        for (k, item) in resolved.into_iter().enumerate() {
-            cs_list.insert(idx + k, item);
-        }
+        // Splice the resolved items in at `idx` in ONE tail-shift, instead of an
+        // insert-per-item loop that memmoves the (large) tail once per item.
+        // Same final order and the same first-Unknown processing order.
+        cs_list.splice(idx..idx, resolved);
     }
 }
 
