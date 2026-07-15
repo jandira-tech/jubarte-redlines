@@ -80,6 +80,7 @@ evidence and ready-to-run branches of the program.
 | HASH-STREAM-05: empty leaf run children (br/tab) in simple-p stream | shipped lean win (MEASURED #37) | exact oracles (9+); digests YES×4; RFP×5lb B wins all 4 slots (~1.2s mean); redline lean 3/4; pdense noise |
 | HASH-STREAM-06: simple `w:tc` stream digests (no clone) | shipped lean win (MEASURED #38) | exact oracles (4); digests YES×4; RFP×5lb B all 4 slots (~0.6s); redline lean 3/4; ~47k cells/doc no-clone |
 | ACCEPT-REUSE-CLEAN: transfer clean accept subtrees (no clone) | shipped win (MEASURED #39) | NodeId reuse gates; digests YES×4; redline×5lb B all 4 slots (~−2.8s); RFP×5lb B all 4 (~−0.6s) |
+| ACCEPT-SKIP-A7: skip deleted-cells full rebuild without cellDel | banked lean (MEASURED #40) | NodeId transfer gate; digests YES×4; redline×5lb B all 4 (~−0.6s); RFP mixed |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1350,6 +1351,27 @@ preservation + content gates). m3/m28/m31 accept suite green.
 document.xml match YES all four. Scratch: `{SCRATCH}/abba-accept-reuse-clean/`.
 **Verdict: ship win** — exact digests + load-bearing wall lean on both complicated
 fixtures; largest gain on accept-heavy redline×5lb.
+
+### Quality sample (n≈35) after #39
+`tools/parity_ledger.sh 40`: mean **83.78** · median **89.46** · min 40.10 · max 100 · n 35
+(scratch `scores-parity-accept-reuse-clean-40.*`). Prior n80 mean 81.73 / n100 82.34 —
+sample pair sets differ; no material-loss signal.
+
+## MEASURED #40 — 2026-07-15: ACCEPT-SKIP-A7 BANKED LEAN
+
+Skip A.7 `accept_deleted_cells_transform` full-tree rebuild when the subtree
+contains no `w:cellDel` (transfer root). RED/GREEN: `tests/perf_accept_skip_a7.rs`.
+
+### A/B — full permanent matrix (4 fixtures), 2× ABBA (base = ACCEPT-REUSE-CLEAN / b1f35c3)
+
+| fixture | A wall (ABBA r1 / r2) | B wall (ABBA r1 / r2) |
+|---|---:|---:|
+| pdense_15k | ~15.3 | ~15.4 (noise) |
+| rfp17_vs_5lb102 | 22.04·21.05 / 22.13·22.11 | 20.90·21.72 / 21.33·21.03 (mixed) |
+| redline_rfp17_vs_5lb102 | 24.24·24.10 / 25.59·24.02 | 23.91·23.68 / 24.23·23.66 (**B all 4**; mean ~−0.6s) |
+
+document.xml match YES all four. Scratch: `{SCRATCH}/abba-accept-skip-a7/`.
+**Verdict: keep / bank lean** — exact + redline lean; RFP thrash → no full-matrix wall claim.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

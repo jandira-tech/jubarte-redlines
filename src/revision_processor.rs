@@ -133,6 +133,23 @@ fn take_subtree(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     vec![node]
 }
 
+/// Non-allocating presence of `name` on `root` or any descendant element.
+fn element_or_desc_has_name(dom: &Dom, root: NodeId, name: &XName) -> bool {
+    fn walk(dom: &Dom, id: NodeId, name: &XName) -> bool {
+        if dom.name(id).as_ref() == Some(name) {
+            return true;
+        }
+        let n = dom.child_count(id);
+        for i in 0..n {
+            if walk(dom, dom.child_at(id, i), name) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(dom, root, name)
+}
+
 /// True iff a transformed element still carries run/inline content (port of
 /// `HasRunContent`) — used to decide whether an emptied `w:hyperlink` survives.
 fn has_run_content(dom: &Dom, element: NodeId) -> bool {
@@ -1954,9 +1971,23 @@ fn order_tc_pr(name: &XName) -> i32 {
 /// a group starting with a deleted cell (no anchor) is dropped. FAITHFUL:
 /// the rebuilt cell loses the original `w:tc` attributes, and an anchor cell
 /// without `w:tcPr` panics (C# NREs on `currentTcPr.Elements()`).
+///
+/// ACCEPT-SKIP-A7: when the subtree has no `w:cellDel`, transfer `node`
+/// without a full-tree identity rebuild (common path for redlines that only
+/// carry ins/del).
 pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
+    let cell_del = W::name("cellDel");
+    if !element_or_desc_has_name(dom, node, &cell_del) {
+        if dom.parent(node).is_some() {
+            dom.remove(node);
+        }
+        return node;
+    }
     if !dom.is_element(node) {
-        return dom.clone_subtree(node);
+        if dom.parent(node).is_some() {
+            dom.remove(node);
+        }
+        return node;
     }
     let name = dom.name(node).unwrap();
     if name != W::tr() {
