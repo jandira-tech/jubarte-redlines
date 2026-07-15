@@ -2935,12 +2935,11 @@ fn step_h(
                         &para_text_tokens(dom, &rest1[0]),
                         &para_text_tokens(dom, &rest2[0]),
                     );
-                    // M189: very weak first residual j1 < 0.15 → pure-I/D both.
-                    // M191: very strong first residual j1 ≥ 0.46 with empty last
-                    // (track_changes italic×title j1≈0.47). Keep mesh for
-                    // heading_2_center×style (j1≈0.455, LO 90.8 with mesh).
-                    // Mid band 0.15..0.46 keeps first residual mesh.
-                    if m180 && (first_j + 1e-12 < 0.15 || first_j + 1e-12 >= 0.46) {
+                    // M189: very weak first residual j1 < 0.15 → pure-I/D both
+                    // (times×title ≈0.14). Strong first residual free-mesh is
+                    // LO-preferred for track_changes calibri×center (j1≈0.50 →
+                    // 100); a j1≥0.46 pure-I/D rule regressed that pair −21.
+                    if m180 && first_j + 1e-12 < 0.15 {
                         out.push(CorrelatedSequence::inserted(vec![rest2[0].clone()]));
                         out.push(CorrelatedSequence::deleted(vec![rest1[0].clone()]));
                         out.push(CorrelatedSequence::inserted(vec![rest2[1].clone()]));
