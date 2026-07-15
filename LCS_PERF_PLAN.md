@@ -76,6 +76,7 @@ evidence and ready-to-run branches of the program.
 | HASH-STREAM-03: simple-p stream hash without clone DOM | shipped win (MEASURED #33) | matrix×4: pdense+RFP×5lb+redline×5lb wall ↓ every slot; RSS lean; digests exact |
 | HASH-STREAM-03b: multi-t run expansion in simple-p stream | banked (MEASURED #34) | exact multi-t + correlated_ws oracles; matrix thrash/mixed — no wall claim |
 | ATOM-TEXT-02: value_str in produce/lcs/finalize/atomize | banked (MEASURED #35) | exact document.xml; matrix thrash/mixed — no wall claim |
+| HASH-STREAM-04: simple-tbl/tr stream content+structure digests | banked lean (MEASURED #36) | exact == clone oracles (12 tests); digests YES×4; redline×5lb B wins all 4 slots (~3s mean); RFP thrash; pdense noise — no full-matrix wall claim |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1264,6 +1265,27 @@ read paths (borrow single-text leaves). document.xml exact on matrix.
 | redline_rfp17_vs_5lb102 | 37.44† / 31.15 | 33.25 / 30.40 (mixed) |
 
 document.xml match YES all four. **Verdict: keep / bank.**
+
+## MEASURED #36 — 2026-07-15: HASH-STREAM-04 BANKED LEAN
+
+Simple `w:tbl` / `w:tr` content + structure digests without hash-clone DOM when
+cells are simple-paragraph-only (drops tblPr/trPr; tcPr keeps gridSpan only;
+complex cells fall back to clone). RED/GREEN: `tests/perf_hash_stream04.rs`
+(12 cases) vs clone oracle. Production: `block_sha1_from_source` +
+`add_sha1_hash_to_block_level_content`.
+
+### A/B — full permanent matrix (4 fixtures), 2× ABBA (base = ATOM-TEXT-02 / HEAD b359c4b)
+
+| fixture | A wall (ABBA r1 / r2) | B wall (ABBA r1 / r2) |
+|---|---:|---:|
+| pdense_15k | 16.59·15.82 / 15.85·17.32 | 15.95·15.67 / 16.98·17.15 (mixed/noise) |
+| rfp17_redline_self | 0.05 | 0.05–0.07 (IDENTICAL-INPUT; noise) |
+| rfp17_vs_5lb102 | 29.37·29.45 / 26.68·27.69 | 26.77·26.02 / 29.37·29.77 (thrash r1 B / r2 A) |
+| redline_rfp17_vs_5lb102 | 35.62·36.87 / 34.86·33.38 | 31.83·30.43 / 33.10·32.45 (**B wins all 4 slots**; mean ~−3.2s) |
+
+document.xml match YES all four. Scratch: `{SCRATCH}/abba-hash-stream04/`.
+**Verdict: keep / bank lean** — exact digests + consistent redline×5lb wall lean;
+no full-matrix wall claim while RFP thrash/pdense noise remain.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

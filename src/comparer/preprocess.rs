@@ -612,14 +612,14 @@ pub fn block_sha1(dom: &Dom, clone: NodeId) -> String {
     dom.serialize_element_sha1_hex(clone)
 }
 
-/// HASH-STREAM-03: content SHA-1 of a **source** block node, preferring a
-/// no-clone stream for simple `w:p` (only single-`w:t` runs after drops).
+/// HASH-STREAM-03/04: content SHA-1 of a **source** block node, preferring a
+/// no-clone stream for simple `w:p` and simple `w:tbl`/`w:tr`.
 /// Falls back to `clone_block_level_content_for_hashing` + [`block_sha1`].
 ///
 /// When `correlated_ws` is true (Word-visual correlated hashes), text is
 /// whitespace-stripped like `strip_whitespace_in_clone_text` after clone.
 ///
-/// Digest-identical to the clone oracle for every accepted simple-p shape and
+/// Digest-identical to the clone oracle for every accepted simple shape and
 /// for all complex nodes (fallback path).
 pub fn block_sha1_from_source(
     dom: &mut Dom,
@@ -631,6 +631,11 @@ pub fn block_sha1_from_source(
 ) -> String {
     if let Some(hex) = try_stream_hash_simple_paragraph(dom, node, settings, correlated_ws) {
         return hex;
+    }
+    // HASH-STREAM-04: simple tables/rows stream content without hash-clone DOM.
+    if let Some((content, _)) = try_stream_hash_simple_table_or_tr(dom, node, settings, correlated_ws)
+    {
+        return content;
     }
     let clone =
         clone_block_level_content_for_hashing(dom, node, include_related_parts, settings, rel_hash);
@@ -746,6 +751,321 @@ fn try_stream_hash_simple_paragraph(
     Some(crate::util::sha1::sha1_hex(&xml))
 }
 
+/// HASH-STREAM-04: stream content + structure digests for a simple `w:tbl` or
+/// `w:tr` without materializing a hash-clone subtree.
+///
+/// Accepted shapes match `clone_internal` projection for tables:
+/// - `w:tbl` keeps only `w:tr` children (drops `tblPr`/`tblGrid`/…)
+/// - `w:tr` keeps only `w:tc` children (drops `trPr`)
+/// - `w:tc` keeps element children: simple paragraphs, `tcPr` (gridSpan only)
+/// - paragraphs only when streamable as simple-p (t-only runs after drops)
+///
+/// Returns `(content_sha1_hex, structure_sha1_hex)` digest-identical to
+/// `block_sha1(clone)` / `structure_sha1(clone)`. `None` → use clone fallback.
+pub fn try_stream_hash_simple_table_or_tr(
+    dom: &Dom,
+    node: NodeId,
+    settings: &WmlComparerSettings,
+    correlated_ws: bool,
+) -> Option<(String, String)> {
+    let name = dom.name(node)?;
+    if name != W::tbl() && name != W::tr() {
+        return None;
+    }
+    // PreDelete salt changes clone attrs — stream only unsalted clean trees.
+    if element_or_desc_has_predelete_orig(dom, node) {
+        return None;
+    }
+    let mut content = String::with_capacity(256);
+    let mut structure = String::with_capacity(256);
+    if name == W::tbl() {
+        emit_open_root(&mut content, "tbl");
+        emit_open_root(&mut structure, "tbl");
+        stream_tbl_body(dom, node, settings, correlated_ws, &mut content, &mut structure)?;
+        content.push_str("</w:tbl>");
+        structure.push_str("</w:tbl>");
+    } else {
+        emit_open_root(&mut content, "tr");
+        emit_open_root(&mut structure, "tr");
+        stream_tr_body(dom, node, settings, correlated_ws, &mut content, &mut structure)?;
+        content.push_str("</w:tr>");
+        structure.push_str("</w:tr>");
+    }
+    // xmlns:w form never contains the default xmlns strip target; keep parity.
+    if let Some(i) = content.find(WML_DEFAULT_XMLNS) {
+        content.drain(i..i + WML_DEFAULT_XMLNS.len());
+    }
+    if let Some(i) = structure.find(WML_DEFAULT_XMLNS) {
+        structure.drain(i..i + WML_DEFAULT_XMLNS.len());
+    }
+    Some((
+        crate::util::sha1::sha1_hex(&content),
+        crate::util::sha1::sha1_hex(&structure),
+    ))
+}
+
+fn emit_open_root(out: &mut String, local: &str) {
+    out.push_str("<w:");
+    out.push_str(local);
+    out.push_str(" xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">");
+}
+
+fn element_or_desc_has_predelete_orig(dom: &Dom, node: NodeId) -> bool {
+    let pre = PT::name("PreDelete");
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        if !dom.is_element(n) {
+            continue;
+        }
+        if dom.attribute(n, &pre) == Some(super::PREDELETE_STAMP_ORIG) {
+            return true;
+        }
+        let c = dom.child_count(n);
+        for i in 0..c {
+            stack.push(dom.child_at(n, i));
+        }
+    }
+    false
+}
+
+/// Stream all `w:tr` children of a table (non-tr children ignored like clone).
+fn stream_tbl_body(
+    dom: &Dom,
+    tbl: NodeId,
+    settings: &WmlComparerSettings,
+    correlated_ws: bool,
+    content: &mut String,
+    structure: &mut String,
+) -> Option<()> {
+    let tr_name = W::tr();
+    let n = dom.child_count(tbl);
+    for i in 0..n {
+        let c = dom.child_at(tbl, i);
+        if !dom.is_element(c) || dom.name(c).as_ref() != Some(&tr_name) {
+            continue;
+        }
+        content.push_str("<w:tr>");
+        structure.push_str("<w:tr>");
+        stream_tr_body(dom, c, settings, correlated_ws, content, structure)?;
+        content.push_str("</w:tr>");
+        structure.push_str("</w:tr>");
+    }
+    Some(())
+}
+
+/// Stream all `w:tc` children of a row (non-tc children ignored like clone).
+fn stream_tr_body(
+    dom: &Dom,
+    tr: NodeId,
+    settings: &WmlComparerSettings,
+    correlated_ws: bool,
+    content: &mut String,
+    structure: &mut String,
+) -> Option<()> {
+    let tc_name = W::tc();
+    let n = dom.child_count(tr);
+    for i in 0..n {
+        let c = dom.child_at(tr, i);
+        if !dom.is_element(c) || dom.name(c).as_ref() != Some(&tc_name) {
+            continue;
+        }
+        content.push_str("<w:tc>");
+        structure.push_str("<w:tc>");
+        stream_tc_body(dom, c, settings, correlated_ws, content, structure)?;
+        content.push_str("</w:tc>");
+        structure.push_str("</w:tc>");
+    }
+    Some(())
+}
+
+/// Stream cell body: simple paragraphs + tcPr (gridSpan only). Bookmarks/pPr
+/// drops mirror clone_internal. Anything else → None (fallback).
+fn stream_tc_body(
+    dom: &Dom,
+    tc: NodeId,
+    settings: &WmlComparerSettings,
+    correlated_ws: bool,
+    content: &mut String,
+    structure: &mut String,
+) -> Option<()> {
+    let n = dom.child_count(tc);
+    for i in 0..n {
+        let c = dom.child_at(tc, i);
+        if !dom.is_element(c) {
+            continue;
+        }
+        let name = dom.name(c)?;
+        // Drops identical to clone_internal for these tags.
+        if name == W::bookmark_start()
+            || name == W::bookmark_end()
+            || name == W::p_pr()
+            || name == W::r_pr()
+        {
+            continue;
+        }
+        if name.namespace_name() == A14::URI {
+            continue;
+        }
+        if name == W::tc_pr() {
+            stream_tc_pr(dom, c, content, structure);
+            continue;
+        }
+        if name == W::p() {
+            stream_simple_p_fragment(dom, c, settings, correlated_ws, content, structure)?;
+            continue;
+        }
+        // Nested simple table under cell.
+        if name == W::tbl() {
+            content.push_str("<w:tbl>");
+            structure.push_str("<w:tbl>");
+            stream_tbl_body(dom, c, settings, correlated_ws, content, structure)?;
+            content.push_str("</w:tbl>");
+            structure.push_str("</w:tbl>");
+            continue;
+        }
+        // Complex cell content (drawing, br-only via non-simple p, sdt, …).
+        return None;
+    }
+    Some(())
+}
+
+/// `tcPr` clone keeps only `w:gridSpan` children; empty → `<w:tcPr />`.
+/// gridSpan attrs: clone rewrites `w:val` → bare `val="..."`.
+fn stream_tc_pr(dom: &Dom, tc_pr: NodeId, content: &mut String, structure: &mut String) {
+    let gs_name = W::grid_span();
+    let mut spans: Vec<String> = Vec::new();
+    let n = dom.child_count(tc_pr);
+    for i in 0..n {
+        let c = dom.child_at(tc_pr, i);
+        if !dom.is_element(c) || dom.name(c).as_ref() != Some(&gs_name) {
+            continue;
+        }
+        let val = dom.attribute(c, &W::val()).unwrap_or("").to_string();
+        spans.push(val);
+    }
+    if spans.is_empty() {
+        content.push_str("<w:tcPr />");
+        structure.push_str("<w:tcPr />");
+        return;
+    }
+    content.push_str("<w:tcPr>");
+    structure.push_str("<w:tcPr>");
+    for val in &spans {
+        // Clone uses empty-namespace `val` attribute (not w:val).
+        let frag = format!(
+            "<w:gridSpan val=\"{}\" />",
+            escape_xml_attr(val)
+        );
+        content.push_str(&frag);
+        structure.push_str(&frag);
+    }
+    content.push_str("</w:tcPr>");
+    structure.push_str("</w:tcPr>");
+}
+
+/// Emit simple-paragraph projection as a fragment (no root xmlns).
+/// Mirrors `try_stream_hash_simple_paragraph` merge rules.
+fn stream_simple_p_fragment(
+    dom: &Dom,
+    node: NodeId,
+    settings: &WmlComparerSettings,
+    correlated_ws: bool,
+    content: &mut String,
+    structure: &mut String,
+) -> Option<()> {
+    if dom.name(node) != Some(W::p()) {
+        return None;
+    }
+    // Surviving attrs after rsid/pt/volatile filter — foreign → fallback.
+    let mut attr_xml = String::new();
+    for i in 0..dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, i);
+        if dom.is_namespace_declaration(an) {
+            continue;
+        }
+        if is_rsid_attr(an) || is_pt(an) || is_volatile_para_attr(an) {
+            continue;
+        }
+        let ns = an.namespace_name();
+        let local = an.local_name();
+        if ns == W::URI {
+            attr_xml.push(' ');
+            attr_xml.push_str("w:");
+            attr_xml.push_str(local);
+            attr_xml.push_str("=\"");
+            attr_xml.push_str(&escape_xml_attr(av));
+            attr_xml.push('"');
+        } else if ns.is_empty() {
+            attr_xml.push(' ');
+            attr_xml.push_str(local);
+            attr_xml.push_str("=\"");
+            attr_xml.push_str(&escape_xml_attr(av));
+            attr_xml.push('"');
+        } else {
+            return None;
+        }
+    }
+
+    let mut texts: Vec<String> = Vec::new();
+    let n = dom.child_count(node);
+    for i in 0..n {
+        let c = dom.child_at(node, i);
+        if !dom.is_element(c) {
+            continue;
+        }
+        let name = dom.name(c)?;
+        if name == W::p_pr() || name == W::bookmark_start() || name == W::bookmark_end() {
+            continue;
+        }
+        if name != W::r() {
+            return None;
+        }
+        let mut saw_t = false;
+        for j in 0..dom.child_count(c) {
+            let cc = dom.child_at(c, j);
+            if !dom.is_element(cc) {
+                continue;
+            }
+            let cn = dom.name(cc)?;
+            if cn == W::r_pr() {
+                continue;
+            }
+            if cn != W::t() {
+                return None;
+            }
+            saw_t = true;
+            let mut t = apply_text_transform(&dom.value_str(cc), settings);
+            if correlated_ws {
+                t = whitespace_invariant_for_hash(&t);
+            }
+            texts.push(t);
+        }
+        if !saw_t {
+            return None; // empty run — clone path may differ
+        }
+    }
+    let merged = texts.concat();
+
+    if merged.is_empty() {
+        content.push_str("<w:p");
+        content.push_str(&attr_xml);
+        content.push_str(" />");
+        structure.push_str("<w:p");
+        structure.push_str(&attr_xml);
+        structure.push_str(" />");
+    } else {
+        content.push_str("<w:p");
+        content.push_str(&attr_xml);
+        content.push_str("><w:r><w:t>");
+        content.push_str(&escape_xml_text(&merged));
+        content.push_str("</w:t></w:r></w:p>");
+        structure.push_str("<w:p");
+        structure.push_str(&attr_xml);
+        structure.push_str("><w:r><w:t /></w:r></w:p>");
+    }
+    Some(())
+}
+
 fn escape_xml_attr(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -823,6 +1143,15 @@ pub fn add_sha1_hash_to_block_level_content(
             // Content hash is space-sensitive (correlated_ws = false).
             let sha = block_sha1_from_source(dom, d, true, settings, rel_hash, false);
             dom.set_attribute_value(d, &PT::sha1_hash(), Some(&sha));
+            continue;
+        }
+        // HASH-STREAM-04: simple tbl/tr stream content + structure without clone.
+        if (name == W::tbl() || name == W::tr())
+            && let Some((sha, sha2)) =
+                try_stream_hash_simple_table_or_tr(dom, d, settings, false)
+        {
+            dom.set_attribute_value(d, &PT::sha1_hash(), Some(&sha));
+            dom.set_attribute_value(d, &PT::structure_sha1_hash(), Some(&sha2));
             continue;
         }
         let clone = clone_block_level_content_for_hashing(dom, d, true, settings, rel_hash);
