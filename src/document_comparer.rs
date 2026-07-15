@@ -2300,15 +2300,18 @@ fn compare_documents_impl(
             out.set_part(&part, n.into_bytes());
         }
     }
-    // Word-validity normalization on every validity-swept content part
+    // Word-validity normalization on every validity-swept content part — NOT
+    // document.xml alone. Word opens the package (headers/footers/notes/
+    // settings/styles/rels/content-types); a clean body with a corrupt notes
+    // or settings part still raises "unreadable content".
+    //
     // (validator sweep: 146/166 outputs carried schema errors Word's own
-    // redlines don't): canonicalize universal measures / fractional ints and
+    // redlines don't): canonicalize universal measures / fractional ints,
     // fix Strict artifacts (cnfStyle bitmask, wp14 percents, out-of-range
-    // paraIds). Scope notes: `word/charts/` (DrawingML) and `word/theme/`
-    // are included ON PURPOSE — the Strict percent→per-thousand rewrite
-    // covers the drawingml namespaces; `word/media/*.xml` is vacuous for
-    // binary payloads (`part_string` returns None) and only catches actual
-    // XML placed under media (chart-under-media class, 49cd707c).
+    // paraIds), and strip pt:* scratch so headers/notes don't ship Unids.
+    // Scope notes: `word/charts/` (DrawingML) and `word/theme/` are included
+    // ON PURPOSE — the Strict percent→per-thousand rewrite covers drawingml
+    // namespaces; `word/media/*.xml` is vacuous for binary payloads.
     for part in out.parts() {
         let is_swept = part == main1
             || part == "word/styles.xml"
@@ -2331,7 +2334,43 @@ fn compare_documents_impl(
             if let Some(vr) = vd.root(doc) {
                 crate::comparer::finalize::normalize_universal_measures(&mut vd, vr);
                 crate::comparer::finalize::fix_strict_validity_artifacts(&mut vd, vr);
+                crate::comparer::finalize::remove_powertools_scratch_markup(&mut vd, vr);
                 out.set_part(&part, vd.serialize_element(vr).into_bytes());
+            }
+        }
+    }
+    // Final package-level notes↔settings coherence (after the validity sweep
+    // re-serialized those parts). Dangling special-note ids in settings are a
+    // package bug, not a document.xml bug.
+    {
+        let collect_ids = |part: &str, local: &str| -> std::collections::HashSet<String> {
+            let mut set = std::collections::HashSet::new();
+            let Some(x) = out.part_string(part) else {
+                return set;
+            };
+            let mut d = Dom::new();
+            let doc = d.parse_xdocument(&x);
+            let Some(root) = d.root(doc) else {
+                return set;
+            };
+            let name = W::name(local);
+            for n in d.elements(root, Some(&name)) {
+                if let Some(id) = d.attribute(n, &W::id()) {
+                    set.insert(id.to_string());
+                }
+            }
+            set
+        };
+        let fn_ids = collect_ids("word/footnotes.xml", "footnote");
+        let en_ids = collect_ids("word/endnotes.xml", "endnote");
+        if let Some(sx) = out.part_string("word/settings.xml") {
+            let mut sd = Dom::new();
+            let sdoc = sd.parse_xdocument(&sx);
+            if let Some(sroot) = sd.root(sdoc) {
+                crate::comparer::footnotes::sync_settings_special_note_ids(
+                    &mut sd, sroot, &fn_ids, &en_ids,
+                );
+                out.set_part("word/settings.xml", sd.serialize_element(sroot).into_bytes());
             }
         }
     }
