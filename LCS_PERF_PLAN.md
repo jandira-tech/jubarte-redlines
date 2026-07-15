@@ -71,6 +71,7 @@ evidence and ready-to-run branches of the program.
 | DOM-ITER-03: for_each_descendant_element non-alloc walk | banked (MEASURED #28) | exact m4b + order==descendants; pdense lean; redline×5lb thrash/worse — no wall claim |
 | HASH-STREAM-01 lite: stream serialize into SHA-1 for block digests | shipped lean win (MEASURED #29) | matrix×4: RFP×5lb + redline×5lb wall ↓ both slots; pdense noise; digests exact |
 | HASH-STREAM-02: structure digest without structure-clone DOM | banked (MEASURED #30) | exact == clone oracle; pdense lean; RFP/redline mixed slots — no wall claim |
+| DOM-ITER-04: RP block/tag walk early-exit + child_count | banked (MEASURED #31) | exact m28 + tags/blocks; matrix wall mixed/noise (clean path skips accept) |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1170,6 +1171,33 @@ uses it for `pt:StructureSHA1Hash` instead of `clone_for_structure_hash` +
 | redline_rfp17_vs_5lb102 | 30.98 / 30.38 | 31.01 / 29.78 (mixed) |
 
 document.xml match YES all four. **Verdict: keep / bank** — exact; no wall claim.
+
+## MEASURED #31 — 2026-07-15: DOM-ITER-04 BANKED
+
+Revision-processor `first_block_content` early-exit iterative walk (no full
+`descendants_and_self` Vec); `descendant_and_self_tags` uses `child_count`
+empty checks; `iterate_block_content_elements` single element-children collect.
+Tests: `tests/perf_dom_iter04.rs` + m28 RP suite.
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = HASH-STREAM-02)
+
+| fixture | A wall | B wall |
+|---|---:|---:|
+| pdense_15k | 15.40 / 15.20 | 15.33 / 15.25 (mixed) |
+| rfp17_redline_self | ~0.06–0.07 | ~0.07–0.08 |
+| rfp17_vs_5lb102 | 24.42 / 23.25 | 23.70 / 23.47 (mixed) |
+| redline_rfp17_vs_5lb102 | **29.61 / 30.62** | 30.29 / 30.81 (cand both worse) |
+
+document.xml match YES all four. **Verdict: keep / bank** — exact; clean-matrix
+path rarely runs full accept rebuilds, so wall is noise.
+
+## Session stop note — 2026-07-15
+
+Easy Lane S Q0 wall seconds on the permanent 4-fixture matrix are exhausted or
+banked/reverted through MEASURED #31. Residual RFP×5lb wall ≈23–24 s. Remaining
+portfolio EV is multi-session architectural (full HASH-STREAM without materializing
+hash-clone DOM; ACCEPT-INPLACE dirty transforms; ATOM-VIEW/ATOM-ID; RESULT-DOM;
+produce residual). See `{SCRATCH}/stop-evidence.md`.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

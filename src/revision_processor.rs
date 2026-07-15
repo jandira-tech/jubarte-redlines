@@ -567,13 +567,15 @@ pub fn descendant_and_self_tags(dom: &Dom, element: NodeId) -> Vec<Tag> {
         element,
         tag_type: TagType::Element,
     }];
-    // (children, next index) — mirrors the C# iterator stack.
-    let mut stack: Vec<(Vec<NodeId>, usize)> = vec![(dom.elements(element, None), 0)];
+    // DOM-ITER-04: stack of (element children, next index, last advanced element).
+    // Element-child lists still materialize (EndElement needs the finished id),
+    // but empty checks use `child_count` (no `nodes()` clone).
+    let mut stack: Vec<(Vec<NodeId>, usize)> = vec![(element_children_vec(dom, element), 0)];
     while let Some(top) = stack.last_mut() {
         if top.1 < top.0.len() {
             let current = top.0[top.1];
             top.1 += 1;
-            if dom.nodes(current).is_empty() {
+            if dom.child_count(current) == 0 {
                 out.push(Tag {
                     element: current,
                     tag_type: TagType::EmptyElement,
@@ -584,7 +586,7 @@ pub fn descendant_and_self_tags(dom: &Dom, element: NodeId) -> Vec<Tag> {
                 element: current,
                 tag_type: TagType::Element,
             });
-            stack.push((dom.elements(current, None), 0));
+            stack.push((element_children_vec(dom, current), 0));
             continue;
         }
         stack.pop();
@@ -604,6 +606,19 @@ pub fn descendant_and_self_tags(dom: &Dom, element: NodeId) -> Vec<Tag> {
     out
 }
 
+/// Direct element children (document order) without the `elements()` filter path.
+fn element_children_vec(dom: &Dom, id: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let n = dom.child_count(id);
+    for i in 0..n {
+        let c = dom.child_at(id, i);
+        if dom.is_element(c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// `BlockContentInfo` (RevisionProcessor.cs :52): prev/this/next links for
 /// block-level content. `iterate_block_content_elements` fills all three
 /// (`this` always `Some`); `get_paragraph_info` fills `previous` (= previous
@@ -616,15 +631,30 @@ pub struct BlockContentInfo {
 }
 
 /// First `w:p`/`w:tbl` among `roots`' descendants-and-self, document order.
+/// DOM-ITER-04: early-exit iterative walk (no full `descendants_and_self` Vec).
 fn first_block_content(dom: &Dom, roots: &[NodeId]) -> Option<NodeId> {
     let (p, tbl) = (W::p(), W::tbl());
+    let is_block = |e: NodeId| dom.name(e).is_some_and(|n| n == p || n == tbl);
     for &r in roots {
-        if let Some(hit) = dom
-            .descendants_and_self(r, None)
-            .into_iter()
-            .find(|&e| dom.name(e).is_some_and(|n| n == p || n == tbl))
-        {
-            return Some(hit);
+        if is_block(r) {
+            return Some(r);
+        }
+        let mut stack: Vec<(NodeId, usize)> = vec![(r, 0)];
+        while let Some((node, i)) = stack.last_mut() {
+            let n = dom.child_count(*node);
+            if *i >= n {
+                stack.pop();
+                continue;
+            }
+            let c = dom.child_at(*node, *i);
+            *i += 1;
+            if !dom.is_element(c) {
+                continue;
+            }
+            if is_block(c) {
+                return Some(c);
+            }
+            stack.push((c, 0));
         }
     }
     None
@@ -644,10 +674,12 @@ fn elements_after_self(dom: &Dom, id: NodeId) -> Vec<NodeId> {
 /// current element's FOLLOWING siblings (climbing ancestors up to `element`),
 /// so a table's inner paragraphs never appear once the table itself matched.
 pub fn iterate_block_content_elements(dom: &Dom, element: NodeId) -> Vec<BlockContentInfo> {
-    if dom.elements(element, None).is_empty() {
+    // DOM-ITER-04: one element-children collect (was two `elements()` calls).
+    let kids = element_children_vec(dom, element);
+    if kids.is_empty() {
         return Vec::new();
     }
-    let Some(first) = first_block_content(dom, &dom.elements(element, None)) else {
+    let Some(first) = first_block_content(dom, &kids) else {
         return Vec::new();
     };
 
