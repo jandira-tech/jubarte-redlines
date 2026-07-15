@@ -870,17 +870,19 @@ fn emit_merged_run_fragments(frags: &[RunFrag], out: &mut String, structure_only
     }
 }
 
-/// HASH-STREAM-04: stream content + structure digests for a simple `w:tbl` or
-/// `w:tr` without materializing a hash-clone subtree.
+/// HASH-STREAM-04/06: stream content + structure digests for a simple `w:tbl`,
+/// `w:tr`, or `w:tc` without materializing a hash-clone subtree.
 ///
 /// Accepted shapes match `clone_internal` projection for tables:
 /// - `w:tbl` keeps only `w:tr` children (drops `tblPr`/`tblGrid`/…)
 /// - `w:tr` keeps only `w:tc` children (drops `trPr`)
 /// - `w:tc` keeps element children: simple paragraphs, `tcPr` (gridSpan only)
-/// - paragraphs only when streamable as simple-p (t-only runs after drops)
+/// - paragraphs only when streamable as simple-p (incl. empty leaf runs)
 ///
 /// Returns `(content_sha1_hex, structure_sha1_hex)` digest-identical to
-/// `block_sha1(clone)` / `structure_sha1(clone)`. `None` → use clone fallback.
+/// `block_sha1(clone)` / `structure_sha1(clone)`. For `w:tc`, structure is
+/// still returned (callers that only need content may ignore it). `None` →
+/// use clone fallback.
 pub fn try_stream_hash_simple_table_or_tr(
     dom: &Dom,
     node: NodeId,
@@ -888,7 +890,7 @@ pub fn try_stream_hash_simple_table_or_tr(
     correlated_ws: bool,
 ) -> Option<(String, String)> {
     let name = dom.name(node)?;
-    if name != W::tbl() && name != W::tr() {
+    if name != W::tbl() && name != W::tr() && name != W::tc() {
         return None;
     }
     // PreDelete salt changes clone attrs — stream only unsalted clean trees.
@@ -903,12 +905,19 @@ pub fn try_stream_hash_simple_table_or_tr(
         stream_tbl_body(dom, node, settings, correlated_ws, &mut content, &mut structure)?;
         content.push_str("</w:tbl>");
         structure.push_str("</w:tbl>");
-    } else {
+    } else if name == W::tr() {
         emit_open_root(&mut content, "tr");
         emit_open_root(&mut structure, "tr");
         stream_tr_body(dom, node, settings, correlated_ws, &mut content, &mut structure)?;
         content.push_str("</w:tr>");
         structure.push_str("</w:tr>");
+    } else {
+        // HASH-STREAM-06: simple table cell root.
+        emit_open_root(&mut content, "tc");
+        emit_open_root(&mut structure, "tc");
+        stream_tc_body(dom, node, settings, correlated_ws, &mut content, &mut structure)?;
+        content.push_str("</w:tc>");
+        structure.push_str("</w:tc>");
     }
     // xmlns:w form never contains the default xmlns strip target; keep parity.
     if let Some(i) = content.find(WML_DEFAULT_XMLNS) {
@@ -1198,13 +1207,16 @@ pub fn add_sha1_hash_to_block_level_content(
             dom.set_attribute_value(d, &PT::sha1_hash(), Some(&sha));
             continue;
         }
-        // HASH-STREAM-04: simple tbl/tr stream content + structure without clone.
-        if (name == W::tbl() || name == W::tr())
+        // HASH-STREAM-04/06: simple tbl/tr/tc stream without clone.
+        if (name == W::tbl() || name == W::tr() || name == W::tc())
             && let Some((sha, sha2)) =
                 try_stream_hash_simple_table_or_tr(dom, d, settings, false)
         {
             dom.set_attribute_value(d, &PT::sha1_hash(), Some(&sha));
-            dom.set_attribute_value(d, &PT::structure_sha1_hash(), Some(&sha2));
+            // Structure digests only for tbl/tr (PowerTools ElementsToHaveSha1 extras).
+            if name == W::tbl() || name == W::tr() {
+                dom.set_attribute_value(d, &PT::structure_sha1_hash(), Some(&sha2));
+            }
             continue;
         }
         let clone = clone_block_level_content_for_hashing(dom, d, true, settings, rel_hash);
