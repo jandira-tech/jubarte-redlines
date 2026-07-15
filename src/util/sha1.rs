@@ -7,12 +7,14 @@ use sha1::{Digest, Sha1};
 const HEX_LOWER: [u8; 16] = *b"0123456789abcdef";
 
 fn hex_string_from_bytes(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push(HEX_LOWER[(b >> 4) as usize] as char);
-        s.push(HEX_LOWER[(b & 0x0f) as usize] as char);
+    // HASH-01c: write ASCII nibbles into a byte buffer (no per-nibble `char` push).
+    let mut out = vec![0u8; bytes.len() * 2];
+    for (i, &b) in bytes.iter().enumerate() {
+        out[i * 2] = HEX_LOWER[(b >> 4) as usize];
+        out[i * 2 + 1] = HEX_LOWER[(b & 0x0f) as usize];
     }
-    s
+    // HEX_LOWER is pure ASCII; from_utf8 cannot fail.
+    String::from_utf8(out).expect("hex digits are ASCII")
 }
 
 /// `SHA1HashStringForUTF8String(s)` — lowercase hex SHA-1 of the UTF-8 bytes.

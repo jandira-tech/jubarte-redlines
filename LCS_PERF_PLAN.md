@@ -51,6 +51,7 @@ evidence and ready-to-run branches of the program.
 | CLONE-01: clone_subtree index walk + reserve | shipped banked (MEASURED #8) | exact clone; pdense wall noise-neutral — bank |
 | PARSE-02: skip ns_scope clone without xmlns | shipped lean win (MEASURED #9) | pdense user CPU ↓ every run; wall 3/4 better; exact document.xml |
 | PARSE-01b: starts_with/index_of no Vec alloc | shipped win (MEASURED #10) | pdense wall+user ↓ every ABBA slot; exact document.xml |
+| HASH-01c: hex write via byte buffer | shipped lean win (MEASURED #11) | pdense wall ↓ every ABBA slot (~0.1–0.5 s); digests exact |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -771,6 +772,21 @@ MEASURED #5; this is the small scanner allocation fix).
 - **document.xml:** identical.
 
 **Verdict: ship.**
+
+## MEASURED #11 — 2026-07-15: HASH-01c hex byte buffer lean win
+
+`hex_string_from_bytes` writes nibble ASCII into a `Vec<u8>` then
+`String::from_utf8` instead of two `char` pushes per digest byte. Digests
+unchanged (`sha1_hex_known_vector`, HASH-02 stream suite).
+
+### A/B — ABBA ×2, pdense 15k, base = PARSE-01b
+
+| run | A wall | B wall |
+|---|---:|---:|
+| r1 | 22.29 / 22.26 | **21.79 / 22.18** |
+| r2 | 22.38 / 22.79 | **22.16 / 22.48** |
+
+Cand wall better in **all 4** slots (~0.1–0.5 s). **Verdict: ship.**
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
