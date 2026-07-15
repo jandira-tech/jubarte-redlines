@@ -5,7 +5,7 @@
 
 use jubarte::namespaces::W;
 use jubarte::revision_processor::{
-    descendant_and_self_tags, iterate_block_content_elements, TagType,
+    TagType, descendant_and_self_tags, iterate_block_content_elements,
 };
 use jubarte::xmllinq::Dom;
 
