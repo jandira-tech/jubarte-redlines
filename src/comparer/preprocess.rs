@@ -6,7 +6,7 @@
 
 use crate::namespaces::{A14, O, PT, R, VML, W, WP};
 use crate::util::group_adjacent;
-use crate::util::sha1::sha1_hex;
+
 use crate::xmllinq::{Dom, NodeId, XName};
 
 use super::WmlComparerSettings;
@@ -594,13 +594,20 @@ pub fn test_for_invalid_content(dom: &Dom, root: NodeId) -> Result<(), String> {
 /// JS string `.replace` removes only the first occurrence; the wrapper has
 /// already stripped all xmlns decls so exactly one is re-emitted on the root).
 pub fn block_hash_string(dom: &Dom, clone: NodeId) -> String {
-    let serialized = dom.serialize_element(clone);
-    serialized.replacen(WML_DEFAULT_XMLNS, "", 1)
+    let mut serialized = dom.serialize_element(clone);
+    // In-place strip (same result as `replacen(.., 1)` without a second full alloc).
+    if let Some(i) = serialized.find(WML_DEFAULT_XMLNS) {
+        serialized.drain(i..i + WML_DEFAULT_XMLNS.len());
+    }
+    serialized
 }
 
 /// M4.B.2 — SHA-1 of the block hash string.
+///
+/// HASH-STREAM-01 lite: stream serialize into SHA-1 (no full XML `String` for
+/// the digest path). Digest must match `sha1_hex(block_hash_string(...))`.
 pub fn block_sha1(dom: &Dom, clone: NodeId) -> String {
-    sha1_hex(&block_hash_string(dom, clone))
+    dom.serialize_element_sha1_hex(clone)
 }
 
 /// M4.B.3 — `CloneForStructureHash` (:5121): keep element name + attributes +

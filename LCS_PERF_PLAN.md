@@ -69,6 +69,7 @@ evidence and ready-to-run branches of the program.
 | DOM-ITER-02: hash-clone preprocess index walks | shipped lean win (MEASURED #26) | matrix×4: wall ↓ every slot on pdense+RFP×5lb+redline×5lb; m4b exact |
 | NAME-01b: cache tbl/tr/tc/bookmark/move locals + call sites | shipped win (MEASURED #27) | matrix×4 incl redline×5lb: wall ↓ every load-bearing slot; equality exact |
 | DOM-ITER-03: for_each_descendant_element non-alloc walk | banked (MEASURED #28) | exact m4b + order==descendants; pdense lean; redline×5lb thrash/worse — no wall claim |
+| HASH-STREAM-01 lite: stream serialize into SHA-1 for block digests | shipped lean win (MEASURED #29) | matrix×4: RFP×5lb + redline×5lb wall ↓ both slots; pdense noise; digests exact |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1130,6 +1131,26 @@ Tests: `tests/perf_dom_iter03.rs` (order == descendants; m4b green).
 
 † First cand redline slot is thrash (sys 15 s).  
 document.xml match YES all four. **Verdict: keep / bank** — exact cleanup; no wall claim.
+
+## MEASURED #29 — 2026-07-15: HASH-STREAM-01 lite LEAN WIN
+
+`block_sha1` streams serialize into SHA-1 via `serialize_element_sha1_hex`
+(XmlBuf sink), stripping the first WML default-xmlns from the root open tag —
+same digest as `sha1_hex(block_hash_string)` without materializing the full
+XML string for the digest path. `block_hash_string` still available; in-place
+xmlns drain (no `replacen` second alloc). Tests: `tests/perf_hash_stream_lite.rs`
++ m4b_preprocess.
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = DOM-ITER-03 banked)
+
+| fixture | A wall / user | B wall / user |
+|---|---:|---:|
+| pdense_15k | 16.00 / 15.17 · 16.15 / 15.37 | 16.42 / 15.56 · 16.04 / 15.36 (noise) |
+| rfp17_redline_self | ~0.06 | ~0.06 |
+| **rfp17_vs_5lb102** | 26.98 / 21.52 · 24.90 / 20.93 | **25.13 / 20.96 · 23.90 / 20.72** |
+| **redline_rfp17_vs_5lb102** | 31.45 / 23.01 · 29.46 / 23.05 | **29.66 / 23.50 · 28.58 / 22.93** |
+
+document.xml match YES all four. **Verdict: ship** (lean wall win on load-bearing fixtures).
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

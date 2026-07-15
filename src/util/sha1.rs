@@ -6,7 +6,7 @@ use sha1::{Digest, Sha1};
 /// `HexStringFromBytes` — lowercase hex.
 const HEX_LOWER: [u8; 16] = *b"0123456789abcdef";
 
-fn hex_string_from_bytes(bytes: &[u8]) -> String {
+pub(crate) fn hex_string_from_bytes(bytes: &[u8]) -> String {
     // HASH-01c: write ASCII nibbles into a byte buffer (no per-nibble `char` push).
     let mut out = vec![0u8; bytes.len() * 2];
     for (i, &b) in bytes.iter().enumerate() {

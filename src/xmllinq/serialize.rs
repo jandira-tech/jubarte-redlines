@@ -222,9 +222,106 @@ pub fn serialize_element(dom: &Dom, el: NodeId) -> String {
     out
 }
 
+/// HASH-STREAM-01 lite: SHA-1 (lowercase hex) of the serialized element with the
+/// first WML default-xmlns declaration stripped — byte-identical to
+/// `sha1_hex(serialize_element(el).replacen(WML_DEFAULT_XMLNS, "", 1))` without
+/// materializing the full XML string for hashing.
+pub fn serialize_element_sha1_hex(dom: &Dom, el: NodeId) -> String {
+    let mut state = State { counter: 0 };
+    let root_scope = Scope::root();
+    let mut out = HashXmlBuf::new();
+    emit(dom, el, &root_scope, &mut state, &mut out);
+    out.finish_hex()
+}
+
+/// Minimal output sink so serialize can target `String` or a streaming hasher.
+trait XmlBuf {
+    fn push_str(&mut self, s: &str);
+    fn push(&mut self, c: char);
+}
+
+impl XmlBuf for String {
+    #[inline]
+    fn push_str(&mut self, s: &str) {
+        String::push_str(self, s);
+    }
+    #[inline]
+    fn push(&mut self, c: char) {
+        String::push(self, c);
+    }
+}
+
+/// WordprocessingML default xmlns substring stripped once from block hash input
+/// (matches `preprocess::WML_DEFAULT_XMLNS` / PowerTools).
+const WML_DEFAULT_XMLNS: &str =
+    " xmlns=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"";
+
+/// Stream serialized XML into SHA-1, stripping the first WML default xmlns from
+/// the root open tag (same as `replacen` on the full string).
+struct HashXmlBuf {
+    hasher: sha1::Sha1,
+    /// Bytes of the root open tag until the first `>`.
+    open: String,
+    past_root_open: bool,
+}
+
+impl HashXmlBuf {
+    fn new() -> Self {
+        use sha1::Digest;
+        Self {
+            hasher: sha1::Sha1::new(),
+            open: String::with_capacity(256),
+            past_root_open: false,
+        }
+    }
+
+    fn finish_hex(mut self) -> String {
+        use sha1::Digest;
+        // Degenerate: no `>` seen (should not happen for well-formed emit).
+        if !self.past_root_open {
+            self.flush_open_tag();
+        }
+        crate::util::sha1::hex_string_from_bytes(&self.hasher.finalize())
+    }
+
+    fn flush_open_tag(&mut self) {
+        use sha1::Digest;
+        if let Some(i) = self.open.find(WML_DEFAULT_XMLNS) {
+            self.open.drain(i..i + WML_DEFAULT_XMLNS.len());
+        }
+        self.hasher.update(self.open.as_bytes());
+        self.open.clear();
+        self.past_root_open = true;
+    }
+}
+
+impl XmlBuf for HashXmlBuf {
+    fn push_str(&mut self, s: &str) {
+        use sha1::Digest;
+        if self.past_root_open {
+            self.hasher.update(s.as_bytes());
+            return;
+        }
+        self.open.push_str(s);
+        if let Some(gt) = self.open.find('>') {
+            let rest = self.open[gt + 1..].to_string();
+            self.open.truncate(gt + 1);
+            self.flush_open_tag();
+            if !rest.is_empty() {
+                self.hasher.update(rest.as_bytes());
+            }
+        }
+    }
+
+    fn push(&mut self, c: char) {
+        let mut buf = [0u8; 4];
+        self.push_str(c.encode_utf8(&mut buf));
+    }
+}
+
 /// SER-01: write `prefix:local` (or bare local) into `out` with no temporary String.
 #[inline]
-fn write_qname(out: &mut String, prefix: &str, local: &str) {
+fn write_qname(out: &mut impl XmlBuf, prefix: &str, local: &str) {
     if !prefix.is_empty() {
         out.push_str(prefix);
         out.push(':');
@@ -234,7 +331,7 @@ fn write_qname(out: &mut String, prefix: &str, local: &str) {
 
 /// SER-01: escape attribute values into `out`. Fast path when no special chars.
 #[inline]
-fn write_escape_attr(out: &mut String, s: &str) {
+fn write_escape_attr(out: &mut impl XmlBuf, s: &str) {
     if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>' | b'"')) {
         out.push_str(s);
         return;
@@ -252,7 +349,7 @@ fn write_escape_attr(out: &mut String, s: &str) {
 
 /// SER-01: escape text content into `out`. Fast path when no special chars.
 #[inline]
-fn write_escape_text(out: &mut String, s: &str) {
+fn write_escape_text(out: &mut impl XmlBuf, s: &str) {
     if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>')) {
         out.push_str(s);
         return;
@@ -277,7 +374,7 @@ fn resolve_prefix(scope: &mut Scope<'_>, state: &mut State, uri: &str) -> String
 
 /// Write namespace decls + real attrs + rewritten QName-list attrs into `out`.
 fn write_attributes(
-    out: &mut String,
+    out: &mut impl XmlBuf,
     scope: &mut Scope<'_>,
     state: &mut State,
     real_attrs: &[(&XName, &str)],
@@ -344,7 +441,7 @@ fn write_attributes(
     }
 }
 
-fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut String) {
+fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut impl XmlBuf) {
     let ename = dom.name(e).expect("emit: non-element node");
     let mut scope = Scope::child(parent, dom, e);
 
