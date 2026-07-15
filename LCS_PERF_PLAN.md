@@ -72,6 +72,7 @@ evidence and ready-to-run branches of the program.
 | HASH-STREAM-01 lite: stream serialize into SHA-1 for block digests | shipped lean win (MEASURED #29) | matrix×4: RFP×5lb + redline×5lb wall ↓ both slots; pdense noise; digests exact |
 | HASH-STREAM-02: structure digest without structure-clone DOM | banked (MEASURED #30) | exact == clone oracle; pdense lean; RFP/redline mixed slots — no wall claim |
 | DOM-ITER-04: RP block/tag walk early-exit + child_count | banked (MEASURED #31) | exact m28 + tags/blocks; matrix wall mixed/noise (clean path skips accept) |
+| ACCEPT-INPLACE-A9: fill empty tc in place | banked (MEASURED #32) | exact m28/A.9; matrix mixed (A.9 often skipped); redline lean both slots |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1191,13 +1192,23 @@ Tests: `tests/perf_dom_iter04.rs` + m28 RP suite.
 document.xml match YES all four. **Verdict: keep / bank** — exact; clean-matrix
 path rarely runs full accept rebuilds, so wall is noise.
 
-## Session stop note — 2026-07-15
+## MEASURED #32 — 2026-07-15: ACCEPT-INPLACE-A9 BANKED
 
-Easy Lane S Q0 wall seconds on the permanent 4-fixture matrix are exhausted or
-banked/reverted through MEASURED #31. Residual RFP×5lb wall ≈23–24 s. Remaining
-portfolio EV is multi-session architectural (full HASH-STREAM without materializing
-hash-clone DOM; ACCEPT-INPLACE dirty transforms; ATOM-VIEW/ATOM-ID; RESULT-DOM;
-produce residual). See `{SCRATCH}/stop-evidence.md`.
+`add_empty_paragraph_to_any_empty_cells` mutates empty `w:tc`s in place
+(append `w:p`) instead of rebuilding the whole subtree. Same root NodeId
+returned. Tests: `tests/perf_accept_inplace_a9.rs` + m28 A.9 + ACCEPT-SKIP-02.
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = DOM-ITER-04)
+
+| fixture | A wall | B wall |
+|---|---:|---:|
+| pdense_15k | 15.59 / 15.29 | 15.32 / 15.30 (noise) |
+| rfp17_redline_self | ~0.05–0.06 | ~0.06–0.07 |
+| rfp17_vs_5lb102 | 23.43 / 23.12 | 23.22 / 23.32 (mixed) |
+| redline_rfp17_vs_5lb102 | 30.51 / 30.31 | **29.91 / 30.05** (lean both) |
+
+document.xml match YES all four. **Verdict: keep / bank** — exact; wall not
+reliable on permanent matrix (A.9 often skipped via ACCEPT-SKIP-02).
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

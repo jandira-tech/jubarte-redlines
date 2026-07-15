@@ -2317,40 +2317,55 @@ fn has_empty_table_cell(dom: &Dom, root: NodeId) -> bool {
 }
 
 /// A.9 — `AddEmptyParagraphToAnyEmptyCells` (:1448): a `w:tc` with no element
-/// children other than `w:tcPr` gains an empty `w:p`; everything else
-/// rebuilds recursively.
+/// children other than `w:tcPr` gains an empty `w:p`.
+///
+/// ACCEPT-INPLACE-A9: mutate empty cells in place (append `w:p`) instead of
+/// rebuilding the entire subtree. Returns the same `node` root (callers that
+/// rebind `e = add_empty...(dom, e)` stay correct).
 pub fn add_empty_paragraph_to_any_empty_cells(dom: &mut Dom, node: NodeId) -> NodeId {
     if !dom.is_element(node) {
-        return dom.clone_subtree(node);
+        return node;
     }
-    let name = dom.name(node).unwrap();
-    if name == W::tc()
-        && !dom
-            .elements(node, None)
-            .into_iter()
-            .any(|e| dom.name(e) != Some(W::tc_pr()))
-    {
-        let ne = dom.new_element(W::tc());
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
-        for e in dom.elements(node, None) {
-            let c = dom.clone_subtree(e);
-            dom.add(ne, c);
-        }
+    let tc = W::tc();
+    let tcpr = W::tc_pr();
+    // Collect empty cells first — cannot mutate while walking.
+    let mut empty: Vec<NodeId> = Vec::new();
+    collect_empty_table_cells(dom, node, &tc, &tcpr, &mut empty);
+    for cell in empty {
         let p = dom.new_element(W::p());
-        dom.add(ne, p);
-        return ne;
+        dom.add(cell, p);
     }
-    let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
+    node
+}
+
+fn collect_empty_table_cells(
+    dom: &Dom,
+    id: NodeId,
+    tc: &XName,
+    tcpr: &XName,
+    out: &mut Vec<NodeId>,
+) {
+    if let Some(name) = dom.name(id)
+        && name == *tc
+    {
+        let mut only_tcpr = true;
+        for i in 0..dom.child_count(id) {
+            let c = dom.child_at(id, i);
+            if dom.is_element(c) && dom.name(c).is_some_and(|n| n != *tcpr) {
+                only_tcpr = false;
+                break;
+            }
+        }
+        if only_tcpr {
+            out.push(id);
+        }
     }
-    for c in dom.nodes(node) {
-        let tc = add_empty_paragraph_to_any_empty_cells(dom, c);
-        dom.add(ne, tc);
+    for i in 0..dom.child_count(id) {
+        let c = dom.child_at(id, i);
+        if dom.is_element(c) {
+            collect_empty_table_cells(dom, c, tc, tcpr, out);
+        }
     }
-    ne
 }
 
 // ─────────────── A.10 — the full AcceptRevisionsForPart pipeline ────────────
