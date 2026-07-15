@@ -2473,6 +2473,10 @@ fn step_h(
                 );
                 let a2 = para_text_token_list(dom, &cul1[2]);
                 let b2 = para_text_token_list(dom, &cul2[2]);
+                let j2_raw = token_jaccard(
+                    &para_text_tokens(dom, &cul1[2]),
+                    &para_text_tokens(dom, &cul2[2]),
+                );
                 let content = |toks: &[String]| -> std::collections::HashSet<String> {
                     toks.iter()
                         .filter(|t| {
@@ -2555,10 +2559,13 @@ fn step_h(
                         && b2.len() <= 4
                         && a2.len() >= 6
                         && real_nonempty(&b2));
+                // both_long also needs raw j2 <0.15: bold_red×superscript shares
+                // "is used and" (j2≈0.27) — Word free-meshes; pure-I/D LO −21.
+                // center_bold×clear j2≈0.13 still pure-I/Ds (LO 100).
                 j1 + 1e-12 >= 0.12
                     && j1 + 1e-12 < 0.55
                     && j2c + 1e-12 < 0.05
-                    && (both_long || asymmetric_short)
+                    && (both_long && j2_raw + 1e-12 < 0.15 || asymmetric_short)
             };
         // M183 (left_alignment×line_spacing 3v4 / reverse 4v3): Demo last-sig
         // titles, first residual mid-related This-bodies, longer side has an
