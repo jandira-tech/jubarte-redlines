@@ -63,6 +63,7 @@ evidence and ready-to-run branches of the program.
 | ATOM-STACK-01: path stack instead of ancestors_and_self | shipped win (MEASURED #20) | pdense + RFP×5lb102 wall ↓ both slots; atomize profile hotspot |
 | SER-01: direct write tags/attrs/escapes into out buffer | shipped win (MEASURED #21) | matrix×4: RFP×5lb + redline×5lb wall ↓ both slots; pdense noise; exact document.xml |
 | LCS-SCORE-01: prefix sums for non-separator LCR scores | banked (MEASURED #22) | exact prefix==direct; pdense+RFP×5lb lean; redline×5lb noise/worse — no wall claim |
+| ATOM-TEXT-01: value_str borrow single text-child leaves | shipped lean win (MEASURED #23) | matrix×4: pdense+RFP×5lb+redline×5lb wall ↓ every slot; exact value_str==value |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1011,6 +1012,25 @@ call; O(1) range score for each candidate run. Exact: prefix range == direct
 
 document.xml match YES all four. **Verdict: keep / bank** — exact cleanup; do not
 claim a wall win (load-bearing redline×5lb not improved).
+
+## MEASURED #23 — 2026-07-15: ATOM-TEXT-01 LEAN WIN
+
+`Dom::value_str` borrows when an element has a single direct text child (the
+common atom / `w:t` shape); `value()` delegates. Hot callers (moves extract,
+LCS non-separator scores, units word-break) use `value_str` to avoid intermediate
+`String`s. Exact: `tests/perf_atom_text01.rs` (`value_str` == `value`, Borrowed
+vs Owned cases).
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = LCS-SCORE banked)
+
+| fixture | A wall / user | B wall / user |
+|---|---:|---:|
+| **pdense_15k** | 17.72 / 16.98 · 17.48 / 16.98 | **17.37 / 16.65 · 17.25 / 16.73** |
+| rfp17_redline_self | ~0.06 | ~0.06 |
+| **rfp17_vs_5lb102** | 27.77 / 25.82 · 27.36 / 25.97 | **26.83 / 25.59 · 27.05 / 25.66** |
+| **redline_rfp17_vs_5lb102** | 35.00 / 30.11 · 33.97 / 30.15 | **34.83 / 30.00 · 33.94 / 30.02** |
+
+document.xml match YES all four. **Verdict: ship** (lean wall win every matrix slot).
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

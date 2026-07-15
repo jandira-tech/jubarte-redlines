@@ -258,8 +258,9 @@ fn unit_non_separator_text_len(
         ComparisonUnit::Word(w) => {
             for a in &w.contents {
                 if dom.name(a.content_element) == Some(W::t()) {
+                    // ATOM-TEXT-01: borrow single-text-child leaves.
                     score += dom
-                        .value(a.content_element)
+                        .value_str(a.content_element)
                         .chars()
                         .filter(|ch| !settings.word_separators.contains(ch) && !ch.is_whitespace())
                         .count();
@@ -395,7 +396,7 @@ fn run_real_text_len(dom: &Dom, run: &[ComparisonUnit]) -> usize {
     run.iter()
         .flat_map(|u| u.descendant_atoms())
         .filter(|a| dom.name(a.content_element) == Some(W::t()))
-        .map(|a| dom.value(a.content_element).trim().chars().count())
+        .map(|a| dom.value_str(a.content_element).trim().chars().count())
         .sum()
 }
 
@@ -410,7 +411,8 @@ fn run_non_separator_text_len(
         .flat_map(|u| u.descendant_atoms())
         .filter(|a| dom.name(a.content_element) == Some(W::t()))
         .map(|a| {
-            dom.value(a.content_element)
+            // ATOM-TEXT-01: borrow single-char / single-text-child atoms.
+            dom.value_str(a.content_element)
                 .chars()
                 .filter(|ch| !settings.word_separators.contains(ch) && !ch.is_whitespace())
                 .count()

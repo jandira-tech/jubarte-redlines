@@ -757,11 +757,30 @@ impl Dom {
     }
 
     /// `element.Value` getter — concatenated descendant text.
+    ///
+    /// ATOM-TEXT-01: single direct text child (the common `w:t` / atom shape)
+    /// clones that string without a recursive walk.
     pub fn value(&self, id: NodeId) -> String {
+        match self.value_str(id) {
+            std::borrow::Cow::Borrowed(s) => s.to_string(),
+            std::borrow::Cow::Owned(s) => s,
+        }
+    }
+
+    /// ATOM-TEXT-01: borrowed text when `id` has exactly one direct text child;
+    /// otherwise owned concatenated descendant text (same bytes as [`Self::value`]).
+    pub fn value_str(&self, id: NodeId) -> std::borrow::Cow<'_, str> {
+        let content = &self.data(id).content;
+        if content.len() == 1
+            && let NodeKind::Text(v) = &self.data(content[0]).kind
+        {
+            return std::borrow::Cow::Borrowed(v.as_str());
+        }
         let mut s = String::new();
         self.collect_text(id, &mut s);
-        s
+        std::borrow::Cow::Owned(s)
     }
+
     fn collect_text(&self, id: NodeId, s: &mut String) {
         for &c in &self.data(id).content {
             match &self.data(c).kind {

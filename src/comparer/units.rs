@@ -67,14 +67,14 @@ pub fn get_comparison_unit_list(
         let key: i64;
         let cname = dom.name(atom.content_element).unwrap();
         if cname == W::t() {
-            let val = dom.value(atom.content_element);
+            let val = dom.value_str(atom.content_element);
             let ch = val.chars().next().unwrap_or('\0');
             if ch == '.' || ch == ',' {
                 let before_is_digit = i > 0 && {
                     let prev = &atoms[i - 1];
                     dom.name(prev.content_element).unwrap() == W::t()
                         && dom
-                            .value(prev.content_element)
+                            .value_str(prev.content_element)
                             .chars()
                             .next()
                             .is_some_and(is_digit_char)
@@ -83,7 +83,7 @@ pub fn get_comparison_unit_list(
                     let next = &atoms[i + 1];
                     dom.name(next.content_element).unwrap() == W::t()
                         && dom
-                            .value(next.content_element)
+                            .value_str(next.content_element)
                             .chars()
                             .next()
                             .is_some_and(is_digit_char)
@@ -92,7 +92,7 @@ pub fn get_comparison_unit_list(
                     let next = &atoms[i + 1];
                     dom.name(next.content_element).unwrap() == W::t()
                         && dom
-                            .value(next.content_element)
+                            .value_str(next.content_element)
                             .chars()
                             .next()
                             .is_some_and(is_word_letter)

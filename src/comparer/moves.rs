@@ -124,7 +124,8 @@ pub fn extract_text_from_atom_block(
         if dom.name(ce) == Some(W::p_pr()) {
             s.push('\n');
         } else {
-            s.push_str(&dom.value(ce));
+            // ATOM-TEXT-01: borrow single-text-child leaves (no intermediate String).
+            s.push_str(&dom.value_str(ce));
         }
     }
     s
