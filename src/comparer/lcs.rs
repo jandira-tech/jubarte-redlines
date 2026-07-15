@@ -2521,12 +2521,54 @@ fn step_h(
                 // Both last residuals ≥6 toks: short "This text is bold" (4)
                 // must free-mesh (Word EQ "text is"); pure-I/D regressed
                 // bold_text×bold_underline 98→89.
+                // M182: asymmetric short last residual (2..=4 toks) vs long
+                // (≥6) with empty content bridge — heading_4 "Small Section
+                // Header" (3) × long hierarchy body; subtitle "Document
+                // Subtitle Description" (3) × long secondary-heading body.
+                // Both-short stays free-mesh (both <6).
+                let both_long = a2.len() >= 6 && b2.len() >= 6;
+                let asymmetric_short = (a2.len() >= 2 && a2.len() <= 4 && b2.len() >= 6)
+                    || (b2.len() >= 2 && b2.len() <= 4 && a2.len() >= 6);
                 j1 + 1e-12 >= 0.12
                     && j1 + 1e-12 < 0.55
                     && j2c + 1e-12 < 0.05
-                    && a2.len() >= 6
-                    && b2.len() >= 6
+                    && (both_long || asymmetric_short)
             };
+        // M183 (left_alignment×line_spacing 3v4 / reverse 4v3): Demo last-sig
+        // titles, first residual mid-related This-bodies, longer side has an
+        // extra mid residual. Zip free-meshes last with orphan periods (~85);
+        // Word meshes title+first residual, pure-I's extra mid body(s), pure
+        // I/D last residual. Not equal-count M180.
+        let skip_zip_for_m183 = {
+            let (short_n, long_n) = if left_paras < right_paras {
+                (left_paras, right_paras)
+            } else {
+                (right_paras, left_paras)
+            };
+            short_n == 3
+                && long_n == 4
+                && first_paras_share_last_sig(dom, cul1, cul2)
+                && residual_para_starts_this(dom, &cul1[1])
+                && residual_para_starts_this(dom, &cul2[1])
+                && {
+                    let j1 = token_jaccard(
+                        &para_text_tokens(dom, &cul1[1]),
+                        &para_text_tokens(dom, &cul2[1]),
+                    );
+                    let a_last = para_text_token_list(dom, &cul1[left_paras - 1]);
+                    let b_last = para_text_token_list(dom, &cul2[right_paras - 1]);
+                    let j_last = token_jaccard(
+                        &para_text_tokens(dom, &cul1[left_paras - 1]),
+                        &para_text_tokens(dom, &cul2[right_paras - 1]),
+                    );
+                    // mid first residual; last residual thin/empty bridge
+                    j1 + 1e-12 >= 0.15
+                        && j1 + 1e-12 < 0.55
+                        && j_last + 1e-12 < 0.12
+                        && a_last.len() >= 4
+                        && b_last.len() >= 4
+                }
+        };
         // M173 (italic_and_underline×italic_subscript): equal 3v3 Demo, first
         // residual mid-related (shared "italic"/"combined"), last residual
         // glue-related with a thin content bridge ("is"+"and" + "italic").
@@ -2645,6 +2687,7 @@ fn step_h(
             && !skip_zip_for_m165
             && !skip_zip_for_m173
             && !skip_zip_for_m180
+            && !skip_zip_for_m183
             && !skip_zip_for_m161
         {
             for (l, r) in cul1.iter().zip(cul2.iter()) {
@@ -2686,6 +2729,7 @@ fn step_h(
                 || skip_zip_for_m165
                 || skip_zip_for_m173
                 || skip_zip_for_m180
+                || skip_zip_for_m183
                 || skip_zip_for_m161)
             && first_paras_share_last_sig(dom, cul1, cul2)
         {
@@ -2750,6 +2794,7 @@ fn step_h(
             let m165 = skip_zip_for_m165;
             let m173 = skip_zip_for_m173;
             let m180 = skip_zip_for_m180;
+            let m183 = skip_zip_for_m183;
             let m161 = skip_zip_for_m161;
             // M163 (numbered_list×numbered_list_italic): Demo+short items vs
             // Demo+intro("This…")+items. Word pure-I intro then position-mesh
@@ -2771,14 +2816,54 @@ fn step_h(
                         .iter()
                         .any(|t| t.eq_ignore_ascii_case("item"))
                 });
-            if m144 || m146 || m149 || m151 || m153 || m142 || m165 || m173 || m180 || m161 || m163
+            if m144
+                || m146
+                || m149
+                || m151
+                || m153
+                || m142
+                || m165
+                || m173
+                || m180
+                || m183
+                || m161
+                || m163
             {
                 out.push(CorrelatedSequence::paired(
                     CorrelationStatus::Unknown,
                     vec![cul1[0].clone()],
                     vec![cul2[0].clone()],
                 ));
-                if m163 {
+                if m183 && rest1.len() >= 2 && rest2.len() >= 2 {
+                    // Mesh first residual body; pure-I extra mid on longer side;
+                    // pure-I/D last residual.
+                    out.push(CorrelatedSequence::paired(
+                        CorrelationStatus::Unknown,
+                        vec![rest1[0].clone()],
+                        vec![rest2[0].clone()],
+                    ));
+                    if rest2.len() > rest1.len() {
+                        for u in &rest2[1..rest2.len() - 1] {
+                            out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                        }
+                        out.push(CorrelatedSequence::inserted(
+                            vec![rest2[rest2.len() - 1].clone()],
+                        ));
+                        out.push(CorrelatedSequence::deleted(
+                            vec![rest1[rest1.len() - 1].clone()],
+                        ));
+                    } else {
+                        for u in &rest1[1..rest1.len() - 1] {
+                            out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                        }
+                        out.push(CorrelatedSequence::inserted(
+                            vec![rest2[rest2.len() - 1].clone()],
+                        ));
+                        out.push(CorrelatedSequence::deleted(
+                            vec![rest1[rest1.len() - 1].clone()],
+                        ));
+                    }
+                } else if m163 {
                     // pure-I intro, then zip list items positionally
                     out.push(CorrelatedSequence::inserted(vec![rest2[0].clone()]));
                     let items2 = &rest2[1..];
