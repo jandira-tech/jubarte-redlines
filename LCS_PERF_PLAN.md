@@ -50,6 +50,7 @@ evidence and ready-to-run branches of the program.
 | DOM-ITER-01: serializer borrowed children/attrs | shipped banked (MEASURED #7) | exact serialize; pdense wall noise-neutral — bank for amplify / next profile |
 | CLONE-01: clone_subtree index walk + reserve | shipped banked (MEASURED #8) | exact clone; pdense wall noise-neutral — bank |
 | PARSE-02: skip ns_scope clone without xmlns | shipped lean win (MEASURED #9) | pdense user CPU ↓ every run; wall 3/4 better; exact document.xml |
+| PARSE-01b: starts_with/index_of no Vec alloc | shipped win (MEASURED #10) | pdense wall+user ↓ every ABBA slot; exact document.xml |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -750,6 +751,26 @@ default-ns tests in `tests/perf_parse02_ns_scope.rs` + m1 foundation green.
 
 **Verdict: ship.** Exact; diagnostic user-CPU clean; wall leans positive. Full
 stack refactor (mutable push/restore) deferred.
+
+## MEASURED #10 — 2026-07-15: PARSE-01b starts_with/index_of WIN
+
+Remove per-call `Vec<char>` allocation in `Parser::starts_with` and
+`Parser::index_of` — walk needle chars against the already-materialized input
+buffer. Residual of the original PARSE-01 plan (interning shipped earlier as
+MEASURED #5; this is the small scanner allocation fix).
+
+### A/B — ABBA ×2, pdense 15k, base = PARSE-02
+
+| run | A wall / user | B wall / user |
+|---|---:|---:|
+| r1 | 22.59 / 21.12 · 22.79 / 21.15 | **22.41 / 20.91 · 22.38 / 21.05** |
+| r2 | 23.19 / 21.48 · 23.22 / 21.51 | **22.20 / 20.93 · 22.87 / 21.19** |
+
+- **wall:** cand better in **all 4** slots (~0.2–1.0 s).
+- **user CPU:** cand lower in **all 4** slots.
+- **document.xml:** identical.
+
+**Verdict: ship.**
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

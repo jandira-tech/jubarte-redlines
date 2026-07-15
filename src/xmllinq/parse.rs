@@ -42,28 +42,40 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// True if the buffer at `pos` matches `s` (char-for-char).
+    /// PARSE-01b: no per-call `Vec<char>` allocation — walk `s.chars()` directly
+    /// against the already-materialized input buffer.
     fn starts_with(&self, s: &str) -> bool {
-        let sc: Vec<char> = s.chars().collect();
-        if self.pos + sc.len() > self.len() {
-            return false;
-        }
-        for (k, ch) in sc.iter().enumerate() {
-            if self.c[self.pos + k] != *ch {
+        let mut i = self.pos;
+        for ch in s.chars() {
+            if i >= self.len() || self.c[i] != ch {
                 return false;
             }
+            i += 1;
         }
         true
     }
 
     /// Index of substring `s` at or after `from`, in char units.
+    /// PARSE-01b: match without allocating a needle `Vec<char>` each call.
     fn index_of(&self, s: &str, from: usize) -> Option<usize> {
-        let sc: Vec<char> = s.chars().collect();
-        if sc.is_empty() || from > self.len() {
+        if s.is_empty() || from > self.len() {
             return None;
         }
+        // Call sites use short ASCII needles (`</`, `<!--`, `]]>`, `?>`, …).
+        let needle_chars: usize = s.chars().count();
         let mut i = from;
-        while i + sc.len() <= self.len() {
-            if self.c[i..i + sc.len()] == sc[..] {
+        while i + needle_chars <= self.len() {
+            let mut j = i;
+            let mut ok = true;
+            for ch in s.chars() {
+                if self.c[j] != ch {
+                    ok = false;
+                    break;
+                }
+                j += 1;
+            }
+            if ok {
                 return Some(i);
             }
             i += 1;
