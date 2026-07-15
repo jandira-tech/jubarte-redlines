@@ -321,24 +321,52 @@ pub fn compare_bodies_faithful_with_notes(
     }
     crate::unid::assign_to_all_elements(dom, body1);
     crate::unid::assign_to_all_elements(dom, body2);
-    let acc1 = dom.clone_subtree(body1);
-    let acc1 = crate::revision_processor::accept_revisions_document(dom, acc1);
-    let _ = preprocess::hash_block_level_content(
-        dom,
-        body1,
-        acc1,
-        settings,
-        &preprocess::null_rel_resolver,
-    );
-    let rej2 = dom.clone_subtree(body2);
-    let rej2 = crate::revision_processor::reject_revisions_document(dom, rej2);
-    let _ = preprocess::hash_block_level_content(
-        dom,
-        body2,
-        rej2,
-        settings,
-        &preprocess::null_rel_resolver,
-    );
+
+    // COMPARE-CLEAN-PROJ-01 / REJECT-SKIP-01: mark-free trees do not need a
+    // full body clone + accept/reject rebuild just to stamp correlated hashes.
+    // Hashing clones already strip rsids, so self-projection equals
+    // accept/reject projection when there are no tracked-revision elements.
+    let has_rev1 = crate::revision_processor::element_has_tracked_revisions(dom, body1);
+    let has_rev2 = crate::revision_processor::element_has_tracked_revisions(dom, body2);
+
+    if has_rev1 {
+        let acc1 = dom.clone_subtree(body1);
+        let acc1 = crate::revision_processor::accept_revisions_document(dom, acc1);
+        let _ = preprocess::hash_block_level_content(
+            dom,
+            body1,
+            acc1,
+            settings,
+            &preprocess::null_rel_resolver,
+        );
+    } else {
+        let _ = preprocess::hash_block_level_content(
+            dom,
+            body1,
+            body1,
+            settings,
+            &preprocess::null_rel_resolver,
+        );
+    }
+    if has_rev2 {
+        let rej2 = dom.clone_subtree(body2);
+        let rej2 = crate::revision_processor::reject_revisions_document(dom, rej2);
+        let _ = preprocess::hash_block_level_content(
+            dom,
+            body2,
+            rej2,
+            settings,
+            &preprocess::null_rel_resolver,
+        );
+    } else {
+        let _ = preprocess::hash_block_level_content(
+            dom,
+            body2,
+            body2,
+            settings,
+            &preprocess::null_rel_resolver,
+        );
+    }
 
     // Accept existing tracked revisions in BOTH inputs to get their final state
     // before diffing (CompareInternal :746-747). Without this, inputs that already
@@ -352,25 +380,9 @@ pub fn compare_bodies_faithful_with_notes(
     // scratch against the now-accepted content — so the post-accept tree is
     // what gets hashed, not any cached value from the earlier projection pass.
     //
-    // Idempotency: `accept_revisions_document` is the element-level pipeline
-    // (RemoveRsid → AcceptMoveFromMoveTo → AcceptAllOtherRevisions → strip
-    // PT.UniqueId/RunIds → drop empty w:numPr); once all tracked-revision
-    // elements are gone, each subsequent accept is a no-op, so calling it on
-    // the same body twice is safe.
-    //
-    // Scope limitation: this is the element-level `AcceptRevisionsForElement`
-    // pipeline (revision_processor.rs:259), NOT docxodus's full part-level
-    // `AcceptRevisionsForPart` (RevisionProcessor.ts:1265-1336). The full
-    // part pipeline additionally runs FixUpDeletedOrInsertedFieldCodes,
-    // AcceptMoveFromRanges, AcceptParagraphEndTagsInMoveFrom,
-    // AcceptDeletedAndMovedFromContentControls,
-    // AcceptDeletedAndMoveFromParagraphMarks, RemoveRowsLeftEmptyByMoveFrom,
-    // AcceptDeletedCellsTransform, MergeAdjacentTablesTransform, and
-    // AddEmptyParagraphToAnyEmptyCells — those transforms are out of scope for
-    // this PR and would belong in a follow-up that wires them through
-    // `accept_revisions_document` (or a new part-level entry point). The
-    // residual golden-parity gap on move-heavy fixtures (e.g. inpi2) is
-    // plausibly explained by those omitted transforms.
+    // Idempotency: once all tracked-revision elements are gone, each subsequent
+    // accept is a no-op (ACCEPT-SKIP-01), so calling it on the same body twice
+    // is safe.
     let body1 = crate::revision_processor::accept_revisions_document(dom, body1);
     let body2 = crate::revision_processor::accept_revisions_document(dom, body2);
 
@@ -378,23 +390,31 @@ pub fn compare_bodies_faithful_with_notes(
     // rebuilds elements and was leaving ComparisonUnits with correlated=None
     // (process_correlated_hashes never paired). Self-project each body so
     // spacing-invariant correlated hashes (Word-visual) land on live groups.
+    //
+    // COMPARE-CLEAN-PROJ-01: when a side was mark-free, accept only stripped
+    // rsids in place (same Unids/structure) — the pre-accept self-projection
+    // already stamped the right correlated hashes; skip a second body clone.
     if settings.merge_replaced_paragraphs {
-        let proj1 = dom.clone_subtree(body1);
-        let _ = preprocess::hash_block_level_content(
-            dom,
-            body1,
-            proj1,
-            settings,
-            &preprocess::null_rel_resolver,
-        );
-        let proj2 = dom.clone_subtree(body2);
-        let _ = preprocess::hash_block_level_content(
-            dom,
-            body2,
-            proj2,
-            settings,
-            &preprocess::null_rel_resolver,
-        );
+        if has_rev1 {
+            let proj1 = dom.clone_subtree(body1);
+            let _ = preprocess::hash_block_level_content(
+                dom,
+                body1,
+                proj1,
+                settings,
+                &preprocess::null_rel_resolver,
+            );
+        }
+        if has_rev2 {
+            let proj2 = dom.clone_subtree(body2);
+            let _ = preprocess::hash_block_level_content(
+                dom,
+                body2,
+                proj2,
+                settings,
+                &preprocess::null_rel_resolver,
+            );
+        }
     }
 
     // block hashes (group correlation reads pt:SHA1Hash off ancestors) —

@@ -524,7 +524,14 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
 /// `RejectRevisionsDocument` at element scope: revert property changes, invert
 /// the sense of every remaining revision, strip rsids, then accept. The net
 /// effect is the document's *original* (pre-revision) projection.
+///
+/// REJECT-SKIP-01: when the subtree has no tracked-revision elements, the
+/// reject/reverse/accept rebuilds are identity — only RemoveRsid is needed
+/// (in-place). Dirty trees take the full faithful path.
 pub fn reject_revisions_document(dom: &mut Dom, root: NodeId) -> NodeId {
+    if !element_has_tracked_revisions(dom, root) {
+        return remove_rsid_transform(dom, root).expect("reject clean: root not dropped by rsid");
+    }
     let reverted =
         reject_revisions_for_part_transform(dom, root).expect("reject: root must not be dropped");
     let reversed = reverse_revisions_transform(dom, reverted);

@@ -56,6 +56,7 @@ evidence and ready-to-run branches of the program.
 | ACCEPT-SKIP-02: skip A.9 when no empty `w:tc` | shipped lean win (MEASURED #13) | matrix: RFP redline-self & RFP×5lb102 wall ↓ both slots; pdense noise; exact |
 | RSID-INPLACE-01: strip rsids without rebuild | shipped lean win (MEASURED #14) | matrix: both RFP fixtures wall ↓ both slots; pdense noise; exact; lower sys |
 | HASH-CLONE-MICRO: text new_text + nsdecl index walk | banked (MEASURED #15) | exact m4b; matrix wall mixed/noise (user flat); keep as cleanup |
+| REJECT-SKIP + COMPARE-CLEAN-PROJ | shipped win (MEASURED #16) | matrix: pdense + RFP×5lb102 wall ↓ both slots (~10–12% on 5lb); redline-self noise; exact |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -883,6 +884,26 @@ In `clone_block_level_content_for_hashing` / `clone_internal`: text leaves use
 User CPU ≈ flat on RFP self. **Verdict: keep / bank** — exact cleanup, no wall claim.
 Profile still shows `clone_block_level_content_for_hashing` dominant → real next
 is HASH-STREAM-01 (serialize/hash projection without materializing clones).
+
+## MEASURED #16 — 2026-07-15: REJECT-SKIP-01 + COMPARE-CLEAN-PROJ-01 WIN
+
+1. **REJECT-SKIP-01:** `reject_revisions_document` on mark-free trees is
+   RemoveRsid only (no reject/reverse/accept rebuilds).
+2. **COMPARE-CLEAN-PROJ-01:** when a body has no tracked revisions, stamp
+   correlated hashes via self-projection (no body `clone_subtree` + accept/reject
+   projection) and skip the post-accept M122 re-clone for that side.
+
+Tests: `tests/perf_reject_skip01.rs` + m3/m4/m28 green.
+
+### A/B — full matrix, 1× ABBA (base = HASH-CLONE-MICRO)
+
+| fixture | A wall / user | B wall / user |
+|---|---:|---:|
+| **pdense_15k** | 18.56 / 17.94 · 18.55 / 17.98 | **18.18 / 17.43 · 18.04 / 17.53** |
+| rfp17_redline_self | 50.18 / 41.26 · 50.12 / 41.43 | 50.77 / 40.97 · 50.20 / 41.50 (noise; has revs) |
+| **rfp17_vs_5lb102** | 31.86 / 30.41 · 32.70 / 30.76 | **28.67 / 27.36 · 28.48 / 27.25** (~10–12%) |
+
+document.xml match all three. **Verdict: ship.**
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
