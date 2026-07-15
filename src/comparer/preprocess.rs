@@ -131,6 +131,8 @@ pub fn clone_block_level_content_for_hashing(
 
 /// Build a new element named `name`, copying `src`'s attributes except those for
 /// which `drop(name)` is true, then appending `children`.
+///
+/// DOM-ITER-02: walk attributes by index (no `attributes()` Vec alloc).
 fn new_with_filtered_attrs(
     dom: &mut Dom,
     name: XName,
@@ -139,10 +141,19 @@ fn new_with_filtered_attrs(
     children: Vec<NodeId>,
 ) -> NodeId {
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(src) {
-        if !drop(&an) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
+    // Collect first: attr_at borrows dom; set_attribute_value needs &mut.
+    let keep: Vec<(XName, String)> = (0..dom.attr_count(src))
+        .filter_map(|i| {
+            let (an, av) = dom.attr_at(src, i);
+            if drop(an) {
+                None
+            } else {
+                Some((an.clone(), av.to_string()))
+            }
+        })
+        .collect();
+    for (an, av) in &keep {
+        dom.set_attribute_value(ne, an, Some(av));
     }
     for c in children {
         dom.add(ne, c);
@@ -151,6 +162,8 @@ fn new_with_filtered_attrs(
 }
 
 /// Recurse-clone all child nodes, flattening fragment results.
+///
+/// DOM-ITER-02: index walk (no `nodes()` Vec alloc per element).
 fn clone_children(
     dom: &mut Dom,
     node: NodeId,
@@ -159,7 +172,9 @@ fn clone_children(
     rel_hash: &RelHashResolver,
 ) -> Vec<NodeId> {
     let mut out = Vec::new();
-    for c in dom.nodes(node) {
+    let n = dom.child_count(node);
+    for i in 0..n {
+        let c = dom.child_at(node, i);
         out.extend(clone_internal(
             dom,
             c,
@@ -271,7 +286,11 @@ fn clone_internal_unsalted(
         );
         for (kind, group) in grouped {
             if kind != 0 {
-                let text: String = group.iter().map(|&e| dom.value(e)).collect();
+                // ATOM-TEXT-01: borrow single-text-child leaves when grouping runs.
+                let text: String = group
+                    .iter()
+                    .map(|&e| dom.value_str(e).into_owned())
+                    .collect();
                 let text = apply_text_transform(&text, settings);
                 let r = dom.new_element(W::r());
                 if kind == 2 {
@@ -292,8 +311,14 @@ fn clone_internal_unsalted(
 
     if name == W::r() {
         // fragment: each non-rPr child element wrapped in its own fresh w:r
+        // DOM-ITER-02: index walk (no elements() Vec).
         let mut runs = Vec::new();
-        for rc in dom.elements(node, None) {
+        let n = dom.child_count(node);
+        for i in 0..n {
+            let rc = dom.child_at(node, i);
+            if !dom.is_element(rc) {
+                continue;
+            }
             if dom.name(rc).unwrap() == W::r_pr() {
                 continue;
             }
@@ -308,9 +333,10 @@ fn clone_internal_unsalted(
     }
 
     // ── B.4b: table cases ─────────────────────────────────────────────────────
+    // DOM-ITER-02: filter child elements by local name without elements() Vec.
     if name == W::name("tbl") {
-        let children: Vec<NodeId> = dom
-            .elements(node, Some(&W::name("tr")))
+        let tr_name = W::name("tr");
+        let children: Vec<NodeId> = element_children_named(dom, node, &tr_name)
             .into_iter()
             .flat_map(|tr| clone_internal(dom, tr, include_related_parts, settings, rel_hash))
             .collect();
@@ -321,8 +347,8 @@ fn clone_internal_unsalted(
         return vec![tbl];
     }
     if name == W::name("tr") {
-        let children: Vec<NodeId> = dom
-            .elements(node, Some(&W::name("tc")))
+        let tc_name = W::name("tc");
+        let children: Vec<NodeId> = element_children_named(dom, node, &tc_name)
             .into_iter()
             .flat_map(|tc| clone_internal(dom, tc, include_related_parts, settings, rel_hash))
             .collect();
@@ -342,8 +368,8 @@ fn clone_internal_unsalted(
         return vec![tc];
     }
     if name == W::name("tcPr") {
-        let children: Vec<NodeId> = dom
-            .elements(node, Some(&W::name("gridSpan")))
+        let gs_name = W::name("gridSpan");
+        let children: Vec<NodeId> = element_children_named(dom, node, &gs_name)
             .into_iter()
             .flat_map(|gs| clone_internal(dom, gs, include_related_parts, settings, rel_hash))
             .collect();
@@ -372,17 +398,24 @@ fn clone_internal_unsalted(
     // ── B.4c: relationship-id branch ──────────────────────────────────────────
     if include_related_parts && S_ELEMENTS_WITH_RELATIONSHIP_IDS.contains(&name) {
         let ne = dom.new_element(name.clone());
-        for (an, av) in dom.attributes(node) {
-            if is_pt(&an) || ATTRIBUTES_TO_TRIM_WHEN_CLONING.contains(&an) {
+        // DOM-ITER-02: snapshot attrs (index walk), then mutate.
+        let attrs: Vec<(XName, String)> = (0..dom.attr_count(node))
+            .map(|i| {
+                let (an, av) = dom.attr_at(node, i);
+                (an.clone(), av.to_string())
+            })
+            .collect();
+        for (an, av) in &attrs {
+            if is_pt(an) || ATTRIBUTES_TO_TRIM_WHEN_CLONING.contains(an) {
                 continue;
             }
-            if S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(&an) {
-                match rel_hash(&av) {
-                    Some(v) => dom.set_attribute_value(ne, &an, Some(&v)),
+            if S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(an) {
+                match rel_hash(av) {
+                    Some(v) => dom.set_attribute_value(ne, an, Some(&v)),
                     None => { /* xml part → drop attribute */ }
                 }
             } else {
-                dom.set_attribute_value(ne, &an, Some(&av));
+                dom.set_attribute_value(ne, an, Some(av));
             }
         }
         for c in clone_children(dom, node, include_related_parts, settings, rel_hash) {
@@ -443,6 +476,32 @@ fn clone_internal_unsalted(
     )]
 }
 
+/// DOM-ITER-02: direct-child element ids (no `elements()` Vec).
+fn element_children(dom: &Dom, node: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let n = dom.child_count(node);
+    for i in 0..n {
+        let c = dom.child_at(node, i);
+        if dom.is_element(c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// DOM-ITER-02: direct-child elements matching `filter` (no `elements()` Vec).
+fn element_children_named(dom: &Dom, node: NodeId, filter: &XName) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let n = dom.child_count(node);
+    for i in 0..n {
+        let c = dom.child_at(node, i);
+        if dom.is_element(c) && dom.name(c).as_ref() == Some(filter) {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn clone_children_elements(
     dom: &mut Dom,
     node: NodeId,
@@ -450,16 +509,31 @@ fn clone_children_elements(
     settings: &WmlComparerSettings,
     rel_hash: &RelHashResolver,
 ) -> Vec<NodeId> {
-    dom.elements(node, None)
+    element_children(dom, node)
         .into_iter()
         .flat_map(|c| clone_internal(dom, c, include_related_parts, settings, rel_hash))
         .collect()
 }
 
 fn is_single_t_run(dom: &Dom, e: NodeId) -> bool {
-    dom.name(e) == Some(W::r())
-        && dom.elements(e, None).len() == 1
-        && dom.element(e, &W::t()).is_some()
+    if dom.name(e) != Some(W::r()) {
+        return false;
+    }
+    // DOM-ITER-02: count element children without allocating.
+    let mut el_count = 0usize;
+    let mut has_t = false;
+    let n = dom.child_count(e);
+    for i in 0..n {
+        let c = dom.child_at(e, i);
+        if !dom.is_element(c) {
+            continue;
+        }
+        el_count += 1;
+        if dom.name(c) == Some(W::t()) {
+            has_t = true;
+        }
+    }
+    el_count == 1 && has_t
 }
 
 const WML_DEFAULT_XMLNS: &str =
@@ -470,14 +544,17 @@ const WML_DEFAULT_XMLNS: &str =
 pub fn remove_existing_powertools_markup(dom: &mut Dom, root: NodeId) {
     let unid = PT::unid();
     for el in dom.descendants_and_self(root, None) {
-        let pt_attrs: Vec<_> = dom
-            .attributes(el)
-            .into_iter()
-            .map(|(n, _)| n)
-            .filter(|n| n.namespace_name() == PT::URI && *n != unid)
-            .collect();
-        for a in pt_attrs {
-            dom.set_attribute_value(el, &a, None);
+        // DOM-ITER-02: index walk attrs (no attributes() Vec).
+        let mut pt_attrs = Vec::new();
+        let n = dom.attr_count(el);
+        for i in 0..n {
+            let (name, _) = dom.attr_at(el, i);
+            if name.namespace_name() == PT::URI && *name != unid {
+                pt_attrs.push(name.clone());
+            }
+        }
+        for a in &pt_attrs {
+            dom.set_attribute_value(el, a, None);
         }
     }
 }
@@ -523,10 +600,19 @@ pub fn clone_for_structure_hash(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
     }
     let name = dom.name(node).unwrap();
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
+    // DOM-ITER-02: snapshot attrs then children by index (no attributes()/nodes() Vecs).
+    let attrs: Vec<(XName, String)> = (0..dom.attr_count(node))
+        .map(|i| {
+            let (an, av) = dom.attr_at(node, i);
+            (an.clone(), av.to_string())
+        })
+        .collect();
+    for (an, av) in &attrs {
+        dom.set_attribute_value(ne, an, Some(av));
     }
-    for c in dom.nodes(node) {
+    let n = dom.child_count(node);
+    for i in 0..n {
+        let c = dom.child_at(node, i);
         if let Some(child) = clone_for_structure_hash(dom, c) {
             dom.add(ne, child);
         }

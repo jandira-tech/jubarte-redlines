@@ -66,6 +66,7 @@ evidence and ready-to-run branches of the program.
 | ATOM-TEXT-01: value_str borrow single text-child leaves | shipped lean win (MEASURED #23) | matrix×4: pdense+RFP×5lb+redline×5lb wall ↓ every slot; exact value_str==value |
 | PATH-01: Arc-share ancestor_elements across multi-char atoms | shipped win (MEASURED #24) | matrix×4: wall ↓ every slot on pdense+RFP×5lb+redline×5lb; Arc::ptr_eq gate; exact document.xml |
 | NAME-01: OnceLock cache hottest W/PT XNames | shipped win (MEASURED #25) | matrix×4: ~5–15% wall all load-bearing slots; name equality exact |
+| DOM-ITER-02: hash-clone preprocess index walks | shipped lean win (MEASURED #26) | matrix×4: wall ↓ every slot on pdense+RFP×5lb+redline×5lb; m4b exact |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1069,6 +1070,24 @@ Equality vs `XName::get` unchanged (`tests/perf_name01.rs`).
 | **redline_rfp17_vs_5lb102** | 34.40 / 29.90 · 34.06 / 30.02 | **29.87 / 25.62 · 29.24 / 25.43** (~13%) |
 
 document.xml match YES all four. **Verdict: ship.**
+
+## MEASURED #26 — 2026-07-15: DOM-ITER-02 LEAN WIN
+
+Hash-clone preprocess (`clone_children`, run/table walks, structure-hash,
+attr filters) uses `child_count`/`child_at`/`attr_count`/`attr_at` instead of
+allocating `nodes()`/`elements()`/`attributes()` Vecs per node. m4b_preprocess
++ `tests/perf_dom_iter02.rs` exact digests.
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = NAME-01)
+
+| fixture | A wall / user | B wall / user |
+|---|---:|---:|
+| **pdense_15k** | 15.78 / 15.11 · 15.56 / 15.09 | **15.69 / 15.00 · 15.39 / 14.92** |
+| rfp17_redline_self | ~0.07 | ~0.06 |
+| **rfp17_vs_5lb102** | 24.02 / 22.48 · 24.03 / 22.53 | **23.67 / 22.14 · 23.94 / 22.52** |
+| **redline_rfp17_vs_5lb102** | 30.69 / 25.69 · 30.21 / 25.73 | **29.45 / 25.36 · 29.85 / 25.35** |
+
+document.xml match YES all four. **Verdict: ship** (lean wall win every matrix slot).
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
