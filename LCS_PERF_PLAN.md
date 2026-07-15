@@ -73,6 +73,7 @@ evidence and ready-to-run branches of the program.
 | HASH-STREAM-02: structure digest without structure-clone DOM | banked (MEASURED #30) | exact == clone oracle; pdense lean; RFP/redline mixed slots — no wall claim |
 | DOM-ITER-04: RP block/tag walk early-exit + child_count | banked (MEASURED #31) | exact m28 + tags/blocks; matrix wall mixed/noise (clean path skips accept) |
 | ACCEPT-INPLACE-A9: fill empty tc in place | banked (MEASURED #32) | exact m28/A.9; matrix mixed (A.9 often skipped); redline lean both slots |
+| HASH-STREAM-03: simple-p stream hash without clone DOM | shipped win (MEASURED #33) | matrix×4: pdense+RFP×5lb+redline×5lb wall ↓ every slot; RSS lean; digests exact |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1209,6 +1210,25 @@ returned. Tests: `tests/perf_accept_inplace_a9.rs` + m28 A.9 + ACCEPT-SKIP-02.
 
 document.xml match YES all four. **Verdict: keep / bank** — exact; wall not
 reliable on permanent matrix (A.9 often skipped via ACCEPT-SKIP-02).
+
+## MEASURED #33 — 2026-07-15: HASH-STREAM-03 WIN
+
+`block_sha1_from_source` streams simple `w:p` (single-`w:t` runs after drops)
+into the block digest without materializing a hash-clone subtree; complex
+nodes fall back to clone + `block_sha1`. Used from `add_sha1` (all paragraphs)
+and `hash_block_level_content` (correlated, with optional whitespace-invariant
+form). Tests: `tests/perf_hash_stream03.rs` + m4b.
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = ACCEPT-INPLACE-A9)
+
+| fixture | A wall / user | B wall / user |
+|---|---:|---:|
+| **pdense_15k** | 15.49 / 14.68 · 15.10 / 14.53 | **15.11 / 14.35 · 14.93 / 14.39** (RSS ~3.56 vs 3.65 GB) |
+| rfp17_redline_self | ~0.05–0.06 | ~0.05–0.06 |
+| **rfp17_vs_5lb102** | 23.15 / 20.36 · 23.31 / 20.52 | **22.26 / 19.92 · 22.41 / 19.99** |
+| **redline_rfp17_vs_5lb102** | 30.89 / 22.78 · 29.98 / 22.17 | **29.40 / 22.12 · 28.18 / 22.30** |
+
+document.xml match YES all four. **Verdict: ship.**
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

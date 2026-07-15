@@ -607,7 +607,156 @@ pub fn block_hash_string(dom: &Dom, clone: NodeId) -> String {
 /// HASH-STREAM-01 lite: stream serialize into SHA-1 (no full XML `String` for
 /// the digest path). Digest must match `sha1_hex(block_hash_string(...))`.
 pub fn block_sha1(dom: &Dom, clone: NodeId) -> String {
-    dom.serialize_element_sha1_hex(clone)
+    crate::util::sha1::sha1_hex(block_hash_string(dom, clone).as_bytes())
+}
+
+/// HASH-STREAM-03: content SHA-1 of a **source** block node, preferring a
+/// no-clone stream for simple `w:p` (only single-`w:t` runs after drops).
+/// Falls back to `clone_block_level_content_for_hashing` + [`block_sha1`].
+///
+/// When `correlated_ws` is true (Word-visual correlated hashes), text is
+/// whitespace-stripped like `strip_whitespace_in_clone_text` after clone.
+///
+/// Digest-identical to the clone oracle for every accepted simple-p shape and
+/// for all complex nodes (fallback path).
+pub fn block_sha1_from_source(
+    dom: &mut Dom,
+    node: NodeId,
+    include_related_parts: bool,
+    settings: &WmlComparerSettings,
+    rel_hash: &RelHashResolver,
+    correlated_ws: bool,
+) -> String {
+    if let Some(hex) = try_stream_hash_simple_paragraph(dom, node, settings, correlated_ws) {
+        return hex;
+    }
+    let clone =
+        clone_block_level_content_for_hashing(dom, node, include_related_parts, settings, rel_hash);
+    if correlated_ws {
+        strip_whitespace_in_clone_text(dom, clone);
+    }
+    block_sha1(dom, clone)
+}
+
+/// Stream-hash a simple paragraph without materializing a hash-clone subtree.
+/// Returns `None` when the node is not a simple single-`w:t`-run paragraph
+/// (tables, drawings, multi-t runs, footnote refs, etc. fall back to clone).
+fn try_stream_hash_simple_paragraph(
+    dom: &Dom,
+    node: NodeId,
+    settings: &WmlComparerSettings,
+    correlated_ws: bool,
+) -> Option<String> {
+    if dom.name(node) != Some(W::p()) {
+        return None;
+    }
+    // Collect texts of single-t runs; reject complex content.
+    let mut texts: Vec<String> = Vec::new();
+    let n = dom.child_count(node);
+    for i in 0..n {
+        let c = dom.child_at(node, i);
+        if !dom.is_element(c) {
+            continue;
+        }
+        let name = dom.name(c)?;
+        if name == W::p_pr() || name == W::bookmark_start() || name == W::bookmark_end() {
+            continue;
+        }
+        if name != W::r() {
+            return None;
+        }
+        // Single w:t (optional rPr); anything else → fallback.
+        let mut t_text: Option<String> = None;
+        for j in 0..dom.child_count(c) {
+            let cc = dom.child_at(c, j);
+            if !dom.is_element(cc) {
+                continue;
+            }
+            let cn = dom.name(cc)?;
+            if cn == W::r_pr() {
+                continue;
+            }
+            if cn != W::t() {
+                return None;
+            }
+            if t_text.is_some() {
+                return None; // multi-t run: clone fragments into multiple runs
+            }
+            t_text = Some(dom.value_str(cc).into_owned());
+        }
+        let Some(t) = t_text else {
+            return None; // empty run
+        };
+        let mut t = apply_text_transform(&t, settings);
+        if correlated_ws {
+            t = whitespace_invariant_for_hash(&t);
+        }
+        texts.push(t);
+    }
+    // Adjacent single-t runs merge into one (group_adjacent kind==1).
+    let merged = texts.concat();
+
+    // Build projection XML matching serializer of the hash clone for this shape:
+    // <w:p xmlns:w="..." [filtered attrs]><w:r><w:t>merged</w:t></w:r></w:p>
+    // or empty self-closing when no text runs.
+    let mut xml = String::with_capacity(128 + merged.len());
+    xml.push_str("<w:p xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"");
+    // Real attrs in document order, filtered like new_with_filtered_attrs.
+    for i in 0..dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, i);
+        if dom.is_namespace_declaration(an) {
+            continue;
+        }
+        if is_rsid_attr(an) || is_pt(an) || is_volatile_para_attr(an) {
+            continue;
+        }
+        // Only no-namespace or w: attrs that survive; serializer uses prefixes.
+        let ns = an.namespace_name();
+        let local = an.local_name();
+        if ns == W::URI {
+            xml.push(' ');
+            xml.push_str("w:");
+            xml.push_str(local);
+            xml.push_str("=\"");
+            xml.push_str(&escape_xml_attr(av));
+            xml.push('"');
+        } else if ns.is_empty() {
+            xml.push(' ');
+            xml.push_str(local);
+            xml.push_str("=\"");
+            xml.push_str(&escape_xml_attr(av));
+            xml.push('"');
+        } else {
+            // Foreign attr → fallback (prefix assignment may introduce xmlns:nsN).
+            return None;
+        }
+    }
+    if merged.is_empty() {
+        xml.push_str(" />");
+    } else {
+        xml.push('>');
+        xml.push_str("<w:r><w:t>");
+        xml.push_str(&escape_xml_text(&merged));
+        xml.push_str("</w:t></w:r></w:p>");
+    }
+    // Same xmlns strip as block_hash_string (usually no-op for xmlns:w form).
+    if let Some(i) = xml.find(WML_DEFAULT_XMLNS) {
+        xml.drain(i..i + WML_DEFAULT_XMLNS.len());
+    }
+    Some(crate::util::sha1::sha1_hex(&xml))
+}
+
+fn escape_xml_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn escape_xml_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// HASH-STREAM-02: SHA-1 of the structure projection of `node` (elements + attrs
@@ -669,6 +818,13 @@ pub fn add_sha1_hash_to_block_level_content(
     });
     for d in targets {
         let name = dom.name(d).unwrap();
+        // HASH-STREAM-03: simple paragraphs skip hash-clone DOM materialization.
+        if name == W::p() {
+            // Content hash is space-sensitive (correlated_ws = false).
+            let sha = block_sha1_from_source(dom, d, true, settings, rel_hash, false);
+            dom.set_attribute_value(d, &PT::sha1_hash(), Some(&sha));
+            continue;
+        }
         let clone = clone_block_level_content_for_hashing(dom, d, true, settings, rel_hash);
         let sha = block_sha1(dom, clone);
         dom.set_attribute_value(d, &PT::sha1_hash(), Some(&sha));
@@ -721,15 +877,16 @@ pub fn hash_block_level_content(
         }
     });
     for b in after_blocks {
-        let clone = clone_block_level_content_for_hashing(dom, b, true, settings, rel_hash);
-        // M122: Word-visual correlated hashes ignore whitespace so spacing-
-        // stamped related paragraphs (file_175) share a CorrelatedSHA1Hash.
-        // Exact pt:SHA1Hash (add_sha1) stays space-sensitive → word LCS after
-        // ProcessCorrelatedHashes Unknown pairing can still emit space inserts.
-        if settings.merge_replaced_paragraphs {
-            strip_whitespace_in_clone_text(dom, clone);
-        }
-        let sha = block_sha1(dom, clone);
+        // HASH-STREAM-03: simple paragraphs stream without clone; M122
+        // whitespace-invariant form is applied inside the stream/fallback path.
+        let sha = block_sha1_from_source(
+            dom,
+            b,
+            true,
+            settings,
+            rel_hash,
+            settings.merge_replaced_paragraphs,
+        );
         if let Some(u) = dom.attribute(b, &unid).map(|s| s.to_string())
             && let Some(&src) = source_by_unid.get(&u)
         {
