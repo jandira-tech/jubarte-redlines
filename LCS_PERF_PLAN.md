@@ -85,7 +85,7 @@ evidence and ready-to-run branches of the program.
 | ACCEPT-SKIP-A1: skip field-code fixup rebuild without fld/instr | banked (MEASURED #42) | identity skip + keep parent links; digests YES×4; wall mixed — bank |
 | PARITY-FIX-43: ATOM-STACK footnote path + IDENTICAL-INPUT docPr fixup | shipped quality restore (MEASURED #43) | restored zero NEW ladder keys; fixed deleted-note CRASH; S-dup-docpr-id gone on identical packages; ledger sample mean **83.78** / median **89.46** (n=35) |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
-| quality baseline | **re-recorded HEAD** (MEASURED #43) | ladder: 0 NEW after re-bless (crash fix + baseline reconcile); sample ledger mean **83.78** / median **89.46** (n=35) — at last good sample class; full visual 83.77/88.52 post-PR-B still the full-run floor |
+| quality baseline | **re-recorded HEAD** (MEASURED #43) | ladder: 0 NEW; sample ledger mean **83.78** / median **89.46** (n=35); **full ledger mean 83.77 / median 88.52 (n=164)** — exact historical floor class |
 
 The flat profile changes the strategy. “Only optimize the largest hotspot” is
 no longer sufficient: on a roughly 98-second comparison, every stable 1% slice
@@ -1446,8 +1446,9 @@ stack. Fixed **before** any further speed experiment.
 | `parity_ladder.py sweep` (207 pairs) | **0 NEW, 0 fixed** after bless |
 | CRASH pairs (5) | all complete (no panic) |
 | `parity_ledger.sh 40` | mean **83.78** · median **89.46** · min 40.10 · n **35** |
+| `parity_ledger.sh full` | mean **83.77** · median **88.52** · min 39.17 · n **164** (exact historical floor) |
+| `cargo test --no-fail-fast` | **758 passed**, 1 failed (`m36_predel_correlation::s1a` pre-existing on stock HEAD), 6 ignored |
 | focused tests | atom_stack_footnote_path, m4f6_fixupids, path01, accept_skip01 green |
-| pre-existing | `m36_predel_correlation::s1a` fails on stock HEAD too (not introduced here) |
 
 ### Next queue (do not stack)
 
