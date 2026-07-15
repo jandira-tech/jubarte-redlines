@@ -221,6 +221,9 @@ fn extend_common_run(
 
 /// Content score of the run `cul1[i1..i1 + len]`: non-separator character count
 /// in Word mode (`dom`+`settings` present), else the historical pure-length rank.
+///
+/// When `prefix` is `Some` (LCS-SCORE-01), uses O(1) prefix sums of per-unit
+/// non-separator scores — exact equal to walking the run each time.
 #[inline]
 fn common_run_content_score(
     dom: Option<&Dom>,
@@ -228,13 +231,64 @@ fn common_run_content_score(
     i1: usize,
     len: usize,
     settings: Option<&WmlComparerSettings>,
+    prefix: Option<&[usize]>,
 ) -> usize {
+    if let Some(p) = prefix {
+        // p[0]=0, p[k]=sum of unit scores for first k units.
+        debug_assert_eq!(p.len(), cul1.len() + 1);
+        return p[i1 + len] - p[i1];
+    }
     if let (Some(d), Some(s)) = (dom, settings) {
         run_non_separator_text_len(d, &cul1[i1..i1 + len], s)
     } else {
         // Faithful / no-dom: pure length ranking (historical).
         len
     }
+}
+
+/// LCS-SCORE-01: non-separator content score of a single comparison unit.
+fn unit_non_separator_text_len(
+    dom: &Dom,
+    unit: &ComparisonUnit,
+    settings: &WmlComparerSettings,
+) -> usize {
+    let mut score = 0usize;
+    // Avoid allocating a descendant_atoms Vec for the common Word case.
+    match unit {
+        ComparisonUnit::Word(w) => {
+            for a in &w.contents {
+                if dom.name(a.content_element) == Some(W::t()) {
+                    score += dom
+                        .value(a.content_element)
+                        .chars()
+                        .filter(|ch| !settings.word_separators.contains(ch) && !ch.is_whitespace())
+                        .count();
+                }
+            }
+        }
+        ComparisonUnit::Group(g) => {
+            for c in &g.contents {
+                score += unit_non_separator_text_len(dom, c, settings);
+            }
+        }
+    }
+    score
+}
+
+/// LCS-SCORE-01: prefix sums of per-unit non-separator scores.
+/// `prefix[0] == 0`, `prefix[i+1] == prefix[i] + score(cul[i])`.
+fn non_separator_prefix_sums(
+    dom: &Dom,
+    cul: &[ComparisonUnit],
+    settings: &WmlComparerSettings,
+) -> Vec<usize> {
+    let mut prefix = Vec::with_capacity(cul.len() + 1);
+    prefix.push(0);
+    for u in cul {
+        let s = unit_non_separator_text_len(dom, u, settings);
+        prefix.push(prefix.last().copied().unwrap_or(0) + s);
+    }
+    prefix
 }
 
 /// Keep the **first-found** candidate maximising `(content_score, len)`. Strict
@@ -264,13 +318,18 @@ fn longest_common_run_scan(
     cul2: &[ComparisonUnit],
     settings: Option<&WmlComparerSettings>,
 ) -> (usize, usize, usize) {
+    let prefix = match (dom, settings) {
+        (Some(d), Some(s)) => Some(non_separator_prefix_sums(d, cul1, s)),
+        _ => None,
+    };
     // best: (content_score, len, i1, i2)
     let mut best: Option<(usize, usize, usize, usize)> = None;
     for i1 in 0..cul1.len() {
         for i2 in 0..cul2.len() {
             let len = extend_common_run(cul1, cul2, i1, i2);
             if len > 0 {
-                let content = common_run_content_score(dom, cul1, i1, len, settings);
+                let content =
+                    common_run_content_score(dom, cul1, i1, len, settings, prefix.as_deref());
                 consider_candidate(&mut best, (content, len, i1, i2));
             }
         }
@@ -296,6 +355,12 @@ fn longest_common_run_indexed(
     cul2: &[ComparisonUnit],
     settings: Option<&WmlComparerSettings>,
 ) -> (usize, usize, usize) {
+    // LCS-SCORE-01: precompute per-unit non-separator scores once per LCR call.
+    let prefix = match (dom, settings) {
+        (Some(d), Some(s)) => Some(non_separator_prefix_sums(d, cul1, s)),
+        _ => None,
+    };
+
     // Bucket cul2 positions by their u64 fingerprint key. Pushing in ascending
     // i2 order keeps each bucket ascending, so a probe reproduces the scan's
     // i2-ascending visitation for a given i1.
@@ -314,7 +379,8 @@ fn longest_common_run_indexed(
         for &i2 in positions {
             let len = extend_common_run(cul1, cul2, i1, i2);
             if len > 0 {
-                let content = common_run_content_score(dom, cul1, i1, len, settings);
+                let content =
+                    common_run_content_score(dom, cul1, i1, len, settings, prefix.as_deref());
                 consider_candidate(&mut best, (content, len, i1, i2));
             }
         }
