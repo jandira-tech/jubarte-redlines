@@ -9,7 +9,10 @@ pub mod parse;
 pub mod serialize;
 
 pub use parse::parse_xdocument;
-pub use serialize::{serialize_document, serialize_element, serialize_element_sha1_hex};
+pub use serialize::{
+    serialize_document, serialize_element, serialize_element_sha1_hex,
+    serialize_element_structure_sha1_hex,
+};
 
 use std::sync::Arc;
 
@@ -907,6 +910,11 @@ impl Dom {
     /// stripped (same digest as hash of [`serialize_element`] after that strip).
     pub fn serialize_element_sha1_hex(&self, el: NodeId) -> String {
         serialize::serialize_element_sha1_hex(self, el)
+    }
+
+    /// HASH-STREAM-02: structure-only SHA-1 (no text nodes) with xmlns strip.
+    pub fn serialize_element_structure_sha1_hex(&self, el: NodeId) -> String {
+        serialize::serialize_element_structure_sha1_hex(self, el)
     }
     /// Serialize a whole document (declaration + root) (M1.4).
     pub fn serialize_document(&self, doc: NodeId) -> String {

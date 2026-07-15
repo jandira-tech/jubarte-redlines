@@ -610,8 +610,15 @@ pub fn block_sha1(dom: &Dom, clone: NodeId) -> String {
     dom.serialize_element_sha1_hex(clone)
 }
 
+/// HASH-STREAM-02: SHA-1 of the structure projection of `node` (elements + attrs
+/// only). Digest-identical to `block_sha1(clone_for_structure_hash(...))`.
+pub fn structure_sha1(dom: &Dom, node: NodeId) -> String {
+    dom.serialize_element_structure_sha1_hex(node)
+}
+
 /// M4.B.3 — `CloneForStructureHash` (:5121): keep element name + attributes +
 /// element nesting, drop ALL text/value nodes. Returns `None` for non-elements.
+/// Kept as the oracle for HASH-STREAM-02 tests; production uses [`structure_sha1`].
 pub fn clone_for_structure_hash(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
     if !dom.is_element(node) {
         return None;
@@ -665,10 +672,9 @@ pub fn add_sha1_hash_to_block_level_content(
         let clone = clone_block_level_content_for_hashing(dom, d, true, settings, rel_hash);
         let sha = block_sha1(dom, clone);
         dom.set_attribute_value(d, &PT::sha1_hash(), Some(&sha));
-        if (name == W::tbl() || name == W::tr())
-            && let Some(sc) = clone_for_structure_hash(dom, clone)
-        {
-            let sha2 = block_sha1(dom, sc);
+        if name == W::tbl() || name == W::tr() {
+            // HASH-STREAM-02: structure digest without allocating a structure-clone DOM.
+            let sha2 = structure_sha1(dom, clone);
             dom.set_attribute_value(d, &PT::structure_sha1_hash(), Some(&sha2));
         }
     }

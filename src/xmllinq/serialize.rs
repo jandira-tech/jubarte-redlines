@@ -234,6 +234,18 @@ pub fn serialize_element_sha1_hex(dom: &Dom, el: NodeId) -> String {
     out.finish_hex()
 }
 
+/// HASH-STREAM-02: structure-only SHA-1 (element names + attributes + nesting;
+/// no text/comment/PI) with the same first WML default-xmlns strip as
+/// [`serialize_element_sha1_hex`]. Digest-identical to hashing a
+/// structure-clone then serializing, without allocating the structure DOM.
+pub fn serialize_element_structure_sha1_hex(dom: &Dom, el: NodeId) -> String {
+    let mut state = State { counter: 0 };
+    let root_scope = Scope::root();
+    let mut out = HashXmlBuf::new();
+    emit_structure(dom, el, &root_scope, &mut state, &mut out);
+    out.finish_hex()
+}
+
 /// Minimal output sink so serialize can target `String` or a streaming hasher.
 trait XmlBuf {
     fn push_str(&mut self, s: &str);
@@ -503,6 +515,66 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut impl 
                 out.push_str(data);
             }
             out.push_str("?>");
+        }
+    }
+    out.push_str("</");
+    write_qname(out, &tag_prefix, local);
+    out.push('>');
+}
+
+/// HASH-STREAM-02: like [`emit`] but drops all non-element children (text /
+/// comment / PI), matching `CloneForStructureHash` then serialize.
+fn emit_structure(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut impl XmlBuf) {
+    let ename = dom.name(e).expect("emit_structure: non-element node");
+    let mut scope = Scope::child(parent, dom, e);
+
+    scope.assign(state, ename.namespace_name());
+    let mut real_attrs: Vec<(&XName, &str)> = Vec::new();
+    let mut prefix_list_attrs: Vec<(&XName, &str)> = Vec::new();
+    for i in 0..dom.attr_count(e) {
+        let (name, value) = dom.attr_at(e, i);
+        if dom.is_namespace_declaration(name) {
+            continue;
+        }
+        scope.assign(state, name.namespace_name());
+        if is_namespace_prefix_list(name) {
+            for token in value.split_whitespace() {
+                if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
+                    scope.assign(state, &uri);
+                }
+            }
+            prefix_list_attrs.push((name, value));
+            continue;
+        }
+        real_attrs.push((name, value));
+    }
+
+    let tag_prefix = resolve_prefix(&mut scope, state, ename.namespace_name());
+    let local = ename.local_name();
+    let n_kids = dom.child_count(e);
+
+    // Count element children only (structure clone has no text nodes).
+    let mut n_el = 0usize;
+    for i in 0..n_kids {
+        if dom.is_element(dom.child_at(e, i)) {
+            n_el += 1;
+        }
+    }
+
+    out.push('<');
+    write_qname(out, &tag_prefix, local);
+    write_attributes(out, &mut scope, state, &real_attrs, &prefix_list_attrs);
+
+    if n_el == 0 {
+        out.push_str(" />");
+        return;
+    }
+
+    out.push('>');
+    for i in 0..n_kids {
+        let k = dom.child_at(e, i);
+        if dom.is_element(k) {
+            emit_structure(dom, k, &scope, state, out);
         }
     }
     out.push_str("</");

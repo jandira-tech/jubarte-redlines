@@ -70,6 +70,7 @@ evidence and ready-to-run branches of the program.
 | NAME-01b: cache tbl/tr/tc/bookmark/move locals + call sites | shipped win (MEASURED #27) | matrix×4 incl redline×5lb: wall ↓ every load-bearing slot; equality exact |
 | DOM-ITER-03: for_each_descendant_element non-alloc walk | banked (MEASURED #28) | exact m4b + order==descendants; pdense lean; redline×5lb thrash/worse — no wall claim |
 | HASH-STREAM-01 lite: stream serialize into SHA-1 for block digests | shipped lean win (MEASURED #29) | matrix×4: RFP×5lb + redline×5lb wall ↓ both slots; pdense noise; digests exact |
+| HASH-STREAM-02: structure digest without structure-clone DOM | banked (MEASURED #30) | exact == clone oracle; pdense lean; RFP/redline mixed slots — no wall claim |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1151,6 +1152,24 @@ xmlns drain (no `replacen` second alloc). Tests: `tests/perf_hash_stream_lite.rs
 | **redline_rfp17_vs_5lb102** | 31.45 / 23.01 · 29.46 / 23.05 | **29.66 / 23.50 · 28.58 / 22.93** |
 
 document.xml match YES all four. **Verdict: ship** (lean wall win on load-bearing fixtures).
+
+## MEASURED #30 — 2026-07-15: HASH-STREAM-02 BANKED
+
+`structure_sha1` / `serialize_element_structure_sha1_hex` stream structure-only
+serialize (no text) into SHA-1. Production `add_sha1_hash_to_block_level_content`
+uses it for `pt:StructureSHA1Hash` instead of `clone_for_structure_hash` +
+`block_sha1`. Oracle: `tests/perf_hash_stream02.rs` + m4b.
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = HASH-STREAM-01 lite)
+
+| fixture | A wall | B wall |
+|---|---:|---:|
+| pdense_15k | 15.77 / 15.78 | **15.54 / 15.26** (lean both) |
+| rfp17_redline_self | ~0.06 | ~0.06 |
+| rfp17_vs_5lb102 | 24.42 / 23.20 | 23.21 / 23.46 (mixed) |
+| redline_rfp17_vs_5lb102 | 30.98 / 30.38 | 31.01 / 29.78 (mixed) |
+
+document.xml match YES all four. **Verdict: keep / bank** — exact; no wall claim.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
