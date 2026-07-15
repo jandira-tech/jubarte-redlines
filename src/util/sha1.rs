@@ -27,6 +27,20 @@ pub fn sha1_hex_bytes(bytes: &[u8]) -> String {
     hex_string_from_bytes(&hasher.finalize())
 }
 
+/// SHA-1 of the concatenation of `parts`, without allocating the concatenated
+/// string. Byte-identical to `sha1_hex(&parts.concat())` for any sequence of
+/// UTF-8 pieces (used by `ComparisonUnitWord::new` to hash atom digests).
+pub fn sha1_hex_parts<'a, I>(parts: I) -> String
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut hasher = Sha1::new();
+    for p in parts {
+        hasher.update(p.as_bytes());
+    }
+    hex_string_from_bytes(&hasher.finalize())
+}
+
 /// A fixed-width `u64` fingerprint of a hash string, used as a cheap pre-filter
 /// for comparison-unit equality in the LCS hot path (`longest_common_run`). It
 /// is a *pure deterministic function* of the string, so equal strings always

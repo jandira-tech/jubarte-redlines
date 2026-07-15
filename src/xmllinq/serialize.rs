@@ -351,10 +351,10 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut Strin
         } else if dom.is_pi(k) {
             out.push_str("<?");
             out.push_str(dom.pi_target(k).unwrap_or(""));
-            if let Some(data) = dom.pi_data(k) {
-                if !data.is_empty() {
-                    out.push_str(data);
-                }
+            if let Some(data) = dom.pi_data(k)
+                && !data.is_empty()
+            {
+                out.push_str(data);
             }
             out.push_str("?>");
         }
@@ -391,10 +391,10 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
         } else if dom.is_pi(k) {
             out.push_str("<?");
             out.push_str(dom.pi_target(k).unwrap_or(""));
-            if let Some(data) = dom.pi_data(k) {
-                if !data.is_empty() {
-                    out.push_str(data);
-                }
+            if let Some(data) = dom.pi_data(k)
+                && !data.is_empty()
+            {
+                out.push_str(data);
             }
             out.push_str("?>");
         }

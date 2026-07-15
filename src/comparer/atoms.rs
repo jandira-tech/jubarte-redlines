@@ -1,6 +1,6 @@
 //! Comparison-unit types (M4.0/M4.2). Port of the `ComparisonUnit*` hierarchy.
 
-use crate::util::sha1::{sha1_fingerprint, sha1_hex};
+use crate::util::sha1::{sha1_fingerprint, sha1_hex_parts};
 use crate::xmllinq::NodeId;
 
 use super::{ComparisonUnitGroupType, CorrelationStatus, WmlComparerRevisionType};
@@ -86,8 +86,9 @@ pub struct ComparisonUnitWord {
 
 impl ComparisonUnitWord {
     pub fn new(contents: Vec<ComparisonUnitAtom>) -> Self {
-        let concat: String = contents.iter().map(|a| a.sha1_hash.as_str()).collect();
-        let sha1_hash = sha1_hex(&concat);
+        // HASH-02: stream each atom's hex digest into SHA-1 — same bytes as
+        // concatenating the digests first, without the intermediate String.
+        let sha1_hash = sha1_hex_parts(contents.iter().map(|a| a.sha1_hash.as_str()));
         ComparisonUnitWord {
             correlation_status: CorrelationStatus::Nil,
             sha1_key: sha1_fingerprint(&sha1_hash),
@@ -166,18 +167,16 @@ impl ComparisonUnit {
         self.collect_atoms(&mut out);
         out
     }
-    /// Port of `DescendantContentAtomsCount`.
+    /// Port of `DescendantContentAtomsCount` — atom cardinality under this unit.
+    /// Must equal `descendant_atoms().len()` without allocating the vector.
+    /// A Word contributes `contents.len()` (atoms in the word), not 1.
     pub fn descendant_content_atoms_count(&self) -> usize {
-        self.descendant_content_atoms_count_rec()
-    }
-
-    fn descendant_content_atoms_count_rec(&self) -> usize {
         match self {
-            ComparisonUnit::Word(_) => 1,
+            ComparisonUnit::Word(w) => w.contents.len(),
             ComparisonUnit::Group(g) => g
                 .contents
                 .iter()
-                .map(|a| a.descendant_content_atoms_count_rec())
+                .map(ComparisonUnit::descendant_content_atoms_count)
                 .sum(),
         }
     }

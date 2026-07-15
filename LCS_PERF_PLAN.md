@@ -44,6 +44,9 @@ evidence and ready-to-run branches of the program.
 | ANN-01: dead annotations Vec → Dom side table | shipped (`d006eaf`) | NodeData 152→128 B; annotations never had a production caller (see MEASURED #4) |
 | NODE-KIND-01: box rare Document/Pi variants | shipped (`6bd0e41`) | NodeData 128→96 B; A/B user CPU −2.6%, sys CPU −17%, wall −2.6% (both runs); RSS inconclusive, no regression |
 | PARSE-01: intern XNamespace/XName strings | shipped (`2d4b1e6`) | wall −4%…−10.6% (win, all runs), sys CPU −24%…−31%, user ~neutral; peak RSS +~1.2GB reproducible (flagged, see MEASURED #5) |
+| HASH-01: fixed hex nibble table | shipped (in `1f0ab33`, documented MEASURED #6) | replaces per-byte `format!("{b:02x}")` in `hex_string_from_bytes` |
+| LCS-ITER-01 count fix | shipped (MEASURED #6) | Word atom count was wrongly `1` after `1f0ab33` → LCS thresholds broken; restored `contents.len()` |
+| HASH-02: stream atom digests into SHA-1 | shipped (MEASURED #6) | `ComparisonUnitWord::new` no longer allocates concat String; digests byte-identical |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -639,6 +642,51 @@ masking for short similar XML names, degrading the pool toward linear scans.
 Default SipHash is the shipped choice. A properly-avalanched fast hasher (e.g.
 fxhash with a final mix) is the only viable variant, and only if a future profile
 shows the pool's SipHash cost is worth attacking.
+
+## MEASURED #6 — 2026-07-15: HASH-01 + LCS count fix + HASH-02 SHIPPED
+
+Three related exact-path items closed together after a regression hunt on the
+mixed `1f0ab33` commit.
+
+### What landed
+
+1. **HASH-01** (already in `1f0ab33`): `hex_string_from_bytes` uses a fixed
+   lowercase nibble table instead of `format!("{b:02x}")` per digest byte.
+2. **LCS-ITER-01 count fix (correctness)**: `descendant_content_atoms_count` for
+   `ComparisonUnit::Word` must return `contents.len()` (atom cardinality), not
+   `1`. The `1f0ab33` "recursive count" rewrite under-counted multi-atom words,
+   flipping LCS correlation thresholds (`>16` / `>32` atom gates) and making
+   dense compares pathological (pdense 15k hung for many minutes in LCS
+   `process_correlated_hashes` vs ~25 s healthy).
+3. **HASH-02**: `ComparisonUnitWord::new` streams each atom's hex digest into
+   `Sha1` via `sha1_hex_parts` — byte-identical to hashing the concatenated
+   string, without allocating that intermediate `String`. Covered by
+   `tests/perf_hash02_stream.rs` (multipart/generated splits == concat oracle)
+   and `tests/perf_lcs_iter01_count.rs` (count == `descendant_atoms().len()`).
+
+### A/B — interleaved ABBA, pdense 15k, 2 rounds
+
+Base binary: pre-`1f0ab33` release (PARSE-01 head). Candidate: count fix +
+HASH-01 + HASH-02.
+
+| run | A wall (base) | B wall (cand) |
+|---|---:|---:|
+| r1 | 25.78 / 23.25 | 23.12 / 22.44 |
+| r2 | 24.59 / 25.13 | 23.23 / 23.30 |
+
+- **wall:** cand beat base in every paired slot (median ~23.2 s vs ~24.9 s,
+  ~**6–7%** on this fixture).
+- **user CPU:** same direction (cand lower).
+- **document.xml:** SHA-256 identical across last A/B pair
+  (`512eb265…bd92`).
+- Quality sample: 30-fixture parity ledger (not full 207) per operating rule.
+
+**Verdict: ship.** The count fix is the load-bearing correctness restore; HASH-01
+and HASH-02 are exact, allocation-light wins measured with it.
+
+**Lesson:** never batch a micro-optimization with a count rewrite in one opaque
+commit; the Word=`1` bug was invisible until an end-to-end dense fixture and a
+samply of the hung candidate.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
