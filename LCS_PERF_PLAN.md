@@ -88,6 +88,7 @@ evidence and ready-to-run branches of the program.
 | PACKAGE-VALIDITY-01: package-wide pt:* strip + settings re-sync | shipped quality (`74ea0e4`) | validity not document.xml-only; OPC parts + rels/CT; SDK TOTAL_ERRORS=0 on hostile redline pair |
 | ACCEPT-SKIP-A3: skip A.3 rebuild without moveFromRangeStart | banked (MEASURED #44) | exact NodeId + m28 A.3; digests YES×4; matrix wall thrash/mixed — no wall claim |
 | ACCEPT-SKIP-A5: skip A.5 when no deleted/moved-from paragraph marks | banked lean (MEASURED #45) | exact m28 A.5 + NodeId; digests YES×4; RFP×5lb + redline×5lb B both slots (~−1s); pdense flat — no full-matrix wall claim |
+| NAME-01c: cache accept/RP W/PT locals + call sites | banked (MEASURED #46) | exact == XName::get; digests YES×4; matrix wall noise/mixed — no wall claim |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | **re-recorded HEAD** (MEASURED #43 + package fixes) | ladder: 0 NEW; sample ledger mean **83.78** / median **89.46** (n=35); **full ledger mean 83.77 / median 88.52 (n=164)** — exact historical floor class |
 
@@ -1517,14 +1518,46 @@ base = HEAD (A3 banked) · cand = A5 skip
 **Verdict: bank lean** — keep exact cleanup; RFP load-bearing lean; pdense not a
 win → no full-matrix wall claim.
 
+## MEASURED #46 — 2026-07-15: NAME-01c BANKED (exact, wall noise)
+
+### Hypothesis
+Cache remaining accept/RP `W`/`PT` locals (`moveFromRangeEnd`, `sdt`, `fldChar`,
+`instrText`, `numPr`, `cellDel`, `UniqueId`, `RunIds`, …) and convert production
+call sites. Prior NAME-01/01b won full-matrix wall; residual uncached gets may
+still tax accept-heavy paths.
+
+### Files
+- `src/namespaces.rs` — OnceLock helpers
+- `src/revision_processor.rs` + `src/comparer/{finalize,produce,tables}.rs` — call sites
+- `tests/perf_name01c.rs` — equality vs `XName::get`
+
+### Exact gates
+- name01c equality suite green; m28 + accept-skip a3/a5 green
+- digests YES×4
+
+### A/B — clean permanent matrix (1× ABBA)
+base = A5 banked · cand = NAME-01c
+
+| fixture | A wall | B wall | note |
+|---|---|---|---|
+| pdense_15k | 15.19 / 15.07 | 15.22 / 15.20 | flat |
+| rfp17_redline_self | 0.70 / 0.67 | 0.68 / 0.68 | noise |
+| rfp17_vs_5lb102 | 23.68 / 23.03 | 23.56 / 22.61 | B lean |
+| redline_rfp17_vs_5lb102 | 23.97 / 23.97 | 23.87 / 24.27 | mixed |
+
+**Verdict: bank** — exact keep; no full-matrix wall claim (NAME-01 family
+already harvested the large win).
+
 ### Next queue (do not stack)
 
-MEASURED #45 banked lean. **Next single experiment: NAME-01c** — cache remaining
-hot `W::*` locals used on accept/compare paths (`moveFromRangeEnd`, `sdt`,
-`fldChar`, `instrText`, `numPr`, `cellDel`, …) and convert call sites. Prior
-NAME-01/01b won full-matrix wall. No multi-mechanism batch.
+MEASURED #45 banked lean + **#46 NAME-01c banked**. **Queue paused for
+re-profile** (samply on permanent 4-fixture matrix) before the next pick.
+Portfolio still open: ACCEPT-SCAN-01 (single-flag only), HASH-STREAM banked
+amplify only after new profile, ATOM-VIEW/RESULT-DOM architectural tracks,
+remaining uncached `W::name` (tblGrid/gridCol/customXml*). No multi-mechanism
+batch. Do not stack banked skips for a synthetic wall claim.
 
-**Verdict #43–#44:** quality restore + A3 bank. **Verdict #45:** bank A5 lean.
+**Verdict #43–#46:** quality restore; A3/A5 banked (A5 lean); NAME-01c banked.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

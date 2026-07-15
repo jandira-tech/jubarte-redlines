@@ -119,6 +119,28 @@ impl W {
     cached_xname!(W::URI, move_to, "moveTo");
     cached_xname!(W::URI, move_from_range_start, "moveFromRangeStart");
     cached_xname!(W::URI, move_to_range_start, "moveToRangeStart");
+    // NAME-01c: accept / RP pipeline locals (hit every has_rev document).
+    cached_xname!(W::URI, move_from_range_end, "moveFromRangeEnd");
+    cached_xname!(W::URI, move_to_range_end, "moveToRangeEnd");
+    cached_xname!(W::URI, sdt, "sdt");
+    cached_xname!(W::URI, sdt_content, "sdtContent");
+    cached_xname!(W::URI, sdt_pr, "sdtPr");
+    cached_xname!(W::URI, fld_char, "fldChar");
+    cached_xname!(W::URI, instr_text, "instrText");
+    cached_xname!(W::URI, del_instr_text, "delInstrText");
+    cached_xname!(W::URI, num_pr, "numPr");
+    cached_xname!(W::URI, cell_del, "cellDel");
+    cached_xname!(W::URI, cell_ins, "cellIns");
+    cached_xname!(W::URI, cell_merge, "cellMerge");
+    cached_xname!(W::URI, hyperlink, "hyperlink");
+    cached_xname!(W::URI, smart_tag, "smartTag");
+    cached_xname!(W::URI, r_pr_change, "rPrChange");
+    cached_xname!(W::URI, p_pr_change, "pPrChange");
+    cached_xname!(W::URI, numbering_change, "numberingChange");
+    cached_xname!(W::URI, v_merge, "vMerge");
+    cached_xname!(W::URI, hdr, "hdr");
+    cached_xname!(W::URI, ftr, "ftr");
+    cached_xname!(W::URI, fld_simple, "fldSimple");
 }
 
 // ── PowerTools correlation attribute names ────────────────────────────────────
@@ -128,4 +150,7 @@ impl PT {
     cached_xname!(PT::URI, correlated_sha1_hash, "CorrelatedSHA1Hash");
     cached_xname!(PT::URI, structure_sha1_hash, "StructureSHA1Hash");
     cached_xname!(PT::URI, status, "Status");
+    // NAME-01c: accept strip / annotate attrs.
+    cached_xname!(PT::URI, unique_id, "UniqueId");
+    cached_xname!(PT::URI, run_ids, "RunIds");
 }

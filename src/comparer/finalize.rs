@@ -67,7 +67,7 @@ fn convert_run_text_to_del_text(dom: &mut Dom, run: NodeId) {
                     continue;
                 }
                 Some(n) if n == &W::t() => dom.set_name(c, W::name("delText")),
-                Some(n) if n == &W::name("instrText") => dom.set_name(c, W::name("delInstrText")),
+                Some(n) if n == &W::instr_text() => dom.set_name(c, W::name("delInstrText")),
                 _ => walk(dom, c),
             }
         }
@@ -190,13 +190,13 @@ pub fn mark_content_transform(
                     (
                         W::name("moveFromRangeStart"),
                         W::name("moveFrom"),
-                        W::name("moveFromRangeEnd"),
+                        W::move_from_range_end(),
                     )
                 } else {
                     (
                         W::name("moveToRangeStart"),
                         W::name("moveTo"),
-                        W::name("moveToRangeEnd"),
+                        W::move_to_range_end(),
                     )
                 };
                 let mname = move_name(dom);
@@ -591,9 +591,9 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
         W::name("moveFrom"),
         W::name("moveTo"),
         W::name("moveFromRangeStart"),
-        W::name("moveFromRangeEnd"),
+        W::move_from_range_end(),
         W::name("moveToRangeStart"),
-        W::name("moveToRangeEnd"),
+        W::move_to_range_end(),
         W::name("rPrChange"),
         W::name("pPrChange"),
         W::name("tblPrChange"),
@@ -643,8 +643,8 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
         v
     };
     let (mffe, mtre, mffs, mtrs) = (
-        W::name("moveFromRangeEnd"),
-        W::name("moveToRangeEnd"),
+        W::move_from_range_end(),
+        W::move_to_range_end(),
         W::name("moveFromRangeStart"),
         W::name("moveToRangeStart"),
     );
@@ -761,7 +761,7 @@ fn coalesce_key(dom: &Dom, ce: NodeId) -> String {
         if dom.element(ce, &W::t()).is_some() {
             return format!("Wt{rpr}\u{2}{stamp}");
         }
-        if dom.element(ce, &W::name("instrText")).is_some() {
+        if dom.element(ce, &W::instr_text()).is_some() {
             return format!("WinstrText{rpr}\u{2}{stamp}");
         }
         return DONT_CONSOLIDATE.to_string();
@@ -825,7 +825,7 @@ fn run_text_concat(dom: &Dom, r: NodeId) -> String {
     let mut s = String::new();
     for d in dom.descendants(r, None) {
         let n = dom.name(d).unwrap();
-        if n == W::t() || n == W::name("delText") || n == W::name("instrText") {
+        if n == W::t() || n == W::name("delText") || n == W::instr_text() {
             s.push_str(&dom.value_str(d));
         }
     }
@@ -858,8 +858,8 @@ pub fn coalesce_adjacent_runs(dom: &mut Dom, container: NodeId) -> NodeId {
                 let c = dom.clone_subtree(rpr);
                 dom.add(nr, c);
             }
-            let leaf_name = if dom.element(first, &W::name("instrText")).is_some() {
-                W::name("instrText")
+            let leaf_name = if dom.element(first, &W::instr_text()).is_some() {
+                W::instr_text()
             } else {
                 W::t()
             };
@@ -1109,7 +1109,7 @@ pub fn move_paragraph_properties_first(dom: &mut Dom, node: NodeId) {
 /// (m16/m29 regression).
 pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
     let hyperlinks: Vec<NodeId> = dom
-        .descendants(root, Some(&W::name("hyperlink")))
+        .descendants(root, Some(&W::hyperlink()))
         .into_iter()
         .filter(|&hl| dom.attribute(hl, &R::name("id")).is_none())
         .collect();
@@ -1788,7 +1788,7 @@ pub fn last_pure_del_spacing_to_pprchange(
     // Layout props Word records under pPrChange on the last pure-del / mixed.
     let movable = [
         W::name("spacing"),
-        W::name("numPr"),
+        W::num_pr(),
         W::name("ind"),
         W::name("jc"),
         W::name("pStyle"),
@@ -2133,9 +2133,9 @@ fn simplify_move_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     let name = dom.name(node).unwrap();
     let ranges = [
         W::name("moveFromRangeStart"),
-        W::name("moveFromRangeEnd"),
+        W::move_from_range_end(),
         W::name("moveToRangeStart"),
-        W::name("moveToRangeEnd"),
+        W::move_to_range_end(),
     ];
     let new_name = if name == W::name("moveFrom") {
         W::del()
@@ -2184,7 +2184,7 @@ pub fn merge_replaced_paragraphs(dom: &mut Dom, root: NodeId, comparer_author: &
     if let Some(b) = dom.element(root, &W::body()) {
         containers.push(b);
     }
-    for name in [W::name("tc"), W::name("txbxContent"), W::name("sdtContent")] {
+    for name in [W::name("tc"), W::name("txbxContent"), W::sdt_content()] {
         containers.extend(dom.descendants(root, Some(&name)));
     }
     for c in containers {
@@ -2230,7 +2230,7 @@ fn accumulate_para_child_class(
         *del = true;
         return;
     }
-    if n == W::name("hyperlink") {
+    if n == W::hyperlink() {
         for gc in dom.elements(c, None) {
             accumulate_para_child_class(dom, gc, ins, del, plain);
         }
@@ -2287,7 +2287,7 @@ fn para_class_carried_aware(dom: &Dom, p: NodeId, comparer_author: &str) -> Opti
             }
         } else if n == W::del() {
             del = true;
-        } else if n == W::name("hyperlink") {
+        } else if n == W::hyperlink() {
             // Transparent: TOC hyperlink > del|ins (same as para_replacement_class).
             for gc in dom.elements(c, None) {
                 let Some(gn) = dom.name(gc) else {
@@ -2765,8 +2765,8 @@ pub fn reorder_replaced_blocks(dom: &mut Dom, root: NodeId) {
             }
             return cls;
         }
-        if n == W::name("sdt") {
-            let content = dom.element(el, &W::name("sdtContent"))?;
+        if n == W::sdt() {
+            let content = dom.element(el, &W::sdt_content())?;
             let kids = dom.elements(content, None);
             if kids.is_empty() {
                 return None;
@@ -2963,7 +2963,7 @@ pub fn convert_stamped_preins(
                 dom.set_name(t, W::t());
             }
             for t in dom.descendants(run, Some(&W::name("delInstrText"))) {
-                dom.set_name(t, W::name("instrText"));
+                dom.set_name(t, W::instr_text());
             }
         };
         let Some(parent) = dom.parent(r) else {
@@ -3486,7 +3486,7 @@ pub fn flatten_tracked_deletions(
             dom.set_name(t, W::t());
         }
         for t in dom.descendants(d, Some(&W::name("delInstrText"))) {
-            dom.set_name(t, W::name("instrText"));
+            dom.set_name(t, W::instr_text());
         }
         let author = dom.attribute(d, &W::author()).map(|s| s.to_string());
         let date = dom.attribute(d, &W::date()).map(|s| s.to_string());
@@ -3614,7 +3614,7 @@ pub fn convert_stamped_predeletes(
         for t in dom.descendants(r, Some(&W::t())) {
             dom.set_name(t, W::name("delText"));
         }
-        for t in dom.descendants(r, Some(&W::name("instrText"))) {
+        for t in dom.descendants(r, Some(&W::instr_text())) {
             dom.set_name(t, W::name("delInstrText"));
         }
     }

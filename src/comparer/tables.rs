@@ -68,8 +68,8 @@ pub static ALLOWABLE_RUN_CHILDREN: LazyLock<HashSet<XName>> = LazyLock::new(|| {
         W::name("yearShort"),
         M::name("oMathPara"),
         M::name("oMath"),
-        W::name("fldChar"),
-        W::name("instrText"),
+        W::fld_char(),
+        W::instr_text(),
     ])
 });
 
@@ -91,9 +91,9 @@ pub static ELEMENTS_TO_THROW_AWAY: LazyLock<HashSet<XName>> = LazyLock::new(|| {
         W::name("separator"),
         W::name("continuationSeparator"),
         W::move_from_range_start(),
-        W::name("moveFromRangeEnd"),
+        W::move_from_range_end(),
         W::move_to_range_start(),
-        W::name("moveToRangeEnd"),
+        W::move_to_range_end(),
     ])
 });
 
@@ -165,14 +165,14 @@ pub static RECURSION_ELEMENTS: LazyLock<Vec<RecursionInfo>> = LazyLock::new(|| {
         mk(W::txbx_content(), None),
         mk(W10::name("wrap"), None),
         mk(
-            W::name("sdt"),
+            W::sdt(),
             Some(vec![W::name("sdtPr"), W::name("sdtEndPr")]),
         ),
-        mk(W::name("sdtContent"), None),
-        mk(W::name("hyperlink"), None),
+        mk(W::sdt_content(), None),
+        mk(W::hyperlink(), None),
         mk(W::name("fldSimple"), None),
         mk(VML::name("shapetype"), None),
-        mk(W::name("smartTag"), Some(vec![W::name("smartTagPr")])),
+        mk(W::smart_tag(), Some(vec![W::name("smartTagPr")])),
         mk(W::name("ruby"), Some(vec![W::name("rubyPr")])),
     ]
 });
@@ -238,7 +238,7 @@ pub static S_ELEMENTS_WITH_RELATIONSHIP_IDS: LazyLock<HashSet<XName>> = LazyLock
         W::name("footerReference"),
         W::name("headerReference"),
         W::name("headerSource"),
-        W::name("hyperlink"),
+        W::hyperlink(),
         W::name("printerSettings"),
         W::name("recipientData"),
         W::name("saveThroughXslt"),

@@ -778,7 +778,7 @@ pub fn coalesce_recurse(
             &["trPr"]
         } else if aname == W::tc() {
             &["tcPr"]
-        } else if aname == W::name("sdt") {
+        } else if aname == W::sdt() {
             &["sdtPr", "sdtEndPr"]
         } else if aname == W::name("ruby") {
             &["rubyPr"]
@@ -1197,13 +1197,13 @@ mod opaque_text_tests {
         let mut d = Dom::new();
         let drawing = d.new_element(W::drawing());
         let r = d.new_element(W::r());
-        let instr = d.new_element(W::name("instrText"));
+        let instr = d.new_element(W::instr_text());
         d.add_text(instr, "FIELD");
         d.add(r, instr);
         d.add(drawing, r);
         delete_text_in_opaque(&mut d, drawing, CorrelationStatus::Deleted);
         assert_eq!(
-            d.descendants(drawing, Some(&W::name("instrText"))).len(),
+            d.descendants(drawing, Some(&W::instr_text())).len(),
             1,
             "instrText untouched"
         );

@@ -154,13 +154,13 @@ fn element_or_desc_has_name(dom: &Dom, root: NodeId, name: &XName) -> bool {
 /// `HasRunContent`) — used to decide whether an emptied `w:hyperlink` survives.
 fn has_run_content(dom: &Dom, element: NodeId) -> bool {
     let content_names = [
-        W::name("r"),
-        W::name("smartTag"),
-        W::name("ins"),
-        W::name("del"),
-        W::name("hyperlink"),
-        W::name("fldSimple"),
-        W::name("sdt"),
+        W::r(),
+        W::smart_tag(),
+        W::ins(),
+        W::del(),
+        W::hyperlink(),
+        W::fld_simple(),
+        W::sdt(),
     ];
     dom.elements(element, None)
         .into_iter()
@@ -265,22 +265,22 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
     }
 
     // Vertically-merged cell markers.
-    if name == W::name("cellMerge") {
+    if name == W::cell_merge() {
         let parent_is_tcpr = dom
             .parent(node)
             .and_then(|p| dom.name(p))
             .is_some_and(|pn| pn == W::tc_pr());
         if parent_is_tcpr {
             let vmerge = dom
-                .attribute(node, &W::name("vMerge"))
+                .attribute(node, &W::v_merge())
                 .map(|s| s.to_string());
             if vmerge.as_deref() == Some("rest") {
-                let v = dom.new_element(W::name("vMerge"));
+                let v = dom.new_element(W::v_merge());
                 dom.set_attribute_value(v, &W::val(), Some("restart"));
                 return vec![v];
             }
             if vmerge.as_deref() == Some("cont") {
-                let v = dom.new_element(W::name("vMerge"));
+                let v = dom.new_element(W::v_merge());
                 dom.set_attribute_value(v, &W::val(), Some("continue"));
                 return vec![v];
             }
@@ -288,7 +288,7 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
     }
 
     // w:hyperlink that collapses to an empty shell after accepting children → drop.
-    if name == W::name("hyperlink") {
+    if name == W::hyperlink() {
         let ne = dom.new_element(name);
         for (an, av) in dom.attributes(node) {
             dom.set_attribute_value(ne, &an, Some(&av));
@@ -344,15 +344,15 @@ pub fn accept_revisions_for_element(dom: &mut Dom, element: NodeId) -> NodeId {
     };
 
     // Strip PT.UniqueId / PT.RunIds attributes from all descendants.
-    let unique_id = PT::name("UniqueId");
-    let run_ids = PT::name("RunIds");
+    let unique_id = PT::unique_id();
+    let run_ids = PT::run_ids();
     for d in dom.descendants_and_self(e, None) {
         dom.set_attribute_value(d, &unique_id, None);
         dom.set_attribute_value(d, &run_ids, None);
     }
 
     // Remove empty w:numPr elements.
-    let num_pr = W::name("numPr");
+    let num_pr = W::num_pr();
     for np in dom.descendants(e, Some(&num_pr)) {
         if !dom.has_elements(np) {
             dom.remove(np);
@@ -379,7 +379,7 @@ pub fn accept_revisions_document(dom: &mut Dom, root: NodeId) -> NodeId {
 /// The "skipping" parent used by `ReverseRevisionsTransform` — nearest ancestor
 /// whose name is not `w:sdtContent`/`w:sdt`/`w:smartTag`.
 fn effective_parent(dom: &Dom, node: NodeId) -> Option<NodeId> {
-    let skip = [W::name("sdtContent"), W::name("sdt"), W::name("smartTag")];
+    let skip = [W::sdt_content(), W::sdt(), W::smart_tag()];
     dom.ancestors(node, None)
         .into_iter()
         .find(|&a| dom.name(a).is_some_and(|n| !skip.contains(&n)))
@@ -406,7 +406,7 @@ fn reverse_revisions_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         .is_some_and(|n| n == W::p_pr());
 
     let in_p_or_hyperlink =
-        matches!(&parent_name, Some(n) if *n == W::p() || *n == W::name("hyperlink"));
+        matches!(&parent_name, Some(n) if *n == W::p() || *n == W::hyperlink());
 
     // Deleted run / deleted math char → w:ins (wrapping reversed children).
     if name == W::del() && (in_p_or_hyperlink || parent_name.as_ref() == Some(&M::name("r"))) {
@@ -488,7 +488,7 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
     let name = dom.name(node).unwrap();
 
     // Inserted numbering properties: numPr containing w:ins → drop.
-    if name == W::name("numPr") && dom.element(node, &W::ins()).is_some() {
+    if name == W::num_pr() && dom.element(node, &W::ins()).is_some() {
         return None;
     }
     // Property-change reverts: replace the prop element by the change's saved copy.
@@ -523,7 +523,7 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
     }
     // rPrChange: replace rPr by the change's saved rPr.
     if name == W::r_pr()
-        && let Some(chg) = dom.element(node, &W::name("rPrChange"))
+        && let Some(chg) = dom.element(node, &W::r_pr_change())
     {
         let saved = dom.element(chg, &W::r_pr());
         let new_rpr = match saved {
@@ -533,9 +533,9 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         return reject_revisions_for_part_transform(dom, new_rpr);
     }
     // numberingChange / cellDel / cellMerge → drop.
-    if name == W::name("numberingChange")
-        || name == W::name("cellDel")
-        || name == W::name("cellMerge")
+    if name == W::numbering_change()
+        || name == W::cell_del()
+        || name == W::cell_merge()
     {
         return None;
     }
@@ -544,7 +544,7 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         let has_cell_ins = dom
             .elements(node, Some(&W::tc_pr()))
             .into_iter()
-            .any(|tcpr| dom.element(tcpr, &W::name("cellIns")).is_some());
+            .any(|tcpr| dom.element(tcpr, &W::cell_ins()).is_some());
         if has_cell_ins {
             return None;
         }
@@ -759,9 +759,9 @@ fn block_level_content_containers() -> [XName; 7] {
         W::body(),
         W::tc(),
         W::txbx_content(),
-        W::name("hdr"),
-        W::name("ftr"),
-        W::name("endnote"),
+        W::hdr(),
+        W::ftr(),
+        W::endnote(),
         W::footnote(),
     ]
 }
@@ -828,8 +828,8 @@ fn transform_instr_text_to_del_instr_text(dom: &mut Dom, node: NodeId) -> NodeId
         return dom.clone_subtree(node);
     }
     let name = dom.name(node).unwrap();
-    if name == W::name("instrText") {
-        let ne = dom.new_element(W::name("delInstrText"));
+    if name == W::instr_text() {
+        let ne = dom.new_element(W::del_instr_text());
         for (an, av) in dom.attributes(node) {
             dom.set_attribute_value(ne, &an, Some(&av));
         }
@@ -862,8 +862,8 @@ fn transform_instr_text_to_del_instr_text(dom: &mut Dom, node: NodeId) -> NodeId
 /// the wrapping del/ins carries no author/date attributes.
 pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     // ACCEPT-SKIP-A1: no field marks → identity (keep parent links; do not detach).
-    let fld = W::name("fldChar");
-    let instr = W::name("instrText");
+    let fld = W::fld_char();
+    let instr = W::instr_text();
     if !element_or_desc_has_name(dom, node, &fld) && !element_or_desc_has_name(dom, node, &instr) {
         return node;
     }
@@ -877,13 +877,13 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
             let holds_fld_char = |d: &Dom| {
                 d.elements(e, Some(&W::r()))
                     .into_iter()
-                    .any(|r| d.element(r, &W::name("fldChar")).is_some())
+                    .any(|r| d.element(r, &W::fld_char()).is_some())
             };
             if n == W::del() && holds_fld_char(dom) {
                 2
             } else if n == W::ins() && holds_fld_char(dom) {
                 3
-            } else if n == W::r() && dom.element(e, &W::name("instrText")).is_some() {
+            } else if n == W::r() && dom.element(e, &W::instr_text()).is_some() {
                 4
             } else {
                 1
@@ -961,7 +961,7 @@ pub fn accept_move_from_ranges(dom: &mut Dom, document: NodeId) -> NodeId {
     use std::collections::{HashMap, HashSet};
 
     let mfrs = W::move_from_range_start();
-    let mfre = W::name("moveFromRangeEnd");
+    let mfre = W::move_from_range_end();
 
     let mut start_tags_in_range: Vec<NodeId> = Vec::new();
     let mut end_tags_in_range: Vec<NodeId> = Vec::new();
@@ -1145,7 +1145,7 @@ pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: Nod
     let name = dom.name(node).unwrap();
     if block_level_content_containers().contains(&name) {
         let mfrs = W::move_from_range_start();
-        let mfre = W::name("moveFromRangeEnd");
+        let mfre = W::move_from_range_end();
         let mark_in_open_range = |dom: &Dom, p: NodeId| {
             !dom.elements(p, Some(&mfrs)).is_empty() && dom.elements(p, Some(&mfre)).is_empty()
         };
@@ -1239,8 +1239,8 @@ pub fn accept_deleted_and_moved_from_content_controls(dom: &mut Dom, root: NodeI
     let cxmf_s = W::name("customXmlMoveFromRangeStart");
     let cxmf_e = W::name("customXmlMoveFromRangeEnd");
     let mfrs = W::move_from_range_start();
-    let mfre = W::name("moveFromRangeEnd");
-    let sdt = W::name("sdt");
+    let mfre = W::move_from_range_end();
+    let sdt = W::sdt();
 
     let mut del_starts: Vec<NodeId> = Vec::new();
     let mut del_ends: Vec<NodeId> = Vec::new();
@@ -1365,9 +1365,9 @@ fn accept_deleted_and_moved_from_content_controls_transform(
         return vec![dom.clone_subtree(node)];
     }
     let name = dom.name(node).unwrap();
-    if name == W::name("sdt") && to_collapse.contains(&node) {
+    if name == W::sdt() && to_collapse.contains(&node) {
         let content = dom
-            .element(node, &W::name("sdtContent"))
+            .element(node, &W::sdt_content())
             .expect("collapsed w:sdt must carry sdtContent (C# NREs otherwise)");
         let mut out = Vec::new();
         for c in dom.nodes(content) {
@@ -1455,9 +1455,9 @@ fn collapse_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
         let kids = dom.elements(node, None);
         return kids.into_iter().map(|e| dom.clone_subtree(e)).collect();
     }
-    if name == W::name("sdt") {
+    if name == W::sdt() {
         let mut out = Vec::new();
-        for sc in dom.elements(node, Some(&W::name("sdtContent"))) {
+        for sc in dom.elements(node, Some(&W::sdt_content())) {
             for e in dom.elements(sc, None) {
                 out.push(dom.clone_subtree(e));
             }
@@ -1679,7 +1679,7 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
 /// A.5b — `AnnotateRunElementsWithId` (:1935): number every descendant `w:r`
 /// with `pt:UniqueId` 0.. in document order (in place).
 pub fn annotate_run_elements_with_id(dom: &mut Dom, element: NodeId) {
-    let unique_id = PT::name("UniqueId");
+    let unique_id = PT::unique_id();
     for (run_id, r) in (0..).zip(dom.descendants(element, Some(&W::r()))) {
         dom.set_attribute_value(r, &unique_id, Some(&run_id.to_string()));
     }
@@ -1705,10 +1705,10 @@ fn descendants_trimmed(dom: &Dom, element: NodeId, trim: &XName) -> Vec<NodeId> 
 /// `w:sdt` a `pt:RunIds` (comma-joined `pt:UniqueId`s of its runs, trimmed at
 /// `w:txbxContent`) and its own `pt:UniqueId` (in place).
 pub fn annotate_content_controls_with_run_ids(dom: &mut Dom, element: NodeId) {
-    let unique_id = PT::name("UniqueId");
-    let run_ids_name = PT::name("RunIds");
+    let unique_id = PT::unique_id();
+    let run_ids_name = PT::run_ids();
     let txbx = W::txbx_content();
-    for (sdt_id, e) in (0..).zip(dom.descendants(element, Some(&W::name("sdt")))) {
+    for (sdt_id, e) in (0..).zip(dom.descendants(element, Some(&W::sdt()))) {
         let ids: Vec<String> = descendants_trimmed(dom, e, &txbx)
             .into_iter()
             .filter(|&d2| dom.name(d2) == Some(W::r()))
@@ -1756,9 +1756,9 @@ pub fn add_block_level_content_controls(
 ) -> NodeId {
     use std::collections::HashSet;
 
-    let sdt = W::name("sdt");
-    let unique_id = PT::name("UniqueId");
-    let run_ids_name = PT::name("RunIds");
+    let sdt = W::sdt();
+    let unique_id = PT::unique_id();
+    let run_ids_name = PT::run_ids();
 
     let original_ccs = dom.descendants(original, Some(&sdt));
     let existing_ids: HashSet<String> = dom
@@ -1880,14 +1880,14 @@ pub fn add_block_level_content_controls(
         for (an, av) in dom.attributes(cc) {
             dom.set_attribute_value(new_cc, &an, Some(&av));
         }
-        let sdt_content = dom.new_element(W::name("sdtContent"));
+        let sdt_content = dom.new_element(W::sdt_content());
         for &e in &in_range {
             dom.add(sdt_content, e); // detached → moved, like the C#
         }
         let cc_props: Vec<NodeId> = dom
             .elements(cc, None)
             .into_iter()
-            .filter(|&e| dom.name(e) != Some(W::name("sdtContent")))
+            .filter(|&e| dom.name(e) != Some(W::sdt_content()))
             .collect();
         let mut cc_kids: Vec<NodeId> = cc_props.into_iter().map(|e| dom.clone_subtree(e)).collect();
         cc_kids.push(sdt_content);
@@ -1932,7 +1932,7 @@ fn a6_block_level_elements() -> [XName; 8] {
     [
         W::p(),
         W::tbl(),
-        W::name("sdt"),
+        W::sdt(),
         W::del(),
         W::ins(),
         M::name("oMath"),
@@ -2017,7 +2017,7 @@ fn order_tc_pr(name: &XName) -> i32 {
 /// without a full-tree identity rebuild (common path for redlines that only
 /// carry ins/del).
 pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
-    let cell_del = W::name("cellDel");
+    let cell_del = W::cell_del();
     // ACCEPT-SKIP-A7: no cellDel → identity (keep parent links).
     if !element_or_desc_has_name(dom, node, &cell_del) {
         return node;
@@ -2039,7 +2039,7 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     }
 
     let tc_name = W::tc();
-    let cell_del = W::name("cellDel");
+    let cell_del = W::cell_del();
     let has_cell_del = |dom: &Dom, e: NodeId| !dom.descendants(e, Some(&cell_del)).is_empty();
 
     let children = dom.elements(node, None);
@@ -2552,14 +2552,14 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
     };
 
     // Strip PT.UniqueId / PT.RunIds attributes from all descendants.
-    let unique_id = PT::name("UniqueId");
-    let run_ids = PT::name("RunIds");
+    let unique_id = PT::unique_id();
+    let run_ids = PT::run_ids();
     for d in dom.descendants_and_self(e, None) {
         dom.set_attribute_value(d, &unique_id, None);
         dom.set_attribute_value(d, &run_ids, None);
     }
     // Remove empty w:numPr elements.
-    let num_pr = W::name("numPr");
+    let num_pr = W::num_pr();
     for np in dom.descendants(e, Some(&num_pr)) {
         if !dom.has_elements(np) {
             dom.remove(np);
@@ -2577,7 +2577,7 @@ fn accept_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
         return Some(dom.clone_subtree(node));
     }
     let name = dom.name(node).unwrap();
-    if name == W::name("pPrChange") || name == W::name("rPrChange") {
+    if name == W::p_pr_change() || name == W::r_pr_change() {
         return None;
     }
     let ne = dom.new_element(name);
@@ -2602,13 +2602,13 @@ fn reject_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
     }
     let name = dom.name(node).unwrap();
     if name == W::p_pr()
-        && let Some(chg) = dom.element(node, &W::name("pPrChange"))
+        && let Some(chg) = dom.element(node, &W::p_pr_change())
     {
         let inner = dom.element(chg, &W::p_pr());
         return inner.and_then(|i| reject_revisions_for_styles_transform(dom, i));
     }
     if name == W::r_pr()
-        && let Some(chg) = dom.element(node, &W::name("rPrChange"))
+        && let Some(chg) = dom.element(node, &W::r_pr_change())
     {
         let inner = dom.element(chg, &W::r_pr());
         return inner.and_then(|i| reject_revisions_for_styles_transform(dom, i));
