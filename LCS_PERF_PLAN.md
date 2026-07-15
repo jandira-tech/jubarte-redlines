@@ -61,6 +61,7 @@ evidence and ready-to-run branches of the program.
 | HASH-SCRATCH-01: temp Dom for hash clones | **REVERTED** (MEASURED #18) | exact digests but wall/user worse (import+project); plan said revert if drop dominates |
 | IDENTICAL-INPUT-01: byte-equal short-circuit | shipped win (MEASURED #19) | self-compare ~50s → **~0.07s**; other fixtures unchanged; correct empty redline |
 | ATOM-STACK-01: path stack instead of ancestors_and_self | shipped win (MEASURED #20) | pdense + RFP×5lb102 wall ↓ both slots; atomize profile hotspot |
+| SER-01: direct write tags/attrs/escapes into out buffer | shipped win (MEASURED #21) | matrix×4: RFP×5lb + redline×5lb wall ↓ both slots; pdense noise; exact document.xml |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -80,16 +81,25 @@ interleaved ABBA runs where the candidate beats the base in *every* run, not on 
 single delta. A wall-only win from added threads still belongs in a throughput
 lane, not here.
 
-**Permanent ABBA fixture matrix (user directive 2026-07-15):** every wall claim
-must report all three, not pdense alone — the real docs are the load-bearing ones:
+**Permanent ABBA fixture matrix (user directive 2026-07-15, reaffirmed):** every
+wall claim must report the **full matrix**, not pdense alone. The complicated
+real fixtures are load-bearing and **must always** be part of comparison/speed
+measurement:
 
 | fixture id | pair | why |
 |---|---|---|
 | `pdense_15k` | `_scratch/perf/pdense_{A,B}_15000.docx` | fast dense synthetic sanity |
-| `rfp17_redline_self` | `../redline_RFP17_vs_individual-contractor.docx` × self | complicated real redline (fixture A / format-heavy) |
-| `rfp17_vs_5lb102` | `../RFP17-071-Addendum-1-MWSU-CSR-816-271-4200.docx` × `../5lb102!.docx` | unrelated pair (move-heavy) |
+| `rfp17_redline_self` | `../redline_RFP17_vs_individual-contractor.docx` × self | complicated real redline (format-heavy) |
+| `rfp17_vs_5lb102` | `../RFP17-071-Addendum-1-MWSU-CSR-816-271-4200.docx` × `../5lb102!.docx` | clean original × unrelated (move-heavy) |
+| `redline_rfp17_vs_5lb102` | `../redline_RFP17_vs_individual-contractor.docx` × `../5lb102!.docx` | both user-named complicated docs cross-pair |
+
+Absolute paths (when crate is `…/ooxmlsdk/jubarte-rs`):
+
+- `/Users/arthrod/temp/T/ooxmlsdk/redline_RFP17_vs_individual-contractor.docx`
+- `/Users/arthrod/temp/T/ooxmlsdk/5lb102!.docx`
 
 Harness: `tools/perf/run_abba_matrix.sh <base> <cand> <out_dir> [rounds]`.
+Never remove these pairs from the harness; never accept a wall claim that skipped them.
 
 ### What “quickest without lower quality” means
 
@@ -963,6 +973,24 @@ Atomize maintains the ancestor path while recursing instead of calling
 | **rfp17_vs_5lb102** | 28.27 / 26.64 · 28.41 / 27.11 | **27.75 / 26.47 · 27.47 / 26.20** |
 
 document.xml match all three. **Verdict: ship.**
+
+## MEASURED #21 — 2026-07-15: SER-01 WIN
+
+Serializer writes tags, attributes, and entity escapes directly into the final
+`out` buffer (no intermediate `attr_str` / `qname` String; escape fast-path when
+no special characters). `serialize_document` streams the root element into the
+same buffer. Exact goldens: `tests/perf_ser01.rs` + DOM-ITER serialize suite.
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA
+
+| fixture | A wall / user | B wall / user |
+|---|---:|---:|
+| pdense_15k | 17.74 / 17.18 · 17.74 / 17.21 | 17.93 / 17.17 · 17.63 / 17.09 (noise) |
+| rfp17_redline_self | ~0.06 | ~0.06 (IDENTICAL-INPUT short-circuit) |
+| **rfp17_vs_5lb102** | 28.71 / 26.63 · 28.04 / 26.73 | **26.47 / 25.14 · 27.07 / 25.64** (~6–8%) |
+| **redline_rfp17_vs_5lb102** | 35.06 / 30.97 · 35.49 / 31.13 | **33.50 / 29.77 · 33.30 / 29.28** (~5%) |
+
+document.xml match **YES** all four. **Verdict: ship.**
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

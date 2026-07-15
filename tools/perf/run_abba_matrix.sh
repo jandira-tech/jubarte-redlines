@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 # Interleaved ABBA wall-time matrix for jubarte-rs perf experiments.
 #
-# ALWAYS runs the three named fixtures (user directive 2026-07-15):
-#   1. pdense_15k          — fast dense synthetic (sanity)
-#   2. rfp17_redline_self  — complicated real redline vs itself (fixture A)
-#   3. rfp17_vs_5lb102     — RFP17 original vs unrelated 5lb102 (moves)
+# ALWAYS runs ALL of the following (user directive 2026-07-15; reaffirmed):
+#   NEVER claim a wall win from pdense alone — the complicated real docs are load-bearing.
+#
+#   1. pdense_15k              — fast dense synthetic (sanity)
+#   2. rfp17_redline_self      — redline_RFP17_vs_individual-contractor.docx × self
+#   3. rfp17_vs_5lb102         — RFP17 original × 5lb102!.docx (move-heavy)
+#   4. redline_rfp17_vs_5lb102 — redline_RFP17 × 5lb102!.docx
+#                                (both complicated fixtures the user named, cross-pair)
+#
+# Canonical absolute paths (parent of jubarte-rs when OOXML_DIR unset):
+#   $OOXML/redline_RFP17_vs_individual-contractor.docx
+#   $OOXML/5lb102!.docx
+#   $OOXML/RFP17-071-Addendum-1-MWSU-CSR-816-271-4200.docx
 #
 # Usage:
 #   tools/perf/run_abba_matrix.sh <base_bin> <cand_bin> <out_dir> [rounds]
@@ -25,6 +34,7 @@ OOXML="${OOXML_DIR:-$CRATE/..}"
 PDENSE_A="${PDENSE_A:-$CRATE/_scratch/perf/pdense_A_15000.docx}"
 PDENSE_B="${PDENSE_B:-$CRATE/_scratch/perf/pdense_B_15000.docx}"
 RFP17="${RFP17:-$OOXML/RFP17-071-Addendum-1-MWSU-CSR-816-271-4200.docx}"
+# Complicated real fixtures — MUST always be on the matrix (do not remove):
 RFP17_REDLINE="${RFP17_REDLINE:-$OOXML/redline_RFP17_vs_individual-contractor.docx}"
 F5LB="${F5LB:-$OOXML/5lb102!.docx}"
 
@@ -58,12 +68,13 @@ run_one() {
 }
 
 # Fixture list: name | original | modified
-# rfp17_redline_self: redline vs itself (format-change / equal-heavy path — plan fixture A)
-# rfp17_vs_5lb102:    unrelated pair (move-detection path)
+# Mandatory complicated real docs (user-named): RFP17_REDLINE and F5LB appear in
+# pairs 2–4. Do not drop them or gate them behind env flags.
 fixtures=(
   "pdense_15k|$PDENSE_A|$PDENSE_B"
   "rfp17_redline_self|$RFP17_REDLINE|$RFP17_REDLINE"
   "rfp17_vs_5lb102|$RFP17|$F5LB"
+  "redline_rfp17_vs_5lb102|$RFP17_REDLINE|$F5LB"
 )
 
 for ((r=1; r<=ROUNDS; r++)); do

@@ -3,6 +3,10 @@
 //! Scope-aware namespace serialization: each element inherits its parent
 //! namespace scope and may add/override local `xmlns` declarations, so nested
 //! namespace scopes are not flattened to the root.
+//!
+//! SER-01: tags, attributes, and escapes are written directly into the final
+//! output buffer (no intermediate `attr_str` / `qname` String / always-alloc
+//! `escape_*` that re-allocates when nothing needs escaping).
 
 use std::collections::HashMap;
 
@@ -218,11 +222,125 @@ pub fn serialize_element(dom: &Dom, el: NodeId) -> String {
     out
 }
 
-fn qname(prefix: &str, name: &XName) -> String {
-    if prefix.is_empty() {
-        name.local_name().to_string()
-    } else {
-        format!("{}:{}", prefix, name.local_name())
+/// SER-01: write `prefix:local` (or bare local) into `out` with no temporary String.
+#[inline]
+fn write_qname(out: &mut String, prefix: &str, local: &str) {
+    if !prefix.is_empty() {
+        out.push_str(prefix);
+        out.push(':');
+    }
+    out.push_str(local);
+}
+
+/// SER-01: escape attribute values into `out`. Fast path when no special chars.
+#[inline]
+fn write_escape_attr(out: &mut String, s: &str) {
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>' | b'"')) {
+        out.push_str(s);
+        return;
+    }
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+}
+
+/// SER-01: escape text content into `out`. Fast path when no special chars.
+#[inline]
+fn write_escape_text(out: &mut String, s: &str) {
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>')) {
+        out.push_str(s);
+        return;
+    }
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(c),
+        }
+    }
+}
+
+/// Resolve prefix for a URI, assigning if needed.
+fn resolve_prefix(scope: &mut Scope<'_>, state: &mut State, uri: &str) -> String {
+    if let Some(p) = scope.prefix_for_uri(uri) {
+        return p.to_string();
+    }
+    scope.assign(state, uri)
+}
+
+/// Write namespace decls + real attrs + rewritten QName-list attrs into `out`.
+fn write_attributes(
+    out: &mut String,
+    scope: &mut Scope<'_>,
+    state: &mut State,
+    real_attrs: &[(&XName, &str)],
+    prefix_list_attrs: &[(&XName, &str)],
+) {
+    // Namespace declarations first, sorted by prefix for determinism.
+    {
+        let mut decls: Vec<(&String, &String)> = scope.local_uri_to_prefix.iter().collect();
+        decls.sort_by(|a, b| a.1.cmp(b.1));
+        for (uri, prefix) in decls {
+            if prefix == "xml" || *uri == XML_NAMESPACE || prefix == "xmlns" {
+                continue;
+            }
+            if uri.is_empty() && !prefix.is_empty() {
+                continue;
+            }
+            if prefix.is_empty() {
+                out.push_str(" xmlns=\"");
+                write_escape_attr(out, uri);
+                out.push('"');
+            } else {
+                out.push_str(" xmlns:");
+                out.push_str(prefix);
+                out.push_str("=\"");
+                write_escape_attr(out, uri);
+                out.push('"');
+            }
+        }
+    }
+
+    for (name, value) in real_attrs {
+        let prefix = resolve_prefix(scope, state, name.namespace_name());
+        out.push(' ');
+        write_qname(out, &prefix, name.local_name());
+        out.push_str("=\"");
+        write_escape_attr(out, value);
+        out.push('"');
+    }
+
+    for (name, value) in prefix_list_attrs {
+        let prefix = resolve_prefix(scope, state, name.namespace_name());
+        out.push(' ');
+        write_qname(out, &prefix, name.local_name());
+        out.push_str("=\"");
+        // Rewrite prefix tokens; write rewritten value with escapes, no join Vec.
+        let mut first = true;
+        let mut rewritten = String::new();
+        for token in value.split_whitespace() {
+            if !first {
+                rewritten.push(' ');
+            }
+            first = false;
+            if let Some(uri) = scope.uri_for_prefix(token)
+                && let Some(p) = scope.prefix_for_uri(uri)
+                && p != token
+            {
+                rewritten.push_str(p);
+                continue;
+            }
+            rewritten.push_str(token);
+        }
+        write_escape_attr(out, &rewritten);
+        out.push('"');
     }
 }
 
@@ -254,101 +372,27 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut Strin
         real_attrs.push((name, value));
     }
 
-    // Build the attribute string. Namespace declarations come first, then
-    // real attributes, then the rewritten QName-list attributes.
-    // Sort declarations by prefix so serialization is deterministic.
-    let mut attr_str = String::new();
-    {
-        let mut decls: Vec<(&String, &String)> = scope.local_uri_to_prefix.iter().collect();
-        decls.sort_by(|a, b| a.1.cmp(b.1));
-        for (uri, prefix) in decls {
-            if prefix == "xml" || *uri == XML_NAMESPACE || prefix == "xmlns" {
-                continue;
-            }
-            if uri.is_empty() && !prefix.is_empty() {
-                continue;
-            }
-            if prefix.is_empty() {
-                attr_str.push_str(&format!(" xmlns=\"{}\"", escape_attr(uri)));
-            } else {
-                attr_str.push_str(&format!(" xmlns:{}=\"{}\"", prefix, escape_attr(uri)));
-            }
-        }
-    }
-
-    for (name, value) in real_attrs {
-        let prefix = scope
-            .prefix_for_uri(name.namespace_name())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| scope.assign(state, name.namespace_name()));
-        let qn = qname(&prefix, name);
-        attr_str.push(' ');
-        attr_str.push_str(&qn);
-        attr_str.push_str("=\"");
-        attr_str.push_str(&escape_attr(value));
-        attr_str.push('"');
-    }
-
-    for (name, value) in prefix_list_attrs {
-        let prefix = scope
-            .prefix_for_uri(name.namespace_name())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| scope.assign(state, name.namespace_name()));
-        let qn = qname(&prefix, name);
-        let rewritten = value
-            .split_whitespace()
-            .map(|token| {
-                if let Some(uri) = scope.uri_for_prefix(token) {
-                    if let Some(p) = scope.prefix_for_uri(uri) {
-                        if p != token {
-                            p.to_string()
-                        } else {
-                            token.to_string()
-                        }
-                    } else {
-                        token.to_string()
-                    }
-                } else {
-                    token.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        attr_str.push(' ');
-        attr_str.push_str(&qn);
-        attr_str.push_str("=\"");
-        attr_str.push_str(&escape_attr(&rewritten));
-        attr_str.push('"');
-    }
-
-    let tag = {
-        let prefix = scope
-            .prefix_for_uri(ename.namespace_name())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| scope.assign(state, ename.namespace_name()));
-        qname(&prefix, &ename)
-    };
-
-    // DOM-ITER-01: index children; no nodes() Vec clone per element.
+    let tag_prefix = resolve_prefix(&mut scope, state, ename.namespace_name());
+    let local = ename.local_name();
     let n_kids = dom.child_count(e);
+
+    // SER-01: open tag + attributes written straight into `out` (no attr_str).
+    out.push('<');
+    write_qname(out, &tag_prefix, local);
+    write_attributes(out, &mut scope, state, &real_attrs, &prefix_list_attrs);
+
     if n_kids == 0 {
-        out.push('<');
-        out.push_str(&tag);
-        out.push_str(&attr_str);
         out.push_str(" />");
         return;
     }
 
-    out.push('<');
-    out.push_str(&tag);
-    out.push_str(&attr_str);
     out.push('>');
     for i in 0..n_kids {
         let k = dom.child_at(e, i);
         if dom.is_element(k) {
             emit(dom, k, &scope, state, out);
         } else if dom.is_text(k) {
-            out.push_str(&escape_text(dom.text_value(k).unwrap_or("")));
+            write_escape_text(out, dom.text_value(k).unwrap_or(""));
         } else if dom.is_comment(k) {
             out.push_str("<!--");
             out.push_str(dom.text_value(k).unwrap_or(""));
@@ -365,7 +409,7 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut Strin
         }
     }
     out.push_str("</");
-    out.push_str(&tag);
+    write_qname(out, &tag_prefix, local);
     out.push('>');
 }
 
@@ -377,19 +421,26 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
         out.push_str(d.version.as_deref().unwrap_or("1.0"));
         out.push('"');
         if let Some(enc) = &d.encoding {
-            out.push_str(&format!(" encoding=\"{enc}\""));
+            out.push_str(" encoding=\"");
+            out.push_str(enc);
+            out.push('"');
         }
         if let Some(sa) = &d.standalone {
-            out.push_str(&format!(" standalone=\"{sa}\""));
+            out.push_str(" standalone=\"");
+            out.push_str(sa);
+            out.push('"');
         }
         out.push_str("?>");
     }
     for i in 0..dom.child_count(doc) {
         let k = dom.child_at(doc, i);
         if dom.is_element(k) {
-            out.push_str(&serialize_element(dom, k));
+            // Stream element into the same buffer (avoid intermediate String).
+            let mut state = State { counter: 0 };
+            let root_scope = Scope::root();
+            emit(dom, k, &root_scope, &mut state, &mut out);
         } else if dom.is_text(k) {
-            out.push_str(&escape_text(dom.text_value(k).unwrap_or("")));
+            write_escape_text(&mut out, dom.text_value(k).unwrap_or(""));
         } else if dom.is_comment(k) {
             out.push_str("<!--");
             out.push_str(dom.text_value(k).unwrap_or(""));
@@ -406,17 +457,4 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
         }
     }
     out
-}
-
-fn escape_attr(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-fn escape_text(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
 }
