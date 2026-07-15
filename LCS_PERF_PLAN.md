@@ -79,6 +79,7 @@ evidence and ready-to-run branches of the program.
 | HASH-STREAM-04: simple-tbl/tr stream content+structure digests | banked lean (MEASURED #36) | exact == clone oracles (12 tests); digests YES×4; redline×5lb B wins all 4 slots (~3s mean); RFP thrash; pdense noise — no full-matrix wall claim |
 | HASH-STREAM-05: empty leaf run children (br/tab) in simple-p stream | shipped lean win (MEASURED #37) | exact oracles (9+); digests YES×4; RFP×5lb B wins all 4 slots (~1.2s mean); redline lean 3/4; pdense noise |
 | HASH-STREAM-06: simple `w:tc` stream digests (no clone) | shipped lean win (MEASURED #38) | exact oracles (4); digests YES×4; RFP×5lb B all 4 slots (~0.6s); redline lean 3/4; ~47k cells/doc no-clone |
+| ACCEPT-REUSE-CLEAN: transfer clean accept subtrees (no clone) | shipped win (MEASURED #39) | NodeId reuse gates; digests YES×4; redline×5lb B all 4 slots (~−2.8s); RFP×5lb B all 4 (~−0.6s) |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1328,6 +1329,27 @@ tbl/tr streaming. Structure stamp remains tbl/tr-only.
 
 document.xml match YES all four. Scratch: `{SCRATCH}/abba-hash-stream06/`.
 **Verdict: ship lean win** — exact digests + RFP×5lb wall lean both rounds.
+
+## MEASURED #39 — 2026-07-15: ACCEPT-REUSE-CLEAN WIN
+
+When `accept_all_other_revisions_transform` / `accept_move_from_move_to_transform`
+encounter a subtree with **no** tracked-revision elements, detach and return the
+existing node instead of `clone_subtree` + identity rebuild. `Dom::add` reuses
+unparented nodes. RED/GREEN: `tests/perf_accept_reuse_clean.rs` (NodeId
+preservation + content gates). m3/m28/m31 accept suite green.
+
+### A/B — full permanent matrix (4 fixtures), 2× ABBA (base = HASH-STREAM-06 / af1797b)
+
+| fixture | A wall (ABBA r1 / r2) | B wall (ABBA r1 / r2) |
+|---|---:|---:|
+| pdense_15k | 15.55·15.34 / 15.27·15.21 | 15.49·15.22 / 15.33·15.31 (noise) |
+| rfp17_redline_self | 0.06–0.08 | 0.06–0.08 (IDENTICAL-INPUT) |
+| rfp17_vs_5lb102 | 21.96·20.82 / 21.58·20.54 | 20.78·20.53 / 20.64·20.51 (**B all 4**; mean ~−0.6s) |
+| redline_rfp17_vs_5lb102 | 27.14·26.65 / 26.54·26.77 | 24.26·23.68 / 24.02·23.77 (**B all 4**; mean ~−2.8s) |
+
+document.xml match YES all four. Scratch: `{SCRATCH}/abba-accept-reuse-clean/`.
+**Verdict: ship win** — exact digests + load-bearing wall lean on both complicated
+fixtures; largest gain on accept-heavy redline×5lb.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

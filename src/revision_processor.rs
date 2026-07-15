@@ -89,9 +89,17 @@ fn has_path(dom: &Dom, el: NodeId, a: &XName, b: &XName) -> bool {
 }
 
 /// Port of `AcceptMoveFromMoveToTransform` — unwrap `w:moveTo`, drop `w:moveFrom`.
+///
+/// ACCEPT-REUSE-CLEAN: subtrees with no moveFrom/moveTo (and no other tracked
+/// revision markers) are detached and returned as-is — `Dom::add` then reuses
+/// them without `clone_subtree`.
 pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
+    // No move/revision markers in this subtree → transfer ownership.
+    if !element_has_tracked_revisions(dom, node) {
+        return take_subtree(dom, node);
+    }
     if !dom.is_element(node) {
-        return vec![dom.clone_subtree(node)];
+        return take_subtree(dom, node);
     }
     let name = dom.name(node).unwrap();
     if name == W::move_to() {
@@ -116,6 +124,15 @@ pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<No
     vec![ne]
 }
 
+/// Detach `node` from its parent (if any) and return it for reparenting.
+/// Unparented nodes are reused by [`Dom::add`] without cloning.
+fn take_subtree(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
+    if dom.parent(node).is_some() {
+        dom.remove(node);
+    }
+    vec![node]
+}
+
 /// True iff a transformed element still carries run/inline content (port of
 /// `HasRunContent`) — used to decide whether an emptied `w:hyperlink` survives.
 fn has_run_content(dom: &Dom, element: NodeId) -> bool {
@@ -136,9 +153,17 @@ fn has_run_content(dom: &Dom, element: NodeId) -> bool {
 /// Port of `AcceptAllOtherRevisionsTransform` — accept inserts (unwrap `w:ins`),
 /// drop deletions and revision-range markers, accept formatting-change markers,
 /// handle deleted rows/tables, cell merges, and empty hyperlink shells.
+///
+/// ACCEPT-REUSE-CLEAN: when a subtree has no tracked-revision elements, detach
+/// and return it instead of `clone_subtree` + identity rebuild. Callers reparent
+/// via `Dom::add`, which reuses unparented nodes.
 pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
+    // Clean subtree (incl. plain text leaves): transfer, do not rebuild.
+    if !element_has_tracked_revisions(dom, node) {
+        return take_subtree(dom, node);
+    }
     if !dom.is_element(node) {
-        return vec![dom.clone_subtree(node)];
+        return take_subtree(dom, node);
     }
     let name = dom.name(node).unwrap();
 
