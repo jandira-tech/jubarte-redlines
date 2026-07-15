@@ -2926,15 +2926,16 @@ fn step_h(
                 } else if (m165 || m180) && rest1.len() == 2 && rest2.len() == 2 {
                     // Mesh first residual; pure-I/D last residual
                     // (M165 near-identical first; M180 mid first + content-empty last).
-                    // M189: very weak first residual (j1 < 0.20, times×title ~
+                    // M189: very weak first residual (j1 < 0.15, times×title ~
                     // 0.14) — pure-I/D both residuals instead of free-meshing
-                    // EQ "This document " (LO chrome). Mid j1 (center_bold ~
-                    // 0.30, heading_1 ~0.42) keeps first-residual mesh.
+                    // EQ "This document " (LO chrome). Keep mesh for
+                    // small_font×strikethrough (j1≈0.15, LO 100 with mesh)
+                    // and mid j1 (center_bold ~0.30).
                     let first_j = token_jaccard(
                         &para_text_tokens(dom, &rest1[0]),
                         &para_text_tokens(dom, &rest2[0]),
                     );
-                    if m180 && first_j + 1e-12 < 0.20 {
+                    if m180 && first_j + 1e-12 < 0.15 {
                         out.push(CorrelatedSequence::inserted(vec![rest2[0].clone()]));
                         out.push(CorrelatedSequence::deleted(vec![rest1[0].clone()]));
                         out.push(CorrelatedSequence::inserted(vec![rest2[1].clone()]));
