@@ -77,3 +77,44 @@ fn hash_stream03_empty_p_matches() {
     let stream = block_sha1_from_source(&mut dom, p, true, &s, &null_rel_resolver, false);
     assert_eq!(stream, oracle(&mut dom, p, &s));
 }
+
+#[test]
+fn hash_stream03b_multi_t_run_matches_clone() {
+    // One run with two w:t children → clone fragments then merges to "ab"
+    let (mut dom, p) = body_p(r#"<w:p><w:r><w:t>a</w:t><w:t>b</w:t></w:r></w:p>"#);
+    let s = WmlComparerSettings {
+        conflate_breaking_and_nonbreaking_spaces: false,
+        ..Default::default()
+    };
+    let stream = block_sha1_from_source(&mut dom, p, true, &s, &null_rel_resolver, false);
+    assert_eq!(stream, oracle(&mut dom, p, &s));
+}
+
+#[test]
+fn hash_stream03b_correlated_ws_matches_clone_path() {
+    let (mut dom, p) = body_p(r#"<w:p><w:r><w:t>a b</w:t></w:r><w:r><w:t> c</w:t></w:r></w:p>"#);
+    let s = WmlComparerSettings::default();
+    let stream = block_sha1_from_source(&mut dom, p, true, &s, &null_rel_resolver, true);
+    let oracle = block_sha1_from_source(&mut dom, p, true, &s, &null_rel_resolver, true);
+    // Force oracle via clone by using a complex marker would be different;
+    // stream twice must be stable, and equal clone path:
+    let clone = clone_block_level_content_for_hashing(&mut dom, p, true, &s, &null_rel_resolver);
+    // strip whitespace on clone text like production correlated path
+    fn strip_ws(dom: &mut Dom, id: jubarte::xmllinq::NodeId) {
+        if dom.is_text(id) {
+            let raw = dom.text_value(id).unwrap_or("").to_string();
+            let stripped: String = raw.chars().filter(|ch| !ch.is_whitespace()).collect();
+            if stripped != raw {
+                dom.set_text_value(id, &stripped);
+            }
+        }
+        let n = dom.child_count(id);
+        for i in 0..n {
+            let c = dom.child_at(id, i);
+            strip_ws(dom, c);
+        }
+    }
+    strip_ws(&mut dom, clone);
+    assert_eq!(stream, block_sha1(&dom, clone));
+    assert_eq!(stream, oracle);
+}

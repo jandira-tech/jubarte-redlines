@@ -607,7 +607,9 @@ pub fn block_hash_string(dom: &Dom, clone: NodeId) -> String {
 /// HASH-STREAM-01 lite: stream serialize into SHA-1 (no full XML `String` for
 /// the digest path). Digest must match `sha1_hex(block_hash_string(...))`.
 pub fn block_sha1(dom: &Dom, clone: NodeId) -> String {
-    crate::util::sha1::sha1_hex(block_hash_string(dom, clone).as_bytes())
+    // HASH-STREAM-01 lite: stream serialize into SHA-1 (no full intermediate
+    // hash string required beyond the serialize sink).
+    dom.serialize_element_sha1_hex(clone)
 }
 
 /// HASH-STREAM-03: content SHA-1 of a **source** block node, preferring a
@@ -639,8 +641,9 @@ pub fn block_sha1_from_source(
 }
 
 /// Stream-hash a simple paragraph without materializing a hash-clone subtree.
-/// Returns `None` when the node is not a simple single-`w:t`-run paragraph
-/// (tables, drawings, multi-t runs, footnote refs, etc. fall back to clone).
+/// Accepts runs that only contain `w:t` (+ optional `w:rPr`): multi-`w:t` runs
+/// are expanded like clone_internal's r-fragment path, then adjacent singles
+/// merge. Returns `None` for drawings, footnotes, tables, etc.
 fn try_stream_hash_simple_paragraph(
     dom: &Dom,
     node: NodeId,
@@ -650,7 +653,7 @@ fn try_stream_hash_simple_paragraph(
     if dom.name(node) != Some(W::p()) {
         return None;
     }
-    // Collect texts of single-t runs; reject complex content.
+    // Collect texts of each t-leaf (after r-fragment expansion); reject complex.
     let mut texts: Vec<String> = Vec::new();
     let n = dom.child_count(node);
     for i in 0..n {
@@ -665,8 +668,8 @@ fn try_stream_hash_simple_paragraph(
         if name != W::r() {
             return None;
         }
-        // Single w:t (optional rPr); anything else → fallback.
-        let mut t_text: Option<String> = None;
+        // Expand run: each w:t is a fragment (clone_internal); ignore rPr only.
+        let mut saw_t = false;
         for j in 0..dom.child_count(c) {
             let cc = dom.child_at(c, j);
             if !dom.is_element(cc) {
@@ -679,21 +682,18 @@ fn try_stream_hash_simple_paragraph(
             if cn != W::t() {
                 return None;
             }
-            if t_text.is_some() {
-                return None; // multi-t run: clone fragments into multiple runs
+            saw_t = true;
+            let mut t = apply_text_transform(&dom.value_str(cc), settings);
+            if correlated_ws {
+                t = whitespace_invariant_for_hash(&t);
             }
-            t_text = Some(dom.value_str(cc).into_owned());
+            texts.push(t);
         }
-        let Some(t) = t_text else {
-            return None; // empty run
-        };
-        let mut t = apply_text_transform(&t, settings);
-        if correlated_ws {
-            t = whitespace_invariant_for_hash(&t);
+        if !saw_t {
+            return None; // empty run — clone path may differ
         }
-        texts.push(t);
     }
-    // Adjacent single-t runs merge into one (group_adjacent kind==1).
+    // Adjacent single-t fragments merge into one run (group_adjacent kind==1).
     let merged = texts.concat();
 
     // Build projection XML matching serializer of the hash clone for this shape:

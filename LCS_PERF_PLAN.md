@@ -74,6 +74,7 @@ evidence and ready-to-run branches of the program.
 | DOM-ITER-04: RP block/tag walk early-exit + child_count | banked (MEASURED #31) | exact m28 + tags/blocks; matrix wall mixed/noise (clean path skips accept) |
 | ACCEPT-INPLACE-A9: fill empty tc in place | banked (MEASURED #32) | exact m28/A.9; matrix mixed (A.9 often skipped); redline lean both slots |
 | HASH-STREAM-03: simple-p stream hash without clone DOM | shipped win (MEASURED #33) | matrix×4: pdense+RFP×5lb+redline×5lb wall ↓ every slot; RSS lean; digests exact |
+| HASH-STREAM-03b: multi-t run expansion in simple-p stream | banked (MEASURED #34) | exact multi-t + correlated_ws oracles; matrix thrash/mixed — no wall claim |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1229,6 +1230,24 @@ form). Tests: `tests/perf_hash_stream03.rs` + m4b.
 | **redline_rfp17_vs_5lb102** | 30.89 / 22.78 · 29.98 / 22.17 | **29.40 / 22.12 · 28.18 / 22.30** |
 
 document.xml match YES all four. **Verdict: ship.**
+
+## MEASURED #34 — 2026-07-15: HASH-STREAM-03b BANKED
+
+Extend simple-p stream path to multi-`w:t` runs (fragment expansion then
+merge, matching clone_internal). Correlated whitespace-invariant path covered
+by tests. Exact: `tests/perf_hash_stream03.rs` multi-t + correlated_ws cases.
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = HASH-STREAM-03)
+
+| fixture | A wall | B wall |
+|---|---:|---:|
+| pdense_15k | 15.54 / 15.57 | **15.39 / 15.29** (lean both) |
+| rfp17_redline_self | ~0.05–0.06 | ~0.06 |
+| rfp17_vs_5lb102 | 23.52 / 29.96† | 25.02 / 23.87 (mixed; thrash on A2) |
+| redline_rfp17_vs_5lb102 | 37.82† / 29.46 | 30.50 / 30.17 (mixed) |
+
+† thrash. document.xml match YES all four. **Verdict: keep / bank** — exact
+coverage expansion; no clean wall claim under thrash.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
