@@ -54,6 +54,7 @@ evidence and ready-to-run branches of the program.
 | HASH-01c: hex write via byte buffer | shipped lean win (MEASURED #11) | pdense wall ↓ every ABBA slot (~0.1–0.5 s); digests exact |
 | ACCEPT-SKIP-01: skip rebuilds when no tracked revs | shipped win (MEASURED #12) | pdense wall −10…12% every slot; user −10%; exact document.xml |
 | ACCEPT-SKIP-02: skip A.9 when no empty `w:tc` | shipped lean win (MEASURED #13) | matrix: RFP redline-self & RFP×5lb102 wall ↓ both slots; pdense noise; exact |
+| RSID-INPLACE-01: strip rsids without rebuild | shipped lean win (MEASURED #14) | matrix: both RFP fixtures wall ↓ both slots; pdense noise; exact; lower sys |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -846,6 +847,23 @@ empty `w:tc` (only-`tcPr` or empty). Empty-cell docs still run A.9. Tests:
 document.xml SHA match on all three fixtures. **Verdict: ship** — wall wins on
 the load-bearing complicated fixtures; pdense neutral. Harness committed as
 `tools/perf/run_abba_matrix.sh`.
+
+## MEASURED #14 — 2026-07-15: RSID-INPLACE-01 (matrix)
+
+`remove_rsid_transform` mutates the existing tree (strip `w:rsid*` attrs, drop
+`w:rsid` elements) and returns the same root `NodeId` — no full-tree rebuild.
+Tests: `tests/perf_rsid_inplace.rs` + m2 remove_rsid + accept suite.
+
+### A/B — full matrix, 1× ABBA (base = ACCEPT-SKIP-02)
+
+| fixture | A wall | B wall | note |
+|---|---:|---:|---|
+| pdense_15k | 19.86 / 21.55 | 21.13 / 21.45 | noise / slight cand higher |
+| **rfp17_redline_self** | 67.06 / 55.72 | **60.09 / 52.65** | cand both; sys ↓ |
+| **rfp17_vs_5lb102** | 36.36 / 36.90 | **35.15 / 34.54** | cand both; sys ↓ |
+
+document.xml match all three. **Verdict: ship** — wall wins on complicated
+fixtures (the permanent matrix load-bearers).
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
