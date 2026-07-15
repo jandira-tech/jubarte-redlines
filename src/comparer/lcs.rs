@@ -2481,23 +2481,51 @@ fn step_h(
                 };
                 let sa = content(&a2);
                 let sb = content(&b2);
-                let j2c = if sa.is_empty() && sb.is_empty() {
+                // Format-boilerplate shared words (bold/text/…) are not a real
+                // content bridge — Word pure-I/Ds center_bold×clear last residual
+                // despite sharing "bold"/"text". verdana shares "Verdana" (not
+                // boilerplate) and must stay MIX.
+                const FORMAT_BOILER: &[&str] = &[
+                    "bold",
+                    "text",
+                    "italic",
+                    "underline",
+                    "formatting",
+                    "format",
+                    "style",
+                    "styles",
+                    "font",
+                    "fonts",
+                ];
+                let inter: std::collections::HashSet<&String> = sa.intersection(&sb).collect();
+                let inter_real: Vec<&String> = inter
+                    .iter()
+                    .copied()
+                    .filter(|w| !FORMAT_BOILER.iter().any(|b| w.eq_ignore_ascii_case(b)))
+                    .collect();
+                let j2c = if inter_real.is_empty() {
+                    // empty or format-only intersection → treat as content-empty
                     0.0
                 } else {
-                    let inter = sa.intersection(&sb).count() as f64;
                     let uni = sa.union(&sb).count() as f64;
-                    if uni > 0.0 { inter / uni } else { 0.0 }
+                    if uni > 0.0 {
+                        inter_real.len() as f64 / uni
+                    } else {
+                        0.0
+                    }
                 };
                 // j1 ≥0.12: times×title first residual ~0.14 ("This document");
-                // subtitle ~0.33; track ~0.47. Keep <0.55 for M165 separation.
-                // j2c <0.05: pure-empty last residual (subtitle/times). verdana
-                // font×italic last shares only "Verdana" (j2c≈0.08) must stay
-                // MIX (Word EQ Verdana/a; pure-I/D regressed sticky 100→84).
+                // subtitle ~0.33; center_bold×clear ~0.30. Keep <0.55 for M165.
+                // j2c <0.05 after format-boiler strip: pure-empty last residual.
+                // verdana font×italic shares "Verdana" (kept) → j2c>0 → stay MIX.
+                // Both last residuals ≥6 toks: short "This text is bold" (4)
+                // must free-mesh (Word EQ "text is"); pure-I/D regressed
+                // bold_text×bold_underline 98→89.
                 j1 + 1e-12 >= 0.12
                     && j1 + 1e-12 < 0.55
                     && j2c + 1e-12 < 0.05
-                    && a2.len() >= 4
-                    && b2.len() >= 4
+                    && a2.len() >= 6
+                    && b2.len() >= 6
             };
         // M173 (italic_and_underline×italic_subscript): equal 3v3 Demo, first
         // residual mid-related (shared "italic"/"combined"), last residual
