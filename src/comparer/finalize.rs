@@ -826,7 +826,7 @@ fn run_text_concat(dom: &Dom, r: NodeId) -> String {
     for d in dom.descendants(r, None) {
         let n = dom.name(d).unwrap();
         if n == W::t() || n == W::name("delText") || n == W::name("instrText") {
-            s.push_str(&dom.value(d));
+            s.push_str(&dom.value_str(d));
         }
     }
     s
@@ -1628,7 +1628,7 @@ pub fn fold_leading_ins_from_mix_into_preceding_pure_del(dom: &mut Dom, root: No
             let mut ins_text = String::new();
             for &ins_n in &leading_ins {
                 for t in dom.descendants(ins_n, Some(&W::t())) {
-                    ins_text.push_str(&dom.value(t));
+                    ins_text.push_str(&dom.value_str(t));
                 }
             }
             if ins_text.trim().is_empty() {
@@ -2336,7 +2336,7 @@ fn para_revision_body_text(dom: &Dom, p: NodeId) -> String {
     let mut out = String::new();
     for name in [W::name("t"), W::name("delText")] {
         for t in dom.descendants(p, Some(&name)) {
-            out.push_str(&dom.value(t));
+            out.push_str(&dom.value_str(t));
             out.push(' ');
         }
     }

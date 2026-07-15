@@ -111,7 +111,7 @@ fn build_paragraph(
                 let n = dom.name(t.atom.content_element);
                 n == Some(W::t()) || n == Some(W::del_text())
             })
-            .map(|t| dom.value(t.atom.content_element))
+            .map(|t| dom.value_str(t.atom.content_element).into_owned())
             .collect();
         if text.is_empty() {
             continue;
@@ -641,7 +641,10 @@ pub fn coalesce_recurse(
         // Pure del → delText. MovedSource → w:t (Word Compare; see delete_text_in_opaque).
         if aname == W::t() {
             for (_key, gc) in &groupedchildren {
-                let text: String = gc.iter().map(|a| dom.value(a.content_element)).collect();
+                let text: String = gc
+                    .iter()
+                    .map(|a| dom.value_str(a.content_element).into_owned())
+                    .collect();
                 let first = &gc[0];
                 let elem_name = match first.correlation_status {
                     CorrelationStatus::Deleted => W::del_text(),

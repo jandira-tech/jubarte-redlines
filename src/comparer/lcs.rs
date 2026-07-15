@@ -479,7 +479,7 @@ fn first_contentful_para_text(dom: &Dom, cu: &[ComparisonUnit]) -> Option<String
         let mut text = String::new();
         for a in cu[i].descendant_atoms() {
             if dom.name(a.content_element) == Some(W::t()) {
-                text.push_str(&dom.value(a.content_element));
+                text.push_str(&dom.value_str(a.content_element));
             }
         }
         text
@@ -572,7 +572,7 @@ fn para_text_token_list(dom: &Dom, u: &ComparisonUnit) -> Vec<String> {
     let mut text = String::new();
     for a in u.descendant_atoms() {
         if dom.name(a.content_element) == Some(W::t()) {
-            text.push_str(&dom.value(a.content_element));
+            text.push_str(&dom.value_str(a.content_element));
         }
     }
     text.split(|c: char| !c.is_alphanumeric())
@@ -1264,7 +1264,7 @@ fn para_text_tokens_from_units(
     for u in units {
         for a in u.descendant_atoms() {
             if dom.name(a.content_element) == Some(W::t()) {
-                text.push_str(&dom.value(a.content_element));
+                text.push_str(&dom.value_str(a.content_element));
             }
         }
         text.push(' ');
@@ -1296,7 +1296,7 @@ fn rehash_words_by_text_content(dom: &Dom, units: &mut [ComparisonUnit]) {
             let mut text = String::new();
             for a in &w.contents {
                 if dom.name(a.content_element) == Some(W::t()) {
-                    text.push_str(&dom.value(a.content_element));
+                    text.push_str(&dom.value_str(a.content_element));
                 }
             }
             if !text.is_empty() {
@@ -1494,7 +1494,7 @@ fn residual_looks_like_colon_list(dom: &Dom, rest: &[ComparisonUnit]) -> bool {
             let mut text = String::new();
             for a in u.descendant_atoms() {
                 if dom.name(a.content_element) == Some(W::t()) {
-                    text.push_str(&dom.value(a.content_element));
+                    text.push_str(&dom.value_str(a.content_element));
                 }
             }
             text.contains(':')
@@ -1698,7 +1698,7 @@ pub fn do_lcs_algorithm(
                     return true;
                 }
                 atoms.iter().any(|dca| {
-                    let v = dom.value(dca.content_element);
+                    let v = dom.value_str(dca.content_element);
                     let ch = v.chars().next().unwrap_or('\0');
                     let is_word_split = ('\u{4e00}'..='\u{9fff}').contains(&ch)
                         || settings.word_separators.contains(&ch);
@@ -1751,7 +1751,7 @@ pub fn do_lcs_algorithm(
                             if dom.name(dca.content_element) != Some(W::t()) {
                                 return false;
                             }
-                            let v = dom.value(dca.content_element);
+                            let v = dom.value_str(dca.content_element);
                             !v.is_empty()
                                 && v.chars().all(|ch| settings.word_separators.contains(&ch))
                         })
@@ -1796,7 +1796,7 @@ pub fn do_lcs_algorithm(
             for u in &cul1[i1..i1 + len] {
                 for a in u.descendant_atoms() {
                     if dom.name(a.content_element) == Some(W::t()) {
-                        for ch in dom.value(a.content_element).chars() {
+                        for ch in dom.value_str(a.content_element).chars() {
                             if ch.is_ascii_alphabetic() {
                                 alpha.push(ch.to_ascii_lowercase());
                             }
@@ -1850,7 +1850,7 @@ pub fn do_lcs_algorithm(
         && cul1[i1..i1 + len].iter().all(|u| {
             u.descendant_atoms().iter().all(|a| {
                 dom.name(a.content_element) != Some(W::t())
-                    || dom.value(a.content_element).trim().is_empty()
+                    || dom.value_str(a.content_element).trim().is_empty()
             })
         })
     {
@@ -2033,7 +2033,7 @@ fn containing_paragraph_is_duplicated(dom: &Dom, units: &[ComparisonUnit], pos: 
             let text: String = atoms
                 .iter()
                 .filter(|a| dom.name(a.content_element) == Some(W::t()))
-                .map(|a| dom.value(a.content_element))
+                .map(|a| dom.value_str(a.content_element))
                 .collect();
             texts.push(text);
             texts.push(String::new());
@@ -2045,7 +2045,7 @@ fn containing_paragraph_is_duplicated(dom: &Dom, units: &[ComparisonUnit], pos: 
         let last = texts.last_mut().expect("non-empty");
         for a in atoms {
             if dom.name(a.content_element) == Some(W::t()) {
-                last.push_str(&dom.value(a.content_element));
+                last.push_str(&dom.value_str(a.content_element));
             }
         }
     }
@@ -2575,7 +2575,7 @@ pub fn detect_unrelated_sources_word_mode(
                         if dom.name(dca.content_element) != Some(W::t()) {
                             return false;
                         }
-                        let v = dom.value(dca.content_element);
+                        let v = dom.value_str(dca.content_element);
                         !v.is_empty() && v.chars().all(|ch| settings.word_separators.contains(&ch))
                     })
                 })
@@ -2587,7 +2587,7 @@ pub fn detect_unrelated_sources_word_mode(
                 for u in common {
                     for a in u.descendant_atoms() {
                         if dom.name(a.content_element) == Some(W::t()) {
-                            text.push_str(&dom.value(a.content_element));
+                            text.push_str(&dom.value_str(a.content_element));
                         }
                     }
                 }

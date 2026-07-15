@@ -75,6 +75,7 @@ evidence and ready-to-run branches of the program.
 | ACCEPT-INPLACE-A9: fill empty tc in place | banked (MEASURED #32) | exact m28/A.9; matrix mixed (A.9 often skipped); redline lean both slots |
 | HASH-STREAM-03: simple-p stream hash without clone DOM | shipped win (MEASURED #33) | matrix×4: pdense+RFP×5lb+redline×5lb wall ↓ every slot; RSS lean; digests exact |
 | HASH-STREAM-03b: multi-t run expansion in simple-p stream | banked (MEASURED #34) | exact multi-t + correlated_ws oracles; matrix thrash/mixed — no wall claim |
+| ATOM-TEXT-02: value_str in produce/lcs/finalize/atomize | banked (MEASURED #35) | exact document.xml; matrix thrash/mixed — no wall claim |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1248,6 +1249,21 @@ by tests. Exact: `tests/perf_hash_stream03.rs` multi-t + correlated_ws cases.
 
 † thrash. document.xml match YES all four. **Verdict: keep / bank** — exact
 coverage expansion; no clean wall claim under thrash.
+
+## MEASURED #35 — 2026-07-15: ATOM-TEXT-02 BANKED
+
+Expand `value_str` use in produce / lcs / finalize / atomize / revisions hot
+read paths (borrow single-text leaves). document.xml exact on matrix.
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = HASH-STREAM-03b)
+
+| fixture | A wall | B wall |
+|---|---:|---:|
+| pdense_15k | 16.03 / 15.60 | 16.35 / 15.81 (mixed) |
+| rfp17_vs_5lb102 | 23.86 / 27.09† | 23.71 / 27.27 (mixed/thrash) |
+| redline_rfp17_vs_5lb102 | 37.44† / 31.15 | 33.25 / 30.40 (mixed) |
+
+document.xml match YES all four. **Verdict: keep / bank.**
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

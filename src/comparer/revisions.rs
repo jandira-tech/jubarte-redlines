@@ -111,7 +111,7 @@ fn group_text(dom: &Dom, group: &[(String, ComparisonUnitAtom)]) -> Option<Strin
                 if dom.name(a.content_element) == Some(W::p_pr()) {
                     "\n".to_string()
                 } else {
-                    dom.value(a.content_element)
+                    dom.value_str(a.content_element).into_owned()
                 }
             })
             .collect(),
