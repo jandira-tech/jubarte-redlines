@@ -2935,11 +2935,18 @@ fn step_h(
                         &para_text_tokens(dom, &rest1[0]),
                         &para_text_tokens(dom, &rest2[0]),
                     );
-                    // M189: very weak first residual j1 < 0.15 → pure-I/D both
-                    // (times×title ≈0.14). Strong first residual free-mesh is
-                    // LO-preferred for track_changes calibri×center (j1≈0.50 →
-                    // 100); a j1≥0.46 pure-I/D rule regressed that pair −21.
-                    if m180 && first_j + 1e-12 < 0.15 {
+                    // M189: j1 < 0.15 → pure-I/D both (times×title ≈0.14).
+                    // M191b: both-long last residuals + j1 ∈ [0.46, 0.50) → pure
+                    // both (track italic×title ≈0.47). Keep free-mesh first
+                    // residual for j1≥0.50 (track calibri×center) and for
+                    // asymmetric short lasts (heading_2 j1≈0.455).
+                    let both_long_res = para_text_token_list(dom, &rest1[1]).len() >= 6
+                        && para_text_token_list(dom, &rest2[1]).len() >= 6;
+                    let pure_both = first_j + 1e-12 < 0.15
+                        || (both_long_res
+                            && first_j + 1e-12 >= 0.46
+                            && first_j + 1e-12 < 0.50);
+                    if m180 && pure_both {
                         out.push(CorrelatedSequence::inserted(vec![rest2[0].clone()]));
                         out.push(CorrelatedSequence::deleted(vec![rest1[0].clone()]));
                         out.push(CorrelatedSequence::inserted(vec![rest2[1].clone()]));
