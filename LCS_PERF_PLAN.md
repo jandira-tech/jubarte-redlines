@@ -82,6 +82,7 @@ evidence and ready-to-run branches of the program.
 | ACCEPT-REUSE-CLEAN: transfer clean accept subtrees (no clone) | shipped win (MEASURED #39) | NodeId reuse gates; digests YES×4; redline×5lb B all 4 slots (~−2.8s); RFP×5lb B all 4 (~−0.6s) |
 | ACCEPT-SKIP-A7: skip deleted-cells full rebuild without cellDel | banked lean (MEASURED #40) | NodeId transfer gate; digests YES×4; redline×5lb B all 4 (~−0.6s); RFP mixed |
 | ACCEPT-SKIP-A8: skip merge-adjacent-tables rebuild when nothing merges | banked (MEASURED #41) | exact transfer gates; digests YES×4; matrix wall thrash/mixed — no wall claim |
+| ACCEPT-SKIP-A1: skip field-code fixup rebuild without fld/instr | banked (MEASURED #42) | identity skip + keep parent links; digests YES×4; wall mixed — bank |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1390,6 +1391,18 @@ this is the common path. RED/GREEN: `tests/perf_accept_skip_a8.rs`.
 
 document.xml match YES all four. Scratch: `{SCRATCH}/abba-accept-skip-a8/`.
 **Verdict: keep / bank** — exact no-op skip; wall mixed under noise after prior accept wins.
+
+## MEASURED #42 — 2026-07-15: ACCEPT-SKIP-A1 BANKED
+
+Skip A.1 field-code fixup full-tree rebuild when no `w:fldChar`/`w:instrText`
+(identity return, parent links preserved). Also tighten A7/A8 early-exits to
+not detach pipeline roots. RED/GREEN: `tests/perf_accept_skip_a1.rs` + m28.
+
+### A/B — full permanent matrix (4 fixtures), 2× ABBA (base = ACCEPT-SKIP-A8 / 7c4dcdb)
+
+document.xml match YES all four. Wall mixed/noise on RFP; redline lean slots
+mixed. Scratch: `{SCRATCH}/abba-accept-skip-a1/`.
+**Verdict: keep / bank** — exact identity skip on common path.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

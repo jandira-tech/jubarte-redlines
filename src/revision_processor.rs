@@ -861,8 +861,14 @@ fn transform_instr_text_to_del_instr_text(dom: &mut Dom, node: NodeId) -> NodeId
 /// child ELEMENTS only (direct text under `w:p` is dropped, as in C#), and
 /// the wrapping del/ins carries no author/date attributes.
 pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: NodeId) -> NodeId {
+    // ACCEPT-SKIP-A1: no field marks → identity (keep parent links; do not detach).
+    let fld = W::name("fldChar");
+    let instr = W::name("instrText");
+    if !element_or_desc_has_name(dom, node, &fld) && !element_or_desc_has_name(dom, node, &instr) {
+        return node;
+    }
     if !dom.is_element(node) {
-        return dom.clone_subtree(node);
+        return node;
     }
     let name = dom.name(node).unwrap();
     if name == W::p() {
@@ -1977,16 +1983,11 @@ fn order_tc_pr(name: &XName) -> i32 {
 /// carry ins/del).
 pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     let cell_del = W::name("cellDel");
+    // ACCEPT-SKIP-A7: no cellDel → identity (keep parent links).
     if !element_or_desc_has_name(dom, node, &cell_del) {
-        if dom.parent(node).is_some() {
-            dom.remove(node);
-        }
         return node;
     }
     if !dom.is_element(node) {
-        if dom.parent(node).is_some() {
-            dom.remove(node);
-        }
         return node;
     }
     let name = dom.name(node).unwrap();
@@ -2197,16 +2198,11 @@ fn subtree_needs_adjacent_table_merge(dom: &Dom, root: NodeId) -> bool {
 /// ACCEPT-SKIP-A8: when no mergeable adjacent revision-bearing table group
 /// exists anywhere under `node`, transfer without a full-tree rebuild.
 pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
+    // ACCEPT-SKIP-A8: nothing to merge → identity (keep parent links).
     if !subtree_needs_adjacent_table_merge(dom, node) {
-        if dom.parent(node).is_some() {
-            dom.remove(node);
-        }
         return node;
     }
     if !dom.is_element(node) {
-        if dom.parent(node).is_some() {
-            dom.remove(node);
-        }
         return node;
     }
     let name = dom.name(node).unwrap();
