@@ -138,11 +138,8 @@ pub fn compare_bodies_faithful_with_notes(
     const SECT_GEOMETRY: [&str; 6] = ["type", "pgSz", "pgMar", "cols", "titlePg", "docGrid"];
     let saved_sectpr: Option<NodeId> = {
         let last_sect = |dom: &mut Dom, body: NodeId| {
-            dom.element(body, &W::sect_pr()).or_else(|| {
-                dom.descendants(body, Some(&W::sect_pr()))
-                    .last()
-                    .copied()
-            })
+            dom.element(body, &W::sect_pr())
+                .or_else(|| dom.descendants(body, Some(&W::sect_pr())).last().copied())
         };
         let sp1 = last_sect(dom, body1);
         // geometry source: revised doc in word mode (falling back to the base

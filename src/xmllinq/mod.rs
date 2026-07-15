@@ -444,17 +444,41 @@ impl Dom {
     /// `Descendants()` / `Descendants(name)` — all descendant elements (pre-order).
     pub fn descendants(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
         let mut out = Vec::new();
-        self.walk_descendant_elements(id, filter, &mut out);
+        self.for_each_descendant_element(id, filter, |c| out.push(c));
         out
     }
-    fn walk_descendant_elements(&self, id: NodeId, filter: Option<&XName>, out: &mut Vec<NodeId>) {
-        for &c in &self.data(id).content {
-            if let NodeKind::Element { name } = &self.data(c).kind {
-                if filter.is_none_or(|f| name == f) {
-                    out.push(c);
-                }
-                self.walk_descendant_elements(c, filter, out);
+
+    /// DOM-ITER-03: visit every descendant element in document order without
+    /// allocating a result `Vec`. Same pre-order as [`descendants`]. The filter
+    /// selects which elements are *visited*; recursion still enters every
+    /// element child (XLinq `Descendants` semantics).
+    pub fn for_each_descendant_element(
+        &self,
+        id: NodeId,
+        filter: Option<&XName>,
+        mut visit: impl FnMut(NodeId),
+    ) {
+        // Iterative stack avoids deep recursion on large bodies.
+        let mut stack: Vec<(NodeId, usize)> = vec![(id, 0)];
+        while let Some((node, i)) = stack.last_mut() {
+            let n = self.child_count(*node);
+            if *i >= n {
+                stack.pop();
+                continue;
             }
+            let c = self.child_at(*node, *i);
+            *i += 1;
+            if !self.is_element(c) {
+                continue;
+            }
+            let matches = match filter {
+                None => true,
+                Some(f) => self.name(c).as_ref() == Some(f),
+            };
+            if matches {
+                visit(c);
+            }
+            stack.push((c, 0));
         }
     }
 
@@ -476,13 +500,23 @@ impl Dom {
     /// `DescendantsAndSelf()` — self (if element & matches) then descendants.
     pub fn descendants_and_self(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
         let mut out = Vec::new();
+        self.for_each_descendant_and_self(id, filter, |c| out.push(c));
+        out
+    }
+
+    /// DOM-ITER-03: non-allocating `DescendantsAndSelf` walk.
+    pub fn for_each_descendant_and_self(
+        &self,
+        id: NodeId,
+        filter: Option<&XName>,
+        mut visit: impl FnMut(NodeId),
+    ) {
         if let NodeKind::Element { name } = &self.data(id).kind
             && filter.is_none_or(|f| name == f)
         {
-            out.push(id);
+            visit(id);
         }
-        self.walk_descendant_elements(id, filter, &mut out);
-        out
+        self.for_each_descendant_element(id, filter, visit);
     }
 
     /// `Ancestors()` — parents from nearest to root (elements only).

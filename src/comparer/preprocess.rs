@@ -543,7 +543,10 @@ const WML_DEFAULT_XMLNS: &str =
 /// EXCEPT `pt:Unid`, across `root` and all descendants.
 pub fn remove_existing_powertools_markup(dom: &mut Dom, root: NodeId) {
     let unid = PT::unid();
-    for el in dom.descendants_and_self(root, None) {
+    // DOM-ITER-03: collect elements first (visit needs &Dom; mutate after).
+    let mut els = Vec::new();
+    dom.for_each_descendant_and_self(root, None, |el| els.push(el));
+    for el in els {
         // DOM-ITER-02: index walk attrs (no attributes() Vec).
         let mut pt_attrs = Vec::new();
         let n = dom.attr_count(el);
@@ -568,14 +571,22 @@ pub fn test_for_invalid_content(dom: &Dom, root: NodeId) -> Result<(), String> {
         W::name("subDoc"),
         W::name("contentPart"),
     ];
-    for d in dom.descendants(root, None) {
+    // DOM-ITER-03: stop at first hit without allocating the full descendant list.
+    let mut bad: Option<String> = None;
+    dom.for_each_descendant_element(root, None, |d| {
+        if bad.is_some() {
+            return;
+        }
         if let Some(name) = dom.name(d)
             && invalid.contains(&name)
         {
-            return Err(format!("Document contains {}", name.local_name()));
+            bad = Some(format!("Document contains {}", name.local_name()));
         }
+    });
+    match bad {
+        Some(e) => Err(e),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// M4.B.2 — the block hash *string*: serialize the clone, then strip the single
@@ -632,14 +643,16 @@ pub fn add_sha1_hash_to_block_level_content(
     settings: &WmlComparerSettings,
     rel_hash: &RelHashResolver,
 ) {
-    let targets: Vec<NodeId> = dom
-        .descendants(content_parent, None)
-        .into_iter()
-        .filter(|&d| {
-            dom.name(d)
-                .is_some_and(|n| ELEMENTS_TO_HAVE_SHA1.contains(&n))
-        })
-        .collect();
+    // DOM-ITER-03: collect targets without a full descendants() Vec of every node.
+    let mut targets = Vec::new();
+    dom.for_each_descendant_element(content_parent, None, |d| {
+        if dom
+            .name(d)
+            .is_some_and(|n| ELEMENTS_TO_HAVE_SHA1.contains(&n))
+        {
+            targets.push(d);
+        }
+    });
     for d in targets {
         let name = dom.name(d).unwrap();
         let clone = clone_block_level_content_for_hashing(dom, d, true, settings, rel_hash);
@@ -670,21 +683,30 @@ pub fn hash_block_level_content(
     let unid = PT::unid();
 
     // sourceUnidDict: Unid -> source element (duplicate Unid is an error).
+    // DOM-ITER-03: non-allocating descendant walk.
     let mut source_by_unid: HashMap<String, NodeId> = HashMap::new();
-    for d in dom.descendants(source_root, None) {
+    let mut dup: Option<String> = None;
+    dom.for_each_descendant_element(source_root, None, |d| {
+        if dup.is_some() {
+            return;
+        }
         if dom.name(d).is_some_and(|n| block(&n))
             && let Some(u) = dom.attribute(d, &unid)
             && source_by_unid.insert(u.to_string(), d).is_some()
         {
-            return Err(format!("duplicate Unid in source: {u}"));
+            dup = Some(u.to_string());
         }
+    });
+    if let Some(u) = dup {
+        return Err(format!("duplicate Unid in source: {u}"));
     }
 
-    let after_blocks: Vec<NodeId> = dom
-        .descendants(after_proc_root, None)
-        .into_iter()
-        .filter(|&d| dom.name(d).is_some_and(|n| block(&n)))
-        .collect();
+    let mut after_blocks = Vec::new();
+    dom.for_each_descendant_element(after_proc_root, None, |d| {
+        if dom.name(d).is_some_and(|n| block(&n)) {
+            after_blocks.push(d);
+        }
+    });
     for b in after_blocks {
         let clone = clone_block_level_content_for_hashing(dom, b, true, settings, rel_hash);
         // M122: Word-visual correlated hashes ignore whitespace so spacing-

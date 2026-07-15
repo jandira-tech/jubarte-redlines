@@ -1841,14 +1841,11 @@ fn remove_rows_left_empty_by_move_from_inner(dom: &mut Dom, node: NodeId) -> Opt
     let name = dom.name(node).unwrap();
     if name == W::tr() {
         let block = a6_block_level_elements();
-        let non_empty_cells = dom
-            .elements(node, Some(&W::tc()))
-            .into_iter()
-            .any(|tc| {
-                dom.elements(tc, None)
-                    .into_iter()
-                    .any(|tcc| dom.name(tcc).is_some_and(|n| block.contains(&n)))
-            });
+        let non_empty_cells = dom.elements(node, Some(&W::tc())).into_iter().any(|tc| {
+            dom.elements(tc, None)
+                .into_iter()
+                .any(|tcc| dom.name(tcc).is_some_and(|n| block.contains(&n)))
+        });
         if !non_empty_cells {
             return None;
         }

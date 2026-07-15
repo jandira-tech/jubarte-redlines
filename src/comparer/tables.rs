@@ -129,15 +129,8 @@ pub static INVALID_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
 });
 
 /// `ComparisonGroupingElements` (:9071) — ancestors used for hierarchical keys.
-pub static COMPARISON_GROUPING_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
-    set(&[
-        W::p(),
-        W::tbl(),
-        W::tr(),
-        W::tc(),
-        W::txbx_content(),
-    ])
-});
+pub static COMPARISON_GROUPING_ELEMENTS: LazyLock<HashSet<XName>> =
+    LazyLock::new(|| set(&[W::p(), W::tbl(), W::tr(), W::tc(), W::txbx_content()]));
 
 /// One `RecursionElements` (:9074) entry: an element that recurses into children
 /// while skipping the named property children (rebuilt structurally in Coalesce).
@@ -159,20 +152,10 @@ pub static RECURSION_ELEMENTS: LazyLock<Vec<RecursionInfo>> = LazyLock::new(|| {
         mk(W::move_to(), None),
         mk(
             W::tbl(),
-            Some(vec![
-                W::tbl_pr(),
-                W::name("tblGrid"),
-                W::name("tblPrEx"),
-            ]),
+            Some(vec![W::tbl_pr(), W::name("tblGrid"), W::name("tblPrEx")]),
         ),
-        mk(
-            W::tr(),
-            Some(vec![W::tr_pr(), W::name("tblPrEx")]),
-        ),
-        mk(
-            W::tc(),
-            Some(vec![W::tc_pr(), W::name("tblPrEx")]),
-        ),
+        mk(W::tr(), Some(vec![W::tr_pr(), W::name("tblPrEx")])),
+        mk(W::tc(), Some(vec![W::tc_pr(), W::name("tblPrEx")])),
         mk(W::pict(), Some(vec![VML::name("shapetype")])),
         mk(VML::name("group"), None),
         mk(VML::name("shape"), None),

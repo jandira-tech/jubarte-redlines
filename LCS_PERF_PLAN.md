@@ -68,6 +68,7 @@ evidence and ready-to-run branches of the program.
 | NAME-01: OnceLock cache hottest W/PT XNames | shipped win (MEASURED #25) | matrix×4: ~5–15% wall all load-bearing slots; name equality exact |
 | DOM-ITER-02: hash-clone preprocess index walks | shipped lean win (MEASURED #26) | matrix×4: wall ↓ every slot on pdense+RFP×5lb+redline×5lb; m4b exact |
 | NAME-01b: cache tbl/tr/tc/bookmark/move locals + call sites | shipped win (MEASURED #27) | matrix×4 incl redline×5lb: wall ↓ every load-bearing slot; equality exact |
+| DOM-ITER-03: for_each_descendant_element non-alloc walk | banked (MEASURED #28) | exact m4b + order==descendants; pdense lean; redline×5lb thrash/worse — no wall claim |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1110,6 +1111,25 @@ Includes mandatory **redline_RFP17 × 5lb102** cross-pair (user directive).
 
 † Second RFP×5lb A shows thrash noise (33 s); B still wins both slots.  
 document.xml match YES all four. **Verdict: ship.**
+
+## MEASURED #28 — 2026-07-15: DOM-ITER-03 BANKED
+
+`Dom::for_each_descendant_element` / `for_each_descendant_and_self` iterative
+walks (no result `Vec`). `descendants()` delegates; hash-path
+`add_sha1` / `hash_block_level_content` / invalid-content scan use the walk.
+Tests: `tests/perf_dom_iter03.rs` (order == descendants; m4b green).
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = NAME-01b)
+
+| fixture | A wall | B wall |
+|---|---:|---:|
+| pdense_15k | 17.01 / 16.25 | **15.91 / 15.73** (lean both) |
+| rfp17_redline_self | ~0.05 | ~0.06–0.08 |
+| rfp17_vs_5lb102 | 27.56 / 23.48 | 23.71 / 23.48 (slot2 tie; thrash on A1) |
+| redline_rfp17_vs_5lb102 | **36.68 / 27.09** | 62.71† / 35.04 (cand both worse) |
+
+† First cand redline slot is thrash (sys 15 s).  
+document.xml match YES all four. **Verdict: keep / bank** — exact cleanup; no wall claim.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
