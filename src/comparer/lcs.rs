@@ -1385,15 +1385,7 @@ fn residual_para_starts_this(dom: &Dom, u: &ComparisonUnit) -> bool {
         .is_some_and(|t| t.eq_ignore_ascii_case("this"))
 }
 
-/// M186: Demo residual bodies often open with "This document…" or
-/// "Demonstrating …". Treat both as residual-body openers for M180/M182/M183
-/// entry so this×demonstrating pairs (heading_3/4 style cousins) can pure-I/D
-/// empty last residuals. Keep the strict `this`-only helper for M151 etc.
-fn residual_para_starts_demo_body(dom: &Dom, u: &ComparisonUnit) -> bool {
-    para_text_token_list(dom, u).first().is_some_and(|t| {
-        t.eq_ignore_ascii_case("this") || t.eq_ignore_ascii_case("demonstrating")
-    })
-}
+
 
 fn residual_first_body_starts_this(dom: &Dom, rest: &[ComparisonUnit]) -> bool {
     rest.len() >= 2 && residual_para_starts_this(dom, &rest[1])
@@ -2472,8 +2464,8 @@ fn step_h(
         let skip_zip_for_m180 = left_paras == 3
             && right_paras == 3
             && first_paras_share_last_sig(dom, cul1, cul2)
-            && residual_para_starts_demo_body(dom, &cul1[1])
-            && residual_para_starts_demo_body(dom, &cul2[1])
+            && residual_para_starts_this(dom, &cul1[1])
+            && residual_para_starts_this(dom, &cul2[1])
             && {
                 let j1 = token_jaccard(
                     &para_text_tokens(dom, &cul1[1]),
@@ -2506,6 +2498,18 @@ fn step_h(
                     "styles",
                     "font",
                     "fonts",
+                    // Residual openers/stopwords — "this" alone must not count as
+                    // real content on "This text is bold" (asymmetric M182 false
+                    // positive → pure-I/D last; Word free-meshes EQ text/bold).
+                    "this",
+                    "that",
+                    "with",
+                    "from",
+                    "into",
+                    "used",
+                    "for",
+                    "and",
+                    "the",
                 ];
                 let inter: std::collections::HashSet<&String> = sa.intersection(&sb).collect();
                 let inter_real: Vec<&String> = inter
@@ -2532,13 +2536,25 @@ fn step_h(
                 // must free-mesh (Word EQ "text is"); pure-I/D regressed
                 // bold_text×bold_underline 98→89.
                 // M182: asymmetric short last residual (2..=4 toks) vs long
-                // (≥6) with empty content bridge — heading_4 "Small Section
-                // Header" (3) × long hierarchy body; subtitle "Document
-                // Subtitle Description" (3) × long secondary-heading body.
-                // Both-short stays free-mesh (both <6).
+                // (≥6) with empty content bridge — but the SHORT side must keep
+                // non-boiler real content ("Main Title Section", "Small Section
+                // Header"). Pure format stubs ("This text is bold" → only
+                // text/bold after strip) must free-mesh (Word EQ text/bold;
+                // pure-I/D regressed bold_text×bold_underline 98→89).
                 let both_long = a2.len() >= 6 && b2.len() >= 6;
-                let asymmetric_short = (a2.len() >= 2 && a2.len() <= 4 && b2.len() >= 6)
-                    || (b2.len() >= 2 && b2.len() <= 4 && a2.len() >= 6);
+                let real_nonempty = |toks: &[String]| -> bool {
+                    content(toks).iter().any(|w| {
+                        !FORMAT_BOILER.iter().any(|b| w.eq_ignore_ascii_case(b))
+                    })
+                };
+                let asymmetric_short = (a2.len() >= 2
+                    && a2.len() <= 4
+                    && b2.len() >= 6
+                    && real_nonempty(&a2))
+                    || (b2.len() >= 2
+                        && b2.len() <= 4
+                        && a2.len() >= 6
+                        && real_nonempty(&b2));
                 j1 + 1e-12 >= 0.12
                     && j1 + 1e-12 < 0.55
                     && j2c + 1e-12 < 0.05
@@ -2552,16 +2568,13 @@ fn step_h(
         // layout-boiler strip false-fired on center_alignment×center_bold
         // (shared "titles") and regressed LO score.
         let skip_zip_for_m183 = {
-            let (short_n, long_n) = if left_paras < right_paras {
-                (left_paras, right_paras)
-            } else {
-                (right_paras, left_paras)
-            };
-            short_n == 3
-                && long_n == 4
+            // Only 3-base × 4-next (extra inserted mid body), not 4×3 —
+            // reverse fired on font_family×font_size_12 and regressed LO ~26pts.
+            left_paras == 3
+                && right_paras == 4
                 && first_paras_share_last_sig(dom, cul1, cul2)
-                && residual_para_starts_demo_body(dom, &cul1[1])
-                && residual_para_starts_demo_body(dom, &cul2[1])
+                && residual_para_starts_this(dom, &cul1[1])
+                && residual_para_starts_this(dom, &cul2[1])
                 && {
                     let j1 = token_jaccard(
                         &para_text_tokens(dom, &cul1[1]),
