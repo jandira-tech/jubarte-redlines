@@ -48,6 +48,7 @@ evidence and ready-to-run branches of the program.
 | LCS-ITER-01 count fix | shipped (MEASURED #6) | Word atom count was wrongly `1` after `1f0ab33` → LCS thresholds broken; restored `contents.len()` |
 | HASH-02: stream atom digests into SHA-1 | shipped (MEASURED #6) | `ComparisonUnitWord::new` no longer allocates concat String; digests byte-identical |
 | DOM-ITER-01: serializer borrowed children/attrs | shipped banked (MEASURED #7) | exact serialize; pdense wall noise-neutral — bank for amplify / next profile |
+| CLONE-01: clone_subtree index walk + reserve | shipped banked (MEASURED #8) | exact clone; pdense wall noise-neutral — bank |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -712,6 +713,21 @@ accessors. Owned `attributes()` / `nodes()` APIs remain for other callers.
 win on pdense (serialize is only ~5–6% inclusive). Do not claim a second; amplify
 later with a serialize-heavy microbench or re-evaluate after the next profile
 when serialize rank moves.
+
+## MEASURED #8 — 2026-07-15: CLONE-01 BANKED (exact, wall noise)
+
+`clone_subtree` walks children by index (no temporary content Vec clone) and
+`reserve_exact`s destination capacity. Attribute clone unchanged. Tests:
+`tests/perf_clone01.rs` (serialize equality, parent links, source isolation).
+
+### A/B — ABBA ×2, pdense 15k, base = DOM-ITER-01
+
+| run | A wall | B wall |
+|---|---:|---:|
+| r1 | 25.71 / 23.56 | 24.02 / 23.98 |
+| r2 | 24.22 / 23.11 | 22.83 / 23.49 |
+
+document.xml identical. **Verdict: keep / bank** — no consistent wall win; exact.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

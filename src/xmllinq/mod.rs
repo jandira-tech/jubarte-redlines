@@ -780,6 +780,9 @@ impl Dom {
 
     /// Deep-clone a subtree into the same arena, returning the new root. The
     /// clone has no parent. Port of `XElement.clone()` / `XContainer.clone()`.
+    ///
+    /// CLONE-01: walk children by index (no temporary `content` Vec clone) and
+    /// `reserve_exact` the destination content capacity so growth is one shot.
     pub fn clone_subtree(&mut self, id: NodeId) -> NodeId {
         let new_kind = match &self.data(id).kind {
             NodeKind::Element { name } => NodeKind::Element { name: name.clone() },
@@ -790,13 +793,17 @@ impl Dom {
                 declaration: declaration.clone(),
             },
         };
-        let copy = self.alloc(new_kind);
-        // attributes
+        let n_kids = self.child_count(id);
         let attrs = self.data(id).attrs.clone();
-        self.data_mut(copy).attrs = attrs;
-        // children (recursive)
-        let kids = self.data(id).content.clone();
-        for k in kids {
+        let copy = self.alloc(new_kind);
+        {
+            let d = self.data_mut(copy);
+            d.attrs = attrs;
+            d.content.reserve_exact(n_kids);
+        }
+        for i in 0..n_kids {
+            // Re-index each step: recursive clone may reallocate the arena.
+            let k = self.child_at(id, i);
             let ck = self.clone_subtree(k);
             self.validate_attachment(copy, ck);
             self.data_mut(ck).parent = Some(copy);
