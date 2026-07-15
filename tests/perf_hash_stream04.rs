@@ -4,7 +4,8 @@
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::comparer::preprocess::{
     block_sha1, block_sha1_from_source, clone_block_level_content_for_hashing,
-    clone_for_structure_hash, null_rel_resolver, structure_sha1, try_stream_hash_simple_table_or_tr,
+    clone_for_structure_hash, null_rel_resolver, structure_sha1,
+    try_stream_hash_simple_table_or_tr,
 };
 use jubarte::namespaces::W;
 use jubarte::xmllinq::Dom;
@@ -75,8 +76,8 @@ fn hash_stream04_simple_1x1_matches_clone() {
     let s = settings_space_sensitive();
     let stream = block_sha1_from_source(&mut dom, tbl, true, &s, &null_rel_resolver, false);
     assert_eq!(stream, oracle_content(&mut dom, tbl, &s, false));
-    let (c, st) = try_stream_hash_simple_table_or_tr(&dom, tbl, &s, false)
-        .expect("simple table must stream");
+    let (c, st) =
+        try_stream_hash_simple_table_or_tr(&dom, tbl, &s, false).expect("simple table must stream");
     assert_eq!(c, stream);
     assert_eq!(st, oracle_structure(&mut dom, tbl, &s));
 }
@@ -150,10 +151,7 @@ fn hash_stream04_multi_p_cell() {
 
 #[test]
 fn hash_stream04_empty_p_cell() {
-    let (mut dom, tbl) = body_block(
-        r#"<w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>"#,
-        "tbl",
-    );
+    let (mut dom, tbl) = body_block(r#"<w:tbl><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>"#, "tbl");
     let s = settings_space_sensitive();
     assert_eq!(
         block_sha1_from_source(&mut dom, tbl, true, &s, &null_rel_resolver, false),
@@ -227,8 +225,7 @@ fn hash_stream04_structure_matches_structure_clone_oracle() {
     );
     let s = settings_space_sensitive();
     let (_, st) = try_stream_hash_simple_table_or_tr(&dom, tbl, &s, false).unwrap();
-    let clone =
-        clone_block_level_content_for_hashing(&mut dom, tbl, true, &s, &null_rel_resolver);
+    let clone = clone_block_level_content_for_hashing(&mut dom, tbl, true, &s, &null_rel_resolver);
     let sc = clone_for_structure_hash(&mut dom, clone).unwrap();
     assert_eq!(st, block_sha1(&dom, sc));
 }

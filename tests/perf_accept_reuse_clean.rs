@@ -129,6 +129,12 @@ fn reuse_clean_element_accept_still_correct() {
     d.add(body, clean);
     let accepted = accept_revisions_for_element(&mut d, body);
     let ser = d.serialize_element(accepted);
-    assert!(ser.contains("keep") && ser.contains("ADD") && ser.contains("Z"), "{ser}");
-    assert!(!ser.contains("gone") && !ser.contains("<w:ins") && !ser.contains("<w:del"), "{ser}");
+    assert!(
+        ser.contains("keep") && ser.contains("ADD") && ser.contains("Z"),
+        "{ser}"
+    );
+    assert!(
+        !ser.contains("gone") && !ser.contains("<w:ins") && !ser.contains("<w:del"),
+        "{ser}"
+    );
 }

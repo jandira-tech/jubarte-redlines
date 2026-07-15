@@ -48,9 +48,8 @@ fn hash_stream06_simple_tc_matches() {
 
 #[test]
 fn hash_stream06_tc_with_tcpr_and_br() {
-    let (mut dom, tc) = body_tc(
-        r#"<w:tc><w:tcPr/><w:p><w:r><w:t>a</w:t><w:br/></w:r></w:p></w:tc>"#,
-    );
+    let (mut dom, tc) =
+        body_tc(r#"<w:tc><w:tcPr/><w:p><w:r><w:t>a</w:t><w:br/></w:r></w:p></w:tc>"#);
     let s = s_space();
     let (c, _) = try_stream_hash_simple_table_or_tr(&dom, tc, &s, false).expect("stream");
     assert_eq!(c, oracle(&mut dom, tc, &s));

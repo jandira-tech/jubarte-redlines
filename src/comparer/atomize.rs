@@ -455,7 +455,10 @@ fn coalesce_recurse(dom: &mut Dom, atoms: &[ComparisonUnitAtom], level: usize) -
             }
             for (cname, gc) in &by_name {
                 if *cname == W::t() || *cname == W::del_text() {
-                    let text: String = gc.iter().map(|a| dom.value_str(a.content_element)).collect();
+                    let text: String = gc
+                        .iter()
+                        .map(|a| dom.value_str(a.content_element))
+                        .collect();
                     let t = dom.new_element(cname.clone());
                     if let Some(sp) = xml_space_attr(&text) {
                         dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some(sp));
