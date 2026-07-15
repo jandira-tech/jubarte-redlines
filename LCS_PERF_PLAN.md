@@ -64,6 +64,7 @@ evidence and ready-to-run branches of the program.
 | SER-01: direct write tags/attrs/escapes into out buffer | shipped win (MEASURED #21) | matrix×4: RFP×5lb + redline×5lb wall ↓ both slots; pdense noise; exact document.xml |
 | LCS-SCORE-01: prefix sums for non-separator LCR scores | banked (MEASURED #22) | exact prefix==direct; pdense+RFP×5lb lean; redline×5lb noise/worse — no wall claim |
 | ATOM-TEXT-01: value_str borrow single text-child leaves | shipped lean win (MEASURED #23) | matrix×4: pdense+RFP×5lb+redline×5lb wall ↓ every slot; exact value_str==value |
+| PATH-01: Arc-share ancestor_elements across multi-char atoms | shipped win (MEASURED #24) | matrix×4: wall ↓ every slot on pdense+RFP×5lb+redline×5lb; Arc::ptr_eq gate; exact document.xml |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1031,6 +1032,25 @@ vs Owned cases).
 | **redline_rfp17_vs_5lb102** | 35.00 / 30.11 · 33.97 / 30.15 | **34.83 / 30.00 · 33.94 / 30.02** |
 
 document.xml match YES all four. **Verdict: ship** (lean wall win every matrix slot).
+
+## MEASURED #24 — 2026-07-15: PATH-01 WIN
+
+`ComparisonUnitAtom::ancestor_elements` is `Arc<[NodeId]>`. Multi-char `w:t`
+atoms share one Arc chain (PATH-01); atom clone becomes Arc-refcount instead of
+deep Vec copy. Tests: `tests/perf_path01.rs` (`Arc::ptr_eq` + path order +
+coalesce text).
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = ATOM-TEXT-01)
+
+| fixture | A wall | B wall |
+|---|---:|---:|
+| **pdense_15k** | 17.63 / 25.00† | **16.89 / 16.79** (also RSS ~3.65 vs ~3.78 GB) |
+| rfp17_redline_self | ~0.05 | ~0.05 |
+| **rfp17_vs_5lb102** | 28.45 / 27.53 | **27.51 / 27.09** |
+| **redline_rfp17_vs_5lb102** | 35.28 / 35.32 | **33.77 / 34.46** |
+
+† Second pdense A shows thrash noise (25 s); B still wins both slots.  
+document.xml match YES all four. **Verdict: ship.**
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

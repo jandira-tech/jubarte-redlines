@@ -1,5 +1,7 @@
 //! Comparison-unit types (M4.0/M4.2). Port of the `ComparisonUnit*` hierarchy.
 
+use std::sync::Arc;
+
 use crate::util::sha1::{sha1_fingerprint, sha1_hex_parts};
 use crate::xmllinq::NodeId;
 
@@ -27,12 +29,15 @@ pub struct AtomBlock {
 
 /// Port of `ComparisonUnitAtom` — one single-character run / content leaf, with
 /// its ancestor chain (outermost → leaf, excluding body) and content hash.
+///
+/// PATH-01: `ancestor_elements` is an `Arc` so sibling characters under the same
+/// `w:t` (and other multi-atom leaves sharing a chain) share one path allocation.
 #[derive(Clone, Debug)]
 pub struct ComparisonUnitAtom {
     pub correlation_status: CorrelationStatus,
     pub sha1_hash: String,
     pub content_element: NodeId,
-    pub ancestor_elements: Vec<NodeId>,
+    pub ancestor_elements: Arc<[NodeId]>,
     pub correlated_sha1_hash: Option<String>,
 
     // ── M4.0 additions (faithful engine) ──────────────────────────────────────
@@ -54,12 +59,16 @@ pub struct ComparisonUnitAtom {
 }
 
 impl ComparisonUnitAtom {
-    pub fn new(content_element: NodeId, ancestor_elements: Vec<NodeId>, sha1_hash: String) -> Self {
+    pub fn new(
+        content_element: NodeId,
+        ancestor_elements: impl Into<Arc<[NodeId]>>,
+        sha1_hash: String,
+    ) -> Self {
         ComparisonUnitAtom {
             correlation_status: CorrelationStatus::Nil,
             sha1_hash,
             content_element,
-            ancestor_elements,
+            ancestor_elements: ancestor_elements.into(),
             correlated_sha1_hash: None,
             content_element_before: None,
             comparison_unit_atom_before: None,

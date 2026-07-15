@@ -301,14 +301,14 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
 
     // ── Phase B (reverse) ──────────────────────────────────────────────────────
     let mut current: Option<Vec<String>> = None;
-    let mut current_elems: Option<Vec<NodeId>> = None;
+    // PATH-01: track the shared Arc chain (not a cloned Vec).
+    let mut current_elems: Option<std::sync::Arc<[NodeId]>> = None;
     for atom in atoms.iter_mut().rev() {
         if is_ppr_atom(dom, atom) && !atom_in_textbox(dom, atom) {
             let mut cur: Vec<String> = atom
                 .ancestor_elements
-                .clone()
-                .into_iter()
-                .map(|ae| unid_or_mint(dom, ae))
+                .iter()
+                .map(|&ae| unid_or_mint(dom, ae))
                 .collect();
             if let Some(d) = &deepest_unid
                 && let Some(first) = cur.first_mut()
@@ -317,7 +317,7 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
             }
             atom.ancestor_unids = Some(cur.clone());
             current = Some(cur);
-            current_elems = Some(atom.ancestor_elements.clone());
+            current_elems = Some(std::sync::Arc::clone(&atom.ancestor_elements));
         } else {
             let prefix = current.clone().unwrap_or_default();
             // Borrow the following paragraph's Unid prefix to bridge MATCHED A/B

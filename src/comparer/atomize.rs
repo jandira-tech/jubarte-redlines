@@ -8,6 +8,8 @@
 //! `coalesce(atomize(body))` reconstructs a structurally-equal body — the
 //! invariant the whole comparer relies on.
 
+use std::sync::Arc;
+
 use crate::namespaces::{MC, PT, W};
 use crate::unid::assign_to_all_elements;
 use crate::util::group_adjacent;
@@ -188,7 +190,7 @@ fn annotate_element_with_props(
 fn push_atom(
     dom: &Dom,
     content: NodeId,
-    ancestors: &[NodeId],
+    ancestors: Arc<[NodeId]>,
     list: &mut Vec<ComparisonUnitAtom>,
     settings: &WmlComparerSettings,
 ) {
@@ -208,18 +210,21 @@ fn push_atom(
     {
         hash = sha1_hex(&format!("PREDEL|{hash}"));
     }
-    let mut atom = ComparisonUnitAtom::new(content, ancestors.to_vec(), hash);
-    atom.rev_track_element = revision_tracking_element_from_ancestors(dom, content, ancestors);
+    // PATH-01: store the shared Arc chain (no per-atom Vec clone).
+    let mut atom = ComparisonUnitAtom::new(content, Arc::clone(&ancestors), hash);
+    atom.rev_track_element =
+        revision_tracking_element_from_ancestors(dom, content, ancestors.as_ref());
     atom.correlation_status = status_from_rev_track_element(dom, atom.rev_track_element);
     list.push(atom);
 }
 
 /// Chain for an atom at `element`: `path` (ancestors excluding body) + `element`.
-fn chain_with(path: &[NodeId], element: NodeId) -> Vec<NodeId> {
+/// PATH-01: returns `Arc` so multi-char `w:t` siblings share one allocation.
+fn chain_with(path: &[NodeId], element: NodeId) -> Arc<[NodeId]> {
     let mut c = Vec::with_capacity(path.len() + 1);
     c.extend_from_slice(path);
     c.push(element);
-    c
+    Arc::from(c)
 }
 
 fn recurse(
@@ -282,7 +287,7 @@ fn recurse(
             None => dom.new_element(W::p_pr()),
         };
         let chain = chain_with(path, element);
-        push_atom(dom, content, &chain, list, settings);
+        push_atom(dom, content, chain, list, settings);
         return;
     }
 
@@ -303,14 +308,15 @@ fn recurse(
     }
 
     if name == W::t() || name == W::name("delText") {
+        // Own the text: we mutate the Dom while splitting into char atoms.
         let val = dom.value(element);
-        // One chain for every character in this text node (was re-walked per char).
+        // PATH-01: one shared Arc chain for every character in this text node.
         let chain = chain_with(path, element);
         for ch in val.chars() {
             // content = fresh <w:t>ch</w:t> (or delText)
             let content = dom.new_element(name.clone());
             dom.add_text(content, &ch.to_string());
-            push_atom(dom, content, &chain, list, settings);
+            push_atom(dom, content, Arc::clone(&chain), list, settings);
         }
         return;
     }
@@ -318,7 +324,7 @@ fn recurse(
     // mc:AlternateContent → a single opaque atom (Choice+Fallback kept verbatim).
     if name == MC::name("AlternateContent") {
         let chain = chain_with(path, element);
-        push_atom(dom, element, &chain, list, settings);
+        push_atom(dom, element, chain, list, settings);
         return;
     }
 
@@ -330,14 +336,14 @@ fn recurse(
     // rIds via S_ELEMENTS_WITH_RELATIONSHIP_IDS on imagedata when needed.
     if name == W::name("pict") {
         let chain = chain_with(path, element);
-        push_atom(dom, element, &chain, list, settings);
+        push_atom(dom, element, chain, list, settings);
         return;
     }
 
     // AllowableRunChildren (or w:object) → a single verbatim leaf atom.
     if ALLOWABLE_RUN_CHILDREN.contains(&name) || name == W::name("object") {
         let chain = chain_with(path, element);
-        push_atom(dom, element, &chain, list, settings);
+        push_atom(dom, element, chain, list, settings);
         return;
     }
 
@@ -349,7 +355,7 @@ fn recurse(
     // recurses (its result runs diff normally).
     if name == W::name("fldSimple") && dom.elements(element, None).is_empty() {
         let chain = chain_with(path, element);
-        push_atom(dom, element, &chain, list, settings);
+        push_atom(dom, element, chain, list, settings);
         return;
     }
 

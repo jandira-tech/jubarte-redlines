@@ -2670,7 +2670,7 @@ pub fn set_after_unids(dom: &mut Dom, unknown: &CorrelatedSequence) {
 
     // relevant ancestors of da1[0] up to & including the first `take_thru`.
     let mut relevant = Vec::new();
-    for &ae in &first1.ancestor_elements {
+    for &ae in first1.ancestor_elements.iter() {
         relevant.push(ae);
         if dom.name(ae) == Some(take_thru.clone()) {
             break;
