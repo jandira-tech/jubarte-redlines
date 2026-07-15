@@ -146,32 +146,6 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Stri
     sha1_hex(&format!("{local}{text}"))
 }
 
-/// Build the ancestor chain for an atom: `AncestorsAndSelf` of `element`, taking
-/// while the ancestor is not a content-root container, then reversed
-/// (outermost → leaf, excluding the container). Content roots: body, footnotes,
-/// endnotes, **hdr, ftr** — header/footer parts use hdr/ftr as the body
-/// equivalent; including them in the chain re-emits nested `<w:ftr>` inside
-/// the redlined part (PR #81 / m23).
-fn ancestor_chain(dom: &Dom, element: NodeId) -> Vec<NodeId> {
-    let stop = [
-        W::body(),
-        W::name("footnotes"),
-        W::name("endnotes"),
-        W::name("hdr"),
-        W::name("ftr"),
-    ];
-    let mut chain = Vec::new();
-    for a in dom.ancestors_and_self(element, None) {
-        let n = dom.name(a).unwrap();
-        if stop.contains(&n) {
-            break;
-        }
-        chain.push(a);
-    }
-    chain.reverse();
-    chain
-}
-
 /// `CreateComparisonUnitAtomList(contentParent)` — assign unids, then flatten.
 pub fn create_comparison_unit_atom_list(
     dom: &mut Dom,
@@ -183,7 +157,10 @@ pub fn create_comparison_unit_atom_list(
     move_last_sectpr_into_last_paragraph(dom, content_parent)
         .expect("invalid document: multiple body sectPr");
     let mut list = Vec::new();
-    recurse(dom, content_parent, &mut list, settings);
+    // ATOM-STACK-01: maintain the ancestor path while recursing instead of
+    // re-walking `ancestors_and_self` for every character atom.
+    let mut path = Vec::new();
+    recurse(dom, content_parent, &mut list, settings, &mut path);
     list
 }
 
@@ -195,6 +172,7 @@ fn annotate_element_with_props(
     list: &mut Vec<ComparisonUnitAtom>,
     child_property_names: Option<&[XName]>,
     settings: &WmlComparerSettings,
+    path: &mut Vec<NodeId>,
 ) {
     for item in dom.elements(element, None) {
         let skip = match (child_property_names, dom.name(item)) {
@@ -202,7 +180,7 @@ fn annotate_element_with_props(
             _ => false,
         };
         if !skip {
-            recurse(dom, item, list, settings);
+            recurse(dom, item, list, settings, path);
         }
     }
 }
@@ -210,11 +188,10 @@ fn annotate_element_with_props(
 fn push_atom(
     dom: &Dom,
     content: NodeId,
-    element_for_ancestors: NodeId,
+    ancestors: &[NodeId],
     list: &mut Vec<ComparisonUnitAtom>,
     settings: &WmlComparerSettings,
 ) {
-    let ancestors = ancestor_chain(dom, element_for_ancestors);
     let mut hash = atom_hash(dom, content, settings);
     // M-MOVE S1: salt the atom hash of pt:PreDelete-stamped content (word-mode
     // flattened pre-existing deletions) so it can never correlate Equal with
@@ -231,10 +208,18 @@ fn push_atom(
     {
         hash = sha1_hex(&format!("PREDEL|{hash}"));
     }
-    let mut atom = ComparisonUnitAtom::new(content, ancestors.clone(), hash);
-    atom.rev_track_element = revision_tracking_element_from_ancestors(dom, content, &ancestors);
+    let mut atom = ComparisonUnitAtom::new(content, ancestors.to_vec(), hash);
+    atom.rev_track_element = revision_tracking_element_from_ancestors(dom, content, ancestors);
     atom.correlation_status = status_from_rev_track_element(dom, atom.rev_track_element);
     list.push(atom);
+}
+
+/// Chain for an atom at `element`: `path` (ancestors excluding body) + `element`.
+fn chain_with(path: &[NodeId], element: NodeId) -> Vec<NodeId> {
+    let mut c = Vec::with_capacity(path.len() + 1);
+    c.extend_from_slice(path);
+    c.push(element);
+    c
 }
 
 fn recurse(
@@ -242,6 +227,7 @@ fn recurse(
     element: NodeId,
     list: &mut Vec<ComparisonUnitAtom>,
     settings: &WmlComparerSettings,
+    path: &mut Vec<NodeId>,
 ) {
     let name = match dom.name(element) {
         Some(n) => n,
@@ -260,12 +246,13 @@ fn recurse(
         // Non-allocating child walk (see Dom::child_at): recurse does not
         // add/remove children of `element`, so its content is stable and the
         // index sequence equals `elements(element, None)` — without the Vec.
+        // path stays empty under content roots (stop containers).
         let mut i = 0;
         while i < dom.child_count(element) {
             let item = dom.child_at(element, i);
             i += 1;
             if dom.name(item).is_some() {
-                recurse(dom, item, list, settings);
+                recurse(dom, item, list, settings, path);
             }
         }
         return;
@@ -273,15 +260,17 @@ fn recurse(
 
     if name == W::p() {
         // children except pPr (non-allocating; see the body branch above)
+        path.push(element);
         let mut i = 0;
         while i < dom.child_count(element) {
             let item = dom.child_at(element, i);
             i += 1;
             match dom.name(item) {
-                Some(n) if n != W::p_pr() => recurse(dom, item, list, settings),
+                Some(n) if n != W::p_pr() => recurse(dom, item, list, settings, path),
                 _ => {}
             }
         }
+        path.pop();
         // the paragraph mark atom (pPr, or a fresh empty pPr). Faithful to
         // WmlComparer.ts: the atom's ancestor chain is the PARAGRAPH's
         // (`element.AncestorsAndSelf()`), i.e. `[…, w:p]` — NOT `[…, w:p, w:pPr]`.
@@ -292,38 +281,44 @@ fn recurse(
             Some(pp) => pp,
             None => dom.new_element(W::p_pr()),
         };
-        push_atom(dom, content, element, list, settings);
+        let chain = chain_with(path, element);
+        push_atom(dom, content, &chain, list, settings);
         return;
     }
 
     if name == W::r() {
         // children except rPr (non-allocating; see the body branch above)
+        path.push(element);
         let mut i = 0;
         while i < dom.child_count(element) {
             let item = dom.child_at(element, i);
             i += 1;
             match dom.name(item) {
-                Some(n) if n != W::r_pr() => recurse(dom, item, list, settings),
+                Some(n) if n != W::r_pr() => recurse(dom, item, list, settings, path),
                 _ => {}
             }
         }
+        path.pop();
         return;
     }
 
     if name == W::t() || name == W::name("delText") {
         let val = dom.value(element);
+        // One chain for every character in this text node (was re-walked per char).
+        let chain = chain_with(path, element);
         for ch in val.chars() {
             // content = fresh <w:t>ch</w:t> (or delText)
             let content = dom.new_element(name.clone());
             dom.add_text(content, &ch.to_string());
-            push_atom(dom, content, element, list, settings);
+            push_atom(dom, content, &chain, list, settings);
         }
         return;
     }
 
     // mc:AlternateContent → a single opaque atom (Choice+Fallback kept verbatim).
     if name == MC::name("AlternateContent") {
-        push_atom(dom, element, element, list, settings);
+        let chain = chain_with(path, element);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 
@@ -334,13 +329,15 @@ fn recurse(
     // w:ins; ours dropped the whole image). Hash still covers nested
     // rIds via S_ELEMENTS_WITH_RELATIONSHIP_IDS on imagedata when needed.
     if name == W::name("pict") {
-        push_atom(dom, element, element, list, settings);
+        let chain = chain_with(path, element);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 
     // AllowableRunChildren (or w:object) → a single verbatim leaf atom.
     if ALLOWABLE_RUN_CHILDREN.contains(&name) || name == W::name("object") {
-        push_atom(dom, element, element, list, settings);
+        let chain = chain_with(path, element);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 
@@ -351,19 +348,23 @@ fn recurse(
     // "Pg  Left aligned" with empty numbers). Non-empty fldSimple still
     // recurses (its result runs diff normally).
     if name == W::name("fldSimple") && dom.elements(element, None).is_empty() {
-        push_atom(dom, element, element, list, settings);
+        let chain = chain_with(path, element);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 
     // RecursionElements → recurse, skipping the declared property children.
     if let Some(ri) = recursion_info(&name) {
+        path.push(element);
         annotate_element_with_props(
             dom,
             element,
             list,
             ri.child_property_names.as_deref(),
             settings,
+            path,
         );
+        path.pop();
         return;
     }
 
@@ -373,7 +374,9 @@ fn recurse(
     }
 
     // Fallthrough: recurse into all child elements.
-    annotate_element_with_props(dom, element, list, None, settings);
+    path.push(element);
+    annotate_element_with_props(dom, element, list, None, settings, path);
+    path.pop();
 }
 
 /// `Coalesce(atomList)` — rebuild a `<w:document><w:body>…` from the atom stream.

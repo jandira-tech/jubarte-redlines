@@ -60,6 +60,7 @@ evidence and ready-to-run branches of the program.
 | COMPARE-M122-SELF: no body clone for M122 | shipped lean win (MEASURED #17) | redline-self wall lean ↓; clean fixtures neutral (already skipped); exact |
 | HASH-SCRATCH-01: temp Dom for hash clones | **REVERTED** (MEASURED #18) | exact digests but wall/user worse (import+project); plan said revert if drop dominates |
 | IDENTICAL-INPUT-01: byte-equal short-circuit | shipped win (MEASURED #19) | self-compare ~50s → **~0.07s**; other fixtures unchanged; correct empty redline |
+| ATOM-STACK-01: path stack instead of ancestors_and_self | shipped win (MEASURED #20) | pdense + RFP×5lb102 wall ↓ both slots; atomize profile hotspot |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -946,6 +947,22 @@ that package as the empty redline — no dual Dom, LCS, or produce.
 | rfp17_vs_5lb102 | ~28.5s | ~28.5s (different files) |
 
 Tests: `tests/perf_identical_input01.rs`. **Verdict: ship.**
+
+## MEASURED #20 — 2026-07-15: ATOM-STACK-01 WIN
+
+Atomize maintains the ancestor path while recursing instead of calling
+`ancestors_and_self` (allocating walk) for every character atom. Same
+`ancestor_elements` vectors; m4a/m4/m4c green.
+
+### A/B — full matrix, 1× ABBA (base = IDENTICAL-INPUT)
+
+| fixture | A wall / user | B wall / user |
+|---|---:|---:|
+| **pdense_15k** | 17.86 / 17.32 · 17.79 / 17.30 | **17.70 / 16.96 · 17.42 / 16.92** |
+| rfp17_redline_self | ~0.06 | ~0.06 (short-circuit) |
+| **rfp17_vs_5lb102** | 28.27 / 26.64 · 28.41 / 27.11 | **27.75 / 26.47 · 27.47 / 26.20** |
+
+document.xml match all three. **Verdict: ship.**
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
