@@ -180,19 +180,27 @@ impl<'a> Parser<'a> {
         }
 
         // Build local namespace scope.
-        let mut local_scope = ns_scope.clone();
+        // PARSE-02: only clone the parent HashMap when this element declares
+        // xmlns / xmlns:*; the common OOXML interior path reuses the parent
+        // scope by reference (no HashMap clone per element).
+        let mut local_scope_owned: Option<HashMap<String, String>> = None;
         for (name, value) in &raw_attrs {
             if name == "xmlns" {
-                local_scope.insert(String::new(), value.clone());
+                local_scope_owned
+                    .get_or_insert_with(|| ns_scope.clone())
+                    .insert(String::new(), value.clone());
             } else if let Some(prefix) = name.strip_prefix("xmlns:") {
-                local_scope.insert(prefix.to_string(), value.clone());
+                local_scope_owned
+                    .get_or_insert_with(|| ns_scope.clone())
+                    .insert(prefix.to_string(), value.clone());
             }
         }
+        let local_scope: &HashMap<String, String> = local_scope_owned.as_ref().unwrap_or(ns_scope);
 
-        let el_name = resolve(&raw_name, false, &local_scope);
+        let el_name = resolve(&raw_name, false, local_scope);
         let el = self.dom.new_element(el_name);
         for (name, value) in &raw_attrs {
-            let an = resolve(name, true, &local_scope);
+            let an = resolve(name, true, local_scope);
             self.dom.set_attribute_value(el, &an, Some(value));
         }
 
@@ -236,7 +244,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.cur() == '<' {
-                let child = self.parse_element(&local_scope);
+                let child = self.parse_element(local_scope);
                 self.dom.add(el, child);
                 continue;
             }

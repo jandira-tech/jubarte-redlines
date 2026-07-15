@@ -49,6 +49,7 @@ evidence and ready-to-run branches of the program.
 | HASH-02: stream atom digests into SHA-1 | shipped (MEASURED #6) | `ComparisonUnitWord::new` no longer allocates concat String; digests byte-identical |
 | DOM-ITER-01: serializer borrowed children/attrs | shipped banked (MEASURED #7) | exact serialize; pdense wall noise-neutral — bank for amplify / next profile |
 | CLONE-01: clone_subtree index walk + reserve | shipped banked (MEASURED #8) | exact clone; pdense wall noise-neutral — bank |
+| PARSE-02: skip ns_scope clone without xmlns | shipped lean win (MEASURED #9) | pdense user CPU ↓ every run; wall 3/4 better; exact document.xml |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -728,6 +729,27 @@ when serialize rank moves.
 | r2 | 24.22 / 23.11 | 22.83 / 23.49 |
 
 document.xml identical. **Verdict: keep / bank** — no consistent wall win; exact.
+
+## MEASURED #9 — 2026-07-15: PARSE-02 lean win (skip ns HashMap clone)
+
+Parser only clones `ns_scope` when the element declares `xmlns` / `xmlns:*`;
+interior OOXML elements reuse the parent map by reference. Shadowed-prefix and
+default-ns tests in `tests/perf_parse02_ns_scope.rs` + m1 foundation green.
+
+### A/B — ABBA ×2, pdense 15k, base = CLONE-01
+
+| run | A wall / user | B wall / user |
+|---|---:|---:|
+| r1 | 23.36 / 21.65 · 22.71 / 21.38 | 22.60 / 21.09 · 22.81 / 21.20 |
+| r2 | 22.57 / 21.48 · 22.17 / 21.20 | 22.09 / 20.89 · 21.64 / 20.75 |
+
+- **user CPU:** cand lower in **all 4** slots (~0.3–0.5 s).
+- **wall:** cand better in 3/4 slots (one 0.1 s loss) — lean win, not a hard
+  every-run gate on wall alone.
+- **document.xml:** identical.
+
+**Verdict: ship.** Exact; diagnostic user-CPU clean; wall leans positive. Full
+stack refactor (mutable push/restore) deferred.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
