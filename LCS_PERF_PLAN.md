@@ -53,6 +53,7 @@ evidence and ready-to-run branches of the program.
 | PARSE-01b: starts_with/index_of no Vec alloc | shipped win (MEASURED #10) | pdense wall+user ↓ every ABBA slot; exact document.xml |
 | HASH-01c: hex write via byte buffer | shipped lean win (MEASURED #11) | pdense wall ↓ every ABBA slot (~0.1–0.5 s); digests exact |
 | ACCEPT-SKIP-01: skip rebuilds when no tracked revs | shipped win (MEASURED #12) | pdense wall −10…12% every slot; user −10%; exact document.xml |
+| ACCEPT-SKIP-02: skip A.9 when no empty `w:tc` | shipped lean win (MEASURED #13) | matrix: RFP redline-self & RFP×5lb102 wall ↓ both slots; pdense noise; exact |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -71,6 +72,17 @@ CPU/RSS micro-win that does not move wall. Because wall is noisy, judge it on
 interleaved ABBA runs where the candidate beats the base in *every* run, not on a
 single delta. A wall-only win from added threads still belongs in a throughput
 lane, not here.
+
+**Permanent ABBA fixture matrix (user directive 2026-07-15):** every wall claim
+must report all three, not pdense alone — the real docs are the load-bearing ones:
+
+| fixture id | pair | why |
+|---|---|---|
+| `pdense_15k` | `_scratch/perf/pdense_{A,B}_15000.docx` | fast dense synthetic sanity |
+| `rfp17_redline_self` | `../redline_RFP17_vs_individual-contractor.docx` × self | complicated real redline (fixture A / format-heavy) |
+| `rfp17_vs_5lb102` | `../RFP17-071-Addendum-1-MWSU-CSR-816-271-4200.docx` × `../5lb102!.docx` | unrelated pair (move-heavy) |
+
+Harness: `tools/perf/run_abba_matrix.sh <base> <cand> <out_dir> [rounds]`.
 
 ### What “quickest without lower quality” means
 
@@ -816,6 +828,24 @@ Revision-bearing trees take the full faithful path unchanged. Tests:
 
 **Verdict: ship.** Next: skip A.9 when no empty `w:tc`; per-transform skips
 when only a subset of marks is present; ACCEPT-INPLACE for remaining rebuilds.
+
+## MEASURED #13 — 2026-07-15: ACCEPT-SKIP-02 A.9 empty-cell skip (matrix)
+
+Skip `add_empty_paragraph_to_any_empty_cells` when a non-allocating DFS finds no
+empty `w:tc` (only-`tcPr` or empty). Empty-cell docs still run A.9. Tests:
+`empty_table_cell_still_gets_paragraph` + m28 A.9/A.10 green.
+
+### A/B — full fixture matrix, 1× ABBA (base = ACCEPT-SKIP-01)
+
+| fixture | A wall (base) | B wall (cand) | slots |
+|---|---:|---:|---|
+| pdense_15k | 19.96 / 19.54 | 19.60 / 19.68 | noise (1/2) |
+| **rfp17_redline_self** | 60.50 / 55.96 | **54.98 / 53.76** | **cand both** |
+| **rfp17_vs_5lb102** | 38.31 / 38.31 | **37.37 / 37.00** | **cand both** |
+
+document.xml SHA match on all three fixtures. **Verdict: ship** — wall wins on
+the load-bearing complicated fixtures; pdense neutral. Harness committed as
+`tools/perf/run_abba_matrix.sh`.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

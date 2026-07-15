@@ -130,3 +130,27 @@ fn dirty_document_accept_still_works() {
     assert_eq!(d.value(out), "AB");
     assert!(!element_has_tracked_revisions(&d, out));
 }
+
+/// ACCEPT-SKIP-02: empty `w:tc` (only tcPr) still gains a `w:p` via A.9.
+#[test]
+fn empty_table_cell_still_gets_paragraph() {
+    let mut d = Dom::new();
+    let body = d.new_element(w("body"));
+    let tbl = d.new_element(w("tbl"));
+    let tr = d.new_element(w("tr"));
+    let tc = d.new_element(w("tc"));
+    let tcpr = d.new_element(w("tcPr"));
+    d.add(tc, tcpr);
+    d.add(tr, tc);
+    d.add(tbl, tr);
+    d.add(body, tbl);
+    let out = accept_revisions_document(&mut d, body);
+    let cells = d.descendants(out, Some(&w("tc")));
+    assert_eq!(cells.len(), 1);
+    let kids: Vec<_> = d
+        .elements(cells[0], None)
+        .into_iter()
+        .map(|e| d.name(e).unwrap().local_name().to_string())
+        .collect();
+    assert_eq!(kids, vec!["tcPr".to_string(), "p".to_string()]);
+}

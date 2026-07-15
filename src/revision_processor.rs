@@ -2248,6 +2248,38 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 
 // ─────────────── A.9 — empty paragraph in empty cells ───────────────────────
 
+/// True if any `w:tc` under `root` has no element children other than `w:tcPr`
+/// (the A.9 empty-cell predicate). Non-allocating DFS for ACCEPT-SKIP-02.
+fn has_empty_table_cell(dom: &Dom, root: NodeId) -> bool {
+    let tc = W::name("tc");
+    let tcpr = W::name("tcPr");
+    fn walk(dom: &Dom, id: NodeId, tc: &XName, tcpr: &XName) -> bool {
+        if let Some(name) = dom.name(id)
+            && name == *tc
+        {
+            // empty = no element child other than w:tcPr (incl. zero children)
+            let mut only_tcpr = true;
+            for i in 0..dom.child_count(id) {
+                let c = dom.child_at(id, i);
+                if dom.is_element(c) && dom.name(c).is_some_and(|n| n != *tcpr) {
+                    only_tcpr = false;
+                    break;
+                }
+            }
+            if only_tcpr {
+                return true;
+            }
+        }
+        for i in 0..dom.child_count(id) {
+            if walk(dom, dom.child_at(id, i), tc, tcpr) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(dom, root, &tc, &tcpr)
+}
+
 /// A.9 — `AddEmptyParagraphToAnyEmptyCells` (:1448): a `w:tc` with no element
 /// children other than `w:tcPr` gains an empty `w:p`; everything else
 /// rebuilds recursively.
@@ -2326,7 +2358,12 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
     } else {
         e
     };
-    let e = add_empty_paragraph_to_any_empty_cells(dom, e);
+    // ACCEPT-SKIP-02: A.9 is a full-tree rebuild; skip when no empty cells.
+    let e = if has_empty_table_cell(dom, e) {
+        add_empty_paragraph_to_any_empty_cells(dom, e)
+    } else {
+        e
+    };
 
     // Strip PT.UniqueId / PT.RunIds attributes from all descendants.
     let unique_id = PT::name("UniqueId");
