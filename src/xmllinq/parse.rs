@@ -111,7 +111,7 @@ impl<'a> Parser<'a> {
                     || self
                         .c
                         .get(after)
-                        .map_or(true, |&ch| ch.is_whitespace() || ch == '?');
+                        .is_none_or(|&ch| ch.is_whitespace() || ch == '?');
                 if is_declaration {
                     let end = self.index_of("?>", self.pos);
                     let decl_str = self.slice(self.pos, end.unwrap_or(len));

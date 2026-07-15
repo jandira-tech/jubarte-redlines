@@ -137,10 +137,10 @@ impl<'a> Scope<'a> {
         }
         let mut scope = self;
         loop {
-            if let Some(prefix) = scope.local_uri_to_prefix.get(uri) {
-                if self.active_prefix_uri(prefix) == Some(uri) {
-                    return Some(prefix);
-                }
+            if let Some(prefix) = scope.local_uri_to_prefix.get(uri)
+                && self.active_prefix_uri(prefix) == Some(uri)
+            {
+                return Some(prefix);
             }
             match scope.parent {
                 Some(parent) => scope = parent,

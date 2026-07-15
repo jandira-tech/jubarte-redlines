@@ -168,7 +168,18 @@ impl ComparisonUnit {
     }
     /// Port of `DescendantContentAtomsCount`.
     pub fn descendant_content_atoms_count(&self) -> usize {
-        self.descendant_atoms().len()
+        self.descendant_content_atoms_count_rec()
+    }
+
+    fn descendant_content_atoms_count_rec(&self) -> usize {
+        match self {
+            ComparisonUnit::Word(_) => 1,
+            ComparisonUnit::Group(g) => g
+                .contents
+                .iter()
+                .map(|a| a.descendant_content_atoms_count_rec())
+                .sum(),
+        }
     }
     fn collect_atoms<'a>(&'a self, out: &mut Vec<&'a ComparisonUnitAtom>) {
         match self {

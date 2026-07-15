@@ -4,10 +4,13 @@
 use sha1::{Digest, Sha1};
 
 /// `HexStringFromBytes` — lowercase hex.
+const HEX_LOWER: [u8; 16] = *b"0123456789abcdef";
+
 fn hex_string_from_bytes(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        s.push_str(&format!("{b:02x}"));
+        s.push(HEX_LOWER[(b >> 4) as usize] as char);
+        s.push(HEX_LOWER[(b & 0x0f) as usize] as char);
     }
     s
 }
