@@ -1773,6 +1773,17 @@ fn compare_documents_impl(
     settings: &WmlComparerSettings,
     pre_process_original: bool,
 ) -> Result<Vec<u8>, OpcError> {
+    // IDENTICAL-INPUT-01: same input bytes → empty redline is the (accepted)
+    // original package. Avoids dual package prep, Dom parse, LCS, and produce.
+    // Critical for self-compare fixtures (e.g. redline × self).
+    if original == modified {
+        let mut owned = crate::strict_translation::strict_to_transitional_docx(original);
+        if settings.merge_replaced_paragraphs && docx_has_tracked_changes(&owned) {
+            owned = accept_revisions(&owned)?;
+        }
+        return Ok(owned);
+    }
+
     // M8: normalize ISO/IEC 29500 "Strict" inputs to "Transitional" before any
     // PartFs::open sees them (mirrors the OpenXML SDK's pre-compare step).
     // Transitional packages round-trip byte-identical (zero-churn), so the
@@ -1790,6 +1801,11 @@ fn compare_documents_impl(
     {
         original_owned = accept_revisions(&original_owned)?;
         modified_owned = accept_revisions(&modified_owned)?;
+    }
+
+    // After prep, packages may still be byte-identical (rare non-self paths).
+    if original_owned == modified_owned {
+        return Ok(original_owned);
     }
 
     let original: &[u8] = &original_owned;

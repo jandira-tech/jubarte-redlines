@@ -58,6 +58,8 @@ evidence and ready-to-run branches of the program.
 | HASH-CLONE-MICRO: text new_text + nsdecl index walk | banked (MEASURED #15) | exact m4b; matrix wall mixed/noise (user flat); keep as cleanup |
 | REJECT-SKIP + COMPARE-CLEAN-PROJ | shipped win (MEASURED #16) | matrix: pdense + RFP×5lb102 wall ↓ both slots (~10–12% on 5lb); redline-self noise; exact |
 | COMPARE-M122-SELF: no body clone for M122 | shipped lean win (MEASURED #17) | redline-self wall lean ↓; clean fixtures neutral (already skipped); exact |
+| HASH-SCRATCH-01: temp Dom for hash clones | **REVERTED** (MEASURED #18) | exact digests but wall/user worse (import+project); plan said revert if drop dominates |
+| IDENTICAL-INPUT-01: byte-equal short-circuit | shipped win (MEASURED #19) | self-compare ~50s → **~0.07s**; other fixtures unchanged; correct empty redline |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -921,6 +923,29 @@ clone on revision-bearing sides.
 | rfp17_vs_5lb102 | 27.97 / 28.25 | 28.54 / 28.62 (neutral; clean) |
 
 document.xml match all. **Verdict: ship** (helps the complicated redline fixture).
+
+## MEASURED #18 — 2026-07-15: HASH-SCRATCH-01 REVERTED
+
+Project+hash each block in a temporary `Dom` then drop it. Digests matched
+m4b oracles, but full-matrix ABBA showed **wall and user CPU regressions**
+(import+project cost > in-arena clone). Per plan: revert when scratch does
+not win. Code not shipped.
+
+## MEASURED #19 — 2026-07-15: IDENTICAL-INPUT-01 WIN
+
+`compare_documents_impl`: if `original` and `modified` are the same byte
+slice, run strict-translation (+ optional package accept) **once** and return
+that package as the empty redline — no dual Dom, LCS, or produce.
+
+### A/B — full matrix, 1× ABBA (base = M122-self)
+
+| fixture | A wall | B wall |
+|---|---:|---:|
+| pdense_15k | ~18s | ~18s (different files) |
+| **rfp17_redline_self** | ~50s | **~0.07s** |
+| rfp17_vs_5lb102 | ~28.5s | ~28.5s (different files) |
+
+Tests: `tests/perf_identical_input01.rs`. **Verdict: ship.**
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
