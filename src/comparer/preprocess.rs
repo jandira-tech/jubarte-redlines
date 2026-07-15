@@ -645,11 +645,11 @@ pub fn block_sha1_from_source(
     block_sha1(dom, clone)
 }
 
-/// Stream-hash a simple paragraph without materializing a hash-clone subtree.
-/// Accepts runs that only contain `w:t` (+ optional `w:rPr`): multi-`w:t` runs
-/// are expanded like clone_internal's r-fragment path, then adjacent singles
-/// merge. Returns `None` for drawings, footnotes, tables, etc.
-fn try_stream_hash_simple_paragraph(
+/// HASH-STREAM-03/05: stream-hash a simple paragraph without a hash-clone
+/// subtree. Accepts `w:t` and empty leaf run children (`w:br`/`w:tab`/…):
+/// multi-child runs expand like `clone_internal` r-fragments; adjacent text
+/// fragments merge. Returns `None` for drawings, footnotes, nested content.
+pub fn try_stream_hash_simple_paragraph(
     dom: &Dom,
     node: NodeId,
     settings: &WmlComparerSettings,
@@ -658,8 +658,79 @@ fn try_stream_hash_simple_paragraph(
     if dom.name(node) != Some(W::p()) {
         return None;
     }
-    // Collect texts of each t-leaf (after r-fragment expansion); reject complex.
-    let mut texts: Vec<String> = Vec::new();
+    let attr_xml = filtered_p_attr_xml(dom, node)?;
+    let frags = collect_simple_p_fragments(dom, node, settings, correlated_ws)?;
+    let mut xml = String::with_capacity(128);
+    xml.push_str("<w:p xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"");
+    xml.push_str(&attr_xml);
+    if frags.is_empty() {
+        xml.push_str(" />");
+    } else {
+        xml.push('>');
+        emit_merged_run_fragments(&frags, &mut xml, /*structure_only*/ false);
+        xml.push_str("</w:p>");
+    }
+    if let Some(i) = xml.find(WML_DEFAULT_XMLNS) {
+        xml.drain(i..i + WML_DEFAULT_XMLNS.len());
+    }
+    Some(crate::util::sha1::sha1_hex(&xml))
+}
+
+/// Fragment after r-expansion: text (mergeable) or an empty leaf element.
+enum RunFrag {
+    Text(String),
+    /// Self-closing `w:{local}` with pre-rendered attribute string (may be empty).
+    Leaf { local: String, attrs: String },
+}
+
+fn is_streamable_empty_run_leaf(local: &str) -> bool {
+    matches!(
+        local,
+        "br" | "tab" | "cr" | "noBreakHyphen" | "softHyphen" | "lastRenderedPageBreak"
+    )
+}
+
+/// Paragraph attrs surviving rsid/pt/volatile filter (w: or empty ns only).
+fn filtered_p_attr_xml(dom: &Dom, node: NodeId) -> Option<String> {
+    let mut attr_xml = String::new();
+    for i in 0..dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, i);
+        if dom.is_namespace_declaration(an) {
+            continue;
+        }
+        if is_rsid_attr(an) || is_pt(an) || is_volatile_para_attr(an) {
+            continue;
+        }
+        let ns = an.namespace_name();
+        let local = an.local_name();
+        if ns == W::URI {
+            attr_xml.push(' ');
+            attr_xml.push_str("w:");
+            attr_xml.push_str(local);
+            attr_xml.push_str("=\"");
+            attr_xml.push_str(&escape_xml_attr(av));
+            attr_xml.push('"');
+        } else if ns.is_empty() {
+            attr_xml.push(' ');
+            attr_xml.push_str(local);
+            attr_xml.push_str("=\"");
+            attr_xml.push_str(&escape_xml_attr(av));
+            attr_xml.push('"');
+        } else {
+            return None;
+        }
+    }
+    Some(attr_xml)
+}
+
+/// Expand runs under `w:p` to fragments; empty runs skipped; complex → None.
+fn collect_simple_p_fragments(
+    dom: &Dom,
+    node: NodeId,
+    settings: &WmlComparerSettings,
+    correlated_ws: bool,
+) -> Option<Vec<RunFrag>> {
+    let mut frags: Vec<RunFrag> = Vec::new();
     let n = dom.child_count(node);
     for i in 0..n {
         let c = dom.child_at(node, i);
@@ -673,8 +744,8 @@ fn try_stream_hash_simple_paragraph(
         if name != W::r() {
             return None;
         }
-        // Expand run: each w:t is a fragment (clone_internal); ignore rPr only.
-        let mut saw_t = false;
+        // Expand run: each non-rPr child is a fragment (clone_internal r path).
+        let mut saw = false;
         for j in 0..dom.child_count(c) {
             let cc = dom.child_at(c, j);
             if !dom.is_element(cc) {
@@ -684,71 +755,119 @@ fn try_stream_hash_simple_paragraph(
             if cn == W::r_pr() {
                 continue;
             }
-            if cn != W::t() {
-                return None;
+            if cn == W::t() {
+                saw = true;
+                let mut t = apply_text_transform(&dom.value_str(cc), settings);
+                if correlated_ws {
+                    t = whitespace_invariant_for_hash(&t);
+                }
+                frags.push(RunFrag::Text(t));
+                continue;
             }
-            saw_t = true;
-            let mut t = apply_text_transform(&dom.value_str(cc), settings);
-            if correlated_ws {
-                t = whitespace_invariant_for_hash(&t);
+            // HASH-STREAM-05: empty leaf run children (br/tab/…).
+            if cn.namespace_name() == W::URI
+                && is_streamable_empty_run_leaf(cn.local_name())
+                && !has_element_child(dom, cc)
+            {
+                let attrs = filtered_leaf_attr_xml(dom, cc)?;
+                saw = true;
+                frags.push(RunFrag::Leaf {
+                    local: cn.local_name().to_string(),
+                    attrs,
+                });
+                continue;
             }
-            texts.push(t);
+            return None; // drawing, footnoteRef, nested content, …
         }
-        if !saw_t {
-            return None; // empty run — clone path may differ
+        let _ = saw; // empty run (only rPr) contributes nothing — like clone
+    }
+    Some(frags)
+}
+
+fn has_element_child(dom: &Dom, node: NodeId) -> bool {
+    let n = dom.child_count(node);
+    for i in 0..n {
+        if dom.is_element(dom.child_at(node, i)) {
+            return true;
         }
     }
-    // Adjacent single-t fragments merge into one run (group_adjacent kind==1).
-    let merged = texts.concat();
+    false
+}
 
-    // Build projection XML matching serializer of the hash clone for this shape:
-    // <w:p xmlns:w="..." [filtered attrs]><w:r><w:t>merged</w:t></w:r></w:p>
-    // or empty self-closing when no text runs.
-    let mut xml = String::with_capacity(128 + merged.len());
-    xml.push_str("<w:p xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"");
-    // Real attrs in document order, filtered like new_with_filtered_attrs.
+/// Attrs on empty leaf after clone's default filter (pt / volatile / trim set).
+fn filtered_leaf_attr_xml(dom: &Dom, node: NodeId) -> Option<String> {
+    let mut attr_xml = String::new();
     for i in 0..dom.attr_count(node) {
         let (an, av) = dom.attr_at(node, i);
         if dom.is_namespace_declaration(an) {
             continue;
         }
-        if is_rsid_attr(an) || is_pt(an) || is_volatile_para_attr(an) {
+        if is_pt(an) || is_volatile_para_attr(an) || ATTRIBUTES_TO_TRIM_WHEN_CLONING.contains(an) {
             continue;
         }
-        // Only no-namespace or w: attrs that survive; serializer uses prefixes.
         let ns = an.namespace_name();
         let local = an.local_name();
         if ns == W::URI {
-            xml.push(' ');
-            xml.push_str("w:");
-            xml.push_str(local);
-            xml.push_str("=\"");
-            xml.push_str(&escape_xml_attr(av));
-            xml.push('"');
+            attr_xml.push(' ');
+            attr_xml.push_str("w:");
+            attr_xml.push_str(local);
+            attr_xml.push_str("=\"");
+            attr_xml.push_str(&escape_xml_attr(av));
+            attr_xml.push('"');
         } else if ns.is_empty() {
-            xml.push(' ');
-            xml.push_str(local);
-            xml.push_str("=\"");
-            xml.push_str(&escape_xml_attr(av));
-            xml.push('"');
+            attr_xml.push(' ');
+            attr_xml.push_str(local);
+            attr_xml.push_str("=\"");
+            attr_xml.push_str(&escape_xml_attr(av));
+            attr_xml.push('"');
         } else {
-            // Foreign attr → fallback (prefix assignment may introduce xmlns:nsN).
             return None;
         }
     }
-    if merged.is_empty() {
-        xml.push_str(" />");
-    } else {
-        xml.push('>');
-        xml.push_str("<w:r><w:t>");
-        xml.push_str(&escape_xml_text(&merged));
-        xml.push_str("</w:t></w:r></w:p>");
+    Some(attr_xml)
+}
+
+/// Merge adjacent text fragments, emit `<w:r>…</w:r>` sequence into `out`.
+fn emit_merged_run_fragments(frags: &[RunFrag], out: &mut String, structure_only: bool) {
+    let mut i = 0;
+    while i < frags.len() {
+        match &frags[i] {
+            RunFrag::Text(t0) => {
+                let mut merged = t0.clone();
+                i += 1;
+                while i < frags.len() {
+                    if let RunFrag::Text(t) = &frags[i] {
+                        merged.push_str(t);
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if structure_only {
+                    if merged.is_empty() {
+                        // empty text fragment after merge is still a t leaf? clone
+                        // never emits empty-only text runs from empty t normally.
+                        out.push_str("<w:r><w:t /></w:r>");
+                    } else {
+                        out.push_str("<w:r><w:t /></w:r>");
+                    }
+                } else if merged.is_empty() {
+                    out.push_str("<w:r><w:t /></w:r>");
+                } else {
+                    out.push_str("<w:r><w:t>");
+                    out.push_str(&escape_xml_text(&merged));
+                    out.push_str("</w:t></w:r>");
+                }
+            }
+            RunFrag::Leaf { local, attrs } => {
+                out.push_str("<w:r><w:");
+                out.push_str(local);
+                out.push_str(attrs);
+                out.push_str(" /></w:r>");
+                i += 1;
+            }
+        }
     }
-    // Same xmlns strip as block_hash_string (usually no-op for xmlns:w form).
-    if let Some(i) = xml.find(WML_DEFAULT_XMLNS) {
-        xml.drain(i..i + WML_DEFAULT_XMLNS.len());
-    }
-    Some(crate::util::sha1::sha1_hex(&xml))
 }
 
 /// HASH-STREAM-04: stream content + structure digests for a simple `w:tbl` or
@@ -964,7 +1083,7 @@ fn stream_tc_pr(dom: &Dom, tc_pr: NodeId, content: &mut String, structure: &mut 
 }
 
 /// Emit simple-paragraph projection as a fragment (no root xmlns).
-/// Mirrors `try_stream_hash_simple_paragraph` merge rules.
+/// Shared fragment rules with [`try_stream_hash_simple_paragraph`] (HASH-STREAM-05).
 fn stream_simple_p_fragment(
     dom: &Dom,
     node: NodeId,
@@ -976,93 +1095,27 @@ fn stream_simple_p_fragment(
     if dom.name(node) != Some(W::p()) {
         return None;
     }
-    // Surviving attrs after rsid/pt/volatile filter — foreign → fallback.
-    let mut attr_xml = String::new();
-    for i in 0..dom.attr_count(node) {
-        let (an, av) = dom.attr_at(node, i);
-        if dom.is_namespace_declaration(an) {
-            continue;
-        }
-        if is_rsid_attr(an) || is_pt(an) || is_volatile_para_attr(an) {
-            continue;
-        }
-        let ns = an.namespace_name();
-        let local = an.local_name();
-        if ns == W::URI {
-            attr_xml.push(' ');
-            attr_xml.push_str("w:");
-            attr_xml.push_str(local);
-            attr_xml.push_str("=\"");
-            attr_xml.push_str(&escape_xml_attr(av));
-            attr_xml.push('"');
-        } else if ns.is_empty() {
-            attr_xml.push(' ');
-            attr_xml.push_str(local);
-            attr_xml.push_str("=\"");
-            attr_xml.push_str(&escape_xml_attr(av));
-            attr_xml.push('"');
-        } else {
-            return None;
-        }
-    }
-
-    let mut texts: Vec<String> = Vec::new();
-    let n = dom.child_count(node);
-    for i in 0..n {
-        let c = dom.child_at(node, i);
-        if !dom.is_element(c) {
-            continue;
-        }
-        let name = dom.name(c)?;
-        if name == W::p_pr() || name == W::bookmark_start() || name == W::bookmark_end() {
-            continue;
-        }
-        if name != W::r() {
-            return None;
-        }
-        let mut saw_t = false;
-        for j in 0..dom.child_count(c) {
-            let cc = dom.child_at(c, j);
-            if !dom.is_element(cc) {
-                continue;
-            }
-            let cn = dom.name(cc)?;
-            if cn == W::r_pr() {
-                continue;
-            }
-            if cn != W::t() {
-                return None;
-            }
-            saw_t = true;
-            let mut t = apply_text_transform(&dom.value_str(cc), settings);
-            if correlated_ws {
-                t = whitespace_invariant_for_hash(&t);
-            }
-            texts.push(t);
-        }
-        if !saw_t {
-            return None; // empty run — clone path may differ
-        }
-    }
-    let merged = texts.concat();
-
-    if merged.is_empty() {
+    let attr_xml = filtered_p_attr_xml(dom, node)?;
+    let frags = collect_simple_p_fragments(dom, node, settings, correlated_ws)?;
+    if frags.is_empty() {
         content.push_str("<w:p");
         content.push_str(&attr_xml);
         content.push_str(" />");
         structure.push_str("<w:p");
         structure.push_str(&attr_xml);
         structure.push_str(" />");
-    } else {
-        content.push_str("<w:p");
-        content.push_str(&attr_xml);
-        content.push_str("><w:r><w:t>");
-        content.push_str(&escape_xml_text(&merged));
-        content.push_str("</w:t></w:r></w:p>");
-        structure.push_str("<w:p");
-        structure.push_str(&attr_xml);
-        structure.push_str("><w:r><w:t /></w:r></w:p>");
+        return Some(());
     }
+    content.push_str("<w:p");
+    content.push_str(&attr_xml);
+    content.push('>');
+    emit_merged_run_fragments(&frags, content, false);
+    content.push_str("</w:p>");
+    structure.push_str("<w:p");
+    structure.push_str(&attr_xml);
+    structure.push('>');
+    emit_merged_run_fragments(&frags, structure, true);
+    structure.push_str("</w:p>");
     Some(())
 }
 

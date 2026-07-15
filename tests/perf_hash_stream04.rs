@@ -178,16 +178,19 @@ fn hash_stream04_tr_root_matches() {
 }
 
 #[test]
-fn hash_stream04_complex_br_falls_back_still_matches() {
-    // br under run is not simple-p; stream path returns None, clone fallback still exact
+fn hash_stream04_br_in_cell_streams_after_05() {
+    // HASH-STREAM-05: empty leaf `w:br` is streamable; table cell streams too.
     let (mut dom, tbl) = body_block(
         r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:br/></w:r></w:p></w:tc></w:tr></w:tbl>"#,
         "tbl",
     );
     let s = settings_space_sensitive();
-    assert!(try_stream_hash_simple_table_or_tr(&dom, tbl, &s, false).is_none());
+    let (c, st) = try_stream_hash_simple_table_or_tr(&dom, tbl, &s, false)
+        .expect("br-only cell streams after HASH-STREAM-05");
+    assert_eq!(c, oracle_content(&mut dom, tbl, &s, false));
+    assert_eq!(st, oracle_structure(&mut dom, tbl, &s));
     let stream = block_sha1_from_source(&mut dom, tbl, true, &s, &null_rel_resolver, false);
-    assert_eq!(stream, oracle_content(&mut dom, tbl, &s, false));
+    assert_eq!(stream, c);
 }
 
 #[test]
