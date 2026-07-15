@@ -41,7 +41,7 @@ pub fn move_last_sectpr_into_last_paragraph(
     dom: &mut Dom,
     content_parent: NodeId,
 ) -> Result<(), String> {
-    let sectprs = dom.elements(content_parent, Some(&W::name("sectPr")));
+    let sectprs = dom.elements(content_parent, Some(&W::sect_pr()));
     if sectprs.len() > 1 {
         return Err("Invalid document: multiple body-level sectPr".to_string());
     }
@@ -72,7 +72,7 @@ pub fn move_last_sectpr_into_last_paragraph(
     };
     let moved = dom.clone_subtree(last_sectpr);
     dom.add(ppr, moved);
-    for sp in dom.elements(content_parent, Some(&W::name("sectPr"))) {
+    for sp in dom.elements(content_parent, Some(&W::sect_pr())) {
         dom.remove(sp);
     }
     Ok(())
@@ -100,7 +100,7 @@ fn revision_tracking_element_from_ancestors(
     }
     ancestors.iter().copied().find(|&a| {
         let n = dom.name(a).unwrap();
-        n == W::del() || n == W::ins() || n == W::name("moveFrom") || n == W::name("moveTo")
+        n == W::del() || n == W::ins() || n == W::move_from() || n == W::move_to()
     })
 }
 
@@ -115,9 +115,9 @@ fn status_from_rev_track_element(dom: &Dom, rte: Option<NodeId>) -> CorrelationS
         CorrelationStatus::Deleted
     } else if n == W::ins() {
         CorrelationStatus::Inserted
-    } else if n == W::name("moveFrom") {
+    } else if n == W::move_from() {
         CorrelationStatus::MovedSource
-    } else if n == W::name("moveTo") {
+    } else if n == W::move_to() {
         CorrelationStatus::MovedDestination
     } else {
         // C# leaves the ctor-default status when the name matches nothing —
@@ -307,7 +307,7 @@ fn recurse(
         return;
     }
 
-    if name == W::t() || name == W::name("delText") {
+    if name == W::t() || name == W::del_text() {
         // Own the text: we mutate the Dom while splitting into char atoms.
         let val = dom.value(element);
         // PATH-01: one shared Arc chain for every character in this text node.
@@ -334,14 +334,14 @@ fn recurse(
     // never referenced (file_11×file_12: Word keeps v:imagedata under
     // w:ins; ours dropped the whole image). Hash still covers nested
     // rIds via S_ELEMENTS_WITH_RELATIONSHIP_IDS on imagedata when needed.
-    if name == W::name("pict") {
+    if name == W::pict() {
         let chain = chain_with(path, element);
         push_atom(dom, element, chain, list, settings);
         return;
     }
 
     // AllowableRunChildren (or w:object) → a single verbatim leaf atom.
-    if ALLOWABLE_RUN_CHILDREN.contains(&name) || name == W::name("object") {
+    if ALLOWABLE_RUN_CHILDREN.contains(&name) || name == W::object() {
         let chain = chain_with(path, element);
         push_atom(dom, element, chain, list, settings);
         return;
@@ -454,7 +454,7 @@ fn coalesce_recurse(dom: &mut Dom, atoms: &[ComparisonUnitAtom], level: usize) -
                 dom.add(r, cloned);
             }
             for (cname, gc) in &by_name {
-                if *cname == W::t() || *cname == W::name("delText") {
+                if *cname == W::t() || *cname == W::del_text() {
                     let text: String = gc.iter().map(|a| dom.value(a.content_element)).collect();
                     let t = dom.new_element(cname.clone());
                     if let Some(sp) = xml_space_attr(&text) {

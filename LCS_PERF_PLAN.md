@@ -67,6 +67,7 @@ evidence and ready-to-run branches of the program.
 | PATH-01: Arc-share ancestor_elements across multi-char atoms | shipped win (MEASURED #24) | matrix×4: wall ↓ every slot on pdense+RFP×5lb+redline×5lb; Arc::ptr_eq gate; exact document.xml |
 | NAME-01: OnceLock cache hottest W/PT XNames | shipped win (MEASURED #25) | matrix×4: ~5–15% wall all load-bearing slots; name equality exact |
 | DOM-ITER-02: hash-clone preprocess index walks | shipped lean win (MEASURED #26) | matrix×4: wall ↓ every slot on pdense+RFP×5lb+redline×5lb; m4b exact |
+| NAME-01b: cache tbl/tr/tc/bookmark/move locals + call sites | shipped win (MEASURED #27) | matrix×4 incl redline×5lb: wall ↓ every load-bearing slot; equality exact |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1088,6 +1089,27 @@ allocating `nodes()`/`elements()`/`attributes()` Vecs per node. m4b_preprocess
 | **redline_rfp17_vs_5lb102** | 30.69 / 25.69 · 30.21 / 25.73 | **29.45 / 25.36 · 29.85 / 25.35** |
 
 document.xml match YES all four. **Verdict: ship** (lean wall win every matrix slot).
+
+## MEASURED #27 — 2026-07-15: NAME-01b WIN
+
+Extend NAME-01 `OnceLock` cache to table/bookmark/move/sectPr/`delText` locals
+and wire hot `W::name("…")` call sites in preprocess/atomize/produce/tables/
+revision_processor to the cached helpers. Equality vs `XName::get` unchanged
+(`tests/perf_name01.rs` name01b cases).
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = DOM-ITER-02)
+
+Includes mandatory **redline_RFP17 × 5lb102** cross-pair (user directive).
+
+| fixture | A wall / user | B wall / user |
+|---|---:|---:|
+| **pdense_15k** | 15.61 / 14.91 · 15.37 / 14.86 | **15.13 / 14.41 · 14.95 / 14.42** |
+| rfp17_redline_self | ~0.06–0.07 | ~0.06–0.08 |
+| **rfp17_vs_5lb102** | 24.34 / 22.16 · 33.09† / 24.07 | **21.18 / 19.95 · 21.64 / 20.11** (~13%) |
+| **redline_rfp17_vs_5lb102** | 31.95 / 26.18 · 31.02 / 25.67 | **29.21 / 22.86 · 28.34 / 22.79** (~9%) |
+
+† Second RFP×5lb A shows thrash noise (33 s); B still wins both slots.  
+document.xml match YES all four. **Verdict: ship.**
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

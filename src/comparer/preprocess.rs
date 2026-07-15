@@ -241,8 +241,8 @@ fn clone_internal_unsalted(
     let name = dom.name(node).unwrap();
 
     // ── B.4a: drops + text/run/para ───────────────────────────────────────────
-    if name == W::name("bookmarkStart")
-        || name == W::name("bookmarkEnd")
+    if name == W::bookmark_start()
+        || name == W::bookmark_end()
         || name == W::p_pr()
         || name == W::r_pr()
     {
@@ -334,61 +334,61 @@ fn clone_internal_unsalted(
 
     // ── B.4b: table cases ─────────────────────────────────────────────────────
     // DOM-ITER-02: filter child elements by local name without elements() Vec.
-    if name == W::name("tbl") {
-        let tr_name = W::name("tr");
+    if name == W::tbl() {
+        let tr_name = W::tr();
         let children: Vec<NodeId> = element_children_named(dom, node, &tr_name)
             .into_iter()
             .flat_map(|tr| clone_internal(dom, tr, include_related_parts, settings, rel_hash))
             .collect();
-        let tbl = dom.new_element(W::name("tbl"));
+        let tbl = dom.new_element(W::tbl());
         for c in children {
             dom.add(tbl, c);
         }
         return vec![tbl];
     }
-    if name == W::name("tr") {
-        let tc_name = W::name("tc");
+    if name == W::tr() {
+        let tc_name = W::tc();
         let children: Vec<NodeId> = element_children_named(dom, node, &tc_name)
             .into_iter()
             .flat_map(|tc| clone_internal(dom, tc, include_related_parts, settings, rel_hash))
             .collect();
-        let tr = dom.new_element(W::name("tr"));
+        let tr = dom.new_element(W::tr());
         for c in children {
             dom.add(tr, c);
         }
         return vec![tr];
     }
-    if name == W::name("tc") {
+    if name == W::tc() {
         let children =
             clone_children_elements(dom, node, include_related_parts, settings, rel_hash);
-        let tc = dom.new_element(W::name("tc"));
+        let tc = dom.new_element(W::tc());
         for c in children {
             dom.add(tc, c);
         }
         return vec![tc];
     }
-    if name == W::name("tcPr") {
-        let gs_name = W::name("gridSpan");
+    if name == W::tc_pr() {
+        let gs_name = W::grid_span();
         let children: Vec<NodeId> = element_children_named(dom, node, &gs_name)
             .into_iter()
             .flat_map(|gs| clone_internal(dom, gs, include_related_parts, settings, rel_hash))
             .collect();
-        let tcpr = dom.new_element(W::name("tcPr"));
+        let tcpr = dom.new_element(W::tc_pr());
         for c in children {
             dom.add(tcpr, c);
         }
         return vec![tcpr];
     }
-    if name == W::name("gridSpan") {
+    if name == W::grid_span() {
         let val = dom.attribute(node, &W::val()).unwrap_or("").to_string();
-        let gs = dom.new_element(W::name("gridSpan"));
+        let gs = dom.new_element(W::grid_span());
         dom.set_attribute_value(gs, &XName::get("val", ""), Some(&val));
         return vec![gs];
     }
-    if name == W::name("txbxContent") {
+    if name == W::txbx_content() {
         let children =
             clone_children_elements(dom, node, include_related_parts, settings, rel_hash);
-        let tb = dom.new_element(W::name("txbxContent"));
+        let tb = dom.new_element(W::txbx_content());
         for c in children {
             dom.add(tb, c);
         }
@@ -450,7 +450,7 @@ fn clone_internal_unsalted(
             children,
         )];
     }
-    if name == W::name("object") {
+    if name == W::object() {
         let children = clone_children(dom, node, include_related_parts, settings, rel_hash);
         return vec![new_with_filtered_attrs(dom, name, node, is_pt, children)];
     }
@@ -645,7 +645,7 @@ pub fn add_sha1_hash_to_block_level_content(
         let clone = clone_block_level_content_for_hashing(dom, d, true, settings, rel_hash);
         let sha = block_sha1(dom, clone);
         dom.set_attribute_value(d, &PT::sha1_hash(), Some(&sha));
-        if (name == W::name("tbl") || name == W::name("tr"))
+        if (name == W::tbl() || name == W::tr())
             && let Some(sc) = clone_for_structure_hash(dom, clone)
         {
             let sha2 = block_sha1(dom, sc);
@@ -666,7 +666,7 @@ pub fn hash_block_level_content(
     settings: &WmlComparerSettings,
     rel_hash: &RelHashResolver,
 ) -> Result<(), String> {
-    let block = |n: &XName| *n == W::p() || *n == W::name("tbl") || *n == W::name("tr");
+    let block = |n: &XName| *n == W::p() || *n == W::tbl() || *n == W::tr();
     let unid = PT::unid();
 
     // sourceUnidDict: Unid -> source element (duplicate Unid is an error).

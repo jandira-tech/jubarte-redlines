@@ -25,14 +25,14 @@ pub static WORD_BREAK_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
         W::name("cr"),
         W::name("dayLong"),
         W::name("dayShort"),
-        W::name("drawing"),
-        W::name("pict"),
+        W::drawing(),
+        W::pict(),
         W::name("endnoteRef"),
         W::name("footnoteRef"),
         W::name("monthLong"),
         W::name("monthShort"),
         W::name("noBreakHyphen"),
-        W::name("object"),
+        W::object(),
         W::name("ptab"),
         W::name("separator"),
         W::name("sym"),
@@ -50,7 +50,7 @@ pub static WORD_BREAK_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
 pub static ALLOWABLE_RUN_CHILDREN: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::name("br"),
-        W::name("drawing"),
+        W::drawing(),
         W::name("cr"),
         W::name("dayLong"),
         W::name("dayShort"),
@@ -76,23 +76,23 @@ pub static ALLOWABLE_RUN_CHILDREN: LazyLock<HashSet<XName>> = LazyLock::new(|| {
 /// `ElementsToThrowAway` (:9023) — produce no atoms.
 pub static ELEMENTS_TO_THROW_AWAY: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
-        W::name("bookmarkStart"),
-        W::name("bookmarkEnd"),
+        W::bookmark_start(),
+        W::bookmark_end(),
         W::name("commentRangeStart"),
         W::name("commentRangeEnd"),
         W::name("lastRenderedPageBreak"),
         W::name("proofErr"),
-        W::name("tblPr"),
-        W::name("sectPr"),
+        W::tbl_pr(),
+        W::sect_pr(),
         W::name("permEnd"),
         W::name("permStart"),
         W::name("footnoteRef"),
         W::name("endnoteRef"),
         W::name("separator"),
         W::name("continuationSeparator"),
-        W::name("moveFromRangeStart"),
+        W::move_from_range_start(),
         W::name("moveFromRangeEnd"),
-        W::name("moveToRangeStart"),
+        W::move_to_range_start(),
         W::name("moveToRangeEnd"),
     ])
 });
@@ -101,12 +101,12 @@ pub static ELEMENTS_TO_THROW_AWAY: LazyLock<HashSet<XName>> = LazyLock::new(|| {
 pub static ELEMENTS_TO_HAVE_SHA1: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::p(),
-        W::name("tbl"),
-        W::name("tr"),
-        W::name("tc"),
-        W::name("drawing"),
-        W::name("pict"),
-        W::name("txbxContent"),
+        W::tbl(),
+        W::tr(),
+        W::tc(),
+        W::drawing(),
+        W::pict(),
+        W::txbx_content(),
     ])
 });
 
@@ -132,10 +132,10 @@ pub static INVALID_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
 pub static COMPARISON_GROUPING_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::p(),
-        W::name("tbl"),
-        W::name("tr"),
-        W::name("tc"),
-        W::name("txbxContent"),
+        W::tbl(),
+        W::tr(),
+        W::tc(),
+        W::txbx_content(),
     ])
 });
 
@@ -155,31 +155,31 @@ pub static RECURSION_ELEMENTS: LazyLock<Vec<RecursionInfo>> = LazyLock::new(|| {
     vec![
         mk(W::del(), None),
         mk(W::ins(), None),
-        mk(W::name("moveFrom"), None),
-        mk(W::name("moveTo"), None),
+        mk(W::move_from(), None),
+        mk(W::move_to(), None),
         mk(
-            W::name("tbl"),
+            W::tbl(),
             Some(vec![
-                W::name("tblPr"),
+                W::tbl_pr(),
                 W::name("tblGrid"),
                 W::name("tblPrEx"),
             ]),
         ),
         mk(
-            W::name("tr"),
-            Some(vec![W::name("trPr"), W::name("tblPrEx")]),
+            W::tr(),
+            Some(vec![W::tr_pr(), W::name("tblPrEx")]),
         ),
         mk(
-            W::name("tc"),
-            Some(vec![W::name("tcPr"), W::name("tblPrEx")]),
+            W::tc(),
+            Some(vec![W::tc_pr(), W::name("tblPrEx")]),
         ),
-        mk(W::name("pict"), Some(vec![VML::name("shapetype")])),
+        mk(W::pict(), Some(vec![VML::name("shapetype")])),
         mk(VML::name("group"), None),
         mk(VML::name("shape"), None),
         mk(VML::name("rect"), None),
         mk(VML::name("textbox"), None),
         mk(O::name("lock"), None),
-        mk(W::name("txbxContent"), None),
+        mk(W::txbx_content(), None),
         mk(W10::name("wrap"), None),
         mk(
             W::name("sdt"),

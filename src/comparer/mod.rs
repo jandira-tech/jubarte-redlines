@@ -138,8 +138,8 @@ pub fn compare_bodies_faithful_with_notes(
     const SECT_GEOMETRY: [&str; 6] = ["type", "pgSz", "pgMar", "cols", "titlePg", "docGrid"];
     let saved_sectpr: Option<NodeId> = {
         let last_sect = |dom: &mut Dom, body: NodeId| {
-            dom.element(body, &W::name("sectPr")).or_else(|| {
-                dom.descendants(body, Some(&W::name("sectPr")))
+            dom.element(body, &W::sect_pr()).or_else(|| {
+                dom.descendants(body, Some(&W::sect_pr()))
                     .last()
                     .copied()
             })
@@ -153,7 +153,7 @@ pub fn compare_bodies_faithful_with_notes(
             sp1
         };
         sp.map(|sp| {
-            let clean = dom.new_element(W::name("sectPr"));
+            let clean = dom.new_element(W::sect_pr());
             for (an, av) in dom.attributes(sp) {
                 dom.set_attribute_value(clean, &an, Some(&av));
             }
@@ -165,7 +165,7 @@ pub fn compare_bodies_faithful_with_notes(
             // Walk every sectPr of body1 in document order (pPr-embedded mid
             // breaks first, final last) and take the LAST-seen ref per
             // (kind, w:type).
-            let chain: Vec<NodeId> = dom.descendants(body1, Some(&W::name("sectPr")));
+            let chain: Vec<NodeId> = dom.descendants(body1, Some(&W::sect_pr()));
             let type_attr = W::name("type");
             for kind in [W::name("headerReference"), W::name("footerReference")] {
                 for ty in ["even", "default", "first"] {
@@ -221,7 +221,7 @@ pub fn compare_bodies_faithful_with_notes(
                 // from preprocessing) and rsids can't fake a difference —
                 // identity compares must NOT emit a change record.
                 let geometry_of = |dom: &mut Dom, s: NodeId| -> String {
-                    let scratch = dom.new_element(W::name("sectPr"));
+                    let scratch = dom.new_element(W::sect_pr());
                     for c in SECT_GEOMETRY {
                         if let Some(n) = dom.element(s, &W::name(c)) {
                             let cc = dom.clone_subtree(n);
@@ -242,7 +242,7 @@ pub fn compare_bodies_faithful_with_notes(
                         &W::name("date"),
                         Some(&settings.date_time_for_revisions),
                     );
-                    let old_clean = dom.new_element(W::name("sectPr"));
+                    let old_clean = dom.new_element(W::sect_pr());
                     for child in SECT_GEOMETRY {
                         if let Some(c) = dom.element(old_sp, &W::name(child)) {
                             let cc = dom.clone_subtree(c);
@@ -265,7 +265,7 @@ pub fn compare_bodies_faithful_with_notes(
             let mut set = std::collections::HashSet::new();
             for b in [body1, body2] {
                 for ppr in dom.descendants(b, Some(&W::p_pr())) {
-                    for sp in dom.elements(ppr, Some(&W::name("sectPr"))) {
+                    for sp in dom.elements(ppr, Some(&W::sect_pr())) {
                         set.insert(finalize::sectpr_identity(dom, sp));
                     }
                 }
@@ -566,7 +566,7 @@ pub fn compare_bodies_faithful_with_notes(
         // Remove only the FINAL-section sectPr (last in document order, whether a
         // direct body child or inside the last paragraph's pPr); keep all
         // intermediate section breaks.
-        if let Some(&last) = dom.descendants(root, Some(&W::name("sectPr"))).last() {
+        if let Some(&last) = dom.descendants(root, Some(&W::sect_pr())).last() {
             dom.remove(last);
         }
         if let (Some(clean), Some(body)) = (saved_sectpr, dom.element(root, &W::body())) {

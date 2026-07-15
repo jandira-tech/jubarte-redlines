@@ -34,7 +34,7 @@ fn delete_text_in_opaque(dom: &mut Dom, node: NodeId, status: CorrelationStatus)
     if matches!(status, CorrelationStatus::Deleted) {
         // Hoist the name out of the loop — `W::name` allocates a fresh `XName`
         // on each call; `XName` is `Arc`-cheap to clone.
-        let del_text = W::name("delText");
+        let del_text = W::del_text();
         for t in dom.descendants(node, Some(&W::t())) {
             dom.set_name(t, del_text.clone());
         }
@@ -109,7 +109,7 @@ fn build_paragraph(
             .iter()
             .filter(|t| {
                 let n = dom.name(t.atom.content_element);
-                n == Some(W::t()) || n == Some(W::name("delText"))
+                n == Some(W::t()) || n == Some(W::del_text())
             })
             .map(|t| dom.value(t.atom.content_element))
             .collect();
@@ -138,7 +138,7 @@ fn build_paragraph(
 /// Build `<w:r><w:t>text</w:t></w:r>` (or delText when `deleted`).
 fn build_text_run(dom: &mut Dom, text: &str, deleted: bool) -> NodeId {
     let r = dom.new_element(W::r());
-    let t = dom.new_element(if deleted { W::name("delText") } else { W::t() });
+    let t = dom.new_element(if deleted { W::del_text() } else { W::t() });
     if text.starts_with(' ') || text.ends_with(' ') {
         dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
     }
@@ -228,7 +228,7 @@ fn is_ppr_atom(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
     dom.name(atom.content_element) == Some(W::p_pr())
 }
 fn atom_in_textbox(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
-    let txbx = W::name("txbxContent");
+    let txbx = W::txbx_content();
     atom.ancestor_elements
         .iter()
         .any(|&a| dom.name(a).as_ref() == Some(&txbx))
@@ -492,7 +492,7 @@ fn tag_status(dom: &mut Dom, node: NodeId, status: CorrelationStatus, atom: &Com
 }
 
 fn is_txbx_from_level(dom: &Dom, atom: &ComparisonUnitAtom, level: usize) -> bool {
-    let txbx = W::name("txbxContent");
+    let txbx = W::txbx_content();
     atom.ancestor_elements
         .iter()
         .skip(level)
@@ -644,7 +644,7 @@ pub fn coalesce_recurse(
                 let text: String = gc.iter().map(|a| dom.value(a.content_element)).collect();
                 let first = &gc[0];
                 let elem_name = match first.correlation_status {
-                    CorrelationStatus::Deleted => W::name("delText"),
+                    CorrelationStatus::Deleted => W::del_text(),
                     _ => W::t(),
                 };
                 let te = dom.new_element(elem_name);
@@ -659,7 +659,7 @@ pub fn coalesce_recurse(
         }
 
         // w:drawing — clone + status (part relocation deferred to M4.H).
-        if aname == W::name("drawing") {
+        if aname == W::drawing() {
             for (_key, gc) in &groupedchildren {
                 for gcc in gc {
                     let d = dom.clone_subtree(gcc.content_element);
@@ -674,7 +674,7 @@ pub fn coalesce_recurse(
         // w:pict (VML image) — clone full subtree + status. Must not fall
         // through to reconstruct_element / empty Allowable shell: attribute-
         // only v:imagedata children emit no atoms when recursed (M74).
-        if aname == W::name("pict") {
+        if aname == W::pict() {
             for (_key, gc) in &groupedchildren {
                 for gcc in gc {
                     let d = dom.clone_subtree(gcc.content_element);
@@ -707,9 +707,9 @@ pub fn coalesce_recurse(
                 for gcc in gc {
                     let rev = match gcc.correlation_status {
                         CorrelationStatus::Deleted => Some(W::del()),
-                        CorrelationStatus::MovedSource => Some(W::name("moveFrom")),
+                        CorrelationStatus::MovedSource => Some(W::move_from()),
                         CorrelationStatus::Inserted => Some(W::ins()),
-                        CorrelationStatus::MovedDestination => Some(W::name("moveTo")),
+                        CorrelationStatus::MovedDestination => Some(W::move_to()),
                         _ => None,
                     };
                     let content = dom.clone_subtree(gcc.content_element);
@@ -769,11 +769,11 @@ pub fn coalesce_recurse(
         }
 
         // Container elements → ReconstructElement (props hoisted first).
-        let props: &[&str] = if aname == W::name("tbl") {
+        let props: &[&str] = if aname == W::tbl() {
             &["tblPr", "tblGrid"]
-        } else if aname == W::name("tr") {
+        } else if aname == W::tr() {
             &["trPr"]
-        } else if aname == W::name("tc") {
+        } else if aname == W::tc() {
             &["tcPr"]
         } else if aname == W::name("sdt") {
             &["sdtPr", "sdtEndPr"]
@@ -782,7 +782,7 @@ pub fn coalesce_recurse(
         } else {
             &[]
         };
-        let pict_props = aname == W::name("pict");
+        let pict_props = aname == W::pict();
         let recon = reconstruct_element(
             dom, &g, ancestor, props, pict_props, level, settings, id_gen,
         );
@@ -831,7 +831,7 @@ fn reconstruct_element(
     // table-vmerge-colspan: effective tblW 6000/grid 3502·3509·3285, old
     // tblW 9360/union grid preserved in the change records. Ours dropped
     // the history entirely, so the old width kept rendering (2 vs 3 pages).
-    if settings.merge_replaced_paragraphs && aname == W::name("tbl") {
+    if settings.merge_replaced_paragraphs && aname == W::tbl() {
         // Bind the table element name once; the find_map below runs per atom.
         let is_tbl = |anc: NodeId| dom.name(anc).is_some_and(|nm| *nm.local_name() == *"tbl");
         // the OLD table node: Deleted atoms carry doc A's ancestors directly;
@@ -890,8 +890,8 @@ fn reconstruct_element(
             };
             // tblPr → tblPrChange
             if let (Some(new_pr), Some(old_pr)) = (
-                dom.element(ne, &W::name("tblPr")),
-                dom.element(old_tbl, &W::name("tblPr")),
+                dom.element(ne, &W::tbl_pr()),
+                dom.element(old_tbl, &W::tbl_pr()),
             ) {
                 let old_clone = dom.clone_subtree(old_pr);
                 strip_change(dom, old_clone, "tblPrChange");
@@ -953,7 +953,7 @@ fn reconstruct_element(
     // per-column gridCols (equal split of the page content width) plus
     // `tblW 0 auto`. GT table-vmerge-colspan_text-box: 1×4985 → 4675+4675;
     // GT nested-table-rowspan_numbered-list: 1×9970 → 4887+4905.
-    if settings.merge_replaced_paragraphs && aname == W::name("tbl") {
+    if settings.merge_replaced_paragraphs && aname == W::tbl() {
         rebuild_degenerate_grid(dom, ne, ancestor);
     }
     ne
@@ -1012,14 +1012,14 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     let grid_cols = dom.elements(grid, Some(&W::name("gridCol")));
     // real column count: max over rows of Σ gridSpan (default 1) per cell
     let real_cols = dom
-        .elements(tbl, Some(&W::name("tr")))
+        .elements(tbl, Some(&W::tr()))
         .into_iter()
         .map(|tr| {
-            dom.elements(tr, Some(&W::name("tc")))
+            dom.elements(tr, Some(&W::tc()))
                 .into_iter()
                 .map(|tc| {
-                    dom.element(tc, &W::name("tcPr"))
-                        .and_then(|pr| dom.element(pr, &W::name("gridSpan")))
+                    dom.element(tc, &W::tc_pr())
+                        .and_then(|pr| dom.element(pr, &W::grid_span()))
                         .and_then(|gs| dom.attribute(gs, &W::val()))
                         .and_then(|v| v.parse::<usize>().ok())
                         .unwrap_or(1)
@@ -1036,7 +1036,7 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     let content_width = dom
         .ancestors(src_tbl, None)
         .last()
-        .map(|&root| dom.descendants(root, Some(&W::name("sectPr"))))
+        .map(|&root| dom.descendants(root, Some(&W::sect_pr())))
         .and_then(|s| s.first().copied())
         .and_then(|sect| {
             let w: i64 = dom
@@ -1087,7 +1087,7 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     // tblStyleColBandSize). Insert after the last present predecessor so a
     // floating (tblpPr) or banded table stays schema-valid; mutate in place
     // when tblW already exists.
-    if let Some(tbl_pr) = dom.element(tbl, &W::name("tblPr")) {
+    if let Some(tbl_pr) = dom.element(tbl, &W::tbl_pr()) {
         let tblw = match dom.element(tbl_pr, &W::name("tblW")) {
             Some(e) => e,
             None => {
@@ -1125,7 +1125,7 @@ mod opaque_text_tests {
 
     /// `<w:drawing><w:r><w:t>txt</w:t></w:r></w:drawing>` — an opaque subtree.
     fn opaque_with_text(d: &mut Dom, txt: &str) -> NodeId {
-        let drawing = d.new_element(W::name("drawing"));
+        let drawing = d.new_element(W::drawing());
         let r = d.new_element(W::r());
         let t = d.new_element(W::t());
         d.add_text(t, txt);
@@ -1192,7 +1192,7 @@ mod opaque_text_tests {
         // `w:instrText` is not `w:t`, so the `W::t()` filter must leave it alone
         // even under a deletion (renaming it would corrupt the field code).
         let mut d = Dom::new();
-        let drawing = d.new_element(W::name("drawing"));
+        let drawing = d.new_element(W::drawing());
         let r = d.new_element(W::r());
         let instr = d.new_element(W::name("instrText"));
         d.add_text(instr, "FIELD");
@@ -1205,7 +1205,7 @@ mod opaque_text_tests {
             "instrText untouched"
         );
         assert!(
-            d.descendants(drawing, Some(&W::name("delText"))).is_empty(),
+            d.descendants(drawing, Some(&W::del_text())).is_empty(),
             "no delText fabricated from instrText"
         );
     }

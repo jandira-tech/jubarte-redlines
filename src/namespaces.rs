@@ -99,6 +99,26 @@ impl W {
     cached_xname!(W::URI, author, "author");
     cached_xname!(W::URI, date, "date");
     cached_xname!(W::URI, val, "val");
+    // NAME-01b: table / field / bookmark locals hit on every hash-clone walk.
+    cached_xname!(W::URI, tbl, "tbl");
+    cached_xname!(W::URI, tr, "tr");
+    cached_xname!(W::URI, tc, "tc");
+    cached_xname!(W::URI, tc_pr, "tcPr");
+    cached_xname!(W::URI, tbl_pr, "tblPr");
+    cached_xname!(W::URI, tr_pr, "trPr");
+    cached_xname!(W::URI, grid_span, "gridSpan");
+    cached_xname!(W::URI, bookmark_start, "bookmarkStart");
+    cached_xname!(W::URI, bookmark_end, "bookmarkEnd");
+    cached_xname!(W::URI, del_text, "delText");
+    cached_xname!(W::URI, sect_pr, "sectPr");
+    cached_xname!(W::URI, drawing, "drawing");
+    cached_xname!(W::URI, object, "object");
+    cached_xname!(W::URI, pict, "pict");
+    cached_xname!(W::URI, txbx_content, "txbxContent");
+    cached_xname!(W::URI, move_from, "moveFrom");
+    cached_xname!(W::URI, move_to, "moveTo");
+    cached_xname!(W::URI, move_from_range_start, "moveFromRangeStart");
+    cached_xname!(W::URI, move_to_range_start, "moveToRangeStart");
 }
 
 // ── PowerTools correlation attribute names ────────────────────────────────────

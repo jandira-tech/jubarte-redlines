@@ -35,3 +35,16 @@ fn name01_distinct_names_still_unequal() {
     assert_ne!(W::t(), W::r());
     assert_ne!(W::p(), W::body());
 }
+
+#[test]
+fn name01b_table_and_bookmark_helpers_match_get() {
+    assert_eq!(W::tbl(), XName::get("tbl", W::URI));
+    assert_eq!(W::tr(), XName::get("tr", W::URI));
+    assert_eq!(W::tc(), XName::get("tc", W::URI));
+    assert_eq!(W::tc_pr(), XName::get("tcPr", W::URI));
+    assert_eq!(W::grid_span(), XName::get("gridSpan", W::URI));
+    assert_eq!(W::bookmark_start(), XName::get("bookmarkStart", W::URI));
+    assert_eq!(W::del_text(), XName::get("delText", W::URI));
+    assert_eq!(W::sect_pr(), XName::get("sectPr", W::URI));
+    assert_eq!(W::move_from(), XName::get("moveFrom", W::URI));
+}

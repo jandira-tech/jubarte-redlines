@@ -94,14 +94,14 @@ pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<No
         return vec![dom.clone_subtree(node)];
     }
     let name = dom.name(node).unwrap();
-    if name == W::name("moveTo") {
+    if name == W::move_to() {
         let mut out = Vec::new();
         for c in dom.nodes(node) {
             out.extend(accept_move_from_move_to_transform(dom, c));
         }
         return out;
     }
-    if name == W::name("moveFrom") {
+    if name == W::move_from() {
         return vec![];
     }
     let ne = dom.new_element(name);
@@ -201,17 +201,17 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
     }
 
     // w:tr / w:trPr / w:del → deleted row.
-    if name == W::name("tr") && has_path(dom, node, &W::name("trPr"), &W::del()) {
+    if name == W::tr() && has_path(dom, node, &W::tr_pr(), &W::del()) {
         return vec![];
     }
 
     // w:tbl whose rows are ALL deleted → drop the whole table.
-    if name == W::name("tbl") {
-        let rows = dom.elements(node, Some(&W::name("tr")));
+    if name == W::tbl() {
+        let rows = dom.elements(node, Some(&W::tr()));
         if !rows.is_empty()
             && rows
                 .iter()
-                .all(|&tr| has_path(dom, tr, &W::name("trPr"), &W::del()))
+                .all(|&tr| has_path(dom, tr, &W::tr_pr(), &W::del()))
         {
             return vec![];
         }
@@ -227,7 +227,7 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
         let parent_is_tcpr = dom
             .parent(node)
             .and_then(|p| dom.name(p))
-            .is_some_and(|pn| pn == W::name("tcPr"));
+            .is_some_and(|pn| pn == W::tc_pr());
         if parent_is_tcpr {
             let vmerge = dom
                 .attribute(node, &W::name("vMerge"))
@@ -383,10 +383,10 @@ fn reverse_revisions_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         return rebuild_named(dom, W::del(), node, false);
     }
     // Deleted / inserted table row (del/ins in trPr) → swap.
-    if name == W::del() && parent_name.as_ref() == Some(&W::name("trPr")) {
+    if name == W::del() && parent_name.as_ref() == Some(&W::tr_pr()) {
         return dom.new_element(W::ins());
     }
-    if name == W::ins() && parent_name.as_ref() == Some(&W::name("trPr")) {
+    if name == W::ins() && parent_name.as_ref() == Some(&W::tr_pr()) {
         return dom.new_element(W::del());
     }
 
@@ -498,9 +498,9 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         return None;
     }
     // tc whose tcPr contains a cellIns → drop the inserted cell.
-    if name == W::name("tc") {
+    if name == W::tc() {
         let has_cell_ins = dom
-            .elements(node, Some(&W::name("tcPr")))
+            .elements(node, Some(&W::tc_pr()))
             .into_iter()
             .any(|tcpr| dom.element(tcpr, &W::name("cellIns")).is_some());
         if has_cell_ins {
@@ -617,7 +617,7 @@ pub struct BlockContentInfo {
 
 /// First `w:p`/`w:tbl` among `roots`' descendants-and-self, document order.
 fn first_block_content(dom: &Dom, roots: &[NodeId]) -> Option<NodeId> {
-    let (p, tbl) = (W::p(), W::name("tbl"));
+    let (p, tbl) = (W::p(), W::tbl());
     for &r in roots {
         if let Some(hit) = dom
             .descendants_and_self(r, None)
@@ -683,8 +683,8 @@ pub fn iterate_block_content_elements(dom: &Dom, element: NodeId) -> Vec<BlockCo
 fn block_level_content_containers() -> [XName; 7] {
     [
         W::body(),
-        W::name("tc"),
-        W::name("txbxContent"),
+        W::tc(),
+        W::txbx_content(),
         W::name("hdr"),
         W::name("ftr"),
         W::name("endnote"),
@@ -711,7 +711,7 @@ pub fn get_paragraph_info(dom: &Dom, content_element: NodeId) -> BlockContentInf
         "GetParagraphInfo called for element that is not child of content container"
     );
 
-    let (p, tc, txbx) = (W::p(), W::name("tc"), W::name("txbxContent"));
+    let (p, tc, txbx) = (W::p(), W::tc(), W::txbx_content());
     let mut paragraph = dom
         .descendants_and_self(content_element, None)
         .into_iter()
@@ -880,7 +880,7 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
 pub fn accept_move_from_ranges(dom: &mut Dom, document: NodeId) -> NodeId {
     use std::collections::{HashMap, HashSet};
 
-    let mfrs = W::name("moveFromRangeStart");
+    let mfrs = W::move_from_range_start();
     let mfre = W::name("moveFromRangeEnd");
 
     let mut start_tags_in_range: Vec<NodeId> = Vec::new();
@@ -1056,7 +1056,7 @@ pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: Nod
     }
     let name = dom.name(node).unwrap();
     if block_level_content_containers().contains(&name) {
-        let mfrs = W::name("moveFromRangeStart");
+        let mfrs = W::move_from_range_start();
         let mfre = W::name("moveFromRangeEnd");
         let mark_in_open_range = |dom: &Dom, p: NodeId| {
             !dom.elements(p, Some(&mfrs)).is_empty() && dom.elements(p, Some(&mfre)).is_empty()
@@ -1150,7 +1150,7 @@ pub fn accept_deleted_and_moved_from_content_controls(dom: &mut Dom, root: NodeI
     let cxdel_e = W::name("customXmlDelRangeEnd");
     let cxmf_s = W::name("customXmlMoveFromRangeStart");
     let cxmf_e = W::name("customXmlMoveFromRangeEnd");
-    let mfrs = W::name("moveFromRangeStart");
+    let mfrs = W::move_from_range_start();
     let mfre = W::name("moveFromRangeEnd");
     let sdt = W::name("sdt");
 
@@ -1417,7 +1417,7 @@ fn paragraph_mark_is_deleted_or_moved_from(dom: &Dom, p: NodeId) -> bool {
         .is_some_and(|rpr| {
             dom.elements(rpr, None).into_iter().any(|e| {
                 dom.name(e)
-                    .is_some_and(|n| n == W::del() || n == W::name("moveFrom"))
+                    .is_some_and(|n| n == W::del() || n == W::move_from())
             })
         })
 }
@@ -1455,7 +1455,7 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
     }
 
     let body_sect_pr = if name == W::body() {
-        dom.element(node, &W::name("sectPr"))
+        dom.element(node, &W::sect_pr())
     } else {
         None
     };
@@ -1496,7 +1496,7 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                     }
                 }
             }
-        } else if tn == W::name("tbl") || tn.namespace_name() == M::URI {
+        } else if tn == W::tbl() || tn.namespace_name() == M::URI {
             current_key += 1;
             infos.push((false, current_key));
             state = 0;
@@ -1514,7 +1514,7 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
     for (an, av) in dom.attributes(node) {
         dom.set_attribute_value(ne, &an, Some(&av));
     }
-    for e in dom.elements(node, Some(&W::name("tcPr"))) {
+    for e in dom.elements(node, Some(&W::tc_pr())) {
         let ce = dom.clone_subtree(e);
         dom.add(ne, ce);
     }
@@ -1539,7 +1539,7 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                 .is_some_and(|rpr| dom.element(rpr, &W::del()).is_some());
             let next = group.last().unwrap().0.next_block_content_element;
             let next_is_none_or_tbl =
-                next.is_none() || next.is_some_and(|n| dom.name(n) == Some(W::name("tbl")));
+                next.is_none() || next.is_some_and(|n| dom.name(n) == Some(W::tbl()));
             if all_para_content_is_deleted(dom, np) && last_mark_is_del && next_is_none_or_tbl {
                 continue; // nuke: never attached
             }
@@ -1600,7 +1600,7 @@ fn descendants_trimmed(dom: &Dom, element: NodeId, trim: &XName) -> Vec<NodeId> 
 pub fn annotate_content_controls_with_run_ids(dom: &mut Dom, element: NodeId) {
     let unique_id = PT::name("UniqueId");
     let run_ids_name = PT::name("RunIds");
-    let txbx = W::name("txbxContent");
+    let txbx = W::txbx_content();
     for (sdt_id, e) in (0..).zip(dom.descendants(element, Some(&W::name("sdt")))) {
         let ids: Vec<String> = descendants_trimmed(dom, e, &txbx)
             .into_iter()
@@ -1816,13 +1816,13 @@ pub fn accept_deleted_and_move_from_paragraph_marks(dom: &mut Dom, element: Node
 fn a6_block_level_elements() -> [XName; 8] {
     [
         W::p(),
-        W::name("tbl"),
+        W::tbl(),
         W::name("sdt"),
         W::del(),
         W::ins(),
         M::name("oMath"),
         M::name("oMathPara"),
-        W::name("moveTo"),
+        W::move_to(),
     ]
 }
 
@@ -1839,10 +1839,10 @@ fn remove_rows_left_empty_by_move_from_inner(dom: &mut Dom, node: NodeId) -> Opt
         return Some(dom.clone_subtree(node));
     }
     let name = dom.name(node).unwrap();
-    if name == W::name("tr") {
+    if name == W::tr() {
         let block = a6_block_level_elements();
         let non_empty_cells = dom
-            .elements(node, Some(&W::name("tc")))
+            .elements(node, Some(&W::tc()))
             .into_iter()
             .any(|tc| {
                 dom.elements(tc, None)
@@ -1905,7 +1905,7 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         return dom.clone_subtree(node);
     }
     let name = dom.name(node).unwrap();
-    if name != W::name("tr") {
+    if name != W::tr() {
         let ne = dom.new_element(name);
         for (an, av) in dom.attributes(node) {
             dom.set_attribute_value(ne, &an, Some(&av));
@@ -1917,7 +1917,7 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         return ne;
     }
 
-    let tc_name = W::name("tc");
+    let tc_name = W::tc();
     let cell_del = W::name("cellDel");
     let has_cell_del = |dom: &Dom, e: NodeId| !dom.descendants(e, Some(&cell_del)).is_empty();
 
@@ -1939,7 +1939,7 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     };
     let grouped = crate::util::group_adjacent(children, |&e| key_of(dom, e));
 
-    let tr = dom.new_element(W::name("tr"));
+    let tr = dom.new_element(W::tr());
     for (an, av) in dom.attributes(node) {
         dom.set_attribute_value(tr, &an, Some(&av));
     }
@@ -1955,8 +1955,8 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         if has_cell_del(dom, first) {
             continue; // no anchor precedes: the whole group is dropped
         }
-        let tcpr_name = W::name("tcPr");
-        let grid_span_name = W::name("gridSpan");
+        let tcpr_name = W::tc_pr();
+        let grid_span_name = W::grid_span();
         // Anchor cells always carry tcPr in the C# path (NRE otherwise); unwrap once.
         let current_tc_pr = dom
             .element(first, &tcpr_name)
@@ -2019,18 +2019,18 @@ fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
         })
         .collect();
     let new_tbl = dom.clone_subtree(tbl);
-    for tr in dom.elements(new_tbl, Some(&W::name("tr"))) {
+    for tr in dom.elements(new_tbl, Some(&W::tr())) {
         let mut last_used: i64 = -1;
-        for tc in dom.elements(tr, Some(&W::name("tc"))) {
+        for tc in dom.elements(tr, Some(&W::tc())) {
             // Singular tcPr / tcW / gridSpan — avoid multi-Vec flat_map scans.
             let tc_w = dom
-                .element(tc, &W::name("tcPr"))
+                .element(tc, &W::tc_pr())
                 .and_then(|p| dom.element(p, &W::name("tcW")))
                 .filter(|&w| dom.attribute(w, &W::name("w")).is_some());
             let Some(tc_w) = tc_w else { continue };
             let grid_span: i64 = dom
-                .element(tc, &W::name("tcPr"))
-                .and_then(|p| dom.element(p, &W::name("gridSpan")))
+                .element(tc, &W::tc_pr())
+                .and_then(|p| dom.element(p, &W::grid_span()))
                 .and_then(|g| dom.attribute(g, &W::val()))
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1);
@@ -2077,7 +2077,7 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         return dom.clone_subtree(node);
     }
     let name = dom.name(node).unwrap();
-    let tbl_name = W::name("tbl");
+    let tbl_name = W::tbl();
     if dom.element(node, &tbl_name).is_none() {
         let ne = dom.new_element(name);
         for (an, av) in dom.attributes(node) {
@@ -2096,7 +2096,7 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
             return String::new();
         }
         let bidi = dom
-            .elements(e, Some(&W::name("tblPr")))
+            .elements(e, Some(&W::tbl_pr()))
             .into_iter()
             .any(|p| dom.element(p, &W::name("bidiVisual")).is_some());
         if bidi {
@@ -2145,7 +2145,7 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         rolled.dedup();
 
         let new_table = dom.new_element(tbl_name.clone());
-        for pr in dom.elements(group[0], Some(&W::name("tblPr"))) {
+        for pr in dom.elements(group[0], Some(&W::tbl_pr())) {
             let c = dom.clone_subtree(pr);
             dom.add(new_table, c);
         }
@@ -2160,23 +2160,23 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 
         for &tbl in &group {
             let fixed = fix_widths(dom, tbl);
-            for tr in dom.elements(fixed, Some(&W::name("tr"))) {
-                let new_row = dom.new_element(W::name("tr"));
+            for tr in dom.elements(fixed, Some(&W::tr())) {
+                let new_row = dom.new_element(W::tr());
                 for (an, av) in dom.attributes(tr) {
                     dom.set_attribute_value(new_row, &an, Some(&av));
                 }
                 let non_cells: Vec<NodeId> = dom
                     .elements(tr, None)
                     .into_iter()
-                    .filter(|&e| dom.name(e) != Some(W::name("tc")))
+                    .filter(|&e| dom.name(e) != Some(W::tc()))
                     .collect();
                 for e in non_cells {
                     let c = dom.clone_subtree(e);
                     dom.add(new_row, c);
                 }
-                for tc in dom.elements(tr, Some(&W::name("tc"))) {
+                for tc in dom.elements(tr, Some(&W::tc())) {
                     let w: Option<i64> = dom
-                        .element(tc, &W::name("tcPr"))
+                        .element(tc, &W::tc_pr())
                         .and_then(|p| dom.element(p, &W::name("tcW")))
                         .and_then(|t| dom.attribute(t, &W::name("w")))
                         .and_then(|v| v.parse().ok());
@@ -2186,12 +2186,12 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
                         continue;
                     };
                     let mut width_to_left = 0i64;
-                    for btc in dom.elements(tr, Some(&W::name("tc"))) {
+                    for btc in dom.elements(tr, Some(&W::tc())) {
                         if btc == tc {
                             break;
                         }
                         width_to_left += dom
-                            .element(btc, &W::name("tcPr"))
+                            .element(btc, &W::tc_pr())
                             .and_then(|p| dom.element(p, &W::name("tcW")))
                             .and_then(|t| dom.attribute(t, &W::name("w")))
                             .and_then(|v| v.parse::<i64>().ok())
@@ -2214,30 +2214,30 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 
                     let mut tcpr_kids: Vec<NodeId> = Vec::new();
                     let props: Vec<NodeId> = dom
-                        .elements(tc, Some(&W::name("tcPr")))
+                        .elements(tc, Some(&W::tc_pr()))
                         .into_iter()
                         .flat_map(|p| dom.elements(p, None))
-                        .filter(|&e| dom.name(e) != Some(W::name("gridSpan")))
+                        .filter(|&e| dom.name(e) != Some(W::grid_span()))
                         .collect();
                     for e in props {
                         tcpr_kids.push(dom.clone_subtree(e));
                     }
                     if grids_required != 1 {
-                        let gs = dom.new_element(W::name("gridSpan"));
+                        let gs = dom.new_element(W::grid_span());
                         dom.set_attribute_value(gs, &W::val(), Some(&grids_required.to_string()));
                         tcpr_kids.push(gs);
                     }
                     tcpr_kids.sort_by_key(|&e| order_tc_pr(&dom.name(e).unwrap()));
-                    let ordered_tc_pr = dom.new_element(W::name("tcPr"));
+                    let ordered_tc_pr = dom.new_element(W::tc_pr());
                     for e in tcpr_kids {
                         dom.add(ordered_tc_pr, e);
                     }
-                    let new_cell = dom.new_element(W::name("tc"));
+                    let new_cell = dom.new_element(W::tc());
                     dom.add(new_cell, ordered_tc_pr);
                     let body_kids: Vec<NodeId> = dom
                         .elements(tc, None)
                         .into_iter()
-                        .filter(|&e| dom.name(e) != Some(W::name("tcPr")))
+                        .filter(|&e| dom.name(e) != Some(W::tc_pr()))
                         .collect();
                     for e in body_kids {
                         let c = dom.clone_subtree(e);
@@ -2258,8 +2258,8 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 /// True if any `w:tc` under `root` has no element children other than `w:tcPr`
 /// (the A.9 empty-cell predicate). Non-allocating DFS for ACCEPT-SKIP-02.
 fn has_empty_table_cell(dom: &Dom, root: NodeId) -> bool {
-    let tc = W::name("tc");
-    let tcpr = W::name("tcPr");
+    let tc = W::tc();
+    let tcpr = W::tc_pr();
     fn walk(dom: &Dom, id: NodeId, tc: &XName, tcpr: &XName) -> bool {
         if let Some(name) = dom.name(id)
             && name == *tc
@@ -2295,13 +2295,13 @@ pub fn add_empty_paragraph_to_any_empty_cells(dom: &mut Dom, node: NodeId) -> No
         return dom.clone_subtree(node);
     }
     let name = dom.name(node).unwrap();
-    if name == W::name("tc")
+    if name == W::tc()
         && !dom
             .elements(node, None)
             .into_iter()
-            .any(|e| dom.name(e) != Some(W::name("tcPr")))
+            .any(|e| dom.name(e) != Some(W::tc_pr()))
     {
-        let ne = dom.new_element(W::name("tc"));
+        let ne = dom.new_element(W::tc());
         for (an, av) in dom.attributes(node) {
             dom.set_attribute_value(ne, &an, Some(&av));
         }
@@ -2340,7 +2340,7 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
     let e = if has_rev {
         let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
-        let contains_move_from = !dom.descendants(e, Some(&W::name("moveFrom"))).is_empty();
+        let contains_move_from = !dom.descendants(e, Some(&W::move_from())).is_empty();
         let e = {
             let v = accept_move_from_move_to_transform(dom, e);
             debug_assert_eq!(v.len(), 1);
