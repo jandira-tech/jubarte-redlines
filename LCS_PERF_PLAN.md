@@ -65,6 +65,7 @@ evidence and ready-to-run branches of the program.
 | LCS-SCORE-01: prefix sums for non-separator LCR scores | banked (MEASURED #22) | exact prefix==direct; pdense+RFP×5lb lean; redline×5lb noise/worse — no wall claim |
 | ATOM-TEXT-01: value_str borrow single text-child leaves | shipped lean win (MEASURED #23) | matrix×4: pdense+RFP×5lb+redline×5lb wall ↓ every slot; exact value_str==value |
 | PATH-01: Arc-share ancestor_elements across multi-char atoms | shipped win (MEASURED #24) | matrix×4: wall ↓ every slot on pdense+RFP×5lb+redline×5lb; Arc::ptr_eq gate; exact document.xml |
+| NAME-01: OnceLock cache hottest W/PT XNames | shipped win (MEASURED #25) | matrix×4: ~5–15% wall all load-bearing slots; name equality exact |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1050,6 +1051,23 @@ coalesce text).
 | **redline_rfp17_vs_5lb102** | 35.28 / 35.32 | **33.77 / 34.46** |
 
 † Second pdense A shows thrash noise (25 s); B still wins both slots.  
+document.xml match YES all four. **Verdict: ship.**
+
+## MEASURED #25 — 2026-07-15: NAME-01 WIN
+
+Cache hottest `W::*` / `PT::*` `XName`s in process-wide `OnceLock`s so each
+compare does not re-enter the interning table for the same syntactic names.
+Equality vs `XName::get` unchanged (`tests/perf_name01.rs`).
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA (base = PATH-01)
+
+| fixture | A wall / user | B wall / user |
+|---|---:|---:|
+| **pdense_15k** | 16.81 / 16.08 · 16.72 / 16.20 | **15.87 / 15.16 · 15.52 / 15.03** (~5–7%) |
+| rfp17_redline_self | ~0.07 | ~0.07 |
+| **rfp17_vs_5lb102** | 27.93 / 26.16 · 27.28 / 26.03 | **23.75 / 22.55 · 23.54 / 22.30** (~15%) |
+| **redline_rfp17_vs_5lb102** | 34.40 / 29.90 · 34.06 / 30.02 | **29.87 / 25.62 · 29.24 / 25.43** (~13%) |
+
 document.xml match YES all four. **Verdict: ship.**
 
 ## Parity Ledger — the Word-visual layer of the quality contract

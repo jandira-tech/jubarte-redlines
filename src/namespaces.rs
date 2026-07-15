@@ -72,69 +72,40 @@ ns_struct!(
 ns_struct!(WNE, "http://schemas.microsoft.com/office/word/2006/wordml");
 
 // ── hottest WML names (extend as needed) ──────────────────────────────────────
+// NAME-01: cache the hottest XNames in process-wide OnceLocks so every compare
+// does not re-enter the interning table for the same syntactic names.
+macro_rules! cached_xname {
+    ($ns_uri:expr, $method:ident, $local:literal) => {
+        pub fn $method() -> XName {
+            static N: std::sync::OnceLock<XName> = std::sync::OnceLock::new();
+            N.get_or_init(|| XName::get($local, $ns_uri)).clone()
+        }
+    };
+}
+
 impl W {
-    pub fn document() -> XName {
-        Self::name("document")
-    }
-    pub fn body() -> XName {
-        Self::name("body")
-    }
-    pub fn p() -> XName {
-        Self::name("p")
-    }
-    pub fn r() -> XName {
-        Self::name("r")
-    }
-    pub fn t() -> XName {
-        Self::name("t")
-    }
-    pub fn p_pr() -> XName {
-        Self::name("pPr")
-    }
-    pub fn r_pr() -> XName {
-        Self::name("rPr")
-    }
-    pub fn footnote() -> XName {
-        Self::name("footnote")
-    }
-    pub fn endnote() -> XName {
-        Self::name("endnote")
-    }
-    pub fn id() -> XName {
-        Self::name("id")
-    }
-    pub fn ins() -> XName {
-        Self::name("ins")
-    }
-    pub fn del() -> XName {
-        Self::name("del")
-    }
-    pub fn author() -> XName {
-        Self::name("author")
-    }
-    pub fn date() -> XName {
-        Self::name("date")
-    }
-    pub fn val() -> XName {
-        Self::name("val")
-    }
+    cached_xname!(W::URI, document, "document");
+    cached_xname!(W::URI, body, "body");
+    cached_xname!(W::URI, p, "p");
+    cached_xname!(W::URI, r, "r");
+    cached_xname!(W::URI, t, "t");
+    cached_xname!(W::URI, p_pr, "pPr");
+    cached_xname!(W::URI, r_pr, "rPr");
+    cached_xname!(W::URI, footnote, "footnote");
+    cached_xname!(W::URI, endnote, "endnote");
+    cached_xname!(W::URI, id, "id");
+    cached_xname!(W::URI, ins, "ins");
+    cached_xname!(W::URI, del, "del");
+    cached_xname!(W::URI, author, "author");
+    cached_xname!(W::URI, date, "date");
+    cached_xname!(W::URI, val, "val");
 }
 
 // ── PowerTools correlation attribute names ────────────────────────────────────
 impl PT {
-    pub fn unid() -> XName {
-        Self::name("Unid")
-    }
-    pub fn sha1_hash() -> XName {
-        Self::name("SHA1Hash")
-    }
-    pub fn correlated_sha1_hash() -> XName {
-        Self::name("CorrelatedSHA1Hash")
-    }
-    pub fn structure_sha1_hash() -> XName {
-        Self::name("StructureSHA1Hash")
-    }
-    pub fn status() -> XName {
-        Self::name("Status")
-    }
+    cached_xname!(PT::URI, unid, "Unid");
+    cached_xname!(PT::URI, sha1_hash, "SHA1Hash");
+    cached_xname!(PT::URI, correlated_sha1_hash, "CorrelatedSHA1Hash");
+    cached_xname!(PT::URI, structure_sha1_hash, "StructureSHA1Hash");
+    cached_xname!(PT::URI, status, "Status");
 }
