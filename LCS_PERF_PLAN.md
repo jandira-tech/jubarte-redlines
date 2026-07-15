@@ -52,6 +52,7 @@ evidence and ready-to-run branches of the program.
 | PARSE-02: skip ns_scope clone without xmlns | shipped lean win (MEASURED #9) | pdense user CPU ↓ every run; wall 3/4 better; exact document.xml |
 | PARSE-01b: starts_with/index_of no Vec alloc | shipped win (MEASURED #10) | pdense wall+user ↓ every ABBA slot; exact document.xml |
 | HASH-01c: hex write via byte buffer | shipped lean win (MEASURED #11) | pdense wall ↓ every ABBA slot (~0.1–0.5 s); digests exact |
+| ACCEPT-SKIP-01: skip rebuilds when no tracked revs | shipped win (MEASURED #12) | pdense wall −10…12% every slot; user −10%; exact document.xml |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -787,6 +788,34 @@ unchanged (`sha1_hex_known_vector`, HASH-02 stream suite).
 | r2 | 22.38 / 22.79 | **22.16 / 22.48** |
 
 Cand wall better in **all 4** slots (~0.1–0.5 s). **Verdict: ship.**
+
+## MEASURED #12 — 2026-07-15: ACCEPT-SKIP-01 WIN (clean-doc rebuild skip)
+
+Hot path `accept_revisions_document` → full A.10 pipeline was identity-rebuilding
+the tree ~10× on mark-free inputs. **ACCEPT-SCAN-01** makes
+`element_has_tracked_revisions` a non-allocating DFS over a static local-name
+set. **ACCEPT-SKIP-01** short-circuits when the scan is false:
+
+- element accept: RemoveRsid only (skip move + all-other rebuilds)
+- part accept: RemoveRsid → A.9 empty-cell fill → UniqueId/numPr cleanup
+  (skip field fixup, move*, all-other, deleted-cells, merge-adjacent)
+
+Revision-bearing trees take the full faithful path unchanged. Tests:
+`tests/perf_accept_skip01.rs` + m3 + m28 RP suite green.
+
+### A/B — ABBA ×2, pdense 15k (clean dense paragraphs)
+
+| run | A wall / user | B wall / user |
+|---|---:|---:|
+| r1 | 23.17 / 21.18 · 22.54 / 20.94 | **20.69 / 18.87 · 20.09 / 18.96** |
+| r2 | 22.94 / 21.15 · 21.56 / 20.67 | **20.06 / 19.13 · 19.80 / 18.97** |
+
+- **wall:** cand better **all 4** slots (~2–3 s, **~10–12%**).
+- **user CPU:** cand lower **all 4** slots (~10%).
+- **document.xml:** identical (`512eb265…bd92`).
+
+**Verdict: ship.** Next: skip A.9 when no empty `w:tc`; per-transform skips
+when only a subset of marks is present; ACCEPT-INPLACE for remaining rebuilds.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

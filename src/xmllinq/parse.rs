@@ -46,12 +46,11 @@ impl<'a> Parser<'a> {
     /// PARSE-01b: no per-call `Vec<char>` allocation — walk `s.chars()` directly
     /// against the already-materialized input buffer.
     fn starts_with(&self, s: &str) -> bool {
-        let mut i = self.pos;
-        for ch in s.chars() {
+        for (off, ch) in s.chars().enumerate() {
+            let i = self.pos + off;
             if i >= self.len() || self.c[i] != ch {
                 return false;
             }
-            i += 1;
         }
         true
     }
@@ -64,21 +63,21 @@ impl<'a> Parser<'a> {
         }
         // Call sites use short ASCII needles (`</`, `<!--`, `]]>`, `?>`, …).
         let needle_chars: usize = s.chars().count();
-        let mut i = from;
-        while i + needle_chars <= self.len() {
-            let mut j = i;
+        let end = self.len().saturating_sub(needle_chars);
+        for i in from..=end {
+            if i + needle_chars > self.len() {
+                break;
+            }
             let mut ok = true;
-            for ch in s.chars() {
-                if self.c[j] != ch {
+            for (off, ch) in s.chars().enumerate() {
+                if self.c[i + off] != ch {
                     ok = false;
                     break;
                 }
-                j += 1;
             }
             if ok {
                 return Some(i);
             }
-            i += 1;
         }
         None
     }

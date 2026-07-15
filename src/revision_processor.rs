@@ -3,62 +3,77 @@
 //! Scope (per the implementation plan): the ACCEPT path only. Reject,
 //! consolidate, and the HTML/markdown surfaces are out of scope.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 use crate::markup_simplifier::remove_rsid_transform;
 use crate::namespaces::{M, PT, W};
 use crate::xmllinq::{Dom, NodeId, XName};
 
+/// Local names of `RevisionProcessor.TrackedRevisionsElements` (W namespace).
+const TRACKED_REVISION_LOCALS: &[&str] = &[
+    "cellDel",
+    "cellIns",
+    "cellMerge",
+    "customXmlDelRangeEnd",
+    "customXmlDelRangeStart",
+    "customXmlInsRangeEnd",
+    "customXmlInsRangeStart",
+    "customXmlMoveFromRangeEnd",
+    "customXmlMoveFromRangeStart",
+    "customXmlMoveToRangeEnd",
+    "customXmlMoveToRangeStart",
+    "del",
+    "delInstrText",
+    "delText",
+    "ins",
+    "moveFrom",
+    "moveFromRangeEnd",
+    "moveFromRangeStart",
+    "moveTo",
+    "moveToRangeEnd",
+    "moveToRangeStart",
+    "numberingChange",
+    "pPrChange",
+    "rPrChange",
+    "sectPrChange",
+    "tblGridChange",
+    "tblPrChange",
+    "tblPrExChange",
+    "tcPrChange",
+    "trPrChange",
+];
+
+static TRACKED_REVISION_LOCAL_SET: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| TRACKED_REVISION_LOCALS.iter().copied().collect());
+
 /// `RevisionProcessor.TrackedRevisionsElements` — the element names whose
 /// presence indicates the document carries tracked revisions.
 pub fn tracked_revisions_elements() -> Vec<XName> {
-    [
-        "cellDel",
-        "cellIns",
-        "cellMerge",
-        "customXmlDelRangeEnd",
-        "customXmlDelRangeStart",
-        "customXmlInsRangeEnd",
-        "customXmlInsRangeStart",
-        "customXmlMoveFromRangeEnd",
-        "customXmlMoveFromRangeStart",
-        "customXmlMoveToRangeEnd",
-        "customXmlMoveToRangeStart",
-        "del",
-        "delInstrText",
-        "delText",
-        "ins",
-        "moveFrom",
-        "moveFromRangeEnd",
-        "moveFromRangeStart",
-        "moveTo",
-        "moveToRangeEnd",
-        "moveToRangeStart",
-        "numberingChange",
-        "pPrChange",
-        "rPrChange",
-        "sectPrChange",
-        "tblGridChange",
-        "tblPrChange",
-        "tblPrExChange",
-        "tcPrChange",
-        "trPrChange",
-    ]
-    .iter()
-    .map(|l| W::name(l))
-    .collect()
+    TRACKED_REVISION_LOCALS.iter().map(|l| W::name(l)).collect()
 }
 
 /// True if any descendant (or `root` itself) is a tracked-revision element.
 /// Port of `PartHasTrackedRevisions` applied to a single element tree.
+///
+/// ACCEPT-SCAN-01: non-allocating DFS + static local-name set (no per-call
+/// `Vec<XName>` / full `descendants_and_self` materialization).
 pub fn element_has_tracked_revisions(dom: &Dom, root: NodeId) -> bool {
-    let set = tracked_revisions_elements();
-    dom.descendants_and_self(root, None)
-        .into_iter()
-        .any(|e| match dom.name(e) {
-            Some(name) => set.contains(&name),
-            None => false,
-        })
+    fn walk(dom: &Dom, id: NodeId) -> bool {
+        if let Some(name) = dom.name(id)
+            && name.namespace_name() == W::URI
+            && TRACKED_REVISION_LOCAL_SET.contains(name.local_name())
+        {
+            return true;
+        }
+        for i in 0..dom.child_count(id) {
+            if walk(dom, dom.child_at(id, i)) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(dom, root)
 }
 
 /// Does `el` have a child element named `local` (in the W namespace)?
@@ -269,17 +284,21 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
 /// cases). The fuller part-level pipeline (`AcceptRevisionsForPart`) adds
 /// deleted-paragraph-mark merging, move-from ranges, field codes, content
 /// controls, table merges, and OrderTcPr — see the module status note.
+///
+/// ACCEPT-SKIP-01: when the subtree has no tracked-revision elements, skip
+/// the two identity full-tree rebuilds (move + all-other) after RemoveRsid.
 pub fn accept_revisions_for_element(dom: &mut Dom, element: NodeId) -> NodeId {
+    let has_rev = element_has_tracked_revisions(dom, element);
     let e = remove_rsid_transform(dom, element).expect("root not dropped by rsid removal");
-    let e = {
+    let e = if has_rev {
         let v = accept_move_from_move_to_transform(dom, e);
         debug_assert_eq!(v.len(), 1);
-        v[0]
-    };
-    let e = {
+        let e = v[0];
         let v = accept_all_other_revisions_transform(dom, e);
         debug_assert_eq!(v.len(), 1);
         v[0]
+    } else {
+        e
     };
 
     // Strip PT.UniqueId / PT.RunIds attributes from all descendants.
@@ -2272,31 +2291,41 @@ pub fn add_empty_paragraph_to_any_empty_cells(dom: &mut Dom, node: NodeId) -> No
 /// 15-step transform order. `contains_move_from` is captured AFTER the
 /// field-code fixup but BEFORE AcceptMoveFromMoveTo consumes the `w:moveFrom`
 /// wrappers, gating RemoveRowsLeftEmptyByMoveFrom exactly like the C#.
+///
+/// ACCEPT-SKIP-01: when the subtree has no tracked-revision elements, skip
+/// every revision-semantic full-tree rebuild (field fixup, move*, all-other,
+/// deleted-cells, merge-adjacent). Still runs RemoveRsid, A.9 empty-cell
+/// fill (not revision-gated in C#), and UniqueId/numPr cleanup.
 pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId {
+    let has_rev = element_has_tracked_revisions(dom, root);
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
-    let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
-    let contains_move_from = !dom.descendants(e, Some(&W::name("moveFrom"))).is_empty();
-    let e = {
-        let v = accept_move_from_move_to_transform(dom, e);
-        debug_assert_eq!(v.len(), 1);
-        v[0]
-    };
-    let e = accept_move_from_ranges(dom, e);
-    let e = accept_paragraph_end_tags_in_move_from_transform(dom, e);
-    let e = accept_deleted_and_moved_from_content_controls(dom, e);
-    let e = accept_deleted_and_move_from_paragraph_marks(dom, e);
-    let e = if contains_move_from {
-        remove_rows_left_empty_by_move_from(dom, e)
+    let e = if has_rev {
+        let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
+        let contains_move_from = !dom.descendants(e, Some(&W::name("moveFrom"))).is_empty();
+        let e = {
+            let v = accept_move_from_move_to_transform(dom, e);
+            debug_assert_eq!(v.len(), 1);
+            v[0]
+        };
+        let e = accept_move_from_ranges(dom, e);
+        let e = accept_paragraph_end_tags_in_move_from_transform(dom, e);
+        let e = accept_deleted_and_moved_from_content_controls(dom, e);
+        let e = accept_deleted_and_move_from_paragraph_marks(dom, e);
+        let e = if contains_move_from {
+            remove_rows_left_empty_by_move_from(dom, e)
+        } else {
+            e
+        };
+        let e = {
+            let v = accept_all_other_revisions_transform(dom, e);
+            debug_assert_eq!(v.len(), 1);
+            v[0]
+        };
+        let e = accept_deleted_cells_transform(dom, e);
+        merge_adjacent_tables_transform(dom, e)
     } else {
         e
     };
-    let e = {
-        let v = accept_all_other_revisions_transform(dom, e);
-        debug_assert_eq!(v.len(), 1);
-        v[0]
-    };
-    let e = accept_deleted_cells_transform(dom, e);
-    let e = merge_adjacent_tables_transform(dom, e);
     let e = add_empty_paragraph_to_any_empty_cells(dom, e);
 
     // Strip PT.UniqueId / PT.RunIds attributes from all descendants.
