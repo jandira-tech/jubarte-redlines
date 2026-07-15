@@ -960,3 +960,57 @@ fn e1_schema_order_respects_numpicbullet_and_nummacatcleanup() {
         "copied nodes land between numPicBullet and numIdMacAtCleanup, got {names:?}"
     );
 }
+
+/// settings.xml special-note list must not reference ids missing from the notes
+/// part (Word "unreadable content" / OpenXmlValidator Semantic).
+#[test]
+fn m4_h6_sync_settings_drops_missing_special_ids() {
+    use jubarte::comparer::footnotes::sync_settings_special_note_ids;
+    use std::collections::HashSet;
+
+    let mut d = Dom::new();
+    let xml = format!(
+        "<w:settings xmlns:w=\"{w}\">\
+           <w:footnotePr>\
+             <w:footnote w:id=\"-1\"/>\
+             <w:footnote w:id=\"0\"/>\
+             <w:footnote w:id=\"1\"/>\
+           </w:footnotePr>\
+           <w:endnotePr>\
+             <w:endnote w:id=\"-1\"/>\
+             <w:endnote w:id=\"0\"/>\
+             <w:endnote w:id=\"1\"/>\
+           </w:endnotePr>\
+         </w:settings>",
+        w = W::URI
+    );
+    let doc = d.parse_xdocument(&xml);
+    let root = d.root(doc).unwrap();
+    let fn_ids: HashSet<String> = ["-1", "0"].into_iter().map(str::to_string).collect();
+    let en_ids = fn_ids.clone();
+    sync_settings_special_note_ids(&mut d, root, &fn_ids, &en_ids);
+
+    let fn_pr = d
+        .descendants(root, Some(&W::name("footnotePr")))
+        .into_iter()
+        .next()
+        .unwrap();
+    let ids: Vec<_> = d
+        .elements(fn_pr, Some(&W::name("footnote")))
+        .into_iter()
+        .filter_map(|e| d.attribute(e, &W::id()).map(str::to_string))
+        .collect();
+    assert_eq!(ids, vec!["-1", "0"], "dangling id=1 removed from footnotePr");
+
+    let en_pr = d
+        .descendants(root, Some(&W::name("endnotePr")))
+        .into_iter()
+        .next()
+        .unwrap();
+    let eids: Vec<_> = d
+        .elements(en_pr, Some(&W::name("endnote")))
+        .into_iter()
+        .filter_map(|e| d.attribute(e, &W::id()).map(str::to_string))
+        .collect();
+    assert_eq!(eids, vec!["-1", "0"], "dangling id=1 removed from endnotePr");
+}

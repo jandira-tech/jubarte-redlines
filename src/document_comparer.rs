@@ -2152,12 +2152,45 @@ fn compare_documents_impl(
     // referenced definitions renumbered 1..n with real revision markup) into
     // the output package. Replaces the old by-id `compare_note_parts` model,
     // whose pairing broke whenever Word renumbered notes.
-    for (part, root) in [
-        (fn1.as_str(), notes_ctx.fn_with_revisions),
-        (en1.as_str(), notes_ctx.en_with_revisions),
+    let mut footnote_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut endnote_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (part, root, is_fn) in [
+        (fn1.as_str(), notes_ctx.fn_with_revisions, true),
+        (en1.as_str(), notes_ctx.en_with_revisions, false),
     ] {
         if let Some(r) = root {
+            let def = if is_fn {
+                W::footnote()
+            } else {
+                W::endnote()
+            };
+            let ids: std::collections::HashSet<String> = dom
+                .elements(r, Some(&def))
+                .into_iter()
+                .filter_map(|n| dom.attribute(n, &W::id()).map(str::to_string))
+                .collect();
+            if is_fn {
+                footnote_ids = ids;
+            } else {
+                endnote_ids = ids;
+            }
             out.set_part(part, dom.serialize_element(r).into_bytes());
+        }
+    }
+    // settings.xml may still list special footnote/endnote ids (e.g. id=1
+    // continuationNotice) that rectify dropped. Dangling settings refs make
+    // Word show "unreadable content" (OpenXmlValidator Semantic).
+    if let Some(sx) = out.part_string("word/settings.xml") {
+        let mut sd = Dom::new();
+        let sdoc = sd.parse_xdocument(&sx);
+        if let Some(sroot) = sd.root(sdoc) {
+            crate::comparer::footnotes::sync_settings_special_note_ids(
+                &mut sd,
+                sroot,
+                &footnote_ids,
+                &endnote_ids,
+            );
+            out.set_part("word/settings.xml", sd.serialize_element(sroot).into_bytes());
         }
     }
     // M4.H.x: header/footer CONTENT diff (Word redlines header/footer changes; we
