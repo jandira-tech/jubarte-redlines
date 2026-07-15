@@ -725,7 +725,7 @@ pub enum CorrelationStatus {
 }
 
 /// Port of `ComparisonUnitGroupType`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ComparisonUnitGroupType {
     Paragraph,
     Table,

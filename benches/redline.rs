@@ -42,12 +42,18 @@ const PAIRS: &[(&str, &str, &str)] = &[
 
 fn bench_compare_documents(c: &mut Criterion) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut group = c.benchmark_group("compare_documents");
-    // Real-document compares run 10ms–1s; trade sample count for wall time.
-    group
-        .sample_size(20)
-        .measurement_time(Duration::from_secs(15));
+    // P0-LAB-01: split short statistical cases from slower trials so Criterion
+    // sampling stays practical. Multi-minute wall claims use tools/perf/* ABBA.
+    let short: &[&str] = &["canonical_dense_edits"];
+    let slow: &[&str] = &["short_into_long", "tables_bookmark_vmerge", "comment_heavy"];
+
+    let mut fast = c.benchmark_group("compare_documents_fast");
+    fast.sample_size(20)
+        .measurement_time(Duration::from_secs(8));
     for (id, a_rel, b_rel) in PAIRS {
+        if !short.contains(id) {
+            continue;
+        }
         let (a_path, b_path) = (root.join(a_rel), root.join(b_rel));
         if !a_path.is_file() || !b_path.is_file() {
             eprintln!("skip {id}: fixtures not present ({a_rel})");
@@ -55,13 +61,36 @@ fn bench_compare_documents(c: &mut Criterion) {
         }
         let a = std::fs::read(&a_path).expect("read original");
         let b = std::fs::read(&b_path).expect("read modified");
-        group.bench_function(*id, |bencher| {
+        fast.bench_function(*id, |bencher| {
             bencher.iter(|| {
                 compare_documents(black_box(&a), black_box(&b), "Bench").expect("compare")
             });
         });
     }
-    group.finish();
+    fast.finish();
+
+    let mut slow_g = c.benchmark_group("compare_documents_slow");
+    slow_g
+        .sample_size(10)
+        .measurement_time(Duration::from_secs(15));
+    for (id, a_rel, b_rel) in PAIRS {
+        if !slow.contains(id) {
+            continue;
+        }
+        let (a_path, b_path) = (root.join(a_rel), root.join(b_rel));
+        if !a_path.is_file() || !b_path.is_file() {
+            eprintln!("skip {id}: fixtures not present ({a_rel})");
+            continue;
+        }
+        let a = std::fs::read(&a_path).expect("read original");
+        let b = std::fs::read(&b_path).expect("read modified");
+        slow_g.bench_function(*id, |bencher| {
+            bencher.iter(|| {
+                compare_documents(black_box(&a), black_box(&b), "Bench").expect("compare")
+            });
+        });
+    }
+    slow_g.finish();
 }
 
 criterion_group!(benches, bench_compare_documents);

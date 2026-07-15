@@ -36,6 +36,8 @@ pub mod document_comparer;
 pub mod markup_simplifier;
 pub mod namespaces;
 pub mod opc;
+/// P0-LAB-01 stage counters/timers — no-ops unless `perf-profile` is enabled.
+pub mod perf;
 pub mod revision_processor;
 pub mod strict_translation;
 pub mod unid;

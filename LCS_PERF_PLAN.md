@@ -90,6 +90,8 @@ evidence and ready-to-run branches of the program.
 | ACCEPT-SKIP-A5: skip A.5 when no deleted/moved-from paragraph marks | banked lean (MEASURED #45) | exact m28 A.5 + NodeId; digests YES×4; RFP×5lb + redline×5lb B both slots (~−1s); pdense flat — no full-matrix wall claim |
 | NAME-01c: cache accept/RP W/PT locals + call sites | banked (MEASURED #46) | exact == XName::get; digests YES×4; matrix wall noise/mixed — no wall claim |
 | LCS-OWN-01: move correlated-hash partitions | **candidate KEEP** (MEASURED #47) | pdense clean slots ~15.1–17.8→11.0–11.2 s; identical neutral; real pairs neutral/noisy; every uncompressed package member exact ×4 ×2 rounds |
+| P0-LAB-01: durable perf lab | shipped lab (MEASURED #48) | `perf-profile` + `src/perf.rs`; `tools/perf/{summarize,quality_compare,run_trials}.py/sh`; `tests/perf_contract.rs`; no wall claim |
+| CORR-IDX-01: indexed correlated-hash run | **candidate KEEP dense** (MEASURED #48) | pdense median ~12.7→9.1 s; digests+all members YES×4; real pairs mixed/load — no full-matrix wall claim |
 | latest profiles | accepted evidence | **workload split:** complex redline×5lb: produce/reconstruct 21.5%/14.6%, LCS 9.0%, parse 8.6%, atomize 5.3%; pdense: LCS 74.0%, correlated resolver 54.0% before #47 |
 | quality baseline | **re-recorded HEAD** (MEASURED #43 + package fixes) | ladder: 0 NEW; sample ledger mean **83.78** / median **89.46** (n=35); **full ledger mean 83.77 / median 88.52 (n=164)** — exact historical floor class |
 
@@ -1636,34 +1638,71 @@ or load-noisy, as expected because their fresh profile is produce-dominated.
 
 ### Next queue (do not stack)
 
-MEASURED #45 banked lean + **#46 NAME-01c banked** + **#47 LCS-OWN-01 candidate
-KEEP**. Fresh profiles replace the old flat-profile assumption with two lanes:
+MEASURED **#48 P0-LAB-01 shipped lab** + **CORR-IDX-01 candidate KEEP dense**
+(after #47 LCS-OWN-01). Next risk-adjusted items:
 
-1. **P0-LAB-01 (mandatory first):** commit the compiled-out stage counters,
-   interleaved-trial summarizer, machine/load metadata, per-fixture medians/MAD,
-   explicit regression exit status, and paired quality comparison promised by
-   this plan. Criterion's exit code alone is not the ship gate.
-2. **CORR-IDX-01 (dense lane):** replace `correlated_hash_run`'s nested
-   start-pair plus suffix-extension scan with an exact hash/type index and
-   maximal-diagonal run computation. Retain the current scanner as the
-   property/reference oracle; exhaust ties, collisions, threshold boundaries,
-   and first-found `(i1, i2)` semantics before production dispatch changes.
-3. **PRODUCE-UNID-01 (real-document lane):** replace per-atom
+1. **PRODUCE-UNID-01 (real-document lane):** replace per-atom
    `Option<Vec<String>>` ancestor-Unid copies with a shared immutable
    `Arc<[String]>`, then profile compact/borrowed coalesce keys. Gate exact
    nesting, textbox ancestry, note handling, and all permanent package members.
-4. **DOM-NAME-REF-01:** add borrowed `Dom` name/attribute predicates at the hot
+2. **DOM-NAME-REF-01:** add borrowed `Dom` name/attribute predicates at the hot
    reconstruction call sites only; do not broaden the DOM API without a profile
    win.
-5. **PGO-LAST:** train only on the mixed permanent/corpus workload after the
+3. **PGO-LAST:** train only on the mixed permanent/corpus workload after the
    algorithm/allocation wins and durable lab exist. A pdense-only profile would
    optimize the wrong regime for real documents.
 
 No multi-mechanism batch. Run one RED→GREEN→ABBA→quality increment at a time.
 Do not stack banked skips for a synthetic wall claim.
 
-**Verdict #43–#47:** quality restore; A3/A5 banked (A5 lean); NAME-01c banked;
-LCS-OWN-01 candidate KEEP.
+**Verdict #43–#48:** quality restore; A3/A5 banked (A5 lean); NAME-01c banked;
+LCS-OWN-01 candidate KEEP; P0-LAB-01 lab; CORR-IDX-01 candidate KEEP dense.
+
+## MEASURED #48 — 2026-07-15: P0-LAB-01 + CORR-IDX-01
+
+### P0-LAB-01 (infrastructure; no wall claim)
+
+- `Cargo.toml`: non-default `perf-profile` feature
+- `src/perf.rs`: compiled-out stage timers + integer counters; `Snapshot::to_json`
+- `src/lib.rs`: expose `pub mod perf`
+- `tools/perf/summarize.py`: median/MAD/paired wall verdict + seeded exit 1
+- `tools/perf/quality_compare.py`: paired ledger mean/median/p10/per-pair gate
+- `tools/perf/run_trials.sh`: load gate + ABBA + summarize wrapper
+- `benches/redline.rs`: fast vs slow Criterion groups
+- `tests/perf_contract.rs`: 8 contract tests (counters, summarize, quality_compare,
+  abba script presence, compare smoke under default feature-off)
+
+### CORR-IDX-01 (dense lane)
+
+**Hypothesis:** `correlated_hash_run`'s nested start-pair scan is the exposed
+target after LCS-OWN-01; an exact `(group_type, correlated_hash)` index over the
+right sequence plus the same diagonal extension must preserve atom-max and
+first-found `(i1,i2)` ties.
+
+**Files:**
+- `src/comparer/lcs.rs` — `correlated_hash_run_scan` (test oracle),
+  `correlated_hash_run_indexed` (production), shared threshold helper
+- `src/comparer/mod.rs` — `Hash` on `ComparisonUnitGroupType`
+- inline `correlated_hash_idx_tests` — fixture / first-found / threshold decline /
+  800 random trials / production signature vs scan
+
+**A/B (2× permanent ABBA):** base `06f436c` release vs cand indexed release.
+
+| fixture | result |
+|---|---|
+| pdense_15k | median A 12.66 s → B 9.08 s; every clean B slot beats adjacent A |
+| rfp17_redline_self | noise (~0.7 s identical short-circuit) |
+| rfp17_vs_5lb102 | mixed (R1 B lean; R2 load-contaminated, loadavg ~7–9) |
+| redline_rfp17_vs_5lb102 | mixed/noise |
+
+`document.xml` digests YES×4; **all uncompressed package members YES×4**.
+
+**Verdict: candidate KEEP dense.** Exact Q0. No full-matrix universal wall claim.
+Next real-document lane: PRODUCE-UNID-01.
+
+**Full corpus quality (once at acceptance):** mean **87.83** / median **92.85**
+(n=164). Floor class MEASURED #43 was 83.77 / 88.52 — **above floor, no material
+regression**. Suite: only pre-existing `m36 s1a` fails (same on base).
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
