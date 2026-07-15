@@ -1510,6 +1510,25 @@ fn paragraph_mark_is_deleted_or_moved_from(dom: &Dom, p: NodeId) -> bool {
         })
 }
 
+/// ACCEPT-SKIP-A5: non-allocating presence of any paragraph whose mark is
+/// deleted or moved-from under `root`.
+fn has_deleted_or_moved_from_paragraph_mark(dom: &Dom, root: NodeId) -> bool {
+    fn walk(dom: &Dom, id: NodeId) -> bool {
+        if dom.name(id).as_ref() == Some(&W::p()) && paragraph_mark_is_deleted_or_moved_from(dom, id)
+        {
+            return true;
+        }
+        let n = dom.child_count(id);
+        for i in 0..n {
+            if walk(dom, dom.child_at(id, i)) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(dom, root)
+}
+
 /// A.5a — `AcceptDeletedAndMoveFromParagraphMarksTransform` (:2119): the
 /// 3-state grouping machine over a container's block-content chain. A run of
 /// deleted-mark paragraphs PLUS the immediately following normal paragraph
@@ -1890,7 +1909,15 @@ pub fn add_block_level_content_controls(
 /// A.5b — `AcceptDeletedAndMoveFromParagraphMarks` (:2098): annotate runs and
 /// content controls (on the ORIGINAL, in place), run the A.5a transform, then
 /// re-wrap the content controls the transform stripped.
+///
+/// ACCEPT-SKIP-A5: when no paragraph mark is `pPr/rPr/(del|moveFrom)`, the
+/// A.5a grouping machine is a pure identity rebuild and annotate/rewrap do
+/// nothing useful — transfer `element` without cloning.
 pub fn accept_deleted_and_move_from_paragraph_marks(dom: &mut Dom, element: NodeId) -> NodeId {
+    // ACCEPT-SKIP-A5: no deleted/moved-from paragraph marks → identity.
+    if !has_deleted_or_moved_from_paragraph_mark(dom, element) {
+        return element;
+    }
     annotate_run_elements_with_id(dom, element);
     annotate_content_controls_with_run_ids(dom, element);
     let new_element = accept_deleted_and_move_from_paragraph_marks_transform(dom, element);

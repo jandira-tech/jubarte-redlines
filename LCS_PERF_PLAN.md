@@ -87,6 +87,7 @@ evidence and ready-to-run branches of the program.
 | NOTES-SETTINGS-01: keep continuationNotice + sync settings special-note ids | shipped quality (`08206bb`) | settings footnotePr/endnotePr ⊆ notes parts; Word-unreadable fixed for structural id=1 after rectify |
 | PACKAGE-VALIDITY-01: package-wide pt:* strip + settings re-sync | shipped quality (`74ea0e4`) | validity not document.xml-only; OPC parts + rels/CT; SDK TOTAL_ERRORS=0 on hostile redline pair |
 | ACCEPT-SKIP-A3: skip A.3 rebuild without moveFromRangeStart | banked (MEASURED #44) | exact NodeId + m28 A.3; digests YES×4; matrix wall thrash/mixed — no wall claim |
+| ACCEPT-SKIP-A5: skip A.5 when no deleted/moved-from paragraph marks | banked lean (MEASURED #45) | exact m28 A.5 + NodeId; digests YES×4; RFP×5lb + redline×5lb B both slots (~−1s); pdense flat — no full-matrix wall claim |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | **re-recorded HEAD** (MEASURED #43 + package fixes) | ladder: 0 NEW; sample ledger mean **83.78** / median **89.46** (n=35); **full ledger mean 83.77 / median 88.52 (n=164)** — exact historical floor class |
 
@@ -1486,17 +1487,44 @@ base = HEAD without A3 · cand = A3 skip
 **Verdict: bank** — exact Q0 keep as cleanup; no full-matrix wall claim (plan
 requires candidate better in every load-bearing slot).
 
+## MEASURED #45 — 2026-07-15: ACCEPT-SKIP-A5 BANKED LEAN (exact, RFP lean)
+
+### Hypothesis
+`accept_deleted_and_move_from_paragraph_marks` always annotates + deep-rebuilds
++ rewraps even when no paragraph mark is `pPr/rPr/(del|moveFrom)`. Skip with
+root transfer when no such marks exist.
+
+### Files
+- `src/revision_processor.rs` — `has_deleted_or_moved_from_paragraph_mark` + early transfer
+- `tests/perf_accept_skip_a5.rs` — NodeId gate + deleted-mark still merges
+- existing m28 A.5 oracles
+
+### Exact gates
+- RED→GREEN NodeId; m28 a5* green; digests YES×4
+- parity_ladder `--limit 25`: **0 NEW**
+- cargo: only pre-existing `m36 s1a`
+
+### A/B — clean permanent matrix (1× ABBA; no concurrent load)
+base = HEAD (A3 banked) · cand = A5 skip
+
+| fixture | A wall | B wall | note |
+|---|---|---|---|
+| pdense_15k | 14.92 / 14.96 | 14.99 / 15.13 | flat / slightly worse |
+| rfp17_redline_self | 0.69 / 0.69 | 0.70 / 0.67 | IDENTICAL-INPUT noise |
+| rfp17_vs_5lb102 | 23.85 / 24.16 | 22.52 / 23.40 | B both (~−1.0s mean) |
+| redline_rfp17_vs_5lb102 | 24.81 / 25.41 | 24.21 / 23.96 | B both (~−1.0s mean) |
+
+**Verdict: bank lean** — keep exact cleanup; RFP load-bearing lean; pdense not a
+win → no full-matrix wall claim.
+
 ### Next queue (do not stack)
 
-MEASURED #44 (ACCEPT-SKIP-A3) **banked** — exact keep, no full-matrix wall
-claim. Next: **one** risk-adjusted wall experiment after re-profile (samply on
-permanent 4-fixture matrix). Portfolio still includes banked lean items
-(HASH-STREAM-04/03b, DOM-ITER-03, ACCEPT-SKIP-A1/A7/A8/A3) and untried Lane-M
-seams (ACCEPT-SCAN-01 single-flag only, remaining A.5 mark skip, HASH/ATOM
-views). No multi-mechanism batch.
+MEASURED #45 banked lean. **Next single experiment: NAME-01c** — cache remaining
+hot `W::*` locals used on accept/compare paths (`moveFromRangeEnd`, `sdt`,
+`fldChar`, `instrText`, `numPr`, `cellDel`, …) and convert call sites. Prior
+NAME-01/01b won full-matrix wall. No multi-mechanism batch.
 
-**Verdict #43:** ship quality restore — no wall claim; package validity Q0
-quality. **Verdict #44:** bank A3 skip as exact cleanup.
+**Verdict #43–#44:** quality restore + A3 bank. **Verdict #45:** bank A5 lean.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
