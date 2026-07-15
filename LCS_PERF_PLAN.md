@@ -57,6 +57,7 @@ evidence and ready-to-run branches of the program.
 | RSID-INPLACE-01: strip rsids without rebuild | shipped lean win (MEASURED #14) | matrix: both RFP fixtures wall ↓ both slots; pdense noise; exact; lower sys |
 | HASH-CLONE-MICRO: text new_text + nsdecl index walk | banked (MEASURED #15) | exact m4b; matrix wall mixed/noise (user flat); keep as cleanup |
 | REJECT-SKIP + COMPARE-CLEAN-PROJ | shipped win (MEASURED #16) | matrix: pdense + RFP×5lb102 wall ↓ both slots (~10–12% on 5lb); redline-self noise; exact |
+| COMPARE-M122-SELF: no body clone for M122 | shipped lean win (MEASURED #17) | redline-self wall lean ↓; clean fixtures neutral (already skipped); exact |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -904,6 +905,22 @@ Tests: `tests/perf_reject_skip01.rs` + m3/m4/m28 green.
 | **rfp17_vs_5lb102** | 31.86 / 30.41 · 32.70 / 30.76 | **28.67 / 27.36 · 28.48 / 27.25** (~10–12%) |
 
 document.xml match all three. **Verdict: ship.**
+
+## MEASURED #17 — 2026-07-15: COMPARE-M122-SELF lean win
+
+Post-accept M122 correlated re-stamp uses `hash_block_level_content(body, body)`
+instead of `clone_subtree(body)` then hash. Same Unid stamps; drops a full body
+clone on revision-bearing sides.
+
+### A/B — full matrix, 1× ABBA (base = REJECT-SKIP)
+
+| fixture | A wall | B wall |
+|---|---:|---:|
+| pdense_15k | 18.11 / 17.96 | 18.23 / 17.96 (neutral; clean) |
+| **rfp17_redline_self** | 51.28 / 47.40 | **49.59 / 47.11** (lean cand) |
+| rfp17_vs_5lb102 | 27.97 / 28.25 | 28.54 / 28.62 (neutral; clean) |
+
+document.xml match all. **Verdict: ship** (helps the complicated redline fixture).
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

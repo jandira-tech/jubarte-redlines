@@ -391,26 +391,25 @@ pub fn compare_bodies_faithful_with_notes(
     // (process_correlated_hashes never paired). Self-project each body so
     // spacing-invariant correlated hashes (Word-visual) land on live groups.
     //
-    // COMPARE-CLEAN-PROJ-01: when a side was mark-free, accept only stripped
-    // rsids in place (same Unids/structure) — the pre-accept self-projection
-    // already stamped the right correlated hashes; skip a second body clone.
+    // COMPARE-M122-SELF-01: hash projection does not need a body clone —
+    // `hash_block_level_content(source, after)` with source==after stamps
+    // from per-block hashing clones (Unids already on the live tree).
+    // COMPARE-CLEAN-PROJ-01: mark-free sides already stamped pre-accept; skip.
     if settings.merge_replaced_paragraphs {
         if has_rev1 {
-            let proj1 = dom.clone_subtree(body1);
             let _ = preprocess::hash_block_level_content(
                 dom,
                 body1,
-                proj1,
+                body1,
                 settings,
                 &preprocess::null_rel_resolver,
             );
         }
         if has_rev2 {
-            let proj2 = dom.clone_subtree(body2);
             let _ = preprocess::hash_block_level_content(
                 dom,
                 body2,
-                proj2,
+                body2,
                 settings,
                 &preprocess::null_rel_resolver,
             );
