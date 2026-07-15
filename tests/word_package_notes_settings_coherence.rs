@@ -6,7 +6,11 @@ use std::collections::HashSet;
 use std::io::Read;
 use zip::ZipArchive;
 
-fn part_ids(zip: &mut ZipArchive<std::io::Cursor<Vec<u8>>>, part: &str, local: &str) -> HashSet<String> {
+fn part_ids(
+    zip: &mut ZipArchive<std::io::Cursor<Vec<u8>>>,
+    part: &str,
+    local: &str,
+) -> HashSet<String> {
     let Ok(mut f) = zip.by_name(part) else {
         return HashSet::new();
     };
@@ -33,7 +37,10 @@ fn part_ids(zip: &mut ZipArchive<std::io::Cursor<Vec<u8>>>, part: &str, local: &
     ids
 }
 
-fn settings_special_ids(zip: &mut ZipArchive<std::io::Cursor<Vec<u8>>>, child: &str) -> HashSet<String> {
+fn settings_special_ids(
+    zip: &mut ZipArchive<std::io::Cursor<Vec<u8>>>,
+    child: &str,
+) -> HashSet<String> {
     let Ok(mut f) = zip.by_name("word/settings.xml") else {
         return HashSet::new();
     };
@@ -101,8 +108,14 @@ fn package_notes_and_settings_coherent_on_treasury_x_5lb() {
 
     let fn_ids = part_ids(&mut zip, "word/footnotes.xml", "footnote");
     let en_ids = part_ids(&mut zip, "word/endnotes.xml", "endnote");
-    assert!(fn_ids.contains("-1") && fn_ids.contains("0"), "footnotes need separators: {fn_ids:?}");
-    assert!(en_ids.contains("-1") && en_ids.contains("0"), "endnotes need separators: {en_ids:?}");
+    assert!(
+        fn_ids.contains("-1") && fn_ids.contains("0"),
+        "footnotes need separators: {fn_ids:?}"
+    );
+    assert!(
+        en_ids.contains("-1") && en_ids.contains("0"),
+        "endnotes need separators: {en_ids:?}"
+    );
 
     // settings special list ⊆ notes part ids
     let mut settings_xml = String::new();
@@ -113,7 +126,10 @@ fn package_notes_and_settings_coherent_on_treasury_x_5lb() {
     // extract footnotePr block children ids
     if let Some(start) = settings_xml.find("footnotePr") {
         let block = &settings_xml[start..];
-        let end = block.find("</w:footnotePr>").or_else(|| block.find("/>")).unwrap_or(block.len().min(500));
+        let end = block
+            .find("</w:footnotePr>")
+            .or_else(|| block.find("/>"))
+            .unwrap_or(block.len().min(500));
         let block = &block[..end];
         for cap in block.split("id=\"").skip(1) {
             let id = cap.split('"').next().unwrap_or("");
@@ -128,7 +144,10 @@ fn package_notes_and_settings_coherent_on_treasury_x_5lb() {
     }
     if let Some(start) = settings_xml.find("endnotePr") {
         let block = &settings_xml[start..];
-        let end = block.find("</w:endnotePr>").or_else(|| block.find("/>")).unwrap_or(block.len().min(500));
+        let end = block
+            .find("</w:endnotePr>")
+            .or_else(|| block.find("/>"))
+            .unwrap_or(block.len().min(500));
         let block = &block[..end];
         for cap in block.split("id=\"").skip(1) {
             let id = cap.split('"').next().unwrap_or("");
@@ -143,13 +162,14 @@ fn package_notes_and_settings_coherent_on_treasury_x_5lb() {
     }
 
     // no powertools Unid left on notes (package parts Word loads)
-    for part in ["word/footnotes.xml", "word/endnotes.xml", "word/document.xml"] {
+    for part in [
+        "word/footnotes.xml",
+        "word/endnotes.xml",
+        "word/document.xml",
+    ] {
         let mut s = String::new();
         zip.by_name(part).unwrap().read_to_string(&mut s).unwrap();
-        assert!(
-            !s.contains("Unid="),
-            "{part} still carries pt Unid scratch"
-        );
+        assert!(!s.contains("Unid="), "{part} still carries pt Unid scratch");
     }
 
     let _ = settings_special_ids; // silence if unused in some paths

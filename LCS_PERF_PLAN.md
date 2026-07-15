@@ -89,7 +89,8 @@ evidence and ready-to-run branches of the program.
 | ACCEPT-SKIP-A3: skip A.3 rebuild without moveFromRangeStart | banked (MEASURED #44) | exact NodeId + m28 A.3; digests YES×4; matrix wall thrash/mixed — no wall claim |
 | ACCEPT-SKIP-A5: skip A.5 when no deleted/moved-from paragraph marks | banked lean (MEASURED #45) | exact m28 A.5 + NodeId; digests YES×4; RFP×5lb + redline×5lb B both slots (~−1s); pdense flat — no full-matrix wall claim |
 | NAME-01c: cache accept/RP W/PT locals + call sites | banked (MEASURED #46) | exact == XName::get; digests YES×4; matrix wall noise/mixed — no wall claim |
-| latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
+| LCS-OWN-01: move correlated-hash partitions | **candidate KEEP** (MEASURED #47) | pdense clean slots ~15.1–17.8→11.0–11.2 s; identical neutral; real pairs neutral/noisy; every uncompressed package member exact ×4 ×2 rounds |
+| latest profiles | accepted evidence | **workload split:** complex redline×5lb: produce/reconstruct 21.5%/14.6%, LCS 9.0%, parse 8.6%, atomize 5.3%; pdense: LCS 74.0%, correlated resolver 54.0% before #47 |
 | quality baseline | **re-recorded HEAD** (MEASURED #43 + package fixes) | ladder: 0 NEW; sample ledger mean **83.78** / median **89.46** (n=35); **full ledger mean 83.77 / median 88.52 (n=164)** — exact historical floor class |
 
 The flat profile changes the strategy. “Only optimize the largest hotspot” is
@@ -1548,16 +1549,121 @@ base = A5 banked · cand = NAME-01c
 **Verdict: bank** — exact keep; no full-matrix wall claim (NAME-01 family
 already harvested the large win).
 
+## MEASURED #47 — 2026-07-15: LCS-OWN-01 CANDIDATE KEEP (exact, dense win)
+
+### Hypothesis
+
+`ProcessCorrelatedHashes` identified an exact run, then deep-cloned every group
+in its before/matched/after partitions. The resolver already owned the Unknown
+sequence, so splitting the two owned vectors should preserve ordering and all
+hash/status semantics while removing the dominant clone stacks from dense
+documents.
+
+### Files and retained oracle
+
+- `src/comparer/lcs.rs` — extract the unchanged run-selection plan; keep the
+  public borrowed/cloning form as the reference oracle; add an ownership-only
+  production form; move the owned Unknown through it.
+- inline `correlated_hash_owned_tests` — assert the owned form has the exact
+  reference signature and preserves every unit SHA string allocation address
+  (move, not deep clone).
+
+TDD RED was the missing `process_correlated_hashes_owned`; GREEN was 2/2 focused
+tests. The first fixture revision correctly exposed a test-data error (empty
+groups have zero descendant atoms and fail the upstream threshold), so the
+fixture was repaired to use real one-atom groups; production logic was not
+relaxed.
+
+### Controlled binaries
+
+Both binaries were rebuilt from the same dirty-tree source, with only the
+resolver dispatch toggled and `CARGO_PROFILE_RELEASE_DEBUG=1` held constant:
+
+- A: `e49bbc0effeea374648e5c70fe73da1180187224f3b5bd69aa55a92de15681d5`
+- B: `f9f40f5fb3a4a92198770c2c265e7009b81551a46a8677888aa2bf5f4083d48d`
+
+### A/B — permanent matrix (2× ABBA)
+
+| fixture | round 1 A / B / B / A wall (s) | round 2 A / B / B / A wall (s) | decision |
+|---|---:|---:|---|
+| pdense_15k | 15.45 / **11.22 / 11.04** / 17.78 | 31.70* / 16.01* / **11.09** / 15.10 | every B beats its adjacent A; clean cluster ~28–38% faster |
+| rfp17_redline_self | 0.66 / 0.66 / 0.67 / 0.66 | 0.65 / 0.64 / 0.65 / 0.63 | neutral short-circuit noise |
+| rfp17_vs_5lb102 | 24.28 / 27.00 / 24.58 / 24.71 | 23.63 / 23.05 / 22.90 / 23.68 | mixed round 1; B both slots round 2 |
+| redline_rfp17_vs_5lb102 | 25.40 / 26.22 / 25.40 / 26.58 | 24.93 / 24.87 / 27.02 / 49.03* | load/noise dominated; no wall claim |
+
+`*` = concurrent-load contamination visible in user/sys time. No contaminated
+slot is used to enlarge the claim. `document.xml` digests matched for every
+slot. Whole ZIP bytes are not deterministic, so every uncompressed member was
+also compared: **all members matched on all four fixtures in both rounds**.
+
+### Final-source confirmation after quality-gate repairs
+
+The controlled binaries were rebuilt after the M151 residual-window and M159
+filename-stamp parity guards, again with only the ownership dispatch toggled:
+
+- A: `e0b81107116c651468d1250936d39bdace66c84f063d6d20afd65e4a548d1aed`
+- B: `3ad14dcf34b73ff60b659f5427a8fa9146923f2da83dbadc3a26a7bb53e03575`
+
+One confirmation ABBA produced pdense A `15.37 / 15.34` s wall and
+`14.64 / 14.94` s user versus B `11.01 / 14.12` s wall and
+`10.49 / 11.12` s user. The second B wall slot contains external wait (its
+user+sys is only 11.73 s); every B user-CPU slot is still ~25–28% below A.
+Identical remained 0.65–0.66 s. The real pairs were load-contaminated/mixed,
+so they remain explicitly outside the speedup claim. **Every uncompressed
+package member matched A versus B on all four fixtures.**
+
+### Mechanism profile
+
+On pdense, the candidate reduced LCS inclusive samples from 74.0% to 63.5% and
+the correlated resolver from 54.0% to 44.9%. The former 20–24% deep-clone stacks
+disappeared. The new exposed target is `correlated_hash_run` (13.9% inclusive),
+whose nested start-pair scan repeatedly extends matching diagonals.
+
+### Verification state
+
+- full branch-coverage lane, with the already-recorded `m36/s1a` defect skipped
+  by exact name: **92.14% lines / 78.97% branches**; `lcs.rs` **92.81% /
+  80.12%**
+- all-target clippy: clean under `-D warnings`
+- the unskipped exhaustive run identified only `m36/s1a` after the two new
+  dirty-tree Word-shape regressions were repaired; the retained cloning route
+  reproduced those failures before repair, proving LCS-OWN-01 was not causal
+
+**Verdict: candidate KEEP.** This is a large, mechanism-confirmed dense-edit win
+with exact permanent-matrix contents and no demonstrated real-document
+regression. Do not claim a universal 28–38% speedup: the real pairs are neutral
+or load-noisy, as expected because their fresh profile is produce-dominated.
+
 ### Next queue (do not stack)
 
-MEASURED #45 banked lean + **#46 NAME-01c banked**. **Queue paused for
-re-profile** (samply on permanent 4-fixture matrix) before the next pick.
-Portfolio still open: ACCEPT-SCAN-01 (single-flag only), HASH-STREAM banked
-amplify only after new profile, ATOM-VIEW/RESULT-DOM architectural tracks,
-remaining uncached `W::name` (tblGrid/gridCol/customXml*). No multi-mechanism
-batch. Do not stack banked skips for a synthetic wall claim.
+MEASURED #45 banked lean + **#46 NAME-01c banked** + **#47 LCS-OWN-01 candidate
+KEEP**. Fresh profiles replace the old flat-profile assumption with two lanes:
 
-**Verdict #43–#46:** quality restore; A3/A5 banked (A5 lean); NAME-01c banked.
+1. **P0-LAB-01 (mandatory first):** commit the compiled-out stage counters,
+   interleaved-trial summarizer, machine/load metadata, per-fixture medians/MAD,
+   explicit regression exit status, and paired quality comparison promised by
+   this plan. Criterion's exit code alone is not the ship gate.
+2. **CORR-IDX-01 (dense lane):** replace `correlated_hash_run`'s nested
+   start-pair plus suffix-extension scan with an exact hash/type index and
+   maximal-diagonal run computation. Retain the current scanner as the
+   property/reference oracle; exhaust ties, collisions, threshold boundaries,
+   and first-found `(i1, i2)` semantics before production dispatch changes.
+3. **PRODUCE-UNID-01 (real-document lane):** replace per-atom
+   `Option<Vec<String>>` ancestor-Unid copies with a shared immutable
+   `Arc<[String]>`, then profile compact/borrowed coalesce keys. Gate exact
+   nesting, textbox ancestry, note handling, and all permanent package members.
+4. **DOM-NAME-REF-01:** add borrowed `Dom` name/attribute predicates at the hot
+   reconstruction call sites only; do not broaden the DOM API without a profile
+   win.
+5. **PGO-LAST:** train only on the mixed permanent/corpus workload after the
+   algorithm/allocation wins and durable lab exist. A pdense-only profile would
+   optimize the wrong regime for real documents.
+
+No multi-mechanism batch. Run one RED→GREEN→ABBA→quality increment at a time.
+Do not stack banked skips for a synthetic wall claim.
+
+**Verdict #43–#47:** quality restore; A3/A5 banked (A5 lean); NAME-01c banked;
+LCS-OWN-01 candidate KEEP.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
@@ -1685,9 +1791,10 @@ The live seams that justify the new portfolio are concrete:
   predicates, token extractions, and LCS score walks.
 - `hex_string_from_bytes` formats each SHA-1 byte separately, and word hashing
   first concatenates every atom’s 40-character hash into a temporary string.
-- `resolve_correlated_sequences` now moves the owned unit vectors into
-  `do_lcs_algorithm` (`e29ca8e`) and splices replacements with one tail shift
-  (`8ec200f`); do not plan those already-shipped clone/worklist fixes again.
+- `resolve_correlated_sequences` now moves the owned unit vectors through both
+  the correlated-hash fast path (MEASURED #47) and `do_lcs_algorithm`
+  (`e29ca8e`), then splices replacements with one tail shift (`8ec200f`); do not
+  plan those already-shipped clone/worklist fixes again.
 - Production LCR dispatch uses the `HashMap<u64, Vec<usize>>` index, but still
   extends every matching suffix and repeatedly walks descendant atoms for
   Word-mode scoring. Strict replacement continues to preserve the earliest

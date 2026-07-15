@@ -115,7 +115,10 @@ fn document_comparer_package_surface() {
     assert!(!redline.is_empty());
     let pkg = PartFs::open(&redline).expect("open redline");
     let doc_xml = pkg
-        .part_string(&pkg.main_document_part().unwrap_or_else(|| "word/document.xml".into()))
+        .part_string(
+            &pkg.main_document_part()
+                .unwrap_or_else(|| "word/document.xml".into()),
+        )
         .expect("document.xml");
     assert!(
         doc_xml.contains("<w:ins") || doc_xml.contains("<w:del"),
@@ -207,7 +210,9 @@ fn revision_processor_element_surface() {
     let doc = jubarte::xmllinq::parse_xdocument(&mut dom, xml);
     let root = dom.root(doc).unwrap();
     // PartHasTrackedRevisions port (tree form)
-    assert!(revision_processor::element_has_tracked_revisions(&dom, root));
+    assert!(revision_processor::element_has_tracked_revisions(
+        &dom, root
+    ));
 
     let body = dom.element(root, &W::name("body")).expect("body");
     let chain = revision_processor::iterate_block_content_elements(&dom, body);
@@ -234,8 +239,8 @@ fn revision_processor_package_styles_path() {
     // document_comparer::accept_revisions / reject_revisions call
     // revision_processor::{accept,reject}_revisions_package, which branch on
     // is_styles → accept/reject_revisions_for_styles_transform.
-    let redline = document_comparer::compare_documents(ORIGINAL, MODIFIED, "Styles Path")
-        .expect("compare");
+    let redline =
+        document_comparer::compare_documents(ORIGINAL, MODIFIED, "Styles Path").expect("compare");
     let accepted = document_comparer::accept_revisions(&redline).expect("accept package");
     assert!(!accepted.is_empty());
     PartFs::open(&accepted).expect("accepted still a package");

@@ -449,13 +449,16 @@ pub fn compare_bodies_faithful_with_notes(
     // merge_replaced_paragraphs itself. Splitting these into independent
     // knobs would change Word-mode semantics; keep them coupled until a
     // deliberate settings redesign.
-    let seqs = if settings.merge_replaced_paragraphs {
+    let mut seqs = if settings.merge_replaced_paragraphs {
         lcs::detect_unrelated_sources_word_mode(dom, &cus1, &cus2, settings)
             .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
     } else {
         lcs::detect_unrelated_sources(&cus1, &cus2)
             .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
     };
+    // Word skip-ahead moves: Equal after pure A-only deletes → ins early +
+    // del late so detect_moves can emit moveTo/moveFrom (page-order parity).
+    moves::promote_skip_ahead_equals(&mut seqs, settings);
 
     let mut id = 1u32;
     lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, &mut id);
@@ -649,7 +652,18 @@ pub fn compare_bodies_faithful_with_notes(
     // runs never take this): merge fully-replaced paragraph pairs like Word.
     if settings.merge_replaced_paragraphs {
         finalize::reorder_replaced_blocks(dom, root);
+        // Short pure-D base trailing after insert-all-next → splice mid-stream
+        // near TOC/tip (document_100×comments; Word nests original on page 2).
+        finalize::splice_trailing_short_pure_dels_midstream(dom, root);
         finalize::merge_replaced_paragraphs(dom, root, &settings.author_for_revisions);
+        // M159: restore short pure-D before longer pure-I after merge reorder
+        // (text_highlight×times Word MIX|DEL|INS|MIX).
+        finalize::restore_short_del_before_long_ins(dom, root);
+        // M147: MIX digits-only pure-I + pure-D title → split (1_5×24 Word shape).
+        finalize::split_digits_ins_from_mixed_title(dom, root);
+        // M143: mid pure-D Demo title → fold into first numbered pure-I heading
+        // (double_spacing×eigenpal: Word MIX on `1. What this is` + del title).
+        finalize::fold_midstream_demo_title_into_numbered_heading(dom, root);
         finalize::drop_sectpr_from_deleted_marks(dom, root, &genuine_mid_sectprs);
         finalize::drop_hoisted_sectpr_artifacts(dom, root, &genuine_mid_sectprs);
         finalize::mark_fully_revised_rows(dom, root, settings, &mut id);
@@ -670,6 +684,11 @@ pub fn compare_bodies_faithful_with_notes(
         // M105: pure-D short title + following MIX leading ins → Word subtitle
         // insert lands on title residual (file_7/5/130 document peel).
         finalize::fold_leading_ins_from_mix_into_preceding_pure_del(dom, root);
+        // M144: trailing ins on MIX + following pure-D body that share a token
+        // → peel ins into pure-D (italic×justified "for a formal document look").
+        finalize::peel_trailing_ins_from_mix_into_following_pure_del(dom, root);
+        // M154: trailing del on MIX + following pure-I (justified_underline×justify_2).
+        finalize::peel_trailing_del_from_mix_into_following_pure_ins(dom, root);
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
         // M87b: last pure-del with pPrChange drops mark-only del (file_55).
         finalize::strip_last_pure_del_mark_when_pprchange(dom, root);

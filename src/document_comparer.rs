@@ -927,6 +927,53 @@ fn add_rpr_child_in_order(dom: &mut Dom, rpr: NodeId, child: NodeId, local: &str
 /// M-PAG mechanism 2b / M71: when the output Normal's effective run metrics
 /// differ from the REVISED document's, rewrite Normal's rPr to B's effective
 /// values with a `w:rPrChange` holding the old rPr. Originally scoped to
+/// Copy B's theme part(s) when the A-based package lacks one. Theme fonts
+/// (major/minor HAnsi) drive Title/Heading faces in Word; missing theme
+/// leaves LO on factory faces. Full docDefaults swap (B Inter over A Calibri)
+/// regressed sales_report×sample_document on LO PDF (−5pts) — leave
+/// docDefaults to the Normal merge path; only fill missing theme parts.
+fn adopt_revised_styles_chrome(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
+    let out_has_theme = out
+        .parts()
+        .iter()
+        .any(|p| p.starts_with("word/theme/") && p.ends_with(".xml"));
+    if out_has_theme {
+        return;
+    }
+    let b_themes: Vec<String> = pkg2
+        .parts()
+        .iter()
+        .filter(|p| p.starts_with("word/theme/") && p.ends_with(".xml"))
+        .cloned()
+        .collect();
+    for part in b_themes {
+        let Some(bytes) = pkg2.part_bytes(&part).map(<[u8]>::to_vec) else {
+            continue;
+        };
+        out.set_part(&part, bytes);
+        out.add_content_type_override(
+            &format!("/{part}"),
+            "application/vnd.openxmlformats-officedocument.theme+xml",
+        );
+        let has_theme_rel = out.read_rels_for(out_main).is_some_and(|r| {
+            r.items
+                .iter()
+                .any(|i| i.rel_type.ends_with("/theme") || i.target.contains("theme"))
+        });
+        if !has_theme_rel {
+            let target = part
+                .strip_prefix("word/")
+                .unwrap_or(part.as_str())
+                .to_string();
+            out.add_document_relationship(
+                out_main,
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme",
+                &target,
+            );
+        }
+    }
+}
+
 /// header/footer→Normal (footer knife-edge line box). M71 always runs it in
 /// Word mode so no-HF pairs like file_197 also get B's Calibri dd; M65 still
 /// skips both-bare Normal (file_170).
@@ -1340,6 +1387,73 @@ fn unique_part_name(out: &PartFs, want: &str, bytes: &[u8]) -> String {
                 }
             }
         }
+    }
+}
+
+/// Word Compare leaves the body-level final `sectPr` without
+/// headerReference/footerReference when an earlier mid-body section break
+/// already defines the same (kind, type) slot — later sections inherit.
+/// Evidence (docx_lots_of_comments_*, verdana×strict01, word_clean_strict01×…):
+/// Word's redline has HF only on mid `pPr/sectPr`; the body final is empty.
+/// Our pipeline sometimes leaves A's (or adopted) refs on the final as well,
+/// which dual-binds chrome and diverges from Word. Strip only the **body
+/// direct-child** final; mid multi-section even/default/first copies stay.
+fn strip_final_sectpr_inherited_header_footer(dom: &mut Dom, result_root: NodeId) {
+    let href = W::name("headerReference");
+    let fref = W::name("footerReference");
+    let type_name = W::name("type");
+    let Some(body) = dom.element(result_root, &W::body()) else {
+        return;
+    };
+    // Body-level final sectPr is a direct child of w:body (not pPr/sectPr).
+    let Some(final_sect) = dom.element(body, &W::name("sectPr")) else {
+        return;
+    };
+    let mut earlier_slots: std::collections::HashSet<(bool, String)> =
+        std::collections::HashSet::new();
+    for sect in dom.descendants(body, Some(&W::name("sectPr"))) {
+        if sect == final_sect {
+            continue;
+        }
+        for e in dom.elements(sect, None) {
+            let Some(n) = dom.name(e) else { continue };
+            let is_header = if n == href {
+                true
+            } else if n == fref {
+                false
+            } else {
+                continue;
+            };
+            let ty = dom
+                .attribute(e, &type_name)
+                .unwrap_or("default")
+                .to_string();
+            earlier_slots.insert((is_header, ty));
+        }
+    }
+    if earlier_slots.is_empty() {
+        return;
+    }
+    let mut to_remove: Vec<NodeId> = Vec::new();
+    for e in dom.elements(final_sect, None) {
+        let Some(n) = dom.name(e) else { continue };
+        let is_header = if n == href {
+            true
+        } else if n == fref {
+            false
+        } else {
+            continue;
+        };
+        let ty = dom
+            .attribute(e, &type_name)
+            .unwrap_or("default")
+            .to_string();
+        if earlier_slots.contains(&(is_header, ty)) {
+            to_remove.push(e);
+        }
+    }
+    for n in to_remove {
+        dom.remove(n);
     }
 }
 
@@ -1809,9 +1923,7 @@ fn compare_documents_impl(
 
     // After prep, packages may still be byte-identical (rare non-self paths).
     if original_owned == modified_owned {
-        return Ok(crate::comparer::fixups::fix_up_drawing_ids_in_package(
-            &original_owned,
-        )?);
+        return crate::comparer::fixups::fix_up_drawing_ids_in_package(&original_owned);
     }
 
     let original: &[u8] = &original_owned;
@@ -1919,6 +2031,9 @@ fn compare_documents_impl(
     // it adds references to the final sectPr).
     if settings.merge_replaced_paragraphs {
         adopt_revised_header_footer(&mut dom, result_root, &pkg2, &mut out, &main1);
+        // Word inheritance: drop body-final HF slots already set on an earlier
+        // mid-section break (dual chrome otherwise). Mid multi-section copies stay.
+        strip_final_sectpr_inherited_header_footer(&mut dom, result_root);
         // M35: comments carryover — union parts (B's byte-identical when its
         // set ⊇ A's) + anchors re-injected at the equivalent text positions.
         crate::comparer::comments::carry_comments(
@@ -1987,6 +2102,15 @@ fn compare_documents_impl(
             }
             _ => {}
         }
+    }
+
+    // Word-mode: adopt B's styles chrome (docDefaults, latentStyles) + theme
+    // when present. A-based packages (sales_report×sample_document) keep A's
+    // thin Calibri docDefaults / no theme while body is almost all B inserts —
+    // LO then lays out B's Inter/theme content with the wrong defaults (score
+    // ~47 despite near-identical markup). Word carries B's docDefaults + theme.
+    if settings.merge_replaced_paragraphs {
+        adopt_revised_styles_chrome(&mut out, &pkg2, &main1);
     }
 
     // Word-parity: strip pStyle/rStyle that styles.xml does not define. LO maps
@@ -2159,11 +2283,7 @@ fn compare_documents_impl(
         (en1.as_str(), notes_ctx.en_with_revisions, false),
     ] {
         if let Some(r) = root {
-            let def = if is_fn {
-                W::footnote()
-            } else {
-                W::endnote()
-            };
+            let def = if is_fn { W::footnote() } else { W::endnote() };
             let ids: std::collections::HashSet<String> = dom
                 .elements(r, Some(&def))
                 .into_iter()
@@ -2190,7 +2310,10 @@ fn compare_documents_impl(
                 &footnote_ids,
                 &endnote_ids,
             );
-            out.set_part("word/settings.xml", sd.serialize_element(sroot).into_bytes());
+            out.set_part(
+                "word/settings.xml",
+                sd.serialize_element(sroot).into_bytes(),
+            );
         }
     }
     // M4.H.x: header/footer CONTENT diff (Word redlines header/footer changes; we
@@ -2370,7 +2493,10 @@ fn compare_documents_impl(
                 crate::comparer::footnotes::sync_settings_special_note_ids(
                     &mut sd, sroot, &fn_ids, &en_ids,
                 );
-                out.set_part("word/settings.xml", sd.serialize_element(sroot).into_bytes());
+                out.set_part(
+                    "word/settings.xml",
+                    sd.serialize_element(sroot).into_bytes(),
+                );
             }
         }
     }

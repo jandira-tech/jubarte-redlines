@@ -164,10 +164,7 @@ pub static RECURSION_ELEMENTS: LazyLock<Vec<RecursionInfo>> = LazyLock::new(|| {
         mk(O::name("lock"), None),
         mk(W::txbx_content(), None),
         mk(W10::name("wrap"), None),
-        mk(
-            W::sdt(),
-            Some(vec![W::name("sdtPr"), W::name("sdtEndPr")]),
-        ),
+        mk(W::sdt(), Some(vec![W::name("sdtPr"), W::name("sdtEndPr")])),
         mk(W::sdt_content(), None),
         mk(W::hyperlink(), None),
         mk(W::name("fldSimple"), None),

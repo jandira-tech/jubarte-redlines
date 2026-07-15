@@ -32,7 +32,10 @@ fn skip_a5_no_deleted_marks_preserves_root_id() {
     d.add(body, p2);
     let body_id = body;
     let out = accept_deleted_and_move_from_paragraph_marks(&mut d, body);
-    assert_eq!(out, body_id, "no deleted paragraph marks → transfer same root");
+    assert_eq!(
+        out, body_id,
+        "no deleted paragraph marks → transfer same root"
+    );
     let texts: Vec<String> = d
         .descendants(out, Some(&w("t")))
         .iter()

@@ -271,9 +271,7 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
             .and_then(|p| dom.name(p))
             .is_some_and(|pn| pn == W::tc_pr());
         if parent_is_tcpr {
-            let vmerge = dom
-                .attribute(node, &W::v_merge())
-                .map(|s| s.to_string());
+            let vmerge = dom.attribute(node, &W::v_merge()).map(|s| s.to_string());
             if vmerge.as_deref() == Some("rest") {
                 let v = dom.new_element(W::v_merge());
                 dom.set_attribute_value(v, &W::val(), Some("restart"));
@@ -405,8 +403,7 @@ fn reverse_revisions_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         .and_then(|gp| dom.name(gp))
         .is_some_and(|n| n == W::p_pr());
 
-    let in_p_or_hyperlink =
-        matches!(&parent_name, Some(n) if *n == W::p() || *n == W::hyperlink());
+    let in_p_or_hyperlink = matches!(&parent_name, Some(n) if *n == W::p() || *n == W::hyperlink());
 
     // Deleted run / deleted math char → w:ins (wrapping reversed children).
     if name == W::del() && (in_p_or_hyperlink || parent_name.as_ref() == Some(&M::name("r"))) {
@@ -533,10 +530,7 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         return reject_revisions_for_part_transform(dom, new_rpr);
     }
     // numberingChange / cellDel / cellMerge → drop.
-    if name == W::numbering_change()
-        || name == W::cell_del()
-        || name == W::cell_merge()
-    {
+    if name == W::numbering_change() || name == W::cell_del() || name == W::cell_merge() {
         return None;
     }
     // tc whose tcPr contains a cellIns → drop the inserted cell.
@@ -1514,7 +1508,8 @@ fn paragraph_mark_is_deleted_or_moved_from(dom: &Dom, p: NodeId) -> bool {
 /// deleted or moved-from under `root`.
 fn has_deleted_or_moved_from_paragraph_mark(dom: &Dom, root: NodeId) -> bool {
     fn walk(dom: &Dom, id: NodeId) -> bool {
-        if dom.name(id).as_ref() == Some(&W::p()) && paragraph_mark_is_deleted_or_moved_from(dom, id)
+        if dom.name(id).as_ref() == Some(&W::p())
+            && paragraph_mark_is_deleted_or_moved_from(dom, id)
         {
             return true;
         }

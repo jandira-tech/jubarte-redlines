@@ -88,7 +88,6 @@ fn m4_f6_group_ids() {
     assert_eq!(ids, vec!["1", "2", "3"]);
 }
 
-
 /// End-of-produce FixUpDocPrIds: drawing-heavy pairs must not emit duplicate
 /// wp:docPr/@id after Word-mode merge/wrap (parity S-dup-docpr-id).
 #[test]

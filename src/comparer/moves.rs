@@ -179,6 +179,129 @@ pub fn split_block_on_paragraphs(
     out
 }
 
+/// When B skips ahead of pure A-only deletes (LCS: `Equal → Deleted+ → Equal+`
+/// with no inserts in the gap), Word often shows the matched continuation as a
+/// **move** to the early (B) position: `moveTo` before the gap, `moveFrom` after.
+/// Leaving equals at A's late position keeps gap deletes in the middle and
+/// shifts later pages (docx_lots_of_comments_addition_removal_redline × clean:
+/// Capability matrix lands pages later than Word).
+///
+/// Rewrite `… Equal, Deleted(gap), Equal+(matched) …` into
+/// `… Equal, Inserted(matched₂), Deleted(gap), Deleted(matched₁) …` so
+/// [`detect_moves_in_atom_list`] can retag the matched pair as a move.
+///
+/// The matched run is the consecutive Equals after the gap, **stopping after
+/// the first table** (or after 3 equals) so a heading alone is never moved
+/// without its following table body.
+pub fn promote_skip_ahead_equals(
+    seqs: &mut Vec<super::atoms::CorrelatedSequence>,
+    settings: &WmlComparerSettings,
+) {
+    use super::ComparisonUnitGroupType;
+    use super::atoms::{ComparisonUnit, CorrelatedSequence};
+    if !settings.merge_replaced_paragraphs || !settings.detect_moves {
+        return;
+    }
+    let unit_is_table = |u: &ComparisonUnit| match u {
+        ComparisonUnit::Group(g) => g.group_type == ComparisonUnitGroupType::Table,
+        _ => false,
+    };
+    let seq_has_table = |s: &CorrelatedSequence| {
+        s.com_units_1
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .any(unit_is_table)
+            || s.com_units_2
+                .as_ref()
+                .into_iter()
+                .flatten()
+                .any(unit_is_table)
+    };
+
+    let mut out: Vec<CorrelatedSequence> = Vec::with_capacity(seqs.len().saturating_mul(2));
+    let mut i = 0usize;
+    while i < seqs.len() {
+        if seqs[i].correlation_status == CorrelationStatus::Deleted {
+            let del_start = i;
+            while i < seqs.len() && seqs[i].correlation_status == CorrelationStatus::Deleted {
+                i += 1;
+            }
+            let gap = &seqs[del_start..i];
+            let gap_units: usize = gap
+                .iter()
+                .map(|s| s.com_units_1.as_ref().map(|u| u.len()).unwrap_or(0))
+                .sum();
+            let prev_ok = out.last().is_none_or(|s| {
+                s.correlation_status == CorrelationStatus::Equal
+                    || s.correlation_status == CorrelationStatus::Inserted
+            });
+            // Collect a short Equal run after the gap (through first table).
+            if gap_units >= 1 && prev_ok && i < seqs.len() {
+                let eq_start = i;
+                let mut eq_end = i;
+                let mut saw_table = false;
+                let mut n_eq = 0usize;
+                while eq_end < seqs.len()
+                    && seqs[eq_end].correlation_status == CorrelationStatus::Equal
+                    && n_eq < 3
+                {
+                    if seqs[eq_end]
+                        .com_units_1
+                        .as_ref()
+                        .map(|u| u.is_empty())
+                        .unwrap_or(true)
+                        || seqs[eq_end]
+                            .com_units_2
+                            .as_ref()
+                            .map(|u| u.is_empty())
+                            .unwrap_or(true)
+                    {
+                        break;
+                    }
+                    n_eq += 1;
+                    if seq_has_table(&seqs[eq_end]) {
+                        saw_table = true;
+                        eq_end += 1;
+                        break;
+                    }
+                    eq_end += 1;
+                }
+                // Only promote when the run includes a table (heading-only moves
+                // orphan the table and regress page layout).
+                if saw_table && eq_end > eq_start {
+                    let mut u1_all = Vec::new();
+                    let mut u2_all = Vec::new();
+                    for s in &seqs[eq_start..eq_end] {
+                        if let Some(u) = &s.com_units_1 {
+                            u1_all.extend(u.iter().cloned());
+                        }
+                        if let Some(u) = &s.com_units_2 {
+                            u2_all.extend(u.iter().cloned());
+                        }
+                    }
+                    if !u1_all.is_empty() && !u2_all.is_empty() {
+                        out.push(CorrelatedSequence::inserted(u2_all));
+                        for g in gap {
+                            out.push(g.clone());
+                        }
+                        out.push(CorrelatedSequence::deleted(u1_all));
+                        i = eq_end;
+                        continue;
+                    }
+                }
+            }
+            for g in &seqs[del_start..i] {
+                out.push(g.clone());
+            }
+            continue;
+        }
+        out.push(seqs[i].clone());
+        i += 1;
+    }
+    *seqs = out;
+}
+
 /// M4.G.3 — `DetectMovesInAtomList` (:4711): greedy match deleted↔inserted blocks
 /// by Jaccard ≥ threshold (min word count), retag MovedSource/MovedDestination.
 ///

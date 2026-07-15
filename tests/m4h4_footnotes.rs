@@ -1000,7 +1000,11 @@ fn m4_h6_sync_settings_drops_missing_special_ids() {
         .into_iter()
         .filter_map(|e| d.attribute(e, &W::id()).map(str::to_string))
         .collect();
-    assert_eq!(ids, vec!["-1", "0"], "dangling id=1 removed from footnotePr");
+    assert_eq!(
+        ids,
+        vec!["-1", "0"],
+        "dangling id=1 removed from footnotePr"
+    );
 
     let en_pr = d
         .descendants(root, Some(&W::name("endnotePr")))
@@ -1012,5 +1016,9 @@ fn m4_h6_sync_settings_drops_missing_special_ids() {
         .into_iter()
         .filter_map(|e| d.attribute(e, &W::id()).map(str::to_string))
         .collect();
-    assert_eq!(eids, vec!["-1", "0"], "dangling id=1 removed from endnotePr");
+    assert_eq!(
+        eids,
+        vec!["-1", "0"],
+        "dangling id=1 removed from endnotePr"
+    );
 }

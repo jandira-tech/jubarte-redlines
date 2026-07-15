@@ -5,7 +5,10 @@ use jubarte::xmllinq::XName;
 
 #[test]
 fn name01c_accept_pipeline_names_match_get() {
-    assert_eq!(W::move_from_range_end(), XName::get("moveFromRangeEnd", W::URI));
+    assert_eq!(
+        W::move_from_range_end(),
+        XName::get("moveFromRangeEnd", W::URI)
+    );
     assert_eq!(W::move_to_range_end(), XName::get("moveToRangeEnd", W::URI));
     assert_eq!(W::sdt(), XName::get("sdt", W::URI));
     assert_eq!(W::sdt_content(), XName::get("sdtContent", W::URI));

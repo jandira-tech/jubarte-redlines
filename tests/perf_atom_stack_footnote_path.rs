@@ -147,8 +147,7 @@ fn deleted_footnote_compare_does_not_panic() {
             )
             .unwrap();
 
-            zip.start_file("word/_rels/document.xml.rels", opt)
-                .unwrap();
+            zip.start_file("word/_rels/document.xml.rels", opt).unwrap();
             let mut rels = String::from(
                 r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
@@ -202,7 +201,11 @@ fn deleted_footnote_compare_does_not_panic() {
     let a = pkg(a_doc, Some(a_fn));
     let b = pkg(b_doc, None);
     let out = compare_documents(&a, &b, "Test").expect("deleted footnote must not panic");
-    assert!(out.len() > 100, "expected a real package, got {} bytes", out.len());
+    assert!(
+        out.len() > 100,
+        "expected a real package, got {} bytes",
+        out.len()
+    );
     // Package must contain delText stream of the deleted note body.
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&out[..])).unwrap();
     let mut found_note_text = false;
