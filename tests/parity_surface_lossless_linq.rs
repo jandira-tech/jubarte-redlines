@@ -196,16 +196,52 @@ fn wml_opc_strict_surface() {
     PartFs::open(&transitional).expect("strict output still a package");
 }
 
-/// Report claim: revision_processor element accept is present.
+/// Report claims (corrected):
+/// - `element_has_tracked_revisions` ≡ PartHasTrackedRevisions on a tree (pub)
+/// - `iterate_block_content_elements` ≡ IterateBlockContentElements + AnnotateBlockContentElements
+/// - styles accept/reject run via `accept_revisions_package` (see document_comparer::accept_revisions)
 #[test]
 fn revision_processor_element_surface() {
     let mut dom = Dom::new();
-    let xml = r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:ins w:id="0" w:author="A" w:date="2020-01-01T00:00:00Z"><w:r><w:t>X</w:t></w:r></w:ins></w:p></w:body></w:document>"#;
+    let xml = r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:ins w:id="0" w:author="A" w:date="2020-01-01T00:00:00Z"><w:r><w:t>X</w:t></w:r></w:ins></w:p><w:p><w:r><w:t>Y</w:t></w:r></w:p></w:body></w:document>"#;
     let doc = jubarte::xmllinq::parse_xdocument(&mut dom, xml);
     let root = dom.root(doc).unwrap();
+    // PartHasTrackedRevisions port (tree form)
     assert!(revision_processor::element_has_tracked_revisions(&dom, root));
+
+    let body = dom.element(root, &W::name("body")).expect("body");
+    let chain = revision_processor::iterate_block_content_elements(&dom, body);
+    assert!(
+        chain.len() >= 2,
+        "AnnotateBlockContentElements port must chain block content"
+    );
+    assert!(chain[0].this_block_content_element.is_some());
+    assert_eq!(
+        chain[0].next_block_content_element,
+        chain[1].this_block_content_element
+    );
+
     let accepted = revision_processor::accept_revisions_for_element(&mut dom, root);
     assert!(dom.is_element(accepted));
+    assert!(!revision_processor::element_has_tracked_revisions(
+        &dom, accepted
+    ));
+}
+
+/// Package-level accept/reject (includes styles part transforms when styles exist).
+#[test]
+fn revision_processor_package_styles_path() {
+    // document_comparer::accept_revisions / reject_revisions call
+    // revision_processor::{accept,reject}_revisions_package, which branch on
+    // is_styles → accept/reject_revisions_for_styles_transform.
+    let redline = document_comparer::compare_documents(ORIGINAL, MODIFIED, "Styles Path")
+        .expect("compare");
+    let accepted = document_comparer::accept_revisions(&redline).expect("accept package");
+    assert!(!accepted.is_empty());
+    PartFs::open(&accepted).expect("accepted still a package");
+    let rejected = document_comparer::reject_revisions(&redline).expect("reject package");
+    assert!(!rejected.is_empty());
+    PartFs::open(&rejected).expect("rejected still a package");
 }
 
 /// Report claim: util sha1 + group_adjacent present (PtUtil subset).
