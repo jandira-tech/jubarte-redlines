@@ -1,0 +1,5 @@
+# This crate is written in rustfmt-default style (4-space indent). The repo
+# root `.rustfmt.toml` sets `tab_spaces = 2` for the parent ooxmlsdk crates;
+# without this nearest-wins override, `cargo fmt --check` (local and the
+# redline CI gate) would demand a whole-crate reindent.
+tab_spaces = 4
