@@ -43,6 +43,7 @@ evidence and ready-to-run branches of the program.
 | PR-C.1: arena free-list/reclaim | measured and reverted | user CPU neutral/slower; peak RSS about 14% worse; do not repeat this design |
 | ANN-01: dead annotations Vec → Dom side table | shipped (`d006eaf`) | NodeData 152→128 B; annotations never had a production caller (see MEASURED #4) |
 | NODE-KIND-01: box rare Document/Pi variants | shipped (`6bd0e41`) | NodeData 128→96 B; A/B user CPU −2.6%, sys CPU −17%, wall −2.6% (both runs); RSS inconclusive, no regression |
+| PARSE-01: intern XNamespace/XName strings | shipped (`2d4b1e6`) | wall −4%…−10.6% (win, all runs), sys CPU −24%…−31%, user ~neutral; peak RSS +~1.2GB reproducible (flagged, see MEASURED #5) |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -51,6 +52,16 @@ no longer sufficient: on a roughly 98-second comparison, every stable 1% slice
 is approximately one second. We will maintain a queue of independent,
 risk-adjusted experiments across the flat top, keep every proven win, and
 reprofile after each accepted change because the ranking will keep moving.
+
+**Metric priority (user directive, 2026-07-14): total end-to-end WALL time is the
+main metric to optimize; the only other thing to guard is material regressions to
+QUALITY (the parity ledger / Word fidelity).** User CPU, sys CPU, and peak RSS are
+diagnostic — use them to explain *why* wall moved and to catch a pathology — but do
+not block a real wall win on a user-CPU wobble or RSS noise, and do not chase a
+CPU/RSS micro-win that does not move wall. Because wall is noisy, judge it on
+interleaved ABBA runs where the candidate beats the base in *every* run, not on a
+single delta. A wall-only win from added threads still belongs in a throughput
+lane, not here.
 
 ### What “quickest without lower quality” means
 
@@ -590,6 +601,44 @@ amplify (or force GC / measure live-bytes) to read memory cleanly.
 elements/attrs and is the #1 self-time `drop_in_place<Attr>`. Engine is verified
 single-threaded, so a lockless `thread_local` interner with content-based
 Eq/Hash (parity-safe) is the mechanism.
+
+## MEASURED #5 — 2026-07-14: PARSE-01 interning SHIPPED (wall win, RSS flagged)
+
+`XName::get`/`XNamespace::get` interned via a lockless `thread_local`
+`HashSet<Arc<str>>`; identical namespace/local strings now share one allocation.
+Eq/Hash stay content-based (+ a parity-safe `Arc::ptr_eq` fast path), so output
+is canonically unchanged. Adversarial review: no BLOCKER/MAJOR (Eq⊆Hash holds
+unconditionally, no RefCell panic path, FNV/consumer hash isolation clean).
+
+### A/B — two interleaved ABBA sessions, base = node-shrink head (`b52ba3e`)
+
+| metric | session 1 (r1/r2) | session 2 (r1/r2) | read |
+|---|---|---|---|
+| **wall (primary)** | 73.8/72.3 → 70.6/69.5 (−4%) | 77.0/85.2 → 70.5/74.5 (−10.6%) | **win, cand < base in all 4 runs** |
+| sys CPU | 13.2/12.6 → 10.1/9.4 (−24%) | 15.6/16.3 → 10.2/11.9 (−31%) | win (fewer allocations) |
+| user CPU | 58.0/57.4 → 58.6/58.7 (+1.7%) | 58.3/58.5 → 58.4/58.8 (+0.3%) | ~neutral |
+| peak RSS | 13.9/14.4 → 14.5/15.0 | 13.7/14.0 → 14.6/15.5 | **+~1.2 GB, reproducible** |
+
+**Verdict: ship** under the wall-time metric — cand beat base in every run,
+anchored by the −24…−31% sys-CPU drop; quality (canonical equality) unchanged.
+
+**Open flag — peak RSS +~1.2 GB (+8%), reproducible across all four runs.**
+Counterintuitive (interning shares strings → fewer distinct allocations), so it
+is a *secondary* effect: the pool holds each distinct name for the run and the
+changed allocation pattern (millions of tiny short-lived allocs removed) shifts
+mimalloc's page-retention high-water mark. The name strings themselves are KB, not
+GB. Not gated by the wall-time metric and not a quality regression, but it nudges
+the existing 12–14 GB RSS pathology up ~1 GB. Candidate follow-ups if the user
+wants it reclaimed: measure live-bytes vs peak to confirm it is retention not
+live growth; try trimming mimalloc segments post-phase; or scope the pool so it
+can be dropped between documents. Deferred pending direction.
+
+**Dead end (do not retry): FNV-1a hasher for the pool.** Measured a +16% wall
+regression — FNV's weak low-bit avalanche clusters under std's low-bit bucket
+masking for short similar XML names, degrading the pool toward linear scans.
+Default SipHash is the shipped choice. A properly-avalanched fast hasher (e.g.
+fxhash with a final mix) is the only viable variant, and only if a future profile
+shows the pool's SipHash cost is worth attacking.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
