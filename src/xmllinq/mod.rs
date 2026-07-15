@@ -13,6 +13,41 @@ pub use serialize::{serialize_document, serialize_element};
 
 use std::sync::Arc;
 
+thread_local! {
+    /// PARSE-01: per-thread pool of interned name strings. `XName`/`XNamespace`
+    /// constructors route their `Arc<str>` through this so identical namespace and
+    /// local-name strings — which recur on millions of elements/attributes —
+    /// share one allocation instead of a fresh `Arc::from` each time. The engine
+    /// is single-threaded, so a thread-local pool needs no lock; OOXML's name
+    /// vocabulary is bounded, so the pool saturates quickly rather than growing
+    /// without bound.
+    ///
+    /// Uses the default (SipHash) hasher deliberately: a hand-rolled FNV-1a was
+    /// tried and measured a +16% wall regression — FNV's weak low-bit avalanche
+    /// clusters under std's low-bit bucket masking for these short, similar names,
+    /// degrading the pool. Default hashing keeps the measured −4% wall win.
+    static STR_POOL: std::cell::RefCell<std::collections::HashSet<Arc<str>>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Return a shared interned `Arc<str>` for `s`, allocating only on first sight.
+/// Equality/hash of the result are byte-for-byte identical to a fresh `Arc::from`;
+/// only storage is shared, so interning is behavior-preserving.
+fn intern_str(s: &str) -> Arc<str> {
+    STR_POOL.with(|pool| {
+        {
+            // Scope the shared borrow so it is released before `borrow_mut` below.
+            let p = pool.borrow();
+            if let Some(existing) = p.get(s) {
+                return existing.clone();
+            }
+        }
+        let arc: Arc<str> = Arc::from(s);
+        pool.borrow_mut().insert(arc.clone());
+        arc
+    })
+}
+
 /// An XML namespace (just its URI), owned via `Arc<str>`. Port of `XNamespace`.
 #[derive(Clone)]
 pub struct XNamespace {
@@ -23,7 +58,7 @@ impl XNamespace {
     /// `XNamespace.get(namespaceName)`.
     pub fn get(namespace_name: &str) -> XNamespace {
         XNamespace {
-            name: Arc::from(namespace_name),
+            name: intern_str(namespace_name),
         }
     }
 
@@ -55,7 +90,11 @@ impl XNamespace {
 
 impl PartialEq for XNamespace {
     fn eq(&self, other: &Self) -> bool {
-        self.name.as_ref() == other.name.as_ref()
+        // Interned names share an `Arc`, so pointer identity is a fast path for the
+        // common equal case; the content compare keeps correctness for any
+        // non-interned or pre-warm name. Result is identical to a pure content
+        // compare, so `Hash` (content-based) stays consistent.
+        Arc::ptr_eq(&self.name, &other.name) || self.name.as_ref() == other.name.as_ref()
     }
 }
 impl Eq for XNamespace {}
@@ -81,7 +120,7 @@ impl XName {
     /// `XName.get(localName, namespaceName = "")`.
     pub fn get(local_name: &str, namespace_name: &str) -> XName {
         XName {
-            local: Arc::from(local_name),
+            local: intern_str(local_name),
             namespace: XNamespace::get(namespace_name),
         }
     }
@@ -127,7 +166,10 @@ impl XName {
 
 impl PartialEq for XName {
     fn eq(&self, other: &Self) -> bool {
-        self.local.as_ref() == other.local.as_ref() && self.namespace == other.namespace
+        // Pointer-identity fast path for interned local names (see `XNamespace`);
+        // falls back to a content compare, so equality/hash semantics are unchanged.
+        (Arc::ptr_eq(&self.local, &other.local) || self.local.as_ref() == other.local.as_ref())
+            && self.namespace == other.namespace
     }
 }
 impl Eq for XName {}
@@ -836,5 +878,33 @@ mod node_layout_tests {
             "NodeData is {node} bytes; NODE-KIND-01 requires <= 96 (was 128 after \
              ANN-01, 152 originally)"
         );
+    }
+}
+
+#[cfg(test)]
+mod intern_tests {
+    use super::*;
+
+    /// PARSE-01 mechanism proof. `XName::get`/`XNamespace::get` must intern their
+    /// `Arc<str>` so identical namespace/local strings — which recur on millions
+    /// of elements and attributes — share one allocation instead of a fresh
+    /// `Arc::from` each time. Verified by pointer identity of the backing `Arc`s.
+    /// Content-based `Eq`/`Hash` are unchanged, so this is parity-safe.
+    #[test]
+    fn identical_names_share_interned_arcs() {
+        let ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        let a = XName::get("p", ns);
+        let b = XName::get("p", ns);
+        assert!(
+            Arc::ptr_eq(&a.local, &b.local),
+            "PARSE-01: identical local names must share one interned Arc"
+        );
+        assert!(
+            Arc::ptr_eq(&a.namespace.name, &b.namespace.name),
+            "PARSE-01: identical namespaces must share one interned Arc"
+        );
+        // Interning must not change equality semantics.
+        assert_eq!(a, b);
+        assert_ne!(a, XName::get("r", ns));
     }
 }
