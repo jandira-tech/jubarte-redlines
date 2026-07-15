@@ -104,17 +104,28 @@ pub fn clone_block_level_content_for_hashing(
         .next()
         .unwrap_or_else(|| dom.new_element(dom.name(node).unwrap_or_else(|| W::name("p"))));
     // remove all namespace-declaration attributes across the result
-    for el in dom.descendants_and_self(root, None) {
-        let nsdecls: Vec<_> = dom
-            .attributes(el)
-            .into_iter()
-            .map(|(n, _)| n)
-            .filter(|n| dom.is_namespace_declaration(n))
-            .collect();
-        for a in nsdecls {
-            dom.set_attribute_value(el, &a, None);
+    // (index walk — no descendants_and_self / attributes() Vec per node)
+    fn strip_nsdecls(dom: &mut Dom, id: NodeId) {
+        if dom.is_element(id) {
+            let n = dom.attr_count(id);
+            let mut to_drop = Vec::new();
+            for i in 0..n {
+                let (name, _) = dom.attr_at(id, i);
+                if dom.is_namespace_declaration(name) {
+                    to_drop.push(name.clone());
+                }
+            }
+            for a in &to_drop {
+                dom.set_attribute_value(id, a, None);
+            }
+            let kids = dom.child_count(id);
+            for i in 0..kids {
+                let c = dom.child_at(id, i);
+                strip_nsdecls(dom, c);
+            }
         }
     }
+    strip_nsdecls(dom, root);
     root
 }
 
@@ -199,12 +210,17 @@ fn clone_internal_unsalted(
 ) -> Vec<NodeId> {
     if !dom.is_element(node) {
         // text-node transform (B.4a)
-        if (settings.case_insensitive || settings.conflate_breaking_and_nonbreaking_spaces)
-            && dom.is_text(node)
-        {
-            let t = apply_text_transform(dom.text_value(node).unwrap_or(""), settings);
+        if dom.is_text(node) {
+            let raw = dom.text_value(node).unwrap_or("");
+            let t =
+                if settings.case_insensitive || settings.conflate_breaking_and_nonbreaking_spaces {
+                    apply_text_transform(raw, settings)
+                } else {
+                    raw.to_string()
+                };
             return vec![dom.new_text(&t)];
         }
+        // comment/PI: still need a fresh leaf (no shared ownership)
         return vec![dom.clone_subtree(node)];
     }
     let name = dom.name(node).unwrap();

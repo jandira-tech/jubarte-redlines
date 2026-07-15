@@ -55,6 +55,7 @@ evidence and ready-to-run branches of the program.
 | ACCEPT-SKIP-01: skip rebuilds when no tracked revs | shipped win (MEASURED #12) | pdense wall −10…12% every slot; user −10%; exact document.xml |
 | ACCEPT-SKIP-02: skip A.9 when no empty `w:tc` | shipped lean win (MEASURED #13) | matrix: RFP redline-self & RFP×5lb102 wall ↓ both slots; pdense noise; exact |
 | RSID-INPLACE-01: strip rsids without rebuild | shipped lean win (MEASURED #14) | matrix: both RFP fixtures wall ↓ both slots; pdense noise; exact; lower sys |
+| HASH-CLONE-MICRO: text new_text + nsdecl index walk | banked (MEASURED #15) | exact m4b; matrix wall mixed/noise (user flat); keep as cleanup |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -864,6 +865,24 @@ Tests: `tests/perf_rsid_inplace.rs` + m2 remove_rsid + accept suite.
 
 document.xml match all three. **Verdict: ship** — wall wins on complicated
 fixtures (the permanent matrix load-bearers).
+
+## MEASURED #15 — 2026-07-15: HASH-CLONE-MICRO BANKED
+
+In `clone_block_level_content_for_hashing` / `clone_internal`: text leaves use
+`new_text` (no `clone_subtree`); post-clone xmlns strip walks with
+`attr_count`/`child_at`. m4b_preprocess green; document.xml match on matrix.
+
+### A/B — full matrix, 1× ABBA (base = RSID-INPLACE)
+
+| fixture | A wall | B wall |
+|---|---:|---:|
+| pdense_15k | 19.65 / 19.39 | 19.84 / 19.50 |
+| rfp17_redline_self | 52.63 / 52.68 | 56.41 / 66.61 (noise/worse) |
+| rfp17_vs_5lb102 | 34.64 / 33.22 | 32.60 / 32.84 |
+
+User CPU ≈ flat on RFP self. **Verdict: keep / bank** — exact cleanup, no wall claim.
+Profile still shows `clone_block_level_content_for_hashing` dominant → real next
+is HASH-STREAM-01 (serialize/hash projection without materializing clones).
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
