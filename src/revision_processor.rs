@@ -1130,7 +1130,15 @@ pub fn coalesque_paragraph_end_tags_in_move_from_transform(
 /// the code takes the plain recursive rebuild instead. Net effect: a deep
 /// identity rebuild. Both the TS goldens and the C# RP baselines were
 /// generated with this behavior, so we reproduce it rather than "fix" it.
+///
+/// ACCEPT-SKIP-A3: when the subtree has no `w:moveFromRangeStart`, every
+/// grouping key is "Other" and the transform is a pure identity rebuild —
+/// transfer `node` without cloning (common path for ins/del-only redlines).
 pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: NodeId) -> NodeId {
+    // ACCEPT-SKIP-A3: no moveFromRangeStart → identity (keep parent links).
+    if !element_or_desc_has_name(dom, node, &W::move_from_range_start()) {
+        return node;
+    }
     if !dom.is_element(node) {
         return dom.clone_subtree(node);
     }

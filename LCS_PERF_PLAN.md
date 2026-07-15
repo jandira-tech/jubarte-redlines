@@ -84,8 +84,11 @@ evidence and ready-to-run branches of the program.
 | ACCEPT-SKIP-A8: skip merge-adjacent-tables rebuild when nothing merges | banked (MEASURED #41) | exact transfer gates; digests YES×4; matrix wall thrash/mixed — no wall claim |
 | ACCEPT-SKIP-A1: skip field-code fixup rebuild without fld/instr | banked (MEASURED #42) | identity skip + keep parent links; digests YES×4; wall mixed — bank |
 | PARITY-FIX-43: ATOM-STACK footnote path + IDENTICAL-INPUT docPr fixup | shipped quality restore (MEASURED #43) | restored zero NEW ladder keys; fixed deleted-note CRASH; S-dup-docpr-id gone on identical packages; ledger sample mean **83.78** / median **89.46** (n=35) |
+| NOTES-SETTINGS-01: keep continuationNotice + sync settings special-note ids | shipped quality (`08206bb`) | settings footnotePr/endnotePr ⊆ notes parts; Word-unreadable fixed for structural id=1 after rectify |
+| PACKAGE-VALIDITY-01: package-wide pt:* strip + settings re-sync | shipped quality (`74ea0e4`) | validity not document.xml-only; OPC parts + rels/CT; SDK TOTAL_ERRORS=0 on hostile redline pair |
+| ACCEPT-SKIP-A3: skip A.3 rebuild without moveFromRangeStart | banked (MEASURED #44) | exact NodeId + m28 A.3; digests YES×4; matrix wall thrash/mixed — no wall claim |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
-| quality baseline | **re-recorded HEAD** (MEASURED #43) | ladder: 0 NEW; sample ledger mean **83.78** / median **89.46** (n=35); **full ledger mean 83.77 / median 88.52 (n=164)** — exact historical floor class |
+| quality baseline | **re-recorded HEAD** (MEASURED #43 + package fixes) | ladder: 0 NEW; sample ledger mean **83.78** / median **89.46** (n=35); **full ledger mean 83.77 / median 88.52 (n=164)** — exact historical floor class |
 
 The flat profile changes the strategy. “Only optimize the largest hotspot” is
 no longer sufficient: on a roughly 98-second comparison, every stable 1% slice
@@ -1450,14 +1453,50 @@ stack. Fixed **before** any further speed experiment.
 | `cargo test --no-fail-fast` | **758 passed**, 1 failed (`m36_predel_correlation::s1a` pre-existing on stock HEAD), 6 ignored |
 | focused tests | atom_stack_footnote_path, m4f6_fixupids, path01, accept_skip01 green |
 
+## MEASURED #44 — 2026-07-15: ACCEPT-SKIP-A3 BANKED (exact, wall mixed)
+
+### Hypothesis
+`accept_paragraph_end_tags_in_move_from_transform` always deep-clones even when
+no `w:moveFromRangeStart` exists (FAITHFUL-BUG “nothing to do” is still a full
+identity rebuild). **ACCEPT-SKIP-A3:** if no mfrs in the subtree, return `node`
+unchanged (same pattern as A1/A7/A8).
+
+### Files
+- `src/revision_processor.rs` — early transfer on missing mfrs
+- `tests/perf_accept_skip_a3.rs` — NodeId gate + mfrs structure gate
+- existing `tests/m28_rp_part_pipeline.rs` A.3 oracles
+
+### Exact gates
+- RED→GREEN: `skip_a3_no_mfrs_preserves_root_id` (NodeId equality)
+- m28 A.3 suite green; full `cargo test --no-fail-fast`: only pre-existing
+  `m36_predel_correlation::s1a` fail
+- digests YES×4 on permanent matrix
+- parity_ladder sample `--limit 25`: **0 NEW, 0 fixed**
+
+### A/B — full permanent matrix (4 fixtures), 1× ABBA
+base = HEAD without A3 · cand = A3 skip
+
+| fixture | A (base) wall | B (cand) wall | note |
+|---|---|---|---|
+| pdense_15k | 16.73 / 20.35 | 21.54 / 20.59 | A better — thrash |
+| rfp17_redline_self | 0.73 / 0.69 | 0.72 / 0.69 | IDENTICAL-INPUT noise |
+| rfp17_vs_5lb102 | 28.32 / 26.69 | 27.02 / 26.21 | B lean both slots |
+| redline_rfp17_vs_5lb102 | 27.55 / 25.90 | 25.74 / 27.35 | mixed |
+
+**Verdict: bank** — exact Q0 keep as cleanup; no full-matrix wall claim (plan
+requires candidate better in every load-bearing slot).
+
 ### Next queue (do not stack)
 
-Quality is restored. Next **one** risk-adjusted wall experiment from the
-portfolio only after re-profile; no multi-mechanism batch. Candidate queue
-unchanged from post-#42 banked items (HASH-STREAM-04/03b banked, DOM-ITER-03
-banked, etc.) — pick by fresh samply on the permanent 4-fixture matrix.
+MEASURED #44 (ACCEPT-SKIP-A3) **banked** — exact keep, no full-matrix wall
+claim. Next: **one** risk-adjusted wall experiment after re-profile (samply on
+permanent 4-fixture matrix). Portfolio still includes banked lean items
+(HASH-STREAM-04/03b, DOM-ITER-03, ACCEPT-SKIP-A1/A7/A8/A3) and untried Lane-M
+seams (ACCEPT-SCAN-01 single-flag only, remaining A.5 mark skip, HASH/ATOM
+views). No multi-mechanism batch.
 
-**Verdict: ship quality restore** — no wall claim; ladder + sample ledger hold.
+**Verdict #43:** ship quality restore — no wall claim; package validity Q0
+quality. **Verdict #44:** bank A3 skip as exact cleanup.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 
