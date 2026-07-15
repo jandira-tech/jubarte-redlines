@@ -81,6 +81,7 @@ evidence and ready-to-run branches of the program.
 | HASH-STREAM-06: simple `w:tc` stream digests (no clone) | shipped lean win (MEASURED #38) | exact oracles (4); digests YES×4; RFP×5lb B all 4 slots (~0.6s); redline lean 3/4; ~47k cells/doc no-clone |
 | ACCEPT-REUSE-CLEAN: transfer clean accept subtrees (no clone) | shipped win (MEASURED #39) | NodeId reuse gates; digests YES×4; redline×5lb B all 4 slots (~−2.8s); RFP×5lb B all 4 (~−0.6s) |
 | ACCEPT-SKIP-A7: skip deleted-cells full rebuild without cellDel | banked lean (MEASURED #40) | NodeId transfer gate; digests YES×4; redline×5lb B all 4 (~−0.6s); RFP mixed |
+| ACCEPT-SKIP-A8: skip merge-adjacent-tables rebuild when nothing merges | banked (MEASURED #41) | exact transfer gates; digests YES×4; matrix wall thrash/mixed — no wall claim |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -1372,6 +1373,23 @@ contains no `w:cellDel` (transfer root). RED/GREEN: `tests/perf_accept_skip_a7.r
 
 document.xml match YES all four. Scratch: `{SCRATCH}/abba-accept-skip-a7/`.
 **Verdict: keep / bank lean** — exact + redline lean; RFP thrash → no full-matrix wall claim.
+
+## MEASURED #41 — 2026-07-15: ACCEPT-SKIP-A8 BANKED
+
+Skip A.8 `merge_adjacent_tables_transform` full-tree rebuild when no adjacent
+revision-bearing table group would merge (transfer root). After ins/del accept,
+this is the common path. RED/GREEN: `tests/perf_accept_skip_a8.rs`.
+
+### A/B — full permanent matrix (4 fixtures), 2× ABBA (base = ACCEPT-SKIP-A7 / 5b03433)
+
+| fixture | A wall | B wall |
+|---|---:|---:|
+| pdense_15k | ~15.4 | ~15.3 (noise) |
+| rfp17_vs_5lb102 | 21.89·22.15 / 21.77·22.15 | 22.62·22.35 / 21.71·22.18 (thrash) |
+| redline_rfp17_vs_5lb102 | 25.02·23.70 / 24.55·23.82 | 23.57·23.28 / 23.27·24.35 (mixed lean) |
+
+document.xml match YES all four. Scratch: `{SCRATCH}/abba-accept-skip-a8/`.
+**Verdict: keep / bank** — exact no-op skip; wall mixed under noise after prior accept wins.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

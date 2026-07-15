@@ -2137,11 +2137,47 @@ fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
 /// gate adjacent-table merge so clean content tables stay separate.
 fn table_has_revision_marks(dom: &Dom, tbl: NodeId) -> bool {
     for tag in ["ins", "del", "moveFrom", "moveTo", "cellIns", "cellDel"] {
-        if !dom.descendants(tbl, Some(&W::name(tag))).is_empty() {
+        if element_or_desc_has_name(dom, tbl, &W::name(tag)) {
             return true;
         }
     }
     false
+}
+
+/// True if any element under `root` has ≥2 adjacent direct `w:tbl` children
+/// where at least one member carries revision marks (the only case A.8 merges).
+fn subtree_needs_adjacent_table_merge(dom: &Dom, root: NodeId) -> bool {
+    let tbl_name = W::tbl();
+    fn walk(dom: &Dom, id: NodeId, tbl_name: &XName) -> bool {
+        if !dom.is_element(id) {
+            return false;
+        }
+        // Scan direct element children for adjacent tbl runs.
+        let kids = dom.elements(id, None);
+        let mut run = 0usize;
+        let mut run_has_rev = false;
+        for &k in &kids {
+            if dom.name(k).as_ref() == Some(tbl_name) {
+                run += 1;
+                if table_has_revision_marks(dom, k) {
+                    run_has_rev = true;
+                }
+                if run >= 2 && run_has_rev {
+                    return true;
+                }
+            } else {
+                run = 0;
+                run_has_rev = false;
+            }
+        }
+        for &k in &kids {
+            if walk(dom, k, tbl_name) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(dom, root, &tbl_name)
 }
 
 /// A.8 — `MergeAdjacentTablesTransform` (:464): where an element has direct
@@ -2157,9 +2193,21 @@ fn table_has_revision_marks(dom: &Dom, tbl: NodeId) -> bool {
 /// them into one 2-col 12-row table shifts LO page geometry and costs ~1–2
 /// score points on large-doc near-90 pairs. Gate: only merge a group when
 /// at least one member carries revision marks (ins/del/move/cellIns/cellDel).
+///
+/// ACCEPT-SKIP-A8: when no mergeable adjacent revision-bearing table group
+/// exists anywhere under `node`, transfer without a full-tree rebuild.
 pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
+    if !subtree_needs_adjacent_table_merge(dom, node) {
+        if dom.parent(node).is_some() {
+            dom.remove(node);
+        }
+        return node;
+    }
     if !dom.is_element(node) {
-        return dom.clone_subtree(node);
+        if dom.parent(node).is_some() {
+            dom.remove(node);
+        }
+        return node;
     }
     let name = dom.name(node).unwrap();
     let tbl_name = W::tbl();
