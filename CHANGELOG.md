@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
+## [0.5.0] - 2026-07-15
+
+Product line alignment with the desktop app: same **0.5.0** minor for the
+shipped engine that powers the Mac App Store build. Includes everything from
+0.2.0 (package-wide Word validity, notes/settings coherence, parity restore,
+measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
+`scripts/bump-version.mjs`).
+
 ## [0.2.0] - 2026-07-15
 
 ### Fixed
@@ -76,5 +84,6 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.5.0]: https://github.com/arthrod/jubarte-rs/releases/tag/v0.5.0
 [0.2.0]: https://github.com/arthrod/jubarte-rs/releases/tag/v0.2.0
 [0.1.0]: https://github.com/arthrod/jubarte-rs/releases/tag/v0.1.0
