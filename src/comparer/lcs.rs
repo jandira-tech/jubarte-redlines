@@ -1385,6 +1385,16 @@ fn residual_para_starts_this(dom: &Dom, u: &ComparisonUnit) -> bool {
         .is_some_and(|t| t.eq_ignore_ascii_case("this"))
 }
 
+/// M186: Demo residual bodies often open with "This document…" or
+/// "Demonstrating …". Treat both as residual-body openers for M180/M182/M183
+/// entry so this×demonstrating pairs (heading_3/4 style cousins) can pure-I/D
+/// empty last residuals. Keep the strict `this`-only helper for M151 etc.
+fn residual_para_starts_demo_body(dom: &Dom, u: &ComparisonUnit) -> bool {
+    para_text_token_list(dom, u).first().is_some_and(|t| {
+        t.eq_ignore_ascii_case("this") || t.eq_ignore_ascii_case("demonstrating")
+    })
+}
+
 fn residual_first_body_starts_this(dom: &Dom, rest: &[ComparisonUnit]) -> bool {
     rest.len() >= 2 && residual_para_starts_this(dom, &rest[1])
 }
@@ -2462,8 +2472,8 @@ fn step_h(
         let skip_zip_for_m180 = left_paras == 3
             && right_paras == 3
             && first_paras_share_last_sig(dom, cul1, cul2)
-            && residual_para_starts_this(dom, &cul1[1])
-            && residual_para_starts_this(dom, &cul2[1])
+            && residual_para_starts_demo_body(dom, &cul1[1])
+            && residual_para_starts_demo_body(dom, &cul2[1])
             && {
                 let j1 = token_jaccard(
                     &para_text_tokens(dom, &cul1[1]),
@@ -2538,7 +2548,9 @@ fn step_h(
         // titles, first residual mid-related This-bodies, longer side has an
         // extra mid residual. Zip free-meshes last with orphan periods (~85);
         // Word meshes title+first residual, pure-I's extra mid body(s), pure
-        // I/D last residual. Not equal-count M180.
+        // I/D last residual. Not equal-count M180. Keep j_last raw thin — a
+        // layout-boiler strip false-fired on center_alignment×center_bold
+        // (shared "titles") and regressed LO score.
         let skip_zip_for_m183 = {
             let (short_n, long_n) = if left_paras < right_paras {
                 (left_paras, right_paras)
@@ -2548,8 +2560,8 @@ fn step_h(
             short_n == 3
                 && long_n == 4
                 && first_paras_share_last_sig(dom, cul1, cul2)
-                && residual_para_starts_this(dom, &cul1[1])
-                && residual_para_starts_this(dom, &cul2[1])
+                && residual_para_starts_demo_body(dom, &cul1[1])
+                && residual_para_starts_demo_body(dom, &cul2[1])
                 && {
                     let j1 = token_jaccard(
                         &para_text_tokens(dom, &cul1[1]),
@@ -2561,7 +2573,6 @@ fn step_h(
                         &para_text_tokens(dom, &cul1[left_paras - 1]),
                         &para_text_tokens(dom, &cul2[right_paras - 1]),
                     );
-                    // mid first residual; last residual thin/empty bridge
                     j1 + 1e-12 >= 0.15
                         && j1 + 1e-12 < 0.55
                         && j_last + 1e-12 < 0.12
