@@ -678,6 +678,13 @@ pub fn compare_bodies_faithful_with_notes(
     // w:id minted after the earlier fix_up_revision_ids pass would otherwise
     // collide with move ranges or comments once those anchors are present.
     finalize::fix_up_revision_ids(dom, &[root]);
+    // Re-run drawing/shape id fixups after Word-mode merge/wrap passes that may
+    // clone drawings (S-dup-docpr-id on strict01_sdt_controls×strict01: mid-path
+    // FixUpDocPrIds left a collision introduced later). Same sequential 1..n
+    // contract as the mid-path call.
+    fixups::fix_up_doc_pr_ids(dom, root);
+    fixups::fix_up_shape_ids(dom, root);
+    fixups::fix_up_shape_type_ids(dom, root);
     root
 }
 

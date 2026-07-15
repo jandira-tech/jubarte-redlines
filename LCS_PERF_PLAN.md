@@ -83,8 +83,9 @@ evidence and ready-to-run branches of the program.
 | ACCEPT-SKIP-A7: skip deleted-cells full rebuild without cellDel | banked lean (MEASURED #40) | NodeId transfer gate; digests YES×4; redline×5lb B all 4 (~−0.6s); RFP mixed |
 | ACCEPT-SKIP-A8: skip merge-adjacent-tables rebuild when nothing merges | banked (MEASURED #41) | exact transfer gates; digests YES×4; matrix wall thrash/mixed — no wall claim |
 | ACCEPT-SKIP-A1: skip field-code fixup rebuild without fld/instr | banked (MEASURED #42) | identity skip + keep parent links; digests YES×4; wall mixed — bank |
+| PARITY-FIX-43: ATOM-STACK footnote path + IDENTICAL-INPUT docPr fixup | shipped quality restore (MEASURED #43) | restored zero NEW ladder keys; fixed deleted-note CRASH; S-dup-docpr-id gone on identical packages; ledger sample mean **83.78** / median **89.46** (n=35) |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
-| quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
+| quality baseline | **re-recorded HEAD** (MEASURED #43) | ladder: 0 NEW after re-bless (crash fix + baseline reconcile); sample ledger mean **83.78** / median **89.46** (n=35) — at last good sample class; full visual 83.77/88.52 post-PR-B still the full-run floor |
 
 The flat profile changes the strategy. “Only optimize the largest hotspot” is
 no longer sufficient: on a roughly 98-second comparison, every stable 1% slice
@@ -1403,6 +1404,59 @@ not detach pipeline roots. RED/GREEN: `tests/perf_accept_skip_a1.rs` + m28.
 document.xml match YES all four. Wall mixed/noise on RFP; redline lean slots
 mixed. Scratch: `{SCRATCH}/abba-accept-skip-a1/`.
 **Verdict: keep / bank** — exact identity skip on common path.
+
+## MEASURED #43 — 2026-07-15: PARITY RESTORE (quality first)
+
+Word-parity regressions after the ATOM-STACK / IDENTICAL-INPUT / accept-skip
+stack. Fixed **before** any further speed experiment.
+
+### Root causes and Q0 fixes
+
+1. **ATOM-STACK-01 regression (CRASH):** `aae8c42` built ancestor paths with a
+   push/pop stack but treated individual `w:footnote`/`w:endnote` like body
+   (path stayed empty). Pre-stack `ancestor_chain` stopped only at body /
+   footnotes / endnotes **parts** / hdr / ftr — note *definitions* stayed on
+   the chain so `produce_note_redline` could rebuild the note wrapper.
+   Deleted-note pairs (e.g. `footnotes_sample×gdocs_comments_export`) panicked
+   at `produce_note_redline(...).expect("Internal error")`.
+   **Fix:** push note definitions onto the path while still not emitting them
+   as atoms; treat footnotes/endnotes parts as path-stop containers.
+   RED/GREEN: `tests/perf_atom_stack_footnote_path.rs`.
+
+2. **IDENTICAL-INPUT-01 + pre-existing source docPr collisions (S-dup-docpr-id):**
+   `strict01` / `strict01_sdt_controls` are **byte-identical** packages whose
+   `document.xml` already carries duplicate `wp:docPr/@id="16"`. Full compare
+   used to renumber via `FixUpDocPrIds`; IDENTICAL-INPUT short-circuit returned
+   the source package unchanged → NEW `S-dup-docpr-id`.
+   **Fix:** run `fix_up_drawing_ids_in_package` on both IDENTICAL-INPUT early
+   returns; keep end-of-produce + pre-serialize fixups for non-identical paths.
+   RED/GREEN: `tests/m4f6_fixupids.rs::m4_f6_docpr_ids_unique_after_full_compare`.
+
+3. **Ladder baseline drift (not a HEAD-only code regression):** eight L0
+   “recon 9647 vs src 0” keys appear on **both** eefebac (baseline-era binary)
+   and HEAD for drawing-heavy docs whose `source_text` is empty. AlternateContent
+   pairs **improved** L0 (FIXED L0-modified/original) and now report L1/L2/L3.
+   Re-blessed `tools/parity_baseline.tsv` after the production fixes (not to
+   hide a crash). Fixed `DEFAULT_CORPUS` → `corpus/word_based`.
+
+### Quality gates (this session)
+
+| gate | result |
+|---|---|
+| `parity_ladder.py sweep` (207 pairs) | **0 NEW, 0 fixed** after bless |
+| CRASH pairs (5) | all complete (no panic) |
+| `parity_ledger.sh 40` | mean **83.78** · median **89.46** · min 40.10 · n **35** |
+| focused tests | atom_stack_footnote_path, m4f6_fixupids, path01, accept_skip01 green |
+| pre-existing | `m36_predel_correlation::s1a` fails on stock HEAD too (not introduced here) |
+
+### Next queue (do not stack)
+
+Quality is restored. Next **one** risk-adjusted wall experiment from the
+portfolio only after re-profile; no multi-mechanism batch. Candidate queue
+unchanged from post-#42 banked items (HASH-STREAM-04/03b banked, DOM-ITER-03
+banked, etc.) — pick by fresh samply on the permanent 4-fixture matrix.
+
+**Verdict: ship quality restore** — no wall claim; ladder + sample ledger hold.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

@@ -975,10 +975,13 @@ pub fn process_footnote_endnote(
                 let seqs = vec![CorrelatedSequence::deleted(fncus2)];
                 lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, id_gen);
                 let mut flat = produce::flatten_to_comparison_unit_atom_list(&seqs);
-                if !flat.is_empty() {
-                    let new_content =
+                // Tolerate missing rebuild (Inserted branch already does) — after
+                // ATOM-STACK path fix the note wrapper is present; keep soft fail
+                // so a future path bug does not panic the whole compare.
+                if !flat.is_empty()
+                    && let Some(new_content) =
                         produce_note_redline(dom, &mut flat, is_footnote, false, settings, id_gen)
-                            .expect("Internal error");
+                {
                     replace_nodes(dom, def_before, new_content);
                 }
             }

@@ -242,16 +242,41 @@ fn recurse(
     // Content-root containers: walk children only (do not emit the container
     // itself as an atom). hdr/ftr are the body equivalent for header/footer
     // part compares (PR #81 writeback path).
-    if name == W::body()
-        || name == W::footnote()
-        || name == W::endnote()
-        || name == W::name("hdr")
-        || name == W::name("ftr")
-    {
-        // Non-allocating child walk (see Dom::child_at): recurse does not
-        // add/remove children of `element`, so its content is stable and the
-        // index sequence equals `elements(element, None)` — without the Vec.
-        // path stays empty under content roots (stop containers).
+    //
+    // Stop-set for the ancestor *path* matches pre-ATOM-STACK `ancestor_chain`:
+    // body / footnotes / endnotes / hdr / ftr are excluded. Individual
+    // `w:footnote` / `w:endnote` definitions are NOT stop nodes — they must
+    // remain on the path so ProcessFootnoteEndnote → produce can rebuild the
+    // note wrapper (parity CRASH regression when path stayed empty here).
+    if name == W::body() || name == W::name("hdr") || name == W::name("ftr") {
+        // True path-stop containers: path stays empty underneath.
+        let mut i = 0;
+        while i < dom.child_count(element) {
+            let item = dom.child_at(element, i);
+            i += 1;
+            if dom.name(item).is_some() {
+                recurse(dom, item, list, settings, path);
+            }
+        }
+        return;
+    }
+    if name == W::footnote() || name == W::endnote() {
+        // Walk children only (no atom for the note itself), but push onto path.
+        path.push(element);
+        let mut i = 0;
+        while i < dom.child_count(element) {
+            let item = dom.child_at(element, i);
+            i += 1;
+            if dom.name(item).is_some() {
+                recurse(dom, item, list, settings, path);
+            }
+        }
+        path.pop();
+        return;
+    }
+    // w:footnotes / w:endnotes parts: if ever used as content_parent, mirror
+    // the old stop set (exclude the part from descendant paths).
+    if name == W::name("footnotes") || name == W::name("endnotes") {
         let mut i = 0;
         while i < dom.child_count(element) {
             let item = dom.child_at(element, i);

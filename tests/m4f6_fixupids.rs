@@ -87,3 +87,50 @@ fn m4_f6_group_ids() {
         .collect();
     assert_eq!(ids, vec!["1", "2", "3"]);
 }
+
+
+/// End-of-produce FixUpDocPrIds: drawing-heavy pairs must not emit duplicate
+/// wp:docPr/@id after Word-mode merge/wrap (parity S-dup-docpr-id).
+#[test]
+fn m4_f6_docpr_ids_unique_after_full_compare() {
+    use jubarte::document_comparer::compare_documents;
+    use std::collections::HashMap;
+    use std::io::Read;
+    use zip::ZipArchive;
+
+    let corpus = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source";
+    let a = std::fs::read(format!("{corpus}/strict01_sdt_controls.docx"))
+        .expect("strict01_sdt_controls fixture");
+    let b = std::fs::read(format!("{corpus}/strict01.docx")).expect("strict01 fixture");
+    let out = compare_documents(&a, &b, "Test").expect("compare");
+    let mut zip = ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    // Namespace-agnostic id harvest (mirrors parity_ladder S-dup-docpr-id).
+    let mut ids = Vec::new();
+    let mut rest = xml.as_str();
+    while let Some(i) = rest.find("docPr") {
+        let slice = &rest[i..];
+        if let Some(id_at) = slice.find("id=\"") {
+            let after = &slice[id_at + 4..];
+            if let Some(end) = after.find('"') {
+                ids.push(after[..end].to_string());
+            }
+        }
+        rest = &rest[i + 4..];
+    }
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for id in &ids {
+        *counts.entry(id.clone()).or_default() += 1;
+    }
+    let dups: Vec<_> = counts
+        .iter()
+        .filter(|(_, c)| **c > 1)
+        .map(|(k, _)| k.clone())
+        .collect();
+    assert!(
+        dups.is_empty(),
+        "duplicate wp:docPr/@id after compare: {dups:?} (all={ids:?})"
+    );
+}

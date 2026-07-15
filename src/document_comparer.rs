@@ -1781,6 +1781,10 @@ fn compare_documents_impl(
         if settings.merge_replaced_paragraphs && docx_has_tracked_changes(&owned) {
             owned = accept_revisions(&owned)?;
         }
+        // IDENTICAL-INPUT still runs drawing/shape id fixups: source packages
+        // may carry colliding wp:docPr/@id (strict01 corpus) that the full
+        // produce path renumbers; skipping left S-dup-docpr-id regressions.
+        owned = crate::comparer::fixups::fix_up_drawing_ids_in_package(&owned)?;
         return Ok(owned);
     }
 
@@ -1805,7 +1809,9 @@ fn compare_documents_impl(
 
     // After prep, packages may still be byte-identical (rare non-self paths).
     if original_owned == modified_owned {
-        return Ok(original_owned);
+        return Ok(crate::comparer::fixups::fix_up_drawing_ids_in_package(
+            &original_owned,
+        )?);
     }
 
     let original: &[u8] = &original_owned;
@@ -1931,6 +1937,13 @@ fn compare_documents_impl(
         // share an id with commentRange* (Word "unreadable content").
         crate::comparer::finalize::fix_up_revision_ids(&mut dom, &[result_root]);
     }
+
+    // Final drawing/shape id renumber immediately before serialize — package
+    // post-steps (reconcile, header/footer adopt, comments) can clone/graft
+    // drawings after the mid-produce FixUpDocPrIds pass (S-dup-docpr-id).
+    crate::comparer::fixups::fix_up_doc_pr_ids(&mut dom, result_root);
+    crate::comparer::fixups::fix_up_shape_ids(&mut dom, result_root);
+    crate::comparer::fixups::fix_up_shape_type_ids(&mut dom, result_root);
 
     let result_xml = dom.serialize_element(result_root);
     out.set_part(&main1, result_xml.into_bytes());
