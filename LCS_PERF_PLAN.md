@@ -47,6 +47,7 @@ evidence and ready-to-run branches of the program.
 | HASH-01: fixed hex nibble table | shipped (in `1f0ab33`, documented MEASURED #6) | replaces per-byte `format!("{b:02x}")` in `hex_string_from_bytes` |
 | LCS-ITER-01 count fix | shipped (MEASURED #6) | Word atom count was wrongly `1` after `1f0ab33` → LCS thresholds broken; restored `contents.len()` |
 | HASH-02: stream atom digests into SHA-1 | shipped (MEASURED #6) | `ComparisonUnitWord::new` no longer allocates concat String; digests byte-identical |
+| DOM-ITER-01: serializer borrowed children/attrs | shipped banked (MEASURED #7) | exact serialize; pdense wall noise-neutral — bank for amplify / next profile |
 | latest full profile | accepted evidence | no dominant function; atomize ~13%, parse ~10%, compare ~9%, LCS ~7.5%, and produce/accept/serialize/hash-clone ~6% each |
 | quality baseline | recorded | full visual ledger 83.77 mean / 88.52 median after PR-B; re-record on the current head before the next production change |
 
@@ -687,6 +688,30 @@ and HASH-02 are exact, allocation-light wins measured with it.
 **Lesson:** never batch a micro-optimization with a count rewrite in one opaque
 commit; the Word=`1` bug was invisible until an end-to-end dense fixture and a
 samply of the hung candidate.
+
+## MEASURED #7 — 2026-07-15: DOM-ITER-01 serializer BANKED (exact, wall noise)
+
+Convert the serializer (and `Scope::child`) off `dom.nodes()` / `dom.attributes()`
+Vec clones onto `child_count`/`child_at` and new `attr_count`/`attr_at` borrowed
+accessors. Owned `attributes()` / `nodes()` APIs remain for other callers.
+
+### A/B — ABBA ×2, pdense 15k, base = MEASURED #6 binary
+
+| run | A wall (base) | B wall (cand) |
+|---|---:|---:|
+| r1 | 24.53 / 24.01 | 24.15 / 27.12 |
+| r2 | 23.47 / 27.47 | 25.13 / 23.40 |
+
+- **wall:** no consistent direction; ranges overlap heavily (noise band).
+- **user CPU:** ~21.5–22.5 both sides.
+- **document.xml:** SHA-256 identical (`512eb265…bd92`).
+- Tests: `tests/perf_dom_iter01_serialize.rs` (attr contract, ns/mc:Ignorable
+  stability, child index order) + m1 foundation serialize suite green.
+
+**Verdict: keep / bank.** Exact Q0 path cleanup with no measured end-to-end wall
+win on pdense (serialize is only ~5–6% inclusive). Do not claim a second; amplify
+later with a serialize-heavy microbench or re-evaluate after the next profile
+when serialize rank moves.
 
 ## Parity Ledger — the Word-visual layer of the quality contract
 

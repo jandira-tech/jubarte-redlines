@@ -587,13 +587,25 @@ impl Dom {
             .map(|a| a.value.as_str())
     }
 
-    /// `Attributes()` — (name, value) pairs in order.
+    /// `Attributes()` — (name, value) pairs in order (owned clones).
     pub fn attributes(&self, id: NodeId) -> Vec<(XName, String)> {
         self.data(id)
             .attrs
             .iter()
             .map(|a| (a.name.clone(), a.value.clone()))
             .collect()
+    }
+
+    /// Number of attributes on `id` (O(1)). Paired with [`attr_at`](Self::attr_at)
+    /// for non-allocating attribute walks (serializer / DOM-ITER-01).
+    pub fn attr_count(&self, id: NodeId) -> usize {
+        self.data(id).attrs.len()
+    }
+
+    /// The `i`-th attribute as borrowed `(name, value)`. Panics out of bounds.
+    pub fn attr_at(&self, id: NodeId, i: usize) -> (&XName, &str) {
+        let a = &self.data(id).attrs[i];
+        (&a.name, a.value.as_str())
     }
 
     /// `SetAttributeValue(name, value)` — add/update; `None` removes (matches the

@@ -88,8 +88,10 @@ impl<'a> Scope<'a> {
     fn child(parent: &'a Scope<'a>, dom: &Dom, e: NodeId) -> Scope<'a> {
         let mut uri_to_prefix = HashMap::new();
         let mut prefix_to_uri = HashMap::new();
-        for (name, value) in dom.attributes(e) {
-            if !dom.is_namespace_declaration(&name) {
+        // DOM-ITER-01: walk attrs without cloning the attributes() Vec.
+        for i in 0..dom.attr_count(e) {
+            let (name, value) = dom.attr_at(e, i);
+            if !dom.is_namespace_declaration(name) {
                 continue;
             }
             let prefix = if name.local_name() == "xmlns" && name.namespace_name().is_empty() {
@@ -101,8 +103,8 @@ impl<'a> Scope<'a> {
             if prefix == "xml" || prefix == "xmlns" || value == "http://www.w3.org/2000/xmlns/" {
                 continue;
             }
-            uri_to_prefix.insert(value.clone(), prefix.to_string());
-            prefix_to_uri.insert(prefix.to_string(), value.clone());
+            uri_to_prefix.insert(value.to_string(), prefix.to_string());
+            prefix_to_uri.insert(prefix.to_string(), value.to_string());
         }
         Scope {
             parent: Some(parent),
@@ -230,16 +232,17 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut Strin
 
     // First pass: assign prefixes for the element name, all attribute names,
     // and all namespaces referenced by QName-list attribute values.
+    // DOM-ITER-01: borrow attr names/values; no attributes() Vec clones.
     scope.assign(state, ename.namespace_name());
-    let attrs = dom.attributes(e);
-    let mut real_attrs: Vec<(XName, String)> = Vec::new();
-    let mut prefix_list_attrs: Vec<(XName, String)> = Vec::new();
-    for (name, value) in attrs {
-        if dom.is_namespace_declaration(&name) {
+    let mut real_attrs: Vec<(&XName, &str)> = Vec::new();
+    let mut prefix_list_attrs: Vec<(&XName, &str)> = Vec::new();
+    for i in 0..dom.attr_count(e) {
+        let (name, value) = dom.attr_at(e, i);
+        if dom.is_namespace_declaration(name) {
             continue;
         }
         scope.assign(state, name.namespace_name());
-        if is_namespace_prefix_list(&name) {
+        if is_namespace_prefix_list(name) {
             for token in value.split_whitespace() {
                 if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
                     scope.assign(state, &uri);
@@ -278,11 +281,11 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut Strin
             .prefix_for_uri(name.namespace_name())
             .map(|s| s.to_string())
             .unwrap_or_else(|| scope.assign(state, name.namespace_name()));
-        let qn = qname(&prefix, &name);
+        let qn = qname(&prefix, name);
         attr_str.push(' ');
         attr_str.push_str(&qn);
         attr_str.push_str("=\"");
-        attr_str.push_str(&escape_attr(&value));
+        attr_str.push_str(&escape_attr(value));
         attr_str.push('"');
     }
 
@@ -291,7 +294,7 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut Strin
             .prefix_for_uri(name.namespace_name())
             .map(|s| s.to_string())
             .unwrap_or_else(|| scope.assign(state, name.namespace_name()));
-        let qn = qname(&prefix, &name);
+        let qn = qname(&prefix, name);
         let rewritten = value
             .split_whitespace()
             .map(|token| {
@@ -326,8 +329,9 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut Strin
         qname(&prefix, &ename)
     };
 
-    let kids = dom.nodes(e);
-    if kids.is_empty() {
+    // DOM-ITER-01: index children; no nodes() Vec clone per element.
+    let n_kids = dom.child_count(e);
+    if n_kids == 0 {
         out.push('<');
         out.push_str(&tag);
         out.push_str(&attr_str);
@@ -339,7 +343,8 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut Strin
     out.push_str(&tag);
     out.push_str(&attr_str);
     out.push('>');
-    for k in kids {
+    for i in 0..n_kids {
+        let k = dom.child_at(e, i);
         if dom.is_element(k) {
             emit(dom, k, &scope, state, out);
         } else if dom.is_text(k) {
@@ -379,7 +384,8 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
         }
         out.push_str("?>");
     }
-    for k in dom.nodes(doc) {
+    for i in 0..dom.child_count(doc) {
+        let k = dom.child_at(doc, i);
         if dom.is_element(k) {
             out.push_str(&serialize_element(dom, k));
         } else if dom.is_text(k) {
