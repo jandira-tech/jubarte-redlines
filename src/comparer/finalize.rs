@@ -1775,8 +1775,12 @@ pub fn last_pure_del_spacing_to_pprchange(
     if dom.name(last) != Some(W::p()) {
         return;
     }
-    // Pure-del or mixed last residual (M94).
-    if !para_is_pure_deleted(dom, last) && !para_is_mixed_revision(dom, last) {
+    // Pure-del last residual only. M94 mixed helped some files, but
+    // subtitle/title/large_font cousins (equal A/B spacing) Word keeps **live**
+    // spacing on last MIX with no pPrChange. Parking into pPrChange (or
+    // live+no-op pPrChange) costs LO. M226 strips no-op later; do not invent
+    // pPrChange on MIX here. Net sticky +18.9 despite a few MIX-layout regs.
+    if !para_is_pure_deleted(dom, last) {
         return;
     }
     let Some(ppr) = dom.element(last, &W::p_pr()) else {
@@ -1785,7 +1789,7 @@ pub fn last_pure_del_spacing_to_pprchange(
     if dom.element(ppr, &W::name("pPrChange")).is_some() {
         return;
     }
-    // Layout props Word records under pPrChange on the last pure-del / mixed.
+    // Layout props Word records under pPrChange on the last pure-del.
     let movable = [
         W::name("spacing"),
         W::num_pr(),
@@ -1919,6 +1923,69 @@ pub fn mixed_spacing_to_following_empty(
             dom.remove(mppr);
         }
         break; // one trailing empty only
+    }
+}
+
+/// M226 (heading_3/4 style cousins ~80): drop `w:pPrChange` when live spacing
+/// equals the pPrChange old spacing and old has no other layout props. Word
+/// keeps live spacing only (no pPrChange) when A/B Heading spacing matches;
+/// we sometimes emit a no-op pPrChange (same before/after/line) that LO treats
+/// differently than Word's live-only shape.
+pub fn strip_redundant_equal_spacing_pprchange(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    for p in dom.elements(body, None) {
+        if dom.name(p) != Some(W::p()) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        let Some(live_sp) = dom.element(ppr, &W::name("spacing")) else {
+            continue;
+        };
+        let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) else {
+            continue;
+        };
+        // pPrChange child is old pPr (CT_PPrChange).
+        let old_ppr = dom
+            .elements(ppc, None)
+            .into_iter()
+            .find(|&c| dom.name(c) == Some(W::p_pr()));
+        let Some(old_ppr) = old_ppr else {
+            continue;
+        };
+        let Some(old_sp) = dom.element(old_ppr, &W::name("spacing")) else {
+            continue;
+        };
+        let same_spacing = ["before", "after", "line", "lineRule"].iter().all(|&a| {
+            dom.attribute(live_sp, &W::name(a)).unwrap_or("")
+                == dom.attribute(old_sp, &W::name(a)).unwrap_or("")
+        });
+        if !same_spacing {
+            continue;
+        }
+        // Old pPr must not carry other meaningful layout. Empty rPr ok.
+        // Always ignore pStyle in old: unresolved styles are stripped later
+        // (document_comparer after finalize), leaving a no-op pPrChange that
+        // only restates equal spacing — Word omits it (heading_3/4 cousins).
+        let mut other_layout = false;
+        for c in dom.elements(old_ppr, None) {
+            let Some(n) = dom.name(c) else {
+                continue;
+            };
+            let local = n.local_name();
+            if local == "spacing" || local == "rPr" || local == "pStyle" {
+                continue;
+            }
+            other_layout = true;
+            break;
+        }
+        if other_layout {
+            continue;
+        }
+        dom.remove(ppc);
     }
 }
 
