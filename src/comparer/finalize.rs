@@ -1915,6 +1915,116 @@ pub fn mixed_spacing_to_following_empty(
     }
 }
 
+/// M221 (green_underline×heading_1_bold ~56): MIX residual carries B Heading
+/// spacing (before=400 after=120 line=240) while following pure-D bullets have
+/// none. Word parks that spacing on the **last** pure-D with live spacing +
+/// `pPrChange(empty old)`, and leaves the MIX with only a del pilcrow.
+///
+/// Fires when: MIX with live spacing, followed only by pure-Ds (1..=4), last
+/// pure-D has content and no live spacing. Does not touch mid pure-Ds that
+/// already carry layout props.
+pub fn park_mixed_spacing_onto_trailing_pure_del(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    if kids.len() < 3 {
+        return;
+    }
+    for i in 0..kids.len() {
+        let mixed = kids[i];
+        if dom.name(mixed) != Some(W::p()) || !para_is_mixed_revision(dom, mixed) {
+            continue;
+        }
+        let Some(mppr) = dom.element(mixed, &W::p_pr()) else {
+            continue;
+        };
+        let Some(spacing) = dom.element(mppr, &W::name("spacing")) else {
+            continue;
+        };
+        // Following run must be pure-D only (at least one, at most 4).
+        let mut j = i + 1;
+        while j < kids.len()
+            && dom.name(kids[j]) == Some(W::p())
+            && para_is_pure_deleted(dom, kids[j])
+        {
+            j += 1;
+        }
+        let n_dels = j - (i + 1);
+        if !(1..=4).contains(&n_dels) {
+            continue;
+        }
+        let last_del = kids[j - 1];
+        if para_has_no_text(dom, last_del) {
+            continue;
+        }
+        let last_has_spacing = dom
+            .element(last_del, &W::p_pr())
+            .and_then(|p| dom.element(p, &W::name("spacing")))
+            .is_some();
+        if last_has_spacing {
+            continue;
+        }
+        // Move spacing onto last pure-D.
+        let lppr = match dom.element(last_del, &W::p_pr()) {
+            Some(p) => p,
+            None => {
+                let p = dom.new_element(W::p_pr());
+                if let Some(first) = dom.elements(last_del, None).first().copied() {
+                    dom.add_before_self(first, p);
+                } else {
+                    dom.add(last_del, p);
+                }
+                p
+            }
+        };
+        let sp = dom.clone_subtree(spacing);
+        dom.add_first(lppr, sp);
+        // pPrChange(empty old) on last pure-D — Word shape.
+        if dom.element(lppr, &W::name("pPrChange")).is_none() {
+            let old_inner = dom.new_element(W::p_pr());
+            let chg = dom.new_element(W::name("pPrChange"));
+            dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+            *id_gen += 1;
+            dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+            dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+            dom.add(chg, old_inner);
+            dom.add(lppr, chg);
+        }
+        // Strip spacing from MIX; ensure del pilcrow.
+        dom.remove(spacing);
+        let rpr = match dom.element(mppr, &W::r_pr()) {
+            Some(r) => r,
+            None => {
+                let r = dom.new_element(W::r_pr());
+                dom.add(mppr, r);
+                r
+            }
+        };
+        if dom.element(rpr, &W::del()).is_none() && dom.element(rpr, &W::ins()).is_none() {
+            let mark = dom.new_element(W::del());
+            dom.set_attribute_value(mark, &W::id(), Some(&id_gen.to_string()));
+            *id_gen += 1;
+            dom.set_attribute_value(mark, &W::author(), Some(&settings.author_for_revisions));
+            dom.set_attribute_value(mark, &W::date(), Some(&settings.date_time_for_revisions));
+            dom.add(rpr, mark);
+        }
+        if dom.elements(mppr, None).is_empty() {
+            dom.remove(mppr);
+        }
+        break; // one MIX cluster
+    }
+}
+
 /// M102c (file_148): last pure-del with `pPrChange(spacing)` and no live `jc`
 /// inherits live `jc` from a preceding body para that has center align (Word
 /// pure-D of A line-spacing sentence keeps B's center mark even when the

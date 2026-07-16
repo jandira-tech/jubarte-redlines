@@ -675,6 +675,8 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::trailing_empty_spacing_to_pprchange(dom, root, settings, &mut id);
         // M98b: mixed+empty trailing — park spacing on empty (file_167).
         finalize::mixed_spacing_to_following_empty(dom, root, settings, &mut id);
+        // M221: MIX Heading spacing → last pure-D residual (green_underline×heading_1).
+        finalize::park_mixed_spacing_onto_trailing_pure_del(dom, root, settings, &mut id);
         // M102c: last pure-del inherits prev live jc (file_148 center+spacing).
         finalize::last_pure_del_inherit_prev_jc(dom, root);
         // Re-drop trailing empty pure-ins if merge reordered anything.
