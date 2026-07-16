@@ -2008,6 +2008,65 @@ pub fn promote_mid_pure_del_spacing_from_pprchange(dom: &mut Dom, root: NodeId) 
     }
 }
 
+/// M231 (large_font×left_alignment ~88): strip schema-default `w:jc val=left|start`
+/// from live pPr and from pPrChange-old. Word omits default left alignment;
+/// we sometimes emit live jc=left and/or pPrChange(jc=left) that LO penalizes.
+pub fn strip_default_left_jc(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    for p in dom.elements(body, None) {
+        if dom.name(p) != Some(W::p()) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        // Live default jc.
+        if let Some(jc) = dom.element(ppr, &W::name("jc")) {
+            let val = dom.attribute(jc, &W::val()).unwrap_or("");
+            if val == "left" || val == "start" {
+                dom.remove(jc);
+            }
+        }
+        // pPrChange old: drop default jc. If old was jc-left-only, drop the
+        // whole pPrChange (large_font×left). Do NOT drop pre-existing empty
+        // pPrChange shells (left×line_spacing Word shape).
+        if let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) {
+            let old_ppr = dom
+                .elements(ppc, None)
+                .into_iter()
+                .find(|&c| dom.name(c) == Some(W::p_pr()));
+            if let Some(old_ppr) = old_ppr {
+                let mut removed_left_jc = false;
+                if let Some(jc) = dom.element(old_ppr, &W::name("jc")) {
+                    let val = dom.attribute(jc, &W::val()).unwrap_or("");
+                    if val == "left" || val == "start" {
+                        dom.remove(jc);
+                        removed_left_jc = true;
+                    }
+                }
+                if removed_left_jc {
+                    let mut has_layout = false;
+                    for c in dom.elements(old_ppr, None) {
+                        let Some(n) = dom.name(c) else {
+                            continue;
+                        };
+                        if n.local_name() == "rPr" {
+                            continue;
+                        }
+                        has_layout = true;
+                        break;
+                    }
+                    if !has_layout {
+                        dom.remove(ppc);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// M226 (heading_3/4 style cousins ~80): drop `w:pPrChange` when live spacing
 /// equals the pPrChange old spacing and old has no other layout props. Word
 /// keeps live spacing only (no pPrChange) when A/B Heading spacing matches;

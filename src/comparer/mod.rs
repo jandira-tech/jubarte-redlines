@@ -679,6 +679,8 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::mixed_spacing_to_following_empty(dom, root, settings, &mut id);
         // M226: drop no-op pPrChange when live spacing == old spacing (heading cousins).
         finalize::strip_redundant_equal_spacing_pprchange(dom, root);
+        // M231: strip schema-default jc left/start (large_font×left_alignment).
+        finalize::strip_default_left_jc(dom, root);
         // M221: MIX Heading spacing → last pure-D residual (green_underline×heading_1).
         finalize::park_mixed_spacing_onto_trailing_pure_del(dom, root, settings, &mut id);
         // M230: MIX numPr → last empty pure-D (bullet_list_bold×bullet_list).
