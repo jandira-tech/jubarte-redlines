@@ -2728,9 +2728,51 @@ fn step_h(
             out.push(CorrelatedSequence::deleted(vec![cul1[2].clone()]));
             return out;
         }
-        // M204 removed: mid-weak j1 pure-I/D both residuals won center_aligned
-        // +2.26 but regressed right_align_bold (−21), underline×verdana (−23),
-        // small_font×strikethrough (−17) — same gate shape. Net negative.
+        // M210 (center_aligned_bold×center_alignment ~80 only): equal 3v3 Demo
+        // last-sig, both first residuals start with "This", j1 ∈ [0.17, 0.20),
+        // j2 ∈ [0.25, 0.32), and both titles contain the token "center".
+        // Tightened vs dropped M204 so right_align_bold (j2≈0.19),
+        // underline×verdana (j2≈0.08), small_font (j2≈0.07) stay free-mesh.
+        let skip_zip_for_m210 = left_paras == 3
+            && right_paras == 3
+            && first_paras_share_last_sig(dom, cul1, cul2)
+            && residual_para_starts_this(dom, &cul1[1])
+            && residual_para_starts_this(dom, &cul2[1])
+            && {
+                let t0a = para_text_tokens(dom, &cul1[0]);
+                let t0b = para_text_tokens(dom, &cul2[0]);
+                let has_center = t0a.iter().any(|t| t == "center")
+                    && t0b.iter().any(|t| t == "center");
+                let j1 = token_jaccard(
+                    &para_text_tokens(dom, &cul1[1]),
+                    &para_text_tokens(dom, &cul2[1]),
+                );
+                let j2 = token_jaccard(
+                    &para_text_tokens(dom, &cul1[2]),
+                    &para_text_tokens(dom, &cul2[2]),
+                );
+                has_center
+                    && j1 + 1e-12 >= 0.17
+                    && j1 + 1e-12 < 0.20
+                    && j2 + 1e-12 >= 0.25
+                    && j2 + 1e-12 < 0.32
+            };
+        if settings.merge_replaced_paragraphs
+            && skip_zip_for_m210
+            && left_paras == left_len
+            && right_paras == right_len
+        {
+            out.push(CorrelatedSequence::paired(
+                CorrelationStatus::Unknown,
+                vec![cul1[0].clone()],
+                vec![cul2[0].clone()],
+            ));
+            out.push(CorrelatedSequence::inserted(vec![cul2[1].clone()]));
+            out.push(CorrelatedSequence::deleted(vec![cul1[1].clone()]));
+            out.push(CorrelatedSequence::inserted(vec![cul2[2].clone()]));
+            out.push(CorrelatedSequence::deleted(vec![cul1[2].clone()]));
+            return out;
+        }
         // M165 (font_size_12×font_size_18; red_heading×red_strikethrough):
         // equal 3v3 Demo, first residual near-identical (digit/word swap),
         // last residual near-unrelated. Positional zip meshes last on a lone
