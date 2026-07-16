@@ -2266,6 +2266,55 @@ fn step_h(
         }
     }
 
+    // M201 (book_catalog×book_catalog_table; project_tasks×table ~60→92):
+    // After outer LCS peels equal short titles, residual is one mashed prose
+    // body vs empties+table. Free LCS character-meshes cell text against prose
+    // ("The Gre"/"at Gats" thrash). Word pure-I/Ds residual without free-mesh.
+    //
+    // Shape (residual window only — titles already peeled):
+    //   - prose side: 0 tables, exactly 1 contentful para, len ≤ 4
+    //   - table side: exactly 1 table, 0 contentful paras (empties only)
+    // Excludes meeting_minutes multi-para (−27), support_tickets×summary
+    // (different titles so residual not this shape after peel), etc.
+    let left_only_ptt_m201 = left_len == left_tables + left_paras + left_textboxes;
+    let right_only_ptt_m201 = right_len == right_tables + right_paras + right_textboxes;
+    if settings.merge_replaced_paragraphs
+        && left_only_ptt_m201
+        && right_only_ptt_m201
+        && left_textboxes == 0
+        && right_textboxes == 0
+        && left_len >= 1
+        && right_len >= 1
+        && left_len <= 6
+        && right_len <= 6
+    {
+        let contentful_paras = |units: &[ComparisonUnit]| -> usize {
+            units
+                .iter()
+                .filter(|u| {
+                    as_group(u).is_some_and(|g| g.group_type == Paragraph)
+                        && !para_text_token_list(dom, u).is_empty()
+                })
+                .count()
+        };
+        let lc = contentful_paras(cul1);
+        let rc = contentful_paras(cul2);
+        let prose_vs_table = (left_tables == 0
+            && lc == 1
+            && right_tables == 1
+            && rc == 0)
+            || (right_tables == 0 && rc == 1 && left_tables == 1 && lc == 0);
+        if prose_vs_table {
+            for u in cul2 {
+                out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+            }
+            for u in cul1 {
+                out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+            }
+            return out;
+        }
+    }
+
     // H3 — single table vs single table → DoLcsAlgorithmForTable (M4.D).
     if left_tables == 1
         && left_len == 1
