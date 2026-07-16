@@ -2783,7 +2783,22 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     .is_some_and(|dp| dom.element(dp, &W::name("spacing")).is_some());
                 let adopt_del_ppr =
                     (del_structural && !ins_structural) || (ins_jc_only && del_has_spacing);
-                if adopt_del_ppr {
+                // M218: mark-only empty pure-D fold — Word parks the deleted
+                // pilcrow on the pure-I carrier (contract_review MIX + mark_del).
+                // Do not strip to a bare pure-I; adopt the empty del's pPr/rPr/del.
+                if mark_only_empty_del {
+                    if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
+                        dom.remove(ippr);
+                    }
+                    if let Some(dppr) = dom.element(d, &W::p_pr()) {
+                        let cloned = dom.clone_subtree(dppr);
+                        if let Some(first) = dom.elements(last_ins, None).first().copied() {
+                            dom.add_before_self(first, cloned);
+                        } else {
+                            dom.add(last_ins, cloned);
+                        }
+                    }
+                } else if adopt_del_ppr {
                     if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
                         dom.remove(ippr);
                     }
