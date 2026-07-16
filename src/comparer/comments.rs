@@ -380,7 +380,6 @@ fn inject_side(
     let (merged_text, mut segs) = collect_segments(dom, result_root, b_side, author);
     let src_chars: Vec<char> = src_text.chars().collect();
     let merged_chars: Vec<char> = merged_text.chars().collect();
-
     // map each comment range through context matching, then flatten to
     // events sorted by (offset, source order) so nesting order is preserved
     let mut events: Vec<Event> = Vec::new();

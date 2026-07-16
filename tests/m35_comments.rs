@@ -178,3 +178,74 @@ fn w2_single_side_comments_carried_with_anchors_not_orphaned() {
         "commentReference ids match the comment part"
     );
 }
+
+/// Diagnostics: document_100 (no comments) × lots_of_comments redline (6 comments).
+/// Expect all 6 B comments anchored; currently only 2 survive — investigate.
+
+/// accept_revisions must not drop comment range markers (nested ends after
+/// tables; starts inside w:del). Regression: outer nested ends and del-hoisted
+/// starts were lost → comment carry 2/6 on document_100×lots_of_comments.
+#[test]
+fn accept_revisions_preserves_comment_range_markers() {
+    let b_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline_addition_v_removal.docx";
+    if !require_path(b_path) {
+        return;
+    }
+    let b = std::fs::read(b_path).unwrap();
+    let list_ids = |bytes: &[u8], tag: &str| -> HashSet<String> {
+        let pkg = PartFs::open(bytes).unwrap();
+        let xml = pkg.part_string("word/document.xml").unwrap();
+        let mut dom = Dom::new();
+        let d = dom.parse_xdocument(&xml);
+        let root = dom.root(d).unwrap();
+        dom.descendants(root, Some(&W::name(tag)))
+            .into_iter()
+            .filter_map(|e| dom.attribute(e, &W::name("id")).map(str::to_string))
+            .collect()
+    };
+    let before_s = list_ids(&b, "commentRangeStart");
+    let before_e = list_ids(&b, "commentRangeEnd");
+    let accepted = jubarte::document_comparer::accept_revisions(&b).unwrap();
+    let after_s = list_ids(&accepted, "commentRangeStart");
+    let after_e = list_ids(&accepted, "commentRangeEnd");
+    assert_eq!(
+        after_s, before_s,
+        "accept dropped commentRangeStart ids: {:?}",
+        before_s.difference(&after_s).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        after_e, before_e,
+        "accept dropped commentRangeEnd ids: {:?}",
+        before_e.difference(&after_e).collect::<Vec<_>>()
+    );
+}
+
+/// document_100 (no comments) × lots_of_comments redline (6 comments on B):
+/// all 6 B comments must be carried with anchors (was 2/6 before accept fix).
+#[test]
+fn document100_vs_lots_of_comments_carries_all_six() {
+    let a_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/document_100_ultimate_demo_id_paraid_overflow.docx";
+    let b_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline_addition_v_removal.docx";
+    if !require_path(a_path) || !require_path(b_path) {
+        return;
+    }
+    let a = std::fs::read(a_path).unwrap();
+    let b = std::fs::read(b_path).unwrap();
+    let pkg_b = PartFs::open(&b).unwrap();
+    let b_ids = comment_ids(&pkg_b);
+    assert_eq!(b_ids.len(), 6, "fixture must have 6 B comments");
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
+    let pkg = PartFs::open(&out).unwrap();
+    let ids = comment_ids(&pkg);
+    let (s, e, r) = anchor_ids(&pkg);
+    assert_eq!(
+        ids, b_ids,
+        "carried {}/{} comments; missing {:?}",
+        ids.len(),
+        b_ids.len(),
+        b_ids.difference(&ids).collect::<Vec<_>>()
+    );
+    assert_eq!(s.len(), 6, "starts={s:?}");
+    assert_eq!(e.len(), 6, "ends={e:?}");
+    assert_eq!(r.len(), 6, "refs={r:?}");
+}

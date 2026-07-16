@@ -259,9 +259,12 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
         }
     }
 
-    // Accept deleted text: drop w:del.
+    // Accept deleted text: drop w:del. Hoist comment range markers that lived
+    // inside the deletion so nested/table comment anchors survive accept
+    // (docx_lots_of_comments redline: starts 9/10 sit between delText runs;
+    // dropping the whole w:del orphaned those comments → carry 2/6).
     if name == W::del() {
-        return vec![];
+        return hoist_comment_markers_from(dom, node);
     }
 
     // Vertically-merged cell markers.
@@ -1612,15 +1615,12 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
     let zipped: Vec<(BlockContentInfo, (bool, i32))> = chain.into_iter().zip(infos).collect();
     let grouped = crate::util::group_adjacent(zipped, |z| z.1.1);
 
-    let ne = dom.new_element(name.clone());
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
-    for e in dom.elements(node, Some(&W::tc_pr())) {
-        let ce = dom.clone_subtree(e);
-        dom.add(ne, ce);
-    }
-    for (_key, group) in grouped {
+    // Prebuild rebuilt block nodes, keyed by the original block element(s)
+    // they replace. Deleted-range merges map many originals → one paragraph.
+    // None = nuked empty deleted trailing para; markers_from_nuke are comment
+    // anchors hoisted out of that discarded para so they still emit.
+    let mut rebuilt: Vec<(Vec<NodeId>, Option<NodeId>, Vec<NodeId>)> = Vec::new();
+    for (_key, group) in &grouped {
         if group[0].1.0 {
             // DeletedRange: merge into one paragraph.
             let last_this = group.last().unwrap().0.this_block_content_element.unwrap();
@@ -1629,8 +1629,10 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                 let c = dom.clone_subtree(ppr);
                 dom.add(np, c);
             }
-            for z in &group {
+            let mut orig_ids = Vec::new();
+            for z in group {
                 let this = z.0.this_block_content_element.unwrap();
+                orig_ids.push(this);
                 for collapsed in collapse_paragraph_transform(dom, this) {
                     dom.add(np, collapsed);
                 }
@@ -1643,11 +1645,15 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
             let next_is_none_or_tbl =
                 next.is_none() || next.is_some_and(|n| dom.name(n) == Some(W::tbl()));
             if all_para_content_is_deleted(dom, np) && last_mark_is_del && next_is_none_or_tbl {
-                continue; // nuke: never attached
+                // Nuke empty deleted para, but keep comment anchors that lived
+                // inside its w:del runs (starts 9/10 between delText).
+                let markers = hoist_comment_markers_from(dom, np);
+                rebuilt.push((orig_ids, None, markers));
+            } else {
+                rebuilt.push((orig_ids, Some(np), Vec::new()));
             }
-            dom.add(ne, np);
         } else {
-            for z in &group {
+            for z in group {
                 let this = z.0.this_block_content_element.unwrap();
                 let rebuilt_name = dom.name(this).unwrap();
                 let re = dom.new_element(rebuilt_name);
@@ -1658,7 +1664,45 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                     let tc = accept_deleted_and_move_from_paragraph_marks_transform(dom, c);
                     dom.add(re, tc);
                 }
-                dom.add(ne, re);
+                rebuilt.push((vec![this], Some(re), Vec::new()));
+            }
+        }
+    }
+
+    let ne = dom.new_element(name.clone());
+    for (an, av) in dom.attributes(node) {
+        dom.set_attribute_value(ne, &an, Some(&av));
+    }
+    for e in dom.elements(node, Some(&W::tc_pr())) {
+        let ce = dom.clone_subtree(e);
+        dom.add(ne, ce);
+    }
+    // Emit in original element-child order so body-level commentRange*/bookmark*
+    // between tables and paragraphs are preserved. The prior rebuild only kept
+    // p/tbl chain members and dropped other body children — that deleted outer
+    // nested commentRangeEnd after tables (ids 2/66) and broke comment carry.
+    let mut emitted: HashSet<usize> = HashSet::new();
+    for c in dom.elements(node, None) {
+        let Some(cn) = dom.name(c) else {
+            continue;
+        };
+        if cn == W::tc_pr() || cn == W::sect_pr() {
+            continue;
+        }
+        if is_body_level_range_marker(&cn) {
+            let clone = dom.clone_subtree(c);
+            dom.add(ne, clone);
+            continue;
+        }
+        if let Some(ri) = rebuilt.iter().position(|(ids, _, _)| ids.contains(&c)) {
+            if emitted.insert(ri) {
+                let (_ids, rebuilt_node, markers) = &rebuilt[ri];
+                if let Some(rebuilt_node) = rebuilt_node {
+                    dom.add(ne, *rebuilt_node);
+                }
+                for &m in markers {
+                    dom.add(ne, m);
+                }
             }
         }
     }
@@ -1667,6 +1711,37 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
         dom.add(ne, c);
     }
     ne
+}
+
+/// Body/cell-level markers that must survive block-content rebuild (not p/tbl).
+fn is_body_level_range_marker(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && matches!(
+            name.local_name(),
+            "commentRangeStart"
+                | "commentRangeEnd"
+                | "bookmarkStart"
+                | "bookmarkEnd"
+                | "permStart"
+                | "permEnd"
+        )
+}
+
+/// Pull comment range markers out of a subtree being discarded (e.g. accepted
+/// `w:del`) so nested anchors between delText runs are not lost.
+fn hoist_comment_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for e in dom.descendants(node, None) {
+        let Some(n) = dom.name(e) else {
+            continue;
+        };
+        if n.namespace_name() == W::URI
+            && matches!(n.local_name(), "commentRangeStart" | "commentRangeEnd")
+        {
+            out.push(dom.clone_subtree(e));
+        }
+    }
+    out
 }
 
 // ─────────────── A.5b — content-control re-wrap after mark merge ────────────
