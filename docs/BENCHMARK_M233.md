@@ -19,6 +19,12 @@ Generate timings (main run, ms per redline from bench timings): mean_speed=26.03
 
 Visual gallery: `neurotic_docx_bench/runs/jubarte-rust_2026-07-16_01-49/report.html`
 
+> **RESULTS.md ranking note:** `export-results-md.py` keeps one row per
+> `(vendor, benchmark, tool_version)` and prefers **higher `n_docs`**. The same
+> pin also has the randomized n=196 row (mean 83.19), which can outrank the
+> main n=164 ship-bar row in the printed table. Always cite **this stamp** (or
+> `results/bench.jsonl` lines with `n_docs=164`) for the ≥90 claim.
+
 ## 2. Expanded sample — randomized `file_i_v_file_{i+1}` (`bench.randomized.yaml`)
 
 Consecutive randomized chain pairs (`file_1_file_2` …). Oracle:
