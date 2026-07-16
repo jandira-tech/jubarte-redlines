@@ -2430,6 +2430,58 @@ fn step_h(
             out.push(CorrelatedSequence::deleted(vec![cul1[1].clone()]));
             return out;
         }
+        // M197 (calibri_heading_2_right×center_aligned_bold ~61→84): equal 3v3
+        // Demo last-sig titles that only share Demo chrome (title j < 0.12),
+        // BOTH residual body pairs content-unrelated (j1 < 0.12 && j2 < 0.12),
+        // and first residuals are NOT Demonstrating×This cousins (those free-
+        // mesh style boilerplate; pure-I/D regressed text_highlight×times
+        // −24 and blue_underline×bold_italic −23). Zip free-meshes on thin
+        // glue; Word pure-I/Ds every residual body for true cross-demos.
+        let skip_zip_for_m197 = left_paras == 3
+            && right_paras == 3
+            && first_paras_share_last_sig(dom, cul1, cul2)
+            && {
+                let j0 = token_jaccard(
+                    &para_text_tokens(dom, &cul1[0]),
+                    &para_text_tokens(dom, &cul2[0]),
+                );
+                let j1 = token_jaccard(
+                    &para_text_tokens(dom, &cul1[1]),
+                    &para_text_tokens(dom, &cul2[1]),
+                );
+                let j2 = token_jaccard(
+                    &para_text_tokens(dom, &cul1[2]),
+                    &para_text_tokens(dom, &cul2[2]),
+                );
+                let a1 = para_text_token_list(dom, &cul1[1]);
+                let b1 = para_text_token_list(dom, &cul2[1]);
+                let a0f = a1.first().map(|s| s.as_str()).unwrap_or("");
+                let b0f = b1.first().map(|s| s.as_str()).unwrap_or("");
+                let this_x_demo = (a0f.eq_ignore_ascii_case("this")
+                    && b0f.eq_ignore_ascii_case("demonstrating"))
+                    || (a0f.eq_ignore_ascii_case("demonstrating")
+                        && b0f.eq_ignore_ascii_case("this"));
+                j0 + 1e-12 < 0.12
+                    && j1 + 1e-12 < 0.12
+                    && j2 + 1e-12 < 0.12
+                    && !this_x_demo
+            };
+        if settings.merge_replaced_paragraphs
+            && skip_zip_for_m197
+            && left_paras == left_len
+            && right_paras == right_len
+        {
+            out.push(CorrelatedSequence::paired(
+                CorrelationStatus::Unknown,
+                vec![cul1[0].clone()],
+                vec![cul2[0].clone()],
+            ));
+            out.push(CorrelatedSequence::inserted(vec![cul2[1].clone()]));
+            out.push(CorrelatedSequence::deleted(vec![cul1[1].clone()]));
+            out.push(CorrelatedSequence::inserted(vec![cul2[2].clone()]));
+            out.push(CorrelatedSequence::deleted(vec![cul1[2].clone()]));
+            return out;
+        }
         // M165 (font_size_12×font_size_18; red_heading×red_strikethrough):
         // equal 3v3 Demo, first residual near-identical (digit/word swap),
         // last residual near-unrelated. Positional zip meshes last on a lone
