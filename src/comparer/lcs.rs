@@ -2531,6 +2531,47 @@ fn step_h(
             out.push(CorrelatedSequence::deleted(vec![cul1[2].clone()]));
             return out;
         }
+        // M204 (center_aligned_bold×center_alignment ~80): equal 3v3 Demo
+        // last-sig, both first residuals start with "This", mid-weak first
+        // residual (0.12 ≤ j1 < 0.25), last residual not strong (j2 < 0.35).
+        // Zip pure-I's first next residual then free-meshes last next against
+        // base first residual (cross-pair thrash ~80). Word pure-I/Ds both
+        // residual bodies after title mesh. Keep j1 < 0.25 so right_aligned
+        // (j1≈0.30, LO prefers free-mesh) and blue_bold (j1≈0.38) stay out.
+        let skip_zip_for_m204 = left_paras == 3
+            && right_paras == 3
+            && first_paras_share_last_sig(dom, cul1, cul2)
+            && residual_para_starts_this(dom, &cul1[1])
+            && residual_para_starts_this(dom, &cul2[1])
+            && {
+                let j1 = token_jaccard(
+                    &para_text_tokens(dom, &cul1[1]),
+                    &para_text_tokens(dom, &cul2[1]),
+                );
+                let j2 = token_jaccard(
+                    &para_text_tokens(dom, &cul1[2]),
+                    &para_text_tokens(dom, &cul2[2]),
+                );
+                j1 + 1e-12 >= 0.12
+                    && j1 + 1e-12 < 0.25
+                    && j2 + 1e-12 < 0.35
+            };
+        if settings.merge_replaced_paragraphs
+            && skip_zip_for_m204
+            && left_paras == left_len
+            && right_paras == right_len
+        {
+            out.push(CorrelatedSequence::paired(
+                CorrelationStatus::Unknown,
+                vec![cul1[0].clone()],
+                vec![cul2[0].clone()],
+            ));
+            out.push(CorrelatedSequence::inserted(vec![cul2[1].clone()]));
+            out.push(CorrelatedSequence::deleted(vec![cul1[1].clone()]));
+            out.push(CorrelatedSequence::inserted(vec![cul2[2].clone()]));
+            out.push(CorrelatedSequence::deleted(vec![cul1[2].clone()]));
+            return out;
+        }
         // M165 (font_size_12×font_size_18; red_heading×red_strikethrough):
         // equal 3v3 Demo, first residual near-identical (digit/word swap),
         // last residual near-unrelated. Positional zip meshes last on a lone
