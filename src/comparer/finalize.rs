@@ -2593,21 +2593,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 }
                 let inss = &children[ins_start..del_start];
                 let dels = &children[del_start..j];
-                // M212: mark-only pure-D empty (pPr/rPr/del, no w:del body) after
-                // pure-I prose — Word folds mark-del into the last pure-I
-                // (contract_review / inventory table→prose). Guard dels[0]
-                // access: empty del runs must not index (prior panic).
-                if inss.is_empty() || dels.is_empty() {
-                    continue;
-                }
-                // First del may be mark-only empty even in multi-del clusters
-                // (inventory: I + 2 empty-D + T → Word folds first empty into I).
-                let mark_only_empty_del = !para_has_real_del(dom, dels[0])
-                    && para_mark_revision(dom, dels[0], &W::del())
-                    && para_has_no_text(dom, dels[0]);
-                let del_foldable =
-                    para_has_real_del(dom, dels[0]) || mark_only_empty_del;
-                if !del_foldable {
+                if inss.is_empty() || dels.is_empty() || !para_has_real_del(dom, dels[0]) {
                     continue;
                 }
                 // Sole trailing del: always fold (single_paragraph GT / m44).
