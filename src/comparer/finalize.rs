@@ -1974,6 +1974,30 @@ pub fn park_mixed_spacing_onto_trailing_pure_del(
         if last_has_spacing {
             continue;
         }
+        // Green_underline bullets are short (≤6 tokens / ≤40 alnum). Long pure-D
+        // residual sentences (times×title "Times New Roman is a classic…") must
+        // keep MIX spacing — parking regressed LO −14.
+        let last_alnum = para_body_alnum_len(dom, last_del);
+        let last_toks = body_token_set(&para_revision_body_text(dom, last_del)).len();
+        if last_alnum > 40 || last_toks > 6 {
+            continue;
+        }
+        // Heading-style spacing only (before≈400 after≈120), not thin line-only.
+        let has_before_after = {
+            let sp = spacing;
+            let before = dom
+                .attribute(sp, &W::name("before"))
+                .and_then(|v| v.parse::<i32>().ok())
+                .unwrap_or(0);
+            let after = dom
+                .attribute(sp, &W::name("after"))
+                .and_then(|v| v.parse::<i32>().ok())
+                .unwrap_or(0);
+            before >= 200 && after >= 80
+        };
+        if !has_before_after {
+            continue;
+        }
         // Move spacing onto last pure-D.
         let lppr = match dom.element(last_del, &W::p_pr()) {
             Some(p) => p,
