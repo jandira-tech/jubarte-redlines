@@ -1961,8 +1961,10 @@ pub fn park_mixed_spacing_onto_trailing_pure_del(
         }
         let n_dels = j - (i + 1);
         // Green bullets: 2 pure-D; customer_satisfaction×document_100: ~8 pure-D
-        // survey lines after MIX title residual.
-        if !(1..=10).contains(&n_dels) {
+        // survey lines after MIX title residual. Require ≥2 pure-D so a sole
+        // trailing pure-D after MIX (calibri_heading_2×center_aligned_bold)
+        // keeps MIX spacing — sole-del park regressed LO −26.
+        if !(2..=10).contains(&n_dels) {
             continue;
         }
         let last_del = kids[j - 1];
