@@ -4519,28 +4519,35 @@ pub fn restore_short_del_before_long_ins(dom: &mut Dom, root: NodeId) {
             if !para_is_pure_inserted(dom, ins_p) || !para_is_pure_deleted(dom, del_p) {
                 continue;
             }
-            // Prefer after a MIX (title residual peel).
-            if i > 0 {
-                let prev = kids[i - 1];
-                if dom.name(prev) == Some(W::p()) {
-                    let has_ins = !dom.descendants(prev, Some(&W::ins())).is_empty()
-                        || para_mark_revision(dom, prev, &W::ins());
-                    let has_del = !dom.descendants(prev, Some(&W::del())).is_empty()
-                        || para_mark_revision(dom, prev, &W::del());
-                    if !(has_ins && has_del) {
-                        continue;
-                    }
-                    // A stamped filename is a comparison anchor, not the M159
-                    // content-title MIX. Swapping after it moves a short base
-                    // title ahead of the long next document's main title
-                    // (M104/M108), reversing Word's order.
-                    let prev_text = para_revision_body_text(dom, prev).to_ascii_lowercase();
-                    if prev_text.contains("file_")
-                        || prev_text.contains(".docx")
-                        || prev_text.contains(".doc")
-                    {
-                        continue;
-                    }
+            // M159 only after a MIX residual peel — never at body start.
+            // M217 (q1_sales×quarterly): leading pure-I title then pure-D
+            // title is Word's IDE… shape; the old i==0 fall-through swapped
+            // short del before long ins and undid reorder_replacements.
+            if i == 0 {
+                continue;
+            }
+            let prev = kids[i - 1];
+            if dom.name(prev) != Some(W::p()) {
+                continue;
+            }
+            {
+                let has_ins = !dom.descendants(prev, Some(&W::ins())).is_empty()
+                    || para_mark_revision(dom, prev, &W::ins());
+                let has_del = !dom.descendants(prev, Some(&W::del())).is_empty()
+                    || para_mark_revision(dom, prev, &W::del());
+                if !(has_ins && has_del) {
+                    continue;
+                }
+                // A stamped filename is a comparison anchor, not the M159
+                // content-title MIX. Swapping after it moves a short base
+                // title ahead of the long next document's main title
+                // (M104/M108), reversing Word's order.
+                let prev_text = para_revision_body_text(dom, prev).to_ascii_lowercase();
+                if prev_text.contains("file_")
+                    || prev_text.contains(".docx")
+                    || prev_text.contains(".doc")
+                {
+                    continue;
                 }
             }
             let d_len = para_body_alnum_len(dom, del_p);
