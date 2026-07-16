@@ -1851,8 +1851,15 @@ pub fn mixed_spacing_to_following_empty(
         if !para_has_no_text(dom, empty) {
             continue;
         }
-        // Only when empty is the last body block (before sectPr) — stamp demos.
-        if i + 1 != kids.len() - 1 {
+        // Last body block (stamp demos) OR empty immediately before a pure-D
+        // table (quarterly×red_bold: MIX title residual, empty, deleted table).
+        let is_trailing = i + 1 == kids.len() - 1;
+        // Pure-D table: has del, no ins (deleted whole table).
+        let before_pure_d_table = i + 2 < kids.len()
+            && dom.name(kids[i + 2]) == Some(W::name("tbl"))
+            && dom.descendants(kids[i + 2], Some(&W::ins())).is_empty()
+            && !dom.descendants(kids[i + 2], Some(&W::del())).is_empty();
+        if !is_trailing && !before_pure_d_table {
             continue;
         }
         let Some(mppr) = dom.element(mixed, &W::p_pr()) else {
