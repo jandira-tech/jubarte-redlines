@@ -669,6 +669,9 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::mark_fully_revised_rows(dom, root, settings, &mut id);
         finalize::synthesize_table_cell_margins(dom, root);
         finalize::ensure_default_page_size(dom, root);
+        // pPr-only multi-pass peels: warm pure-del/mixed once (no body structure
+        // mutation inside — structure folds re-classify after this block).
+        finalize::begin_para_classification_cache();
         // M83b/M87 after merge_replaced — last pure-del layout → pPrChange.
         finalize::last_pure_del_spacing_to_pprchange(dom, root, settings, &mut id);
         // M228+M226+M231: one body walk — mid pure-D spacing promote, no-op
@@ -684,7 +687,11 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::park_mixed_numpr_onto_trailing_empty_pure_del(dom, root, settings, &mut id);
         // M102c: last pure-del inherits prev live jc (file_148 center+spacing).
         finalize::last_pure_del_inherit_prev_jc(dom, root);
-        // Re-drop trailing empty pure-ins if merge reordered anything.
+        finalize::strip_last_pure_del_mark_only_ppr(dom, root);
+        // M87b: last pure-del with pPrChange drops mark-only del (file_55).
+        finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
+        finalize::end_para_classification_cache();
+        // Structure-mutating peels (invalidate pure-del/mixed classification).
         finalize::strip_trailing_empty_pure_ins(dom, root);
         finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
         finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
@@ -696,9 +703,6 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::peel_trailing_ins_from_mix_into_following_pure_del(dom, root);
         // M154: trailing del on MIX + following pure-I (justified_underline×justify_2).
         finalize::peel_trailing_del_from_mix_into_following_pure_ins(dom, root);
-        finalize::strip_last_pure_del_mark_only_ppr(dom, root);
-        // M87b: last pure-del with pPrChange drops mark-only del (file_55).
-        finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
     }
     // Final renumber after wrap_bare / stamped predeletes / row marks — any
     // w:id minted after the earlier fix_up_revision_ids pass would otherwise

@@ -5,11 +5,36 @@
 //! FixUpRevisionIds (:2769), IgnorePt14Namespace (:2912),
 //! RemovePowerToolsScratchMarkup (CleanPartTransform :1165).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use crate::namespaces::{MC, PT, R, W, W14, WP14};
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use super::WmlComparerSettings;
 use super::tables::ALLOWABLE_RUN_CHILDREN;
+
+// Per-paragraph pure-del / mixed classification cache for finalize peels.
+// Enabled only inside `with_para_classification_cache` so multi-pass peels
+// do not re-walk each paragraph's descendants (large docs: 10k+ paras × N peels).
+thread_local! {
+    static PURE_DEL_CACHE: RefCell<Option<HashMap<NodeId, bool>>> = const { RefCell::new(None) };
+    static MIXED_CACHE: RefCell<Option<HashMap<NodeId, bool>>> = const { RefCell::new(None) };
+}
+
+/// Enable empty para revision classification caches. Peels fill them on first
+/// touch (lazy). Call [`end_para_classification_cache`] after peels finish.
+/// Do **not** eagerly classify every body para — that costs ~O(n_p) pure-del
+/// walks and dominated redline×5lb when most paras are never queried.
+pub fn begin_para_classification_cache() {
+    PURE_DEL_CACHE.with(|c| *c.borrow_mut() = Some(HashMap::new()));
+    MIXED_CACHE.with(|c| *c.borrow_mut() = Some(HashMap::new()));
+}
+
+pub fn end_para_classification_cache() {
+    PURE_DEL_CACHE.with(|c| *c.borrow_mut() = None);
+    MIXED_CACHE.with(|c| *c.borrow_mut() = None);
+}
 
 /// `DescendantsTrimmed(node, stop)` — descendants, not recursing into `stop`.
 fn descendants_trimmed(dom: &Dom, node: NodeId, stop: &XName) -> Vec<NodeId> {
@@ -1194,6 +1219,20 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
 /// True when a paragraph has deleted content, no live (non-del) `w:t` text,
 /// and no `w:ins` — pure deleted body paragraph.
 fn para_is_pure_deleted(dom: &Dom, p: NodeId) -> bool {
+    if let Some(cached) = PURE_DEL_CACHE.with(|c| c.borrow().as_ref().and_then(|m| m.get(&p).copied()))
+    {
+        return cached;
+    }
+    let v = para_is_pure_deleted_uncached(dom, p);
+    PURE_DEL_CACHE.with(|c| {
+        if let Some(m) = c.borrow_mut().as_mut() {
+            m.insert(p, v);
+        }
+    });
+    v
+}
+
+fn para_is_pure_deleted_uncached(dom: &Dom, p: NodeId) -> bool {
     let has_del = !dom.descendants(p, Some(&W::del())).is_empty();
     if !has_del {
         return false;
@@ -1737,11 +1776,21 @@ fn para_is_mixed_revision(dom: &Dom, p: NodeId) -> bool {
     if dom.name(p) != Some(W::p()) {
         return false;
     }
+    if let Some(cached) = MIXED_CACHE.with(|c| c.borrow().as_ref().and_then(|m| m.get(&p).copied()))
+    {
+        return cached;
+    }
     let has_ins =
         !dom.descendants(p, Some(&W::ins())).is_empty() || para_mark_revision(dom, p, &W::ins());
     let has_del =
         !dom.descendants(p, Some(&W::del())).is_empty() || para_mark_revision(dom, p, &W::del());
-    has_ins && has_del
+    let v = has_ins && has_del;
+    MIXED_CACHE.with(|c| {
+        if let Some(m) = c.borrow_mut().as_mut() {
+            m.insert(p, v);
+        }
+    });
+    v
 }
 
 /// M83b / M87 / M91 / M93 / M94 — last pure-deleted **or mixed** body paragraph:
@@ -2040,26 +2089,17 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
         }
 
         // --- M228: mid pure-D spacing promote / line=276 noise ---
-        if !body_has_del || !para_is_pure_deleted(dom, p) {
+        // Cheap gates before pure_deleted (expensive on large bodies).
+        if !body_has_del || dom.element(ppr, &W::name("spacing")).is_some() {
             continue;
         }
-        if dom.element(ppr, &W::name("spacing")).is_some() {
-            continue;
-        }
-        // ppc still present
-        let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) else {
-            continue;
-        };
-        let old_ppr = dom
-            .elements(ppc, None)
-            .into_iter()
-            .find(|&c| dom.name(c) == Some(W::p_pr()));
-        let Some(old_ppr) = old_ppr else {
-            continue;
-        };
+        // ppc / old_ppr still bound above
         let Some(old_sp) = dom.element(old_ppr, &W::name("spacing")) else {
             continue;
         };
+        if !para_is_pure_deleted(dom, p) {
+            continue;
+        }
         let mut other = false;
         for c in dom.elements(old_ppr, None) {
             let Some(n) = dom.name(c) else {
