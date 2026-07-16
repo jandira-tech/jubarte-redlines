@@ -2600,8 +2600,9 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 if inss.is_empty() || dels.is_empty() {
                     continue;
                 }
-                let mark_only_empty_del = dels.len() == 1
-                    && !para_has_real_del(dom, dels[0])
+                // First del may be mark-only empty even in multi-del clusters
+                // (inventory: I + 2 empty-D + T → Word folds first empty into I).
+                let mark_only_empty_del = !para_has_real_del(dom, dels[0])
                     && para_mark_revision(dom, dels[0], &W::del())
                     && para_has_no_text(dom, dels[0]);
                 let del_foldable =
