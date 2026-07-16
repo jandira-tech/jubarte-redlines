@@ -681,6 +681,8 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::strip_redundant_equal_spacing_pprchange(dom, root);
         // M221: MIX Heading spacing → last pure-D residual (green_underline×heading_1).
         finalize::park_mixed_spacing_onto_trailing_pure_del(dom, root, settings, &mut id);
+        // M230: MIX numPr → last empty pure-D (bullet_list_bold×bullet_list).
+        finalize::park_mixed_numpr_onto_trailing_empty_pure_del(dom, root, settings, &mut id);
         // M102c: last pure-del inherits prev live jc (file_148 center+spacing).
         finalize::last_pure_del_inherit_prev_jc(dom, root);
         // Re-drop trailing empty pure-ins if merge reordered anything.

@@ -2209,6 +2209,108 @@ pub fn park_mixed_spacing_onto_trailing_pure_del(
     }
 }
 
+/// M230 (bullet_list_bold×bullet_list ~83): MIX residual carries live `numPr`
+/// (B list item "Grapes") while trailing pure-D empties from A have none.
+/// Word keeps MIX without numPr and parks numPr + empty `pPrChange` on the
+/// **last** pure-D empty. Mirror of M221 spacing park, for list numbering.
+pub fn park_mixed_numpr_onto_trailing_empty_pure_del(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    if kids.len() < 3 {
+        return;
+    }
+    for i in 0..kids.len() {
+        let mixed = kids[i];
+        if dom.name(mixed) != Some(W::p()) || !para_is_mixed_revision(dom, mixed) {
+            continue;
+        }
+        let Some(mppr) = dom.element(mixed, &W::p_pr()) else {
+            continue;
+        };
+        let Some(num) = dom.element(mppr, &W::num_pr()) else {
+            continue;
+        };
+        // Following pure-D only; last must be empty (mark-only).
+        let mut j = i + 1;
+        while j < kids.len()
+            && dom.name(kids[j]) == Some(W::p())
+            && para_is_pure_deleted(dom, kids[j])
+        {
+            j += 1;
+        }
+        let n_dels = j - (i + 1);
+        // Bullet cousins: 3 trailing pure-D empties (A body lines).
+        if !(2..=6).contains(&n_dels) {
+            continue;
+        }
+        let last_del = kids[j - 1];
+        // Last may hold deleted body text (A bullet lines) — Word still parks
+        // numPr there. Do not require para_has_no_text.
+        // No pure-D in the run may already hold numPr (Word parks only on last).
+        let mut run_has_num = false;
+        for &d in &kids[i + 1..j] {
+            if dom
+                .element(d, &W::p_pr())
+                .and_then(|p| dom.element(p, &W::num_pr()))
+                .is_some()
+            {
+                run_has_num = true;
+                break;
+            }
+        }
+        if run_has_num {
+            continue;
+        }
+        let lppr = match dom.element(last_del, &W::p_pr()) {
+            Some(p) => p,
+            None => {
+                let p = dom.new_element(W::p_pr());
+                if let Some(first) = dom.elements(last_del, None).first().copied() {
+                    dom.add_before_self(first, p);
+                } else {
+                    dom.add(last_del, p);
+                }
+                p
+            }
+        };
+        if dom.element(lppr, &W::num_pr()).is_some() {
+            continue;
+        }
+        let num_clone = dom.clone_subtree(num);
+        // numPr before pPrChange / rPr.
+        if let Some(ppc) = dom.element(lppr, &W::name("pPrChange")) {
+            dom.add_before_self(ppc, num_clone);
+        } else if let Some(rpr) = dom.element(lppr, &W::r_pr()) {
+            dom.add_before_self(rpr, num_clone);
+        } else {
+            dom.add_first(lppr, num_clone);
+        }
+        if dom.element(lppr, &W::name("pPrChange")).is_none() {
+            let old_inner = dom.new_element(W::p_pr());
+            let chg = dom.new_element(W::name("pPrChange"));
+            dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+            *id_gen += 1;
+            dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+            dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+            dom.add(chg, old_inner);
+            dom.add(lppr, chg);
+        }
+        dom.remove(num);
+        break; // one MIX cluster
+    }
+}
+
 /// M102c (file_148): last pure-del with `pPrChange(spacing)` and no live `jc`
 /// inherits live `jc` from a preceding body para that has center align (Word
 /// pure-D of A line-spacing sentence keeps B's center mark even when the
