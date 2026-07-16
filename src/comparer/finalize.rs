@@ -1960,7 +1960,9 @@ pub fn park_mixed_spacing_onto_trailing_pure_del(
             j += 1;
         }
         let n_dels = j - (i + 1);
-        if !(1..=4).contains(&n_dels) {
+        // Green bullets: 2 pure-D; customer_satisfaction×document_100: ~8 pure-D
+        // survey lines after MIX title residual.
+        if !(1..=10).contains(&n_dels) {
             continue;
         }
         let last_del = kids[j - 1];
@@ -1974,12 +1976,12 @@ pub fn park_mixed_spacing_onto_trailing_pure_del(
         if last_has_spacing {
             continue;
         }
-        // Green_underline bullets are short (≤6 tokens / ≤40 alnum). Long pure-D
-        // residual sentences (times×title "Times New Roman is a classic…") must
-        // keep MIX spacing — parking regressed LO −14.
+        // Short/mid residual pure-D (bullets / survey lines). Long formal
+        // residual sentences (times×title) keep MIX spacing — parking regressed
+        // LO −14.
         let last_alnum = para_body_alnum_len(dom, last_del);
         let last_toks = body_token_set(&para_revision_body_text(dom, last_del)).len();
-        if last_alnum > 40 || last_toks > 6 {
+        if last_alnum > 80 || last_toks > 12 {
             continue;
         }
         // Heading-style spacing only (before≈400 after≈120), not thin line-only.
