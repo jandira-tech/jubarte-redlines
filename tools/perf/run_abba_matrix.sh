@@ -9,6 +9,8 @@
 #   3. rfp17_vs_5lb102         — RFP17 original × 5lb102!.docx (move-heavy)
 #   4. redline_rfp17_vs_5lb102 — redline_RFP17 × 5lb102!.docx
 #                                (both complicated fixtures the user named, cross-pair)
+#   5..8 (optional sample) file_1_v_file_2, file_50_v_file_51, file_100_v_file_101,
+#        file_130_v_file_131 — consecutive randomized corpus pairs (FILE_SAMPLE=0 to skip)
 #
 # Canonical absolute paths (parent of jubarte-rs when OOXML_DIR unset):
 #   $OOXML/redline_RFP17_vs_individual-contractor.docx
@@ -37,6 +39,16 @@ RFP17="${RFP17:-$OOXML/RFP17-071-Addendum-1-MWSU-CSR-816-271-4200.docx}"
 # Complicated real fixtures — MUST always be on the matrix (do not remove):
 RFP17_REDLINE="${RFP17_REDLINE:-$OOXML/redline_RFP17_vs_individual-contractor.docx}"
 F5LB="${F5LB:-$OOXML/5lb102!.docx}"
+
+# Optional sample expansion: consecutive file_N pairs (file1_v_file2 …) from the
+# neurotic_docx_bench randomized corpus. Increase wall-time coverage beyond the
+# four permanent fixtures without replacing them. Override with FILE_PAIRS_DIR.
+FILE_PAIRS_DIR="${FILE_PAIRS_DIR:-$OOXML/../neurotic_docx_bench/corpus/word_based/docx_source_randomized}"
+if [ ! -d "$FILE_PAIRS_DIR" ]; then
+  FILE_PAIRS_DIR="${FILE_PAIRS_DIR_ALT:-/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source_randomized}"
+fi
+# Default sample pairs (short + mid + dense-ish short-into-long). Empty FILE_SAMPLE=0 to skip.
+FILE_SAMPLE="${FILE_SAMPLE:-1}"
 
 [ -x "$BASE" ] || { echo "error: base not executable: $BASE" >&2; exit 2; }
 [ -x "$CAND" ] || { echo "error: cand not executable: $CAND" >&2; exit 2; }
@@ -76,6 +88,20 @@ fixtures=(
   "rfp17_vs_5lb102|$RFP17|$F5LB"
   "redline_rfp17_vs_5lb102|$RFP17_REDLINE|$F5LB"
 )
+
+# Extra sample: file_i_v_file_{i+1} redline pairs (increase N for wall distribution).
+if [ "$FILE_SAMPLE" != "0" ] && [ -d "$FILE_PAIRS_DIR" ]; then
+  for pair in "file_1|file_2" "file_50|file_51" "file_100|file_101" "file_130|file_131"; do
+    IFS='|' read -r fa fb <<<"$pair"
+    a="$FILE_PAIRS_DIR/${fa}.docx"
+    b="$FILE_PAIRS_DIR/${fb}.docx"
+    if [ -f "$a" ] && [ -f "$b" ]; then
+      fixtures+=("${fa}_v_${fb}|$a|$b")
+    else
+      echo "warn: skip ${fa}_v_${fb} (missing under $FILE_PAIRS_DIR)" >&2
+    fi
+  done
+fi
 
 for ((r=1; r<=ROUNDS; r++)); do
   for entry in "${fixtures[@]}"; do

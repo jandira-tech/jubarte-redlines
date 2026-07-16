@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
+## [Unreleased]
+
+### Fixed
+
+- Residual Word-visual peels on the finalize path (M216–M233): empty pure-D
+  folds, MIX Heading/spacing/numPr parks (gated), mid pure-D live spacing
+  promotion, schema-default `jc` left/start strip, jc-only `pPrChange` removal.
+  Full main ledger **mean 90.04 / median 95.67** (n=164) at `d094de0`.
+
+### Performance
+
+- M232/M233: single-pass spacing+jc cleanup and lazy pure-del/mixed paragraph
+  classification cache for multi-pass peels.
+
+### Documentation
+
+- `docs/BENCHMARK_M233.md` — full quality + speed stamp (main, randomized
+  `file_i_v_file_{i+1}`, 5k-pair speed bench, criterion, expanded ABBA).
+- `tools/perf/run_abba_matrix.sh` — optional sample expansion with consecutive
+  file pairs (`FILE_SAMPLE=1`).
+
 ## [0.5.0] - 2026-07-15
 
 Product line alignment with the desktop app: same **0.5.0** minor for the
