@@ -249,3 +249,42 @@ fn document100_vs_lots_of_comments_carries_all_six() {
     assert_eq!(e.len(), 6, "ends={e:?}");
     assert_eq!(r.len(), 6, "refs={r:?}");
 }
+
+/// Same comment *texts* on A and B under different ids (Word renumbered the
+/// set across two redline-derived sources). Union-by-id produces 12 comments
+/// + 12 anchors; Word redline keeps 6. Prefer B when B's text multiset covers
+/// A's (id-independent).
+#[test]
+fn renumbered_same_text_comments_prefer_b_not_double_union() {
+    let a_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline.docx";
+    let b_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_removal_redline_removal_v_addition.docx";
+    if !require_path(a_path) || !require_path(b_path) {
+        return;
+    }
+    let a = std::fs::read(a_path).unwrap();
+    let b = std::fs::read(b_path).unwrap();
+    let pkg_a = PartFs::open(&a).unwrap();
+    let pkg_b = PartFs::open(&b).unwrap();
+    let a_ids = comment_ids(&pkg_a);
+    let b_ids = comment_ids(&pkg_b);
+    assert_eq!(a_ids.len(), 6);
+    assert_eq!(b_ids.len(), 6);
+    assert!(
+        a_ids != b_ids,
+        "fixture premise: ids differ so bare id-match fails"
+    );
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
+    let pkg = PartFs::open(&out).unwrap();
+    let ids = comment_ids(&pkg);
+    let (s, e, r) = anchor_ids(&pkg);
+    assert_eq!(
+        ids.len(),
+        6,
+        "must not double-union same texts under different ids; got {ids:?}"
+    );
+    assert_eq!(s.len(), 6, "starts={s:?}");
+    assert_eq!(e.len(), 6, "ends={e:?}");
+    assert_eq!(r.len(), 6, "refs={r:?}");
+    // B's id set wins (text-cover fast path installs B byte-identical).
+    assert_eq!(ids, b_ids, "B's comment ids must be the carried set");
+}

@@ -109,6 +109,31 @@ fn b_carries_same_comments_as_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
     a.iter().all(|(id, text)| b.get(id) == Some(text))
 }
 
+/// True when B's multiset of comment *body texts* covers A's multiset
+/// (id-independent). Word renumbers the same comment set across sequential
+/// redline sources (lots_of_comments addition vs removal_v_addition share six
+/// bodies under disjoint ids). Id-match fails → naive union doubles anchors
+/// (12 vs Word's 6). Text multiset cover still refuses drop of an A-only body
+/// (PR #81 spirit: do not silently discard distinct comments).
+fn b_covers_comment_texts_of_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
+    let a = comment_id_text_of(pkg1);
+    if a.is_empty() {
+        return true;
+    }
+    let b = comment_id_text_of(pkg2);
+    let mut b_counts: HashMap<String, usize> = HashMap::new();
+    for text in b.values() {
+        *b_counts.entry(text.clone()).or_default() += 1;
+    }
+    for text in a.values() {
+        match b_counts.get_mut(text) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => return false,
+        }
+    }
+    true
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Start,
@@ -707,10 +732,15 @@ pub fn carry_comments(
     let anchored = if ids_b.is_empty() {
         // only A has comments; its parts are already in out (out is A's clone)
         inject_side(dom, result_root, pkg1, main1, false, author, &no_map, None)
-    } else if ids_a.is_empty() || b_carries_same_comments_as_a(pkg1, pkg2) {
-        // B carries the union — parts byte-identical from B (gated on matching
-        // id AND text for every A comment; a bare numeric-id superset is not
-        // enough — same-id independently-authored comments would be dropped).
+    } else if ids_a.is_empty()
+        || b_carries_same_comments_as_a(pkg1, pkg2)
+        || b_covers_comment_texts_of_a(pkg1, pkg2)
+    {
+        // B carries the union — parts byte-identical from B. Two gates:
+        //   1. id+text match for every A comment (classic superset).
+        //   2. id-independent text multiset cover (M213): Word-renumbered
+        //      same-body comment sets across redline sources.
+        // Bare numeric-id superset alone is still not enough.
         install_parts_from(out, out_main, pkg2);
         inject_side(dom, result_root, pkg2, main2, true, author, &no_map, None)
     } else {
