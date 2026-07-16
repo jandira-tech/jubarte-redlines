@@ -1775,12 +1775,11 @@ pub fn last_pure_del_spacing_to_pprchange(
     if dom.name(last) != Some(W::p()) {
         return;
     }
-    // Pure-del last residual only. M94 mixed helped some files, but
-    // subtitle/title/large_font cousins (equal A/B spacing) Word keeps **live**
-    // spacing on last MIX with no pPrChange. Parking into pPrChange (or
-    // live+no-op pPrChange) costs LO. M226 strips no-op later; do not invent
-    // pPrChange on MIX here. Net sticky +18.9 despite a few MIX-layout regs.
-    if !para_is_pure_deleted(dom, last) {
+    // Pure-del or mixed last residual (M94). M226 gated MIX out for subtitle
+    // cousins, but full ledger showed catastrophic regs (red_heading −37,
+    // heading chain −6..−12). Restore MIX parking; keep M228 mid pure-D
+    // promote + strip_redundant for the spacing wins that don't need this gate.
+    if !para_is_pure_deleted(dom, last) && !para_is_mixed_revision(dom, last) {
         return;
     }
     let Some(ppr) = dom.element(last, &W::p_pr()) else {
@@ -1789,7 +1788,7 @@ pub fn last_pure_del_spacing_to_pprchange(
     if dom.element(ppr, &W::name("pPrChange")).is_some() {
         return;
     }
-    // Layout props Word records under pPrChange on the last pure-del.
+    // Layout props Word records under pPrChange on the last pure-del / mixed.
     let movable = [
         W::name("spacing"),
         W::num_pr(),
