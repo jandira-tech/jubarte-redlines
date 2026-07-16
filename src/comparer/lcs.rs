@@ -2229,16 +2229,85 @@ fn step_h(
                 "Para"
             }
         };
+        let contentful_count = |units: &[ComparisonUnit]| -> usize {
+            units
+                .iter()
+                .filter(|u| {
+                    as_group(u).is_some_and(|g| g.group_type == Paragraph)
+                        && !para_text_token_list(dom, u).is_empty()
+                })
+                .count()
+        };
+        let first_contentful_tokens =
+            |units: &[ComparisonUnit]| -> std::collections::HashSet<String> {
+                units
+                    .iter()
+                    .find(|u| {
+                        as_group(u).is_some_and(|g| g.group_type == Paragraph)
+                            && !para_text_token_list(dom, u).is_empty()
+                    })
+                    .map(|u| para_text_tokens(dom, u))
+                    .unwrap_or_default()
+            };
         let lg = crate::util::group_adjacent(cul1.iter().cloned(), |u| key(u));
         let rg = crate::util::group_adjacent(cul2.iter().cloned(), |u| key(u));
         let (mut il, mut ir) = (0usize, 0usize);
         loop {
             if lg[il].0 == rg[ir].0 {
-                out.push(CorrelatedSequence::paired(
-                    CorrelationStatus::Unknown,
-                    lg[il].1.clone(),
-                    rg[ir].1.clone(),
-                ));
+                // M205 (q1_sales_summary_table×quarterly_performance ~65):
+                // equal-length title+empty para runs with one contentful title
+                // each and near-zero title jaccard free-mesh as R (~65). Word
+                // pure-I/Ds the titles then EQ-meshes empties+tables. Keep
+                // unequal-length para runs as Unknown so project_tasks×q1_sales
+                // (3v2 empties) still free-meshes title (Word R).
+                let pure_id_titles = settings.merge_replaced_paragraphs
+                    && lg[il].0 == "Para"
+                    && lg[il].1.len() == rg[ir].1.len()
+                    && contentful_count(&lg[il].1) == 1
+                    && contentful_count(&rg[ir].1) == 1
+                    && {
+                        let j = token_jaccard(
+                            &first_contentful_tokens(&lg[il].1),
+                            &first_contentful_tokens(&rg[ir].1),
+                        );
+                        j + 1e-12 < 0.12
+                    };
+                if pure_id_titles {
+                    let (lt, le): (Vec<_>, Vec<_>) = lg[il]
+                        .1
+                        .iter()
+                        .cloned()
+                        .partition(|u| !para_text_token_list(dom, u).is_empty());
+                    let (rt, re): (Vec<_>, Vec<_>) = rg[ir]
+                        .1
+                        .iter()
+                        .cloned()
+                        .partition(|u| !para_text_token_list(dom, u).is_empty());
+                    if !rt.is_empty() {
+                        out.push(CorrelatedSequence::inserted(rt));
+                    }
+                    if !lt.is_empty() {
+                        out.push(CorrelatedSequence::deleted(lt));
+                    }
+                    // Empties keep positional Unknown so they EQ-mesh (Word).
+                    if !le.is_empty() && !re.is_empty() {
+                        out.push(CorrelatedSequence::paired(
+                            CorrelationStatus::Unknown,
+                            le,
+                            re,
+                        ));
+                    } else if !le.is_empty() {
+                        out.push(CorrelatedSequence::deleted(le));
+                    } else if !re.is_empty() {
+                        out.push(CorrelatedSequence::inserted(re));
+                    }
+                } else {
+                    out.push(CorrelatedSequence::paired(
+                        CorrelationStatus::Unknown,
+                        lg[il].1.clone(),
+                        rg[ir].1.clone(),
+                    ));
+                }
                 il += 1;
                 ir += 1;
             } else if lg[il].0 == "Para" && rg[ir].0 == "Table" {
