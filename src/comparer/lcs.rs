@@ -2360,6 +2360,12 @@ fn step_h(
     //   - table side: exactly 1 table, 0 contentful paras (empties only)
     // Excludes meeting_minutes multi-para (−27), support_tickets×summary
     // (different titles so residual not this shape after peel), etc.
+    //
+    // M207 (contract_review insertions×mixed ~67; inventory deletions×mixed
+    // ~68): full window still has equal titles (j ≥ 0.9) so residual M201
+    // never sees the window — H4 flattens and free-meshes. Peel the equal
+    // first contentful titles, then pure-I/D the residual when it matches
+    // the prose-vs-table shape. Word EQ title + R residual + empty table.
     let left_only_ptt_m201 = left_len == left_tables + left_paras + left_textboxes;
     let right_only_ptt_m201 = right_len == right_tables + right_paras + right_textboxes;
     if settings.merge_replaced_paragraphs
@@ -2369,8 +2375,8 @@ fn step_h(
         && right_textboxes == 0
         && left_len >= 1
         && right_len >= 1
-        && left_len <= 6
-        && right_len <= 6
+        && left_len <= 12
+        && right_len <= 12
     {
         let contentful_paras = |units: &[ComparisonUnit]| -> usize {
             units
@@ -2381,13 +2387,19 @@ fn step_h(
                 })
                 .count()
         };
+        let first_contentful_idx = |units: &[ComparisonUnit]| -> Option<usize> {
+            units.iter().position(|u| {
+                as_group(u).is_some_and(|g| g.group_type == Paragraph)
+                    && !para_text_token_list(dom, u).is_empty()
+            })
+        };
         let lc = contentful_paras(cul1);
         let rc = contentful_paras(cul2);
-        let prose_vs_table = (left_tables == 0
-            && lc == 1
-            && right_tables == 1
-            && rc == 0)
-            || (right_tables == 0 && rc == 1 && left_tables == 1 && lc == 0);
+        // Tight residual pure-I/D (original M201): keep len ≤ 6.
+        let prose_vs_table = left_len <= 6
+            && right_len <= 6
+            && ((left_tables == 0 && lc == 1 && right_tables == 1 && rc == 0)
+                || (right_tables == 0 && rc == 1 && left_tables == 1 && lc == 0));
         if prose_vs_table {
             for u in cul2 {
                 out.push(CorrelatedSequence::inserted(vec![u.clone()]));
@@ -2396,6 +2408,120 @@ fn step_h(
                 out.push(CorrelatedSequence::deleted(vec![u.clone()]));
             }
             return out;
+        }
+        // M207: equal-title peel then residual prose-vs-table.
+        if (left_tables == 1) ^ (right_tables == 1)
+            && lc >= 1
+            && rc >= 1
+            && left_len <= 5
+            && right_len <= 5
+        {
+            if let (Some(li), Some(ri)) = (first_contentful_idx(cul1), first_contentful_idx(cul2))
+            {
+                let j_title = token_jaccard(
+                    &para_text_tokens(dom, &cul1[li]),
+                    &para_text_tokens(dom, &cul2[ri]),
+                );
+                if j_title + 1e-12 >= 0.9 {
+                    let rest1: Vec<ComparisonUnit> = cul1
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| *i != li)
+                        .map(|(_, u)| u.clone())
+                        .collect();
+                    let rest2: Vec<ComparisonUnit> = cul2
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| *i != ri)
+                        .map(|(_, u)| u.clone())
+                        .collect();
+                    let rc_rest = contentful_paras(&rest1);
+                    let rr_rest = contentful_paras(&rest2);
+                    let rt1 = count_gt(&rest1, Table);
+                    let rt2 = count_gt(&rest2, Table);
+                    let residual_pvt = (rt1 == 0 && rc_rest == 1 && rt2 == 1 && rr_rest == 0)
+                        || (rt2 == 0 && rr_rest == 1 && rt1 == 1 && rc_rest == 0);
+                    if residual_pvt && !rest1.is_empty() && !rest2.is_empty() {
+                        out.push(CorrelatedSequence::paired(
+                            CorrelationStatus::Unknown,
+                            vec![cul1[li].clone()],
+                            vec![cul2[ri].clone()],
+                        ));
+                        for u in &rest2 {
+                            out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                        }
+                        for u in &rest1 {
+                            out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                        }
+                        return out;
+                    }
+                }
+            }
+        }
+        // M208 (book_catalog_table×budget_report ~69): multi pure-prose next
+        // (all contentful, no tables, ≥4 paras) vs title+empties+1 table.
+        // Free LCS pure-I's every prose line + pure-D title (~69). Word pure-I's
+        // all-but-last prose, free-meshes last prose × title, pure-D empties+
+        // table. Require title jaccard with last prose < 0.15 (unrelated).
+        let m208 = {
+            let prose_left =
+                left_tables == 0 && lc == left_paras && lc >= 4 && left_len == left_paras;
+            let prose_right =
+                right_tables == 0 && rc == right_paras && rc >= 4 && right_len == right_paras;
+            let table_left = left_tables == 1 && lc == 1 && left_len <= 5;
+            let table_right = right_tables == 1 && rc == 1 && right_len <= 5;
+            (prose_left && table_right) || (prose_right && table_left)
+        };
+        if m208 {
+            let (prose, table_side) = if left_tables == 0 {
+                (cul1, cul2)
+            } else {
+                (cul2, cul1)
+            };
+            let prose_is_left = left_tables == 0;
+            if let Some(ti) = first_contentful_idx(table_side) {
+                let last_p = prose.len() - 1;
+                let j_last = token_jaccard(
+                    &para_text_tokens(dom, &prose[last_p]),
+                    &para_text_tokens(dom, &table_side[ti]),
+                );
+                if j_last + 1e-12 < 0.15 {
+                    // pure-I early prose
+                    for u in &prose[..last_p] {
+                        if prose_is_left {
+                            out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                        } else {
+                            out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                        }
+                    }
+                    // free-mesh last prose × title
+                    out.push(CorrelatedSequence::paired(
+                        CorrelationStatus::Unknown,
+                        if prose_is_left {
+                            vec![prose[last_p].clone()]
+                        } else {
+                            vec![table_side[ti].clone()]
+                        },
+                        if prose_is_left {
+                            vec![table_side[ti].clone()]
+                        } else {
+                            vec![prose[last_p].clone()]
+                        },
+                    ));
+                    // pure-I/D rest of table side
+                    for (i, u) in table_side.iter().enumerate() {
+                        if i == ti {
+                            continue;
+                        }
+                        if prose_is_left {
+                            out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                        } else {
+                            out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                        }
+                    }
+                    return out;
+                }
+            }
         }
     }
 
