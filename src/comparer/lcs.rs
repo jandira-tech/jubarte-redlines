@@ -2254,15 +2254,16 @@ fn step_h(
         let (mut il, mut ir) = (0usize, 0usize);
         loop {
             if lg[il].0 == rg[ir].0 {
-                // M205 (q1_sales_summary_table×quarterly_performance ~65):
-                // equal-length title+empty para runs with one contentful title
-                // each and near-zero title jaccard free-mesh as R (~65). Word
-                // pure-I/Ds the titles then EQ-meshes empties+tables. Keep
-                // unequal-length para runs as Unknown so project_tasks×q1_sales
-                // (3v2 empties) still free-meshes title (Word R).
-                let pure_id_titles = settings.merge_replaced_paragraphs
+                // M205/M206 (table-doc title runs with one contentful each and
+                // near-zero title jaccard):
+                //   M205 equal-length (q1_sales×quarterly ~65→85): Word
+                //   pure-I/Ds titles then EQ-meshes empties+tables.
+                //   M206 unequal-length (project_tasks×q1_sales ~67): nested
+                //   free-LCS pure-I/Ds titles + extra empty-D; Word free-meshes
+                //   titles as R and EQ-meshes the shared empties. Force Unknown
+                //   on the two titles and pure-I/D leftover empties.
+                let one_title_each = settings.merge_replaced_paragraphs
                     && lg[il].0 == "Para"
-                    && lg[il].1.len() == rg[ir].1.len()
                     && contentful_count(&lg[il].1) == 1
                     && contentful_count(&rg[ir].1) == 1
                     && {
@@ -2272,7 +2273,7 @@ fn step_h(
                         );
                         j + 1e-12 < 0.12
                     };
-                if pure_id_titles {
+                if one_title_each {
                     let (lt, le): (Vec<_>, Vec<_>) = lg[il]
                         .1
                         .iter()
@@ -2283,23 +2284,37 @@ fn step_h(
                         .iter()
                         .cloned()
                         .partition(|u| !para_text_token_list(dom, u).is_empty());
-                    if !rt.is_empty() {
-                        out.push(CorrelatedSequence::inserted(rt));
-                    }
-                    if !lt.is_empty() {
-                        out.push(CorrelatedSequence::deleted(lt));
-                    }
-                    // Empties keep positional Unknown so they EQ-mesh (Word).
-                    if !le.is_empty() && !re.is_empty() {
+                    if lg[il].1.len() == rg[ir].1.len() {
+                        // M205: pure-I/D titles
+                        if !rt.is_empty() {
+                            out.push(CorrelatedSequence::inserted(rt));
+                        }
+                        if !lt.is_empty() {
+                            out.push(CorrelatedSequence::deleted(lt));
+                        }
+                    } else {
+                        // M206: free-mesh titles (Unknown → word LCS replace)
                         out.push(CorrelatedSequence::paired(
                             CorrelationStatus::Unknown,
-                            le,
-                            re,
+                            lt,
+                            rt,
                         ));
-                    } else if !le.is_empty() {
-                        out.push(CorrelatedSequence::deleted(le));
-                    } else if !re.is_empty() {
-                        out.push(CorrelatedSequence::inserted(re));
+                    }
+                    // Empties: positional Unknown for the shared prefix, pure
+                    // I/D the leftover empties on the longer side.
+                    let n_eq = le.len().min(re.len());
+                    if n_eq > 0 {
+                        out.push(CorrelatedSequence::paired(
+                            CorrelationStatus::Unknown,
+                            le[..n_eq].to_vec(),
+                            re[..n_eq].to_vec(),
+                        ));
+                    }
+                    if le.len() > n_eq {
+                        out.push(CorrelatedSequence::deleted(le[n_eq..].to_vec()));
+                    }
+                    if re.len() > n_eq {
+                        out.push(CorrelatedSequence::inserted(re[n_eq..].to_vec()));
                     }
                 } else {
                     out.push(CorrelatedSequence::paired(
