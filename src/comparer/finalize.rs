@@ -2593,7 +2593,32 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 }
                 let inss = &children[ins_start..del_start];
                 let dels = &children[del_start..j];
-                if inss.is_empty() || dels.is_empty() || !para_has_real_del(dom, dels[0]) {
+                // M216: mark-only empty pure-D (pPr/rPr/del, no w:del body) after
+                // a sole pure-I prose block — Word folds the mark-del into that
+                // pure-I for table→prose residuals with an **equal** title
+                // (contract_review insertions×mixed: classes `.ID.T.`).
+                // Skip when the paragraph immediately before the pure-I run
+                // already carries `w:ins` (support_tickets_table×summary title
+                // is partial-EQ + ins → class None but still an inserted title;
+                // Word keeps the empty pure-D after the body). Tables break the
+                // pure-D run (class None), so the empty mark is a sole del.
+                if inss.is_empty() || dels.is_empty() {
+                    continue;
+                }
+                let preceding_has_ins = ins_start > 0 && {
+                    let prev = children[ins_start - 1];
+                    dom.name(prev) == Some(W::p())
+                        && !dom.descendants(prev, Some(&W::ins())).is_empty()
+                };
+                let mark_only_empty_del = dels.len() == 1
+                    && inss.len() == 1
+                    && !preceding_has_ins
+                    && !para_has_real_del(dom, dels[0])
+                    && para_mark_revision(dom, dels[0], &W::del())
+                    && para_has_no_text(dom, dels[0]);
+                let del_foldable =
+                    para_has_real_del(dom, dels[0]) || mark_only_empty_del;
+                if !del_foldable {
                     continue;
                 }
                 // Sole trailing del: always fold (single_paragraph GT / m44).
