@@ -2610,12 +2610,29 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     dom.name(prev) == Some(W::p())
                         && !dom.descendants(prev, Some(&W::ins())).is_empty()
                 };
-                let mark_only_empty_del = dels.len() == 1
-                    && inss.len() == 1
-                    && !preceding_has_ins
-                    && !para_has_real_del(dom, dels[0])
+                // Sole mark-only empty (contract) OR leading mark-only empty when
+                // every pure-D in the run is mark-only empty (inventory: two
+                // empties before deleted table). After M218 the carrier gets a
+                // del pilcrow → class None, so a second empty is not re-folded
+                // into a pure-I on the next rescan (Word keeps one empty).
+                let first_mark_only_empty = !para_has_real_del(dom, dels[0])
                     && para_mark_revision(dom, dels[0], &W::del())
                     && para_has_no_text(dom, dels[0]);
+                let all_dels_mark_only_empty = first_mark_only_empty
+                    && dels.iter().all(|&d| {
+                        !para_has_real_del(dom, d)
+                            && para_mark_revision(dom, d, &W::del())
+                            && para_has_no_text(dom, d)
+                    });
+                // Skip when carrier already has a del pilcrow (second empty after
+                // inventory first fold — Word keeps one empty pure-D).
+                let carrier = inss[inss.len() - 1];
+                let carrier_has_mark_del = para_mark_revision(dom, carrier, &W::del());
+                let mark_only_empty_del = inss.len() == 1
+                    && !preceding_has_ins
+                    && !carrier_has_mark_del
+                    && first_mark_only_empty
+                    && (dels.len() == 1 || all_dels_mark_only_empty);
                 let del_foldable =
                     para_has_real_del(dom, dels[0]) || mark_only_empty_del;
                 if !del_foldable {
