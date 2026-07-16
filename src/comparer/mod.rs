@@ -671,16 +671,13 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::ensure_default_page_size(dom, root);
         // M83b/M87 after merge_replaced — last pure-del layout → pPrChange.
         finalize::last_pure_del_spacing_to_pprchange(dom, root, settings, &mut id);
-        // M228: mid pure-D keep live spacing (not pPrChange); strip line=276 noise.
-        finalize::promote_mid_pure_del_spacing_from_pprchange(dom, root);
+        // M228+M226+M231: one body walk — mid pure-D spacing promote, no-op
+        // equal-spacing pPrChange strip, default jc=left strip.
+        finalize::cleanup_spacing_and_default_jc(dom, root);
         // M92 after M69 strip path may leave empty with live spacing.
         finalize::trailing_empty_spacing_to_pprchange(dom, root, settings, &mut id);
         // M98b: mixed+empty trailing — park spacing on empty (file_167).
         finalize::mixed_spacing_to_following_empty(dom, root, settings, &mut id);
-        // M226: drop no-op pPrChange when live spacing == old spacing (heading cousins).
-        finalize::strip_redundant_equal_spacing_pprchange(dom, root);
-        // M231: strip schema-default jc left/start (large_font×left_alignment).
-        finalize::strip_default_left_jc(dom, root);
         // M221: MIX Heading spacing → last pure-D residual (green_underline×heading_1).
         finalize::park_mixed_spacing_onto_trailing_pure_del(dom, root, settings, &mut id);
         // M230: MIX numPr → last empty pure-D (bullet_list_bold×bullet_list).

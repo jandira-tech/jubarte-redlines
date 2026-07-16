@@ -1925,15 +1925,12 @@ pub fn mixed_spacing_to_following_empty(
     }
 }
 
-/// M228 (1_5_line_spacing×24 ~62): mid pure-D empty residuals keep **live**
-/// spacing; only the last pure-D parks into `pPrChange` (M83b/M91). After
-/// residual emit we sometimes have mid pure-Ds with spacing-only `pPrChange`
-/// and no live spacing — promote old spacing to live and drop the ppc.
+/// M228 / M226 / M231 single body walk (perf: avoid 3× O(n_p) on large docs).
 ///
-/// Also drops pure-D `pPrChange` whose old spacing is only default-ish
-/// `line=276` (no before/after/lineRule): Word omits that noise on the first
-/// pure-D after a digit title residual.
-pub fn promote_mid_pure_del_spacing_from_pprchange(dom: &mut Dom, root: NodeId) {
+/// - **M228:** mid pure-D promote spacing-only pPrChange → live; strip line=276 noise.
+/// - **M226:** drop no-op pPrChange when live spacing equals old spacing.
+/// - **M231:** strip schema-default `jc=left|start` live and from pPrChange-old.
+pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
@@ -1942,102 +1939,36 @@ pub fn promote_mid_pure_del_spacing_from_pprchange(dom: &mut Dom, root: NodeId) 
         .into_iter()
         .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
         .collect();
-    if kids.len() < 2 {
+    if kids.is_empty() {
         return;
     }
     let last_i = kids.len() - 1;
+    // Fast path: no del in body → M228 cannot fire; still may need M226/M231.
+    let body_has_del = !dom.descendants(body, Some(&W::del())).is_empty();
     for (i, &p) in kids.iter().enumerate() {
-        if dom.name(p) != Some(W::p()) || !para_is_pure_deleted(dom, p) {
-            continue;
-        }
-        let Some(ppr) = dom.element(p, &W::p_pr()) else {
-            continue;
-        };
-        let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) else {
-            continue;
-        };
-        // Already has live spacing — leave alone.
-        if dom.element(ppr, &W::name("spacing")).is_some() {
-            continue;
-        }
-        let old_ppr = dom
-            .elements(ppc, None)
-            .into_iter()
-            .find(|&c| dom.name(c) == Some(W::p_pr()));
-        let Some(old_ppr) = old_ppr else {
-            continue;
-        };
-        let Some(old_sp) = dom.element(old_ppr, &W::name("spacing")) else {
-            continue;
-        };
-        // Old must be spacing-only (ignore empty rPr / pStyle noise).
-        let mut other = false;
-        for c in dom.elements(old_ppr, None) {
-            let Some(n) = dom.name(c) else {
-                continue;
-            };
-            let local = n.local_name();
-            if local == "spacing" || local == "rPr" || local == "pStyle" {
-                continue;
-            }
-            other = true;
-            break;
-        }
-        if other {
-            continue;
-        }
-        let line = dom.attribute(old_sp, &W::name("line")).unwrap_or("");
-        let before = dom.attribute(old_sp, &W::name("before")).unwrap_or("");
-        let after = dom.attribute(old_sp, &W::name("after")).unwrap_or("");
-        let line_rule = dom.attribute(old_sp, &W::name("lineRule")).unwrap_or("");
-        // Noise: sole line=276 with no lineRule/before/after — Word drops it.
-        let is_line276_noise =
-            line == "276" && before.is_empty() && after.is_empty() && line_rule.is_empty();
-        if is_line276_noise {
-            dom.remove(ppc);
-            continue;
-        }
-        // Last pure-D keeps pPrChange (Word shape). Mid pure-Ds promote to live.
-        if i == last_i {
-            continue;
-        }
-        let live = dom.clone_subtree(old_sp);
-        // Insert spacing before pPrChange (CT_PPr order).
-        dom.add_before_self(ppc, live);
-        dom.remove(ppc);
-    }
-}
-
-/// M231 (large_font×left_alignment ~88): strip schema-default `w:jc val=left|start`
-/// from live pPr and from pPrChange-old. Word omits default left alignment;
-/// we sometimes emit live jc=left and/or pPrChange(jc=left) that LO penalizes.
-pub fn strip_default_left_jc(dom: &mut Dom, root: NodeId) {
-    let Some(body) = dom.element(root, &W::body()) else {
-        return;
-    };
-    for p in dom.elements(body, None) {
         if dom.name(p) != Some(W::p()) {
             continue;
         }
         let Some(ppr) = dom.element(p, &W::p_pr()) else {
             continue;
         };
-        // Live default jc.
+
+        // --- M231: live default jc ---
         if let Some(jc) = dom.element(ppr, &W::name("jc")) {
             let val = dom.attribute(jc, &W::val()).unwrap_or("");
             if val == "left" || val == "start" {
                 dom.remove(jc);
             }
         }
-        // pPrChange old: drop default jc. If old was jc-left-only, drop the
-        // whole pPrChange (large_font×left). Do NOT drop pre-existing empty
-        // pPrChange shells (left×line_spacing Word shape).
-        if let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) {
+
+        let ppc = dom.element(ppr, &W::name("pPrChange"));
+        if let Some(ppc) = ppc {
             let old_ppr = dom
                 .elements(ppc, None)
                 .into_iter()
                 .find(|&c| dom.name(c) == Some(W::p_pr()));
             if let Some(old_ppr) = old_ppr {
+                // --- M231: pPrChange old default jc ---
                 let mut removed_left_jc = false;
                 if let Some(jc) = dom.element(old_ppr, &W::name("jc")) {
                     let val = dom.attribute(jc, &W::val()).unwrap_or("");
@@ -2060,36 +1991,65 @@ pub fn strip_default_left_jc(dom: &mut Dom, root: NodeId) {
                     }
                     if !has_layout {
                         dom.remove(ppc);
+                        continue; // ppc gone
                     }
                 }
+
+                // Re-fetch ppc after possible remove above.
             }
         }
-    }
-}
-
-/// M226 (heading_3/4 style cousins ~80): drop `w:pPrChange` when live spacing
-/// equals the pPrChange old spacing and old has no other layout props. Word
-/// keeps live spacing only (no pPrChange) when A/B Heading spacing matches;
-/// we sometimes emit a no-op pPrChange (same before/after/line) that LO treats
-/// differently than Word's live-only shape.
-pub fn strip_redundant_equal_spacing_pprchange(dom: &mut Dom, root: NodeId) {
-    let Some(body) = dom.element(root, &W::body()) else {
-        return;
-    };
-    for p in dom.elements(body, None) {
-        if dom.name(p) != Some(W::p()) {
-            continue;
-        }
-        let Some(ppr) = dom.element(p, &W::p_pr()) else {
-            continue;
-        };
-        let Some(live_sp) = dom.element(ppr, &W::name("spacing")) else {
-            continue;
-        };
+        // Re-bind ppc after M231 may have removed it.
         let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) else {
             continue;
         };
-        // pPrChange child is old pPr (CT_PPrChange).
+        let old_ppr = dom
+            .elements(ppc, None)
+            .into_iter()
+            .find(|&c| dom.name(c) == Some(W::p_pr()));
+        let Some(old_ppr) = old_ppr else {
+            continue;
+        };
+
+        // --- M226: equal live/old spacing no-op pPrChange ---
+        if let (Some(live_sp), Some(old_sp)) = (
+            dom.element(ppr, &W::name("spacing")),
+            dom.element(old_ppr, &W::name("spacing")),
+        ) {
+            let same_spacing = ["before", "after", "line", "lineRule"].iter().all(|&a| {
+                dom.attribute(live_sp, &W::name(a)).unwrap_or("")
+                    == dom.attribute(old_sp, &W::name(a)).unwrap_or("")
+            });
+            if same_spacing {
+                let mut other_layout = false;
+                for c in dom.elements(old_ppr, None) {
+                    let Some(n) = dom.name(c) else {
+                        continue;
+                    };
+                    let local = n.local_name();
+                    if local == "spacing" || local == "rPr" || local == "pStyle" {
+                        continue;
+                    }
+                    other_layout = true;
+                    break;
+                }
+                if !other_layout {
+                    dom.remove(ppc);
+                    continue;
+                }
+            }
+        }
+
+        // --- M228: mid pure-D spacing promote / line=276 noise ---
+        if !body_has_del || !para_is_pure_deleted(dom, p) {
+            continue;
+        }
+        if dom.element(ppr, &W::name("spacing")).is_some() {
+            continue;
+        }
+        // ppc still present
+        let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) else {
+            continue;
+        };
         let old_ppr = dom
             .elements(ppc, None)
             .into_iter()
@@ -2100,18 +2060,7 @@ pub fn strip_redundant_equal_spacing_pprchange(dom: &mut Dom, root: NodeId) {
         let Some(old_sp) = dom.element(old_ppr, &W::name("spacing")) else {
             continue;
         };
-        let same_spacing = ["before", "after", "line", "lineRule"].iter().all(|&a| {
-            dom.attribute(live_sp, &W::name(a)).unwrap_or("")
-                == dom.attribute(old_sp, &W::name(a)).unwrap_or("")
-        });
-        if !same_spacing {
-            continue;
-        }
-        // Old pPr must not carry other meaningful layout. Empty rPr ok.
-        // Always ignore pStyle in old: unresolved styles are stripped later
-        // (document_comparer after finalize), leaving a no-op pPrChange that
-        // only restates equal spacing — Word omits it (heading_3/4 cousins).
-        let mut other_layout = false;
+        let mut other = false;
         for c in dom.elements(old_ppr, None) {
             let Some(n) = dom.name(c) else {
                 continue;
@@ -2120,14 +2069,42 @@ pub fn strip_redundant_equal_spacing_pprchange(dom: &mut Dom, root: NodeId) {
             if local == "spacing" || local == "rPr" || local == "pStyle" {
                 continue;
             }
-            other_layout = true;
+            other = true;
             break;
         }
-        if other_layout {
+        if other {
             continue;
         }
+        let line = dom.attribute(old_sp, &W::name("line")).unwrap_or("");
+        let before = dom.attribute(old_sp, &W::name("before")).unwrap_or("");
+        let after = dom.attribute(old_sp, &W::name("after")).unwrap_or("");
+        let line_rule = dom.attribute(old_sp, &W::name("lineRule")).unwrap_or("");
+        let is_line276_noise =
+            line == "276" && before.is_empty() && after.is_empty() && line_rule.is_empty();
+        if is_line276_noise {
+            dom.remove(ppc);
+            continue;
+        }
+        if i == last_i {
+            continue;
+        }
+        let live = dom.clone_subtree(old_sp);
+        dom.add_before_self(ppc, live);
         dom.remove(ppc);
     }
+}
+
+/// Thin wrappers kept for call-site clarity / tests.
+pub fn promote_mid_pure_del_spacing_from_pprchange(dom: &mut Dom, root: NodeId) {
+    cleanup_spacing_and_default_jc(dom, root);
+}
+
+pub fn strip_default_left_jc(dom: &mut Dom, root: NodeId) {
+    cleanup_spacing_and_default_jc(dom, root);
+}
+
+pub fn strip_redundant_equal_spacing_pprchange(dom: &mut Dom, root: NodeId) {
+    cleanup_spacing_and_default_jc(dom, root);
 }
 
 /// M221 (green_underline×heading_1_bold ~56): MIX residual carries B Heading
