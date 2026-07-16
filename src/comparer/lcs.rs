@@ -2458,66 +2458,53 @@ fn step_h(
                 }
             }
         }
-        // M208 (book_catalog_table×budget_report ~69): multi pure-prose next
-        // (all contentful, no tables, ≥4 paras) vs title+empties+1 table.
-        // Free LCS pure-I's every prose line + pure-D title (~69). Word pure-I's
+        // M208 (book_catalog_table×budget_report ~69→91): base is title+empties+
+        // 1 table, next is multi pure-prose (≥4 contentful, no tables). Free LCS
+        // pure-I's every prose line + pure-D title (~69). Word pure-I's
         // all-but-last prose, free-meshes last prose × title, pure-D empties+
-        // table. Require title jaccard with last prose < 0.15 (unrelated).
-        let m208 = {
-            let prose_left =
-                left_tables == 0 && lc == left_paras && lc >= 4 && left_len == left_paras;
-            let prose_right =
-                right_tables == 0 && rc == right_paras && rc >= 4 && right_len == right_paras;
-            let table_left = left_tables == 1 && lc == 1 && left_len <= 5;
-            let table_right = right_tables == 1 && rc == 1 && right_len <= 5;
-            (prose_left && table_right) || (prose_right && table_left)
-        };
+        // table.
+        //
+        // Direction is table-LEFT × prose-RIGHT only — prose-left×table-right
+        // (marketing_strategy×meeting_agenda_table) was already 100 via pure
+        // I/D of the agenda residual; free-meshing last KPI×title tanked LO
+        // −52. Also require first-title × first-prose j < 0.15 so related
+        // families (Meeting Agenda×Meeting Minutes) stay on the free path
+        // (was 100; free-mesh last×title −28).
+        let m208 = left_tables == 1
+            && lc == 1
+            && left_len <= 5
+            && right_tables == 0
+            && rc == right_paras
+            && rc >= 4
+            && right_len == right_paras;
         if m208 {
-            let (prose, table_side) = if left_tables == 0 {
-                (cul1, cul2)
-            } else {
-                (cul2, cul1)
-            };
-            let prose_is_left = left_tables == 0;
-            if let Some(ti) = first_contentful_idx(table_side) {
-                let last_p = prose.len() - 1;
-                let j_last = token_jaccard(
-                    &para_text_tokens(dom, &prose[last_p]),
-                    &para_text_tokens(dom, &table_side[ti]),
+            if let Some(ti) = first_contentful_idx(cul1) {
+                let last_p = cul2.len() - 1;
+                let j_first = token_jaccard(
+                    &para_text_tokens(dom, &cul1[ti]),
+                    &para_text_tokens(dom, &cul2[0]),
                 );
-                if j_last + 1e-12 < 0.15 {
-                    // pure-I early prose
-                    for u in &prose[..last_p] {
-                        if prose_is_left {
-                            out.push(CorrelatedSequence::deleted(vec![u.clone()]));
-                        } else {
-                            out.push(CorrelatedSequence::inserted(vec![u.clone()]));
-                        }
+                let j_last = token_jaccard(
+                    &para_text_tokens(dom, &cul2[last_p]),
+                    &para_text_tokens(dom, &cul1[ti]),
+                );
+                if j_first + 1e-12 < 0.15 && j_last + 1e-12 < 0.15 {
+                    // pure-I early next prose
+                    for u in &cul2[..last_p] {
+                        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
                     }
-                    // free-mesh last prose × title
+                    // free-mesh last next prose × base title
                     out.push(CorrelatedSequence::paired(
                         CorrelationStatus::Unknown,
-                        if prose_is_left {
-                            vec![prose[last_p].clone()]
-                        } else {
-                            vec![table_side[ti].clone()]
-                        },
-                        if prose_is_left {
-                            vec![table_side[ti].clone()]
-                        } else {
-                            vec![prose[last_p].clone()]
-                        },
+                        vec![cul1[ti].clone()],
+                        vec![cul2[last_p].clone()],
                     ));
-                    // pure-I/D rest of table side
-                    for (i, u) in table_side.iter().enumerate() {
+                    // pure-D rest of table side
+                    for (i, u) in cul1.iter().enumerate() {
                         if i == ti {
                             continue;
                         }
-                        if prose_is_left {
-                            out.push(CorrelatedSequence::inserted(vec![u.clone()]));
-                        } else {
-                            out.push(CorrelatedSequence::deleted(vec![u.clone()]));
-                        }
+                        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
                     }
                     return out;
                 }
@@ -2741,47 +2728,9 @@ fn step_h(
             out.push(CorrelatedSequence::deleted(vec![cul1[2].clone()]));
             return out;
         }
-        // M204 (center_aligned_bold×center_alignment ~80): equal 3v3 Demo
-        // last-sig, both first residuals start with "This", mid-weak first
-        // residual (0.12 ≤ j1 < 0.25), last residual not strong (j2 < 0.35).
-        // Zip pure-I's first next residual then free-meshes last next against
-        // base first residual (cross-pair thrash ~80). Word pure-I/Ds both
-        // residual bodies after title mesh. Keep j1 < 0.25 so right_aligned
-        // (j1≈0.30, LO prefers free-mesh) and blue_bold (j1≈0.38) stay out.
-        let skip_zip_for_m204 = left_paras == 3
-            && right_paras == 3
-            && first_paras_share_last_sig(dom, cul1, cul2)
-            && residual_para_starts_this(dom, &cul1[1])
-            && residual_para_starts_this(dom, &cul2[1])
-            && {
-                let j1 = token_jaccard(
-                    &para_text_tokens(dom, &cul1[1]),
-                    &para_text_tokens(dom, &cul2[1]),
-                );
-                let j2 = token_jaccard(
-                    &para_text_tokens(dom, &cul1[2]),
-                    &para_text_tokens(dom, &cul2[2]),
-                );
-                j1 + 1e-12 >= 0.12
-                    && j1 + 1e-12 < 0.25
-                    && j2 + 1e-12 < 0.35
-            };
-        if settings.merge_replaced_paragraphs
-            && skip_zip_for_m204
-            && left_paras == left_len
-            && right_paras == right_len
-        {
-            out.push(CorrelatedSequence::paired(
-                CorrelationStatus::Unknown,
-                vec![cul1[0].clone()],
-                vec![cul2[0].clone()],
-            ));
-            out.push(CorrelatedSequence::inserted(vec![cul2[1].clone()]));
-            out.push(CorrelatedSequence::deleted(vec![cul1[1].clone()]));
-            out.push(CorrelatedSequence::inserted(vec![cul2[2].clone()]));
-            out.push(CorrelatedSequence::deleted(vec![cul1[2].clone()]));
-            return out;
-        }
+        // M204 removed: mid-weak j1 pure-I/D both residuals won center_aligned
+        // +2.26 but regressed right_align_bold (−21), underline×verdana (−23),
+        // small_font×strikethrough (−17) — same gate shape. Net negative.
         // M165 (font_size_12×font_size_18; red_heading×red_strikethrough):
         // equal 3v3 Demo, first residual near-identical (digit/word swap),
         // last residual near-unrelated. Positional zip meshes last on a lone
