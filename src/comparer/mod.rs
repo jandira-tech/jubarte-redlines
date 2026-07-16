@@ -671,6 +671,8 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::ensure_default_page_size(dom, root);
         // M83b/M87 after merge_replaced — last pure-del layout → pPrChange.
         finalize::last_pure_del_spacing_to_pprchange(dom, root, settings, &mut id);
+        // M228: mid pure-D keep live spacing (not pPrChange); strip line=276 noise.
+        finalize::promote_mid_pure_del_spacing_from_pprchange(dom, root);
         // M92 after M69 strip path may leave empty with live spacing.
         finalize::trailing_empty_spacing_to_pprchange(dom, root, settings, &mut id);
         // M98b: mixed+empty trailing — park spacing on empty (file_167).

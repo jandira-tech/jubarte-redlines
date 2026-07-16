@@ -1926,6 +1926,89 @@ pub fn mixed_spacing_to_following_empty(
     }
 }
 
+/// M228 (1_5_line_spacing×24 ~62): mid pure-D empty residuals keep **live**
+/// spacing; only the last pure-D parks into `pPrChange` (M83b/M91). After
+/// residual emit we sometimes have mid pure-Ds with spacing-only `pPrChange`
+/// and no live spacing — promote old spacing to live and drop the ppc.
+///
+/// Also drops pure-D `pPrChange` whose old spacing is only default-ish
+/// `line=276` (no before/after/lineRule): Word omits that noise on the first
+/// pure-D after a digit title residual.
+pub fn promote_mid_pure_del_spacing_from_pprchange(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    if kids.len() < 2 {
+        return;
+    }
+    let last_i = kids.len() - 1;
+    for (i, &p) in kids.iter().enumerate() {
+        if dom.name(p) != Some(W::p()) || !para_is_pure_deleted(dom, p) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) else {
+            continue;
+        };
+        // Already has live spacing — leave alone.
+        if dom.element(ppr, &W::name("spacing")).is_some() {
+            continue;
+        }
+        let old_ppr = dom
+            .elements(ppc, None)
+            .into_iter()
+            .find(|&c| dom.name(c) == Some(W::p_pr()));
+        let Some(old_ppr) = old_ppr else {
+            continue;
+        };
+        let Some(old_sp) = dom.element(old_ppr, &W::name("spacing")) else {
+            continue;
+        };
+        // Old must be spacing-only (ignore empty rPr / pStyle noise).
+        let mut other = false;
+        for c in dom.elements(old_ppr, None) {
+            let Some(n) = dom.name(c) else {
+                continue;
+            };
+            let local = n.local_name();
+            if local == "spacing" || local == "rPr" || local == "pStyle" {
+                continue;
+            }
+            other = true;
+            break;
+        }
+        if other {
+            continue;
+        }
+        let line = dom.attribute(old_sp, &W::name("line")).unwrap_or("");
+        let before = dom.attribute(old_sp, &W::name("before")).unwrap_or("");
+        let after = dom.attribute(old_sp, &W::name("after")).unwrap_or("");
+        let line_rule = dom.attribute(old_sp, &W::name("lineRule")).unwrap_or("");
+        // Noise: sole line=276 with no lineRule/before/after — Word drops it.
+        let is_line276_noise =
+            line == "276" && before.is_empty() && after.is_empty() && line_rule.is_empty();
+        if is_line276_noise {
+            dom.remove(ppc);
+            continue;
+        }
+        // Last pure-D keeps pPrChange (Word shape). Mid pure-Ds promote to live.
+        if i == last_i {
+            continue;
+        }
+        let live = dom.clone_subtree(old_sp);
+        // Insert spacing before pPrChange (CT_PPr order).
+        dom.add_before_self(ppc, live);
+        dom.remove(ppc);
+    }
+}
+
 /// M226 (heading_3/4 style cousins ~80): drop `w:pPrChange` when live spacing
 /// equals the pPrChange old spacing and old has no other layout props. Word
 /// keeps live spacing only (no pPrChange) when A/B Heading spacing matches;

@@ -199,6 +199,47 @@ fn projected_ppr_is_jc_only(dom: &Dom, ppr: NodeId) -> bool {
     kids.len() == 1 && dom.name(kids[0]) == Some(W::name("jc"))
 }
 
+/// First non-default `w:jc` child of a projected pPr, if any.
+fn projected_ppr_jc(dom: &Dom, ppr: NodeId) -> Option<NodeId> {
+    for c in dom.elements(ppr, None) {
+        if is_para_comparison_noise(dom, c) {
+            continue;
+        }
+        if dom.name(c) == Some(W::name("jc")) {
+            let val = dom.attribute(c, &W::val()).unwrap_or("");
+            if val != "left" && val != "start" {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+/// Project only the non-default `w:jc` from old pPr (justify/center removal class).
+fn project_jc_only_from(dom: &mut Dom, ppr: NodeId) -> Option<NodeId> {
+    let jc = projected_ppr_jc(dom, ppr)?;
+    let out = dom.new_element(W::p_pr());
+    let clone = dom.clone_subtree(jc);
+    dom.add(out, clone);
+    Some(out)
+}
+
+/// Signature of projected pPr with jc children ignored (for partial-removal gate).
+fn normalize_para_properties_without_jc(dom: &mut Dom, ppr: NodeId) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for c in dom.elements(ppr, None) {
+        if is_para_comparison_noise(dom, c) {
+            continue;
+        }
+        if dom.name(c) == Some(W::name("jc")) {
+            continue;
+        }
+        parts.push(prop_signature(dom, c));
+    }
+    parts.sort();
+    parts.join("\u{1}")
+}
+
 /// True when projected pPr has only `w:spacing` (bare A → spaced B body class).
 /// M130 (file_165): Word keeps live spacing + `pPrChange(empty old)` on
 /// Verdana bare × Ultimate Demo spaced bodies. Broader addition floods file_8.
@@ -333,6 +374,18 @@ fn detect_format_changes_impl(
                     // addition flooded file_8; jc-only + spacing-only only.
                     let empty_old = dom.new_element(W::p_pr());
                     para_changes.push((i, empty_old));
+                } else if projected_ppr_jc(dom, projected_old).is_some()
+                    && projected_ppr_jc(dom, projected_new).is_none()
+                    && normalize_para_properties_without_jc(dom, projected_old)
+                        == normalize_para_properties_without_jc(dom, projected_new)
+                {
+                    // M227 (justify×large_font ~78, center×center_bold): A had
+                    // non-default jc, B dropped it while other layout (e.g.
+                    // line=276) stayed equal. Full-clear M81 misses this —
+                    // new_sig is non-empty. Word emits pPrChange(jc only).
+                    if let Some(jc_old) = project_jc_only_from(dom, projected_old) {
+                        para_changes.push((i, jc_old));
+                    }
                 }
             }
             continue;
