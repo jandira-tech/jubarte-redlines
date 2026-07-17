@@ -145,45 +145,10 @@ fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
     let revs = jubarte::document_comparer::get_revisions(&bytes, &settings)
         .map_err(|e| format!("get_revisions failed: {e:?}"))?;
     if json {
+        // Shared serialization (also the wasm `getRevisions` shape): full JSON
+        // string escaping — backslash, quote, and ALL control chars < 0x20.
         for r in &revs {
-            // full JSON string escaping: backslash, quote, and ALL control
-            // chars < 0x20 (document text can carry \t, \r, vertical tabs…)
-            let esc = |s: &str| {
-                let mut o = String::with_capacity(s.len());
-                for c in s.chars() {
-                    match c {
-                        '\\' => o.push_str("\\\\"),
-                        '"' => o.push_str("\\\""),
-                        '\n' => o.push_str("\\n"),
-                        '\r' => o.push_str("\\r"),
-                        '\t' => o.push_str("\\t"),
-                        c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
-                        c => o.push(c),
-                    }
-                }
-                o
-            };
-            let format_change = r.format_change.as_ref().map_or("null".to_string(), |fc| {
-                let props: Vec<String> = fc
-                    .changed_properties
-                    .iter()
-                    .map(|p| format!("\"{}\"", esc(p)))
-                    .collect();
-                format!("{{\"changedProperties\":[{}]}}", props.join(","))
-            });
-            println!(
-                "{{\"type\":\"{:?}\",\"author\":\"{}\",\"date\":\"{}\",\"part\":\"{}\",\"moveGroupId\":{},\"isMoveSource\":{},\"formatChange\":{},\"text\":\"{}\"}}",
-                r.revision_type,
-                esc(r.author.as_deref().unwrap_or("")),
-                esc(r.date.as_deref().unwrap_or("")),
-                esc(&r.part_name),
-                r.move_group_id
-                    .map_or("null".to_string(), |v| v.to_string()),
-                r.is_move_source
-                    .map_or("null".to_string(), |v| v.to_string()),
-                format_change,
-                esc(r.text.as_deref().unwrap_or("")),
-            );
+            println!("{}", jubarte::document_comparer::revision_to_json(r));
         }
     } else {
         for r in &revs {

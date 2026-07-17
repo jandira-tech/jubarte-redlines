@@ -2179,6 +2179,56 @@ pub fn get_revisions(
     Ok(revs)
 }
 
+/// Serialize one revision to the stable JSON object shape shared by the CLI
+/// (`jubarte revisions --json`) and the wasm `getRevisions` binding. Full
+/// string escaping: backslash, quote, and EVERY control char < 0x20 (document
+/// text can carry `\t`, `\r`, vertical tabs, …).
+pub fn revision_to_json(r: &crate::comparer::WmlComparerRevision) -> String {
+    fn esc(s: &str) -> String {
+        let mut o = String::with_capacity(s.len());
+        for c in s.chars() {
+            match c {
+                '\\' => o.push_str("\\\\"),
+                '"' => o.push_str("\\\""),
+                '\n' => o.push_str("\\n"),
+                '\r' => o.push_str("\\r"),
+                '\t' => o.push_str("\\t"),
+                c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+                c => o.push(c),
+            }
+        }
+        o
+    }
+    let format_change = r.format_change.as_ref().map_or("null".to_string(), |fc| {
+        let props: Vec<String> = fc
+            .changed_properties
+            .iter()
+            .map(|p| format!("\"{}\"", esc(p)))
+            .collect();
+        format!("{{\"changedProperties\":[{}]}}", props.join(","))
+    });
+    format!(
+        "{{\"type\":\"{:?}\",\"author\":\"{}\",\"date\":\"{}\",\"part\":\"{}\",\"moveGroupId\":{},\"isMoveSource\":{},\"formatChange\":{},\"text\":\"{}\"}}",
+        r.revision_type,
+        esc(r.author.as_deref().unwrap_or("")),
+        esc(r.date.as_deref().unwrap_or("")),
+        esc(&r.part_name),
+        r.move_group_id
+            .map_or("null".to_string(), |v| v.to_string()),
+        r.is_move_source
+            .map_or("null".to_string(), |v| v.to_string()),
+        format_change,
+        esc(r.text.as_deref().unwrap_or("")),
+    )
+}
+
+/// Serialize a revision list to a single JSON array string — the wasm
+/// `getRevisions` binding shape (the CLI prints one object per line instead).
+pub fn revisions_to_json(revs: &[crate::comparer::WmlComparerRevision]) -> String {
+    let items: Vec<String> = revs.iter().map(revision_to_json).collect();
+    format!("[{}]", items.join(","))
+}
+
 /// `DocumentComparer.CompareDocuments(original, modified, author)`.
 pub fn compare_documents(
     original: &[u8],
@@ -3062,5 +3112,76 @@ mod tests {
             sz_pos > pos_pos,
             "sz must follow position (EG_RPrBase order), got order: {order:?}"
         );
+    }
+
+    /// `revision_to_json` / `revisions_to_json` are the single serialization
+    /// shared by the CLI (`jubarte revisions --json`) and the wasm
+    /// `getRevisions` binding: exact CLI object shape, full string escaping —
+    /// backslash, quote, and EVERY control char < 0x20 (document text can
+    /// carry tabs, CRs, vertical tabs).
+    #[test]
+    fn revision_json_matches_cli_shape_and_escapes_control_chars() {
+        use crate::comparer::atoms::FormatChangeInfo;
+        use crate::comparer::{WmlComparerRevision, WmlComparerRevisionType};
+
+        let inserted = WmlComparerRevision {
+            revision_type: WmlComparerRevisionType::Inserted,
+            text: Some("a\"b\\c\nd\te\u{000B}f".to_string()),
+            author: Some("Reviewer \"X\"".to_string()),
+            date: Some("2026-07-17T00:00:00Z".to_string()),
+            content_element: None,
+            revision_element: None,
+            part_name: "word/document.xml".to_string(),
+            move_group_id: Some(3),
+            is_move_source: Some(true),
+            format_change: None,
+        };
+        assert_eq!(
+            revision_to_json(&inserted),
+            concat!(
+                "{\"type\":\"Inserted\",\"author\":\"Reviewer \\\"X\\\"\",",
+                "\"date\":\"2026-07-17T00:00:00Z\",\"part\":\"word/document.xml\",",
+                "\"moveGroupId\":3,\"isMoveSource\":true,\"formatChange\":null,",
+                "\"text\":\"a\\\"b\\\\c\\nd\\te\\u000bf\"}"
+            )
+        );
+
+        let format_changed = WmlComparerRevision {
+            revision_type: WmlComparerRevisionType::FormatChanged,
+            text: None,
+            author: None,
+            date: None,
+            content_element: None,
+            revision_element: None,
+            part_name: "word/document.xml".to_string(),
+            move_group_id: None,
+            is_move_source: None,
+            format_change: Some(FormatChangeInfo {
+                changed_properties: vec!["bold".to_string(), "sz".to_string()],
+                ..FormatChangeInfo::default()
+            }),
+        };
+        assert_eq!(
+            revision_to_json(&format_changed),
+            concat!(
+                "{\"type\":\"FormatChanged\",\"author\":\"\",\"date\":\"\",",
+                "\"part\":\"word/document.xml\",\"moveGroupId\":null,",
+                "\"isMoveSource\":null,",
+                "\"formatChange\":{\"changedProperties\":[\"bold\",\"sz\"]},",
+                "\"text\":\"\"}"
+            )
+        );
+
+        // The wasm array shape is exactly the objects joined inside [].
+        let expected_array = format!(
+            "[{},{}]",
+            revision_to_json(&inserted),
+            revision_to_json(&format_changed)
+        );
+        assert_eq!(
+            revisions_to_json(&[inserted, format_changed]),
+            expected_array
+        );
+        assert_eq!(revisions_to_json(&[]), "[]");
     }
 }
