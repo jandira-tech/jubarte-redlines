@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 # Jubarte Redlines Agent Guide
 
 Before changing this repository, read
@@ -39,3 +45,19 @@ new semantics.
   copied binary or generated WASM artifact as a substitute for a source fix.
 - Fidelity gates precede speed claims: native/WASM `script_redlines` scores must
   agree for the same source commit before publishing performance results.
+
+## Licensing and provenance
+
+The repository's only project license is AGPL-3.0-only (`LICENSE`), and
+Jandira Technologies, LLC owns its contributions. File-level licensing is
+tracked with REUSE/SPDX: commentable project files carry SPDX headers, while
+`REUSE.toml` covers binary fixtures and records the preserved upstream MIT
+attribution texts under `LICENSES/`.
+
+- Run `uv tool run --from 'reuse[charset-normalizer]' reuse lint` before
+  changing licensing or adding non-trivial assets.
+- Do not overwrite an upstream copyright notice or license identifier. Add the
+  accurate provenance instead and update `REUSE.toml` when a file cannot carry
+  a comment header.
+- `LICENSES/` is attribution/provenance only, not an alternative licensing
+  choice for this repository.

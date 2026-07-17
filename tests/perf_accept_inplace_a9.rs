@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! ACCEPT-INPLACE-A9 — empty cells filled without full-tree rebuild.
 //!
 //! `add_empty_paragraph_to_any_empty_cells` must return the same root NodeId

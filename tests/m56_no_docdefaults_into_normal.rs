@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M56 — empty Normal styles must stay empty even when B's docDefaults carry
 //! demo spacing (after=200 line=276). Promoting docDefaults into Normal forces
 //! LO to bloat every body para (file_69_file_70: 5pp vs Word 3pp).

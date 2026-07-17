@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! WmlComparer core (M4). Port of `WmlComparer.ts`.
 
 pub mod atomize;

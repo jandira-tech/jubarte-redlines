@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! OPC (Open Packaging Conventions) layer — M1.5.
 //!
 //! SPIKE FINDINGS (rdocx-opc 0.1, verified 2026-06-27):

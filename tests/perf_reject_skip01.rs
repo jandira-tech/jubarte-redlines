@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! REJECT-SKIP-01 — clean trees skip the full reject rebuild chain.
 //!
 //! When there are no tracked-revision elements, reject must equal remove_rsid

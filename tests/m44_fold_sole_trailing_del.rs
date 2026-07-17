@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Word/jubarte: N inserted paragraphs + exactly one deleted paragraph folds
 //! the deleted body into the last inserted paragraph (mixed I+D).
 //! Evidence: single_paragraph × small_font_size_demo (JS 100, ours ~68 with

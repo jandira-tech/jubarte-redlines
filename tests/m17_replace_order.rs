@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M17 — replacement order: Word emits the INSERTION (new) before the DELETION
 //! (old) at a replacement site; we emitted delete-then-insert. Match Word.
 //!

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M-ANCHOR attempt 3 — strength+relatedness anchor gate (word mode).
 //!
 //! A whole-document replacement (two UNRELATED large documents) must not let

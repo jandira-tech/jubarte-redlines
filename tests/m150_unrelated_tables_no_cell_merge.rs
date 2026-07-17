@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! C5-content / hr_onboarding class: unrelated tables (zero body Jaccard)
 //! must not cell-merge. Word pure-dels A table and pure-ins B table.
 

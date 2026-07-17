@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Golden generator — runs the TypeScript docxodus oracle to produce canonical
 // redline outputs that the Rust port is tested against.
 //

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Ring 1½ — schema-consistency oracle for hand order tables
 //! (SCHEMA_ORACLE_PLAN W1 / plan D2).
 //!

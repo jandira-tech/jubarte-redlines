@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Hand order tables for property containers (Ring 1½ schema oracle).
 //!
 //! These ranks must stay in sync with the tables inside

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! C2 — comments union-carryover contract (synthetic).
 //!
 //! Mechanism (not fixture-specific):

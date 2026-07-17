@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Port of `ComparisonLog.ts` — diagnostic log emitted during comparison.
 
 /// Severity / category codes for comparison log entries.

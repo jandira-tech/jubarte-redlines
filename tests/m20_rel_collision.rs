@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M20 — relationship-id COLLISION across the two compared documents.
 //!
 //! The output package is based on the ORIGINAL (A). Inserted content from the

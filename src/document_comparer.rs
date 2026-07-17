@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! DocumentComparer façade (M5). Port of `DocumentComparer.ts` (compare path).
 //!
 //! `compare_documents(original, modified, author) -> Vec<u8>` opens both

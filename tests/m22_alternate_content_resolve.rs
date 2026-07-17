@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M22 — feature-gating `mc:AlternateContent` must be RESOLVED (replaced by its
 //! `mc:Choice` content), like Word does, while drawing/VML fallbacks are KEPT.
 //!

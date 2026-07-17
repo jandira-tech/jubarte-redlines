@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Port of `UnidHelper` (`UnidHelper.ts`) — M1.7.
 //!
 //! The `PtOpenXml.Unid` is a 32-hex stable id. `WmlComparer` uses the random-Guid

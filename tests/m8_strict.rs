@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M8 — ISO/IEC 29500 **Strict** input support (regression: fixture f-3).
 //!
 //! Microsoft Word reads a Strict `.docx` natively and, when you Compare it,

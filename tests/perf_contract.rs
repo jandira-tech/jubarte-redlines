@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! P0-LAB-01 contract tests — durable lab pieces from LCS_PERF_PLAN.md.
 //!
 //! Drives the **shipped** surfaces:

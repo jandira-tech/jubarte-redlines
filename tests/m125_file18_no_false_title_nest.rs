@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M125 — short demo × long pot-pourri: do not nest short title into unrelated
 //! next subtitle (file_18). Word pure-I's the long residual after stamp MIX.
 

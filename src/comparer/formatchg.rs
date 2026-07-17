@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.G — format-change detection. Port of DetectFormatChangesInAtomList (:4824),
 //! GetRunPropertiesFromAtom (:4854), NormalizeRunProperties (:4884),
 //! AreRunPropertiesEqual (:4868), GetChangedPropertyNames (:4919),

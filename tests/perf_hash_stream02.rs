@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! HASH-STREAM-02 — structure_sha1 == block_sha1(structure_clone).
 //!
 //! Production stamps `pt:StructureSHA1Hash` via streaming structure serialize;

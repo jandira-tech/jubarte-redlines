@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! C5 — formatting-only residue: rPrChange when run properties differ.
 //!
 //! Synthetic: same text, A plain vs B bold. Word records the formatting

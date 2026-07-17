@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M23 — `assemble_ancestor_unids` Phase B must borrow the following paragraph's
 //! ancestor Unids ONLY for ancestors actually shared (by element identity), not
 //! the whole prefix blindly.

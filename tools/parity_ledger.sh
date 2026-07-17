@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Word-parity LEDGER for jubarte-rs.
 #
 # The ledger, not byte-identity, is the correctness contract for the redline

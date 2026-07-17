@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! DOM-ITER-01 — serializer must match the pre-borrow path byte-for-byte.
 //!
 //! Gates: namespace-hostile prefixes, empty elements, mixed content, QName-list

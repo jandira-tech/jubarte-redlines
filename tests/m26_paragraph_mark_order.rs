@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M26 — paragraph-mark revision markers must obey OOXML child order.
 //!
 //! When a paragraph mark is inserted/deleted, the marker goes in the paragraph's

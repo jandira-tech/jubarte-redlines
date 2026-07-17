@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! HASH-STREAM-01 lite — streaming block SHA-1 == string-oracle digest.
 //!
 //! `block_sha1` / `serialize_element_sha1_hex` must match

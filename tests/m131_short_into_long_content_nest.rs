@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M131 — long residual × short content-related next: nest short into long head
 //! (file_34 comprehensive × file_35 strikethrough), not pure-I short + pure-D long.
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Word-alignment, package level: Word's Compare presents the REVISED
 //! document's headers/footers (evidence: comments_complex-style-attr — the
 //! header exists only in doc B yet renders in Word's redline). When doc A has

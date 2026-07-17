@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 use jubarte::document_comparer::compare_documents;
 use std::io::{Cursor, Read};
 

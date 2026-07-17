@@ -109,18 +109,20 @@ Open engine defects and unresolved Word-behavior conflicts are tracked in
 
 ## Provenance & attribution
 
-The comparison engine is a Rust port of the `WmlComparer` /
-`DocumentComparer` engine from [Docxodus](https://github.com/JSv4/Docxodus)
-(MIT), itself a fork of Microsoft's
-[Open-Xml-PowerTools](https://github.com/OfficeDev/Open-Xml-PowerTools)
-(MIT). The MIT attribution for the ported portions is preserved; see the
-license section below.
+The comparison engine is historically informed by the `WmlComparer` /
+`DocumentComparer` engine from [Docxodus](https://github.com/JSv4/Docxodus),
+itself a fork of Microsoft's
+[Open-Xml-PowerTools](https://github.com/OfficeDev/Open-Xml-PowerTools).
+Their original MIT texts are preserved as attribution records; see
+[`LICENSES.md`](LICENSES.md).
 
 ## License
 
-Licensed under the [GNU Affero General Public License v3.0](LICENSE)
-(AGPL-3.0-only).
+Jubarte is licensed under the [GNU Affero General Public License v3.0](LICENSE)
+(AGPL-3.0-only). `LICENSE` is the repository's only project license.
 
-Portions are derived from MIT-licensed works (Docxodus,
-Open-Xml-PowerTools); their original copyright notices apply to those
-portions.
+Copyright (c) 2026 Jandira Technologies, LLC for its contributions.
+
+The [third-party attribution texts](LICENSES.md) preserve the MIT
+notices of historical upstream sources. They do not provide an alternative
+license for this repository or for Jandira Technologies, LLC contributions.

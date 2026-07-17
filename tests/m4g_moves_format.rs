@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.G — moves + format-change detection tests.
 
 use jubarte::comparer::atoms::ComparisonUnitAtom;

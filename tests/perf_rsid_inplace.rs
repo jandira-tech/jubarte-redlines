@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! RSID-INPLACE-01 — remove_rsid_transform mutates in place (no full-tree rebuild)
 //! but must still strip all w:rsid* attrs and w:rsid elements with content intact.
 

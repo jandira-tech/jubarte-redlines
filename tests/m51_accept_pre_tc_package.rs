@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Word-mode package compare pre-accepts inputs that already carry track
 //! changes (accept-then), matching Word Compare of finals.
 //! broken_ones_two file_8×file_9 / file_27×file_28.

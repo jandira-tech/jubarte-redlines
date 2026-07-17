@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! ACCEPT-SKIP-01 — when a subtree has no tracked-revision elements, the
 //! accept pipeline must still strip rsids / empty-numPr / PT.UniqueId, but
 //! must NOT run the multi-pass full-tree rebuild transforms (move / all-other

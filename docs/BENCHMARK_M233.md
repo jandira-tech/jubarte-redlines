@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 # Benchmark stamp — HEAD `d094de0aed36` (M233)
 
 Generated 2026-07-16 06:01 UTC. Binary content-hash pin: **jubarte-rust@9fcc4289e375**.

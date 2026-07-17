@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.0 + M4.A — faithful atomization & comparison-unit tests.
 
 use jubarte::comparer::atoms::{AtomBlock, ComparisonUnitAtom, FormatChangeInfo};

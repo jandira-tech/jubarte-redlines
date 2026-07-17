@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Ring 1 — Rust-native Word-validity package invariants (plan D1).
 //!
 //! `assert_word_valid_package` fails a test when a produced package would make

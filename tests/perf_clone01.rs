@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! CLONE-01 — clone_subtree index walk + reserve_exact must preserve structure.
 //!
 //! Gates: serialize equality, parent links, attr/child counts, deep mutate

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M14 — documents with multiple `w:body` elements (Apache POI `MultipleBodyBug`).
 //!
 //! Some producers emit a `w:document` with more than one `w:body` (invalid per

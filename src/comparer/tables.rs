@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.A.1 — the static element-name tables that drive atomization.
 //! Faithful to WmlComparer.ts: WordBreakElements (:8469), AllowableRunChildren
 //! (:8998), ElementsToThrowAway (:9023), ElementsToHaveSha1Hash (:9045),

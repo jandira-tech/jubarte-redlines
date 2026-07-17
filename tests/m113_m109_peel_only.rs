@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M113 — M109 reverse short-into-long only when peel token relatedness fires.
 //! file_59: long greek alphabet base × short Font Size 24 next — zero shared
 //! vocab. Ungated M109 nested "Αα Alpha" into the short body; Word pure-I's

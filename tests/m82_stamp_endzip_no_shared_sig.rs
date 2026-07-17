@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M82 — stamp residual end-zip only when last unpaired residuals share zero
 //! significant tokens. file_85: "This text is bold." must not nest-LCS with a
 //! "bold" bullet (Word: pure-I bullets + full del on last).

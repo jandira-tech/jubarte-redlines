@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Criterion benchmarks: exact wall-time of redline creation
 //! (`document_comparer::compare_documents`) on real fixture pairs.
 //!

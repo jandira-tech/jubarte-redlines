@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M99 — stamped short demos with drawing/text-box residuals must confetti
 //! (insert-all next, delete-all base), not full-doc word LCS.
 //! file_70: "Green Highlight Demo" stays pure-I; Datum plane drawing is del.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M106 — same docDefaults both sides, A bare Normal, B structured rPr:
 //! Word emits empty live Normal pPr + pPrChange(old = dd spacing) with rPrChange.
 

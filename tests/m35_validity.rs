@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Word-validity normalization (OpenXmlValidator-driven, real-Word-arbitrated).
 //!
 //! The 166-pair sweep with DocumentFormat.OpenXml's validator showed 146/166

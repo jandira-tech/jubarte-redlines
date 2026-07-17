@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! PARSE-02 — skip HashMap clone when an element declares no xmlns.
 //!
 //! Correctness gate: shadowed prefixes and default-namespace inheritance must

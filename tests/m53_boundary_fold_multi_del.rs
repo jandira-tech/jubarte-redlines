@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! broken_ones_two file_14×file_15 shape:
 //! After stamp confetti, short pure-ins next body meets long pure-del base.
 //! Word: 2 pure-ins + 1 mixed (last next + first base del) + remaining pure-dels.

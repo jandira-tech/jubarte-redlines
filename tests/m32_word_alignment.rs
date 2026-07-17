@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Word-visual-alignment behaviors (benchmark-driven, beyond the m4i
 //! PowerTools-faithful gate — everything here is settings-gated).
 //!

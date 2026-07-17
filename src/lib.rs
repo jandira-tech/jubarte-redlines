@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! # jubarte
 //!
 //! Lossless DOCX redline engine: compare two Word documents and produce a
@@ -29,7 +33,8 @@
 //! The comparer is a Rust port of the `WmlComparer`/`DocumentComparer` engine
 //! from [Docxodus](https://github.com/JSv4/Docxodus) (MIT), itself a fork of
 //! Microsoft's [Open-Xml-PowerTools](https://github.com/OfficeDev/Open-Xml-PowerTools)
-//! (MIT).
+//! (MIT). The repository itself is AGPL-3.0-only; `LICENSES/` preserves those
+//! upstream attribution texts without changing the repository license.
 
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 pub mod comparer;

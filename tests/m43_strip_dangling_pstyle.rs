@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Word-parity: strip `w:pStyle`/`w:rStyle` that styles.xml does not define.
 //!
 //! Source demos often set `pStyle=Heading1` without defining Heading1 in

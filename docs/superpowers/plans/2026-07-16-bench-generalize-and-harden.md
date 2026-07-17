@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 # Jubarte-rs: Best Practices, Benchmark Generalization, Speed Review, Validity Hardening — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Execute ONE measured increment at a time; never hide a quality change inside a cleanup or performance change (LCS_PERF_PLAN.md doctrine applies).

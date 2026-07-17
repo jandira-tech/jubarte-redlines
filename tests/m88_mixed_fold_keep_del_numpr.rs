@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M88 — mixed I+D fold keeps Deleted structural numPr (file_55 "notation"+"a").
 
 use std::io::{Cursor, Read};

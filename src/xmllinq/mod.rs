@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Port of `lib/xml-linq.ts` — a LINQ-to-XML-style mutable XML tree.
 //!
 //! M1.1: `XName` / `XNamespace` (interned expanded names).

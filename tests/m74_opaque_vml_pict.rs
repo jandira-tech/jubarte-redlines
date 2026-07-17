@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M74 — inserted VML `w:pict` must survive atomize/coalesce as an opaque
 //! leaf (like `w:drawing` / `mc:AlternateContent`). Recursing into
 //! shapetype/shape/`v:imagedata` produced zero atoms for attribute-only

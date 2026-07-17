@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! DOM-ITER-04 — revision_processor block/tag walks stay order-exact.
 //!
 //! Gates `descendant_and_self_tags` and `iterate_block_content_elements`

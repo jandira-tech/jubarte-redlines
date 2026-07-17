@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! broken_ones_two file_188×file_189: otherwise-unrelated demos that only share
 //! the stamped filename. Word confettis `file_188`/`file_189` in one para;
 //! unrelated short-circuit used to insert-all-next then delete-all-base.

@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 # Bench defect classes (Ratchet-1 ledger)
 
 **Baseline pin:** `jubarte-rust@9fcc4289e375` (2026-07-16)

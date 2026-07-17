@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M40 — footer/header linked-style run metrics (M-PAG mechanism 2b). In word
 //! mode, when header/footer parts reference styles whose basedOn chain
 //! resolves through Normal, and the output Normal's EFFECTIVE run metrics

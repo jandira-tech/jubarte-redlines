@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M16 — relationship-id attributes (images, hyperlinks) must survive the redline.
 //!
 //! `reconcile_dangling_relationships` ensures every rId referenced by the result

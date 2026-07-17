@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M134 — short colon-list residuals (policy×review) get text-hash stream LCS
 //! so Word can peel connectors across interleaved lines (file_127).
 

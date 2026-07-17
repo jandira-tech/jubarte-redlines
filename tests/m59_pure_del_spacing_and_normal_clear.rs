@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M59 — when A stores Normal spacing and B's cascade equals shared
 //! docDefaults, clear Normal spacing rather than materializing cascade
 //! (file_22 Word leaves empty Normal with pPrChange).

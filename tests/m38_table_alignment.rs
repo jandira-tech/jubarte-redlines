@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M38 — M-TBL rules 3 & 4 (parity/_scratch/table_class_forensics.md).
 //!
 //! Rule 3 — merge-partner alignment: Word merges doc A's table with the FIRST

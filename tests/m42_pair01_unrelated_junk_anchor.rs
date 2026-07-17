@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Pair 01 (word_tolerated_duplicate_ppr vs word_tolerated_misplaced_link)
 //! Word emits pure insert-all-next then delete-all-base. Ours LCS-matches the
 //! single letter "a" into a MIX paragraph and interleaves base deletions mid-flow.

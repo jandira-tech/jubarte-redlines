@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M60 — when both Normals store no spacing and both are structurally bare
 //! (no pPr/rPr), Word leaves Normal empty even if docDefaults differ or only
 //! A has dd. Promoting into Normal page-bloats LO (file_19 6pp vs Word 5pp;

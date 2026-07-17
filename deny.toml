@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # cargo-deny policy for jubarte (plan A4).
 # Project is AGPL-3.0-only; allow common permissive deps and AGPL itself.
 

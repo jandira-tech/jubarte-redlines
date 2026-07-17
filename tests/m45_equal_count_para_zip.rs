@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Word Compare pairs equal-count pure-paragraph docs positionally
 //! (heading_2_style × heading_3_center_italic: 3 mixed paras, not 4
 //! cross-stitched). Flattening into one word-LCS window lets shared tokens

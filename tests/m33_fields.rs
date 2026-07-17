@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Field-code preservation through the compare (comments forensics anomaly 3,
 //! page-numbering_potpourritest: A's footer carries three `w:fldSimple`
 //! PAGE/NUMPAGES fields; GT keeps every field (expanded to fldChar runs) in

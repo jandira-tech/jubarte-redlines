@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """P0-LAB-01 — paired quality ledger comparator.
 
 Compares two score ledgers (baseline vs candidate) from tools/parity_ledger.sh

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M102 — center-align addition: live jc + pPrChange(empty old); fold prefers
 //! deleted spacing over insert-only jc (file_148 Line Spacing ↔ Center Align).
 

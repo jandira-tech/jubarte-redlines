@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! HASH-STREAM-04 — simple-table / simple-row stream hash == clone oracle
 //! (content + structure digests, no hash-clone DOM on the stream path).
 

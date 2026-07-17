@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M98 — empty trailing `<w:p/>` must not block sole pure-D fold into last
 //! pure-I (file_167: "Subsection Title" + del "24").
 

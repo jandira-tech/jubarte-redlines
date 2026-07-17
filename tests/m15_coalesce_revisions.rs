@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M15 — coalesce adjacent same-status revision wrappers.
 //!
 //! Word never emits two adjacent `w:ins` (or two adjacent `w:del`) wrappers: it

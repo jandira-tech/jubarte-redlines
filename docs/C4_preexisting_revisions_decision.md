@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 # C4 decision memo — pre-existing tracked changes (`suggesting_*`)
 
 **Status:** **DEFERRED — waiting on Arthur**

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M35 — comments carryover (word mode). Word's Compare carries comments
 //! through the redline (comments_carryover_forensics.md): union of both
 //! sides' comment sets — when B's set ⊇ A's, B's four comment parts are

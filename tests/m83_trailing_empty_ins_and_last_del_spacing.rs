@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M83 — trailing empty pure-ins dropped; last pure-del spacing → pPrChange (file_23).
 
 use std::io::{Cursor, Read};

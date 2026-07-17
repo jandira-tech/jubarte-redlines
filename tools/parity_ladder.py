@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Word-parity ladder: tiny, named findings from (A, B, word_redline) triples.
 
 Corpus: neurotic_docx_bench corpus_sanity/word_based layout —
