@@ -521,6 +521,19 @@ fn allocate_para_id(used: &mut HashSet<String>, next: &mut u32) -> String {
     }
 }
 
+fn allocate_durable_id(used: &mut HashSet<String>, next: &mut u32) -> String {
+    loop {
+        if *next == 0 {
+            *next = 1;
+        }
+        let candidate = format!("{:08X}", *next);
+        *next = next.wrapping_add(1);
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+}
+
 fn rewrite_para_id_references(dom: &mut Dom, root: NodeId, map: &HashMap<String, String>) {
     if map.is_empty() {
         return;
@@ -528,6 +541,21 @@ fn rewrite_para_id_references(dom: &mut Dom, root: NodeId, map: &HashMap<String,
     for element in dom.descendants_and_self(root, None) {
         for (name, value) in dom.attributes(element) {
             if matches!(name.local_name(), "paraId" | "paraIdParent")
+                && let Some(replacement) = map.get(&value.to_ascii_uppercase())
+            {
+                dom.set_attribute_value(element, &name, Some(replacement));
+            }
+        }
+    }
+}
+
+fn rewrite_durable_id_references(dom: &mut Dom, root: NodeId, map: &HashMap<String, String>) {
+    if map.is_empty() {
+        return;
+    }
+    for element in dom.descendants_and_self(root, None) {
+        for (name, value) in dom.attributes(element) {
+            if name.local_name() == "durableId"
                 && let Some(replacement) = map.get(&value.to_ascii_uppercase())
             {
                 dom.set_attribute_value(element, &name, Some(replacement));
@@ -647,10 +675,13 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
     // When B lacks an aux part entirely, `install_parts_from(out, pkg2)` has
     // already removed it from `out` — seed the part from A first so A-only
     // comments keep their commentsExtended/Ids/Extensible metadata (PR #81).
+    let mut durable_id_map: HashMap<String, String> = HashMap::new();
     for (part, ct, rel_type) in &FAMILY[1..] {
         let Some(ax) = pkg1.part_string(part) else {
             continue;
         };
+        let is_comments_ids = *part == "word/commentsIds.xml";
+        let is_comments_extensible = *part == "word/commentsExtensible.xml";
         if out.part_string(part).is_none() {
             let mut d = Dom::new();
             let ad = d.parse_xdocument(&ax);
@@ -658,6 +689,9 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
                 continue;
             };
             rewrite_para_id_references(&mut d, ar, &para_id_map);
+            if is_comments_extensible {
+                rewrite_durable_id_references(&mut d, ar, &durable_id_map);
+            }
             out.set_part(part, d.serialize_element(ar).into_bytes());
             out.add_content_type_override(&format!("/{part}"), ct);
             let has_rel = out
@@ -678,28 +712,70 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
             continue;
         };
         rewrite_para_id_references(&mut d, ar, &para_id_map);
+        if is_comments_extensible {
+            rewrite_durable_id_references(&mut d, ar, &durable_id_map);
+        }
         let bd = d.parse_xdocument(&bx);
         let Some(br) = d.root(bd) else {
             continue;
         };
-        let para_key = |d: &Dom, e: NodeId| -> Option<String> {
+        let key_local_name = if is_comments_extensible {
+            "durableId"
+        } else {
+            "paraId"
+        };
+        let entry_key = |d: &Dom, e: NodeId| -> Option<String> {
             d.attributes(e)
                 .into_iter()
-                .find(|(n, _)| n.local_name() == "paraId")
+                .find(|(n, _)| n.local_name() == key_local_name)
                 .map(|(_, v)| v)
         };
         let mut existing: HashSet<String> = d
             .elements(br, None)
             .into_iter()
-            .filter_map(|e| para_key(&d, e))
+            .filter_map(|e| entry_key(&d, e))
             .map(|value| value.to_ascii_uppercase())
             .collect();
+        let mut used_durable_ids: HashSet<String> = if is_comments_ids {
+            d.elements(br, None)
+                .into_iter()
+                .filter_map(|e| {
+                    d.attributes(e)
+                        .into_iter()
+                        .find(|(name, _)| name.local_name() == "durableId")
+                        .map(|(_, value)| value.to_ascii_uppercase())
+                })
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        let mut next_durable_id = used_durable_ids
+            .iter()
+            .filter_map(|value| u32::from_str_radix(value, 16).ok())
+            .max()
+            .map_or(1, |value| value.checked_add(1).unwrap_or(1));
         let mut changed = false;
         for e in d.elements(ar, None) {
-            if let Some(k) = para_key(&d, e)
+            if let Some(k) = entry_key(&d, e)
                 && !existing.contains(&k.to_ascii_uppercase())
             {
                 let c = d.clone_subtree(e);
+                if is_comments_ids
+                    && let Some((durable_name, durable_id)) = d
+                        .attributes(c)
+                        .into_iter()
+                        .find(|(name, _)| name.local_name() == "durableId")
+                {
+                    let durable_key = durable_id.to_ascii_uppercase();
+                    if used_durable_ids.contains(&durable_key) {
+                        let replacement = durable_id_map.entry(durable_key).or_insert_with(|| {
+                            allocate_durable_id(&mut used_durable_ids, &mut next_durable_id)
+                        });
+                        d.set_attribute_value(c, &durable_name, Some(replacement));
+                    } else {
+                        used_durable_ids.insert(durable_key);
+                    }
+                }
                 d.add(br, c);
                 existing.insert(k.to_ascii_uppercase());
                 changed = true;
@@ -745,7 +821,7 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
         for p in dom.descendants(c, Some(&W::p())) {
             for (n, v) in dom.attributes(p) {
                 if n.local_name() == "paraId" {
-                    dead_para_ids.insert(v);
+                    dead_para_ids.insert(v.to_ascii_uppercase());
                 }
             }
         }
@@ -755,6 +831,7 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
         "word/comments.xml",
         dom.serialize_element(root).into_bytes(),
     );
+    let mut dead_durable_ids: HashSet<String> = HashSet::new();
     for (part, _, _) in &FAMILY[1..] {
         let Some(px) = out.part_string(part) else {
             continue;
@@ -765,16 +842,30 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
         let mut changed = false;
         for e in d2.elements(pr, None) {
             let attributes = d2.attributes(e);
-            let dead = attributes
-                .iter()
-                .any(|(n, v)| n.local_name() == "paraId" && dead_para_ids.contains(v));
-            if dead {
+            let dead = attributes.iter().any(|(n, v)| {
+                n.local_name() == "paraId" && dead_para_ids.contains(&v.to_ascii_uppercase())
+            });
+            let dead_by_durable_id = attributes.iter().any(|(name, value)| {
+                name.local_name() == "durableId"
+                    && dead_durable_ids.contains(&value.to_ascii_uppercase())
+            });
+            if dead || dead_by_durable_id {
+                if *part == "word/commentsIds.xml" {
+                    dead_durable_ids.extend(
+                        attributes
+                            .iter()
+                            .filter(|(name, _)| name.local_name() == "durableId")
+                            .map(|(_, value)| value.to_ascii_uppercase()),
+                    );
+                }
                 d2.remove(e);
                 changed = true;
                 continue;
             }
             for (name, value) in attributes {
-                if name.local_name() == "paraIdParent" && dead_para_ids.contains(&value) {
+                if name.local_name() == "paraIdParent"
+                    && dead_para_ids.contains(&value.to_ascii_uppercase())
+                {
                     d2.set_attribute_value(e, &name, None);
                     changed = true;
                 }

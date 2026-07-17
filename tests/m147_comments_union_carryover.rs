@@ -255,7 +255,7 @@ enum CommentGraphFixture {
 }
 
 fn pkg_with_comment_identity_graph(fixture: CommentGraphFixture) -> Vec<u8> {
-    let (anchors, comments, comments_extended, comments_ids) = match fixture {
+    let (anchors, comments, comments_extended, comments_ids, comments_extensible) = match fixture {
         CommentGraphFixture::CollisionA => (
             r#"<w:commentRangeStart w:id="0"/>
       <w:commentRangeStart w:id="1"/>
@@ -274,6 +274,8 @@ fn pkg_with_comment_identity_graph(fixture: CommentGraphFixture) -> Vec<u8> {
   <w15:commentEx w15:paraId="22222222" w15:paraIdParent="11111111" w15:done="0"/>"#,
             r#"<w16cid:commentId w16cid:paraId="11111111" w16cid:durableId="10000001"/>
   <w16cid:commentId w16cid:paraId="22222222" w16cid:durableId="10000002"/>"#,
+            r#"<w16cex:commentExtensible w16cex:durableId="10000001" w16cex:dateUtc="2020-01-01T00:00:00Z"/>
+  <w16cex:commentExtensible w16cex:durableId="10000002" w16cex:dateUtc="2020-01-02T00:00:00Z"/>"#,
         ),
         CommentGraphFixture::CollisionB => (
             r#"<w:commentRangeStart w:id="0"/>
@@ -284,7 +286,8 @@ fn pkg_with_comment_identity_graph(fixture: CommentGraphFixture) -> Vec<u8> {
     <w:p w14:paraId="11111111"><w:r><w:t>B parent</w:t></w:r></w:p>
   </w:comment>"#,
             r#"<w15:commentEx w15:paraId="11111111" w15:done="0"/>"#,
-            r#"<w16cid:commentId w16cid:paraId="11111111" w16cid:durableId="20000001"/>"#,
+            r#"<w16cid:commentId w16cid:paraId="11111111" w16cid:durableId="10000001"/>"#,
+            r#"<w16cex:commentExtensible w16cex:durableId="10000001" w16cex:dateUtc="2021-01-01T00:00:00Z"/>"#,
         ),
         CommentGraphFixture::OrphanedParent => (
             r#"<w:r><w:t>shared comment target</w:t></w:r>
@@ -302,6 +305,8 @@ fn pkg_with_comment_identity_graph(fixture: CommentGraphFixture) -> Vec<u8> {
   <w15:commentEx w15:paraId="22222222" w15:paraIdParent="11111111" w15:done="0"/>"#,
             r#"<w16cid:commentId w16cid:paraId="11111111" w16cid:durableId="20000001"/>
   <w16cid:commentId w16cid:paraId="22222222" w16cid:durableId="20000002"/>"#,
+            r#"<w16cex:commentExtensible w16cex:durableId="20000001" w16cex:dateUtc="2021-01-01T00:00:00Z"/>
+  <w16cex:commentExtensible w16cex:durableId="20000002" w16cex:dateUtc="2021-01-02T00:00:00Z"/>"#,
         ),
     };
 
@@ -333,9 +338,15 @@ fn pkg_with_comment_identity_graph(fixture: CommentGraphFixture) -> Vec<u8> {
   {comments_ids}
 </w16cid:commentsIds>"#
     );
-    let content_types = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/><Override PartName="/word/commentsIds.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml"/></Types>"#;
+    let comments_extensible = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w16cex:commentsExtensible xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex">
+  {comments_extensible}
+</w16cex:commentsExtensible>"#
+    );
+    let content_types = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/><Override PartName="/word/commentsIds.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml"/><Override PartName="/word/commentsExtensible.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtensible+xml"/></Types>"#;
     let root_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
-    let document_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/><Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/><Relationship Id="rId3" Type="http://schemas.microsoft.com/office/2016/09/relationships/commentsIds" Target="commentsIds.xml"/></Relationships>"#;
+    let document_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/><Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/><Relationship Id="rId3" Type="http://schemas.microsoft.com/office/2016/09/relationships/commentsIds" Target="commentsIds.xml"/><Relationship Id="rId4" Type="http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible" Target="commentsExtensible.xml"/></Relationships>"#;
 
     let mut buf = Cursor::new(Vec::new());
     {
@@ -354,6 +365,10 @@ fn pkg_with_comment_identity_graph(fixture: CommentGraphFixture) -> Vec<u8> {
             ("word/comments.xml", comments.as_bytes()),
             ("word/commentsExtended.xml", comments_extended.as_bytes()),
             ("word/commentsIds.xml", comments_ids.as_bytes()),
+            (
+                "word/commentsExtensible.xml",
+                comments_extensible.as_bytes(),
+            ),
         ] {
             zip.start_file(name, options).unwrap();
             zip.write_all(data).unwrap();
@@ -407,6 +422,18 @@ fn cross_document_para_id_collisions_are_reallocated_across_the_comment_graph() 
         parent_para_ids.is_subset(&comment_para_ids),
         "renumbered parent references must resolve: parents={parent_para_ids:?}, paraIds={comment_para_ids:?}"
     );
+
+    let durable_ids = local_attribute_values(&pkg, "word/commentsIds.xml", "durableId");
+    assert_eq!(
+        durable_ids.len(),
+        3,
+        "every surviving comment identity needs a document-unique durableId"
+    );
+    assert_eq!(
+        local_attribute_values(&pkg, "word/commentsExtensible.xml", "durableId"),
+        durable_ids,
+        "commentsExtensible must carry exactly the durable IDs from commentsIds"
+    );
 }
 
 #[test]
@@ -430,5 +457,10 @@ fn orphan_cleanup_removes_parent_edges_to_dropped_comment_paragraphs() {
     assert!(
         local_attribute_values(&pkg, "word/commentsExtended.xml", "paraIdParent").is_empty(),
         "a surviving comment must not retain an edge to a dropped parent paragraph"
+    );
+    assert_eq!(
+        local_attribute_values(&pkg, "word/commentsExtensible.xml", "durableId"),
+        HashSet::from(["20000002".to_string()]),
+        "orphan cleanup must remove extensible metadata keyed by the dead durableId"
     );
 }
