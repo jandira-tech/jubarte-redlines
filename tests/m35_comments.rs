@@ -6,8 +6,11 @@
 //! at the equivalent text positions in the merged body and survive del/ins
 //! wrapping. Never an orphaned comments part.
 
+mod common;
+
 use std::collections::HashSet;
 
+use common::validity::assert_word_valid_package;
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::compare_documents_with_settings;
 use jubarte::namespaces::W;
@@ -78,6 +81,11 @@ fn anchor_ids(pkg: &PartFs) -> (Vec<String>, Vec<String>, Vec<String>) {
     )
 }
 
+fn open_valid_output(out: &[u8]) -> PartFs {
+    assert_word_valid_package(out);
+    PartFs::open(out).expect("open")
+}
+
 /// Fresh pair: A has 4 comments (ids 0,1,3,4), B has 6 (superset, +19,20).
 /// GT (docx_lots_of_comments_addition_redline.docx): B's four comment parts
 /// byte-identical, 6/6/6 anchors. Ours must carry B's parts and anchor all 6.
@@ -94,7 +102,7 @@ fn w1_superset_carries_revised_parts_byte_identical_with_anchors() {
     let a = std::fs::read(&a_path).unwrap();
     let b = std::fs::read(&b_path).unwrap();
     let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
-    let pkg = PartFs::open(&out).unwrap();
+    let pkg = open_valid_output(&out);
     let pkg_b = PartFs::open(&b).unwrap();
 
     // B's four comment parts carried byte-identical
@@ -147,7 +155,7 @@ fn w2_single_side_comments_carried_with_anchors_not_orphaned() {
     let a = std::fs::read(&a_path).unwrap();
     let b = std::fs::read(&b_path).unwrap();
     let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
-    let pkg = PartFs::open(&out).unwrap();
+    let pkg = open_valid_output(&out);
 
     let ids = comment_ids(&pkg);
     let (starts, ends, refs) = anchor_ids(&pkg);
@@ -234,7 +242,7 @@ fn document100_vs_lots_of_comments_carries_unique_bodies() {
     let b_ids = comment_ids(&pkg_b);
     assert_eq!(b_ids.len(), 6, "fixture must have 6 B comment ids");
     let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
-    let pkg = PartFs::open(&out).unwrap();
+    let pkg = open_valid_output(&out);
     let ids = comment_ids(&pkg);
     let (s, e, r) = anchor_ids(&pkg);
     // Word-oracle parity: 4 unique bodies, not the raw 6-id set.
@@ -276,7 +284,7 @@ fn renumbered_same_text_comments_prefer_b_not_double_union() {
         "fixture premise: ids differ so bare id-match fails"
     );
     let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
-    let pkg = PartFs::open(&out).unwrap();
+    let pkg = open_valid_output(&out);
     let ids = comment_ids(&pkg);
     let (s, e, r) = anchor_ids(&pkg);
     assert_eq!(

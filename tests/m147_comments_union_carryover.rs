@@ -7,6 +7,8 @@
 //!    (Ring-1 validity).
 //! 3. When only A has comments, those comments are still carried (union).
 
+mod common;
+
 use std::collections::HashSet;
 use std::io::{Cursor, Write};
 
@@ -17,6 +19,8 @@ use jubarte::opc::PartFs;
 use jubarte::xmllinq::Dom;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
+
+use common::validity::assert_word_valid_package;
 
 fn word_mode() -> WmlComparerSettings {
     WmlComparerSettings {
@@ -142,6 +146,11 @@ fn anchor_ids(pkg: &PartFs) -> HashSet<String> {
     ids
 }
 
+fn open_valid_output(out: &[u8]) -> PartFs {
+    assert_word_valid_package(out);
+    PartFs::open(out).expect("open")
+}
+
 /// A has a comment on shared text; B revises surrounding text. Comment body
 /// must survive and every anchor id must resolve to a comment definition.
 #[test]
@@ -149,7 +158,7 @@ fn a_side_comment_survives_with_matched_anchors() {
     let a = pkg_with_comment("Hello shared world", "0", "note-on-hello");
     let b = plain_pkg("Hello shared WORLD revised");
     let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
-    let pkg = PartFs::open(&out).expect("open");
+    let pkg = open_valid_output(&out);
     let defs = comment_ids(&pkg);
     let anchors = anchor_ids(&pkg);
     assert!(
@@ -168,7 +177,7 @@ fn b_only_comments_carried() {
     let a = plain_pkg("Base text alpha");
     let b = pkg_with_comment("Base text alpha plus", "3", "b-side-note");
     let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
-    let pkg = PartFs::open(&out).expect("open");
+    let pkg = open_valid_output(&out);
     let defs = comment_ids(&pkg);
     let anchors = anchor_ids(&pkg);
     assert!(!defs.is_empty(), "B-only comments must be carried");
@@ -243,7 +252,7 @@ fn same_body_comments_on_distinct_ranges_are_preserved() {
     let a = plain_pkg("first span second span base");
     let b = pkg_two_dup_comments();
     let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
-    let pkg = PartFs::open(&out).expect("open");
+    let pkg = open_valid_output(&out);
     let defs = comment_ids(&pkg);
     assert_eq!(
         defs.len(),
@@ -268,7 +277,7 @@ fn cross_document_same_body_comments_on_different_ranges_are_unioned() {
     let a = pkg_with_comment("alpha review target", "0", "same note");
     let b = pkg_with_comment("beta review target", "7", "same note");
     let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
-    let pkg = PartFs::open(&out).expect("open");
+    let pkg = open_valid_output(&out);
     let defs = comment_ids(&pkg);
     let anchors = anchor_ids(&pkg);
 
@@ -287,7 +296,7 @@ fn same_body_and_range_from_different_authors_are_preserved() {
     let a = pkg_with_comment_author("shared target", "0", "looks good", "Alice");
     let b = pkg_with_comment_author("shared target", "7", "looks good", "Bob");
     let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
-    let pkg = PartFs::open(&out).expect("open");
+    let pkg = open_valid_output(&out);
     let defs = comment_ids(&pkg);
 
     assert_eq!(
@@ -481,7 +490,7 @@ fn cross_document_para_id_collisions_are_reallocated_across_the_comment_graph() 
     let a = pkg_with_comment_identity_graph(CommentGraphFixture::CollisionA);
     let b = pkg_with_comment_identity_graph(CommentGraphFixture::CollisionB);
     let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
-    let pkg = PartFs::open(&out).expect("open");
+    let pkg = open_valid_output(&out);
 
     let comment_para_ids = local_attribute_values(&pkg, "word/comments.xml", "paraId");
     assert_eq!(
@@ -523,7 +532,7 @@ fn cloned_comments_retain_root_namespace_context_for_mce_qnames() {
     let a = pkg_with_comment_identity_graph(CommentGraphFixture::CollisionA);
     let b = pkg_with_comment_identity_graph(CommentGraphFixture::CollisionB);
     let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
-    let pkg = PartFs::open(&out).expect("open");
+    let pkg = open_valid_output(&out);
     let comments_xml = pkg.part_string("word/comments.xml").expect("comments");
 
     let mut dom = Dom::new();
@@ -574,7 +583,7 @@ fn orphan_cleanup_removes_parent_edges_to_dropped_comment_paragraphs() {
     let a = plain_pkg("shared comment target with reply");
     let b = pkg_with_comment_identity_graph(CommentGraphFixture::OrphanedParent);
     let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
-    let pkg = PartFs::open(&out).expect("open");
+    let pkg = open_valid_output(&out);
 
     assert_eq!(comment_ids(&pkg), HashSet::from(["1".to_string()]));
     let comment_para_ids = local_attribute_values(&pkg, "word/comments.xml", "paraId");

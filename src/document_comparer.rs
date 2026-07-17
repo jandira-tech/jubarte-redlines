@@ -2437,19 +2437,27 @@ fn compare_documents_impl(
         // Word inheritance: drop body-final HF slots already set on an earlier
         // mid-section break (dual chrome otherwise). Mid multi-section copies stay.
         strip_final_sectpr_inherited_header_footer(&mut dom, result_root);
-        // M35: comments carryover — union parts (B's byte-identical when its
-        // set ⊇ A's) + anchors re-injected at the equivalent text positions.
-        crate::comparer::comments::carry_comments(
-            &mut dom,
-            result_root,
-            &pkg1,
-            &main1,
-            &pkg2,
-            &main2,
-            &mut out,
-            &main1,
-            &settings.author_for_revisions,
-        );
+    }
+
+    // M35: comments carryover is a package-validity invariant, not a
+    // Word-visual formatting pass. Both supported comparer presets must union
+    // comment parts and re-inject their anchors; otherwise PowerTools-faithful
+    // output can retain an original comment definition after its source
+    // paragraph becomes a deletion while silently losing the anchor triplet.
+    let has_comments = pkg1.part_string("word/comments.xml").is_some()
+        || pkg2.part_string("word/comments.xml").is_some();
+    crate::comparer::comments::carry_comments(
+        &mut dom,
+        result_root,
+        &pkg1,
+        &main1,
+        &pkg2,
+        &main2,
+        &mut out,
+        &main1,
+        &settings.author_for_revisions,
+    );
+    if has_comments {
         // Comment anchors keep source ids (aligned with comments.xml). Re-run
         // revision renumber with those ids reserved so move/tblPrChange never
         // share an id with commentRange* (Word "unreadable content").

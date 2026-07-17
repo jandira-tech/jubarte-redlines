@@ -4,7 +4,7 @@
 //! Word offer repair (dangling rels, duplicate revision ids, orphan comment
 //! anchors, …). Intentional broken probes live in `tests/m_validity_ring1.rs`.
 
-use jubarte::namespaces::W;
+use jubarte::namespaces::{MC, W, W14};
 use jubarte::opc::PartFs;
 use jubarte::xmllinq::{Dom, NodeId};
 use quick_xml::Reader;
@@ -49,7 +49,7 @@ pub fn check_word_valid_package(bytes: &[u8]) -> ValidityReport {
     check_revision_and_drawing_ids(&pkg, &mut report);
     check_para_text_id_bounds(&pkg, &mut report);
     check_del_text_under_del(&pkg, &mut report);
-    check_comment_anchors(&pkg, &mut report);
+    check_comment_graph(&pkg, &mut report);
     report
 }
 
@@ -327,8 +327,30 @@ fn ancestor_has(dom: &Dom, node: NodeId, stop: NodeId, local: &str) -> bool {
     false
 }
 
-/// Every commentReference has matching range start/end and a comments.xml entry.
-fn check_comment_anchors(pkg: &PartFs, report: &mut ValidityReport) {
+const COMMENT_FAMILY: [(&str, &str, &str); 4] = [
+    (
+        "word/comments.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+    ),
+    (
+        "word/commentsExtended.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml",
+        "http://schemas.microsoft.com/office/2011/relationships/commentsExtended",
+    ),
+    (
+        "word/commentsIds.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml",
+        "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds",
+    ),
+    (
+        "word/commentsExtensible.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtensible+xml",
+        "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible",
+    ),
+];
+
+fn check_comment_graph(pkg: &PartFs, report: &mut ValidityReport) {
     let Some(main) = pkg.main_document_part().or_else(|| {
         if pkg.part_bytes("word/document.xml").is_some() {
             Some("word/document.xml".into())
@@ -338,72 +360,405 @@ fn check_comment_anchors(pkg: &PartFs, report: &mut ValidityReport) {
     }) else {
         return;
     };
-    let Some(xml) = pkg.part_string(&main) else {
+    let Some(main_xml) = pkg.part_string(&main) else {
         return;
     };
-    let mut starts = HashSet::new();
-    let mut ends = HashSet::new();
-    let mut refs = HashSet::new();
-    scrape_comment_ids(&xml, "commentRangeStart", &mut starts);
-    scrape_comment_ids(&xml, "commentRangeEnd", &mut ends);
-    scrape_comment_ids(&xml, "commentReference", &mut refs);
+    let mut main_dom = Dom::new();
+    let main_doc = main_dom.parse_xdocument(&main_xml);
+    let Some(main_root) = main_dom.root(main_doc) else {
+        return;
+    };
+    let starts = comment_id_counts(&main_dom, main_root, "commentRangeStart");
+    let ends = comment_id_counts(&main_dom, main_root, "commentRangeEnd");
+    let references = comment_id_counts(&main_dom, main_root, "commentReference");
 
-    let comment_ids = if let Some(cx) = pkg.part_string("word/comments.xml") {
-        let mut ids = HashSet::new();
-        scrape_comment_ids(&cx, "comment", &mut ids);
-        ids
-    } else {
-        HashSet::new()
+    let Some(comments_xml) = pkg.part_string("word/comments.xml") else {
+        for (kind, counts) in [
+            ("commentRangeStart", &starts),
+            ("commentRangeEnd", &ends),
+            ("commentReference", &references),
+        ] {
+            for id in counts.keys() {
+                report.fail(format!(
+                    "{kind} id '{id}' has no entry in word/comments.xml"
+                ));
+            }
+        }
+        for (part, _, _) in &COMMENT_FAMILY[1..] {
+            if pkg.part_bytes(part).is_some() {
+                report.fail(format!("'{part}' exists without word/comments.xml"));
+            }
+        }
+        return;
     };
 
-    for id in &refs {
-        if !starts.contains(id) {
+    let mut comments_dom = Dom::new();
+    let comments_doc = comments_dom.parse_xdocument(&comments_xml);
+    let Some(comments_root) = comments_dom.root(comments_doc) else {
+        return;
+    };
+    let definitions = comment_id_counts(&comments_dom, comments_root, "comment");
+    for (kind, counts) in [
+        ("comment definition", &definitions),
+        ("commentRangeStart", &starts),
+        ("commentRangeEnd", &ends),
+        ("commentReference", &references),
+    ] {
+        check_unique_comment_ids(kind, counts, report);
+    }
+    let definition_ids: HashSet<String> = definitions.keys().cloned().collect();
+    for (kind, counts) in [
+        ("commentRangeStart", &starts),
+        ("commentRangeEnd", &ends),
+        ("commentReference", &references),
+    ] {
+        let ids: HashSet<String> = counts.keys().cloned().collect();
+        for id in definition_ids.difference(&ids) {
             report.fail(format!(
-                "commentReference id '{id}' has no commentRangeStart"
+                "comment definition id '{id}' has no matching {kind}"
             ));
         }
-        if !ends.contains(id) {
-            report.fail(format!("commentReference id '{id}' has no commentRangeEnd"));
-        }
-        if !comment_ids.contains(id) {
+        for id in ids.difference(&definition_ids) {
             report.fail(format!(
-                "commentReference id '{id}' has no entry in word/comments.xml"
+                "{kind} id '{id}' has no entry in word/comments.xml"
             ));
         }
     }
-    for id in &starts {
-        if !ends.contains(id) {
+
+    check_comment_family_packaging(pkg, &main, report);
+    for (part, _, _) in COMMENT_FAMILY {
+        if pkg.part_bytes(part).is_some() {
+            check_namespace_qname_context(pkg, part, report);
+        }
+    }
+
+    let aux_present = COMMENT_FAMILY[1..]
+        .iter()
+        .any(|(part, _, _)| pkg.part_bytes(part).is_some());
+    let mut all_para_ids = HashSet::new();
+    let mut last_para_ids = HashSet::new();
+    for comment in comments_dom.elements(comments_root, Some(&W::name("comment"))) {
+        let comment_id = comments_dom
+            .attribute(comment, &W::id())
+            .unwrap_or("<missing>");
+        let mut comment_para_ids = Vec::new();
+        for paragraph in comments_dom.descendants(comment, Some(&W::p())) {
+            let Some(para_id) = comments_dom.attribute(paragraph, &W14::name("paraId")) else {
+                continue;
+            };
+            let key = para_id.to_ascii_uppercase();
+            check_hex_id("paraId", para_id, true, report);
+            if !all_para_ids.insert(key.clone()) {
+                report.fail(format!(
+                    "duplicate comment paraId '{para_id}' in word/comments.xml"
+                ));
+            }
+            comment_para_ids.push(key);
+        }
+        if aux_present && comment_para_ids.is_empty() {
             report.fail(format!(
-                "commentRangeStart id '{id}' has no matching commentRangeEnd"
+                "comment id '{comment_id}' has no w14:paraId for its auxiliary metadata"
+            ));
+        }
+        if let Some(last) = comment_para_ids.last() {
+            last_para_ids.insert(last.clone());
+        }
+    }
+
+    let extended_para_ids = check_comments_extended(pkg, &last_para_ids, report);
+    let durable_ids = check_comments_ids(pkg, &last_para_ids, report);
+    check_comments_extensible(pkg, durable_ids.as_ref(), report);
+    if let Some(extended) = extended_para_ids {
+        for parent in extended.parents.values() {
+            if !extended.keys.contains(parent) {
+                report.fail(format!(
+                    "commentsExtended paraIdParent '{parent}' does not resolve"
+                ));
+            }
+        }
+        check_parent_cycles(&extended.parents, report);
+    }
+}
+
+fn comment_id_counts(dom: &Dom, root: NodeId, local: &str) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for element in dom.descendants(root, Some(&W::name(local))) {
+        if let Some(id) = dom.attribute(element, &W::id()) {
+            *counts.entry(id.to_string()).or_default() += 1;
+        }
+    }
+    counts
+}
+
+fn check_unique_comment_ids(
+    kind: &str,
+    counts: &HashMap<String, usize>,
+    report: &mut ValidityReport,
+) {
+    for (id, count) in counts {
+        if *count != 1 {
+            report.fail(format!("{kind} id '{id}' occurs {count} times"));
+        }
+    }
+}
+
+fn check_comment_family_packaging(pkg: &PartFs, main: &str, report: &mut ValidityReport) {
+    let rels = pkg.read_rels_for(main);
+    for (part, content_type, relationship_type) in COMMENT_FAMILY {
+        let part_present = pkg.part_bytes(part).is_some();
+        let matching: Vec<_> = rels
+            .into_iter()
+            .flat_map(|relationships| &relationships.items)
+            .filter(|relationship| relationship.rel_type == relationship_type)
+            .collect();
+        if part_present {
+            if pkg.content_type_for(part).as_deref() != Some(content_type) {
+                report.fail(format!(
+                    "'{part}' has the wrong content type (expected '{content_type}')"
+                ));
+            }
+            if matching.len() != 1 {
+                report.fail(format!(
+                    "'{main}' needs exactly one relationship to '{part}', found {}",
+                    matching.len()
+                ));
+            }
+            for relationship in matching {
+                let resolved = pkg
+                    .resolve_rel_target(main, &relationship.target)
+                    .trim_start_matches('/')
+                    .to_string();
+                if relationship.target_mode.as_deref() == Some("External") || resolved != part {
+                    report.fail(format!(
+                        "comment relationship '{}' on '{main}' resolves to '{}' instead of '{part}'",
+                        relationship.id, relationship.target
+                    ));
+                }
+            }
+        } else if !matching.is_empty() {
+            report.fail(format!(
+                "'{main}' has a relationship for missing comment part '{part}'"
             ));
         }
     }
 }
 
-fn scrape_comment_ids(xml: &str, local: &str, out: &mut HashSet<String>) {
-    // Match w:local or :local with w:id=
-    let tag_patterns = [
-        format!("<{local} "),
-        format!(": {local} "),
-        format!("w:{local} "),
-    ];
-    // simpler: find local name then nearby id=
-    let mut rest = xml;
-    let needle = local;
-    while let Some(i) = rest.find(needle) {
-        // ensure tag-ish context
-        let start = rest[..i].rfind('<').unwrap_or(0);
-        let region =
-            &rest[start..i + needle.len() + 80.min(rest.len().saturating_sub(i + needle.len()))];
-        if region.contains(needle)
-            && let Some(id_pos) = region.find("id=\"")
-        {
-            let after = &region[id_pos + 4..];
-            if let Some(end) = after.find('"') {
-                out.insert(after[..end].to_string());
+fn check_hex_id(label: &str, value: &str, word_para_bound: bool, report: &mut ValidityReport) {
+    let parsed = if value.len() == 8 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        u32::from_str_radix(value, 16).ok()
+    } else {
+        None
+    };
+    let Some(parsed) = parsed else {
+        report.fail(format!(
+            "{label} '{value}' is not an 8-digit hexadecimal id"
+        ));
+        return;
+    };
+    if word_para_bound && parsed >= 0x8000_0000 {
+        report.fail(format!("{label} '{value}' is outside Word's paraId range"));
+    }
+}
+
+struct ExtendedGraph {
+    keys: HashSet<String>,
+    parents: HashMap<String, String>,
+}
+
+fn check_comments_extended(
+    pkg: &PartFs,
+    last_para_ids: &HashSet<String>,
+    report: &mut ValidityReport,
+) -> Option<ExtendedGraph> {
+    let xml = pkg.part_string("word/commentsExtended.xml")?;
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc)?;
+    let mut keys = HashSet::new();
+    let mut parents = HashMap::new();
+    for entry in dom.elements(root, None) {
+        let Some(para_id) = attribute_by_local(&dom, entry, "paraId") else {
+            report.fail("commentsExtended entry has no paraId");
+            continue;
+        };
+        let key = para_id.to_ascii_uppercase();
+        check_hex_id("commentsExtended paraId", para_id, true, report);
+        if !keys.insert(key.clone()) {
+            report.fail(format!("duplicate commentsExtended paraId '{para_id}'"));
+        }
+        if let Some(parent) = attribute_by_local(&dom, entry, "paraIdParent") {
+            let parent = parent.to_ascii_uppercase();
+            check_hex_id("commentsExtended paraIdParent", &parent, true, report);
+            if parent == key {
+                report.fail(format!("commentsExtended paraId '{key}' is its own parent"));
+            }
+            parents.insert(key, parent);
+        }
+    }
+    check_exact_key_set("commentsExtended paraId", &keys, last_para_ids, report);
+    Some(ExtendedGraph { keys, parents })
+}
+
+fn check_comments_ids(
+    pkg: &PartFs,
+    last_para_ids: &HashSet<String>,
+    report: &mut ValidityReport,
+) -> Option<HashSet<String>> {
+    let xml = pkg.part_string("word/commentsIds.xml")?;
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc)?;
+    let mut para_ids = HashSet::new();
+    let mut durable_ids = HashSet::new();
+    for entry in dom.elements(root, None) {
+        let Some(para_id) = attribute_by_local(&dom, entry, "paraId") else {
+            report.fail("commentsIds entry has no paraId");
+            continue;
+        };
+        let para_key = para_id.to_ascii_uppercase();
+        check_hex_id("commentsIds paraId", para_id, true, report);
+        if !para_ids.insert(para_key) {
+            report.fail(format!("duplicate commentsIds paraId '{para_id}'"));
+        }
+        let Some(durable_id) = attribute_by_local(&dom, entry, "durableId") else {
+            report.fail(format!("commentsIds paraId '{para_id}' has no durableId"));
+            continue;
+        };
+        let durable_key = durable_id.to_ascii_uppercase();
+        check_hex_id("commentsIds durableId", durable_id, false, report);
+        if !durable_ids.insert(durable_key) {
+            report.fail(format!("duplicate commentsIds durableId '{durable_id}'"));
+        }
+    }
+    check_exact_key_set("commentsIds paraId", &para_ids, last_para_ids, report);
+    Some(durable_ids)
+}
+
+fn check_comments_extensible(
+    pkg: &PartFs,
+    expected_durable_ids: Option<&HashSet<String>>,
+    report: &mut ValidityReport,
+) {
+    let Some(xml) = pkg.part_string("word/commentsExtensible.xml") else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else { return };
+    let mut durable_ids = HashSet::new();
+    for entry in dom.elements(root, None) {
+        let Some(durable_id) = attribute_by_local(&dom, entry, "durableId") else {
+            report.fail("commentsExtensible entry has no durableId");
+            continue;
+        };
+        let key = durable_id.to_ascii_uppercase();
+        check_hex_id("commentsExtensible durableId", durable_id, false, report);
+        if !durable_ids.insert(key) {
+            report.fail(format!(
+                "duplicate commentsExtensible durableId '{durable_id}'"
+            ));
+        }
+    }
+    match expected_durable_ids {
+        Some(expected) => check_exact_key_set(
+            "commentsExtensible durableId",
+            &durable_ids,
+            expected,
+            report,
+        ),
+        None => report.fail("commentsExtensible exists without commentsIds"),
+    }
+}
+
+fn attribute_by_local<'a>(dom: &'a Dom, element: NodeId, local: &str) -> Option<&'a str> {
+    for index in 0..dom.attr_count(element) {
+        let (name, value) = dom.attr_at(element, index);
+        if name.local_name() == local {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn check_exact_key_set(
+    label: &str,
+    actual: &HashSet<String>,
+    expected: &HashSet<String>,
+    report: &mut ValidityReport,
+) {
+    for key in expected.difference(actual) {
+        report.fail(format!("{label} is missing '{key}'"));
+    }
+    for key in actual.difference(expected) {
+        report.fail(format!("{label} '{key}' has no matching comment paragraph"));
+    }
+}
+
+fn check_parent_cycles(parents: &HashMap<String, String>, report: &mut ValidityReport) {
+    for start in parents.keys() {
+        let mut seen = HashSet::new();
+        let mut current = start;
+        while let Some(parent) = parents.get(current) {
+            if !seen.insert(current.clone()) {
+                report.fail(format!(
+                    "commentsExtended paraIdParent cycle contains '{current}'"
+                ));
+                break;
+            }
+            current = parent;
+        }
+    }
+}
+
+fn is_namespace_qname_list(name: &jubarte::xmllinq::XName) -> bool {
+    (name.namespace_name().is_empty() && name.local_name() == "Requires")
+        || (name.namespace_name() == MC::URI
+            && matches!(
+                name.local_name(),
+                "Ignorable"
+                    | "PreserveAttributes"
+                    | "PreserveElements"
+                    | "ProcessContent"
+                    | "MustUnderstand"
+            ))
+}
+
+fn check_namespace_qname_context(pkg: &PartFs, part: &str, report: &mut ValidityReport) {
+    let Some(xml) = pkg.part_string(part) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else { return };
+    for element in dom.descendants_and_self(root, None) {
+        for (name, value) in dom.attributes(element) {
+            if !is_namespace_qname_list(&name) {
+                continue;
+            }
+            for token in value.split_whitespace() {
+                let prefix = token.split_once(':').map_or(token, |(prefix, _)| prefix);
+                if prefix != "xml" && namespace_in_scope(&dom, element, prefix).is_none() {
+                    report.fail(format!(
+                        "unresolved namespace prefix '{prefix}' in {}='{}' in '{part}'",
+                        name.local_name(),
+                        value
+                    ));
+                }
             }
         }
-        rest = &rest[i + needle.len()..];
     }
-    let _ = tag_patterns;
+}
+
+fn namespace_in_scope<'a>(dom: &'a Dom, element: NodeId, prefix: &str) -> Option<&'a str> {
+    let mut current = Some(element);
+    while let Some(node) = current {
+        for index in 0..dom.attr_count(node) {
+            let (name, value) = dom.attr_at(node, index);
+            if dom.is_namespace_declaration(name) && name.local_name() == prefix {
+                return Some(value);
+            }
+        }
+        current = dom.parent(node);
+    }
+    None
 }

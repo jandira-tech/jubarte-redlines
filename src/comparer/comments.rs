@@ -1,4 +1,4 @@
-//! M35 — comments carryover (word mode, settings-gated).
+//! M35 — comments carryover for every comparer preset.
 //!
 //! Word's Compare carries comments through the redline
 //! (parity/_scratch/comments_carryover_forensics.md):
