@@ -6,6 +6,13 @@
 
 Lossless DOCX redline engine for Rust.
 
+The canonical local checkout is `~/T/jubarte-redlines`; `ooxmlsdk-redline` is
+the retired name for an older copy. The repository, Cargo package, and benchmark
+use different stable boundary names (`jubarte-rs`, `jubarte`, and
+`jubarte-rust`/`jubarte-wasm` respectively). See
+`~/T/reconciliation_plan/GET_JUBARTE_RUST.md` for the complete source-to-bench
+map and rebuild workflow.
+
 `jubarte` compares two Word documents and produces a tracked-changes
 (redline) `.docx`: the original document with every difference against the
 modified one expressed as native Word revisions — insertions, deletions,
