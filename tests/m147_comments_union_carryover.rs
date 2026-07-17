@@ -175,6 +175,38 @@ fn a_side_comment_survives_with_matched_anchors() {
     );
 }
 
+/// Comments carryover is a package-validity invariant, not a Word-visual
+/// formatting pass: it must run under the PowerTools-faithful preset too.
+/// (`6351117` moved `carry_comments` out of the `merge_replaced_paragraphs`
+/// umbrella; this is the red that change shipped without — pre-fix, the
+/// faithful preset silently dropped the union and the anchor triplet.)
+#[test]
+fn comments_carry_under_powertools_faithful_preset() {
+    let a = pkg_with_comment("Hello shared world", "0", "note-on-hello");
+    let b = plain_pkg("Hello shared WORLD revised");
+    let settings = WmlComparerSettings {
+        author_for_revisions: "Redline".into(),
+        date_time_for_revisions: "2020-01-01T00:00:00Z".into(),
+        ..WmlComparerSettings::powertools_faithful()
+    };
+    let out = compare_documents_with_settings(&a, &b, &settings).expect("compare");
+    let pkg = open_valid_output(&out);
+    let defs = comment_ids(&pkg);
+    let anchors = anchor_ids(&pkg);
+    assert!(
+        !defs.is_empty(),
+        "comment definitions must be carried under the faithful preset too"
+    );
+    assert!(
+        !anchors.is_empty(),
+        "the comment anchor triplet must be re-injected under the faithful preset"
+    );
+    assert!(
+        anchors.iter().all(|id| defs.contains(id)),
+        "no orphan anchors under the faithful preset: anchors={anchors:?} defs={defs:?}"
+    );
+}
+
 /// Only B has comments: parts + anchors carried (superset path).
 #[test]
 fn b_only_comments_carried() {
