@@ -23,7 +23,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::namespaces::{W, W14};
+use crate::namespaces::{MC, W, W14};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
@@ -650,6 +650,183 @@ fn rewrite_durable_id_references(dom: &mut Dom, root: NodeId, map: &HashMap<Stri
     }
 }
 
+fn namespace_declarations(dom: &Dom, root: NodeId) -> HashMap<String, String> {
+    dom.attributes(root)
+        .into_iter()
+        .filter(|(name, _)| dom.is_namespace_declaration(name))
+        .map(|(name, value)| (name.local_name().to_string(), value))
+        .collect()
+}
+
+fn is_namespace_qname_list(name: &XName) -> bool {
+    if name.namespace_name().is_empty() {
+        return name.local_name() == "Requires";
+    }
+    name.namespace_name() == MC::URI
+        && matches!(
+            name.local_name(),
+            "Ignorable"
+                | "PreserveAttributes"
+                | "PreserveElements"
+                | "ProcessContent"
+                | "MustUnderstand"
+        )
+}
+
+fn qname_token_prefix(token: &str) -> &str {
+    token.split_once(':').map_or(token, |(prefix, _)| prefix)
+}
+
+fn rewrite_qname_token(token: &str, rewrites: &HashMap<String, String>) -> String {
+    let prefix = qname_token_prefix(token);
+    let Some(replacement) = rewrites.get(prefix) else {
+        return token.to_string();
+    };
+    token.strip_prefix(prefix).map_or_else(
+        || replacement.clone(),
+        |suffix| format!("{replacement}{suffix}"),
+    )
+}
+
+/// A cloned element does not carry namespace declarations inherited from its
+/// source part root. Preserve the bindings referenced by MCE QName-list values
+/// and the `mc:Ignorable` contract for extension namespaces used in the clone.
+/// Conflicting destination prefixes are rebound under a fresh prefix and the
+/// QName-list tokens are rewritten consistently.
+fn preserve_cloned_namespace_context(
+    dom: &mut Dom,
+    source_root: NodeId,
+    destination_root: NodeId,
+    clone: NodeId,
+) {
+    let source_bindings = namespace_declarations(dom, source_root);
+    let mut destination_bindings = namespace_declarations(dom, destination_root);
+    let mut used_uris = HashSet::new();
+    let mut required_prefixes = HashSet::new();
+
+    for element in dom.descendants_and_self(clone, None) {
+        if let Some(name) = dom.name(element)
+            && !name.namespace_name().is_empty()
+        {
+            used_uris.insert(name.namespace_name().to_string());
+        }
+        for (name, value) in dom.attributes(element) {
+            if !dom.is_namespace_declaration(&name) && !name.namespace_name().is_empty() {
+                used_uris.insert(name.namespace_name().to_string());
+            }
+            if is_namespace_qname_list(&name) {
+                required_prefixes.extend(
+                    value
+                        .split_whitespace()
+                        .map(qname_token_prefix)
+                        .map(str::to_string),
+                );
+            }
+        }
+    }
+
+    let source_ignorable: Vec<String> = dom
+        .attribute(source_root, &MC::name("Ignorable"))
+        .unwrap_or("")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    required_prefixes.extend(
+        source_ignorable
+            .iter()
+            .filter(|prefix| {
+                source_bindings
+                    .get(*prefix)
+                    .is_some_and(|uri| used_uris.contains(uri))
+            })
+            .cloned(),
+    );
+
+    let mut required_prefixes: Vec<String> = required_prefixes.into_iter().collect();
+    required_prefixes.sort();
+    let mut rewrites = HashMap::new();
+    for prefix in required_prefixes {
+        let Some(uri) = source_bindings.get(&prefix) else {
+            continue;
+        };
+        let chosen = if destination_bindings
+            .get(&prefix)
+            .is_none_or(|bound_uri| bound_uri == uri)
+        {
+            prefix.clone()
+        } else if let Some(existing) = destination_bindings
+            .iter()
+            .filter(|(_, bound_uri)| *bound_uri == uri)
+            .map(|(bound_prefix, _)| bound_prefix)
+            .min()
+        {
+            existing.clone()
+        } else {
+            let mut index = 0usize;
+            loop {
+                let candidate = format!("ns{index}");
+                if !destination_bindings.contains_key(&candidate) {
+                    break candidate;
+                }
+                index += 1;
+            }
+        };
+        if destination_bindings.get(&chosen) != Some(uri) {
+            dom.set_attribute_value(
+                destination_root,
+                &XNamespace::xmlns().name(&chosen),
+                Some(uri),
+            );
+            destination_bindings.insert(chosen.clone(), uri.clone());
+        }
+        if chosen != prefix {
+            rewrites.insert(prefix, chosen);
+        }
+    }
+
+    if !rewrites.is_empty() {
+        for element in dom.descendants_and_self(clone, None) {
+            for (name, value) in dom.attributes(element) {
+                if !is_namespace_qname_list(&name) {
+                    continue;
+                }
+                let rewritten = value
+                    .split_whitespace()
+                    .map(|token| rewrite_qname_token(token, &rewrites))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                dom.set_attribute_value(element, &name, Some(&rewritten));
+            }
+        }
+    }
+
+    let mut destination_ignorable: Vec<String> = dom
+        .attribute(destination_root, &MC::name("Ignorable"))
+        .unwrap_or("")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    for prefix in source_ignorable {
+        let Some(uri) = source_bindings.get(&prefix) else {
+            continue;
+        };
+        if !used_uris.contains(uri) {
+            continue;
+        }
+        let chosen = rewrites.get(&prefix).unwrap_or(&prefix);
+        if !destination_ignorable.contains(chosen) {
+            destination_ignorable.push(chosen.clone());
+        }
+    }
+    if !destination_ignorable.is_empty() {
+        dom.set_attribute_value(
+            destination_root,
+            &MC::name("Ignorable"),
+            Some(&destination_ignorable.join(" ")),
+        );
+    }
+}
+
 /// Merge A's comments into a B-based comments.xml for the union case,
 /// renumbering A ids that collide with B's. Returns the A→out id map.
 fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMap<String, String> {
@@ -722,6 +899,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
             continue; // same comment carried on both sides; B's copy wins
         }
         let clone = dom.clone_subtree(c);
+        preserve_cloned_namespace_context(&mut dom, ar, br, clone);
         for paragraph in dom.descendants(clone, Some(&W::p())) {
             let Some(para_id) = dom
                 .attribute(paragraph, &W14::name("paraId"))
@@ -846,6 +1024,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
                 && !existing.contains(&k.to_ascii_uppercase())
             {
                 let c = d.clone_subtree(e);
+                preserve_cloned_namespace_context(&mut d, ar, br, c);
                 if is_comments_ids
                     && let Some((durable_name, durable_id)) = d
                         .attributes(c)
