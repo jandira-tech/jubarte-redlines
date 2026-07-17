@@ -247,9 +247,16 @@ fn duplicate_comment_bodies_deduped() {
     );
 }
 
-fn pkg_with_comment_identity_graph(is_a: bool) -> Vec<u8> {
-    let (anchors, comments, comments_extended, comments_ids) = if is_a {
-        (
+#[derive(Clone, Copy)]
+enum CommentGraphFixture {
+    CollisionA,
+    CollisionB,
+    OrphanedParent,
+}
+
+fn pkg_with_comment_identity_graph(fixture: CommentGraphFixture) -> Vec<u8> {
+    let (anchors, comments, comments_extended, comments_ids) = match fixture {
+        CommentGraphFixture::CollisionA => (
             r#"<w:commentRangeStart w:id="0"/>
       <w:commentRangeStart w:id="1"/>
       <w:r><w:t>shared comment target</w:t></w:r>
@@ -267,9 +274,8 @@ fn pkg_with_comment_identity_graph(is_a: bool) -> Vec<u8> {
   <w15:commentEx w15:paraId="22222222" w15:paraIdParent="11111111" w15:done="0"/>"#,
             r#"<w16cid:commentId w16cid:paraId="11111111" w16cid:durableId="10000001"/>
   <w16cid:commentId w16cid:paraId="22222222" w16cid:durableId="10000002"/>"#,
-        )
-    } else {
-        (
+        ),
+        CommentGraphFixture::CollisionB => (
             r#"<w:commentRangeStart w:id="0"/>
       <w:r><w:t>shared comment target</w:t></w:r>
       <w:commentRangeEnd w:id="0"/>
@@ -279,7 +285,24 @@ fn pkg_with_comment_identity_graph(is_a: bool) -> Vec<u8> {
   </w:comment>"#,
             r#"<w15:commentEx w15:paraId="11111111" w15:done="0"/>"#,
             r#"<w16cid:commentId w16cid:paraId="11111111" w16cid:durableId="20000001"/>"#,
-        )
+        ),
+        CommentGraphFixture::OrphanedParent => (
+            r#"<w:r><w:t>shared comment target</w:t></w:r>
+      <w:commentRangeStart w:id="1"/>
+      <w:r><w:t> with reply</w:t></w:r>
+      <w:commentRangeEnd w:id="1"/>
+      <w:r><w:commentReference w:id="1"/></w:r>"#,
+            r#"<w:comment w:id="0" w:author="B">
+    <w:p w14:paraId="11111111"><w:r><w:t>orphaned parent</w:t></w:r></w:p>
+  </w:comment>
+  <w:comment w:id="1" w:author="B">
+    <w:p w14:paraId="22222222"><w:r><w:t>anchored reply</w:t></w:r></w:p>
+  </w:comment>"#,
+            r#"<w15:commentEx w15:paraId="11111111" w15:done="0"/>
+  <w15:commentEx w15:paraId="22222222" w15:paraIdParent="11111111" w15:done="0"/>"#,
+            r#"<w16cid:commentId w16cid:paraId="11111111" w16cid:durableId="20000001"/>
+  <w16cid:commentId w16cid:paraId="22222222" w16cid:durableId="20000002"/>"#,
+        ),
     };
 
     let document = format!(
@@ -358,8 +381,8 @@ fn local_attribute_values(pkg: &PartFs, part: &str, local_name: &str) -> HashSet
 
 #[test]
 fn cross_document_para_id_collisions_are_reallocated_across_the_comment_graph() {
-    let a = pkg_with_comment_identity_graph(true);
-    let b = pkg_with_comment_identity_graph(false);
+    let a = pkg_with_comment_identity_graph(CommentGraphFixture::CollisionA);
+    let b = pkg_with_comment_identity_graph(CommentGraphFixture::CollisionB);
     let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
     let pkg = PartFs::open(&out).expect("open");
 
@@ -383,5 +406,29 @@ fn cross_document_para_id_collisions_are_reallocated_across_the_comment_graph() 
     assert!(
         parent_para_ids.is_subset(&comment_para_ids),
         "renumbered parent references must resolve: parents={parent_para_ids:?}, paraIds={comment_para_ids:?}"
+    );
+}
+
+#[test]
+fn orphan_cleanup_removes_parent_edges_to_dropped_comment_paragraphs() {
+    let a = plain_pkg("shared comment target with reply");
+    let b = pkg_with_comment_identity_graph(CommentGraphFixture::OrphanedParent);
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
+    let pkg = PartFs::open(&out).expect("open");
+
+    assert_eq!(comment_ids(&pkg), HashSet::from(["1".to_string()]));
+    let comment_para_ids = local_attribute_values(&pkg, "word/comments.xml", "paraId");
+    assert_eq!(comment_para_ids, HashSet::from(["22222222".to_string()]));
+    assert_eq!(
+        local_attribute_values(&pkg, "word/commentsExtended.xml", "paraId"),
+        comment_para_ids
+    );
+    assert_eq!(
+        local_attribute_values(&pkg, "word/commentsIds.xml", "paraId"),
+        comment_para_ids
+    );
+    assert!(
+        local_attribute_values(&pkg, "word/commentsExtended.xml", "paraIdParent").is_empty(),
+        "a surviving comment must not retain an edge to a dropped parent paragraph"
     );
 }

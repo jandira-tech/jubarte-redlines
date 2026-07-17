@@ -764,13 +764,20 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
         let Some(pr) = d2.root(pd) else { continue };
         let mut changed = false;
         for e in d2.elements(pr, None) {
-            let dead = d2
-                .attributes(e)
-                .into_iter()
-                .any(|(n, v)| n.local_name() == "paraId" && dead_para_ids.contains(&v));
+            let attributes = d2.attributes(e);
+            let dead = attributes
+                .iter()
+                .any(|(n, v)| n.local_name() == "paraId" && dead_para_ids.contains(v));
             if dead {
                 d2.remove(e);
                 changed = true;
+                continue;
+            }
+            for (name, value) in attributes {
+                if name.local_name() == "paraIdParent" && dead_para_ids.contains(&value) {
+                    d2.set_attribute_value(e, &name, None);
+                    changed = true;
+                }
             }
         }
         if changed {
