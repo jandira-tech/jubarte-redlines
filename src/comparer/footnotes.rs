@@ -481,8 +481,16 @@ pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dang
 /// callers can choose to fail-loud vs skip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RectifyError {
-    MissingNoteDef { id: String },
-    MissingTargetPart { kind: &'static str },
+    /// A note definition id was not found in before ∪ after parts.
+    MissingNoteDef {
+        /// The missing note definition id.
+        id: String,
+    },
+    /// The withRevisions footnotes/endnotes part is absent.
+    MissingTargetPart {
+        /// `"footnotes"` or `"endnotes"`.
+        kind: &'static str,
+    },
 }
 
 impl std::fmt::Display for RectifyError {
@@ -511,8 +519,11 @@ impl std::error::Error for RectifyError {}
 /// `with_revisions` (where we keep separators and re-add the renumbered defs).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NotesSet {
+    /// `before`.
     pub before: Option<NodeId>,
+    /// `after`.
     pub after: Option<NodeId>,
+    /// `with_revisions`.
     pub with_revisions: Option<NodeId>,
 }
 
@@ -972,7 +983,7 @@ pub fn process_footnote_endnote(
                     // format-change detection either.
                     let seqs = lcs::lcs(dom, fncus1, fncus2, settings);
                     lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, id_gen);
-                    let mut flat = produce::flatten_to_comparison_unit_atom_list(&seqs);
+                    let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
                     let new_content =
                         produce_note_redline(dom, &mut flat, is_footnote, true, settings, id_gen)
                             .expect("Internal error");
@@ -1001,7 +1012,7 @@ pub fn process_footnote_endnote(
                 let fncus2 = units::get_comparison_unit_list(dom, &fncal2, settings);
                 let seqs = vec![CorrelatedSequence::inserted(fncus2)];
                 lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, id_gen);
-                let mut flat = produce::flatten_to_comparison_unit_atom_list(&seqs);
+                let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
                 // C# tolerates a missing rebuilt definition here (the throw is
                 // commented out :3202) — unlike the Equal/Deleted branches.
                 if let Some(new_content) =
@@ -1039,7 +1050,7 @@ pub fn process_footnote_endnote(
                 let fncus2 = units::get_comparison_unit_list(dom, &fncal2, settings);
                 let seqs = vec![CorrelatedSequence::deleted(fncus2)];
                 lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, id_gen);
-                let mut flat = produce::flatten_to_comparison_unit_atom_list(&seqs);
+                let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
                 // Tolerate missing rebuild (Inserted branch already does) — after
                 // ATOM-STACK path fix the note wrapper is present; keep soft fail
                 // so a future path bug does not panic the whole compare.

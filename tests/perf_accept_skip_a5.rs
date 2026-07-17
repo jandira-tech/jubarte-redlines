@@ -81,7 +81,6 @@ fn skip_a5_with_deleted_mark_still_merges() {
         .collect();
     assert!(
         texts.iter().any(|t| t == "kept") || texts.iter().any(|t| t == "gone"),
-        "content preserved in some form: {:?}",
-        texts
+        "content preserved in some form: {texts:?}"
     );
 }

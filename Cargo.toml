@@ -30,6 +30,22 @@ include = [
 [package.metadata.docs.rs]
 all-features = true
 
+# Workspace lint policy (plan A1). Groups at priority = -1; pedantic is NOT
+# enabled as a group — only individually chosen low-hit pedantic lints.
+[lints.rust]
+unsafe_code = "deny" # crate is 100% safe today; keep it that way
+
+[lints.clippy]
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+# Targeted pedantic (individually, NOT the group).
+# Dropped: redundant_closure_for_method_calls (>50 hits → follow-up).
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args = "warn"
+manual_let_else = "warn"
+needless_pass_by_value = "warn"
+
 [features]
 default = ["cli", "fast-alloc"]
 # The `jubarte` binary's CLI (clap). Library consumers can opt out with
@@ -46,7 +62,7 @@ perf-profile = []
 [dependencies]
 rdocx-opc = "0.1" # OPC/zip package layer
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # fallback / direct zip access if rdocx-opc's surface is insufficient
-quick-xml = "0.40.1"
+quick-xml = "0.41"
 regex = "1.12.4"
 sha1 = "0.10"
 clap = { version = "4.5", features = ["derive"], optional = true }
@@ -66,6 +82,8 @@ criterion = "0.8"
 # `parts` feature (= dep:zip) is built.
 ooxmlsdk = { version = "0.11", default-features = false, features = ["parts"] }
 tempfile = "3"
+# Ring 1½ schema-consistency oracle (tests/schema_consistency.rs).
+serde_json = "1"
 
 [[bench]]
 name = "redline"

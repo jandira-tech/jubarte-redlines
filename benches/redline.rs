@@ -59,11 +59,14 @@ fn bench_compare_documents(c: &mut Criterion) {
             eprintln!("skip {id}: fixtures not present ({a_rel})");
             continue;
         }
+        // Fixture I/O is outside the measured closure (setup-once).
         let a = std::fs::read(&a_path).expect("read original");
         let b = std::fs::read(&b_path).expect("read modified");
         fast.bench_function(*id, |bencher| {
             bencher.iter(|| {
-                compare_documents(black_box(&a), black_box(&b), "Bench").expect("compare")
+                let out =
+                    compare_documents(black_box(&a), black_box(&b), "Bench").expect("compare");
+                black_box(out)
             });
         });
     }
@@ -86,7 +89,9 @@ fn bench_compare_documents(c: &mut Criterion) {
         let b = std::fs::read(&b_path).expect("read modified");
         slow_g.bench_function(*id, |bencher| {
             bencher.iter(|| {
-                compare_documents(black_box(&a), black_box(&b), "Bench").expect("compare")
+                let out =
+                    compare_documents(black_box(&a), black_box(&b), "Bench").expect("compare");
+                black_box(out)
             });
         });
     }

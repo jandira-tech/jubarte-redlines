@@ -30,9 +30,16 @@ shell needs a store build that embeds the new engine.
 ## Step-by-step: cut an engine release (jubarte-rs)
 
 1. **Quality gate (do not skip)**  
-   - `cargo test --no-fail-fast` (only known pre-existing failures allowed)  
+   - `cargo test --all-features` (only known pre-existing failures allowed)
+   - `cargo clippy --all-targets --all-features -- -D warnings`
    - `tools/parity_ladder.py sweep --bin target/release/jubarte` → 0 NEW  
    - Optional: permanent ABBA matrix if the change claimed a wall win  
+   - **Ring 2 (OpenXmlValidator):** `scripts/redline-sweep.sh … --validate` → no NEW keys vs `tools/validity_baseline.tsv` (local; requires `dotnet`)
+   - **Ring 3 (real Word open probe, macOS release gate):** before any crates.io publish or bench-pin promotion, run
+     `scripts/redline-sweep.sh <both CSVs> <src> parity/_scratch/sweep_<date> --probe`
+     Required: `probe_fail=0`. Never use `/tmp` for Word probe paths (sandbox); use `parity/_scratch`.
+   - **Criterion local gate (perf-affecting PRs):** `cargo bench --bench redline -- --baseline m233_head` — a **>5%** regression on any case blocks merge.
+   - **Speed vs quality (B-fixes):** median generate time > **+10%** vs the M233 baseline (see `docs/SPEED_REVIEW.md`) triggers a perf review before merge.
 
 2. **Decide the bump**  
    - Perf banked-without-wall + package/notes validity → usually **patch** or **minor**  

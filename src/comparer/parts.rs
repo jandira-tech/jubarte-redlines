@@ -7,9 +7,13 @@
 /// A parsed `<Relationship>` row from a `.rels` part.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationshipRow {
+    /// `id`.
     pub id: String,
+    /// `rel_type`.
     pub rel_type: String,
+    /// `target`.
     pub target: String,
+    /// `external`.
     pub external: bool,
 }
 

@@ -135,7 +135,9 @@ pub static COMPARISON_GROUPING_ELEMENTS: LazyLock<HashSet<XName>> =
 /// One `RecursionElements` (:9074) entry: an element that recurses into children
 /// while skipping the named property children (rebuilt structurally in Coalesce).
 pub struct RecursionInfo {
+    /// `element_name`.
     pub element_name: XName,
+    /// `child_property_names`.
     pub child_property_names: Option<Vec<XName>>,
 }
 

@@ -31,6 +31,7 @@ pub fn begin_para_classification_cache() {
     MIXED_CACHE.with(|c| *c.borrow_mut() = Some(HashMap::new()));
 }
 
+/// Drop the thread-local pure-del / mixed para classification caches.
 pub fn end_para_classification_cache() {
     PURE_DEL_CACHE.with(|c| *c.borrow_mut() = None);
     MIXED_CACHE.with(|c| *c.borrow_mut() = None);
@@ -748,9 +749,8 @@ fn rpr_string(dom: &Dom, r: NodeId) -> String {
 }
 
 fn coalesce_key(dom: &Dom, ce: NodeId) -> String {
-    let name = match dom.name(ce) {
-        Some(n) => n,
-        None => return DONT_CONSOLIDATE.to_string(),
+    let Some(name) = dom.name(ce) else {
+        return DONT_CONSOLIDATE.to_string();
     };
     if name == W::r() {
         let non_rpr = dom
@@ -1166,6 +1166,80 @@ pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// Word-parity for incomplete body spacing (C3 / C5 layout).
+///
+/// Tolerated inputs ship `w:spacing w:before="0" w:after="0" w:lineRule="auto"`
+/// **without** `w:line`. Word Compare rewrites that to single-line
+/// `after=0 line=240 lineRule=auto` on list items, and **strips** it on
+/// non-list paragraphs (evidence: broken_media_rel×duplicate_ppr oracle).
+///
+/// Rules (Word mode only):
+/// 1. `lineRule=auto` + no `line` + zero/empty before+after:
+///    - parent has `numPr` → rewrite to `after=0 line=240 lineRule=auto`
+///    - else → remove the spacing element
+/// 2. `lineRule=auto` + no `line` + any other before/after → set `line=240`
+/// 3. `line` present without `lineRule` → set `lineRule=auto` (Word always
+///    pairs them; LO line-box metrics diverge without the rule — document_100
+///    body spacings: ours line only, oracle line+lineRule=auto)
+///
+/// Do **not** inject spacing onto list items that lack it entirely — that
+/// regressed bullet_list×bullet_list_bold and meeting_minutes×numbered_list
+/// (~−30 each) while only helping broken_media by ~3 points.
+pub fn normalize_incomplete_spacing(dom: &mut Dom, root: NodeId) {
+    let spacing_name = W::name("spacing");
+    let num_pr = W::name("numPr");
+    let mut to_remove = Vec::new();
+    let mut to_rewrite: Vec<(NodeId, bool)> = Vec::new(); // (spacing, is_list)
+    let mut need_rule: Vec<NodeId> = Vec::new();
+
+    for p in dom.descendants(root, Some(&W::p())) {
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        let has_num = dom.element(ppr, &num_pr).is_some();
+        let Some(sp) = dom.element(ppr, &spacing_name) else {
+            continue;
+        };
+        let line = dom.attribute(sp, &W::name("line")).unwrap_or("");
+        let after = dom.attribute(sp, &W::name("after")).unwrap_or("");
+        let before = dom.attribute(sp, &W::name("before")).unwrap_or("");
+        let rule = dom.attribute(sp, &W::name("lineRule")).unwrap_or("");
+        if line.is_empty() && rule == "auto" {
+            let zero_ba =
+                (before.is_empty() || before == "0") && (after.is_empty() || after == "0");
+            if zero_ba {
+                if has_num {
+                    to_rewrite.push((sp, true));
+                } else {
+                    to_remove.push(sp);
+                }
+            } else {
+                // Partial metrics + auto rule without line → Word uses 240.
+                to_rewrite.push((sp, false));
+            }
+        } else if !line.is_empty() && rule.is_empty() {
+            need_rule.push(sp);
+        }
+    }
+
+    for sp in to_remove {
+        dom.remove(sp);
+    }
+    for (sp, list_shape) in to_rewrite {
+        if list_shape {
+            dom.set_attribute_value(sp, &W::name("before"), None);
+            dom.set_attribute_value(sp, &W::name("after"), Some("0"));
+            dom.set_attribute_value(sp, &W::name("line"), Some("240"));
+            dom.set_attribute_value(sp, &W::name("lineRule"), Some("auto"));
+        } else {
+            dom.set_attribute_value(sp, &W::name("line"), Some("240"));
+        }
+    }
+    for sp in need_rule {
+        dom.set_attribute_value(sp, &W::name("lineRule"), Some("auto"));
+    }
+}
+
 /// Word Compare omits body-level `w:spacing` that only restates the common
 /// demo-doc default (line=276, optional after=200 / lineRule=auto). Keeping it
 /// shifts line box height vs Word's redline (center_alignment demos ~79 vs 100).
@@ -1219,7 +1293,8 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
 /// True when a paragraph has deleted content, no live (non-del) `w:t` text,
 /// and no `w:ins` — pure deleted body paragraph.
 fn para_is_pure_deleted(dom: &Dom, p: NodeId) -> bool {
-    if let Some(cached) = PURE_DEL_CACHE.with(|c| c.borrow().as_ref().and_then(|m| m.get(&p).copied()))
+    if let Some(cached) =
+        PURE_DEL_CACHE.with(|c| c.borrow().as_ref().and_then(|m| m.get(&p).copied()))
     {
         return cached;
     }
@@ -1977,7 +2052,8 @@ pub fn mixed_spacing_to_following_empty(
 /// M228 / M226 / M231 single body walk (perf: avoid 3× O(n_p) on large docs).
 ///
 /// - **M228:** mid pure-D promote spacing-only pPrChange → live; strip line=276 noise.
-/// - **M226:** drop no-op pPrChange when live spacing equals old spacing.
+/// - **M226:** drop no-op pPrChange on mixed residuals when explicit live/old
+///   line spacing matches. Equal pilcrow and after-only changes retain history.
 /// - **M231:** strip schema-default `jc=left|start` live and from pPrChange-old.
 pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
@@ -2059,11 +2135,23 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
             continue;
         };
 
-        // --- M226: equal live/old spacing no-op pPrChange ---
+        // --- M226: mixed-residual equal live/old spacing no-op pPrChange ---
+        // The measured heading cousins are mixed paragraphs. Applying this to
+        // equal pilcrows erases genuine spacing-removal history (M81/file_69).
+        if !para_is_mixed_revision(dom, p) {
+            continue;
+        }
         if let (Some(live_sp), Some(old_sp)) = (
             dom.element(ppr, &W::name("spacing")),
             dom.element(old_ppr, &W::name("spacing")),
         ) {
+            // The measured Heading/Title/Subtitle cousins all carry explicit
+            // line=240/276. An after-only value (M81/file_69) is real history.
+            if dom.attribute(live_sp, &W::name("line")).is_none()
+                || dom.attribute(old_sp, &W::name("line")).is_none()
+            {
+                continue;
+            }
             let same_spacing = ["before", "after", "line", "lineRule"].iter().all(|&a| {
                 dom.attribute(live_sp, &W::name(a)).unwrap_or("")
                     == dom.attribute(old_sp, &W::name(a)).unwrap_or("")
@@ -2135,14 +2223,17 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
 }
 
 /// Thin wrappers kept for call-site clarity / tests.
+/// Promote mid pure-del spacing from `pPrChange` onto live spacing (legacy name).
 pub fn promote_mid_pure_del_spacing_from_pprchange(dom: &mut Dom, root: NodeId) {
     cleanup_spacing_and_default_jc(dom, root);
 }
 
+/// Strip default left `jc` restatements (legacy name; shares cleanup pass).
 pub fn strip_default_left_jc(dom: &mut Dom, root: NodeId) {
     cleanup_spacing_and_default_jc(dom, root);
 }
 
+/// Strip redundant equal-spacing `pPrChange` (legacy name; shares cleanup pass).
 pub fn strip_redundant_equal_spacing_pprchange(dom: &mut Dom, root: NodeId) {
     cleanup_spacing_and_default_jc(dom, root);
 }
@@ -2886,6 +2977,15 @@ fn body_text_jaccard(a: &str, b: &str) -> f64 {
 /// I…I D…D boundary. Zero-overlap neighbors stay separate (Word file_33).
 const SOLE_DEL_FOLD_MIN_JACCARD: f64 = 0.12;
 
+/// Multi-del boundary fold (C1 / KNOWN ISSUE #2): when the I…I D…D gap covers
+/// more than this fraction of the container's body-word atoms **and** the
+/// boundary pair fails [`should_fold_ins_del_pair`], skip the fold so unrelated
+/// whole-document replacements stay pure-ins + pure-del (no mixed first p).
+const MULTI_DEL_GAP_MAX_DOC_FRACTION: f64 = 0.60;
+
+/// Absolute floor: short demos must still fold (file_54 / bullet_list).
+const MULTI_DEL_GAP_MIN_WORDS_TO_SKIP: usize = 40;
+
 fn should_fold_ins_del_pair(dom: &Dom, ins_p: NodeId, del_p: NodeId) -> bool {
     let it = para_revision_body_text(dom, ins_p);
     let dt = para_revision_body_text(dom, del_p);
@@ -2894,6 +2994,71 @@ fn should_fold_ins_del_pair(dom: &Dom, ins_p: NodeId, del_p: NodeId) -> bool {
         return true;
     }
     body_text_jaccard(&it, &dt) + 1e-12 >= SOLE_DEL_FOLD_MIN_JACCARD
+}
+
+/// Word-atom count for body text under a paragraph (whitespace-split tokens).
+fn para_word_atom_count(dom: &Dom, p: NodeId) -> usize {
+    let t = para_revision_body_text(dom, p);
+    t.split_whitespace().filter(|w| !w.is_empty()).count()
+}
+
+/// Document-scale gate for multi-del boundary fold (plan B1 / C1).
+///
+/// Fold when the boundary pair is related (Jaccard). Skip only for the
+/// **short↔long whole-document replacement** shape: both sides multi-paragraph
+/// (≥ 3), boundary Jaccard miss, gap covers most of the container, **and**
+/// the two sides of the gap are size-asymmetric (word-atom ratio ≥ 4), with
+/// absolute gap ≥ [`MULTI_DEL_GAP_MIN_WORDS_TO_SKIP`].
+fn should_fold_multi_del_at_document_scale(
+    dom: &Dom,
+    container: NodeId,
+    last_ins: NodeId,
+    first_del: NodeId,
+    inss: &[NodeId],
+    dels: &[NodeId],
+) -> bool {
+    // Boundary relatedness: empty pure-D must not force multi-del fold.
+    // file_196: pure-I B body then empty pure-D then A dels — empty-del
+    // auto-fold (should_fold_ins_del_pair) mixed last B para into the empty del
+    // shell (score ~39). Sole-del empty still folds via the sole_del path.
+    let boundary_empty_del = para_revision_body_text(dom, first_del).trim().is_empty();
+    if !boundary_empty_del && should_fold_ins_del_pair(dom, last_ins, first_del) {
+        return true;
+    }
+    // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
+    if inss.len() < 3 || dels.len() < 3 {
+        return true;
+    }
+    // Content-related short-into-long (M131): any I×D pair in the gap with
+    // Jaccard relatedness means Word still folds the boundary.
+    for &i in inss {
+        for &d in dels {
+            if should_fold_ins_del_pair(dom, i, d) {
+                return true;
+            }
+        }
+    }
+    let ins_words: usize = inss.iter().map(|&p| para_word_atom_count(dom, p)).sum();
+    let del_words: usize = dels.iter().map(|&p| para_word_atom_count(dom, p)).sum();
+    let gap = ins_words + del_words;
+    if gap < MULTI_DEL_GAP_MIN_WORDS_TO_SKIP {
+        return true;
+    }
+    let lo = ins_words.min(del_words).max(1);
+    let hi = ins_words.max(del_words);
+    let size_ratio = (hi as f64) / (lo as f64);
+    if size_ratio + 1e-12 < 4.0 {
+        return true;
+    }
+    let doc: usize = dom
+        .elements(container, None)
+        .into_iter()
+        .filter(|&c| dom.name(c) == Some(W::p()))
+        .map(|p| para_word_atom_count(dom, p))
+        .sum();
+    let doc = doc.max(1);
+    let frac = (gap as f64) / (doc as f64);
+    frac + 1e-12 <= MULTI_DEL_GAP_MAX_DOC_FRACTION
 }
 
 fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author: &str) {
@@ -3105,8 +3270,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     && !carrier_has_mark_del
                     && first_mark_only_empty
                     && (dels.len() == 1 || all_dels_mark_only_empty);
-                let del_foldable =
-                    para_has_real_del(dom, dels[0]) || mark_only_empty_del;
+                let del_foldable = para_has_real_del(dom, dels[0]) || mark_only_empty_del;
                 if !del_foldable {
                     continue;
                 }
@@ -3149,10 +3313,18 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // M77: mid-document sole pure-D after pure-I must not fold into
                 // the preceding ins when body texts are unrelated and more
                 // content follows (file_33). Whole-doc trailing sole-del (m44)
-                // still always folds. Multi-del boundary fold stays ungated
-                // (M90 stamped demos); file_78 class is fixed via M116
-                // short-circuit, not fold relatedness.
+                // still always folds.
                 if sole_del && following_content && !should_fold_ins_del_pair(dom, last_ins, d) {
+                    continue;
+                }
+                // C1 / KNOWN ISSUE #2: multi-del boundary fold gated on
+                // document-scale relatedness (unrelated whole-doc replacement
+                // must not mix last pure-I with first pure-D).
+                if !sole_del
+                    && !should_fold_multi_del_at_document_scale(
+                        dom, container, last_ins, d, inss, dels,
+                    )
+                {
                     continue;
                 }
                 // M101 (file_166; 1_5_line_spacing×24): last content pure-I that
@@ -3982,25 +4154,16 @@ pub fn wrap_bare_del_text_runs(
 ///     unmerged paragraphs, breaking the accept contract (m32 w15b/w15c).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FlattenSide {
+    /// Base / original document (`body1`).
     Original,
+    /// Revised document (`body2`).
     Revised,
 }
 
-/// Word-alignment mode: flatten pre-existing tracked deletions before
-/// diffing — unwrap `w:del`, convert `w:delText`/`w:delInstrText` back to
-/// `w:t`/`w:instrText` — so the old text re-enters the diff and comes out
-/// marked deleted: VISIBLE (struck through) like Word's redline, instead of
-/// vanishing via accept-before-diff (forensics: page-numbering_potpourritest
-/// "32 missing blocks", redline-cicerodo losing the whole compendium).
-/// Every unwrapped run is stamped `pt:PreDelete` (+ original author/date) so
-/// [`convert_stamped_predeletes`] can restore attribution and, on the
-/// Revised side, re-emit the span as a pending deletion.
-/// Pre-existing MOVE tracking (`w:moveFrom`/`w:moveTo`) is intentionally out
-/// of scope — it still flows through the pre-diff accept.
-/// The PowerTools-faithful preset keeps C#'s accept-first behavior.
-/// Concatenated visible text of every `w:del` wrapper in `body` — used by
-/// the S1 salt gate: an ORIGINAL-side pending deletion whose text doc B
-/// ALSO holds as a pending deletion must keep correlating Equal (both
+/// Collect concatenated visible text of every `w:del` wrapper in `body`.
+///
+/// Used by the S1 salt gate: an ORIGINAL-side pending deletion whose text
+/// doc B ALSO holds as a pending deletion must keep correlating Equal (both
 /// carry the same revision; GT keeps it once — sample-document iter2 pair,
 /// −38.75 when salted). Only A-only pre-dels get the salt (fresh p4: B has
 /// the text LIVE, GT emits the struck history + live copy).
@@ -4035,6 +4198,15 @@ fn pending_deletion_fingerprint(dom: &Dom, del: NodeId) -> String {
         .collect()
 }
 
+/// Word-alignment mode: flatten pre-existing tracked deletions before
+/// diffing — unwrap `w:del`, convert `w:delText`/`w:delInstrText` back to
+/// `w:t`/`w:instrText` — so the old text re-enters the diff and comes out
+/// marked deleted: VISIBLE (struck through) like Word's redline, instead of
+/// vanishing via accept-before-diff.
+///
+/// Every unwrapped run is stamped `pt:PreDelete` (+ original author/date) so
+/// [`convert_stamped_predeletes`] can restore attribution and, on the
+/// Revised side, re-emit the span as a pending deletion.
 pub fn flatten_tracked_deletions(
     dom: &mut Dom,
     body: NodeId,

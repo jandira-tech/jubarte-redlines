@@ -99,7 +99,7 @@ pub fn group_consecutive_atoms_by_status(
                     cur = Some(AtomBlock {
                         atoms: vec![i],
                         start_index: i,
-                    })
+                    });
                 }
             }
         } else if let Some(b) = cur.take() {

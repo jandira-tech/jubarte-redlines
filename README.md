@@ -77,7 +77,22 @@ case, short-into-long, table-heavy, comment-heavy) live in
 [`benches/redline.rs`](benches/redline.rs); run them with `cargo bench`.
 Typical documents redline in tens of milliseconds; runtime scales with the
 number of *differences*, not document size, so a small pair edited in nearly
-every paragraph is the slow shape.
+every paragraph is the slow shape. Compare against the saved baseline with
+`cargo bench --bench redline -- --baseline m233_head` (see
+[`docs/SPEED_REVIEW.md`](docs/SPEED_REVIEW.md)).
+
+## Validity rings (Word-valid output)
+
+| Ring | What | When |
+|------|------|------|
+| **1** | Rust-native package invariants (`tests/common/validity.rs`) | every `cargo test` (wired into high-traffic package tests + probes) |
+| **1½** | Schema-consistency oracle for hand order tables (`tests/schema_consistency.rs`) | every `cargo test` |
+| **2** | OpenXmlValidator sweep + ratchet (`tools/validate-docx`, `tools/validity_baseline.tsv`) | before every **bench-pin promotion** (`scripts/redline-sweep.sh … --validate`) |
+| **3** | Real Microsoft Word open probe (`scripts/word-open-probe.sh`) | before every **release / pin promotion** (`scripts/redline-sweep.sh … --probe` on macOS; `probe_fail=0`) |
+
+A bench pin without `validator: baseline-clean` and `word-probe: N/N OPENED`
+lines is **not promotable**. See [`VERSIONING.md`](VERSIONING.md) and
+[`docs/bench_classes.md`](docs/bench_classes.md).
 
 ## Known issues
 

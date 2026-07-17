@@ -4,6 +4,8 @@
 //! no header/footer references and doc B's final sectPr does, adopt doc B's:
 //! copy the parts (+ their rels/media) and reference them from the output.
 
+mod common;
+use common::validity::assert_word_valid_package;
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::compare_documents_with_settings;
 use jubarte::namespaces::W;
@@ -70,6 +72,7 @@ fn w6_revised_doc_headers_adopted() {
     let b = pb.to_zip().unwrap();
 
     let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
+    assert_word_valid_package(&out);
     let pkg = PartFs::open(&out).unwrap();
 
     // the header part was copied and contains the revised text

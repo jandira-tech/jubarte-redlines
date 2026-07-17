@@ -23,6 +23,8 @@
 
 use std::io::{Cursor, Read};
 
+mod common;
+use common::validity::assert_word_valid_package;
 use jubarte::document_comparer::compare_documents;
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -89,6 +91,7 @@ fn reconstruct(docx: &[u8]) -> (String, String) {
 #[test]
 fn f4_original_only_content_is_not_attributed_to_modified() {
     let out = compare_documents(ORIGINAL, MODIFIED, "Redline").expect("compare ok");
+    assert_word_valid_package(&out);
     let (orig, modi) = reconstruct(&out);
 
     // `github` is the npm/github install-table label, present ONLY in the original
@@ -125,6 +128,7 @@ fn f4_reconstruction_matches_word() {
         ..WmlComparerSettings::powertools_faithful()
     };
     let out = compare_documents_with_settings(ORIGINAL, MODIFIED, &settings).expect("compare ok");
+    assert_word_valid_package(&out);
     let (our_orig, our_mod) = reconstruct(&out);
     let (word_orig, word_mod) = reconstruct(WORD_REDLINE);
 

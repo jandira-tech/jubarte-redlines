@@ -10,6 +10,8 @@ pub mod formatchg;
 pub mod lcs;
 pub mod lcs_table;
 pub mod moves;
+/// Hand order tables for Ring 1½ schema oracle (`tests/schema_consistency.rs`).
+pub mod order_tables;
 pub mod parts;
 pub mod preprocess;
 pub mod produce;
@@ -31,6 +33,7 @@ pub use atoms::WmlComparerRevision;
 /// `PREDELETE_STAMP_ORIG`, not `is_some()`, or it will re-salt doc-B PreDelete
 /// runs and re-open the M-MOVE S1 bug.
 pub const PREDELETE_STAMP_ORIG: &str = "orig";
+/// Constant `PREDELETE_STAMP_REV`.
 pub const PREDELETE_STAMP_REV: &str = "rev";
 
 /// Compare two content-parent bodies (already accepted/clean) and produce a
@@ -96,11 +99,17 @@ pub fn compare_bodies_faithful(
 /// renumbered 1..n with finalized revision markup.
 #[derive(Debug, Default)]
 pub struct NotesContext {
+    /// `fn_before`.
     pub fn_before: Option<NodeId>,
+    /// `fn_after`.
     pub fn_after: Option<NodeId>,
+    /// `en_before`.
     pub en_before: Option<NodeId>,
+    /// `en_after`.
     pub en_after: Option<NodeId>,
+    /// `fn_with_revisions`.
     pub fn_with_revisions: Option<NodeId>,
+    /// `en_with_revisions`.
     pub en_with_revisions: Option<NodeId>,
 }
 
@@ -463,7 +472,7 @@ pub fn compare_bodies_faithful_with_notes(
     let mut id = 1u32;
     lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, &mut id);
 
-    let mut flat = produce::flatten_to_comparison_unit_atom_list(&seqs);
+    let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
     // moves before format-changes (WmlComparer.ts:2322 then :2326).
     moves::detect_moves_in_atom_list(dom, &mut flat, settings);
     formatchg::detect_format_changes_in_atom_list(dom, &mut flat, settings);
@@ -615,6 +624,8 @@ pub fn compare_bodies_faithful_with_notes(
     // Word-mode: drop body spacing that only restates demo pPrDefault (line=276).
     if settings.merge_replaced_paragraphs {
         finalize::strip_redundant_demo_default_spacing(dom, root);
+        // C3/C5: incomplete lineRule=auto spacing → Word single-line or strip.
+        finalize::normalize_incomplete_spacing(dom, root);
         // NOTE: do not blanket-strip pure-del spacing — delete-heavy winners
         // (file_14/file_69) need source before/after for LO page parity.
         // file_33 residual pure-D spacing: M67 strips Heading residual only.
@@ -723,34 +734,53 @@ use crate::comparison_log::ComparisonLog;
 /// Port of `CorrelationStatus`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CorrelationStatus {
+    /// Public API item.
     Nil,
+    /// Public API item.
     Normal,
+    /// Public API item.
     Unknown,
+    /// Public API item.
     Inserted,
+    /// Public API item.
     Deleted,
+    /// Public API item.
     Equal,
+    /// Public API item.
     Group,
+    /// Public API item.
     MovedSource,
+    /// Public API item.
     MovedDestination,
+    /// Public API item.
     FormatChanged,
 }
 
 /// Port of `ComparisonUnitGroupType`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ComparisonUnitGroupType {
+    /// Public API item.
     Paragraph,
+    /// Public API item.
     Table,
+    /// Public API item.
     Row,
+    /// Public API item.
     Cell,
+    /// Public API item.
     Textbox,
 }
 
 /// Port of `WmlComparerRevisionType`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WmlComparerRevisionType {
+    /// Public API item.
     Inserted,
+    /// Public API item.
     Deleted,
+    /// Public API item.
     Moved,
+    /// Public API item.
     FormatChanged,
 }
 
@@ -760,12 +790,19 @@ pub const DEFAULT_AUTHOR_FOR_REVISIONS: &str = "Open-Xml-PowerTools";
 /// Port of `WmlComparerSettings` (defaults verified against WmlComparer.ts:415-457).
 #[derive(Clone, Debug)]
 pub struct WmlComparerSettings {
+    /// `word_separators`.
     pub word_separators: Vec<char>,
+    /// `author_for_revisions`.
     pub author_for_revisions: String,
+    /// `date_time_for_revisions`.
     pub date_time_for_revisions: String,
+    /// `detail_threshold`.
     pub detail_threshold: f64,
+    /// `case_insensitive`.
     pub case_insensitive: bool,
+    /// `conflate_breaking_and_nonbreaking_spaces`.
     pub conflate_breaking_and_nonbreaking_spaces: bool,
+    /// `starting_id_for_footnotes_endnotes`.
     pub starting_id_for_footnotes_endnotes: i32,
     /// Word-visual default is TRUE so relocated blocks emit `w:moveFrom` /
     /// `w:moveTo` like Word Compare (broken_ones_two `file_8_file_9`: Word
@@ -773,9 +810,13 @@ pub struct WmlComparerSettings {
     /// library default was FALSE (`WmlComparer.ts:433`); use
     /// [`Self::powertools_faithful`] to keep that.
     pub detect_moves: bool,
+    /// `simplify_move_markup`.
     pub simplify_move_markup: bool,
+    /// `move_similarity_threshold`.
     pub move_similarity_threshold: f64,
+    /// `move_minimum_word_count`.
     pub move_minimum_word_count: usize,
+    /// `detect_format_changes`.
     pub detect_format_changes: bool,
     /// Word-visual alignment mode — the UMBRELLA gate for every
     /// beyond-PowerTools pass that aligns output with Word's own Compare
@@ -855,11 +896,14 @@ impl Default for WmlComparerSettings {
 
 /// Optional log holder used by the comparison pipeline.
 pub struct CompareContext {
+    /// `settings`.
     pub settings: WmlComparerSettings,
+    /// `log`.
     pub log: ComparisonLog,
 }
 
 impl CompareContext {
+    /// `new`.
     pub fn new(settings: WmlComparerSettings) -> Self {
         CompareContext {
             settings,

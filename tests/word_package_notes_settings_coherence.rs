@@ -18,7 +18,7 @@ fn part_ids(
     f.read_to_string(&mut xml).unwrap();
     // crude but sufficient: w:footnote w:id="…" / w:endnote w:id="…"
     let needle = format!("<{local}");
-    let alt = format!(":{}", local); // namespaced
+    let alt = format!(":{local}"); // namespaced
     let mut ids = HashSet::new();
     let mut rest = xml.as_str();
     while let Some(i) = rest.find("id=\"") {

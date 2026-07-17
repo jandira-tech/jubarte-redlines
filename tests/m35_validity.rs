@@ -142,11 +142,10 @@ fn t4_wp14_percentages_to_per_thousand() {
     let root = parse(
         &mut dom,
         &format!(
-            "<wp:anchor xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" xmlns:wp14=\"{wp14}\">\
+            "<wp:anchor xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" xmlns:wp14=\"{WP14_URI}\">\
              <wp14:sizeRelH relativeFrom=\"page\"><wp14:pctWidth>40%</wp14:pctWidth></wp14:sizeRelH>\
              <wp14:sizeRelV relativeFrom=\"page\"><wp14:pctHeight>20.5%</wp14:pctHeight></wp14:sizeRelV>\
-             </wp:anchor>",
-            wp14 = WP14_URI
+             </wp:anchor>"
         ),
     );
     fix_strict_validity_artifacts(&mut dom, root);

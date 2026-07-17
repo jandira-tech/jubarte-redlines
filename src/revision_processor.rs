@@ -584,15 +584,20 @@ pub fn reject_revisions_document(dom: &mut Dom, root: NodeId) -> NodeId {
 /// doc-order tag stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TagType {
+    /// Public API item.
     Element,
+    /// Public API item.
     EmptyElement,
+    /// Public API item.
     EndElement,
 }
 
 /// `Tag` (RevisionProcessor.cs :2393): one open/empty/close event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tag {
+    /// `element`.
     pub element: NodeId,
+    /// `tag_type`.
     pub tag_type: TagType,
 }
 
@@ -664,8 +669,11 @@ fn element_children_vec(dom: &Dom, id: NodeId) -> Vec<NodeId> {
 /// element sibling) and `this` only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockContentInfo {
+    /// `previous_block_content_element`.
     pub previous_block_content_element: Option<NodeId>,
+    /// `this_block_content_element`.
     pub this_block_content_element: Option<NodeId>,
+    /// `next_block_content_element`.
     pub next_block_content_element: Option<NodeId>,
 }
 
@@ -1694,15 +1702,41 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
             dom.add(ne, clone);
             continue;
         }
-        if let Some(ri) = rebuilt.iter().position(|(ids, _, _)| ids.contains(&c)) {
-            if emitted.insert(ri) {
-                let (_ids, rebuilt_node, markers) = &rebuilt[ri];
-                if let Some(rebuilt_node) = rebuilt_node {
-                    dom.add(ne, *rebuilt_node);
-                }
-                for &m in markers {
-                    dom.add(ne, m);
-                }
+        // Direct block content (p/tbl child of body/cell).
+        if let Some(ri) = rebuilt.iter().position(|(ids, _, _)| ids.contains(&c))
+            && emitted.insert(ri)
+        {
+            let (_ids, rebuilt_node, markers) = &rebuilt[ri];
+            if let Some(rebuilt_node) = rebuilt_node {
+                dom.add(ne, *rebuilt_node);
+            }
+            for &m in markers {
+                dom.add(ne, m);
+            }
+            continue;
+        }
+        // Nested block content under wrappers (w:sdt → sdtContent → p).
+        // The chain walks into sdt-wrapped paragraphs, but emit used to only
+        // match *direct* body children — so a surviving sdt's paragraph was
+        // rebuilt then never attached (m28 a5b_mixed: left=0 SDTs). Emit any
+        // rebuilt entry whose original id is under this child; nuked entries
+        // (None) drop the fully-deleted sdt while A.5b re-wraps survivors.
+        for (ri, (ids, rebuilt_node, markers)) in rebuilt.iter().enumerate() {
+            if emitted.contains(&ri) {
+                continue;
+            }
+            let nested = ids
+                .iter()
+                .any(|&id| id == c || dom.ancestors(id, None).into_iter().any(|a| a == c));
+            if !nested {
+                continue;
+            }
+            emitted.insert(ri);
+            if let Some(rebuilt_node) = rebuilt_node {
+                dom.add(ne, *rebuilt_node);
+            }
+            for &m in markers {
+                dom.add(ne, m);
             }
         }
     }

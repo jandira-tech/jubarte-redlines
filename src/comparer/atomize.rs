@@ -190,7 +190,7 @@ fn annotate_element_with_props(
 fn push_atom(
     dom: &Dom,
     content: NodeId,
-    ancestors: Arc<[NodeId]>,
+    ancestors: &Arc<[NodeId]>,
     list: &mut Vec<ComparisonUnitAtom>,
     settings: &WmlComparerSettings,
 ) {
@@ -211,7 +211,7 @@ fn push_atom(
         hash = sha1_hex(&format!("PREDEL|{hash}"));
     }
     // PATH-01: store the shared Arc chain (no per-atom Vec clone).
-    let mut atom = ComparisonUnitAtom::new(content, Arc::clone(&ancestors), hash);
+    let mut atom = ComparisonUnitAtom::new(content, Arc::clone(ancestors), hash);
     atom.rev_track_element =
         revision_tracking_element_from_ancestors(dom, content, ancestors.as_ref());
     atom.correlation_status = status_from_rev_track_element(dom, atom.rev_track_element);
@@ -234,9 +234,8 @@ fn recurse(
     settings: &WmlComparerSettings,
     path: &mut Vec<NodeId>,
 ) {
-    let name = match dom.name(element) {
-        Some(n) => n,
-        None => return,
+    let Some(name) = dom.name(element) else {
+        return;
     };
 
     // Content-root containers: walk children only (do not emit the container
@@ -312,7 +311,7 @@ fn recurse(
             None => dom.new_element(W::p_pr()),
         };
         let chain = chain_with(path, element);
-        push_atom(dom, content, chain, list, settings);
+        push_atom(dom, content, &chain, list, settings);
         return;
     }
 
@@ -341,7 +340,7 @@ fn recurse(
             // content = fresh <w:t>ch</w:t> (or delText)
             let content = dom.new_element(name.clone());
             dom.add_text(content, &ch.to_string());
-            push_atom(dom, content, Arc::clone(&chain), list, settings);
+            push_atom(dom, content, &chain, list, settings);
         }
         return;
     }
@@ -349,7 +348,7 @@ fn recurse(
     // mc:AlternateContent → a single opaque atom (Choice+Fallback kept verbatim).
     if name == MC::name("AlternateContent") {
         let chain = chain_with(path, element);
-        push_atom(dom, element, chain, list, settings);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 
@@ -361,14 +360,14 @@ fn recurse(
     // rIds via S_ELEMENTS_WITH_RELATIONSHIP_IDS on imagedata when needed.
     if name == W::pict() {
         let chain = chain_with(path, element);
-        push_atom(dom, element, chain, list, settings);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 
     // AllowableRunChildren (or w:object) → a single verbatim leaf atom.
     if ALLOWABLE_RUN_CHILDREN.contains(&name) || name == W::object() {
         let chain = chain_with(path, element);
-        push_atom(dom, element, chain, list, settings);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 
@@ -380,7 +379,7 @@ fn recurse(
     // recurses (its result runs diff normally).
     if name == W::name("fldSimple") && dom.elements(element, None).is_empty() {
         let chain = chain_with(path, element);
-        push_atom(dom, element, chain, list, settings);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 

@@ -36,7 +36,7 @@ fn m4_e1_flatten() {
     ])]);
     let inserted = CorrelatedSequence::inserted(vec![word_of(vec![atom(ti, vec![], "i")])]);
 
-    let flat = flatten_to_comparison_unit_atom_list(&[equal, deleted, inserted]);
+    let flat = flatten_to_comparison_unit_atom_list(&d, &[equal, deleted, inserted]);
     assert_eq!(flat.len(), 4);
     // Equal atom carries AFTER content + before link
     assert_eq!(flat[0].correlation_status, CorrelationStatus::Equal);

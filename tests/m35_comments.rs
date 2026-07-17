@@ -179,12 +179,10 @@ fn w2_single_side_comments_carried_with_anchors_not_orphaned() {
     );
 }
 
-/// Diagnostics: document_100 (no comments) × lots_of_comments redline (6 comments).
-/// Expect all 6 B comments anchored; currently only 2 survive — investigate.
-
 /// accept_revisions must not drop comment range markers (nested ends after
 /// tables; starts inside w:del). Regression: outer nested ends and del-hoisted
 /// starts were lost → comment carry 2/6 on document_100×lots_of_comments.
+/// (document_100 × lots_of_comments redline: all 6 B comments should anchor.)
 #[test]
 fn accept_revisions_preserves_comment_range_markers() {
     let b_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline_addition_v_removal.docx";
@@ -208,22 +206,23 @@ fn accept_revisions_preserves_comment_range_markers() {
     let accepted = jubarte::document_comparer::accept_revisions(&b).unwrap();
     let after_s = list_ids(&accepted, "commentRangeStart");
     let after_e = list_ids(&accepted, "commentRangeEnd");
+    let dropped_s: Vec<_> = before_s.difference(&after_s).collect();
+    let dropped_e: Vec<_> = before_e.difference(&after_e).collect();
     assert_eq!(
         after_s, before_s,
-        "accept dropped commentRangeStart ids: {:?}",
-        before_s.difference(&after_s).collect::<Vec<_>>()
+        "accept dropped commentRangeStart ids: {dropped_s:?}"
     );
     assert_eq!(
         after_e, before_e,
-        "accept dropped commentRangeEnd ids: {:?}",
-        before_e.difference(&after_e).collect::<Vec<_>>()
+        "accept dropped commentRangeEnd ids: {dropped_e:?}"
     );
 }
 
-/// document_100 (no comments) × lots_of_comments redline (6 comments on B):
-/// all 6 B comments must be carried with anchors (was 2/6 before accept fix).
+/// document_100 (no comments) × lots_of_comments redline (6 comment *ids* on B,
+/// only 4 unique bodies — Complex/Threaded are duplicated). Word redline keeps
+/// **4** (one per body). Carry unique bodies with matched anchors (C2).
 #[test]
-fn document100_vs_lots_of_comments_carries_all_six() {
+fn document100_vs_lots_of_comments_carries_unique_bodies() {
     let a_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/document_100_ultimate_demo_id_paraid_overflow.docx";
     let b_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline_addition_v_removal.docx";
     if !require_path(a_path) || !require_path(b_path) {
@@ -233,27 +232,30 @@ fn document100_vs_lots_of_comments_carries_all_six() {
     let b = std::fs::read(b_path).unwrap();
     let pkg_b = PartFs::open(&b).unwrap();
     let b_ids = comment_ids(&pkg_b);
-    assert_eq!(b_ids.len(), 6, "fixture must have 6 B comments");
+    assert_eq!(b_ids.len(), 6, "fixture must have 6 B comment ids");
     let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
     let pkg = PartFs::open(&out).unwrap();
     let ids = comment_ids(&pkg);
     let (s, e, r) = anchor_ids(&pkg);
+    // Word-oracle parity: 4 unique bodies, not the raw 6-id set.
     assert_eq!(
-        ids, b_ids,
-        "carried {}/{} comments; missing {:?}",
         ids.len(),
-        b_ids.len(),
-        b_ids.difference(&ids).collect::<Vec<_>>()
+        4,
+        "Word keeps one def per unique body text; got {ids:?}"
     );
-    assert_eq!(s.len(), 6, "starts={s:?}");
-    assert_eq!(e.len(), 6, "ends={e:?}");
-    assert_eq!(r.len(), 6, "refs={r:?}");
+    assert_eq!(s.len(), 4, "starts={s:?}");
+    assert_eq!(e.len(), 4, "ends={e:?}");
+    assert_eq!(r.len(), 4, "refs={r:?}");
+    // Every remaining anchor resolves to a comment def.
+    for id in s.iter().chain(e.iter()).chain(r.iter()) {
+        assert!(ids.contains(id), "orphan anchor id {id}");
+    }
 }
 
 /// Same comment *texts* on A and B under different ids (Word renumbered the
-/// set across two redline-derived sources). Union-by-id produces 12 comments
-/// + 12 anchors; Word redline keeps 6. Prefer B when B's text multiset covers
-/// A's (id-independent).
+/// set across two redline-derived sources). Union-by-id produces 12 comments;
+/// Word keeps one per unique body (4 — fixtures ship Complex/Threaded dups).
+/// Prefer B's install path, then body-text dedupe.
 #[test]
 fn renumbered_same_text_comments_prefer_b_not_double_union() {
     let a_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline.docx";
@@ -279,12 +281,15 @@ fn renumbered_same_text_comments_prefer_b_not_double_union() {
     let (s, e, r) = anchor_ids(&pkg);
     assert_eq!(
         ids.len(),
-        6,
-        "must not double-union same texts under different ids; got {ids:?}"
+        4,
+        "must not double-union; one def per unique body; got {ids:?}"
     );
-    assert_eq!(s.len(), 6, "starts={s:?}");
-    assert_eq!(e.len(), 6, "ends={e:?}");
-    assert_eq!(r.len(), 6, "refs={r:?}");
-    // B's id set wins (text-cover fast path installs B byte-identical).
-    assert_eq!(ids, b_ids, "B's comment ids must be the carried set");
+    assert_eq!(s.len(), 4, "starts={s:?}");
+    assert_eq!(e.len(), 4, "ends={e:?}");
+    assert_eq!(r.len(), 4, "refs={r:?}");
+    // Surviving ids must be a subset of B's (text-cover path installs B first).
+    assert!(
+        ids.is_subset(&b_ids),
+        "carried ids must come from B: {ids:?} not subset of {b_ids:?}"
+    );
 }

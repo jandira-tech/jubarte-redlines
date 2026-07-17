@@ -56,7 +56,35 @@ for f in "$PDENSE_A" "$PDENSE_B" "$RFP17" "$RFP17_REDLINE" "$F5LB"; do
   [ -f "$f" ] || { echo "error: missing fixture: $f" >&2; exit 2; }
 done
 
+# Loadavg guard (plan C2): refuse A/B-win claims when the machine is hot.
+NCPU=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+LOAD_RAW=$(sysctl -n vm.loadavg 2>/dev/null || cat /proc/loadavg 2>/dev/null || echo "0 0 0")
+# Prefer 1-minute loadavg number.
+LOAD1=$(echo "$LOAD_RAW" | awk '{ for(i=1;i<=NF;i++) if ($i+0==$i) { print $i; exit } }')
+LOAD1=${LOAD1:-0}
+HIGH_LOAD=0
+if awk -v l="$LOAD1" -v n="$NCPU" 'BEGIN { exit !(l > n) }'; then
+  HIGH_LOAD=1
+fi
+
 mkdir -p "$OUT"
+{
+  echo "# loadavg_raw=$LOAD_RAW"
+  echo "# load1=$LOAD1 ncpu=$NCPU high_load=$HIGH_LOAD"
+  if [ "$HIGH_LOAD" -eq 1 ]; then
+    echo "# WARNING: loadavg ($LOAD1) > ncpu ($NCPU) at start — A/B-win claims are INVALID"
+    echo "#          Report absolute numbers only; do not declare a winner."
+  fi
+} | tee "$OUT/loadavg.txt"
+if [ "$HIGH_LOAD" -eq 1 ]; then
+  echo ""
+  echo "################################################################"
+  echo "# WARNING: machine loadavg ($LOAD1) > ncpu ($NCPU)"
+  echo "# A/B-win claims from this ABBA run are REFUSED by policy."
+  echo "# Absolute numbers are still recorded for forensic use only."
+  echo "################################################################"
+  echo ""
+fi
 echo -e "round\tfixture\ttag\treal\tuser\tsys\tmaxrss" > "$OUT/summary.tsv"
 : > "$OUT/doc-hashes.txt"
 
@@ -124,3 +152,10 @@ done
 
 echo "=== DONE matrix → $OUT/summary.tsv ==="
 cat "$OUT/summary.tsv"
+if [ "$HIGH_LOAD" -eq 1 ]; then
+  echo ""
+  echo "################################################################"
+  echo "# REMINDER: high_load=1 — do NOT declare A or B the winner."
+  echo "# See $OUT/loadavg.txt"
+  echo "################################################################"
+fi

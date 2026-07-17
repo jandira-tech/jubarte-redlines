@@ -187,7 +187,7 @@ fn comparison_log_surface() {
 fn wml_opc_strict_surface() {
     let mut wml = WmlDocument::from_bytes(ORIGINAL).expect("from_bytes");
     let _ = wml.main_document_part_name();
-    let root = wml.main_document_root();
+    let root = wml.main_document_root().expect("main root");
     assert!(wml.dom().is_element(root));
     assert!(!wml.part_fs().parts().is_empty());
 

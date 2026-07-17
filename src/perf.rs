@@ -11,13 +11,21 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Stage {
+    /// Public API item.
     PackageOpen = 0,
+    /// Public API item.
     Preprocess = 1,
+    /// Public API item.
     Atomize = 2,
+    /// Public API item.
     Unitize = 3,
+    /// Public API item.
     Lcs = 4,
+    /// Public API item.
     Produce = 5,
+    /// Public API item.
     Serialize = 6,
+    /// Public API item.
     Zip = 7,
 }
 
@@ -57,13 +65,14 @@ pub fn time_stage<R>(stage: Stage, f: impl FnOnce() -> R) -> R {
         f()
     }
 }
-
+/// Increment the LCS-call counter (no-op without `perf-profile`).
 #[inline]
 pub fn inc_lcs_calls() {
     #[cfg(feature = "perf-profile")]
     active::inc_lcs_calls();
 }
 
+/// Accumulate LCS window area `n × m` (no-op without `perf-profile`).
 #[inline]
 pub fn add_lcs_window_area(n: u64, m: u64) {
     #[cfg(feature = "perf-profile")]
@@ -74,18 +83,21 @@ pub fn add_lcs_window_area(n: u64, m: u64) {
     }
 }
 
+/// Increment correlation-run scan counter (no-op without `perf-profile`).
 #[inline]
 pub fn inc_corr_run_scans() {
     #[cfg(feature = "perf-profile")]
     active::inc_corr_run_scans();
 }
 
+/// Increment correlation-run hit counter (no-op without `perf-profile`).
 #[inline]
 pub fn inc_corr_run_hits() {
     #[cfg(feature = "perf-profile")]
     active::inc_corr_run_hits();
 }
 
+/// Add `n` unit clones to the clone counter (no-op without `perf-profile`).
 #[inline]
 pub fn add_unit_clones(n: u64) {
     #[cfg(feature = "perf-profile")]
@@ -96,6 +108,7 @@ pub fn add_unit_clones(n: u64) {
     }
 }
 
+/// Record the atom count for this compare (no-op without `perf-profile`).
 #[inline]
 pub fn set_atom_count(n: u64) {
     #[cfg(feature = "perf-profile")]
@@ -106,6 +119,7 @@ pub fn set_atom_count(n: u64) {
     }
 }
 
+/// Record the unit count for this compare (no-op without `perf-profile`).
 #[inline]
 pub fn set_unit_count(n: u64) {
     #[cfg(feature = "perf-profile")]
@@ -120,13 +134,21 @@ pub fn set_unit_count(n: u64) {
 /// no-op path returns zeros when the feature is off.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Snapshot {
+    /// `stage_ns`.
     pub stage_ns: [u64; STAGE_COUNT],
+    /// `lcs_calls`.
     pub lcs_calls: u64,
+    /// `lcs_window_area`.
     pub lcs_window_area: u64,
+    /// `corr_run_scans`.
     pub corr_run_scans: u64,
+    /// `corr_run_hits`.
     pub corr_run_hits: u64,
+    /// `unit_clones`.
     pub unit_clones: u64,
+    /// `atoms`.
     pub atoms: u64,
+    /// `units`.
     pub units: u64,
 }
 

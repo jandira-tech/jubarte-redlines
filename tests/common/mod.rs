@@ -1,7 +1,8 @@
-//! Canonical DOCX structural comparator (M0.3).
+//! Shared integration-test helpers: Ring-1 Word-validity gates and the
+//! canonical DOCX structural comparator (M0.3).
 //!
-//! Compares two `.docx` byte streams for *structural* equality, tolerating the
-//! volatile bits that don't affect document meaning:
+//! The comparator compares two `.docx` byte streams for *structural* equality,
+//! tolerating volatile bits that don't affect document meaning:
 //!   - `w:rsid*` attributes (revision-save IDs)
 //!   - `w14:paraId` / `w14:textId` (paragraph/text identity)
 //!   - any `pt14:*` PowerTools attribute (correlation glue) + its xmlns decl
@@ -15,6 +16,8 @@
 //! canonicalized; all other parts are compared byte-for-byte.
 
 #![allow(dead_code)]
+
+pub mod validity;
 
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read};

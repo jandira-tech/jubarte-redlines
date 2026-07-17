@@ -208,8 +208,11 @@ pub struct NodeId(pub u32);
 /// An XML declaration (`<?xml version encoding standalone?>`). Port of `XDeclaration`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct XDeclaration {
+    /// `version`.
     pub version: Option<String>,
+    /// `encoding`.
     pub encoding: Option<String>,
+    /// `standalone`.
     pub standalone: Option<String>,
 }
 
@@ -277,6 +280,7 @@ pub struct Dom {
 }
 
 impl Dom {
+    /// `new`.
     pub fn new() -> Self {
         Dom {
             nodes: Vec::new(),
@@ -298,18 +302,23 @@ impl Dom {
     }
 
     // ── constructors ────────────────────────────────────────────────────────
+    /// `new_document`.
     pub fn new_document(&mut self) -> NodeId {
         self.alloc(NodeKind::Document { declaration: None })
     }
+    /// `new_element`.
     pub fn new_element(&mut self, name: XName) -> NodeId {
         self.alloc(NodeKind::Element { name })
     }
+    /// `new_text`.
     pub fn new_text(&mut self, value: &str) -> NodeId {
         self.alloc(NodeKind::Text(value.to_string()))
     }
+    /// `new_comment`.
     pub fn new_comment(&mut self, value: &str) -> NodeId {
         self.alloc(NodeKind::Comment(value.to_string()))
     }
+    /// `new_pi`.
     pub fn new_pi(&mut self, target: &str, data: &str) -> NodeId {
         self.alloc(NodeKind::Pi(Box::new(PiData {
             target: target.to_string(),
@@ -318,18 +327,23 @@ impl Dom {
     }
 
     // ── kind predicates / accessors ───────────────────────────────────────────
+    /// `is_element`.
     pub fn is_element(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Element { .. })
     }
+    /// `is_text`.
     pub fn is_text(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Text(_))
     }
+    /// `is_document`.
     pub fn is_document(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Document { .. })
     }
+    /// `is_comment`.
     pub fn is_comment(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Comment(_))
     }
+    /// `is_pi`.
     pub fn is_pi(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Pi(_))
     }
@@ -355,6 +369,7 @@ impl Dom {
             _ => None,
         }
     }
+    /// `set_text_value`.
     pub fn set_text_value(&mut self, id: NodeId, value: &str) {
         match &mut self.data_mut(id).kind {
             NodeKind::Text(v) | NodeKind::Comment(v) => *v = value.to_string(),
@@ -362,12 +377,14 @@ impl Dom {
         }
     }
 
+    /// `pi_target`.
     pub fn pi_target(&self, id: NodeId) -> Option<&str> {
         match &self.data(id).kind {
             NodeKind::Pi(pi) => Some(&pi.target),
             _ => None,
         }
     }
+    /// `pi_data`.
     pub fn pi_data(&self, id: NodeId) -> Option<&str> {
         match &self.data(id).kind {
             NodeKind::Pi(pi) => Some(&pi.data),
@@ -375,12 +392,14 @@ impl Dom {
         }
     }
 
+    /// `declaration`.
     pub fn declaration(&self, id: NodeId) -> Option<&XDeclaration> {
         match &self.data(id).kind {
             NodeKind::Document { declaration } => declaration.as_deref(),
             _ => None,
         }
     }
+    /// `set_declaration`.
     pub fn set_declaration(&mut self, id: NodeId, decl: Option<XDeclaration>) {
         if let NodeKind::Document { declaration } = &mut self.data_mut(id).kind {
             *declaration = decl.map(Box::new);
@@ -388,6 +407,7 @@ impl Dom {
     }
 
     // ── tree navigation ───────────────────────────────────────────────────────
+    /// `parent`.
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
         self.data(id).parent
     }
@@ -422,6 +442,7 @@ impl Dom {
         self.data(id).content[i]
     }
 
+    /// `elements`.
     pub fn elements(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
         self.data(id)
             .content
@@ -607,9 +628,11 @@ impl Dom {
             .find(|&n| self.is_element(n))
     }
 
+    /// `has_elements`.
     pub fn has_elements(&self, id: NodeId) -> bool {
         self.data(id).content.iter().any(|&c| self.is_element(c))
     }
+    /// `has_attributes`.
     pub fn has_attributes(&self, id: NodeId) -> bool {
         !self.data(id).attrs.is_empty()
     }

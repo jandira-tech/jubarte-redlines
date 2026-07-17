@@ -659,6 +659,13 @@ pub fn try_stream_hash_simple_paragraph(
     if dom.name(node) != Some(W::p()) {
         return None;
     }
+    // PreDelete salt changes clone attrs — stream only unsalted clean trees
+    // (same gate as try_stream_hash_simple_table_or_tr). Without this, A-only
+    // flattened pre-dels hash Equal to B's live copy and both history + B
+    // inserts vanish (m36 S1 / fresh-p4).
+    if element_or_desc_has_predelete_orig(dom, node) {
+        return None;
+    }
     let attr_xml = filtered_p_attr_xml(dom, node)?;
     let frags = collect_simple_p_fragments(dom, node, settings, correlated_ws)?;
     let mut xml = String::with_capacity(128);

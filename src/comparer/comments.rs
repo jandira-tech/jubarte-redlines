@@ -709,6 +709,44 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
     }
 }
 
+/// Collapse identical comment body texts to one id (Word redline keeps one
+/// of each body). `docx_lots_of_comments_*` sources ship duplicate bodies
+/// under distinct ids; carrying all 6 vs Word's 4 shifts layout (C2 ~45 score).
+/// Keeps the first id per body text; strips later ids from the anchor set so
+/// [`drop_orphans`] removes their defs and aux-part rows.
+fn dedupe_anchored_by_body_text(out: &PartFs, anchored: &HashSet<String>) -> HashSet<String> {
+    let Some(xml) = out.part_string("word/comments.xml") else {
+        return anchored.clone();
+    };
+    let mut d = Dom::new();
+    let doc = d.parse_xdocument(&xml);
+    let Some(root) = d.root(doc) else {
+        return anchored.clone();
+    };
+    let mut seen_text: HashSet<String> = HashSet::new();
+    let mut keep: HashSet<String> = HashSet::new();
+    // Document order of comment elements = stable keep-first.
+    for c in d.elements(root, Some(&W::name("comment"))) {
+        let Some(id) = d.attribute(c, &W::name("id")).map(str::to_string) else {
+            continue;
+        };
+        if !anchored.contains(&id) {
+            continue;
+        }
+        let text: String = d
+            .descendants(c, Some(&W::t()))
+            .into_iter()
+            .map(|t| d.value(t))
+            .collect();
+        // Normalize whitespace so "Complex comment. " and "Complex comment." match.
+        let key = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if seen_text.insert(key) {
+            keep.insert(id);
+        }
+    }
+    keep
+}
+
 /// Entry point — run after the diff produced `result_root` but BEFORE it is
 /// serialized into `out` (anchors are injected into the result DOM).
 #[allow(clippy::too_many_arguments)]
@@ -761,5 +799,34 @@ pub fn carry_comments(
         ));
         anchored
     };
+    // Word-parity: one comment def per unique body text, then strip orphans
+    // (including duplicate-body anchors left in the merged document).
+    let anchored = dedupe_anchored_by_body_text(out, &anchored);
+    // Also strip body anchors for dropped ids so they don't linger orphan-free
+    // as range markers without a comments.xml entry (Ring-1).
+    strip_unanchored_comment_markers(dom, result_root, &anchored);
     drop_orphans(out, out_main, &anchored);
+}
+
+/// Remove commentRangeStart/End/commentReference whose id is not in `keep`.
+fn strip_unanchored_comment_markers(dom: &mut Dom, result_root: NodeId, keep: &HashSet<String>) {
+    let names = [
+        W::name("commentRangeStart"),
+        W::name("commentRangeEnd"),
+        W::name("commentReference"),
+    ];
+    let mut dead: Vec<NodeId> = Vec::new();
+    for name in names {
+        for e in dom.descendants(result_root, Some(&name)) {
+            if dom
+                .attribute(e, &W::name("id"))
+                .is_none_or(|id| !keep.contains(id))
+            {
+                dead.push(e);
+            }
+        }
+    }
+    for e in dead {
+        dom.remove(e);
+    }
 }

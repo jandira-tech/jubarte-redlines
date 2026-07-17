@@ -115,10 +115,10 @@ fn m4_f2_move_markup() {
     assert_eq!(d2.attribute(out2[0], &W::name("name")).unwrap(), "move1");
 }
 
-/// M4.F.2 — deleted/moved-source text renames `w:t` → `w:delText`;
-/// inserted/moved-destination text keeps `w:t`.
+/// M4.F.2 — deleted text renames `w:t` → `w:delText`; inserted keeps `w:t`.
+/// MovedSource keeps `w:t` under `w:moveFrom` (Word-required — Ring-3 probe
+/// of delText-under-moveFrom FAILED open; see KNOWN_ISSUES #1 settled).
 #[test]
-#[ignore = "KNOWN ISSUE 1 (KNOWN_ISSUES.md): MovedSource emits w:t instead of w:delText under w:moveFrom — obsolete Word-repair workaround; the one-line fix needs real-Word validation"]
 fn m4_f2_del_text_kind() {
     let s = WmlComparerSettings::default();
     let mut id = 1u32;
@@ -147,6 +147,7 @@ fn m4_f2_del_text_kind() {
     );
     assert!(d2.element(inner_r2, &del_text).is_none());
 
+    // Word-required contract: w:t under w:moveFrom (NOT delText).
     let mut d3 = Dom::new();
     let r3 = d3.new_element(W::r());
     let t3 = d3.new_element(W::t());
@@ -157,11 +158,14 @@ fn m4_f2_del_text_kind() {
     let out3 = mark_content_transform(&mut d3, r3, &s, &mut id);
     let mv = out3[1];
     let inner_r3 = d3.element(mv, &W::r()).unwrap();
-    assert_eq!(
-        d3.name(d3.element(inner_r3, &del_text).unwrap()).as_ref(),
-        Some(&del_text)
+    assert!(
+        d3.element(inner_r3, &W::t()).is_some(),
+        "Word requires w:t under w:moveFrom (probe failed on delText)"
     );
-    assert!(d3.element(inner_r3, &W::t()).is_none());
+    assert!(
+        d3.element(inner_r3, &del_text).is_none(),
+        "must not emit delText under moveFrom"
+    );
 
     let mut d4 = Dom::new();
     let r4 = d4.new_element(W::r());

@@ -520,11 +520,10 @@ fn translate(text: &str, table: &[(&str, &str)]) -> String {
 /// is never rebuilt. Only when at least one URI was rewritten is a new zip
 /// assembled (every entry under its original name, Deflated).
 pub fn strict_to_transitional_docx(bytes: &[u8]) -> Vec<u8> {
-    let mut archive = match ZipArchive::new(Cursor::new(bytes.to_vec())) {
-        Ok(a) => a,
-        // Not a readable zip — leave untouched (PartFs::open reports the real
-        // error downstream).
-        Err(_) => return bytes.to_vec(),
+    // Not a readable zip — leave untouched (PartFs::open reports the real
+    // error downstream).
+    let Ok(mut archive) = ZipArchive::new(Cursor::new(bytes.to_vec())) else {
+        return bytes.to_vec();
     };
 
     let n = archive.len();
@@ -533,9 +532,8 @@ pub fn strict_to_transitional_docx(bytes: &[u8]) -> Vec<u8> {
     let mut entries: Vec<(String, Vec<u8>)> = Vec::with_capacity(n);
     let mut any_changed = false;
     for i in 0..n {
-        let mut f = match archive.by_index(i) {
-            Ok(f) => f,
-            Err(_) => return bytes.to_vec(),
+        let Ok(mut f) = archive.by_index(i) else {
+            return bytes.to_vec();
         };
         if f.is_dir() {
             continue;

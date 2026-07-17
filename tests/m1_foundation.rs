@@ -292,7 +292,7 @@ fn wml_document_parses_main_document() {
     use jubarte::WmlDocument;
     let mut wml = WmlDocument::from_bytes(ORIGINAL).expect("open");
     assert_eq!(wml.main_document_part_name(), "word/document.xml");
-    let root = wml.main_document_root();
+    let root = wml.main_document_root().expect("main root");
     assert_eq!(wml.dom().name(root).unwrap(), w("document"));
     // body present with paragraphs
     let body = wml.dom().element(root, &w("body")).expect("body");

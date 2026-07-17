@@ -18,7 +18,9 @@ use super::atoms::ComparisonUnitAtom;
 /// An atom tagged with its correlation status, ready for the produce step.
 #[derive(Clone, Debug)]
 pub struct TaggedAtom {
+    /// `atom`.
     pub atom: ComparisonUnitAtom,
+    /// `status`.
     pub status: CorrelationStatus,
 }
 
@@ -1025,9 +1027,25 @@ fn stamp_confetti_then_replace(
             // jaccard on full long is diluted (~0.04) so use content-sig only.
             // LCS short next vs first k long residual paras (k=short.len()+1).
             // Unrelated short (file_59 greek) shares no content sig → pure I/D.
+            //
+            // file_196×197: long multi-section base (100+ residual groups) × short
+            // images essay. Incidental shared vocabulary (appears/center/left/…)
+            // free-meshed B into A dels (score ~39). Modest long residual
+            // (≤40 groups — demo class) keeps any non-boiler share; large long
+            // residual needs both ≥5 shared sigs **and** residual jaccard ≥0.12.
             let k = (rest2.len() + 1).min(rest1.len());
             let head1 = rest1[..k].to_vec();
-            if residual_sets_share_content_sig(dom, &rest1, &rest2) {
+            let share = residual_shared_sig_count(dom, &rest1, &rest2);
+            let m131_ok = if rest1.len() <= 40 {
+                share >= 1
+            } else {
+                share >= 5 && {
+                    let t1 = para_text_tokens_from_units(dom, rest1.as_slice());
+                    let t2 = para_text_tokens_from_units(dom, rest2.as_slice());
+                    token_jaccard(&t1, &t2) + 1e-12 >= 0.12
+                }
+            };
+            if m131_ok {
                 let mut left: Vec<ComparisonUnit> = head1.iter().flat_map(group_contents).collect();
                 let mut right: Vec<ComparisonUnit> =
                     rest2.iter().flat_map(group_contents).collect();
@@ -1385,8 +1403,6 @@ fn residual_para_starts_this(dom: &Dom, u: &ComparisonUnit) -> bool {
         .is_some_and(|t| t.eq_ignore_ascii_case("this"))
 }
 
-
-
 fn residual_first_body_starts_this(dom: &Dom, rest: &[ComparisonUnit]) -> bool {
     rest.len() >= 2 && residual_para_starts_this(dom, &rest[1])
 }
@@ -1465,6 +1481,15 @@ fn residual_sets_share_content_sig(
     rest1: &[ComparisonUnit],
     rest2: &[ComparisonUnit],
 ) -> bool {
+    residual_shared_sig_count(dom, rest1, rest2) >= 1
+}
+
+/// Count of shared non-boilerplate significant tokens across residual sets.
+fn residual_shared_sig_count(
+    dom: &Dom,
+    rest1: &[ComparisonUnit],
+    rest2: &[ComparisonUnit],
+) -> usize {
     let mut left = std::collections::HashSet::new();
     let mut right = std::collections::HashSet::new();
     for u in rest1 {
@@ -1473,15 +1498,14 @@ fn residual_sets_share_content_sig(
     for u in rest2 {
         right.extend(para_text_token_list(dom, u));
     }
-    let shared_sig: std::collections::HashSet<String> = significant_tokens(&left)
+    significant_tokens(&left)
         .intersection(&significant_tokens(&right))
-        .cloned()
-        .collect();
-    shared_sig.iter().any(|t| {
-        !M128_BOILERPLATE_SIG
-            .iter()
-            .any(|b| t.eq_ignore_ascii_case(b))
-    })
+        .filter(|t| {
+            !M128_BOILERPLATE_SIG
+                .iter()
+                .any(|b| t.eq_ignore_ascii_case(b))
+        })
+        .count()
 }
 
 /// M134 — majority of residual paragraphs contain `:` (policy/review/
@@ -2316,6 +2340,25 @@ fn step_h(
                     if re.len() > n_eq {
                         out.push(CorrelatedSequence::inserted(re[n_eq..].to_vec()));
                     }
+                } else if lg[il].0 == "Table"
+                    && settings.merge_replaced_paragraphs
+                    // Only the short-checklist × multi-table shape (hr_onboarding):
+                    // one side has a single table, the other ≥3. Single×single
+                    // zero-Jaccard tables still cell-merge positionally (Word:
+                    // project_tasks×q1_sales, q1_sales×quarterly — pure del+ins
+                    // regressed those ~−30 pts).
+                    && ((left_tables == 1 && right_tables >= 3)
+                        || (right_tables == 1 && left_tables >= 3))
+                    && {
+                        let j = token_jaccard(
+                            &para_text_tokens_from_units(dom, &lg[il].1),
+                            &para_text_tokens_from_units(dom, &rg[ir].1),
+                        );
+                        j + 1e-12 < 0.05
+                    }
+                {
+                    out.push(CorrelatedSequence::inserted(rg[ir].1.clone()));
+                    out.push(CorrelatedSequence::deleted(lg[il].1.clone()));
                 } else {
                     out.push(CorrelatedSequence::paired(
                         CorrelationStatus::Unknown,
@@ -2415,46 +2458,44 @@ fn step_h(
             && rc >= 1
             && left_len <= 5
             && right_len <= 5
+            && let (Some(li), Some(ri)) = (first_contentful_idx(cul1), first_contentful_idx(cul2))
         {
-            if let (Some(li), Some(ri)) = (first_contentful_idx(cul1), first_contentful_idx(cul2))
-            {
-                let j_title = token_jaccard(
-                    &para_text_tokens(dom, &cul1[li]),
-                    &para_text_tokens(dom, &cul2[ri]),
-                );
-                if j_title + 1e-12 >= 0.9 {
-                    let rest1: Vec<ComparisonUnit> = cul1
-                        .iter()
-                        .enumerate()
-                        .filter(|(i, _)| *i != li)
-                        .map(|(_, u)| u.clone())
-                        .collect();
-                    let rest2: Vec<ComparisonUnit> = cul2
-                        .iter()
-                        .enumerate()
-                        .filter(|(i, _)| *i != ri)
-                        .map(|(_, u)| u.clone())
-                        .collect();
-                    let rc_rest = contentful_paras(&rest1);
-                    let rr_rest = contentful_paras(&rest2);
-                    let rt1 = count_gt(&rest1, Table);
-                    let rt2 = count_gt(&rest2, Table);
-                    let residual_pvt = (rt1 == 0 && rc_rest == 1 && rt2 == 1 && rr_rest == 0)
-                        || (rt2 == 0 && rr_rest == 1 && rt1 == 1 && rc_rest == 0);
-                    if residual_pvt && !rest1.is_empty() && !rest2.is_empty() {
-                        out.push(CorrelatedSequence::paired(
-                            CorrelationStatus::Unknown,
-                            vec![cul1[li].clone()],
-                            vec![cul2[ri].clone()],
-                        ));
-                        for u in &rest2 {
-                            out.push(CorrelatedSequence::inserted(vec![u.clone()]));
-                        }
-                        for u in &rest1 {
-                            out.push(CorrelatedSequence::deleted(vec![u.clone()]));
-                        }
-                        return out;
+            let j_title = token_jaccard(
+                &para_text_tokens(dom, &cul1[li]),
+                &para_text_tokens(dom, &cul2[ri]),
+            );
+            if j_title + 1e-12 >= 0.9 {
+                let rest1: Vec<ComparisonUnit> = cul1
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != li)
+                    .map(|(_, u)| u.clone())
+                    .collect();
+                let rest2: Vec<ComparisonUnit> = cul2
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != ri)
+                    .map(|(_, u)| u.clone())
+                    .collect();
+                let rc_rest = contentful_paras(&rest1);
+                let rr_rest = contentful_paras(&rest2);
+                let rt1 = count_gt(&rest1, Table);
+                let rt2 = count_gt(&rest2, Table);
+                let residual_pvt = (rt1 == 0 && rc_rest == 1 && rt2 == 1 && rr_rest == 0)
+                    || (rt2 == 0 && rr_rest == 1 && rt1 == 1 && rc_rest == 0);
+                if residual_pvt && !rest1.is_empty() && !rest2.is_empty() {
+                    out.push(CorrelatedSequence::paired(
+                        CorrelationStatus::Unknown,
+                        vec![cul1[li].clone()],
+                        vec![cul2[ri].clone()],
+                    ));
+                    for u in &rest2 {
+                        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
                     }
+                    for u in &rest1 {
+                        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                    }
+                    return out;
                 }
             }
         }
@@ -2477,37 +2518,35 @@ fn step_h(
             && rc == right_paras
             && rc >= 4
             && right_len == right_paras;
-        if m208 {
-            if let Some(ti) = first_contentful_idx(cul1) {
-                let last_p = cul2.len() - 1;
-                let j_first = token_jaccard(
-                    &para_text_tokens(dom, &cul1[ti]),
-                    &para_text_tokens(dom, &cul2[0]),
-                );
-                let j_last = token_jaccard(
-                    &para_text_tokens(dom, &cul2[last_p]),
-                    &para_text_tokens(dom, &cul1[ti]),
-                );
-                if j_first + 1e-12 < 0.15 && j_last + 1e-12 < 0.15 {
-                    // pure-I early next prose
-                    for u in &cul2[..last_p] {
-                        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
-                    }
-                    // free-mesh last next prose × base title
-                    out.push(CorrelatedSequence::paired(
-                        CorrelationStatus::Unknown,
-                        vec![cul1[ti].clone()],
-                        vec![cul2[last_p].clone()],
-                    ));
-                    // pure-D rest of table side
-                    for (i, u) in cul1.iter().enumerate() {
-                        if i == ti {
-                            continue;
-                        }
-                        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
-                    }
-                    return out;
+        if m208 && let Some(ti) = first_contentful_idx(cul1) {
+            let last_p = cul2.len() - 1;
+            let j_first = token_jaccard(
+                &para_text_tokens(dom, &cul1[ti]),
+                &para_text_tokens(dom, &cul2[0]),
+            );
+            let j_last = token_jaccard(
+                &para_text_tokens(dom, &cul2[last_p]),
+                &para_text_tokens(dom, &cul1[ti]),
+            );
+            if j_first + 1e-12 < 0.15 && j_last + 1e-12 < 0.15 {
+                // pure-I early next prose
+                for u in &cul2[..last_p] {
+                    out.push(CorrelatedSequence::inserted(vec![u.clone()]));
                 }
+                // free-mesh last next prose × base title
+                out.push(CorrelatedSequence::paired(
+                    CorrelationStatus::Unknown,
+                    vec![cul1[ti].clone()],
+                    vec![cul2[last_p].clone()],
+                ));
+                // pure-D rest of table side
+                for (i, u) in cul1.iter().enumerate() {
+                    if i == ti {
+                        continue;
+                    }
+                    out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                }
+                return out;
             }
         }
     }
@@ -2683,10 +2722,8 @@ fn step_h(
         // mesh style boilerplate; pure-I/D regressed text_highlight×times
         // −24 and blue_underline×bold_italic −23). Zip free-meshes on thin
         // glue; Word pure-I/Ds every residual body for true cross-demos.
-        let skip_zip_for_m197 = left_paras == 3
-            && right_paras == 3
-            && first_paras_share_last_sig(dom, cul1, cul2)
-            && {
+        let skip_zip_for_m197 =
+            left_paras == 3 && right_paras == 3 && first_paras_share_last_sig(dom, cul1, cul2) && {
                 let j0 = token_jaccard(
                     &para_text_tokens(dom, &cul1[0]),
                     &para_text_tokens(dom, &cul2[0]),
@@ -2707,10 +2744,7 @@ fn step_h(
                     && b0f.eq_ignore_ascii_case("demonstrating"))
                     || (a0f.eq_ignore_ascii_case("demonstrating")
                         && b0f.eq_ignore_ascii_case("this"));
-                j0 + 1e-12 < 0.12
-                    && j1 + 1e-12 < 0.12
-                    && j2 + 1e-12 < 0.12
-                    && !this_x_demo
+                j0 + 1e-12 < 0.12 && j1 + 1e-12 < 0.12 && j2 + 1e-12 < 0.12 && !this_x_demo
             };
         if settings.merge_replaced_paragraphs
             && skip_zip_for_m197
@@ -2741,8 +2775,8 @@ fn step_h(
             && {
                 let t0a = para_text_tokens(dom, &cul1[0]);
                 let t0b = para_text_tokens(dom, &cul2[0]);
-                let has_center = t0a.iter().any(|t| t == "center")
-                    && t0b.iter().any(|t| t == "center");
+                let has_center =
+                    t0a.iter().any(|t| t == "center") && t0b.iter().any(|t| t == "center");
                 let j1 = token_jaccard(
                     &para_text_tokens(dom, &cul1[1]),
                     &para_text_tokens(dom, &cul2[1]),
@@ -2890,18 +2924,13 @@ fn step_h(
                 // pure-I/D regressed bold_text×bold_underline 98→89).
                 let both_long = a2.len() >= 6 && b2.len() >= 6;
                 let real_nonempty = |toks: &[String]| -> bool {
-                    content(toks).iter().any(|w| {
-                        !FORMAT_BOILER.iter().any(|b| w.eq_ignore_ascii_case(b))
-                    })
+                    content(toks)
+                        .iter()
+                        .any(|w| !FORMAT_BOILER.iter().any(|b| w.eq_ignore_ascii_case(b)))
                 };
-                let asymmetric_short = (a2.len() >= 2
-                    && a2.len() <= 4
-                    && b2.len() >= 6
-                    && real_nonempty(&a2))
-                    || (b2.len() >= 2
-                        && b2.len() <= 4
-                        && a2.len() >= 6
-                        && real_nonempty(&b2));
+                let asymmetric_short =
+                    (a2.len() >= 2 && a2.len() <= 4 && b2.len() >= 6 && real_nonempty(&a2))
+                        || (b2.len() >= 2 && b2.len() <= 4 && a2.len() >= 6 && real_nonempty(&b2));
                 // both_long also needs raw j2 <0.15: bold_red×superscript shares
                 // "is used and" (j2≈0.27) — Word free-meshes; pure-I/D LO −21.
                 // center_bold×clear j2≈0.13 still pure-I/Ds (LO 100).
@@ -3220,22 +3249,22 @@ fn step_h(
                         for u in &rest2[1..rest2.len() - 1] {
                             out.push(CorrelatedSequence::inserted(vec![u.clone()]));
                         }
-                        out.push(CorrelatedSequence::inserted(
-                            vec![rest2[rest2.len() - 1].clone()],
-                        ));
-                        out.push(CorrelatedSequence::deleted(
-                            vec![rest1[rest1.len() - 1].clone()],
-                        ));
+                        out.push(CorrelatedSequence::inserted(vec![
+                            rest2[rest2.len() - 1].clone(),
+                        ]));
+                        out.push(CorrelatedSequence::deleted(vec![
+                            rest1[rest1.len() - 1].clone(),
+                        ]));
                     } else {
                         for u in &rest1[1..rest1.len() - 1] {
                             out.push(CorrelatedSequence::deleted(vec![u.clone()]));
                         }
-                        out.push(CorrelatedSequence::inserted(
-                            vec![rest2[rest2.len() - 1].clone()],
-                        ));
-                        out.push(CorrelatedSequence::deleted(
-                            vec![rest1[rest1.len() - 1].clone()],
-                        ));
+                        out.push(CorrelatedSequence::inserted(vec![
+                            rest2[rest2.len() - 1].clone(),
+                        ]));
+                        out.push(CorrelatedSequence::deleted(vec![
+                            rest1[rest1.len() - 1].clone(),
+                        ]));
                     }
                 } else if m163 {
                     // pure-I intro, then zip list items positionally
@@ -3286,9 +3315,7 @@ fn step_h(
                     let both_long_res = para_text_token_list(dom, &rest1[1]).len() >= 6
                         && para_text_token_list(dom, &rest2[1]).len() >= 6;
                     let pure_both = first_j + 1e-12 < 0.15
-                        || (both_long_res
-                            && first_j + 1e-12 >= 0.46
-                            && first_j + 1e-12 < 0.50);
+                        || (both_long_res && first_j + 1e-12 >= 0.46 && first_j + 1e-12 < 0.50);
                     if m180 && pure_both {
                         out.push(CorrelatedSequence::inserted(vec![rest2[0].clone()]));
                         out.push(CorrelatedSequence::deleted(vec![rest1[0].clone()]));
@@ -4125,6 +4152,46 @@ pub fn detect_unrelated_sources_word_mode(
     //    full LCS nested "Quarterly…" into "eigenpal…". Word is pure-I short next
     //    then pure-D long base. Allow only when short side is **next** (n2==short_n);
     //    short **base** catalog×long next (file_187) Word nests — must keep full LCS.
+    // Body-token Jaccard for stamped short-next vs long-base (file_196×197):
+    // short side can have 7+ contentful groups (images essay) while long base
+    // is a full multi-section doc — the 2..=6 cap never fired, full LCS mixed
+    // B's "Generally…" insert into A dels (score ~39 p14/12). Require near-zero
+    // body overlap so related stamped cousins (file_175) stay on full LCS.
+    // Stamped short-next × long-base with near-zero residual body overlap
+    // (file_196×197): force confetti pure-I/D even when drawing structure
+    // hashes collide (disjoint=false) or short_n > 6. Related stamped cousins
+    // (file_175) have high residual jaccard and stay off this path.
+    let stamped_body_unrelated =
+        stamped && n2 == short_n && long_n > 20 && (2..=20).contains(&short_n) && {
+            // Exclude stamp filenames (`file_N.docx`) — shared tokens inflate jaccard.
+            let rest = |cu: &[ComparisonUnit]| -> std::collections::HashSet<String> {
+                match first_contentful_group_index(dom, cu) {
+                    Some(i) if i + 1 < cu.len() => para_text_tokens_from_units(dom, &cu[i + 1..]),
+                    _ => std::collections::HashSet::new(),
+                }
+            };
+            let b1 = rest(cu1);
+            let b2 = rest(cu2);
+            if b1.is_empty() || b2.is_empty() {
+                true
+            } else {
+                // file_196×197 residual jaccard ≈0.10 with incidental shared
+                // vocabulary; related cousins (file_175) sit well above 0.20.
+                // Use 0.15 so incidental ~0.10 still pure-I/D confetti.
+                token_jaccard(&b1, &b2) + 1e-12 < 0.15
+            }
+        };
+    if stamped_body_unrelated {
+        // Prefer confetti when stamp confetti is allowed; otherwise still
+        // pure-I next / pure-D base for strongly size-asymmetric stamped pairs.
+        if should_stamp_confetti(dom, cu1, cu2) {
+            return stamp_confetti_then_replace(dom, cu1, cu2, settings);
+        }
+        return Some(vec![
+            CorrelatedSequence::inserted(cu2.to_vec()),
+            CorrelatedSequence::deleted(cu1.to_vec()),
+        ]);
+    }
     let ok_counts = (short_n > 3 && long_n > 3)
         || ((2..=3).contains(&short_n) && long_n > 3 && !has_table(short_cu))
         || (stamped && disjoint && (2..=6).contains(&short_n) && long_n > 6 && n2 == short_n);
@@ -4575,6 +4642,7 @@ fn correlated_hash_run(unknown: &CorrelatedSequence) -> Option<CorrelatedHashRun
     run
 }
 
+/// `process_correlated_hashes`.
 pub fn process_correlated_hashes(unknown: &CorrelatedSequence) -> Option<Vec<CorrelatedSequence>> {
     let run = correlated_hash_run(unknown)?;
     let cul1 = unknown.com_units_1.as_deref().unwrap_or(&[]);

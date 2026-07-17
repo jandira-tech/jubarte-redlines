@@ -184,10 +184,28 @@ fn flatten_atoms(units: &[ComparisonUnit]) -> Vec<ComparisonUnitAtom> {
         .collect()
 }
 
+/// True when a before-side atom carries `pt:PreDelete="orig"` on itself or an
+/// ancestor (word-mode flattened A-only pre-existing deletion). Equal emit
+/// would drop the stamp (content comes from AFTER); force del+ins instead.
+fn atom_has_predelete_orig(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
+    let pre = PT::name("PreDelete");
+    if dom.attribute(atom.content_element, &pre) == Some(crate::comparer::PREDELETE_STAMP_ORIG) {
+        return true;
+    }
+    atom.ancestor_elements
+        .iter()
+        .any(|&a| dom.attribute(a, &pre) == Some(crate::comparer::PREDELETE_STAMP_ORIG))
+}
+
 /// M4.E.1 — `FlattenToComparisonUnitAtomList` (:4141): nested correlated tree →
 /// flat status-tagged atom list. Equal carries content/ancestors from the AFTER
 /// atom and a link to the BEFORE atom; zip truncates to the shorter side.
+///
+/// M-MOVE S1 exception: when the BEFORE atom is a PreDelete-orig span, emit
+/// Deleted(before)+Inserted(after) instead of Equal so history survives even
+/// if an upstream correlation path lost the salt (m36 / fresh-p4).
 pub fn flatten_to_comparison_unit_atom_list(
+    dom: &Dom,
     seqs: &[CorrelatedSequence],
 ) -> Vec<ComparisonUnitAtom> {
     let mut out = Vec::new();
@@ -196,6 +214,23 @@ pub fn flatten_to_comparison_unit_atom_list(
             CorrelationStatus::Equal => {
                 let before = flatten_atoms(cs.com_units_1.as_deref().unwrap_or(&[]));
                 let after = flatten_atoms(cs.com_units_2.as_deref().unwrap_or(&[]));
+                // M-MOVE S1: if any BEFORE atom is a PreDelete-orig span, emit
+                // the whole before run as Deleted and the whole after run as
+                // Inserted (paragraph/word granularity). Per-atom del+ins
+                // confetti fails convert_stamped coalescing and m36.
+                if before.iter().any(|b| atom_has_predelete_orig(dom, b)) {
+                    for b in &before {
+                        let mut del = b.clone();
+                        del.correlation_status = CorrelationStatus::Deleted;
+                        out.push(del);
+                    }
+                    for a in &after {
+                        let mut ins = a.clone();
+                        ins.correlation_status = CorrelationStatus::Inserted;
+                        out.push(ins);
+                    }
+                    continue;
+                }
                 for (b, a) in before.iter().zip(after.iter()) {
                     let mut atom = a.clone();
                     atom.correlation_status = CorrelationStatus::Equal;
@@ -458,9 +493,11 @@ fn group_by_key_stable<'a, K: Eq + std::hash::Hash + Clone>(
 /// Add the `pt:Status` (+ move/format) attributes to a constructed node.
 fn tag_status(dom: &mut Dom, node: NodeId, status: CorrelationStatus, atom: &ComparisonUnitAtom) {
     match status {
-        CorrelationStatus::Deleted => dom.set_attribute_value(node, &PT::status(), Some("Deleted")),
+        CorrelationStatus::Deleted => {
+            dom.set_attribute_value(node, &PT::status(), Some("Deleted"));
+        }
         CorrelationStatus::Inserted => {
-            dom.set_attribute_value(node, &PT::status(), Some("Inserted"))
+            dom.set_attribute_value(node, &PT::status(), Some("Inserted"));
         }
         CorrelationStatus::MovedSource | CorrelationStatus::MovedDestination => {
             dom.set_attribute_value(node, &PT::status(), Some(status_str(status)));

@@ -63,7 +63,7 @@ fn pair02_batch_docx_first_table_mixes_cells() {
     // Word: AAA and R1C1 in first cell together
     let aaa_at = tbl.find("AAA");
     let r1c1_at = tbl.find("R1C1");
-    eprintln!("AAA at {:?} R1C1 at {:?}", aaa_at, r1c1_at);
+    eprintln!("AAA at {aaa_at:?} R1C1 at {r1c1_at:?}");
     if let (Some(a), Some(r)) = (aaa_at, r1c1_at) {
         let dist = (a as i64 - r as i64).abs();
         assert!(
