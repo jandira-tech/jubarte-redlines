@@ -70,8 +70,6 @@ perf-profile = []
 [dependencies]
 rdocx-opc = "0.1" # OPC/zip package layer
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # fallback / direct zip access if rdocx-opc's surface is insufficient
-quick-xml = "0.41"
-regex = "1.12.4"
 sha1 = "0.10"
 clap = { version = "4.5", features = ["derive"], optional = true }
 # CLI-only global allocator. The redline pipeline is ~41% allocation self-time
@@ -86,6 +84,9 @@ required-features = ["cli"]
 
 [dev-dependencies]
 criterion = "0.8"
+# XML assertions in integration tests; production parsing uses xmllinq's
+# purpose-built scanner instead.
+quick-xml = "0.41"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
 ooxmlsdk = { version = "0.11", default-features = false, features = ["parts"] }
