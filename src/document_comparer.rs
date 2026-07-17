@@ -1237,6 +1237,21 @@ fn word_canonical_style_id(name: &str) -> String {
         "heading" => return "Heading".into(),
         "list" => return "List".into(),
         "index" => return "Index".into(),
+        // Table-of-contents built-ins: styleId is the ALL-CAPS `TOC1`..`TOC9`
+        // (name "toc 1"..), which the generic PascalCase below would mangle to
+        // `Toc1`. That renames a live built-in to a custom id, so LibreOffice
+        // (and Word) drop the built-in TOC indents/dot-leader tabs and the
+        // whole table of contents reflows — tanking the visual redline score.
+        "toc 1" => return "TOC1".into(),
+        "toc 2" => return "TOC2".into(),
+        "toc 3" => return "TOC3".into(),
+        "toc 4" => return "TOC4".into(),
+        "toc 5" => return "TOC5".into(),
+        "toc 6" => return "TOC6".into(),
+        "toc 7" => return "TOC7".into(),
+        "toc 8" => return "TOC8".into(),
+        "toc 9" => return "TOC9".into(),
+        "toc heading" => return "TOCHeading".into(),
         _ => {}
     }
     // Generic: drop spaces/underscores/hyphens, PascalCase each token.
@@ -3187,5 +3202,22 @@ mod tests {
             expected_array
         );
         assert_eq!(revisions_to_json(&[]), "[]");
+    }
+
+    #[test]
+    fn word_canonical_style_id_preserves_toc_builtins() {
+        // Regression: TOC 1..9 are ALL-CAPS built-in styleIds (TOC1..TOC9,
+        // name "toc N"). The generic PascalCase fallback would mangle them to
+        // Toc1.., renaming a live built-in to a custom id — LibreOffice/Word
+        // then drop the built-in TOC indents + dot-leader tabs and the table of
+        // contents reflows, collapsing the visual redline score.
+        assert_eq!(word_canonical_style_id("toc 1"), "TOC1");
+        assert_eq!(word_canonical_style_id("toc 9"), "TOC9");
+        assert_eq!(word_canonical_style_id("TOC 2"), "TOC2"); // name matched case-insensitively
+        assert_eq!(word_canonical_style_id("toc heading"), "TOCHeading");
+        // Sibling built-ins and the generic PascalCase path are unaffected.
+        assert_eq!(word_canonical_style_id("heading 1"), "Heading1");
+        assert_eq!(word_canonical_style_id("document title"), "DocumentTitle");
+        assert_eq!(word_canonical_style_id("my custom style"), "MyCustomStyle");
     }
 }
