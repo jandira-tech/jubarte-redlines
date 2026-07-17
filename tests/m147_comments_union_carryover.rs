@@ -246,3 +246,142 @@ fn duplicate_comment_bodies_deduped() {
         "no orphan anchors after dedupe: anchors={anchors:?} defs={defs:?}"
     );
 }
+
+fn pkg_with_comment_identity_graph(is_a: bool) -> Vec<u8> {
+    let (anchors, comments, comments_extended, comments_ids) = if is_a {
+        (
+            r#"<w:commentRangeStart w:id="0"/>
+      <w:commentRangeStart w:id="1"/>
+      <w:r><w:t>shared comment target</w:t></w:r>
+      <w:commentRangeEnd w:id="1"/>
+      <w:r><w:commentReference w:id="1"/></w:r>
+      <w:commentRangeEnd w:id="0"/>
+      <w:r><w:commentReference w:id="0"/></w:r>"#,
+            r#"<w:comment w:id="0" w:author="A">
+    <w:p w14:paraId="11111111"><w:r><w:t>A parent</w:t></w:r></w:p>
+  </w:comment>
+  <w:comment w:id="1" w:author="A">
+    <w:p w14:paraId="22222222"><w:r><w:t>A reply</w:t></w:r></w:p>
+  </w:comment>"#,
+            r#"<w15:commentEx w15:paraId="11111111" w15:done="0"/>
+  <w15:commentEx w15:paraId="22222222" w15:paraIdParent="11111111" w15:done="0"/>"#,
+            r#"<w16cid:commentId w16cid:paraId="11111111" w16cid:durableId="10000001"/>
+  <w16cid:commentId w16cid:paraId="22222222" w16cid:durableId="10000002"/>"#,
+        )
+    } else {
+        (
+            r#"<w:commentRangeStart w:id="0"/>
+      <w:r><w:t>shared comment target</w:t></w:r>
+      <w:commentRangeEnd w:id="0"/>
+      <w:r><w:commentReference w:id="0"/></w:r>"#,
+            r#"<w:comment w:id="0" w:author="B">
+    <w:p w14:paraId="11111111"><w:r><w:t>B parent</w:t></w:r></w:p>
+  </w:comment>"#,
+            r#"<w15:commentEx w15:paraId="11111111" w15:done="0"/>"#,
+            r#"<w16cid:commentId w16cid:paraId="11111111" w16cid:durableId="20000001"/>"#,
+        )
+    };
+
+    let document = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>{anchors}</w:p>
+    <w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>
+  </w:body>
+</w:document>"#
+    );
+    let comments = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml">
+  {comments}
+</w:comments>"#
+    );
+    let comments_extended = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">
+  {comments_extended}
+</w15:commentsEx>"#
+    );
+    let comments_ids = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid">
+  {comments_ids}
+</w16cid:commentsIds>"#
+    );
+    let content_types = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/><Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/><Override PartName="/word/commentsIds.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml"/></Types>"#;
+    let root_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let document_rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/><Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/><Relationship Id="rId3" Type="http://schemas.microsoft.com/office/2016/09/relationships/commentsIds" Target="commentsIds.xml"/></Relationships>"#;
+
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut zip = ZipWriter::new(&mut buf);
+        let options = SimpleFileOptions::default();
+        for (name, data) in [
+            ("[Content_Types].xml", content_types.as_slice()),
+            ("_rels/.rels", root_rels.as_slice()),
+            ("word/_rels/document.xml.rels", document_rels.as_slice()),
+        ] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        for (name, data) in [
+            ("word/document.xml", document.as_bytes()),
+            ("word/comments.xml", comments.as_bytes()),
+            ("word/commentsExtended.xml", comments_extended.as_bytes()),
+            ("word/commentsIds.xml", comments_ids.as_bytes()),
+        ] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+fn local_attribute_values(pkg: &PartFs, part: &str, local_name: &str) -> HashSet<String> {
+    let xml = pkg.part_string(part).expect("part");
+    let mut dom = Dom::new();
+    let document = dom.parse_xdocument(&xml);
+    let root = dom.root(document).expect("root");
+    dom.descendants(root, None)
+        .into_iter()
+        .filter_map(|element| {
+            dom.attributes(element)
+                .into_iter()
+                .find(|(name, _)| name.local_name() == local_name)
+                .map(|(_, value)| value)
+        })
+        .collect()
+}
+
+#[test]
+fn cross_document_para_id_collisions_are_reallocated_across_the_comment_graph() {
+    let a = pkg_with_comment_identity_graph(true);
+    let b = pkg_with_comment_identity_graph(false);
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
+    let pkg = PartFs::open(&out).expect("open");
+
+    let comment_para_ids = local_attribute_values(&pkg, "word/comments.xml", "paraId");
+    assert_eq!(
+        comment_para_ids.len(),
+        3,
+        "every surviving comment paragraph needs a document-unique paraId"
+    );
+    assert!(
+        comment_para_ids.contains("11111111"),
+        "B's established paraId should remain stable"
+    );
+
+    let extended_para_ids = local_attribute_values(&pkg, "word/commentsExtended.xml", "paraId");
+    let ids_para_ids = local_attribute_values(&pkg, "word/commentsIds.xml", "paraId");
+    assert_eq!(extended_para_ids, comment_para_ids);
+    assert_eq!(ids_para_ids, comment_para_ids);
+
+    let parent_para_ids = local_attribute_values(&pkg, "word/commentsExtended.xml", "paraIdParent");
+    assert!(
+        parent_para_ids.is_subset(&comment_para_ids),
+        "renumbered parent references must resolve: parents={parent_para_ids:?}, paraIds={comment_para_ids:?}"
+    );
+}

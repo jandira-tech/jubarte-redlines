@@ -23,7 +23,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::namespaces::W;
+use crate::namespaces::{W, W14};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
@@ -508,6 +508,34 @@ fn remove_family_part(out: &mut PartFs, out_main: &str, part: &str, rel_type: &s
     out.remove_relationships_by_type(out_main, rel_type);
 }
 
+fn allocate_para_id(used: &mut HashSet<String>, next: &mut u32) -> String {
+    loop {
+        if *next == 0 || *next >= 0x8000_0000 {
+            *next = 1;
+        }
+        let candidate = format!("{:08X}", *next);
+        *next += 1;
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+}
+
+fn rewrite_para_id_references(dom: &mut Dom, root: NodeId, map: &HashMap<String, String>) {
+    if map.is_empty() {
+        return;
+    }
+    for element in dom.descendants_and_self(root, None) {
+        for (name, value) in dom.attributes(element) {
+            if matches!(name.local_name(), "paraId" | "paraIdParent")
+                && let Some(replacement) = map.get(&value.to_ascii_uppercase())
+            {
+                dom.set_attribute_value(element, &name, Some(replacement));
+            }
+        }
+    }
+}
+
 /// Merge A's comments into a B-based comments.xml for the union case,
 /// renumbering A ids that collide with B's. Returns the A→out id map.
 fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMap<String, String> {
@@ -530,6 +558,19 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
         .into_iter()
         .filter_map(|c| dom.attribute(c, &id_name).map(str::to_string))
         .collect();
+    let mut used_para_ids: HashSet<String> = dom
+        .descendants(br, Some(&W::p()))
+        .into_iter()
+        .filter_map(|p| dom.attribute(p, &W14::name("paraId")).map(str::to_string))
+        .map(|value| value.to_ascii_uppercase())
+        .collect();
+    let mut next_para_id = used_para_ids
+        .iter()
+        .filter_map(|value| u32::from_str_radix(value, 16).ok())
+        .filter(|value| *value < 0x8000_0000)
+        .max()
+        .map_or(1, |value| value.saturating_add(1));
+    let mut para_id_map: HashMap<String, String> = HashMap::new();
     let mut next_id = b_ids
         .iter()
         .filter_map(|s| s.parse::<i64>().ok())
@@ -567,6 +608,23 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
             continue; // same comment carried on both sides; B's copy wins
         }
         let clone = dom.clone_subtree(c);
+        for paragraph in dom.descendants(clone, Some(&W::p())) {
+            let Some(para_id) = dom
+                .attribute(paragraph, &W14::name("paraId"))
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let para_id_key = para_id.to_ascii_uppercase();
+            if used_para_ids.contains(&para_id_key) {
+                let replacement = para_id_map
+                    .entry(para_id_key)
+                    .or_insert_with(|| allocate_para_id(&mut used_para_ids, &mut next_para_id));
+                dom.set_attribute_value(paragraph, &W14::name("paraId"), Some(replacement));
+            } else {
+                used_para_ids.insert(para_id_key);
+            }
+        }
         if b_ids.contains(&id) {
             // id collision with a DIFFERENT B comment — renumber A's copy to a
             // free id (not in B, not kept by another A comment, not already
@@ -594,7 +652,13 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
             continue;
         };
         if out.part_string(part).is_none() {
-            out.set_part(part, ax.into_bytes());
+            let mut d = Dom::new();
+            let ad = d.parse_xdocument(&ax);
+            let Some(ar) = d.root(ad) else {
+                continue;
+            };
+            rewrite_para_id_references(&mut d, ar, &para_id_map);
+            out.set_part(part, d.serialize_element(ar).into_bytes());
             out.add_content_type_override(&format!("/{part}"), ct);
             let has_rel = out
                 .read_rels_for(out_main)
@@ -609,9 +673,13 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
             continue;
         };
         let mut d = Dom::new();
-        let bd = d.parse_xdocument(&bx);
         let ad = d.parse_xdocument(&ax);
-        let (Some(br), Some(ar)) = (d.root(bd), d.root(ad)) else {
+        let Some(ar) = d.root(ad) else {
+            continue;
+        };
+        rewrite_para_id_references(&mut d, ar, &para_id_map);
+        let bd = d.parse_xdocument(&bx);
+        let Some(br) = d.root(bd) else {
             continue;
         };
         let para_key = |d: &Dom, e: NodeId| -> Option<String> {
@@ -620,18 +688,20 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
                 .find(|(n, _)| n.local_name() == "paraId")
                 .map(|(_, v)| v)
         };
-        let existing: HashSet<String> = d
+        let mut existing: HashSet<String> = d
             .elements(br, None)
             .into_iter()
             .filter_map(|e| para_key(&d, e))
+            .map(|value| value.to_ascii_uppercase())
             .collect();
         let mut changed = false;
         for e in d.elements(ar, None) {
             if let Some(k) = para_key(&d, e)
-                && !existing.contains(&k)
+                && !existing.contains(&k.to_ascii_uppercase())
             {
                 let c = d.clone_subtree(e);
                 d.add(br, c);
+                existing.insert(k.to_ascii_uppercase());
                 changed = true;
             }
         }
