@@ -29,6 +29,15 @@ fn word_mode() -> WmlComparerSettings {
 }
 
 fn pkg_with_comment(body_text: &str, comment_id: &str, comment_body: &str) -> Vec<u8> {
+    pkg_with_comment_author(body_text, comment_id, comment_body, "A")
+}
+
+fn pkg_with_comment_author(
+    body_text: &str,
+    comment_id: &str,
+    comment_body: &str,
+    author: &str,
+) -> Vec<u8> {
     let doc = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -47,7 +56,7 @@ fn pkg_with_comment(body_text: &str, comment_id: &str, comment_body: &str) -> Ve
     let comments = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:comment w:id="{comment_id}" w:author="A" w:date="2020-01-01T00:00:00Z" w:initials="A">
+  <w:comment w:id="{comment_id}" w:author="{author}" w:date="2020-01-01T00:00:00Z" w:initials="A">
     <w:p><w:r><w:t>{comment_body}</w:t></w:r></w:p>
   </w:comment>
 </w:comments>"#
@@ -169,12 +178,13 @@ fn b_only_comments_carried() {
     );
 }
 
-/// Duplicate body texts under distinct ids collapse to one def (Word keeps
-/// one of each body on document_100×lots_of_comments).
+/// Equal comment bodies on distinct non-empty ranges are distinct comments.
+/// Body text alone is not a logical identity and must never silently discard
+/// one author's annotation.
 #[test]
-fn duplicate_comment_bodies_deduped() {
+fn same_body_comments_on_distinct_ranges_are_preserved() {
     // Build B with two comments sharing body text "same note" on different
-    // spans — Word redlines keep a single def per unique body.
+    // spans. Both anchors and both definitions must survive.
     fn pkg_two_dup_comments() -> Vec<u8> {
         use std::io::{Cursor, Write};
         use zip::ZipWriter;
@@ -237,14 +247,55 @@ fn duplicate_comment_bodies_deduped() {
     let defs = comment_ids(&pkg);
     assert_eq!(
         defs.len(),
-        1,
-        "duplicate body texts must collapse to one comment def, got {defs:?}"
+        2,
+        "distinct anchored comments must not collapse by body text, got {defs:?}"
     );
     let anchors = anchor_ids(&pkg);
+    assert_eq!(
+        anchors, defs,
+        "both distinct ranges must keep their comment ids"
+    );
     assert!(
         anchors.iter().all(|id| defs.contains(id)),
-        "no orphan anchors after dedupe: anchors={anchors:?} defs={defs:?}"
+        "no orphan anchors: anchors={anchors:?} defs={defs:?}"
     );
+}
+
+/// Equal bodies in A and B do not make B a comment superset when the comments
+/// annotate different source ranges. Both sides belong in the union.
+#[test]
+fn cross_document_same_body_comments_on_different_ranges_are_unioned() {
+    let a = pkg_with_comment("alpha review target", "0", "same note");
+    let b = pkg_with_comment("beta review target", "7", "same note");
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
+    let pkg = PartFs::open(&out).expect("open");
+    let defs = comment_ids(&pkg);
+    let anchors = anchor_ids(&pkg);
+
+    assert_eq!(
+        defs.len(),
+        2,
+        "body-only superset detection must not discard A's distinct comment: {defs:?}"
+    );
+    assert_eq!(anchors, defs, "both sides must retain resolved anchors");
+}
+
+/// Definition metadata is part of identity: two reviewers can legitimately
+/// leave the same prose on the same range.
+#[test]
+fn same_body_and_range_from_different_authors_are_preserved() {
+    let a = pkg_with_comment_author("shared target", "0", "looks good", "Alice");
+    let b = pkg_with_comment_author("shared target", "7", "looks good", "Bob");
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
+    let pkg = PartFs::open(&out).expect("open");
+    let defs = comment_ids(&pkg);
+
+    assert_eq!(
+        defs.len(),
+        2,
+        "same-body comments from different authors are distinct: {defs:?}"
+    );
+    assert_eq!(anchor_ids(&pkg), defs, "both comments must remain anchored");
 }
 
 #[derive(Clone, Copy)]

@@ -66,12 +66,24 @@ fn comment_ids_of(pkg: &PartFs) -> HashSet<String> {
         .collect()
 }
 
-/// (id → concatenated w:t text) for every comment in a package's comments.xml.
-/// Used to tell a genuine comment superset (B carries A's same-id same-text
-/// comments plus its own) from a numeric-id superset where the shared ids are
-/// DIFFERENT comments authored independently — the latter must go through the
-/// collision-renumbering union path, not the byte-identical fast path.
-fn comment_id_text_of(pkg: &PartFs) -> HashMap<String, String> {
+fn comment_definition_fingerprint(dom: &Dom, comment: NodeId) -> String {
+    let body: String = dom
+        .descendants(comment, Some(&W::t()))
+        .into_iter()
+        .map(|text| dom.value(text))
+        .collect();
+    let author = dom.attribute(comment, &W::author()).unwrap_or("");
+    let date = dom.attribute(comment, &W::date()).unwrap_or("");
+    let initials = dom.attribute(comment, &W::name("initials")).unwrap_or("");
+    format!(
+        "{}\u{0}{author}\u{0}{date}\u{0}{initials}",
+        normalized_text(&body)
+    )
+}
+
+/// (id → definition fingerprint) for every comment. The author, timestamp,
+/// and initials are part of logical identity; body text alone is not.
+fn comment_id_fingerprint_of(pkg: &PartFs) -> HashMap<String, String> {
     let Some(xml) = pkg.part_string("word/comments.xml") else {
         return HashMap::new();
     };
@@ -83,50 +95,117 @@ fn comment_id_text_of(pkg: &PartFs) -> HashMap<String, String> {
     dom.elements(root, Some(&W::name("comment")))
         .into_iter()
         .filter_map(|c| {
-            dom.attribute(c, &W::name("id")).map(|id| {
-                let text: String = dom
-                    .descendants(c, Some(&W::t()))
-                    .into_iter()
-                    .map(|t| dom.value(t))
-                    .collect();
-                (id.to_string(), text)
-            })
+            dom.attribute(c, &W::name("id"))
+                .map(|id| (id.to_string(), comment_definition_fingerprint(&dom, c)))
         })
         .collect()
 }
 
-/// True when B carries every one of A's comments by BOTH id and text — the
-/// condition under which B's comment parts can be emitted byte-identical. A
-/// bare numeric-id superset is NOT sufficient: two independently-authored
-/// comments can share an id (commonly 0) with different bodies, and treating
-/// that as a superset would silently drop A's comment (PR #81 review).
+/// True when B carries every one of A's comments by both id and definition
+/// fingerprint — the condition under which B's parts can be emitted
+/// byte-identical. A numeric-id superset is not sufficient.
 fn b_carries_same_comments_as_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
-    let a = comment_id_text_of(pkg1);
+    let a = comment_id_fingerprint_of(pkg1);
     if a.is_empty() {
         return true;
     }
-    let b = comment_id_text_of(pkg2);
-    a.iter().all(|(id, text)| b.get(id) == Some(text))
+    let b = comment_id_fingerprint_of(pkg2);
+    a.iter()
+        .all(|(id, fingerprint)| b.get(id) == Some(fingerprint))
 }
 
-/// True when B's multiset of comment *body texts* covers A's multiset
-/// (id-independent). Word renumbers the same comment set across sequential
-/// redline sources (lots_of_comments addition vs removal_v_addition share six
-/// bodies under disjoint ids). Id-match fails → naive union doubles anchors
-/// (12 vs Word's 6). Text multiset cover still refuses drop of an A-only body
-/// (PR #81 spirit: do not silently discard distinct comments).
-fn b_covers_comment_texts_of_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
-    let a = comment_id_text_of(pkg1);
+fn normalized_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Build an id-independent identity from the comment body and its anchored
+/// source context. Body text alone is unsafe: two distinct comments can say
+/// the same thing. The bounded pre/inner/post projection distinguishes their
+/// logical locations while still matching Word-renumbered copies.
+fn comment_anchor_identities(pkg: &PartFs, main: &str) -> HashMap<String, String> {
+    let definitions = comment_id_fingerprint_of(pkg);
+    let Some((text, ranges)) = extract_events(pkg, main) else {
+        return definitions
+            .into_iter()
+            .map(|(id, definition)| {
+                let identity = format!("{definition}\u{0}<unanchored:{id}>");
+                (id, identity)
+            })
+            .collect();
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let ranges_by_id: HashMap<&str, &Range> = ranges
+        .iter()
+        .map(|range| (range.id.as_str(), range))
+        .collect();
+    let mut candidates = FingerprintGroups::new();
+    for (id, definition) in definitions {
+        let Some(range) = ranges_by_id.get(id.as_str()) else {
+            candidates
+                .entry(definition)
+                .or_default()
+                .push((id, (usize::MAX, usize::MAX)));
+            continue;
+        };
+        candidates
+            .entry(definition)
+            .or_default()
+            .push((id, (range.start, range.end)));
+    }
+
+    let mut identities = HashMap::new();
+    for (definition, group) in candidates {
+        let has_nonempty = group.iter().any(|(_, (start, end))| end > start);
+        let mut seen_anchors = HashSet::new();
+        for (id, (raw_start, raw_end)) in group {
+            let unanchored = raw_start == usize::MAX;
+            let start = raw_start.min(chars.len());
+            let end = raw_end.min(chars.len()).max(start);
+            if has_nonempty && start == end {
+                continue;
+            }
+            let anchor = if unanchored {
+                format!("<unanchored:{id}>")
+            } else {
+                let pre: String = chars[start.saturating_sub(40)..start].iter().collect();
+                let inner: String = chars[start..end].iter().collect();
+                let post: String = chars[end..(end + 40).min(chars.len())].iter().collect();
+                format!(
+                    "{}\u{0}{}\u{0}{}",
+                    normalized_text(&pre),
+                    normalized_text(&inner),
+                    normalized_text(&post)
+                )
+            };
+            if seen_anchors.insert(anchor.clone()) {
+                identities.insert(id, format!("{definition}\u{0}{anchor}"));
+            }
+        }
+    }
+    identities
+}
+
+/// True when B's multiset of anchored comment identities covers A's. Word can
+/// renumber a comment set across sequential redline sources, so ids cannot be
+/// the key; body-only matching is equally unsafe because repeated prose is
+/// common in review comments.
+fn b_covers_comment_identities_of_a(
+    pkg1: &PartFs,
+    main1: &str,
+    pkg2: &PartFs,
+    main2: &str,
+) -> bool {
+    let a = comment_anchor_identities(pkg1, main1);
     if a.is_empty() {
         return true;
     }
-    let b = comment_id_text_of(pkg2);
+    let b = comment_anchor_identities(pkg2, main2);
     let mut b_counts: HashMap<String, usize> = HashMap::new();
-    for text in b.values() {
-        *b_counts.entry(text.clone()).or_default() += 1;
+    for identity in b.values() {
+        *b_counts.entry(identity.clone()).or_default() += 1;
     }
-    for text in a.values() {
-        match b_counts.get_mut(text) {
+    for identity in a.values() {
+        match b_counts.get_mut(identity) {
             Some(n) if *n > 0 => *n -= 1,
             _ => return false,
         }
@@ -383,8 +462,14 @@ fn new_reference_run(dom: &mut Dom, id: &str) -> NodeId {
     r
 }
 
-/// Inject one side's anchor events into the merged body. Returns the ids that
-/// were anchored (unmappable ranges are skipped — orphan cleanup drops them).
+/// Mapped output intervals keyed by the final comment id. Unmappable comments
+/// are absent and therefore fall to orphan cleanup.
+type AnchorInterval = (usize, usize);
+type AnchoredRanges = HashMap<String, AnchorInterval>;
+type FingerprintGroups = HashMap<String, Vec<(String, AnchorInterval)>>;
+
+/// Inject one side's anchor events into the merged body. Returns the ids and
+/// mapped intervals that were anchored.
 #[allow(clippy::too_many_arguments)]
 fn inject_side(
     dom: &mut Dom,
@@ -395,12 +480,12 @@ fn inject_side(
     author: &str,
     id_map: &HashMap<String, String>,
     only_ids: Option<&HashSet<String>>,
-) -> HashSet<String> {
+) -> AnchoredRanges {
     let Some((src_text, ranges)) = extract_events(src_pkg, src_main) else {
-        return HashSet::new();
+        return HashMap::new();
     };
     if ranges.is_empty() {
-        return HashSet::new();
+        return HashMap::new();
     }
     let (merged_text, mut segs) = collect_segments(dom, result_root, b_side, author);
     let src_chars: Vec<char> = src_text.chars().collect();
@@ -408,6 +493,7 @@ fn inject_side(
     // map each comment range through context matching, then flatten to
     // events sorted by (offset, source order) so nesting order is preserved
     let mut events: Vec<Event> = Vec::new();
+    let mut anchored_ranges = HashMap::new();
     for r in &ranges {
         if let Some(only) = only_ids
             && !only.contains(&r.id)
@@ -417,6 +503,8 @@ fn inject_side(
         let Some((s, e)) = map_range(&src_chars, &merged_chars, r) else {
             continue; // unmappable — the comment falls to orphan cleanup
         };
+        let out_id = id_map.get(&r.id).cloned().unwrap_or_else(|| r.id.clone());
+        anchored_ranges.insert(out_id, (s, e));
         events.push(Event {
             offset: s,
             kind: Kind::Start,
@@ -431,7 +519,6 @@ fn inject_side(
     let mut order: Vec<usize> = (0..events.len()).collect();
     order.sort_by_key(|&i| (events[i].offset, i));
 
-    let mut anchored = HashSet::new();
     for idx in order {
         let ev = &events[idx];
         let out_id = id_map.get(&ev.id).cloned().unwrap_or_else(|| ev.id.clone());
@@ -474,11 +561,10 @@ fn inject_side(
                 }
                 let refrun = new_reference_run(dom, &out_id);
                 dom.add_after_self(anchor, refrun);
-                anchored.insert(out_id);
             }
         }
     }
-    anchored
+    anchored_ranges
 }
 
 /// Copy `src`'s comment family into `out` (overwriting), wire content-type
@@ -877,39 +963,42 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
     }
 }
 
-/// Collapse identical comment body texts to one id (Word redline keeps one
-/// of each body). `docx_lots_of_comments_*` sources ship duplicate bodies
-/// under distinct ids; carrying all 6 vs Word's 4 shifts layout (C2 ~45 score).
-/// Keeps the first id per body text; strips later ids from the anchor set so
-/// [`drop_orphans`] removes their defs and aux-part rows.
-fn dedupe_anchored_by_body_text(out: &PartFs, anchored: &HashSet<String>) -> HashSet<String> {
+/// Select comments using both their definition fingerprint and mapped anchor.
+/// Equal bodies on distinct non-empty ranges are independent comments. Exact
+/// duplicate anchors collapse deterministically, and a live non-empty anchor
+/// supersedes a stale zero-length revision copy of the same comment.
+fn select_anchor_aware_comments(out: &PartFs, anchored: &AnchoredRanges) -> HashSet<String> {
     let Some(xml) = out.part_string("word/comments.xml") else {
-        return anchored.clone();
+        return anchored.keys().cloned().collect();
     };
     let mut d = Dom::new();
     let doc = d.parse_xdocument(&xml);
     let Some(root) = d.root(doc) else {
-        return anchored.clone();
+        return anchored.keys().cloned().collect();
     };
-    let mut seen_text: HashSet<String> = HashSet::new();
-    let mut keep: HashSet<String> = HashSet::new();
-    // Document order of comment elements = stable keep-first.
+    let mut groups = FingerprintGroups::new();
     for c in d.elements(root, Some(&W::name("comment"))) {
         let Some(id) = d.attribute(c, &W::name("id")).map(str::to_string) else {
             continue;
         };
-        if !anchored.contains(&id) {
+        let Some(&range) = anchored.get(&id) else {
             continue;
-        }
-        let text: String = d
-            .descendants(c, Some(&W::t()))
-            .into_iter()
-            .map(|t| d.value(t))
-            .collect();
-        // Normalize whitespace so "Complex comment. " and "Complex comment." match.
-        let key = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        if seen_text.insert(key) {
-            keep.insert(id);
+        };
+        let fingerprint = comment_definition_fingerprint(&d, c);
+        groups.entry(fingerprint).or_default().push((id, range));
+    }
+
+    let mut keep = HashSet::new();
+    for candidates in groups.values() {
+        let has_nonempty = candidates.iter().any(|(_, (start, end))| end > start);
+        let mut seen_ranges = HashSet::new();
+        for (id, range) in candidates {
+            if has_nonempty && range.0 == range.1 {
+                continue;
+            }
+            if seen_ranges.insert(*range) {
+                keep.insert(id.clone());
+            }
         }
     }
     keep
@@ -940,12 +1029,12 @@ pub fn carry_comments(
         inject_side(dom, result_root, pkg1, main1, false, author, &no_map, None)
     } else if ids_a.is_empty()
         || b_carries_same_comments_as_a(pkg1, pkg2)
-        || b_covers_comment_texts_of_a(pkg1, pkg2)
+        || b_covers_comment_identities_of_a(pkg1, main1, pkg2, main2)
     {
         // B carries the union — parts byte-identical from B. Two gates:
-        //   1. id+text match for every A comment (classic superset).
-        //   2. id-independent text multiset cover (M213): Word-renumbered
-        //      same-body comment sets across redline sources.
+        //   1. id+definition match for every A comment (classic superset).
+        //   2. id-independent anchored-identity cover (M213): Word-renumbered
+        //      comment sets across redline sources.
         // Bare numeric-id superset alone is still not enough.
         install_parts_from(out, out_main, pkg2);
         inject_side(dom, result_root, pkg2, main2, true, author, &no_map, None)
@@ -967,9 +1056,7 @@ pub fn carry_comments(
         ));
         anchored
     };
-    // Word-parity: one comment def per unique body text, then strip orphans
-    // (including duplicate-body anchors left in the merged document).
-    let anchored = dedupe_anchored_by_body_text(out, &anchored);
+    let anchored = select_anchor_aware_comments(out, &anchored);
     // Also strip body anchors for dropped ids so they don't linger orphan-free
     // as range markers without a comments.xml entry (Ring-1).
     strip_unanchored_comment_markers(dom, result_root, &anchored);
