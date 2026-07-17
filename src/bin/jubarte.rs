@@ -141,6 +141,40 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Reject every tracked revision (package-wide) and write the result.
+    Reject {
+        /// The document (.docx) whose revisions to reject.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Output path.
+        #[arg(short = 'o', long, value_name = "FILE")]
+        output: PathBuf,
+        /// Overwrite the output file if it already exists.
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+/// Shared body for `accept` / `reject`: read the redline, apply the package-wide
+/// resolution, and write the result under the compare path's no-clobber
+/// contract. Generic over the resolver's error so neither `OpcError`'s path nor
+/// the two arms' bodies are duplicated.
+fn run_resolution<E: std::fmt::Debug>(
+    file: &Path,
+    output: &Path,
+    force: bool,
+    apply: fn(&[u8]) -> Result<Vec<u8>, E>,
+    what: &str,
+) -> Result<(), String> {
+    if output.exists() && !force {
+        return Err(format!(
+            "output '{}' already exists (use --force to overwrite)",
+            output.display()
+        ));
+    }
+    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    let out = apply(&bytes).map_err(|e| format!("{what} failed: {e:?}"))?;
+    std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
 }
 
 fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
@@ -294,24 +328,26 @@ fn main() -> ExitCode {
             output,
             force,
         }) => {
-            // same no-clobber contract as the compare path (PR #54 review)
-            let r = if output.exists() && !force {
-                Err(format!(
-                    "output '{}' already exists (use --force to overwrite)",
-                    output.display()
-                ))
-            } else {
-                std::fs::read(&file).map_err(|e| format!("reading {}: {e}", file.display()))
-            }
-            .and_then(|bytes| {
-                jubarte::document_comparer::accept_revisions(&bytes)
-                    .map_err(|e| format!("accept failed: {e:?}"))
-            })
-            .and_then(|out| {
-                std::fs::write(&output, &out)
-                    .map_err(|e| format!("writing {}: {e}", output.display()))
-            });
-            return exit_code(r);
+            return exit_code(run_resolution(
+                &file,
+                &output,
+                force,
+                jubarte::document_comparer::accept_revisions,
+                "accept",
+            ));
+        }
+        Some(Command::Reject {
+            file,
+            output,
+            force,
+        }) => {
+            return exit_code(run_resolution(
+                &file,
+                &output,
+                force,
+                jubarte::document_comparer::reject_revisions,
+                "reject",
+            ));
         }
         None => {}
     }
@@ -495,6 +531,55 @@ mod tests {
         let job = cli.resolve().unwrap();
         assert_eq!(job.original, PathBuf::from("a.docx"));
         assert_eq!(job.modified, PathBuf::from("b.docx"));
+    }
+
+    /// `accept <file> -o <out> --force` parses into `Command::Accept` with the
+    /// output and force flag captured.
+    #[test]
+    fn accept_subcommand_parses_file_output_and_force() {
+        let cli =
+            Cli::try_parse_from(["jubarte", "accept", "rl.docx", "-o", "out.docx", "--force"])
+                .unwrap();
+        match cli.command {
+            Some(Command::Accept {
+                file,
+                output,
+                force,
+            }) => {
+                assert_eq!(file, PathBuf::from("rl.docx"));
+                assert_eq!(output, PathBuf::from("out.docx"));
+                assert!(force);
+            }
+            other => panic!("expected accept subcommand, got {other:?}"),
+        }
+    }
+
+    /// `reject <file> -o <out>` parses into `Command::Reject`; `force` defaults
+    /// to false (the same no-clobber contract as `accept` / compare).
+    #[test]
+    fn reject_subcommand_parses_file_output_and_defaults_force_false() {
+        let cli = Cli::try_parse_from(["jubarte", "reject", "rl.docx", "-o", "out.docx"]).unwrap();
+        match cli.command {
+            Some(Command::Reject {
+                file,
+                output,
+                force,
+            }) => {
+                assert_eq!(file, PathBuf::from("rl.docx"));
+                assert_eq!(output, PathBuf::from("out.docx"));
+                assert!(!force);
+            }
+            other => panic!("expected reject subcommand, got {other:?}"),
+        }
+    }
+
+    /// `reject` requires `-o/--output` (clap usage error when omitted), matching
+    /// `accept`.
+    #[test]
+    fn reject_subcommand_requires_output() {
+        use clap::error::ErrorKind;
+        let err = Cli::try_parse_from(["jubarte", "reject", "rl.docx"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
     }
 
     /// Documents the one real interaction between the legacy compare surface
