@@ -15,6 +15,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 ## 0. Measured baseline (source commit `c7c7fbf`)
 
+### 0a. Original two-lane published run
+
 Run `019f6e1d-3c41-7604-86d8-20dea470572f`, 1,000 fixtures → 5,000 pairs,
 `wasm-pack --target nodejs --release` + `wasm-opt -O3`,
 artifact 1,987,810 bytes (`73d76228…7ec446`). Fidelity: 164/164 scored docs
@@ -25,24 +27,47 @@ identical native vs WASM, zero failures both lanes.
 | Native Rust CLI (spawn + file I/O per pair) | 10.428 ms | 32.914 ms | 129.333 ms | 202.766 ms | 30.4/s |
 | Rust WASM (in-process, warm instance) | 10.967 ms | 44.596 ms | 191.773 ms | 292.953 ms | 22.4/s |
 
-**Shape of the deficit is the first diagnostic.** Median gap is only 4.9%,
-but mean is 35.5% and p95/p99 are ~45–48% worse. The WASM penalty is
-concentrated in the heavy-document tail. Small pairs look close because the
-native lane pays process spawn + file I/O per pair that the warm in-process
-WASM lane does not; on big pairs compute dominates and the true per-CPU-second
-WASM tax becomes visible.
+### 0b. W7 same-run three-lane measurement (this increment)
 
-**Derived warm-native baseline (verified against harness + history).** The
-bench script itself documents the lanes: `jubarte-rust` = spawn + temp I/O
-per pair; `jubarte-rust-inproc` = long-lived warm worker, called out in the
-report template as "the fair algorithm comparison"; Node/WASM lanes time
-in-memory compare only. Historical same-harness 5,000-pair runs put the
-spawn+I/O tax at ~5 ms at the median (2026-07-15 run: CLI median 14.368 ms vs
-inproc 9.340 ms; 2026-07-16 run: 21.86 vs 16.95). Projecting ~4–5 ms onto the
-current run, warm native median ≈ 5.5–6.5 ms vs WASM 10.967 ms, and warm
-native mean ≈ ~28 ms vs WASM 44.6 ms. **The true WASM compute tax is
-therefore ≈1.6–2.0x warm native, mostly masked at the median by CLI spawn
-overhead.** Cross-run estimate only; lane W7 measures it in the same run.
+Run `w7-wasm-inproc-cli-c7c7fbf`, 2026-07-17T04:26:33Z, same host, same
+1,000-fixture / 5,000-pair matrix, same warmup=50, same seed=42, same
+artifacts. Adds `jubarte-rust-inproc` (long-lived stdin worker over the same
+`compare_documents`) so the engine compute tax is separated from the CLI
+spawn+I/O overhead in the same run.
+
+| Rank | Engine | Median | Mean | p95 | p99 | Throughput | Wall |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | jubarte-rust-inproc (warm native) | **8.54 ms** | **33.05 ms** | 138.57 ms | 231.75 ms | 30.3/s | 165.25 s |
+| 2 | jubarte-rust (CLI, spawn+I/O per pair) | 11.04 ms | 35.21 ms | 136.25 ms | 243.78 ms | 28.4/s | 176.05 s |
+| 3 | jubarte-wasm (warm in-process) | 11.07 ms | 44.93 ms | 193.74 ms | 292.90 ms | 22.3/s | 224.67 s |
+
+Artifacts: `results/redline_speed_bench/w7-wasm-inproc-cli-c7c7fbf/{report.md,
+summary.json, speed.jsonl}` under the benchmark repo. Zero failures all lanes.
+
+**Shape of the deficit is the first diagnostic.** Against the fair warm-native
+baseline (inproc), the WASM compute tax is now a measured same-run number:
+
+| metric | inproc (warm native) | wasm | wasm / inproc | CLI / inproc (spawn tax) |
+|---|---:|---:|---:|---:|
+| median | 8.54 ms | 11.07 ms | **1.30x** | 1.29x (≈2.5 ms spawn+I/O) |
+| mean | 33.05 ms | 44.93 ms | **1.36x** | 1.07x |
+| p95 | 138.57 ms | 193.74 ms | **1.40x** | 0.98x |
+| p99 | 231.75 ms | 292.90 ms | **1.26x** | 1.05x |
+
+The CLI's median beat WASM's median in the original published two-lane table
+(10.4 ms vs 11.0 ms), but that comparison flattered the CLI: in the same run,
+warm native is 23% faster at the median than the CLI and 23% faster than WASM.
+The real WASM tax vs the fair baseline is **~1.3x at the median and ~1.36x at
+the mean**, not the 1.6–2.0x cross-run estimate from Section 0a. The tail
+(p95/p99) is where WASM still hurts most (1.26–1.40x), consistent with the
+allocator hypothesis (H1) biting on heavy documents. Section 0a's historical
+estimate is retained as evidence of why W7 was needed; Section 0b supersedes
+it as the baseline every later increment is judged against.
+
+**CLI spawn+I/O cost, measured in the same run:** ~2.5 ms at the median
+(11.04 − 8.54), near zero at p95/p99 (compute dominates the tail on all
+lanes). Smaller than the ~4–5 ms historical estimate, consistent with a
+warm filesystem cache on this specific run.
 
 ## 1. Findings ledger (evidence-first; updated each iteration)
 
@@ -66,7 +91,7 @@ overhead.** Cross-run estimate only; lane W7 measures it in the same run.
 
 1. **H1 — allocator (dlmalloc vs mimalloc).** A ~40%-allocation workload on a
    materially slower allocator. Expected to explain the largest share of the
-   ~1.6–2.0x warm-native tax. Confidence: high. Cost to test: low
+   ~1.3x warm-native tax (Section 0b). Confidence: high. Cost to test: low
    (adapter-only change). → W1.
 2. **H4 — inherent wasm codegen tax** (bounds checks, no NEON autovec, V8
    codegen quality — includes running the soft SHA-1 rounds slower than
@@ -84,7 +109,8 @@ overhead.** Cross-run estimate only; lane W7 measures it in the same run.
    corrected); soft-vs-soft only differs via H4.
 
 Target end state: WASM mean/p95 within ~10–20% of same-run in-process native
-(H4 floor), median at or below the spawning CLI (it nearly is already).
+(H4 floor), median at or below the spawning CLI (it nearly is already: 11.07 ms
+WASM vs 11.04 ms CLI in the W7 same-run measurement).
 
 ## 3. Experiment lanes (one increment at a time; fidelity gate each)
 
@@ -170,16 +196,22 @@ against the immediately previous WASM artifact. Never batch two mechanisms.
 - Action: when an engine increment ships in the native lane, record the WASM
   delta too, so the cross-lane multiplier becomes a known constant.
 
-### W7 — fair-baseline lane in the bench
+### W7 — fair-baseline lane in the bench — DONE (2026-07-17)
 
-- Run `jubarte-rust-inproc` in the SAME speed run as `jubarte-wasm` and
-  `jubarte-rust` (the harness's default method list already leads with the
-  inproc lanes; the published run just did not include it). This turns the
-  ~1.6–2.0x cross-run estimate (Section 0) into a measured same-run number
-  and separates engine compute tax from CLI spawn overhead in every future
-  table. Benchmark-repo run configuration, not engine change.
-- Publish all three rows together from now on: inproc (algorithm), CLI
-  (deployment reality), WASM (portability lane).
+- **Shipped:** ran the 5,000-pair speed lane with
+  `jubarte-rust-inproc,jubarte-rust,jubarte-wasm` from the same `c7c7fbf`
+  artifacts, same host, same seed=42, same 1,000-fixture matrix.
+- **Result (Section 0b):** the WASM compute tax vs the fair warm-native
+  baseline is **~1.30x median, ~1.36x mean, ~1.40x p95, ~1.26x p99** —
+  materially better than the 1.6–2.0x cross-run estimate. CLI spawn+I/O tax
+  in this run is ~2.5 ms at the median (smaller than the historical ~4–5 ms,
+  likely warm fs cache).
+- **Artifacts:** `results/redline_speed_bench/w7-wasm-inproc-cli-c7c7fbf/`
+  under the benchmark repo; row appended to global `results/speed.jsonl`.
+- **Standing rule:** publish all three rows together from now on — inproc
+  (algorithm), CLI (deployment reality), WASM (portability lane). The
+  harness's default `--methods` list already leads with the inproc lanes;
+  future runs should not drop them.
 
 ### W8 — host/runtime tuning (only with profile evidence)
 
@@ -256,10 +288,13 @@ adapter-level items the native program cannot see.
       relaxed-simd banned.
 - [x] Toolchain support → resolved (F11): wasm-opt 130 / wasm-pack 0.15 /
       Node 25.9 / target installed.
+- [x] Same-run wasm-vs-inproc tax (W7) → **resolved 2026-07-17**: ran the
+      three-lane bench; wasm tax is **~1.30x median / ~1.36x mean / ~1.40x
+      p95 / ~1.26x p99** vs warm native (Section 0b). Lower than the 1.6–2.0x
+      estimate; H1 allocator remains the lead suspect for the residual.
 - [ ] W1 allocator pick: talc vs rlsf — check maintenance status, wasm32
       support, and unsafe surface at implementation time; A/B whichever two
       look healthiest.
-- [ ] Same-run wasm-vs-inproc tax (W7) — replaces the Section 0 estimate.
 - [ ] memory.grow count / high-water trace on the 20 heaviest pairs (W3
       diagnostic) before and after W1, since the allocator change also
       changes grow behavior.
@@ -268,13 +303,13 @@ adapter-level items the native program cannot see.
 
 ## 8. Execution order (first increments, one at a time)
 
-1. **W7** — rerun the 5k speed lane with `jubarte-rust-inproc,jubarte-rust,
-   jubarte-wasm` from commit `c7c7fbf` artifacts. Zero code change; produces
-   the honest baseline every later increment is judged against.
+1. **W7 — DONE (2026-07-17).** Three-lane same-run baseline measured; see
+   Section 0b.
 2. **W5** — names-kept wasm build + `--profile` small-N heavy-pair run;
-   confirm the allocator hypothesis ranking.
+   confirm the allocator hypothesis ranking against the new ~1.3x baseline.
 3. **W1** — allocator swap in the adapter; fidelity gate (164/164) then the
-   full 5k lane. Expected: the mean/p95 gap closes materially.
+   full 5k three-lane run. Expected: the mean/p95 gap closes materially;
+   judge against Section 0b, not 0a.
 4. **W2** — simd128 build flags; same gates. Expected: small additive win.
 5. **W3** — initial-memory preset; judge on p95/p99 movement only.
 6. Reprofile (W5 again), re-rank Section 2, then let W6 engine increments
@@ -294,3 +329,10 @@ adapter-level items the native program cannot see.
   XML parser is scalar → simd expectation lowered). Re-ranked hypotheses
   (H1 > H4 > H2 > H5 > H3); filled the code-level improvement map; added
   execution order.
+- **v3 (W7 done, 2026-07-17):** ran the three-lane same-run bench
+  (`w7-wasm-inproc-cli-c7c7fbf`). Section 0 added 0b with the measured
+  inproc row; the wasm compute tax is ~1.30x median / ~1.36x mean / ~1.40x
+  p95 / ~1.26x p99 — lower than v2's 1.6–2.0x estimate. CLI spawn tax in
+  this run is ~2.5 ms at the median (smaller than historical, likely warm
+  fs cache). H1 re-anchored to the new baseline. Section 0a retained as
+  historical evidence of why W7 was needed.
