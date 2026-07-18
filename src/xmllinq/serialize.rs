@@ -187,6 +187,39 @@ impl<'a> Scope<'a> {
         p
     }
 
+    /// Register a prefix for `uri` in this scope if not already bound. Same scope-
+    /// state effect as [`assign`](Self::assign) with its return value discarded, but
+    /// allocates ONLY when a NEW binding is created — the common already-bound case
+    /// is a pure lookup. ALLOC-LEAN-01: `emit` calls this per element name and per
+    /// attribute name purely to register the prefix; the old code called `assign`,
+    /// which returned an owned `String`, so every already-bound call heap-allocated
+    /// a 1-byte prefix (e.g. `"w"`) only to drop it — tens of millions of wasted
+    /// allocations on run-fragmented documents. Byte-identical output: the scope
+    /// maps end in the same state, so every subsequently resolved prefix is the same.
+    fn ensure_prefix(&mut self, state: &mut State, uri: &str) {
+        if uri.is_empty() || uri == XML_NAMESPACE {
+            return; // assign returned String::new()/"xml" here without inserting
+        }
+        if self.prefix_for_uri(uri).is_some() {
+            return; // already bound — assign allocated+dropped a String here
+        }
+        // Not bound: pick + register a prefix (identical to `assign`'s else branch).
+        let mut p = if let Some(p) = well_known_prefix(uri) {
+            if self.active_prefix_uri(p).is_none() {
+                p.to_string()
+            } else {
+                Self::next_generated(state, self)
+            }
+        } else {
+            Self::next_generated(state, self)
+        };
+        while self.active_prefix_uri(&p).is_some() {
+            p = Self::next_generated(state, self);
+        }
+        self.local_uri_to_prefix.insert(uri.to_string(), p.clone());
+        self.local_prefix_to_uri.insert(p, uri.to_string());
+    }
+
     fn next_generated(state: &mut State, scope: &Scope<'_>) -> String {
         loop {
             let p = format!("ns{}", state.counter);
@@ -422,18 +455,24 @@ fn write_attributes(
     }
 
     for (name, value) in real_attrs {
-        let prefix = resolve_prefix(scope, state, name.namespace_name());
+        // ALLOC-LEAN-01: ensure the binding, then borrow the prefix (&str) — the
+        // attr prefix is used once, immediately, so no owned String is needed.
+        // Every attr namespace was already ensured in emit's first pass, so this is
+        // a lookup; behavior matches `resolve_prefix` (ensure-then-return-prefix).
+        scope.ensure_prefix(state, name.namespace_name());
+        let prefix = scope.prefix_for_uri(name.namespace_name()).unwrap_or("");
         out.push(' ');
-        write_qname(out, &prefix, name.local_name());
+        write_qname(out, prefix, name.local_name());
         out.push_str("=\"");
         write_escape_attr(out, value);
         out.push('"');
     }
 
     for (name, value) in prefix_list_attrs {
-        let prefix = resolve_prefix(scope, state, name.namespace_name());
+        scope.ensure_prefix(state, name.namespace_name());
+        let prefix = scope.prefix_for_uri(name.namespace_name()).unwrap_or("");
         out.push(' ');
-        write_qname(out, &prefix, name.local_name());
+        write_qname(out, prefix, name.local_name());
         out.push_str("=\"");
         // Rewrite prefix tokens; write rewritten value with escapes, no join Vec.
         let mut first = true;
@@ -464,7 +503,7 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut impl 
     // First pass: assign prefixes for the element name, all attribute names,
     // and all namespaces referenced by QName-list attribute values.
     // DOM-ITER-01: borrow attr names/values; no attributes() Vec clones.
-    scope.assign(state, ename.namespace_name());
+    scope.ensure_prefix(state, ename.namespace_name());
     let mut real_attrs: Vec<(&XName, &str)> = Vec::new();
     let mut prefix_list_attrs: Vec<(&XName, &str)> = Vec::new();
     for i in 0..dom.attr_count(e) {
@@ -472,11 +511,11 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut impl 
         if dom.is_namespace_declaration(name) {
             continue;
         }
-        scope.assign(state, name.namespace_name());
+        scope.ensure_prefix(state, name.namespace_name());
         if is_namespace_prefix_list(name) {
             for token in value.split_whitespace() {
                 if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
-                    scope.assign(state, &uri);
+                    scope.ensure_prefix(state, &uri);
                 }
             }
             prefix_list_attrs.push((name, value));
@@ -532,7 +571,7 @@ fn emit_structure(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: 
     let ename = dom.name(e).expect("emit_structure: non-element node");
     let mut scope = Scope::child(parent, dom, e);
 
-    scope.assign(state, ename.namespace_name());
+    scope.ensure_prefix(state, ename.namespace_name());
     let mut real_attrs: Vec<(&XName, &str)> = Vec::new();
     let mut prefix_list_attrs: Vec<(&XName, &str)> = Vec::new();
     for i in 0..dom.attr_count(e) {
@@ -540,11 +579,11 @@ fn emit_structure(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: 
         if dom.is_namespace_declaration(name) {
             continue;
         }
-        scope.assign(state, name.namespace_name());
+        scope.ensure_prefix(state, name.namespace_name());
         if is_namespace_prefix_list(name) {
             for token in value.split_whitespace() {
                 if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
-                    scope.assign(state, &uri);
+                    scope.ensure_prefix(state, &uri);
                 }
             }
             prefix_list_attrs.push((name, value));

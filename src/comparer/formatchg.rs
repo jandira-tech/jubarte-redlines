@@ -49,7 +49,14 @@ fn canonical_rpr_spec(src: &Dom, rpr: Option<NodeId>) -> Vec<CanonicalRprChild> 
                 n != W::name("rPrChange") && n.namespace_name() != PT::URI
             })
             .collect();
-        kids.sort_by_key(|&c| src.name(c).unwrap().local_name().to_string());
+        // ALLOC-LEAN-01: sort_by (compare &str) not sort_by_key(to_string) — the
+        // latter heap-allocates a String on EVERY comparison (keys are not cached),
+        // ~21M allocs on the dissertation. Same total order ⇒ byte-identical.
+        kids.sort_by(|&a, &b| {
+            let na = src.name(a).unwrap();
+            let nb = src.name(b).unwrap();
+            na.local_name().cmp(nb.local_name())
+        });
         for c in kids {
             let cn = src.name(c).unwrap();
             let mut attrs: Vec<(XName, String)> = src
@@ -57,7 +64,7 @@ fn canonical_rpr_spec(src: &Dom, rpr: Option<NodeId>) -> Vec<CanonicalRprChild> 
                 .into_iter()
                 .filter(|(an, _)| !is_rsid_attr(an) && an.namespace_name() != PT::URI)
                 .collect();
-            attrs.sort_by_key(|(an, _)| an.local_name().to_string());
+            attrs.sort_by(|(a, _), (b, _)| a.local_name().cmp(b.local_name()));
             spec.push((cn, attrs));
         }
     }
@@ -172,7 +179,8 @@ fn prop_signature(dom: &mut Dom, prop: NodeId) -> String {
         .into_iter()
         .filter(|(an, _)| !is_rsid_attr(an))
         .collect();
-    attrs.sort_by_key(|(an, _)| an.local_name().to_string());
+    // ALLOC-LEAN-01: compare &str, don't allocate a String key per comparison.
+    attrs.sort_by(|(a, _), (b, _)| a.local_name().cmp(b.local_name()));
     for (an, av) in attrs {
         dom.set_attribute_value(pe, &an, Some(&av));
     }
