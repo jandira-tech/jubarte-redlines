@@ -4,9 +4,13 @@ Findings from the 2026-07-17 folio×jubarte demo session (all measured on this
 machine; the demo corpus lives in the folio playground,
 `packages/playground/public/redline3/`).
 
-> **STATUS 2026-07-17 (evening):** all items below RESOLVED. Engine work is in
+> **STATUS 2026-07-17 (evening):** items §1–§3 RESOLVED. Engine work is in
 > this repo (`~/T/jubarte-redlines`); the bench-harness items are in
 > `~/T/neurotic_docx_bench` (commit `36a81db`). See the per-item notes.
+>
+> **UPDATE 2026-07-18:** §4 added — the compare-peak footprint is now attributed
+> by allocation size class (MEM-ATTRIBUTE-01). Two surgical wins shipped; the
+> dominant blocks are named and deferred (deep output-materialization rework).
 
 ## 1. wasm32 memory ceiling on run-fragmented documents (HIGH)
 
@@ -73,6 +77,65 @@ engine-independent self-check on every pair, including the dissertation
 (accept ≡ revised, reject ≡ base, verified through folio's reviewer). Keep it
 that way: any future emission change should re-run the folio judge sweep in
 `folio/packages/playground/debug-verify-buffer.mjs`.
+
+## 4. Compare-peak attribution and the DOM-arena high-water (MEDIUM, partially deferred)
+
+`examples/mem_attribute.rs` (MEM-ATTRIBUTE-01) snapshots the live-bytes
+histogram by allocation SIZE CLASS at the exact peak moment, and captures a
+backtrace for every single allocation ≥256 MiB. Run:
+`cargo run --release --example mem_attribute --no-default-features`.
+
+Dissertation baseline (before the §4 wins): **10,722.7 MiB** peak, out 11.60 MiB.
+
+**Shipped wins (surgical, TDD, byte-identical — full suite green):**
+
+- [x] **ATOM-HASH-INLINE-01** (commit `f43acad`) — replace the per-atom sha1 hex
+  `String` with an inline `AtomHash([u8;20])` (Copy, no heap). Provably bijective
+  with the 40-hex form. Peak impact **negligible** (−0.84% allocations, 0 MiB
+  peak): a causal balloon experiment (+256 B/atom) moved the peak 0, proving it
+  is atom-size-INVARIANT. The win is allocation-count/clone-cost, not peak.
+- [x] **FMT-SCRATCH-01** (commit `64c3e0f`) — `detect_format_changes_in_atom_list`
+  normalizes+serializes a canonical `w:rPr` per distinct rPr; on run-fragmented
+  docs the distinct-NodeId rPrs miss the cache in the thousands and each leaked a
+  throwaway subtree into the arena. Wrapping in `Dom::with_scratch` reclaims them:
+  **10,722.7 → 10,141.5 MiB (−581 MiB)**, from the per-rPr small-block (child
+  element/attr) churn. REAL peak win.
+- [x] **FMT-SCRATCH-02** (commit `0ea960b`) — build the scratch canonical `w:rPr`
+  in a DEDICATED arena (spec/build split) so format detection never pushes the
+  persistent arena at all (`with_scratch` truncates length but not capacity, so
+  the first push still reallocs the buffer to the next doubling tier). RED→GREEN
+  capacity-invariant guard (`detect_format_changes_never_grows_production_arena_capacity`).
+  **MEASURED peak delta: 0** — this is a correctness/robustness refactor + guard,
+  NOT a peak win. It only re-attributed the 3 GiB block to its true owner (below).
+
+**Remaining 10,141.5 MiB peak, attributed (post-FMT-SCRATCH-02):**
+
+| live@peak | source (backtrace) | nature |
+|---|---|---|
+| **3072 MiB** (30.3%, 1 block) | `produce::coalesce_recurse` → `produce_new_wml_markup_from_correlated_sequence` | output-tree build; arena `Vec` capacity doubled (~1.5 GiB live → 3 GiB cap) |
+| **1536 MiB** (1 block) | `finalize::coalesce_all_paragraphs` → `Dom::clone_subtree` | output-tree build |
+| **~2.6 GiB** (768 + 627.9 + 627.9 + 625.0) | `parse::parse_xdocument` ×4 (bodies + header/footer refs + adopted h/f) | input DOMs; largely irreducible |
+| **~4.6 GiB** (128-255: 2008 / 256-511: 1167 / 32-63: 819 / 64-127: 623) | per-node `NodeData` inline `content`/`attrs` `Vec`s + `String`s across the ~tens-of-M-node DOM | structural node overhead |
+
+**Deferred next levers (deep-structural — HIGH blast radius, need supervision):**
+
+- [ ] **PRODUCE-ARENA-01** — the 3 GiB single block is a Vec doubling overshoot in
+  `produce::coalesce_recurse` (live ≈ 1.5 GiB, capacity doubled to 3 GiB).
+  Candidate: pre-`reserve` the output arena to the known final node count to avoid
+  the ~2× overshoot (up to ~1.5 GiB reclaimable) and/or cut `clone_subtree` churn
+  in coalescing. Touches core output materialization — do NOT rework without
+  re-running the 164/164 fidelity gate + folio judge sweep + Word-validity check.
+- [ ] **FINALIZE-CLONE-01** — the 1.5 GiB `clone_subtree` in
+  `finalize::coalesce_all_paragraphs`; same family (paragraph coalescing clones
+  whole subtrees). Same guards required.
+- [ ] **NODE-LAYOUT-01** — the ~4.6 GiB of small per-node allocations is the
+  `NodeData { content: Vec<NodeId>, attrs: Vec<Attr> }` inline-Vec + name/text
+  `String` overhead × the full DOM. Only a structural change (arena-interned
+  children/attrs, or a columnar node store) moves it. Very high blast radius.
+
+None of these bring the peak under the wasm32 4 GiB ceiling on their own; the
+product stance in §1 (beyond-ceiling docs take the native/server path) stands.
+These levers reduce the native footprint, not the wasm viability class.
 
 - **NOTE (2026-07-17):** ZIP-LEVEL-01 (`src/opc/mod.rs`, commit `f488f2c`) is
   an emission change (deflate level 6→1, +18% output size). The folio repo is
