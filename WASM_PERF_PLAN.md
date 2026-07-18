@@ -88,6 +88,7 @@ warm filesystem cache on this specific run.
 | F13 | Dead direct dependencies in the engine crate: `regex = "1.12.4"` and `quick-xml = "0.41"` have **zero call sites in `src/`** (grep-verified; rdocx-opc vendors its own quick-xml internally). The main XML parse path is the hand-rolled scalar scanner in `src/xmllinq/parse.rs`. | `rg 'regex::|quick_xml' src` empty | Hygiene: drop both from `Cargo.toml` (build-time + lock surface; LTO already DCEs the code). Also calibrates W2: memchr-simd applies to miniz_oxide/bulk ops, NOT the XML parser — the bigger parse win is the engine-level PARSE-01 byte-scanner lane (shared). |
 | F14 | **W5 WASM profile falsifies H1 as the #1 hotspot.** Top self-time frames: zlib_rs `deflate_medium` 16.62%, `inflate` 6.77%, `intern_str` 6.33%, `longest_match` 6.09%, `SipHasher write` 4.13%, `flush_block_only` 3.58%, dlmalloc `malloc`+`free` 3.39%+3.24% = **6.63%**, serializer Scope cluster (`assign` 2.92% + `prefix_for_uri` 2.66% + `descendants` 2.24% = **7.82%**). The deflate cluster (**26.29%**) is the #1 WASM frame, NOT the allocator. The interning pool (`intern_str` + `SipHasher` = **10.46%**) is #2. H1 was extrapolated from the native 35–41% allocation profile; the WASM profile shows deflate dominates. | W5 `summary.json` top_cpu; `results/wasm_perf/112a395-w5-profile/run/summary.json` | **Re-rank Section 2:** deflate > interning > serializer > allocator. ZIP-LEVEL-01 (lower output deflate level 6→1) is the highest-leverage in-repo increment; FXHASH-01 (SipHash→FxHash) is the follow-on. |
 | F15 | **W3 (64 MiB initial-memory) regressed all four percentiles.** Same-run 5k A/B vs W2 SIMD: median 11.317 (+5.1%), mean 46.057 (+5.0%), p95 197.674 (+4.5%), p99 328.085 (+16.8%). Memory trace: grow events 5→3 but total grown pages unchanged (5030 vs 5031), high-water +19.9% (331→397 MB). The `--initial-memory` hypothesis (reduce grow events) failed: total grown pages are essentially unchanged AND the higher initial memory increased the high-water mark. | `results/wasm_perf/112a395-w3-initial-64m/full-5k/summary.json`; memory trace | **Drop W3.** Revert `.cargo/config.toml` to W2-only (simd128, no initial-memory). H5 demoted. |
+| F16 | **The alignment peak is edit-count-INDEPENDENT — it tracks atom (run) count.** Counting-allocator profile of the full 276k-run dissertation pair (`examples/mem_profile.rs`, system allocator, native release): (a) many-edit real revision `a→b`: **10,722.7 MiB** live-heap peak, **544.1M** allocations, 39.3 s; (b) SINGLE-word edit `a→a'`: **10,739.5 MiB**, **545.0M** allocs, 36.5 s — **within 0.2%** of the full revision; (c) identical pair `a→a`: **1,089.6 MiB**, 25.5M allocs, 1.9 s (short-circuits atom correlation). macOS `peak memory footprint` 11.15–11.57 GiB (matches the ~11.9 GB TODO figure); max RSS 4.5–6.5 GiB. A single edit costs the SAME peak as a full rewrite: the driver is the per-atom `ComparisonUnitAtom` churn (ancestor-chain `Vec` + sha1 `String`, cloned through `tag_all`/`resolve`), incurred whenever the pair is non-identical. | `examples/mem_profile.rs` on `dissertacao-{a,b}.docx`; `_scratch/mem_profile_*.log` | **wasm32 verdict:** any real diff peaks ~11 GiB ≈ **2.9× over the 4 GiB linear-memory ceiling** → aborts (`unreachable`; allocator dies before the panic hook). Identical pairs (1.06 GiB) pass. Beyond-ceiling docs take the native/server path (Section 10). |
 
 ## 2. Root-cause hypothesis ranking (re-ranked after W5 profile, 2026-07-17)
 
@@ -395,3 +396,72 @@ adapter-level items the native program cannot see.
   1.40x→1.25x, p99 1.26x→1.12x. Native CLI also improved (median 9.66 vs
   10.63, -9.1%) — deflate is a shared-wall lever. Output size +18% (level 1
   compresses less; decompressed bytes identical, Word-valid). **RETAINED.**
+- **v7 (MEM-PROFILE-01 / wasm32 memory ceiling, 2026-07-17):** added
+  `examples/mem_profile.rs` (counting `#[global_allocator]`) and profiled the
+  full 276k-run dissertation pair. Established F16: the alignment peak is
+  **edit-count-independent** (single-word edit 10,739.5 MiB ≈ full revision
+  10,722.7 MiB, within 0.2%; identical pair short-circuits to 1,089.6 MiB).
+  Any real diff peaks ~11 GiB — ~2.9× over the wasm32 4 GiB ceiling. Added
+  Section 10 (product stance + budget). Pinned the 8 MB shadow-stack rustflag
+  into the adapter `.cargo/config.toml` alongside `+simd128` (TODO §2) so a
+  bare `wasm-pack build` carries the full recipe.
+
+## 10. wasm32 memory ceiling on run-fragmented documents (MEM-PROFILE-01)
+
+Some real documents cannot be diffed inside wasm32's 4 GiB address space, and
+no in-repo optimization changes that — the ceiling is architectural. This
+section is the product stance and the measurement that fixes it in place.
+
+### 10a. The measurement (full dissertation, native, system allocator)
+
+`examples/mem_profile.rs` wraps the system allocator in a counting allocator
+and runs three compares on the 276k-run dissertation pair
+(`dissertacao-a.docx` 9.33 MiB, `dissertacao-b.docx` 9.30 MiB):
+
+| case | edits | compare-peak live heap | allocations | wall | peak footprint (RSS) |
+|---|---|---:|---:|---:|---:|
+| `a → b`   | full revision | **10,722.7 MiB** | 544.1M | 39.3 s | 11.57 GiB (4.47 GiB) |
+| `a → a'`  | **single word** | **10,739.5 MiB** | 545.0M | 36.5 s | 11.15 GiB (6.46 GiB) |
+| `a → a`   | none (identical) | **1,089.6 MiB** | 25.5M | 1.9 s | — |
+
+Reproduce:
+```bash
+cargo build --release --example mem_profile --no-default-features
+/usr/bin/time -l ./target/release/examples/mem_profile   # defaults to the dissertation pair
+```
+
+### 10b. What it proves
+
+- **Edit count does not matter.** A one-word edit (10,739.5 MiB) costs the same
+  peak as a full rewrite (10,722.7 MiB) — the cost is driven by the ~276k
+  run-fragmented atoms, not by how many changed. The driver is per-atom
+  `ComparisonUnitAtom` churn (ancestor-chain `Vec` + sha1 `String`, cloned
+  through `tag_all`/`resolve`), paid whenever the pair is non-identical.
+- **Only the identical short-circuit escapes it.** `a → a` peaks at 1.06 GiB
+  because equal `document.xml` hashes let the correlation return early before
+  the alignment allocations. That is the one case that fits under 4 GiB.
+- **wasm32 verdict:** ~11 GiB peak is ~2.9× the 4 GiB linear-memory ceiling.
+  The allocator dies before the panic hook runs, so the failure surfaces as a
+  bare `unreachable` — even a single-word edit OOMs, while an identical-pair
+  compare passes.
+
+### 10c. Product stance (the fix)
+
+- **In-browser wasm handles what fits; the server/native path handles the rest.**
+  Documents whose predicted peak exceeds a wasm32 budget are diffed on the
+  native/server engine (same crate, no 4 GiB cap). The deployed demo already
+  precomputes the dissertation redline server-side; the wasm lane is for the
+  interactive, in-ceiling majority.
+- **Budget line (feeds the bench, TODO §1):** classify by input size and pin a
+  peak-memory budget per class, with an explicit **wasm32-viable: yes/no** flag
+  derived from the predicted peak vs 4 GiB. On this corpus: sub-MB run-normal
+  docs are comfortably wasm32-viable; the ~9.8 MB / 276k-run dissertation class
+  is **wasm32-viable: no** (native/server only). The budget is enforced in
+  `neurotic_docx_bench` (`config.py` size-class budgets + a memory gate mirroring
+  `gate.py`); the wasm speed lane records the ceiling breach rather than shipping
+  a misleading "wasm failed" row.
+- **Engine follow-on (optional, shared with LCS_PERF_PLAN / W6):** the peak is
+  ~21× the identical-pair floor purely in alignment allocations; a lower-churn
+  atom representation (interned ancestor chains, `Box<[NodeId]>` instead of
+  growable `Vec`, borrowed sha1 keys) would lower the ceiling-crossing size but
+  not remove the class — run-fragmented pathological inputs will always exist.
