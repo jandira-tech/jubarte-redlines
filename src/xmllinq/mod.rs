@@ -298,6 +298,36 @@ impl Dom {
         id
     }
 
+    /// Number of nodes currently in the arena. Diagnostic + scratch-scope helper.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Run `f`, then RECLAIM every node it allocated by truncating the arena back
+    /// to its pre-call length. For SCRATCH work whose output does not reference
+    /// the scratch nodes — e.g. building a normalized element only to serialize it
+    /// to a `String`. The nodes `f` creates are appended at the arena's end and
+    /// dropped on return (freeing their inline child/attr `Vec`s and names), so a
+    /// `NodeId` created inside `f` MUST NOT escape via `R` (it would dangle or, once
+    /// the slot is reused, alias a different node). Reading pre-existing nodes is
+    /// fine; those keep stable ids.
+    ///
+    /// This is what keeps per-atom format-change normalization (thousands of
+    /// distinct `w:rPr` on run-fragmented documents) from accumulating millions of
+    /// throwaway nodes in the persistent arena (MEM-ATTRIBUTE-01: the top single
+    /// allocation, a multi-GB arena `Vec`, came from exactly that leak).
+    pub fn with_scratch<R>(&mut self, f: impl FnOnce(&mut Dom) -> R) -> R {
+        let checkpoint = self.nodes.len();
+        let out = f(self);
+        self.nodes.truncate(checkpoint);
+        // A reused NodeId slot must not inherit a stale annotation. Production
+        // never annotates (the map is empty), so this is a no-op there.
+        if !self.annotations.is_empty() {
+            self.annotations.retain(|k, _| (k.0 as usize) < checkpoint);
+        }
+        out
+    }
+
     fn data(&self, id: NodeId) -> &NodeData {
         &self.nodes[id.0 as usize]
     }

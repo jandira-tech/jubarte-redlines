@@ -85,8 +85,16 @@ fn normalized_rpr_serialized(
     if let Some(s) = cache.get(&rpr) {
         return s.clone();
     }
-    let ne = normalize_run_properties(dom, rpr);
-    let s = dom.serialize_element(ne);
+    // Normalization is SCRATCH: it materializes a canonical `w:rPr` element only to
+    // serialize it. Build it in a scratch scope so the throwaway nodes are reclaimed
+    // instead of accumulating in the persistent arena — on run-fragmented documents
+    // the distinct-NodeId rPrs miss this cache in the thousands, and the leak was the
+    // multi-GB single allocation that dominated the compare peak (MEM-ATTRIBUTE-01).
+    // The serialized bytes are unchanged, so the format-change verdict is identical.
+    let s = dom.with_scratch(|d| {
+        let ne = normalize_run_properties(d, rpr);
+        d.serialize_element(ne)
+    });
     cache.insert(rpr, s.clone());
     s
 }
@@ -510,6 +518,39 @@ mod format_change_cache_tests {
             normalized_rpr_serialized(&mut dom, &mut cache, Some(bold_sz)),
             normalized_rpr_serialized(&mut dom, &mut cache, Some(sz_bold)),
             "canonicalization must ignore source child order"
+        );
+    }
+
+    /// MEM-ATTRIBUTE-01 regression: normalizing an `rPr` is SCRATCH work whose only
+    /// output is a `String`, so it must not leave throwaway nodes in the persistent
+    /// arena. On run-fragmented documents each of thousands of runs carries its own
+    /// (identical-content, distinct-NodeId) `rPr`, defeating the NodeId-keyed cache;
+    /// the old code then leaked ~one normalized subtree per run, growing the arena
+    /// `Vec` into the multi-GB single block that dominated the compare peak.
+    #[test]
+    fn normalized_rpr_serialization_reclaims_scratch_nodes() {
+        let mut dom = Dom::new();
+        // 500 DISTINCT rPr nodes with identical content — every lookup is a cache
+        // miss (distinct NodeId keys), so every call normalizes afresh.
+        let rprs: Vec<NodeId> = (0..500)
+            .map(|_| rpr_with(&mut dom, &[("b", &[]), ("sz", &[("val", "24")]), ("i", &[])]))
+            .collect();
+        let mut cache = std::collections::HashMap::new();
+        let before = dom.node_count();
+        let mut last = String::new();
+        for &rpr in &rprs {
+            last = normalized_rpr_serialized(&mut dom, &mut cache, Some(rpr));
+        }
+        let grew = dom.node_count() - before;
+        assert!(!last.is_empty(), "sanity: normalization produced output");
+        // Each normalization builds `w:rPr` + 3 children = 4 scratch nodes. The old
+        // path leaked all 4 per distinct rPr (~2000 here); scratch reclamation must
+        // return the arena to its prior size.
+        assert!(
+            grew <= 8,
+            "normalizing {} distinct rPr leaked {grew} arena nodes; scratch \
+             reclamation regressed (expected ~0)",
+            rprs.len()
         );
     }
 
