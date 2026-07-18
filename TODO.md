@@ -11,6 +11,10 @@ machine; the demo corpus lives in the folio playground,
 > **UPDATE 2026-07-18:** §4 added — the compare-peak footprint is now attributed
 > by allocation size class (MEM-ATTRIBUTE-01). Two surgical wins shipped; the
 > dominant blocks are named and deferred (deep output-materialization rework).
+>
+> **UPDATE 2026-07-18 (later):** §5 added — the D-2 accept/reject **lossless**
+> gate. REJECT-LOSSLESS-01 (commit `094a10c`) shipped; engine lens 189→**191/196
+> (97.4%)**. The 5 remaining failures are all COMPARE-side and deferred.
 
 ## 1. wasm32 memory ceiling on run-fragmented documents (HIGH)
 
@@ -180,3 +184,57 @@ These levers reduce the native footprint, not the wasm viability class.
   unchanged. The full-dissertation redline was additionally confirmed
   **Word-valid** (opens cleanly in Microsoft Word, no repair dialog). Re-run
   the folio sweep on the next machine that has folio checked out.
+
+## 5. D-2 accept/reject lossless — reject fix shipped, 5 compare-side fails deferred (HIGH)
+
+The accept/reject **lossless invariant** (`accept-all(compare(base,next)) == next`
+and `reject-all == base`, judged on folio's XML-direct body text — the
+neurotic_docx_bench D-2 scoreboard "engine lens", = folio's
+`redline-lossless-verify`) is what the "accept/reject close to 95" goal targets.
+
+**Measured (196 randomized-chain pairs, `docx_source_randomized`, this machine):**
+
+| | engine lens (both accept+reject) |
+| --- | --- |
+| before | 189/196 = 96.4% |
+| after REJECT-LOSSLESS-01 (`094a10c`) | **191/196 = 97.4%** |
+
+(Native == wasm: the rebuilt `jubarte-wasm` `rejectRevisions` was confirmed to
+restore ` NUMWORDS `/` NUMCHARS `/` NUMPAGES ` results on `file_172_173`.)
+
+**Shipped — REJECT-LOSSLESS-01 (`src/revision_processor.rs`).** `reverse_revisions_transform`
+only flipped `w:del`↔`w:ins` under `w:p`/`w:hyperlink`/`m:r`; a content del/ins
+nested in a *transparent run container* (`w:fldSimple`, `mc:Choice`/`mc:Fallback`)
+fell through to identity and the trailing accept then DROPPED it (del) or KEPT it
+(ins). Silent data loss of field results + AlternateContent on reject. Fixed by
+flipping every remaining content del↔ins after the paragraph-mark/table-row
+markers. Reject-only — compare output (164/164 goldens) untouched; a10 RP
+baseline sweep still green. Cleared `file_171_172`, `file_172_173`.
+
+**Deferred — the remaining 5 are all COMPARE-side (goldens-critical, need supervision).**
+These are NOT reject bugs — reject faithfully processes a redline whose compare
+markup is already wrong. All 5 pairs are `randomized_chain` (unrelated base/next),
+which stresses correlation harder than real edits.
+
+- **2 accept fails — spurious "unchanged" LCS token match.** `file_13_14`,
+  `file_145_146`. Base `file_13` (4 paras, "Roboto Font Demo"…) vs next `file_14`
+  (109 paras, unrelated "eigenpal" doc). Next has **zero** "Demo", yet the redline
+  carries an *unchanged* run ` Demo` (base's " Demo" character-matched to a stray
+  token), so accept-all yields `1. What this is  Demo`. → character-level LCS
+  correlation.
+- **3 reject fails — paragraph-mark not marked inserted on a paragraph SPLIT.**
+  `file_28_29`, `file_147_148`, `file_155_156`. Base has ONE paragraph; next split
+  it into several. jubarte's compare left the *new* paragraph mark UNCHANGED
+  (empty `pPr`) instead of `<w:ins>` in `pPr/rPr`, so reject keeps a break base
+  never had (and mc:AlternateContent content lands in the wrong paragraph). →
+  paragraph-mark insertion detection in compare/finalize.
+
+Both classes live in the compare atom-correlation / paragraph-mark path — the
+byte-identity-critical core the 164/164 `script_redlines` goldens protect. Do NOT
+rework unsupervised: add red goldens first, fix behind the full gate (164/164 +
+a10 RP baseline + this D-2 sweep) + a folio judge pass.
+
+**Folio lens (176/196 = 89.8%) is out of scope here.** Where the engine lens
+passes but the folio lens fails, the divergence is in folio's ProseMirror
+resolver (non-atomic PM join — folio TODO §2/§4), not jubarte. That work lives in
+the folio repo, not this one.
