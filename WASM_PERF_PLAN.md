@@ -86,26 +86,39 @@ warm filesystem cache on this specific run.
 | F11 | Toolchain on this host supports everything needed: `wasm-opt` 130 (full SIMD support), `wasm-pack` 0.15.0, `wasm32-unknown-unknown` installed, Node v25.9.0 (simd128 baseline since Node 16). | tool version probe | No toolchain blockers for W1–W3; record the Node floor in the adapter README. |
 | F12 | The harness already has a profiling story: `--profile` wraps Node lanes in a v8-inspector `.cpuprofile` + top-self-frame analysis (`analyzeCpuProfile`), and samply for native lanes. The published run used `--no-profile`; this run's `cpu/` dir is empty. A `wasm_vs_wasm` A/B run directory precedent exists. | script `withV8CpuProfile`; results dir listing | W5 = small-N rerun with `--profile` + a names-kept wasm build (F7). No new tooling needed. |
 | F13 | Dead direct dependencies in the engine crate: `regex = "1.12.4"` and `quick-xml = "0.41"` have **zero call sites in `src/`** (grep-verified; rdocx-opc vendors its own quick-xml internally). The main XML parse path is the hand-rolled scalar scanner in `src/xmllinq/parse.rs`. | `rg 'regex::|quick_xml' src` empty | Hygiene: drop both from `Cargo.toml` (build-time + lock surface; LTO already DCEs the code). Also calibrates W2: memchr-simd applies to miniz_oxide/bulk ops, NOT the XML parser — the bigger parse win is the engine-level PARSE-01 byte-scanner lane (shared). |
+| F14 | **W5 WASM profile falsifies H1 as the #1 hotspot.** Top self-time frames: zlib_rs `deflate_medium` 16.62%, `inflate` 6.77%, `intern_str` 6.33%, `longest_match` 6.09%, `SipHasher write` 4.13%, `flush_block_only` 3.58%, dlmalloc `malloc`+`free` 3.39%+3.24% = **6.63%**, serializer Scope cluster (`assign` 2.92% + `prefix_for_uri` 2.66% + `descendants` 2.24% = **7.82%**). The deflate cluster (**26.29%**) is the #1 WASM frame, NOT the allocator. The interning pool (`intern_str` + `SipHasher` = **10.46%**) is #2. H1 was extrapolated from the native 35–41% allocation profile; the WASM profile shows deflate dominates. | W5 `summary.json` top_cpu; `results/wasm_perf/112a395-w5-profile/run/summary.json` | **Re-rank Section 2:** deflate > interning > serializer > allocator. ZIP-LEVEL-01 (lower output deflate level 6→1) is the highest-leverage in-repo increment; FXHASH-01 (SipHash→FxHash) is the follow-on. |
+| F15 | **W3 (64 MiB initial-memory) regressed all four percentiles.** Same-run 5k A/B vs W2 SIMD: median 11.317 (+5.1%), mean 46.057 (+5.0%), p95 197.674 (+4.5%), p99 328.085 (+16.8%). Memory trace: grow events 5→3 but total grown pages unchanged (5030 vs 5031), high-water +19.9% (331→397 MB). The `--initial-memory` hypothesis (reduce grow events) failed: total grown pages are essentially unchanged AND the higher initial memory increased the high-water mark. | `results/wasm_perf/112a395-w3-initial-64m/full-5k/summary.json`; memory trace | **Drop W3.** Revert `.cargo/config.toml` to W2-only (simd128, no initial-memory). H5 demoted. |
 
-## 2. Root-cause hypothesis ranking (to be re-ranked after each measurement)
+## 2. Root-cause hypothesis ranking (re-ranked after W5 profile, 2026-07-17)
 
-1. **H1 — allocator (dlmalloc vs mimalloc).** A ~40%-allocation workload on a
-   materially slower allocator. Expected to explain the largest share of the
-   ~1.3x warm-native tax (Section 0b). Confidence: high. Cost to test: low
-   (adapter-only change). → W1.
+1. **Deflate cluster (26.29% of WASM self-time) — ZIP-LEVEL-01.** The output
+   zip's deflate level defaults to 6 (`SimpleFileOptions::default()` in
+   `rdocx-opc`/`zip`); level 1 (`deflate_quick`) eliminates `longest_match`
+   (6.09%) and cuts `deflate_medium` (16.62%) iterations. Fidelity-safe by
+   construction (decompressed bytes identical; Word opens any deflate level).
+   ~35 lines in `src/opc/mod.rs`. **Highest expected gain, lowest parity risk.**
 2. **H4 — inherent wasm codegen tax** (bounds checks, no NEON autovec, V8
    codegen quality — includes running the soft SHA-1 rounds slower than
    native runs the same soft rounds, per corrected F4). Typically ~1.1–1.5x
-   for branchy pointer-chasing code; the residual after H1 lands. Partially
-   shaveable via W2/wasm-opt experiments; the rest is paid down by engine
-   work-reduction (W6), which shrinks the base the tax multiplies.
-3. **H2 — missing simd128.** miniz_oxide (deflate), memcpy/memset-adjacent
-   loops, general autovectorization. The XML parser is scalar char-walking
-   (F13), so expect low single digits, not teens. Confidence: medium-low,
-   cost near zero — still worth landing for free.
-4. **H5 — memory.grow tail effects** inside first-touch heavy pairs.
-   Unmeasured; W3 is a cheap A/B that also derisks the allocator swap.
-5. **H3 — SHA-1 hardware gap.** Demoted: none exists on this host (F4
+   for branchy pointer-chasing code; the residual after the deflate fix.
+   Partially shaveable via wasm-opt experiments; the rest is paid down by
+   engine work-reduction (W6), which shrinks the base the tax multiplies.
+3. **Interning pool (10.46%) — FXHASH-01.** `intern_str` (6.33%) +
+   `SipHasher write` (4.13%). SipHash is a WASM top-5 frame but **absent from
+   the native top frames** (MEASURED #3 lists `mi_free`/`memmove`/`drop_in_place`,
+   no SipHash) — this is a WASM-specific codegen artifact, not an algorithmic
+   cost. A final-mixed FxHash (`rustc-hash` or hand-rolled) attacks both the
+   hasher rounds and the HashSet probe. ~60 lines in `src/xmllinq/mod.rs`.
+   Kill condition: the FNV-1a precedent (MEASURED #5, +16% native regression)
+   means a universal swap must be `cfg(wasm32)`-gated if it regresses native.
+4. **H1 — allocator (dlmalloc vs mimalloc).** Demoted from #1 to #4: the W5
+   profile shows dlmalloc at 6.63% (#4), not the predicted #1. W1 (talc) was
+   tested and dropped (no improvement over W2 SIMD). Still worth addressing
+   but not the top frame; the deflate and interning lanes have higher leverage.
+5. **H5 — memory.grow tail effects** — W3 falsified (F15): 64 MiB
+   initial-memory regressed all four percentiles. H5 is effectively dead
+   unless a future profile shows grow-page faults inside timed calls.
+6. **H3 — SHA-1 hardware gap.** Demoted: none exists on this host (F4
    corrected); soft-vs-soft only differs via H4.
 
 Target end state: WASM mean/p95 within ~10–20% of same-run in-process native
@@ -292,28 +305,44 @@ adapter-level items the native program cannot see.
       three-lane bench; wasm tax is **~1.30x median / ~1.36x mean / ~1.40x
       p95 / ~1.26x p99** vs warm native (Section 0b). Lower than the 1.6–2.0x
       estimate; H1 allocator remains the lead suspect for the residual.
-- [ ] W1 allocator pick: talc vs rlsf — check maintenance status, wasm32
-      support, and unsafe surface at implementation time; A/B whichever two
-      look healthiest.
-- [ ] memory.grow count / high-water trace on the 20 heaviest pairs (W3
-      diagnostic) before and after W1, since the allocator change also
-      changes grow behavior.
-- [ ] W5 wasm profile: confirm dlmalloc share ranks #1 as predicted; then
-      re-rank Section 2 with data.
+- [x] W5 wasm profile: confirm dlmalloc share ranks #1 as predicted →
+      **resolved 2026-07-17**: NO. dlmalloc is 6.63% (#4), not #1. The
+      deflate cluster is #1 at 26.29%. H1 falsified as the top hotspot; see
+      F14. Section 2 re-ranked: deflate > interning > serializer > allocator.
+- [x] W1 allocator pick: talc tested → **dropped** (no improvement over W2
+      SIMD on the 5k lane). The allocator lane is demoted but not abandoned;
+      revisit only if the deflate/interning fixes leave a large residual.
+- [x] memory.grow count / high-water trace (W3 diagnostic) → **resolved
+      2026-07-17**: 64 MiB initial-memory regressed all percentiles (F15);
+      total grown pages unchanged (5030 vs 5031), high-water +19.9%. H5 dead.
 
 ## 8. Execution order (first increments, one at a time)
 
 1. **W7 — DONE (2026-07-17).** Three-lane same-run baseline measured; see
    Section 0b.
-2. **W5** — names-kept wasm build + `--profile` small-N heavy-pair run;
-   confirm the allocator hypothesis ranking against the new ~1.3x baseline.
-3. **W1** — allocator swap in the adapter; fidelity gate (164/164) then the
-   full 5k three-lane run. Expected: the mean/p95 gap closes materially;
-   judge against Section 0b, not 0a.
-4. **W2** — simd128 build flags; same gates. Expected: small additive win.
-5. **W3** — initial-memory preset; judge on p95/p99 movement only.
-6. Reprofile (W5 again), re-rank Section 2, then let W6 engine increments
-   carry both lanes; record the wasm multiplier per engine increment.
+2. **W1 — DONE, DROPPED (2026-07-17).** Talc allocator tested in the adapter;
+   no improvement over W2 SIMD on the 5k lane. Demoted; revisit only if the
+   deflate/interning fixes leave a large residual.
+3. **W2 — DONE, RETAINED (2026-07-17).** SIMD128 build flags. Small additive
+   win; retained as the WASM build baseline.
+4. **W3 — DONE, DROPPED (2026-07-17).** 64 MiB initial-memory preset regressed
+   all four percentiles (F15). Reverted to W2-only config.
+5. **W5 — DONE (2026-07-17).** Names-kept WASM profile run. Falsified H1 as
+   #1 (F14): deflate cluster is 26.29%, allocator is 6.63%. Section 2
+   re-ranked.
+6. **ZIP-LEVEL-01 — DONE, RETAINED (2026-07-17).** Rewrite `PartFs::to_zip`
+   to use `zip::ZipWriter` directly with `.compression_level(Some(1))`,
+   bypassing `rdocx-opc`'s default level 6. Fidelity gate: 164/164 per-doc
+   equality, 0 failures. Speed A/B: **WASM median -9.8%, mean -5.5%, p95
+   -4.6%, p99 -2.7% vs W2 SIMD.** Win on all four percentiles. WASM tax vs
+   warm native narrowed to 1.15x median / 1.21x mean. Native CLI also
+   improved (median -9.1%). Output size +18% (decompressed bytes identical).
+7. **FXHASH-01 — NEXT.** Swap `STR_POOL`'s SipHash for a final-mixed FxHash.
+   ~60 lines in `src/xmllinq/mod.rs`. Attacks the #2 WASM frame (10.46%).
+   `cfg(wasm32)`-gate if it regresses native (FNV-1a precedent, MEASURED #5).
+8. Reprofile (W5 again) after ZIP-LEVEL-01 + FXHASH-01, re-rank Section 2,
+   then let W6 engine increments carry both lanes; record the wasm multiplier
+   per engine increment.
 
 ## 9. Iteration log
 
@@ -336,3 +365,33 @@ adapter-level items the native program cannot see.
   this run is ~2.5 ms at the median (smaller than historical, likely warm
   fs cache). H1 re-anchored to the new baseline. Section 0a retained as
   historical evidence of why W7 was needed.
+- **v4 (W1/W2/W3 done, 2026-07-17):** W1 (talc allocator) tested and
+  dropped — no improvement over W2 SIMD on the 5k lane. W2 (SIMD128) tested
+  and retained as the WASM build baseline (median 10.770, mean 43.849, p95
+  189.255, p99 280.854 ms). W3 (64 MiB initial-memory) tested and dropped —
+  regressed all four percentiles (F15: median +5.1%, mean +5.0%, p95 +4.5%,
+  p99 +16.8%); memory trace showed grow events barely reduced (5→3), total
+  grown pages unchanged, high-water +19.9%. Config reverted to W2-only.
+- **v5 (W5 profile done, 2026-07-17):** names-kept WASM profile run
+  (`112a395-w5-profile`). **Falsified H1 as the #1 hotspot** (F14): deflate
+  cluster is 26.29% (#1), interning pool is 10.46% (#2), serializer is 7.82%
+  (#3), dlmalloc is 6.63% (#4). Section 2 re-ranked: deflate > interning >
+  serializer > allocator. ZIP-LEVEL-01 selected as the next increment
+  (attacks the #1 frame, fidelity-safe, ~35 lines in-repo). FXHASH-01
+  selected as the follow-on (attacks the #2 frame, WASM-specific).
+- **v6 (ZIP-LEVEL-01, 2026-07-17):** rewrote `PartFs::to_zip` in
+  `src/opc/mod.rs` to use `zip::ZipWriter` directly with
+  `.compression_level(Some(1))` (deflate level 6→1, `deflate_quick`),
+  bypassing `rdocx-opc`'s default level 6. Added `part_name_to_rels_path`
+  helper (mirrors the private rdocx-opc function). Validators: `cargo fmt`
+  clean, `cargo clippy -D warnings` clean, full test suite passes (incl. new
+  `zip_level_01_roundtrip_member_identity` test), CLI `--help` smoke OK.
+  Fidelity gate: **164/164 per-doc overall_score equality**, 0 failures both
+  lanes, mean 91.9831 / median 99.904 (identical to baseline). Speed A/B
+  (5k three-lane, same seed=42):
+  **WASM: median 9.717 (-9.8%), mean 41.440 (-5.5%), p95 180.492 (-4.6%),
+  p99 273.407 (-2.7%) vs W2 SIMD.** Win on all four percentiles. WASM tax
+  vs warm native narrowed: median 1.30x→1.15x, mean 1.36x→1.21x, p95
+  1.40x→1.25x, p99 1.26x→1.12x. Native CLI also improved (median 9.66 vs
+  10.63, -9.1%) — deflate is a shared-wall lever. Output size +18% (level 1
+  compresses less; decompressed bytes identical, Word-valid). **RETAINED.**

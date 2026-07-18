@@ -514,3 +514,29 @@ fn minimal_valid_package_passes() {
     // Ensure PartFs can open it too
     PartFs::open(&bytes).expect("open");
 }
+
+/// ZIP-LEVEL-01: `to_zip` (deflate level 1) produces a package whose
+/// decompressed members are byte-identical to the original, and the
+/// re-zipped package passes Ring-1 Word-validity.
+#[test]
+fn zip_level_01_roundtrip_member_identity() {
+    let pkg = PartFs::open(ORIG).expect("open original");
+    let original_parts: Vec<(String, Vec<u8>)> = pkg
+        .parts()
+        .into_iter()
+        .map(|name| {
+            let data = pkg.part_bytes(&name).expect("part bytes").to_vec();
+            (name, data)
+        })
+        .collect();
+    let zip_bytes = pkg.to_zip().expect("to_zip");
+    let pkg2 = PartFs::open(&zip_bytes).expect("open re-zipped");
+    for (name, original_data) in &original_parts {
+        assert_eq!(
+            pkg2.part_bytes(name).expect("roundtrip part exists"),
+            original_data.as_slice(),
+            "part '{name}' differs after to_zip round-trip"
+        );
+    }
+    assert_word_valid_package(&zip_bytes);
+}
