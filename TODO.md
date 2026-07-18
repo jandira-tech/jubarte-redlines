@@ -229,6 +229,24 @@ which stresses correlation harder than real edits.
   never had (and mc:AlternateContent content lands in the wrong paragraph). →
   paragraph-mark insertion detection in compare/finalize.
 
+**Remaining failing fixtures (checklist).** Sources under
+`neurotic_docx_bench/corpus/word_based/docx_source_randomized/`; each pair is
+`compare(base,next) → accept/reject`, judged by folio's `compareLossless`
+(verified with folio's own dist, native and wasm both 191/196).
+
+- [ ] `file_13_file_14`  — ACCEPT ≠ revised. base `file_13.docx` → next `file_14.docx`. Spurious *unchanged* ` Demo` run (LCS mis-correlation on unrelated docs); accept-all yields `1. What this is  Demo` but next has no "Demo".
+- [ ] `file_145_file_146` — ACCEPT ≠ revised. base `file_145.docx` → next `file_146.docx`. Same `Demo` LCS artifact as `file_13_file_14`.
+- [ ] `file_28_file_29`  — REJECT ≠ base. base `file_28.docx` → next `file_29.docx`. `mc:AlternateContent` paragraph split: reject keeps a paragraph break base never had (mark left UNCHANGED, should be `<w:ins>` in `pPr/rPr`).
+- [ ] `file_147_file_148` — REJECT ≠ base. base `file_147.docx` → next `file_148.docx`. Same paragraph-split-mark class as `file_28_file_29`.
+- [ ] `file_155_file_156` — REJECT ≠ base. base `file_155.docx` → next `file_156.docx`. base is ONE paragraph; reject emits TWO (spurious break at the un-marked split point).
+
+Repro (single fixture, e.g. reject):
+```sh
+J=target/release/jubarte
+$J .../file_28.docx .../file_29.docx -o /tmp/rl.docx --force -q
+$J reject /tmp/rl.docx -o /tmp/rej.docx --force   # body text ≠ file_28.docx
+```
+
 Both classes live in the compare atom-correlation / paragraph-mark path — the
 byte-identity-critical core the 164/164 `script_redlines` goldens protect. Do NOT
 rework unsupervised: add red goldens first, fix behind the full gate (164/164 +
