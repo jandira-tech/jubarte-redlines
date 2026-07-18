@@ -303,6 +303,22 @@ impl Dom {
         self.nodes.len()
     }
 
+    /// Capacity (allocated node slots) of the arena's backing `Vec`. Diagnostic:
+    /// [`with_scratch`](Self::with_scratch) reclaims LENGTH but not CAPACITY, so a
+    /// push against a full arena reallocs the whole buffer to the next doubling tier
+    /// and pins it. Scratch work that must not enlarge the persistent arena builds in
+    /// a dedicated `Dom`; this is how a test proves that (MEM-ATTRIBUTE-01).
+    pub fn node_capacity(&self) -> usize {
+        self.nodes.capacity()
+    }
+
+    /// Shrink the arena's backing `Vec` capacity to its current length. Lets a test
+    /// pin `capacity == length` so any subsequent internal push provably reallocs.
+    #[cfg(test)]
+    pub fn shrink_arena_to_fit(&mut self) {
+        self.nodes.shrink_to_fit();
+    }
+
     /// Run `f`, then RECLAIM every node it allocated by truncating the arena back
     /// to its pre-call length. For SCRATCH work whose output does not reference
     /// the scratch nodes — e.g. building a normalized element only to serialize it
