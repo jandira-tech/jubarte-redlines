@@ -108,6 +108,39 @@ Dissertation baseline (before the §4 wins): **10,722.7 MiB** peak, out 11.60 Mi
   **MEASURED peak delta: 0** — this is a correctness/robustness refactor + guard,
   NOT a peak win. It only re-attributed the 3 GiB block to its true owner (below).
 
+**Allocation COUNT axis (orthogonal to peak — this is the ~30 s wall-clock driver
+and the metric the goal literally named, "544M allocations"):**
+
+`examples/alloc_attribute.rs` (ALLOC-ATTRIBUTE-01) attributes the 547M allocations
+by call site (size-class histogram + sampled backtraces). Run:
+`cargo run --release --example alloc_attribute --no-default-features`.
+
+- [x] **ALLOC-LEAN-01** (commit `84e1903`) — two byte-identical count reductions:
+  (1) `serialize::Scope::ensure_prefix` replacing the discarded `assign()`-returns-
+  `String` per element/attr name (1-byte `"w"` allocated only to drop it) + borrowed
+  `&str` attr prefixes in `write_attributes`; (2) formatchg `sort_by(&str cmp)` not
+  `sort_by_key(local_name().to_string())` (keys are not cached → a String per
+  comparison). **MEASURED: 547,258,635 → 467,145,278 allocations (−80.1M, −14.6%)**;
+  the 1-byte class collapsed 89.9M → 37.4M. Peak unchanged (count/throughput win).
+  Durable guard: `tests/perf_serialize_prefix_allocs.rs`.
+
+Remaining allocation-count clusters (post-ALLOC-LEAN-01, 467M total):
+
+| ~allocs | source | nature |
+|---|---|---|
+| **~192M (41%)** | `parse::read_name` (56M) + `set_attribute_value` (49M) + `parse_element` (46M) + `unescape_xml_text` (32M) + `add` (9M) | input-DOM XML parse — one String per name/attr/text |
+| **~27M** | `finalize` `clone_subtree` (coalesce_all_paragraphs / coalesce_adjacent_runs) | output-tree build |
+| **~19M** | `unid::assign_to_all_elements` (+ its `set_attribute_value`) | UNID stamping |
+| **~16M** | `formatchg::canonical_rpr_spec` (owned spec `Vec` per rPr — structural to the return-by-value) | format detect |
+| **~15M** | `markup_simplifier::remove_rsid_transform` | pre-process |
+
+- [ ] **PARSE-ALLOC-01** (deferred, HIGH blast radius) — parsing is ~41% of the
+  allocation count: `read_name`/`unescape` allocate a `String` per name/text even
+  though `XName` interns storage (the temp is only for the intern lookup), and
+  `set_attribute_value` grows the per-node `attrs` `Vec`. Candidate: intern-lookup
+  by `&str` (no temp String) and pre-size `attrs`. The parser is the strictest
+  byte-identity surface — defer to supervised work behind the 164/164 fidelity gate.
+
 **Remaining 10,141.5 MiB peak, attributed (post-FMT-SCRATCH-02):**
 
 | live@peak | source (backtrace) | nature |
