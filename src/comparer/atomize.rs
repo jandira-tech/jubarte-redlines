@@ -17,10 +17,9 @@ use std::sync::Arc;
 use crate::namespaces::{MC, PT, W};
 use crate::unid::assign_to_all_elements;
 use crate::util::group_adjacent;
-use crate::util::sha1::sha1_hex;
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
-use super::atoms::ComparisonUnitAtom;
+use super::atoms::{AtomHash, ComparisonUnitAtom};
 use super::tables::{
     ALLOWABLE_RUN_CHILDREN, ELEMENTS_TO_THROW_AWAY, INVALID_ELEMENTS, recursion_info,
 };
@@ -131,7 +130,13 @@ fn status_from_rev_track_element(dom: &Dom, rte: Option<NodeId>) -> CorrelationS
 }
 
 /// `GetSha1HashStringForElement` + the atom hash (localName + normalized text).
-fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> String {
+///
+/// Returns the inline [`AtomHash`] digest. The precomputed-`pt:SHA1Hash` path
+/// DECODES the stamped 40-char hex (`from_hex`) so it lands on the exact digest a
+/// fresh `of_bytes(localName+text)` would produce for identical content — the two
+/// must correlate Equal (same content; PreProcess just precomputed the hash).
+/// Hashing the hex string instead would break that correlation.
+fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> AtomHash {
     let mut text = dom.value(content);
     if settings.case_insensitive {
         text = text.to_uppercase();
@@ -147,9 +152,9 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Stri
         .unwrap_or_default();
     // If a precomputed SHA1Hash attribute is present, prefer it (PreProcess path).
     if let Some(h) = dom.attribute(content, &PT::sha1_hash()) {
-        return h.to_string();
+        return AtomHash::from_hex(h);
     }
-    sha1_hex(&format!("{local}{text}"))
+    AtomHash::of_bytes(format!("{local}{text}").as_bytes())
 }
 
 /// `CreateComparisonUnitAtomList(contentParent)` — assign unids, then flatten.
@@ -212,7 +217,10 @@ fn push_atom(
             .iter()
             .any(|&a| dom.attribute(a, &predel) == Some(super::PREDELETE_STAMP_ORIG))
     {
-        hash = sha1_hex(&format!("PREDEL|{hash}"));
+        // Salt over the inner digest's 40-char hex — byte-identical to the former
+        // `sha1_hex(format!("PREDEL|{hex}"))`, so a salted atom keeps the same
+        // (distinct-from-unsalted) value it always had.
+        hash = AtomHash::of_bytes(format!("PREDEL|{}", hash.to_hex_string()).as_bytes());
     }
     // PATH-01: store the shared Arc chain (no per-atom Vec clone).
     let mut atom = ComparisonUnitAtom::new(content, Arc::clone(ancestors), hash);

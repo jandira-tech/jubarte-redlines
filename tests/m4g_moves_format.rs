@@ -43,7 +43,7 @@ fn m4_g3_moves() {
     let mk = |d: &mut Dom, text: &str, st: CorrelationStatus| {
         let t = d.new_element(W::t());
         d.add_text(t, text);
-        let mut a = ComparisonUnitAtom::new(t, vec![], "h".into());
+        let mut a = ComparisonUnitAtom::new(t, vec![], "h");
         a.correlation_status = st;
         a
     };
@@ -97,13 +97,13 @@ fn m4_g3_paragraph_split_matches_relocated_paras() {
     let mk_t = |d: &mut Dom, text: &str, st: CorrelationStatus| {
         let t = d.new_element(W::t());
         d.add_text(t, text);
-        let mut a = ComparisonUnitAtom::new(t, vec![], "h".into());
+        let mut a = ComparisonUnitAtom::new(t, vec![], "h");
         a.correlation_status = st;
         a
     };
     let mk_ppr = |d: &mut Dom, st: CorrelationStatus| {
         let p = d.new_element(W::p_pr());
-        let mut a = ComparisonUnitAtom::new(p, vec![], "h".into());
+        let mut a = ComparisonUnitAtom::new(p, vec![], "h");
         a.correlation_status = st;
         a
     };
@@ -223,9 +223,9 @@ fn m4_g5_detect_format() {
     d.add_text(after_t, "x");
     d.add(after_r, after_t);
 
-    let mut before_atom = ComparisonUnitAtom::new(before_t, vec![before_r, before_t], "h".into());
+    let mut before_atom = ComparisonUnitAtom::new(before_t, vec![before_r, before_t], "h");
     before_atom.correlation_status = CorrelationStatus::Equal;
-    let mut atom = ComparisonUnitAtom::new(after_t, vec![after_r, after_t], "h".into());
+    let mut atom = ComparisonUnitAtom::new(after_t, vec![after_r, after_t], "h");
     atom.correlation_status = CorrelationStatus::Equal;
     atom.comparison_unit_atom_before = Some(Box::new(before_atom));
 

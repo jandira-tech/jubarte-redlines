@@ -208,7 +208,7 @@ mod formatchg {
         d.add(r, rpr);
         let t = d.new_element(W::t());
         d.add(r, t);
-        let atom = ComparisonUnitAtom::new(t, vec![p, r, t], "h".into());
+        let atom = ComparisonUnitAtom::new(t, vec![p, r, t], "h");
         assert_eq!(get_run_properties_from_atom(&d, &atom), Some(rpr));
     }
 
@@ -216,11 +216,11 @@ mod formatchg {
     fn get_run_properties_from_atom_none_without_run_ancestor() {
         let mut d = Dom::new();
         let t = d.new_element(W::t());
-        let atom = ComparisonUnitAtom::new(t, vec![], "h".into());
+        let atom = ComparisonUnitAtom::new(t, vec![], "h");
         assert_eq!(get_run_properties_from_atom(&d, &atom), None);
         // run ancestor but no rPr child → None
         let r = d.new_element(W::r());
-        let atom2 = ComparisonUnitAtom::new(t, vec![r, t], "h".into());
+        let atom2 = ComparisonUnitAtom::new(t, vec![r, t], "h");
         assert_eq!(get_run_properties_from_atom(&d, &atom2), None);
     }
 
