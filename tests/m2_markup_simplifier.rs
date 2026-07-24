@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 use jubarte::markup_simplifier::{
     remove_rsid_transform, transform_element_to_single_character_runs,
 };

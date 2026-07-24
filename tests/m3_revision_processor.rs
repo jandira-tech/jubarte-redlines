@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 use jubarte::namespaces::W;
 use jubarte::revision_processor::{
     accept_revisions_document, accept_revisions_for_element, element_has_tracked_revisions,

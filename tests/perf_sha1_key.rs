@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! PR1 — fixed-width fingerprint keys for the LCS hot path.
 //!
 //! These lock the *contract* of the `u64` fingerprint used as a pre-filter in

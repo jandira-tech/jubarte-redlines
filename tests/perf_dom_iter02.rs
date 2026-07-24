@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! DOM-ITER-02 — hash-clone preprocess uses index walks; digests stay exact.
 //!
 //! Gates `clone_block_level_content_for_hashing` / `block_sha1` against the

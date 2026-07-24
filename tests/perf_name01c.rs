@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! NAME-01c — additional accept/RP W/PT XNames are cached and equal XName::get.
 
 use jubarte::namespaces::{PT, W};

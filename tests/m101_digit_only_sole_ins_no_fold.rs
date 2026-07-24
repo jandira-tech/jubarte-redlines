@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M101 — sole pure-I that is digits-only ("24") + multi pure-D stays separate
 //! (file_166). Content sole pure-I ("Ouch.") still folds (file_191).
 

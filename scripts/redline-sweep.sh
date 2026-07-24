@@ -1,4 +1,9 @@
 #!/usr/bin/env zsh
+
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Generate a redline for every pair in a bench mapping CSV with the jubarte
 # CLI, then optionally verify each output opens in REAL Microsoft Word
 # (scripts/word-open-probe.sh).

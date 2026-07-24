@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.H.1 — relationship parsing helpers for footnotes/related-part relocation.
 //! Port of ParseRelationshipRows (:6945), DecodeXmlAttribute (:6967),
 //! RequiredRelTypeSuffix (:6914), IsExternalRelationship (:6678). The rel-name

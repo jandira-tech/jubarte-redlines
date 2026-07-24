@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! ACCEPT-REUSE-CLEAN — clean subtrees are transferred (same NodeId), not
 //! clone_subtree'd, during accept_all_other / accept_move transforms.
 //!

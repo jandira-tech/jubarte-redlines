@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Build recipe pinned here (TODO §2) so it rides the engine pin and cannot be
+# forgotten. RUSTFLAGS passed via the environment REPLACE (not merge) these
+# flags, so a bare `wasm-pack build` — no env var — is the only invocation that
+# guarantees BOTH flags below land in the artifact.
+#
+#   +simd128           : SIMD baseline (W2, retained; WASM_PERF_PLAN.md).
+#   -zstack-size=8 MiB : 8 MB shadow stack. The wasm32 default is 1 MB, which
+#                        was the first OOM suspect on deep recursion (the LCS
+#                        divide-and-conquer recurses per residual). 8 MB is a
+#                        defensive floor; it does NOT lift the 4 GiB linear-
+#                        memory ceiling (see TODO §1 / WASM_PERF_PLAN.md — a real
+#                        run-fragmented diff peaks ~11.6 GiB, ~2.9x over 4 GiB).
+#
+# wasm-opt flags (-O3, SIMD, bulk-memory, …) live in Cargo.toml
+# [package.metadata.wasm-pack.profile.*]; together those two files are the
+# FULL build recipe the bench's engine pin now records (tool_updater).
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "-C", "target-feature=+simd128",
+  "-C", "link-arg=-zstack-size=8388608",
+]

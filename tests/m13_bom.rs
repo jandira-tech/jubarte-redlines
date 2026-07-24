@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M13 — leading UTF-8 BOM handling in the XML parser.
 //!
 //! Real-world fixtures begin their `word/document.xml` with a UTF-8 BOM

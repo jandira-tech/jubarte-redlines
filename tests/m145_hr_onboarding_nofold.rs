@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M145: long pure-I subtitle + short unrelated pure-D title must not fold
 //! (hr_onboarding × long next doc).
 

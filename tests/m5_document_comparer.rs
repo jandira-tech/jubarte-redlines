@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 use jubarte::document_comparer::compare_documents_with_options;
 
 const ORIGINAL: &[u8] = include_bytes!("fixtures/redline/original.docx");

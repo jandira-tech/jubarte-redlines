@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Word voids a lone shared stopword ("text") between longer pure-word
 //! paragraphs so the remaining sentence is whole-del / whole-ins
 //! (bold_italic_underline × bold_red last para).

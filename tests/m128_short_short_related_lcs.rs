@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M128 — short×short empty residual pairs with **content** residual relatedness
 //! take text-hash multi-para LCS (file_44 Inventory List × Numbered List).
 //! Boilerplate-only cousins (file_151 Project Proposal × Bold Italic, sole

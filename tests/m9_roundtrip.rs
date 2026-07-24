@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M9 — round-trip reconstruction invariant (fixture f-4).
 //!
 //! The defining property of a *correct* redline: with every revision applied one

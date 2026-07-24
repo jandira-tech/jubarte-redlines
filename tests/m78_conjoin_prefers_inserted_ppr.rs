@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M78 — when a mixed paragraph carries both Deleted and Inserted pPr
 //! (residual end-zip: A spacing + B ListParagraph), conjoin must keep the
 //! Inserted/next pPr live and record Deleted/base in pPrChange.

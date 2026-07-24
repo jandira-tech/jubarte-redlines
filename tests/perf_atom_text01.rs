@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! ATOM-TEXT-01 — direct text accessor for single-child leaves.
 //!
 //! `value_str` must match `value` byte-for-byte (Unicode / nested / empty),

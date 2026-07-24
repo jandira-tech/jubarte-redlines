@@ -1,4 +1,9 @@
 #!/usr/bin/env bun
+
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Bump the crate version in every hard-coded location, in one shot.
 //
 //   bun scripts/bump-version.mjs 0.2.0

@@ -1,11 +1,91 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Comparison-unit types (M4.0/M4.2). Port of the `ComparisonUnit*` hierarchy.
 
 use std::sync::Arc;
 
-use crate::util::sha1::{sha1_fingerprint, sha1_hex_parts};
+use crate::util::sha1::{
+    hex_decode_20, hex_encode_20, sha1_digest, sha1_fingerprint, sha1_hex_of_digest_hexes,
+};
 use crate::xmllinq::NodeId;
 
 use super::{ComparisonUnitGroupType, CorrelationStatus, WmlComparerRevisionType};
+
+/// Inline, `Copy` atom content hash — the raw 20-byte SHA-1 digest. Replaces the
+/// former 40-char lowercase-hex `String` so that cloning a freshly-atomized
+/// [`ComparisonUnitAtom`] (which happens on the order of 10^8 times during the
+/// LCS/correlation recursion) allocates NOTHING for the hash.
+///
+/// The stored value is exactly `hex_decode(sha1_hex(content))`, so every
+/// consumer that used the hex string is preserved bit-for-bit:
+///   - equality (`AtomHash == AtomHash`) is the same relation as string equality;
+///   - the precomputed `pt:SHA1Hash` path decodes the stamped hex
+///     ([`AtomHash::from_hex`]) onto the same digest a fresh atom would compute
+///     ([`AtomHash::of_bytes`]);
+///   - word hashing re-encodes each digest to its 40-char hex on the fly
+///     ([`ComparisonUnitWord::new`]), reproducing the legacy word-hash bytes.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct AtomHash([u8; 20]);
+
+impl AtomHash {
+    /// SHA-1 digest of `bytes` — the fresh-atom path (`localName + text`, or a
+    /// salted variant). Equal to `hex_decode(sha1_hex(bytes))`.
+    pub fn of_bytes(bytes: &[u8]) -> Self {
+        Self(sha1_digest(bytes))
+    }
+    /// Decode a stamped `pt:SHA1Hash` hex attribute (40 hex chars) into the raw
+    /// digest, so a precomputed atom lands on the SAME value as a fresh
+    /// `of_bytes` of identical content. Falls back to hashing the string bytes
+    /// if the input is not 40 hex chars — never happens for a real stamp; keeps
+    /// the value deterministic rather than panicking.
+    pub fn from_hex(s: &str) -> Self {
+        match hex_decode_20(s) {
+            Some(d) => Self(d),
+            None => Self::of_bytes(s.as_bytes()),
+        }
+    }
+    /// The 40-char lowercase hex digest as a fixed stack buffer (no heap).
+    pub fn to_hex(&self) -> [u8; 40] {
+        hex_encode_20(&self.0)
+    }
+    /// The 40-char lowercase hex digest as a `String` (matches `sha1_hex`).
+    pub fn to_hex_string(&self) -> String {
+        // to_hex() is pure ASCII, so from_utf8 cannot fail.
+        String::from_utf8(self.to_hex().to_vec()).expect("hex digits are ASCII")
+    }
+    /// The raw 20-byte digest.
+    pub fn as_bytes(&self) -> &[u8; 20] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for AtomHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Print the hex so atom Debug output stays as readable as the old String.
+        write!(f, "AtomHash({})", self.to_hex_string())
+    }
+}
+
+impl From<&str> for AtomHash {
+    /// Opaque-sentinel convenience (tests build atoms with sentinels like `"h"`
+    /// whose only contract is equality). This HASHES the string; it is NOT a hex
+    /// decoder — use [`AtomHash::from_hex`] for stamped `pt:SHA1Hash` attributes.
+    fn from(s: &str) -> Self {
+        Self::of_bytes(s.as_bytes())
+    }
+}
+impl From<String> for AtomHash {
+    fn from(s: String) -> Self {
+        Self::of_bytes(s.as_bytes())
+    }
+}
+impl From<&String> for AtomHash {
+    fn from(s: &String) -> Self {
+        Self::of_bytes(s.as_bytes())
+    }
+}
 
 /// Port of `FormatChangeInfo` — old/new run or paragraph properties (as DOM
 /// nodes) and the friendly names of properties that changed. Populated by M4.G
@@ -41,8 +121,9 @@ pub struct AtomBlock {
 pub struct ComparisonUnitAtom {
     /// `correlation_status`.
     pub correlation_status: CorrelationStatus,
-    /// `sha1_hash`.
-    pub sha1_hash: String,
+    /// `sha1_hash` — inline, `Copy` digest (see [`AtomHash`]); cloning an atom no
+    /// longer allocates for its hash.
+    pub sha1_hash: AtomHash,
     /// `content_element`.
     pub content_element: NodeId,
     /// `ancestor_elements`.
@@ -74,11 +155,11 @@ impl ComparisonUnitAtom {
     pub fn new(
         content_element: NodeId,
         ancestor_elements: impl Into<Arc<[NodeId]>>,
-        sha1_hash: String,
+        sha1_hash: impl Into<AtomHash>,
     ) -> Self {
         ComparisonUnitAtom {
             correlation_status: CorrelationStatus::Nil,
-            sha1_hash,
+            sha1_hash: sha1_hash.into(),
             content_element,
             ancestor_elements: ancestor_elements.into(),
             correlated_sha1_hash: None,
@@ -111,9 +192,11 @@ pub struct ComparisonUnitWord {
 impl ComparisonUnitWord {
     /// `new`.
     pub fn new(contents: Vec<ComparisonUnitAtom>) -> Self {
-        // HASH-02: stream each atom's hex digest into SHA-1 — same bytes as
-        // concatenating the digests first, without the intermediate String.
-        let sha1_hash = sha1_hex_parts(contents.iter().map(|a| a.sha1_hash.as_str()));
+        // HASH-02 / ATOM-HASH-INLINE-01: stream each atom's 40-char hex digest
+        // into SHA-1 — same bytes as concatenating the hex digests first, and
+        // byte-identical to the former `String`-hash path (each atom digest
+        // re-encodes to the exact hex it used to store), without any heap String.
+        let sha1_hash = sha1_hex_of_digest_hexes(contents.iter().map(|a| a.sha1_hash.as_bytes()));
         ComparisonUnitWord {
             correlation_status: CorrelationStatus::Nil,
             sha1_key: sha1_fingerprint(&sha1_hash),

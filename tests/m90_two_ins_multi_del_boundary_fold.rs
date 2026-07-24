@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M90 — 2 pure-I + multi pure-D folds last I with first D (file_38/62/11).
 
 use std::io::{Cursor, Read};

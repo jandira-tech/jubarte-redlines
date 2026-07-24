@@ -1,4 +1,8 @@
-//! M35 — comments carryover (word mode, settings-gated).
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! M35 — comments carryover for every comparer preset.
 //!
 //! Word's Compare carries comments through the redline
 //! (parity/_scratch/comments_carryover_forensics.md):
@@ -23,7 +27,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::namespaces::W;
+use crate::namespaces::{MC, W, W14};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
@@ -66,12 +70,24 @@ fn comment_ids_of(pkg: &PartFs) -> HashSet<String> {
         .collect()
 }
 
-/// (id → concatenated w:t text) for every comment in a package's comments.xml.
-/// Used to tell a genuine comment superset (B carries A's same-id same-text
-/// comments plus its own) from a numeric-id superset where the shared ids are
-/// DIFFERENT comments authored independently — the latter must go through the
-/// collision-renumbering union path, not the byte-identical fast path.
-fn comment_id_text_of(pkg: &PartFs) -> HashMap<String, String> {
+fn comment_definition_fingerprint(dom: &Dom, comment: NodeId) -> String {
+    let body: String = dom
+        .descendants(comment, Some(&W::t()))
+        .into_iter()
+        .map(|text| dom.value(text))
+        .collect();
+    let author = dom.attribute(comment, &W::author()).unwrap_or("");
+    let date = dom.attribute(comment, &W::date()).unwrap_or("");
+    let initials = dom.attribute(comment, &W::name("initials")).unwrap_or("");
+    format!(
+        "{}\u{0}{author}\u{0}{date}\u{0}{initials}",
+        normalized_text(&body)
+    )
+}
+
+/// (id → definition fingerprint) for every comment. The author, timestamp,
+/// and initials are part of logical identity; body text alone is not.
+fn comment_id_fingerprint_of(pkg: &PartFs) -> HashMap<String, String> {
     let Some(xml) = pkg.part_string("word/comments.xml") else {
         return HashMap::new();
     };
@@ -83,50 +99,117 @@ fn comment_id_text_of(pkg: &PartFs) -> HashMap<String, String> {
     dom.elements(root, Some(&W::name("comment")))
         .into_iter()
         .filter_map(|c| {
-            dom.attribute(c, &W::name("id")).map(|id| {
-                let text: String = dom
-                    .descendants(c, Some(&W::t()))
-                    .into_iter()
-                    .map(|t| dom.value(t))
-                    .collect();
-                (id.to_string(), text)
-            })
+            dom.attribute(c, &W::name("id"))
+                .map(|id| (id.to_string(), comment_definition_fingerprint(&dom, c)))
         })
         .collect()
 }
 
-/// True when B carries every one of A's comments by BOTH id and text — the
-/// condition under which B's comment parts can be emitted byte-identical. A
-/// bare numeric-id superset is NOT sufficient: two independently-authored
-/// comments can share an id (commonly 0) with different bodies, and treating
-/// that as a superset would silently drop A's comment (PR #81 review).
+/// True when B carries every one of A's comments by both id and definition
+/// fingerprint — the condition under which B's parts can be emitted
+/// byte-identical. A numeric-id superset is not sufficient.
 fn b_carries_same_comments_as_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
-    let a = comment_id_text_of(pkg1);
+    let a = comment_id_fingerprint_of(pkg1);
     if a.is_empty() {
         return true;
     }
-    let b = comment_id_text_of(pkg2);
-    a.iter().all(|(id, text)| b.get(id) == Some(text))
+    let b = comment_id_fingerprint_of(pkg2);
+    a.iter()
+        .all(|(id, fingerprint)| b.get(id) == Some(fingerprint))
 }
 
-/// True when B's multiset of comment *body texts* covers A's multiset
-/// (id-independent). Word renumbers the same comment set across sequential
-/// redline sources (lots_of_comments addition vs removal_v_addition share six
-/// bodies under disjoint ids). Id-match fails → naive union doubles anchors
-/// (12 vs Word's 6). Text multiset cover still refuses drop of an A-only body
-/// (PR #81 spirit: do not silently discard distinct comments).
-fn b_covers_comment_texts_of_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
-    let a = comment_id_text_of(pkg1);
+fn normalized_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Build an id-independent identity from the comment body and its anchored
+/// source context. Body text alone is unsafe: two distinct comments can say
+/// the same thing. The bounded pre/inner/post projection distinguishes their
+/// logical locations while still matching Word-renumbered copies.
+fn comment_anchor_identities(pkg: &PartFs, main: &str) -> HashMap<String, String> {
+    let definitions = comment_id_fingerprint_of(pkg);
+    let Some((text, ranges)) = extract_events(pkg, main) else {
+        return definitions
+            .into_iter()
+            .map(|(id, definition)| {
+                let identity = format!("{definition}\u{0}<unanchored:{id}>");
+                (id, identity)
+            })
+            .collect();
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let ranges_by_id: HashMap<&str, &Range> = ranges
+        .iter()
+        .map(|range| (range.id.as_str(), range))
+        .collect();
+    let mut candidates = FingerprintGroups::new();
+    for (id, definition) in definitions {
+        let Some(range) = ranges_by_id.get(id.as_str()) else {
+            candidates
+                .entry(definition)
+                .or_default()
+                .push((id, (usize::MAX, usize::MAX)));
+            continue;
+        };
+        candidates
+            .entry(definition)
+            .or_default()
+            .push((id, (range.start, range.end)));
+    }
+
+    let mut identities = HashMap::new();
+    for (definition, group) in candidates {
+        let has_nonempty = group.iter().any(|(_, (start, end))| end > start);
+        let mut seen_anchors = HashSet::new();
+        for (id, (raw_start, raw_end)) in group {
+            let unanchored = raw_start == usize::MAX;
+            let start = raw_start.min(chars.len());
+            let end = raw_end.min(chars.len()).max(start);
+            if has_nonempty && start == end {
+                continue;
+            }
+            let anchor = if unanchored {
+                format!("<unanchored:{id}>")
+            } else {
+                let pre: String = chars[start.saturating_sub(40)..start].iter().collect();
+                let inner: String = chars[start..end].iter().collect();
+                let post: String = chars[end..(end + 40).min(chars.len())].iter().collect();
+                format!(
+                    "{}\u{0}{}\u{0}{}",
+                    normalized_text(&pre),
+                    normalized_text(&inner),
+                    normalized_text(&post)
+                )
+            };
+            if seen_anchors.insert(anchor.clone()) {
+                identities.insert(id, format!("{definition}\u{0}{anchor}"));
+            }
+        }
+    }
+    identities
+}
+
+/// True when B's multiset of anchored comment identities covers A's. Word can
+/// renumber a comment set across sequential redline sources, so ids cannot be
+/// the key; body-only matching is equally unsafe because repeated prose is
+/// common in review comments.
+fn b_covers_comment_identities_of_a(
+    pkg1: &PartFs,
+    main1: &str,
+    pkg2: &PartFs,
+    main2: &str,
+) -> bool {
+    let a = comment_anchor_identities(pkg1, main1);
     if a.is_empty() {
         return true;
     }
-    let b = comment_id_text_of(pkg2);
+    let b = comment_anchor_identities(pkg2, main2);
     let mut b_counts: HashMap<String, usize> = HashMap::new();
-    for text in b.values() {
-        *b_counts.entry(text.clone()).or_default() += 1;
+    for identity in b.values() {
+        *b_counts.entry(identity.clone()).or_default() += 1;
     }
-    for text in a.values() {
-        match b_counts.get_mut(text) {
+    for identity in a.values() {
+        match b_counts.get_mut(identity) {
             Some(n) if *n > 0 => *n -= 1,
             _ => return false,
         }
@@ -383,8 +466,14 @@ fn new_reference_run(dom: &mut Dom, id: &str) -> NodeId {
     r
 }
 
-/// Inject one side's anchor events into the merged body. Returns the ids that
-/// were anchored (unmappable ranges are skipped — orphan cleanup drops them).
+/// Mapped output intervals keyed by the final comment id. Unmappable comments
+/// are absent and therefore fall to orphan cleanup.
+type AnchorInterval = (usize, usize);
+type AnchoredRanges = HashMap<String, AnchorInterval>;
+type FingerprintGroups = HashMap<String, Vec<(String, AnchorInterval)>>;
+
+/// Inject one side's anchor events into the merged body. Returns the ids and
+/// mapped intervals that were anchored.
 #[allow(clippy::too_many_arguments)]
 fn inject_side(
     dom: &mut Dom,
@@ -395,12 +484,12 @@ fn inject_side(
     author: &str,
     id_map: &HashMap<String, String>,
     only_ids: Option<&HashSet<String>>,
-) -> HashSet<String> {
+) -> AnchoredRanges {
     let Some((src_text, ranges)) = extract_events(src_pkg, src_main) else {
-        return HashSet::new();
+        return HashMap::new();
     };
     if ranges.is_empty() {
-        return HashSet::new();
+        return HashMap::new();
     }
     let (merged_text, mut segs) = collect_segments(dom, result_root, b_side, author);
     let src_chars: Vec<char> = src_text.chars().collect();
@@ -408,6 +497,7 @@ fn inject_side(
     // map each comment range through context matching, then flatten to
     // events sorted by (offset, source order) so nesting order is preserved
     let mut events: Vec<Event> = Vec::new();
+    let mut anchored_ranges = HashMap::new();
     for r in &ranges {
         if let Some(only) = only_ids
             && !only.contains(&r.id)
@@ -417,6 +507,8 @@ fn inject_side(
         let Some((s, e)) = map_range(&src_chars, &merged_chars, r) else {
             continue; // unmappable — the comment falls to orphan cleanup
         };
+        let out_id = id_map.get(&r.id).cloned().unwrap_or_else(|| r.id.clone());
+        anchored_ranges.insert(out_id, (s, e));
         events.push(Event {
             offset: s,
             kind: Kind::Start,
@@ -431,7 +523,6 @@ fn inject_side(
     let mut order: Vec<usize> = (0..events.len()).collect();
     order.sort_by_key(|&i| (events[i].offset, i));
 
-    let mut anchored = HashSet::new();
     for idx in order {
         let ev = &events[idx];
         let out_id = id_map.get(&ev.id).cloned().unwrap_or_else(|| ev.id.clone());
@@ -474,11 +565,10 @@ fn inject_side(
                 }
                 let refrun = new_reference_run(dom, &out_id);
                 dom.add_after_self(anchor, refrun);
-                anchored.insert(out_id);
             }
         }
     }
-    anchored
+    anchored_ranges
 }
 
 /// Copy `src`'s comment family into `out` (overwriting), wire content-type
@@ -508,6 +598,239 @@ fn remove_family_part(out: &mut PartFs, out_main: &str, part: &str, rel_type: &s
     out.remove_relationships_by_type(out_main, rel_type);
 }
 
+fn allocate_para_id(used: &mut HashSet<String>, next: &mut u32) -> String {
+    loop {
+        if *next == 0 || *next >= 0x8000_0000 {
+            *next = 1;
+        }
+        let candidate = format!("{:08X}", *next);
+        *next += 1;
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+}
+
+fn allocate_durable_id(used: &mut HashSet<String>, next: &mut u32) -> String {
+    loop {
+        if *next == 0 {
+            *next = 1;
+        }
+        let candidate = format!("{:08X}", *next);
+        *next = next.wrapping_add(1);
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+}
+
+fn rewrite_para_id_references(dom: &mut Dom, root: NodeId, map: &HashMap<String, String>) {
+    if map.is_empty() {
+        return;
+    }
+    for element in dom.descendants_and_self(root, None) {
+        for (name, value) in dom.attributes(element) {
+            if matches!(name.local_name(), "paraId" | "paraIdParent")
+                && let Some(replacement) = map.get(&value.to_ascii_uppercase())
+            {
+                dom.set_attribute_value(element, &name, Some(replacement));
+            }
+        }
+    }
+}
+
+fn rewrite_durable_id_references(dom: &mut Dom, root: NodeId, map: &HashMap<String, String>) {
+    if map.is_empty() {
+        return;
+    }
+    for element in dom.descendants_and_self(root, None) {
+        for (name, value) in dom.attributes(element) {
+            if name.local_name() == "durableId"
+                && let Some(replacement) = map.get(&value.to_ascii_uppercase())
+            {
+                dom.set_attribute_value(element, &name, Some(replacement));
+            }
+        }
+    }
+}
+
+fn namespace_declarations(dom: &Dom, root: NodeId) -> HashMap<String, String> {
+    dom.attributes(root)
+        .into_iter()
+        .filter(|(name, _)| dom.is_namespace_declaration(name))
+        .map(|(name, value)| (name.local_name().to_string(), value))
+        .collect()
+}
+
+fn is_namespace_qname_list(name: &XName) -> bool {
+    if name.namespace_name().is_empty() {
+        return name.local_name() == "Requires";
+    }
+    name.namespace_name() == MC::URI
+        && matches!(
+            name.local_name(),
+            "Ignorable"
+                | "PreserveAttributes"
+                | "PreserveElements"
+                | "ProcessContent"
+                | "MustUnderstand"
+        )
+}
+
+fn qname_token_prefix(token: &str) -> &str {
+    token.split_once(':').map_or(token, |(prefix, _)| prefix)
+}
+
+fn rewrite_qname_token(token: &str, rewrites: &HashMap<String, String>) -> String {
+    let prefix = qname_token_prefix(token);
+    let Some(replacement) = rewrites.get(prefix) else {
+        return token.to_string();
+    };
+    token.strip_prefix(prefix).map_or_else(
+        || replacement.clone(),
+        |suffix| format!("{replacement}{suffix}"),
+    )
+}
+
+/// A cloned element does not carry namespace declarations inherited from its
+/// source part root. Preserve the bindings referenced by MCE QName-list values
+/// and the `mc:Ignorable` contract for extension namespaces used in the clone.
+/// Conflicting destination prefixes are rebound under a fresh prefix and the
+/// QName-list tokens are rewritten consistently.
+fn preserve_cloned_namespace_context(
+    dom: &mut Dom,
+    source_root: NodeId,
+    destination_root: NodeId,
+    clone: NodeId,
+) {
+    let source_bindings = namespace_declarations(dom, source_root);
+    let mut destination_bindings = namespace_declarations(dom, destination_root);
+    let mut used_uris = HashSet::new();
+    let mut required_prefixes = HashSet::new();
+
+    for element in dom.descendants_and_self(clone, None) {
+        if let Some(name) = dom.name(element)
+            && !name.namespace_name().is_empty()
+        {
+            used_uris.insert(name.namespace_name().to_string());
+        }
+        for (name, value) in dom.attributes(element) {
+            if !dom.is_namespace_declaration(&name) && !name.namespace_name().is_empty() {
+                used_uris.insert(name.namespace_name().to_string());
+            }
+            if is_namespace_qname_list(&name) {
+                required_prefixes.extend(
+                    value
+                        .split_whitespace()
+                        .map(qname_token_prefix)
+                        .map(str::to_string),
+                );
+            }
+        }
+    }
+
+    let source_ignorable: Vec<String> = dom
+        .attribute(source_root, &MC::name("Ignorable"))
+        .unwrap_or("")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    required_prefixes.extend(
+        source_ignorable
+            .iter()
+            .filter(|prefix| {
+                source_bindings
+                    .get(*prefix)
+                    .is_some_and(|uri| used_uris.contains(uri))
+            })
+            .cloned(),
+    );
+
+    let mut required_prefixes: Vec<String> = required_prefixes.into_iter().collect();
+    required_prefixes.sort();
+    let mut rewrites = HashMap::new();
+    for prefix in required_prefixes {
+        let Some(uri) = source_bindings.get(&prefix) else {
+            continue;
+        };
+        let chosen = if destination_bindings
+            .get(&prefix)
+            .is_none_or(|bound_uri| bound_uri == uri)
+        {
+            prefix.clone()
+        } else if let Some(existing) = destination_bindings
+            .iter()
+            .filter(|(_, bound_uri)| *bound_uri == uri)
+            .map(|(bound_prefix, _)| bound_prefix)
+            .min()
+        {
+            existing.clone()
+        } else {
+            let mut index = 0usize;
+            loop {
+                let candidate = format!("ns{index}");
+                if !destination_bindings.contains_key(&candidate) {
+                    break candidate;
+                }
+                index += 1;
+            }
+        };
+        if destination_bindings.get(&chosen) != Some(uri) {
+            dom.set_attribute_value(
+                destination_root,
+                &XNamespace::xmlns().name(&chosen),
+                Some(uri),
+            );
+            destination_bindings.insert(chosen.clone(), uri.clone());
+        }
+        if chosen != prefix {
+            rewrites.insert(prefix, chosen);
+        }
+    }
+
+    if !rewrites.is_empty() {
+        for element in dom.descendants_and_self(clone, None) {
+            for (name, value) in dom.attributes(element) {
+                if !is_namespace_qname_list(&name) {
+                    continue;
+                }
+                let rewritten = value
+                    .split_whitespace()
+                    .map(|token| rewrite_qname_token(token, &rewrites))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                dom.set_attribute_value(element, &name, Some(&rewritten));
+            }
+        }
+    }
+
+    let mut destination_ignorable: Vec<String> = dom
+        .attribute(destination_root, &MC::name("Ignorable"))
+        .unwrap_or("")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    for prefix in source_ignorable {
+        let Some(uri) = source_bindings.get(&prefix) else {
+            continue;
+        };
+        if !used_uris.contains(uri) {
+            continue;
+        }
+        let chosen = rewrites.get(&prefix).unwrap_or(&prefix);
+        if !destination_ignorable.contains(chosen) {
+            destination_ignorable.push(chosen.clone());
+        }
+    }
+    if !destination_ignorable.is_empty() {
+        dom.set_attribute_value(
+            destination_root,
+            &MC::name("Ignorable"),
+            Some(&destination_ignorable.join(" ")),
+        );
+    }
+}
+
 /// Merge A's comments into a B-based comments.xml for the union case,
 /// renumbering A ids that collide with B's. Returns the A→out id map.
 fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMap<String, String> {
@@ -530,6 +853,19 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
         .into_iter()
         .filter_map(|c| dom.attribute(c, &id_name).map(str::to_string))
         .collect();
+    let mut used_para_ids: HashSet<String> = dom
+        .descendants(br, Some(&W::p()))
+        .into_iter()
+        .filter_map(|p| dom.attribute(p, &W14::name("paraId")).map(str::to_string))
+        .map(|value| value.to_ascii_uppercase())
+        .collect();
+    let mut next_para_id = used_para_ids
+        .iter()
+        .filter_map(|value| u32::from_str_radix(value, 16).ok())
+        .filter(|value| *value < 0x8000_0000)
+        .max()
+        .map_or(1, |value| value.saturating_add(1));
+    let mut para_id_map: HashMap<String, String> = HashMap::new();
     let mut next_id = b_ids
         .iter()
         .filter_map(|s| s.parse::<i64>().ok())
@@ -567,6 +903,24 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
             continue; // same comment carried on both sides; B's copy wins
         }
         let clone = dom.clone_subtree(c);
+        preserve_cloned_namespace_context(&mut dom, ar, br, clone);
+        for paragraph in dom.descendants(clone, Some(&W::p())) {
+            let Some(para_id) = dom
+                .attribute(paragraph, &W14::name("paraId"))
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let para_id_key = para_id.to_ascii_uppercase();
+            if used_para_ids.contains(&para_id_key) {
+                let replacement = para_id_map
+                    .entry(para_id_key)
+                    .or_insert_with(|| allocate_para_id(&mut used_para_ids, &mut next_para_id));
+                dom.set_attribute_value(paragraph, &W14::name("paraId"), Some(replacement));
+            } else {
+                used_para_ids.insert(para_id_key);
+            }
+        }
         if b_ids.contains(&id) {
             // id collision with a DIFFERENT B comment — renumber A's copy to a
             // free id (not in B, not kept by another A comment, not already
@@ -589,12 +943,24 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
     // When B lacks an aux part entirely, `install_parts_from(out, pkg2)` has
     // already removed it from `out` — seed the part from A first so A-only
     // comments keep their commentsExtended/Ids/Extensible metadata (PR #81).
+    let mut durable_id_map: HashMap<String, String> = HashMap::new();
     for (part, ct, rel_type) in &FAMILY[1..] {
         let Some(ax) = pkg1.part_string(part) else {
             continue;
         };
+        let is_comments_ids = *part == "word/commentsIds.xml";
+        let is_comments_extensible = *part == "word/commentsExtensible.xml";
         if out.part_string(part).is_none() {
-            out.set_part(part, ax.into_bytes());
+            let mut d = Dom::new();
+            let ad = d.parse_xdocument(&ax);
+            let Some(ar) = d.root(ad) else {
+                continue;
+            };
+            rewrite_para_id_references(&mut d, ar, &para_id_map);
+            if is_comments_extensible {
+                rewrite_durable_id_references(&mut d, ar, &durable_id_map);
+            }
+            out.set_part(part, d.serialize_element(ar).into_bytes());
             out.add_content_type_override(&format!("/{part}"), ct);
             let has_rel = out
                 .read_rels_for(out_main)
@@ -609,29 +975,78 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
             continue;
         };
         let mut d = Dom::new();
-        let bd = d.parse_xdocument(&bx);
         let ad = d.parse_xdocument(&ax);
-        let (Some(br), Some(ar)) = (d.root(bd), d.root(ad)) else {
+        let Some(ar) = d.root(ad) else {
             continue;
         };
-        let para_key = |d: &Dom, e: NodeId| -> Option<String> {
+        rewrite_para_id_references(&mut d, ar, &para_id_map);
+        if is_comments_extensible {
+            rewrite_durable_id_references(&mut d, ar, &durable_id_map);
+        }
+        let bd = d.parse_xdocument(&bx);
+        let Some(br) = d.root(bd) else {
+            continue;
+        };
+        let key_local_name = if is_comments_extensible {
+            "durableId"
+        } else {
+            "paraId"
+        };
+        let entry_key = |d: &Dom, e: NodeId| -> Option<String> {
             d.attributes(e)
                 .into_iter()
-                .find(|(n, _)| n.local_name() == "paraId")
+                .find(|(n, _)| n.local_name() == key_local_name)
                 .map(|(_, v)| v)
         };
-        let existing: HashSet<String> = d
+        let mut existing: HashSet<String> = d
             .elements(br, None)
             .into_iter()
-            .filter_map(|e| para_key(&d, e))
+            .filter_map(|e| entry_key(&d, e))
+            .map(|value| value.to_ascii_uppercase())
             .collect();
+        let mut used_durable_ids: HashSet<String> = if is_comments_ids {
+            d.elements(br, None)
+                .into_iter()
+                .filter_map(|e| {
+                    d.attributes(e)
+                        .into_iter()
+                        .find(|(name, _)| name.local_name() == "durableId")
+                        .map(|(_, value)| value.to_ascii_uppercase())
+                })
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        let mut next_durable_id = used_durable_ids
+            .iter()
+            .filter_map(|value| u32::from_str_radix(value, 16).ok())
+            .max()
+            .map_or(1, |value| value.checked_add(1).unwrap_or(1));
         let mut changed = false;
         for e in d.elements(ar, None) {
-            if let Some(k) = para_key(&d, e)
-                && !existing.contains(&k)
+            if let Some(k) = entry_key(&d, e)
+                && !existing.contains(&k.to_ascii_uppercase())
             {
                 let c = d.clone_subtree(e);
+                preserve_cloned_namespace_context(&mut d, ar, br, c);
+                if is_comments_ids
+                    && let Some((durable_name, durable_id)) = d
+                        .attributes(c)
+                        .into_iter()
+                        .find(|(name, _)| name.local_name() == "durableId")
+                {
+                    let durable_key = durable_id.to_ascii_uppercase();
+                    if used_durable_ids.contains(&durable_key) {
+                        let replacement = durable_id_map.entry(durable_key).or_insert_with(|| {
+                            allocate_durable_id(&mut used_durable_ids, &mut next_durable_id)
+                        });
+                        d.set_attribute_value(c, &durable_name, Some(replacement));
+                    } else {
+                        used_durable_ids.insert(durable_key);
+                    }
+                }
                 d.add(br, c);
+                existing.insert(k.to_ascii_uppercase());
                 changed = true;
             }
         }
@@ -675,7 +1090,7 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
         for p in dom.descendants(c, Some(&W::p())) {
             for (n, v) in dom.attributes(p) {
                 if n.local_name() == "paraId" {
-                    dead_para_ids.insert(v);
+                    dead_para_ids.insert(v.to_ascii_uppercase());
                 }
             }
         }
@@ -685,6 +1100,7 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
         "word/comments.xml",
         dom.serialize_element(root).into_bytes(),
     );
+    let mut dead_durable_ids: HashSet<String> = HashSet::new();
     for (part, _, _) in &FAMILY[1..] {
         let Some(px) = out.part_string(part) else {
             continue;
@@ -694,13 +1110,34 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
         let Some(pr) = d2.root(pd) else { continue };
         let mut changed = false;
         for e in d2.elements(pr, None) {
-            let dead = d2
-                .attributes(e)
-                .into_iter()
-                .any(|(n, v)| n.local_name() == "paraId" && dead_para_ids.contains(&v));
-            if dead {
+            let attributes = d2.attributes(e);
+            let dead = attributes.iter().any(|(n, v)| {
+                n.local_name() == "paraId" && dead_para_ids.contains(&v.to_ascii_uppercase())
+            });
+            let dead_by_durable_id = attributes.iter().any(|(name, value)| {
+                name.local_name() == "durableId"
+                    && dead_durable_ids.contains(&value.to_ascii_uppercase())
+            });
+            if dead || dead_by_durable_id {
+                if *part == "word/commentsIds.xml" {
+                    dead_durable_ids.extend(
+                        attributes
+                            .iter()
+                            .filter(|(name, _)| name.local_name() == "durableId")
+                            .map(|(_, value)| value.to_ascii_uppercase()),
+                    );
+                }
                 d2.remove(e);
                 changed = true;
+                continue;
+            }
+            for (name, value) in attributes {
+                if name.local_name() == "paraIdParent"
+                    && dead_para_ids.contains(&value.to_ascii_uppercase())
+                {
+                    d2.set_attribute_value(e, &name, None);
+                    changed = true;
+                }
             }
         }
         if changed {
@@ -709,39 +1146,42 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
     }
 }
 
-/// Collapse identical comment body texts to one id (Word redline keeps one
-/// of each body). `docx_lots_of_comments_*` sources ship duplicate bodies
-/// under distinct ids; carrying all 6 vs Word's 4 shifts layout (C2 ~45 score).
-/// Keeps the first id per body text; strips later ids from the anchor set so
-/// [`drop_orphans`] removes their defs and aux-part rows.
-fn dedupe_anchored_by_body_text(out: &PartFs, anchored: &HashSet<String>) -> HashSet<String> {
+/// Select comments using both their definition fingerprint and mapped anchor.
+/// Equal bodies on distinct non-empty ranges are independent comments. Exact
+/// duplicate anchors collapse deterministically, and a live non-empty anchor
+/// supersedes a stale zero-length revision copy of the same comment.
+fn select_anchor_aware_comments(out: &PartFs, anchored: &AnchoredRanges) -> HashSet<String> {
     let Some(xml) = out.part_string("word/comments.xml") else {
-        return anchored.clone();
+        return anchored.keys().cloned().collect();
     };
     let mut d = Dom::new();
     let doc = d.parse_xdocument(&xml);
     let Some(root) = d.root(doc) else {
-        return anchored.clone();
+        return anchored.keys().cloned().collect();
     };
-    let mut seen_text: HashSet<String> = HashSet::new();
-    let mut keep: HashSet<String> = HashSet::new();
-    // Document order of comment elements = stable keep-first.
+    let mut groups = FingerprintGroups::new();
     for c in d.elements(root, Some(&W::name("comment"))) {
         let Some(id) = d.attribute(c, &W::name("id")).map(str::to_string) else {
             continue;
         };
-        if !anchored.contains(&id) {
+        let Some(&range) = anchored.get(&id) else {
             continue;
-        }
-        let text: String = d
-            .descendants(c, Some(&W::t()))
-            .into_iter()
-            .map(|t| d.value(t))
-            .collect();
-        // Normalize whitespace so "Complex comment. " and "Complex comment." match.
-        let key = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        if seen_text.insert(key) {
-            keep.insert(id);
+        };
+        let fingerprint = comment_definition_fingerprint(&d, c);
+        groups.entry(fingerprint).or_default().push((id, range));
+    }
+
+    let mut keep = HashSet::new();
+    for candidates in groups.values() {
+        let has_nonempty = candidates.iter().any(|(_, (start, end))| end > start);
+        let mut seen_ranges = HashSet::new();
+        for (id, range) in candidates {
+            if has_nonempty && range.0 == range.1 {
+                continue;
+            }
+            if seen_ranges.insert(*range) {
+                keep.insert(id.clone());
+            }
         }
     }
     keep
@@ -772,12 +1212,12 @@ pub fn carry_comments(
         inject_side(dom, result_root, pkg1, main1, false, author, &no_map, None)
     } else if ids_a.is_empty()
         || b_carries_same_comments_as_a(pkg1, pkg2)
-        || b_covers_comment_texts_of_a(pkg1, pkg2)
+        || b_covers_comment_identities_of_a(pkg1, main1, pkg2, main2)
     {
         // B carries the union — parts byte-identical from B. Two gates:
-        //   1. id+text match for every A comment (classic superset).
-        //   2. id-independent text multiset cover (M213): Word-renumbered
-        //      same-body comment sets across redline sources.
+        //   1. id+definition match for every A comment (classic superset).
+        //   2. id-independent anchored-identity cover (M213): Word-renumbered
+        //      comment sets across redline sources.
         // Bare numeric-id superset alone is still not enough.
         install_parts_from(out, out_main, pkg2);
         inject_side(dom, result_root, pkg2, main2, true, author, &no_map, None)
@@ -799,9 +1239,7 @@ pub fn carry_comments(
         ));
         anchored
     };
-    // Word-parity: one comment def per unique body text, then strip orphans
-    // (including duplicate-body anchors left in the merged document).
-    let anchored = dedupe_anchored_by_body_text(out, &anchored);
+    let anchored = select_anchor_aware_comments(out, &anchored);
     // Also strip body anchors for dropped ids so they don't linger orphan-free
     // as range markers without a comments.xml entry (Ring-1).
     strip_unanchored_comment_markers(dom, result_root, &anchored);

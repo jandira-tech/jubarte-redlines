@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! NAME-01 — hottest W/PT XNames are cached and stay equal to uncached get.
 
 use jubarte::namespaces::{PT, W};

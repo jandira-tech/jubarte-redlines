@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! P0-LAB-01 — feature-gated stage counters and coarse timers.
 //!
 //! When the `perf-profile` Cargo feature is **off** (default), every public

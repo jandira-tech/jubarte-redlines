@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M18 — `w:pPr` must be the FIRST child of `w:p` (OOXML schema).
 //!
 //! Our reassembly emitted the paragraph mark (`w:pPr`) LAST in the paragraph, so

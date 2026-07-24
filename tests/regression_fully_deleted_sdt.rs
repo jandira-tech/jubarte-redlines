@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Regression — accepting revisions must not panic when a block-level content
 //! control's runs were ALL deleted revisions.
 //!

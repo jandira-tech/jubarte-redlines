@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M86 — whitespace-only pure-ins folds into following pure-del (file_88).
 
 use std::io::{Cursor, Read};

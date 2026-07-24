@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! LCS correlation (M4.3). Port of the core of `DoLcsAlgorithm`.
 //!
 //! The TS `DoLcsAlgorithm` finds the longest common CONTIGUOUS run of comparison

@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Interleaved ABBA wall-time matrix for jubarte-rs perf experiments.
 #
 # ALWAYS runs ALL of the following (user directive 2026-07-15; reaffirmed):

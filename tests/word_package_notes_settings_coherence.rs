@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Word opens a PACKAGE. A clean document.xml with settings/notes out of
 //! sync still triggers "unreadable content".
 

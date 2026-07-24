@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::comparer::atomize::{coalesce, create_comparison_unit_atom_list};
 use jubarte::namespaces::W;

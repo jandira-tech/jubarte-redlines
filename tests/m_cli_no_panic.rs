@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Fallible-input surface must return `Err` / non-zero exit — never panic —
 //! on malformed zip, empty packages, or missing main document parts (plan A2).
 

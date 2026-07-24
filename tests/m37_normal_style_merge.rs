@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M37 — merged Normal style (M-PAG mechanism 2). In word mode, when A's
 //! Normal pPr spacing differs from B's EFFECTIVE Normal spacing, the output
 //! styles.xml Normal must carry the revised effective spacing with a

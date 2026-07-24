@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! C1 / KNOWN ISSUE #2 — unrelated whole-document replacement must NOT fold
 //! the last pure-ins into the first pure-del (no mixed first paragraph).
 //!

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M11 — f-1 acceptance round-trip (parity with Word).
 //!
 //! f-1 is the *acceptance* round-trip: its input documents are obtained by

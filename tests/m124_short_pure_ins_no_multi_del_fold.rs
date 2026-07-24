@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M124 — very short pure-I at I…I D…D multi-del boundary stays pure
 //! (file_29: pure-I "a" then pure-D "Open Sans Font Demo"). M90 still folds
 //! content pure-I into multi-del.

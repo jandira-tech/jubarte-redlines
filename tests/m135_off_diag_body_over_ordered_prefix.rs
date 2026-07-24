@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M135 — off-diagonal body residual pairs (shared sig, short demos) beat
 //! diagonal ordered-prefix "This document demonstrates…" thrash (file_180).
 //!

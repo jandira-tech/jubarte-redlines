@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! HASH-STREAM-06 — simple `w:tc` stream hash == clone oracle (no hash-clone DOM).
 
 use jubarte::comparer::WmlComparerSettings;

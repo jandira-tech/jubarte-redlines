@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Port of `WmlDocument` / `PtMainDocumentPart` (`WmlDocument.ts`) — M1.7.
 //!
 //! Models the C# `WmlDocument` surface the comparer uses: it carries

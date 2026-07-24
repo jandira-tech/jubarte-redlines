@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M96 — short residual titles that share only the last significant token
 //! ("… Demo") pair for nested word-LCS (file_139 Font Size 12 Demo ↔
 //! Heading 3 Style Demo; file_32 Heading 1 Style Demo ↔ Bold…Combo Demo).

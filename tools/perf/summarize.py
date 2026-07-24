@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """P0-LAB-01 — interleaved-trial summarizer for ABBA matrix summary.tsv.
 
 Reads tools/perf/run_abba_matrix.sh output (and compatible TSVs) and emits:

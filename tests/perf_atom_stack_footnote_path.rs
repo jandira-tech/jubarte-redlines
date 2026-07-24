@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! ATOM-STACK-01 regression: footnote/endnote must stay on the ancestor path.
 //!
 //! Pre-ATOM-STACK `ancestor_chain` stopped at the footnotes/endnotes *part*

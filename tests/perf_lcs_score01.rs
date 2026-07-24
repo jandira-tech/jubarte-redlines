@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! LCS-SCORE-01 — prefix-sum non-separator scores must match direct walk.
 //!
 //! Gates the production path: unitize real body text, then assert

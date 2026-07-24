@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M21 — header/footer CONTENT must be redlined (Word redlines header/footer
 //! changes; we only copied the original's). Word redlines header parts in 30 of
 //! the 100 benchmark pairs and footers in 83. We diff footnotes/endnotes but not

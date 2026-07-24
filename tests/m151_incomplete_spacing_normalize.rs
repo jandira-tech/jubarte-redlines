@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! C3/C5: incomplete `w:spacing` (lineRule=auto, no line) Word-normalize.
 //!
 //! Word Compare rewrites `before=0 after=0 lineRule=auto` (no line) to:

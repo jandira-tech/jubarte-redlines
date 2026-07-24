@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M89 — sole pure-I + multi pure-D folds first D into I (file_191).
 
 use std::io::{Cursor, Read};

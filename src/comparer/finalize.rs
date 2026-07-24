@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.F — markup finalization: turn the pt:Status-tagged tree into real
 //! `w:ins`/`w:del`/`w:rPrChange`/move markup, conjoin paragraph marks, renumber
 //! revision ids, and strip scratch markup. Port of MarkContentAsDeletedOrInserted

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M114 — residual body cousins that share ordered significant prefix
 //! ("This document …") pair for nested word-LCS (file_154).
 //! Word: Equal "This document " + ins/del tails.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.F.6 — id-renumbering fixups. Port of FixUpDocPrIds (:5937),
 //! FixUpShapeIds (:5964), FixUpGroupIds (:5986), FixUpShapeTypeIds (:6002).
 //! The produced document splices content from two source docs, so original ids

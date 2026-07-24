@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M133 — last-significant-token residual pairs beat ordered-prefix when both
 //! could fire on different next residuals (file_120).
 //!

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M28 — RevisionProcessor part-pipeline (plan M-A). A.0 = the doc-order
 //! tag-stream walker (`DescendantAndSelfTags` :2397) and the block-content
 //! iteration helpers (`IterateBlockContentElements` :1909,

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! P0-LAB-01 contract tests — durable lab pieces from LCS_PERF_PLAN.md.
 //!
 //! Drives the **shipped** surfaces:
@@ -8,9 +12,20 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
 
 use jubarte::document_comparer::compare_documents;
 use jubarte::perf::{self, Snapshot, Stage};
+
+// The perf surface intentionally uses process-global atomics. Tests that call
+// reset/snapshot must therefore not overlap under Rust's parallel test runner.
+static PERF_STATE: Mutex<()> = Mutex::new(());
+
+fn lock_perf_state() -> MutexGuard<'static, ()> {
+    PERF_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn crate_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -22,6 +37,7 @@ fn tool(name: &str) -> PathBuf {
 
 #[test]
 fn perf_counters_reset_and_snapshot_json_shape() {
+    let _guard = lock_perf_state();
     perf::reset();
     let z = perf::snapshot();
     // Default builds: always zero. Feature-on builds: zero after reset.
@@ -33,6 +49,7 @@ fn perf_counters_reset_and_snapshot_json_shape() {
 
 #[test]
 fn perf_time_stage_and_inc_are_callable() {
+    let _guard = lock_perf_state();
     perf::reset();
     let got = perf::time_stage(Stage::Lcs, || 7u8);
     assert_eq!(got, 7);
@@ -54,6 +71,7 @@ fn perf_time_stage_and_inc_are_callable() {
 
 #[test]
 fn compare_documents_unaffected_by_default_perf_hooks() {
+    let _guard = lock_perf_state();
     // Output-equivalence smoke: the default (feature-off) path must still
     // produce a valid redline for the in-repo dense-edit fixture pair.
     let root = crate_root();

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M-B — reference-driven footnote/endnote processing.
 //!
 //! B.1: `NotesContext` plumbing — `compare_bodies_faithful_with_notes` is a

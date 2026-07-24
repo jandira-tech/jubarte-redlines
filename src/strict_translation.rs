@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! ISO/IEC 29500 **Strict** → **Transitional** namespace normalization (M8).
 //!
 //! Microsoft Word can save a `.docx` in the ISO *Strict* schema, whose XML

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.0 + M4.A — faithful atomization & comparison-unit tests.
 
 use jubarte::comparer::atoms::{AtomBlock, ComparisonUnitAtom, FormatChangeInfo};
@@ -40,7 +44,7 @@ fn m4_0_settings_defaults_and_new_fields() {
     );
 
     // new atom fields are constructible/defaulted to None
-    let a = ComparisonUnitAtom::new(jubarte::xmllinq::NodeId(0), vec![], "deadbeef".into());
+    let a = ComparisonUnitAtom::new(jubarte::xmllinq::NodeId(0), vec![], "deadbeef");
     assert!(a.content_element_before.is_none());
     assert!(a.comparison_unit_atom_before.is_none());
     assert!(a.ancestor_unids.is_none());

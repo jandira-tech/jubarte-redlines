@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! DOM-ITER-03 — non-allocating descendant walks match `descendants()` order.
 //!
 //! Hash-path callers (`add_sha1` / `hash_block_level_content`) use

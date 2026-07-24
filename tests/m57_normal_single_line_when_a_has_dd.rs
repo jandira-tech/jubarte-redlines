@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M57 — when both Normals store no spacing but A has a **structured** Normal
 //! (pPr/rPr) and docDefaults, Word rewrites Normal to after=0 line=240.
 //! file_77_file_78: without this, LO renders 5pp vs Word 3pp.

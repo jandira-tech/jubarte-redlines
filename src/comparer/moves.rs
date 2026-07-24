@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.G — move detection. Port of DetectMovesInAtomList (:4711),
 //! GroupConsecutiveAtomsByStatus (:4776), ExtractTextFromAtomBlock (:4805),
 //! CalculateJaccardSimilarity (:4664), TokenizeForComparison/CountWords/splitByChars.

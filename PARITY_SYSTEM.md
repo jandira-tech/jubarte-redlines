@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 # Word-parity test system (parity ladder)
 
 Built 2026-07-13. Turns "our redline vs Word's redline" into tiny, named,

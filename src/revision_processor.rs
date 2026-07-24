@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Port of `RevisionProcessor.ts` — accept-revisions pipeline (M3).
 //!
 //! Scope (per the implementation plan): the ACCEPT path only. Reject,
@@ -406,12 +410,6 @@ fn reverse_revisions_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         .and_then(|gp| dom.name(gp))
         .is_some_and(|n| n == W::p_pr());
 
-    let in_p_or_hyperlink = matches!(&parent_name, Some(n) if *n == W::p() || *n == W::hyperlink());
-
-    // Deleted run / deleted math char → w:ins (wrapping reversed children).
-    if name == W::del() && (in_p_or_hyperlink || parent_name.as_ref() == Some(&M::name("r"))) {
-        return rebuild_named(dom, W::ins(), node, false);
-    }
     // Deleted paragraph mark (del in rPr/pPr) → empty w:ins.
     if name == W::del() && parent_name.as_ref() == Some(&W::r_pr()) && grandparent_is_ppr {
         return dom.new_element(W::ins());
@@ -420,16 +418,28 @@ fn reverse_revisions_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     if name == W::ins() && parent_name.as_ref() == Some(&W::r_pr()) && grandparent_is_ppr {
         return dom.new_element(W::del());
     }
-    // Inserted run / inserted math char → w:del.
-    if name == W::ins() && (in_p_or_hyperlink || parent_name.as_ref() == Some(&M::name("r"))) {
-        return rebuild_named(dom, W::del(), node, false);
-    }
-    // Deleted / inserted table row (del/ins in trPr) → swap.
+    // Deleted / inserted table row (del/ins in trPr) → empty swap.
     if name == W::del() && parent_name.as_ref() == Some(&W::tr_pr()) {
         return dom.new_element(W::ins());
     }
     if name == W::ins() && parent_name.as_ref() == Some(&W::tr_pr()) {
         return dom.new_element(W::del());
+    }
+    // Any OTHER deleted content → w:ins (reversed children); any other inserted
+    // content → w:del. REJECT-LOSSLESS-01: the C# reference only flips del/ins
+    // whose effective parent is w:p / w:hyperlink / m:r, leaving a content del/ins
+    // nested in a transparent run container (`w:fldSimple`, `mc:Choice`/`mc:Fallback`,
+    // …) as identity — which the trailing accept then DROPS (del) or KEEPS (ins),
+    // losing the base/revised text (field results, AlternateContent). Since on reject
+    // a content deletion must always be RESTORED and a content insertion always
+    // REMOVED, flipping every remaining del↔ins is both correct and lossless. Reached
+    // only AFTER the paragraph-mark / table-row markers above (which carry no run
+    // children and must stay empty); `parent`/`parent_name` are still consulted there.
+    if name == W::del() {
+        return rebuild_named(dom, W::ins(), node, false);
+    }
+    if name == W::ins() {
+        return rebuild_named(dom, W::del(), node, false);
     }
 
     // moveFrom↔moveTo and their ranges (attributes preserved).

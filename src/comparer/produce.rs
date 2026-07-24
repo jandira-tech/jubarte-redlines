@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Produce tracked-revision markup (M4.4). Core of
 //! `ProduceDocumentWithTrackedRevisions` for the paragraph-text case.
 //!

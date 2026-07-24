@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # P0-LAB-01 — thin wrapper: build named binaries + run permanent ABBA matrix + summarize.
 #
 # Usage:

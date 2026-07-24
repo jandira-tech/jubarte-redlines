@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! DocumentComparer façade (M5). Port of `DocumentComparer.ts` (compare path).
 //!
 //! `compare_documents(original, modified, author) -> Vec<u8>` opens both
@@ -1233,6 +1237,21 @@ fn word_canonical_style_id(name: &str) -> String {
         "heading" => return "Heading".into(),
         "list" => return "List".into(),
         "index" => return "Index".into(),
+        // Table-of-contents built-ins: styleId is the ALL-CAPS `TOC1`..`TOC9`
+        // (name "toc 1"..), which the generic PascalCase below would mangle to
+        // `Toc1`. That renames a live built-in to a custom id, so LibreOffice
+        // (and Word) drop the built-in TOC indents/dot-leader tabs and the
+        // whole table of contents reflows — tanking the visual redline score.
+        "toc 1" => return "TOC1".into(),
+        "toc 2" => return "TOC2".into(),
+        "toc 3" => return "TOC3".into(),
+        "toc 4" => return "TOC4".into(),
+        "toc 5" => return "TOC5".into(),
+        "toc 6" => return "TOC6".into(),
+        "toc 7" => return "TOC7".into(),
+        "toc 8" => return "TOC8".into(),
+        "toc 9" => return "TOC9".into(),
+        "toc heading" => return "TOCHeading".into(),
         _ => {}
     }
     // Generic: drop spaces/underscores/hyphens, PascalCase each token.
@@ -2179,6 +2198,56 @@ pub fn get_revisions(
     Ok(revs)
 }
 
+/// Serialize one revision to the stable JSON object shape shared by the CLI
+/// (`jubarte revisions --json`) and the wasm `getRevisions` binding. Full
+/// string escaping: backslash, quote, and EVERY control char < 0x20 (document
+/// text can carry `\t`, `\r`, vertical tabs, …).
+pub fn revision_to_json(r: &crate::comparer::WmlComparerRevision) -> String {
+    fn esc(s: &str) -> String {
+        let mut o = String::with_capacity(s.len());
+        for c in s.chars() {
+            match c {
+                '\\' => o.push_str("\\\\"),
+                '"' => o.push_str("\\\""),
+                '\n' => o.push_str("\\n"),
+                '\r' => o.push_str("\\r"),
+                '\t' => o.push_str("\\t"),
+                c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+                c => o.push(c),
+            }
+        }
+        o
+    }
+    let format_change = r.format_change.as_ref().map_or("null".to_string(), |fc| {
+        let props: Vec<String> = fc
+            .changed_properties
+            .iter()
+            .map(|p| format!("\"{}\"", esc(p)))
+            .collect();
+        format!("{{\"changedProperties\":[{}]}}", props.join(","))
+    });
+    format!(
+        "{{\"type\":\"{:?}\",\"author\":\"{}\",\"date\":\"{}\",\"part\":\"{}\",\"moveGroupId\":{},\"isMoveSource\":{},\"formatChange\":{},\"text\":\"{}\"}}",
+        r.revision_type,
+        esc(r.author.as_deref().unwrap_or("")),
+        esc(r.date.as_deref().unwrap_or("")),
+        esc(&r.part_name),
+        r.move_group_id
+            .map_or("null".to_string(), |v| v.to_string()),
+        r.is_move_source
+            .map_or("null".to_string(), |v| v.to_string()),
+        format_change,
+        esc(r.text.as_deref().unwrap_or("")),
+    )
+}
+
+/// Serialize a revision list to a single JSON array string — the wasm
+/// `getRevisions` binding shape (the CLI prints one object per line instead).
+pub fn revisions_to_json(revs: &[crate::comparer::WmlComparerRevision]) -> String {
+    let items: Vec<String> = revs.iter().map(revision_to_json).collect();
+    format!("[{}]", items.join(","))
+}
+
 /// `DocumentComparer.CompareDocuments(original, modified, author)`.
 pub fn compare_documents(
     original: &[u8],
@@ -2437,19 +2506,27 @@ fn compare_documents_impl(
         // Word inheritance: drop body-final HF slots already set on an earlier
         // mid-section break (dual chrome otherwise). Mid multi-section copies stay.
         strip_final_sectpr_inherited_header_footer(&mut dom, result_root);
-        // M35: comments carryover — union parts (B's byte-identical when its
-        // set ⊇ A's) + anchors re-injected at the equivalent text positions.
-        crate::comparer::comments::carry_comments(
-            &mut dom,
-            result_root,
-            &pkg1,
-            &main1,
-            &pkg2,
-            &main2,
-            &mut out,
-            &main1,
-            &settings.author_for_revisions,
-        );
+    }
+
+    // M35: comments carryover is a package-validity invariant, not a
+    // Word-visual formatting pass. Both supported comparer presets must union
+    // comment parts and re-inject their anchors; otherwise PowerTools-faithful
+    // output can retain an original comment definition after its source
+    // paragraph becomes a deletion while silently losing the anchor triplet.
+    let has_comments = pkg1.part_string("word/comments.xml").is_some()
+        || pkg2.part_string("word/comments.xml").is_some();
+    crate::comparer::comments::carry_comments(
+        &mut dom,
+        result_root,
+        &pkg1,
+        &main1,
+        &pkg2,
+        &main2,
+        &mut out,
+        &main1,
+        &settings.author_for_revisions,
+    );
+    if has_comments {
         // Comment anchors keep source ids (aligned with comments.xml). Re-run
         // revision renumber with those ids reserved so move/tblPrChange never
         // share an id with commentRange* (Word "unreadable content").
@@ -3054,5 +3131,93 @@ mod tests {
             sz_pos > pos_pos,
             "sz must follow position (EG_RPrBase order), got order: {order:?}"
         );
+    }
+
+    /// `revision_to_json` / `revisions_to_json` are the single serialization
+    /// shared by the CLI (`jubarte revisions --json`) and the wasm
+    /// `getRevisions` binding: exact CLI object shape, full string escaping —
+    /// backslash, quote, and EVERY control char < 0x20 (document text can
+    /// carry tabs, CRs, vertical tabs).
+    #[test]
+    fn revision_json_matches_cli_shape_and_escapes_control_chars() {
+        use crate::comparer::atoms::FormatChangeInfo;
+        use crate::comparer::{WmlComparerRevision, WmlComparerRevisionType};
+
+        let inserted = WmlComparerRevision {
+            revision_type: WmlComparerRevisionType::Inserted,
+            text: Some("a\"b\\c\nd\te\u{000B}f".to_string()),
+            author: Some("Reviewer \"X\"".to_string()),
+            date: Some("2026-07-17T00:00:00Z".to_string()),
+            content_element: None,
+            revision_element: None,
+            part_name: "word/document.xml".to_string(),
+            move_group_id: Some(3),
+            is_move_source: Some(true),
+            format_change: None,
+        };
+        assert_eq!(
+            revision_to_json(&inserted),
+            concat!(
+                "{\"type\":\"Inserted\",\"author\":\"Reviewer \\\"X\\\"\",",
+                "\"date\":\"2026-07-17T00:00:00Z\",\"part\":\"word/document.xml\",",
+                "\"moveGroupId\":3,\"isMoveSource\":true,\"formatChange\":null,",
+                "\"text\":\"a\\\"b\\\\c\\nd\\te\\u000bf\"}"
+            )
+        );
+
+        let format_changed = WmlComparerRevision {
+            revision_type: WmlComparerRevisionType::FormatChanged,
+            text: None,
+            author: None,
+            date: None,
+            content_element: None,
+            revision_element: None,
+            part_name: "word/document.xml".to_string(),
+            move_group_id: None,
+            is_move_source: None,
+            format_change: Some(FormatChangeInfo {
+                changed_properties: vec!["bold".to_string(), "sz".to_string()],
+                ..FormatChangeInfo::default()
+            }),
+        };
+        assert_eq!(
+            revision_to_json(&format_changed),
+            concat!(
+                "{\"type\":\"FormatChanged\",\"author\":\"\",\"date\":\"\",",
+                "\"part\":\"word/document.xml\",\"moveGroupId\":null,",
+                "\"isMoveSource\":null,",
+                "\"formatChange\":{\"changedProperties\":[\"bold\",\"sz\"]},",
+                "\"text\":\"\"}"
+            )
+        );
+
+        // The wasm array shape is exactly the objects joined inside [].
+        let expected_array = format!(
+            "[{},{}]",
+            revision_to_json(&inserted),
+            revision_to_json(&format_changed)
+        );
+        assert_eq!(
+            revisions_to_json(&[inserted, format_changed]),
+            expected_array
+        );
+        assert_eq!(revisions_to_json(&[]), "[]");
+    }
+
+    #[test]
+    fn word_canonical_style_id_preserves_toc_builtins() {
+        // Regression: TOC 1..9 are ALL-CAPS built-in styleIds (TOC1..TOC9,
+        // name "toc N"). The generic PascalCase fallback would mangle them to
+        // Toc1.., renaming a live built-in to a custom id — LibreOffice/Word
+        // then drop the built-in TOC indents + dot-leader tabs and the table of
+        // contents reflows, collapsing the visual redline score.
+        assert_eq!(word_canonical_style_id("toc 1"), "TOC1");
+        assert_eq!(word_canonical_style_id("toc 9"), "TOC9");
+        assert_eq!(word_canonical_style_id("TOC 2"), "TOC2"); // name matched case-insensitively
+        assert_eq!(word_canonical_style_id("toc heading"), "TOCHeading");
+        // Sibling built-ins and the generic PascalCase path are unaffected.
+        assert_eq!(word_canonical_style_id("heading 1"), "Heading1");
+        assert_eq!(word_canonical_style_id("document title"), "DocumentTitle");
+        assert_eq!(word_canonical_style_id("my custom style"), "MyCustomStyle");
     }
 }

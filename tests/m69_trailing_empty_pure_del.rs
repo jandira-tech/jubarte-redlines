@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M69 — trailing empty pure-del para-mark cleared (file_69 Word leaves bare).
 
 use std::io::{Cursor, Read};

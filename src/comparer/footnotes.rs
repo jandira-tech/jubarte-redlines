@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.H.4 — footnote/endnote id-range, mandatory parts, empty-fill, revision
 //! predicate. Port of ChangeFootnoteEndnoteReferencesToUniqueRange (:2135),
 //! MandatorySeparatorNotes (:2077), FillInEmptyFootnotesEndnotes (:1053),

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M66 — B's final-section footer must land on the output final sectPr even
 //! when mid-body sections already carry footer/default (file_21: footer20).
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! OPC (Open Packaging Conventions) layer — M1.5.
 //!
 //! SPIKE FINDINGS (rdocx-opc 0.1, verified 2026-06-27):
@@ -19,10 +23,12 @@
 //! `word/document.xml`) and normalizes internally, so the rest of the crate is
 //! oblivious to the difference.
 
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 
 use rdocx_opc::OpcPackage;
 pub use rdocx_opc::{OpcError, Relationship, Relationships};
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipWriter};
 
 fn norm(name: &str) -> String {
     if name.starts_with('/') {
@@ -34,6 +40,20 @@ fn norm(name: &str) -> String {
 
 fn denorm(name: &str) -> String {
     name.trim_start_matches('/').to_string()
+}
+
+/// Convert a part name (leading-slash form, e.g. `/word/document.xml`) to its
+/// `.rels` file path (e.g. `word/_rels/document.xml.rels`). Mirrors the
+/// private `rdocx_opc::package::part_name_to_rels_path`.
+fn part_name_to_rels_path(part_name: &str) -> String {
+    let name = part_name.strip_prefix('/').unwrap_or(part_name);
+    if let Some(pos) = name.rfind('/') {
+        let dir = &name[..pos];
+        let file = &name[pos + 1..];
+        format!("{dir}/_rels/{file}.rels")
+    } else {
+        format!("_rels/{name}.rels")
+    }
 }
 
 /// Thin adapter over `rdocx_opc::OpcPackage`. Port-equivalent of `PartFS`.
@@ -79,10 +99,40 @@ impl PartFs {
     }
 
     /// Serialize the package back to zip bytes.
+    ///
+    /// Uses deflate compression level 1 (`deflate_quick`) instead of the
+    /// `zip` crate default level 6. Level 1 skips `longest_match` (the
+    /// largest WASM self-time frame, 26% of the deflate cluster per the W5
+    /// profile) while producing content-identical decompressed bytes — Word
+    /// opens any deflate level. ZIP-LEVEL-01 (WASM_PERF_PLAN.md).
     pub fn to_zip(&self) -> Result<Vec<u8>, OpcError> {
-        let mut buf = Cursor::new(Vec::new());
-        self.pkg.write_to(&mut buf)?;
-        Ok(buf.into_inner())
+        let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .compression_level(Some(1));
+
+        let ct_xml = self.pkg.content_types.to_xml()?;
+        zip.start_file("[Content_Types].xml", options)?;
+        zip.write_all(&ct_xml)?;
+
+        let pkg_rels_xml = self.pkg.package_rels.to_xml()?;
+        zip.start_file("_rels/.rels", options)?;
+        zip.write_all(&pkg_rels_xml)?;
+
+        for (part_name, rels) in &self.pkg.part_rels {
+            let rels_path = part_name_to_rels_path(part_name);
+            let rels_xml = rels.to_xml()?;
+            zip.start_file(&rels_path, options)?;
+            zip.write_all(&rels_xml)?;
+        }
+
+        for (name, data) in &self.pkg.parts {
+            let zip_name = name.strip_prefix('/').unwrap_or(name);
+            zip.start_file(zip_name, options)?;
+            zip.write_all(data)?;
+        }
+
+        Ok(zip.finish()?.into_inner())
     }
 
     // ── gap helpers (the few bits opc-partfs adds on top of raw zip) ───────────

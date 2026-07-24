@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Integration tests for the `redline` binary — drives the compiled CLI to cover
 //! the file-I/O `run` path (default output naming, --force, --quiet, errors) and
 //! confirms the produced docx is ooxmlsdk-loadable.

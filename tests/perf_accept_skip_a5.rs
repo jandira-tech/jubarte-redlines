@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! ACCEPT-SKIP-A5 — when no paragraph mark is deleted/moved-from
 //! (p/pPr/rPr/(del|moveFrom)), accept_deleted_and_move_from_paragraph_marks
 //! transfers the root NodeId (no annotate + full-tree rebuild + rewrap).

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M65 — both Normals bare (no stored rPr): do not promote B docDefaults
 //! fonts onto Normal (file_170 Word leaves bare Normal).
 

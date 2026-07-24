@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 # LCS and comparison performance implementation plan — bank every second without changing the winner
 
 > **For agentic workers:** execute one measured increment at a time. Use the

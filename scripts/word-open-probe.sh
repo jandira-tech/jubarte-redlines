@@ -1,4 +1,9 @@
 #!/usr/bin/env zsh
+
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Ask the real Microsoft Word (AppleScript, macOS-only) to open a .docx and
 # report the outcome — the corruption oracle for redline outputs:
 #   OPENED: <name>   — Word accepted the file (exit 0)

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M115 — residual pairs require both sides short; M104 short-into-long
 //! only with peel. file_169 short demo × pot-pourri: Word pure-I's long next
 //! and pure-D's short demo at end (no early nest of short title into subtitle).

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Shared integration-test helpers: Ring-1 Word-validity gates and the
 //! canonical DOCX structural comparator (M0.3).
 //!

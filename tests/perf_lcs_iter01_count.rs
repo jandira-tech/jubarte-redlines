@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! LCS-ITER-01 / 1f0ab33 fix — non-allocating atom count must equal
 //! `descendant_atoms().len()`.
 //!

@@ -629,7 +629,6 @@ dependencies = [
  "ooxmlsdk",
  "quick-xml 0.41.0",
  "rdocx-opc",
- "regex",
  "serde_json",
  "sha1 0.10.7",
  "tempfile",

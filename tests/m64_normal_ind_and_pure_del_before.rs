@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M64 — (1) keep Word-kept pure-del `before=800` (file_196; M61 reverted);
 //! (2) copy B Normal `w:ind` when merging spacing (file_196 firstLine=432).
 

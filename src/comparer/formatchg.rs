@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.G — format-change detection. Port of DetectFormatChangesInAtomList (:4824),
 //! GetRunPropertiesFromAtom (:4854), NormalizeRunProperties (:4884),
 //! AreRunPropertiesEqual (:4868), GetChangedPropertyNames (:4919),
@@ -25,37 +29,70 @@ fn is_rsid_attr(n: &XName) -> bool {
     n.local_name().to_lowercase().starts_with("rsid")
 }
 
-/// `NormalizeRunProperties` — canonical `w:rPr`: drop `w:rPrChange` + pt-ns
-/// children; children sorted by local name; each child keeps name + filtered
-/// (no rsid*, no pt) attrs sorted by local name; nested sub-elements dropped.
-pub fn normalize_run_properties(dom: &mut Dom, rpr: Option<NodeId>) -> NodeId {
-    let ne = dom.new_element(W::r_pr());
+/// One canonical `w:rPr` child: element name plus its filtered, sorted attrs.
+type CanonicalRprChild = (XName, Vec<(XName, String)>);
+
+/// `NormalizeRunProperties` (read half) — extract `rpr`'s canonical child spec from
+/// `src` with PURE READS: drop `w:rPrChange` + pt-ns children; children sorted by
+/// local name; each child keeps name + filtered (no rsid*, no pt) attrs sorted by
+/// local name; nested sub-elements dropped. Because it only reads, the spec can then
+/// be materialized into ANY arena — `dom` itself (same-dom normalize) or a throwaway
+/// scratch arena (see [`normalized_rpr_serialized`]).
+fn canonical_rpr_spec(src: &Dom, rpr: Option<NodeId>) -> Vec<CanonicalRprChild> {
+    let mut spec: Vec<CanonicalRprChild> = Vec::new();
     if let Some(rpr) = rpr {
-        let mut kids: Vec<NodeId> = dom
+        let mut kids: Vec<NodeId> = src
             .elements(rpr, None)
             .into_iter()
             .filter(|&c| {
-                let n = dom.name(c).unwrap();
+                let n = src.name(c).unwrap();
                 n != W::name("rPrChange") && n.namespace_name() != PT::URI
             })
             .collect();
-        kids.sort_by_key(|&c| dom.name(c).unwrap().local_name().to_string());
+        // ALLOC-LEAN-01: sort_by (compare &str) not sort_by_key(to_string) — the
+        // latter heap-allocates a String on EVERY comparison (keys are not cached),
+        // ~21M allocs on the dissertation. Same total order ⇒ byte-identical.
+        kids.sort_by(|&a, &b| {
+            let na = src.name(a).unwrap();
+            let nb = src.name(b).unwrap();
+            na.local_name().cmp(nb.local_name())
+        });
         for c in kids {
-            let cn = dom.name(c).unwrap();
-            let child = dom.new_element(cn);
-            let mut attrs: Vec<(XName, String)> = dom
+            let cn = src.name(c).unwrap();
+            let mut attrs: Vec<(XName, String)> = src
                 .attributes(c)
                 .into_iter()
                 .filter(|(an, _)| !is_rsid_attr(an) && an.namespace_name() != PT::URI)
                 .collect();
-            attrs.sort_by_key(|(an, _)| an.local_name().to_string());
-            for (an, av) in attrs {
-                dom.set_attribute_value(child, &an, Some(&av));
-            }
-            dom.add(ne, child);
+            attrs.sort_by(|(a, _), (b, _)| a.local_name().cmp(b.local_name()));
+            spec.push((cn, attrs));
         }
     }
+    spec
+}
+
+/// `NormalizeRunProperties` (build half) — materialize a canonical `w:rPr` from a
+/// spec into `dst`, returning its NodeId. Reproduces the original single-pass build's
+/// exact node/attr order, so `serialize_element` is byte-identical to the pre-split
+/// code (guarded by `format_changes_cache_matches_direct`).
+fn build_canonical_rpr(dst: &mut Dom, spec: &[CanonicalRprChild]) -> NodeId {
+    let ne = dst.new_element(W::r_pr());
+    for (cn, attrs) in spec {
+        let child = dst.new_element(cn.clone());
+        for (an, av) in attrs {
+            dst.set_attribute_value(child, an, Some(av.as_str()));
+        }
+        dst.add(ne, child);
+    }
     ne
+}
+
+/// `NormalizeRunProperties` — canonical `w:rPr` built in the same arena `dom`. The
+/// scratch-serialization path ([`normalized_rpr_serialized`]) instead builds into a
+/// DEDICATED arena so the persistent one is never enlarged (MEM-ATTRIBUTE-01).
+pub fn normalize_run_properties(dom: &mut Dom, rpr: Option<NodeId>) -> NodeId {
+    let spec = canonical_rpr_spec(dom, rpr);
+    build_canonical_rpr(dom, &spec)
 }
 
 /// `AreRunPropertiesEqual` — canonical-form equality (null ≡ empty rPr).
@@ -74,15 +111,28 @@ pub fn are_run_properties_equal(dom: &mut Dom, a: Option<NodeId>, b: Option<Node
 /// O(distinct rPr). The value equals `are_run_properties_equal`'s per-operand
 /// serialization exactly, so a cached `==` of two such strings is that predicate.
 fn normalized_rpr_serialized(
-    dom: &mut Dom,
+    dom: &Dom,
+    scratch: &mut Dom,
     cache: &mut std::collections::HashMap<Option<NodeId>, String>,
     rpr: Option<NodeId>,
 ) -> String {
     if let Some(s) = cache.get(&rpr) {
         return s.clone();
     }
-    let ne = normalize_run_properties(dom, rpr);
-    let s = dom.serialize_element(ne);
+    // Normalization is SCRATCH: it materializes a canonical `w:rPr` element only to
+    // serialize it to a `String`. Read the spec off the persistent arena (pure reads)
+    // and build+serialize it in a DEDICATED scratch arena, reclaimed per call. On
+    // run-fragmented documents the distinct-NodeId rPrs miss this cache in the
+    // thousands; building into the persistent arena reallocated its backing `Vec` to
+    // the next doubling tier and pinned it — the multi-GB single allocation that
+    // dominated the compare peak (MEM-ATTRIBUTE-01). `with_scratch` alone truncated
+    // LENGTH but not CAPACITY, so a separate arena is required, not just reclamation.
+    // The serialized bytes are unchanged, so the format-change verdict is identical.
+    let spec = canonical_rpr_spec(dom, rpr);
+    let s = scratch.with_scratch(|d| {
+        let ne = build_canonical_rpr(d, &spec);
+        d.serialize_element(ne)
+    });
     cache.insert(rpr, s.clone());
     s
 }
@@ -129,7 +179,8 @@ fn prop_signature(dom: &mut Dom, prop: NodeId) -> String {
         .into_iter()
         .filter(|(an, _)| !is_rsid_attr(an))
         .collect();
-    attrs.sort_by_key(|(an, _)| an.local_name().to_string());
+    // ALLOC-LEAN-01: compare &str, don't allocate a String key per comparison.
+    attrs.sort_by(|(a, _), (b, _)| a.local_name().cmp(b.local_name()));
     for (an, av) in attrs {
         dom.set_attribute_value(pe, &an, Some(&av));
     }
@@ -337,6 +388,10 @@ fn detect_format_changes_impl(
     // [`normalized_rpr_serialized`].
     let mut norm_cache: std::collections::HashMap<Option<NodeId>, String> =
         std::collections::HashMap::new();
+    // Dedicated throwaway arena for rPr-normalization serialization, kept SEPARATE
+    // from `dom`: the per-rPr scratch build must never enlarge the persistent arena
+    // (MEM-ATTRIBUTE-01 — that build was the multi-GB single allocation at peak).
+    let mut scratch = Dom::new();
     for (i, atom) in atoms.iter().enumerate() {
         if atom.correlation_status != CorrelationStatus::Equal {
             continue;
@@ -397,8 +452,8 @@ fn detect_format_changes_impl(
         // and the cache stores exactly those per-operand strings. The uncached
         // branch is the equivalence oracle (test builds only).
         let differ = if use_cache {
-            normalized_rpr_serialized(dom, &mut norm_cache, old)
-                != normalized_rpr_serialized(dom, &mut norm_cache, new)
+            normalized_rpr_serialized(dom, &mut scratch, &mut norm_cache, old)
+                != normalized_rpr_serialized(dom, &mut scratch, &mut norm_cache, new)
         } else {
             !are_run_properties_equal(dom, old, new)
         };
@@ -493,19 +548,104 @@ mod format_change_cache_tests {
         ];
 
         let mut cache = std::collections::HashMap::new();
+        let mut scratch = Dom::new();
         for &rpr in &cases {
             let want = direct(&mut dom, rpr);
-            let got = normalized_rpr_serialized(&mut dom, &mut cache, rpr);
+            let got = normalized_rpr_serialized(&dom, &mut scratch, &mut cache, rpr);
             assert_eq!(got, want, "cached != direct for {rpr:?}");
             // Cache hit must return the same value, not diverge.
-            let got2 = normalized_rpr_serialized(&mut dom, &mut cache, rpr);
+            let got2 = normalized_rpr_serialized(&dom, &mut scratch, &mut cache, rpr);
             assert_eq!(got2, want, "cache-hit != direct for {rpr:?}");
         }
         // bold_sz and sz_bold have identical properties ⇒ identical normal form.
         assert_eq!(
-            normalized_rpr_serialized(&mut dom, &mut cache, Some(bold_sz)),
-            normalized_rpr_serialized(&mut dom, &mut cache, Some(sz_bold)),
+            normalized_rpr_serialized(&dom, &mut scratch, &mut cache, Some(bold_sz)),
+            normalized_rpr_serialized(&dom, &mut scratch, &mut cache, Some(sz_bold)),
             "canonicalization must ignore source child order"
+        );
+    }
+
+    /// MEM-ATTRIBUTE-01 regression: normalizing an `rPr` is SCRATCH work whose only
+    /// output is a `String`, so it must not leave throwaway nodes in the persistent
+    /// arena. On run-fragmented documents each of thousands of runs carries its own
+    /// (identical-content, distinct-NodeId) `rPr`, defeating the NodeId-keyed cache;
+    /// the old code then leaked ~one normalized subtree per run, growing the arena
+    /// `Vec` into the multi-GB single block that dominated the compare peak.
+    #[test]
+    fn normalized_rpr_serialization_reclaims_scratch_nodes() {
+        let mut dom = Dom::new();
+        // 500 DISTINCT rPr nodes with identical content — every lookup is a cache
+        // miss (distinct NodeId keys), so every call normalizes afresh.
+        let rprs: Vec<NodeId> = (0..500)
+            .map(|_| rpr_with(&mut dom, &[("b", &[]), ("sz", &[("val", "24")]), ("i", &[])]))
+            .collect();
+        let mut cache = std::collections::HashMap::new();
+        let mut scratch = Dom::new();
+        let before = dom.node_count();
+        let mut last = String::new();
+        for &rpr in &rprs {
+            last = normalized_rpr_serialized(&dom, &mut scratch, &mut cache, Some(rpr));
+        }
+        let grew = dom.node_count() - before;
+        assert!(!last.is_empty(), "sanity: normalization produced output");
+        // Each normalization builds `w:rPr` + 3 children in the DEDICATED scratch arena
+        // and reclaims them per call. The persistent `dom` is only read, so it must not
+        // grow by a single node — the old same-arena path leaked all 4 per distinct rPr
+        // (~2000 here) into the persistent `Vec`.
+        assert_eq!(
+            grew, 0,
+            "normalizing {} distinct rPr grew the persistent arena by {grew} nodes; \
+             scratch normalization must build in its own arena",
+            rprs.len()
+        );
+    }
+
+    /// FMT-SCRATCH-02 (MEM-ATTRIBUTE-01): rPr normalization must not merely RECLAIM
+    /// its throwaway nodes from the production arena (that is FMT-SCRATCH-01) — it
+    /// must never ALLOCATE into it at all. `with_scratch` truncates the shared arena's
+    /// LENGTH but not its CAPACITY, so the first normalize push against a near-full
+    /// arena reallocs the entire backing `Vec` to the next doubling tier and pins it
+    /// (on the dissertation, the 3 GiB single block that dominated the compare peak).
+    /// Building the scratch element in a DEDICATED arena leaves production capacity
+    /// untouched. Driven through the public entry point, whose signature is stable.
+    #[test]
+    fn detect_format_changes_never_grows_production_arena_capacity() {
+        type Props<'a> = &'a [(&'a str, &'a [(&'a str, &'a str)])];
+        let mut dom = Dom::new();
+        // before == after CONTENT (so no atom is retagged — isolates the pure
+        // normalize/serialize scratch path from the get_changed_property_names and
+        // pPr-projection paths), but each rPr is a DISTINCT NodeId so every one of the
+        // two per-atom normalizations is a cache miss and actually runs.
+        let props: Props = &[("b", &[]), ("sz", &[("val", "24")]), ("i", &[])];
+        let mut atoms = Vec::new();
+        for _ in 0..1500 {
+            let mut a = run_atom(&mut dom, props);
+            let before = run_atom(&mut dom, props);
+            a.comparison_unit_atom_before = Some(Box::new(before));
+            atoms.push(a);
+        }
+        // Pin the production arena at its exact fill (capacity == length). Any push
+        // into it now provably reallocs, growing capacity — the leak we forbid.
+        dom.shrink_arena_to_fit();
+        let cap_before = dom.node_capacity();
+        let settings = WmlComparerSettings::default();
+        detect_format_changes_in_atom_list(&mut dom, &mut atoms, &settings);
+        // Guard the isolation premise: identical before/after ⇒ nothing retagged, so
+        // the only node work this exercised is rPr normalization scratch.
+        assert!(
+            atoms
+                .iter()
+                .all(|a| a.correlation_status == CorrelationStatus::Equal),
+            "test setup: identical before/after must produce zero format changes"
+        );
+        assert_eq!(
+            dom.node_capacity(),
+            cap_before,
+            "normalizing {} distinct rPr reallocated the production arena \
+             (cap {cap_before} -> {}); rPr normalization scratch must build in a \
+             dedicated arena, never the persistent one",
+            atoms.len(),
+            dom.node_capacity(),
         );
     }
 
