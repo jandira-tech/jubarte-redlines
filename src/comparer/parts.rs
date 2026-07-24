@@ -243,7 +243,10 @@ pub fn reconcile_dangling_relationships(
                         id: r.id.clone(),
                         rel_type: r.rel_type.clone(),
                         target: r.target.clone(),
-                        external: r.target_mode.as_deref() == Some("External"),
+                        // Same rule as parse_relationship_rows: TargetMode OR
+                        // hyperlink/absolute-URI classification.
+                        external: r.target_mode.as_deref() == Some("External")
+                            || is_external_relationship(&r.rel_type, &r.target),
                     },
                     src_doc.clone(),
                 ));

@@ -1261,15 +1261,17 @@ fn font_size_12_vs_18_last_residual_is_pure_id_not_font_bridge() {
         ser_last.contains("standard") || ser_last.contains("Size") || ser_last.contains("delText"),
         "last carries pure-D base body: {ser_last}"
     );
-    // Lone-token "font" bridge would leave equal run mid-body; reject EQ font outside del/ins.
-    let eq_only = {
-        // crude: if serialized has bare w:t with font not inside del/ins — hard; check no dual mesh
-        !ser_last.contains("w:t>font</w:t>")
-            && !ser_last.contains("w:t xml:space=\"preserve\">font")
-    };
+    // Lone-token "font" bridge would leave equal run mid-body. Do not accept
+    // "Medium-large" as a fallback — that is expected *inserted* content and
+    // made this assert always-true (CR hidden gem / test-lie).
     assert!(
-        eq_only || ser_last.contains("Medium-large"),
+        !ser_last.contains("w:t>font</w:t>")
+            && !ser_last.contains("w:t xml:space=\"preserve\">font"),
         "must not Equal-bridge lone 'font' token; ser={ser_last}"
+    );
+    assert!(
+        ser_last.contains("Medium-large") || ser_last.contains("Medium"),
+        "last carries pure-I next body: {ser_last}"
     );
 }
 

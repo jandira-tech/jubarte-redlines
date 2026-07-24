@@ -238,11 +238,19 @@ fn canonicalizes_numeric_style_ids_to_word_names() {
     );
     let main = pkg.part_string("word/document.xml").expect("main");
     assert!(
-        main.contains("Heading1")
-            || main.contains("ListParagraph")
-            || main.contains("PreformattedText"),
-        "body pStyle refs must remap to canonical ids: {main}"
+        main.contains("Heading1"),
+        "body must remap heading pStyle to Heading1: {main}"
     );
+    assert!(
+        main.contains("ListParagraph"),
+        "body must remap list pStyle to ListParagraph: {main}"
+    );
+    for stale in ["style20", "w:val=\"2\"", "w:val=\"14\"", "w:val='2'", "w:val='14'"] {
+        assert!(
+            !main.contains(stale),
+            "body must not keep stale style id {stale}: {main}"
+        );
+    }
 }
 
 /// Broken media: dangling Target that doesn't resolve. Output must not leave

@@ -103,6 +103,89 @@ use jubarte::namespaces::{A, R, W};
 use jubarte::opc::PartFs;
 use jubarte::xmllinq::Dom;
 
+/// Reconcile must classify source hyperlinks without TargetMode as external
+/// (same rule as `parse_relationship_rows`). Otherwise it tries an internal
+/// part copy for `http://…` targets and orphans the rId.
+#[test]
+fn m4_h3_reconcile_hyperlink_without_target_mode_is_external() {
+    use std::io::{Cursor, Write};
+
+    // Dest: empty-ish package with a main part (from fixture).
+    let orig = std::fs::read("tests/fixtures/redline/original.docx").unwrap();
+    let mut dest = PartFs::open(&orig).unwrap();
+
+    // Source package whose document rels have a hyperlink WITHOUT TargetMode.
+    let mut src_buf = Vec::new();
+    {
+        let mut z = zip::ZipWriter::new(Cursor::new(&mut src_buf));
+        let opt = zip::write::SimpleFileOptions::default();
+        z.start_file("[Content_Types].xml", opt).unwrap();
+        z.write_all(
+            br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#,
+        )
+        .unwrap();
+        z.start_file("_rels/.rels", opt).unwrap();
+        z.write_all(
+            br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#,
+        )
+        .unwrap();
+        z.start_file("word/document.xml", opt).unwrap();
+        z.write_all(
+            br#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p/></w:body></w:document>"#,
+        )
+        .unwrap();
+        z.start_file("word/_rels/document.xml.rels", opt).unwrap();
+        // NO TargetMode — must still be treated as external via hyperlink type.
+        z.write_all(
+            br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdHL" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/page"/>
+</Relationships>"#,
+        )
+        .unwrap();
+        z.finish().unwrap();
+    }
+    let src = PartFs::open(&src_buf).unwrap();
+
+    let mut d = Dom::new();
+    let root = d.new_element(W::document());
+    let body = d.new_element(W::body());
+    let p = d.new_element(W::p());
+    let hl = d.new_element(W::name("hyperlink"));
+    d.set_attribute_value(hl, &R::name("id"), Some("rIdHL"));
+    d.add(p, hl);
+    d.add(body, p);
+    d.add(root, body);
+
+    reconcile_dangling_relationships(&mut d, root, &mut dest, &[&src]);
+    let new_id = d
+        .attribute(hl, &R::name("id"))
+        .expect("hyperlink rId must be preserved/remapped, not dropped");
+    let dest_doc = dest
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".into());
+    let rels = dest.read_rels_for(&dest_doc).expect("dest rels");
+    let row = rels
+        .items
+        .iter()
+        .find(|r| r.id == new_id)
+        .expect("dest must carry the hyperlink relationship");
+    assert_eq!(
+        row.target_mode.as_deref(),
+        Some("External"),
+        "hyperlink without TargetMode in source must land as External: {row:?}"
+    );
+    assert!(
+        row.target.contains("example.com"),
+        "target preserved: {row:?}"
+    );
+}
+
 /// M4.H.3 — an orphan rId (in no package) has its attribute dropped (no dangling rel).
 #[test]
 fn m4_h3_reconcile_drops_orphan() {

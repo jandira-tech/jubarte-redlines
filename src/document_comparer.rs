@@ -2829,6 +2829,17 @@ fn compare_documents_impl(
     // referenced definitions renumbered 1..n with real revision markup) into
     // the output package. Replaces the old by-id `compare_note_parts` model,
     // whose pairing broke whenever Word renumbered notes.
+    //
+    // Remap style refs on notes_ctx *before* serialize/writeback so B.4 does
+    // not clobber an earlier styles pass with un-remapped note content.
+    if settings.merge_replaced_paragraphs && !style_renames.is_empty() {
+        for note_root in [notes_ctx.fn_with_revisions, notes_ctx.en_with_revisions]
+            .into_iter()
+            .flatten()
+        {
+            remap_style_refs(&mut dom, note_root, &style_renames);
+        }
+    }
     let mut footnote_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut endnote_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (part, root, is_fn) in [

@@ -2142,42 +2142,45 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
         // --- M226: mixed-residual equal live/old spacing no-op pPrChange ---
         // The measured heading cousins are mixed paragraphs. Applying this to
         // equal pilcrows erases genuine spacing-removal history (M81/file_69).
-        if !para_is_mixed_revision(dom, p) {
-            continue;
-        }
-        if let (Some(live_sp), Some(old_sp)) = (
-            dom.element(ppr, &W::name("spacing")),
-            dom.element(old_ppr, &W::name("spacing")),
-        ) {
-            // The measured Heading/Title/Subtitle cousins all carry explicit
-            // line=240/276. An after-only value (M81/file_69) is real history.
-            if dom.attribute(live_sp, &W::name("line")).is_none()
-                || dom.attribute(old_sp, &W::name("line")).is_none()
-            {
-                continue;
-            }
-            let same_spacing = ["before", "after", "line", "lineRule"].iter().all(|&a| {
-                dom.attribute(live_sp, &W::name(a)).unwrap_or("")
-                    == dom.attribute(old_sp, &W::name(a)).unwrap_or("")
-            });
-            if same_spacing {
-                let mut other_layout = false;
-                for c in dom.elements(old_ppr, None) {
-                    let Some(n) = dom.name(c) else {
-                        continue;
-                    };
-                    let local = n.local_name();
-                    if local == "spacing" || local == "rPr" || local == "pStyle" {
-                        continue;
-                    }
-                    other_layout = true;
-                    break;
-                }
-                if !other_layout {
-                    dom.remove(ppc);
+        // IMPORTANT: only gate *mixed* here. Pure-deleted mid body must fall
+        // through to M228 (was dead when this was `if !mixed { continue }`).
+        if para_is_mixed_revision(dom, p) {
+            if let (Some(live_sp), Some(old_sp)) = (
+                dom.element(ppr, &W::name("spacing")),
+                dom.element(old_ppr, &W::name("spacing")),
+            ) {
+                // The measured Heading/Title/Subtitle cousins all carry explicit
+                // line=240/276. An after-only value (M81/file_69) is real history.
+                if dom.attribute(live_sp, &W::name("line")).is_none()
+                    || dom.attribute(old_sp, &W::name("line")).is_none()
+                {
                     continue;
                 }
+                let same_spacing = ["before", "after", "line", "lineRule"].iter().all(|&a| {
+                    dom.attribute(live_sp, &W::name(a)).unwrap_or("")
+                        == dom.attribute(old_sp, &W::name(a)).unwrap_or("")
+                });
+                if same_spacing {
+                    let mut other_layout = false;
+                    for c in dom.elements(old_ppr, None) {
+                        let Some(n) = dom.name(c) else {
+                            continue;
+                        };
+                        let local = n.local_name();
+                        if local == "spacing" || local == "rPr" || local == "pStyle" {
+                            continue;
+                        }
+                        other_layout = true;
+                        break;
+                    }
+                    if !other_layout {
+                        dom.remove(ppc);
+                        continue;
+                    }
+                }
             }
+            // Mixed residual: do not run pure-del M228 promote.
+            continue;
         }
 
         // --- M228: mid pure-D spacing promote / line=276 noise ---

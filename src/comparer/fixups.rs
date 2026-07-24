@@ -100,12 +100,16 @@ pub fn fix_up_drawing_ids_in_package(docx: &[u8]) -> Result<Vec<u8>, crate::opc:
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
     let Some(xml) = pkg.part_string(&main) else {
-        return Ok(docx.to_vec());
+        return Err(crate::opc::OpcError::PartNotFound(format!(
+            "main document missing: {main}"
+        )));
     };
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
     let Some(root) = dom.root(doc) else {
-        return Ok(docx.to_vec());
+        return Err(crate::opc::OpcError::PartNotFound(format!(
+            "main document has no root element: {main}"
+        )));
     };
     fix_up_doc_pr_ids(&mut dom, root);
     fix_up_shape_ids(&mut dom, root);

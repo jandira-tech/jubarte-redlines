@@ -475,7 +475,9 @@ fn m50_skip_ahead_equal_table_promotes_to_move() {
     // Capability table text should appear before pure-deleted middle content
     // in serialization order (moveTo early).
     let cap_pos = xml.find("Cap capability").expect("cap text");
-    let parity_pos = xml.find("Parity real-time").unwrap_or(usize::MAX);
+    let parity_pos = xml
+        .find("Parity real-time")
+        .expect("deleted middle content must remain present (data loss if absent)");
     assert!(
         cap_pos < parity_pos,
         "capability (moveTo) must serialize before A-only deleted middle; cap@{cap_pos} parity@{parity_pos}"
