@@ -1,0 +1,70 @@
+# Standalone workspace so patching rdocx-opc does not touch jubarte-redlines
+# itself (this crate lives INSIDE the jubarte-redlines checkout as its wasm
+# binding; the neurotic_docx_bench consumes it via a gitignored symlink).
+[workspace]
+
+[package]
+name = "jubarte-wasm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "wasm-bindgen bindings for jubarte-redlines compare_documents (Word-mode redline)"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "jubarte_wasm"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jubarte-redlines = { path = "..", default-features = false }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[features]
+default = ["console-panic"]
+console-panic = ["dep:console_error_panic_hook"]
+# Diagnostic-only linear-memory page counter used by the W3 bench harness.
+# It is absent from the shipped default build.
+memory-metrics = []
+
+# Force pure-Rust deflate-only zip for the whole graph (rdocx-opc defaults pull zstd-sys,
+# which needs a wasm-capable C toolchain Apple clang does not provide).
+[patch.crates-io]
+rdocx-opc = { path = "patches/rdocx-opc" }
+
+# Runtime-speed profile for wasm-pack: -O3 (not -Oz size). Requires binaryen on PATH.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+  "-O3",
+  "--enable-bulk-memory",
+  "--enable-nontrapping-float-to-int",
+  "--enable-sign-ext",
+  "--enable-simd",
+]
+
+# `wasm-pack --profiling` still compiles Cargo's release profile, which strips
+# the wasm name section below. Use `wasm-pack --profile profiling` instead: the
+# custom wasm-pack profile keeps names through wasm-opt while Cargo's matching
+# profile retains release codegen.
+[package.metadata.wasm-pack.profile.custom]
+wasm-opt = [
+  "-O3",
+  "-g",
+  "--enable-bulk-memory",
+  "--enable-nontrapping-float-to-int",
+  "--enable-sign-ext",
+  "--enable-simd",
+]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[profile.profiling]
+inherits = "release"
+debug = 1
+strip = "none"

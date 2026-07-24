@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "jubarte-verify-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  // Apple's @apple/app-store-server-library depends on jsonwebtoken (node:crypto)
+  // and node-fetch — it needs the Node compat layer to load on workerd.
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // Non-secret config. appAppleId + bundleId are required to verify Production
+  // data (see MAC_APP_STORE_RELEASE.md). enable_online_checks does OCSP over the
+  // network (node-fetch) — left off; flip to "true" only if you need revocation.
+  "vars": {
+    "APPLE_BUNDLE_ID": "com.jandira.jubarte",
+    "APPLE_APP_APPLE_ID": "6790926615",
+    "APPLE_ENABLE_ONLINE_CHECKS": "false"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jubarte-entitlements",
+      "database_id": "dfd37865-7cda-49a3-a43c-981057073aa6",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

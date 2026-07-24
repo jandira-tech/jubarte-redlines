@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged over the generated Info.plist. Declares the .docx association with
+     LSHandlerRank=Alternate: Jubarte appears in Finder's "Open With…" menu but
+     never competes with Word for the double-click default. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>docx</string></array>
+      <key>CFBundleTypeName</key>
+      <string>Word Document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array><string>org.openxmlformats.wordprocessingml.document</string></array>
+    </dict>
+  </array>
+</dict>
+</plist>

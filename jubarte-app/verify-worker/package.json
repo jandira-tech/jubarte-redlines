@@ -1,0 +1,30 @@
+{
+  "name": "jubarte-verify-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "cf-typegen": "wrangler types",
+    "db:migrate:local": "wrangler d1 migrations apply jubarte-entitlements --local",
+    "db:migrate:remote": "wrangler d1 migrations apply jubarte-entitlements --remote"
+  },
+  "dependencies": {
+    "@apple/app-store-server-library": "^3.1.0",
+    "hono": "^4.12.30"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
+    "@cloudflare/vitest-pool-workers": "^0.18.4",
+    "@cloudflare/workers-types": "^5.20260714.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.110.0"
+  }
+}

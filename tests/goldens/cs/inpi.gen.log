@@ -1,0 +1,6 @@
+Comparing documents...
+  Original: /Users/arthrod/temp/T/ooxmlsdk/crates/ooxmlsdk-redline/tests/fixtures/redline-inpi/original-new.docx
+  Modified: /Users/arthrod/temp/T/ooxmlsdk/crates/ooxmlsdk-redline/tests/fixtures/redline-inpi/modified-new.docx
+
+Redline complete: 1 revision(s) found
+  Output: /Users/arthrod/temp/T/ooxmlsdk/crates/ooxmlsdk-redline/tests/goldens/cs/inpi.redline.docx

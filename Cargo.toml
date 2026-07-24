@@ -1,0 +1,105 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Standalone workspace (also shields the crate from any enclosing workspace
+# while this checkout sits inside another repo).
+[workspace]
+
+[package]
+name = "jubarte-redlines"
+version = "0.5.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Jandira Technologies, LLC"]
+license = "AGPL-3.0-only"
+description = "Lossless DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
+repository = "https://github.com/jandira-tech/jubarte-redlines"
+homepage = "https://github.com/jandira-tech/jubarte-redlines"
+documentation = "https://docs.rs/jubarte-redlines"
+readme = "README.md"
+keywords = ["docx", "redline", "track-changes", "openxml", "word"]
+categories = ["text-processing", "parser-implementations", "command-line-utilities"]
+# Keep the published package lean: test fixtures/goldens (~3 MB) and dev tools
+# stay in the repository only.
+include = [
+  "src/**",
+  "benches/**",
+  "Cargo.toml",
+  "README.md",
+  "CHANGELOG.md",
+  "KNOWN_ISSUES.md",
+  "LICENSE",
+  "LICENSES.md",
+  "NOTICE",
+  "LICENSES/**",
+]
+
+# Rust import path stays `jubarte::…` (historical library name). The crates.io
+# package / GitHub repo are `jubarte-redlines`.
+[lib]
+name = "jubarte"
+path = "src/lib.rs"
+
+[package.metadata.docs.rs]
+all-features = true
+
+# Workspace lint policy (plan A1). Groups at priority = -1; pedantic is NOT
+# enabled as a group — only individually chosen low-hit pedantic lints.
+[lints.rust]
+unsafe_code = "deny" # crate is 100% safe today; keep it that way
+
+[lints.clippy]
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+# Targeted pedantic (individually, NOT the group).
+# Dropped: redundant_closure_for_method_calls (>50 hits → follow-up).
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args = "warn"
+manual_let_else = "warn"
+needless_pass_by_value = "warn"
+
+[features]
+default = ["cli", "fast-alloc"]
+# The `jubarte` binary's CLI (clap). Library consumers can opt out with
+# `default-features = false` to keep the dependency tree minimal.
+cli = ["dep:clap"]
+# CLI global allocator (mimalloc). Default-on; disable with
+# `--no-default-features --features cli` to fall back to the system allocator
+# (used for allocator A/B measurement). Library-only builds never pull it in.
+fast-alloc = ["cli", "dep:mimalloc"]
+# P0-LAB-01: compiled-out stage counters / coarse timers (src/perf.rs).
+# Diagnostic only — never use a profiled build for final wall-time claims.
+perf-profile = []
+
+[dependencies]
+rdocx-opc = "0.1" # OPC/zip package layer
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # fallback / direct zip access if rdocx-opc's surface is insufficient
+sha1 = "0.10"
+clap = { version = "4.5", features = ["derive"], optional = true }
+# CLI-only global allocator. The redline pipeline is ~41% allocation self-time
+# (xmllinq node clone/drop churn, measured via samply on the RFP17 fixtures);
+# mimalloc cuts that per-alloc cost with zero behaviour change. Kept out of the
+# pure-library dependency tree so downstream consumers pick their own allocator.
+mimalloc = { version = "0.1", default-features = false, optional = true }
+
+[[bin]]
+name = "jubarte"
+required-features = ["cli"]
+
+[dev-dependencies]
+criterion = "0.8"
+# XML assertions in integration tests; production parsing uses xmllinq's
+# purpose-built scanner instead.
+quick-xml = "0.41"
+# Round-trip validation of produced .docx files in integration tests; only the
+# `parts` feature (= dep:zip) is built.
+ooxmlsdk = { version = "0.11", default-features = false, features = ["parts"] }
+tempfile = "3"
+# Ring 1½ schema-consistency oracle (tests/schema_consistency.rs).
+serde_json = "1"
+
+[[bench]]
+name = "redline"
+harness = false

@@ -1,0 +1,3 @@
+tests/fixtures/redline/original.docx	tests/fixtures/redline/modified.docx	redline
+tests/fixtures/redline-inpi/original-new.docx	tests/fixtures/redline-inpi/modified-new.docx	inpi
+tests/fixtures/redline-inpi/original-new-2.docx	tests/fixtures/redline-inpi/modified-new-2.docx	inpi2

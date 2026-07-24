@@ -1,0 +1,1078 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Port of `lib/xml-linq.ts` — a LINQ-to-XML-style mutable XML tree.
+//!
+//! M1.1: `XName` / `XNamespace` (interned expanded names).
+//! M1.2: arena DOM (`Dom`, `NodeId`, …).
+//! M1.3: `parse` — string → DOM.
+//! M1.4: `serialize` — DOM → string.
+
+pub mod parse;
+pub mod serialize;
+
+pub use parse::parse_xdocument;
+pub use serialize::{
+    serialize_document, serialize_element, serialize_element_sha1_hex,
+    serialize_element_structure_sha1_hex,
+};
+
+use std::sync::Arc;
+
+thread_local! {
+    /// PARSE-01: per-thread pool of interned name strings. `XName`/`XNamespace`
+    /// constructors route their `Arc<str>` through this so identical namespace and
+    /// local-name strings — which recur on millions of elements/attributes —
+    /// share one allocation instead of a fresh `Arc::from` each time. The engine
+    /// is single-threaded, so a thread-local pool needs no lock; OOXML's name
+    /// vocabulary is bounded, so the pool saturates quickly rather than growing
+    /// without bound.
+    ///
+    /// Uses the default (SipHash) hasher deliberately: a hand-rolled FNV-1a was
+    /// tried and measured a +16% wall regression — FNV's weak low-bit avalanche
+    /// clusters under std's low-bit bucket masking for these short, similar names,
+    /// degrading the pool. Default hashing keeps the measured −4% wall win.
+    static STR_POOL: std::cell::RefCell<std::collections::HashSet<Arc<str>>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Cap the intern pool so a pathological host (adversarial inputs) cannot grow
+/// the thread-local set without bound (gemini #3584751169, CR #3584798246).
+/// OOXML name vocabulary is far smaller; beyond the cap we still return a
+/// correct `Arc<str>`, just without interning.
+const STR_POOL_MAX: usize = 16_384;
+
+/// Return a shared interned `Arc<str>` for `s`, allocating only on first sight.
+/// Equality/hash of the result are byte-for-byte identical to a fresh `Arc::from`;
+/// only storage is shared, so interning is behavior-preserving.
+fn intern_str(s: &str) -> Arc<str> {
+    STR_POOL.with(|pool| {
+        {
+            // Scope the shared borrow so it is released before `borrow_mut` below.
+            let p = pool.borrow();
+            if let Some(existing) = p.get(s) {
+                return existing.clone();
+            }
+            if p.len() >= STR_POOL_MAX {
+                return Arc::from(s);
+            }
+        }
+        let arc: Arc<str> = Arc::from(s);
+        pool.borrow_mut().insert(arc.clone());
+        arc
+    })
+}
+
+/// An XML namespace (just its URI), owned via `Arc<str>`. Port of `XNamespace`.
+#[derive(Clone)]
+pub struct XNamespace {
+    name: Arc<str>,
+}
+
+impl XNamespace {
+    /// `XNamespace.get(namespaceName)`.
+    pub fn get(namespace_name: &str) -> XNamespace {
+        XNamespace {
+            name: intern_str(namespace_name),
+        }
+    }
+
+    /// `XNamespace.None` — the empty namespace.
+    pub fn none() -> XNamespace {
+        XNamespace::get("")
+    }
+
+    /// `XNamespace.Xmlns`.
+    pub fn xmlns() -> XNamespace {
+        XNamespace::get("http://www.w3.org/2000/xmlns/")
+    }
+
+    /// `XNamespace.Xml`.
+    pub fn xml() -> XNamespace {
+        XNamespace::get("http://www.w3.org/XML/1998/namespace")
+    }
+
+    /// `ns.getName(local)` → `XName`.
+    pub fn name(&self, local: &str) -> XName {
+        XName::get(local, &self.name)
+    }
+
+    /// `ns.NamespaceName`.
+    pub fn namespace_name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl PartialEq for XNamespace {
+    fn eq(&self, other: &Self) -> bool {
+        // Interned names share an `Arc`, so pointer identity is a fast path for the
+        // common equal case; the content compare keeps correctness for any
+        // non-interned or pre-warm name. Result is identical to a pure content
+        // compare, so `Hash` (content-based) stays consistent.
+        Arc::ptr_eq(&self.name, &other.name) || self.name.as_ref() == other.name.as_ref()
+    }
+}
+impl Eq for XNamespace {}
+impl std::hash::Hash for XNamespace {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.as_ref().hash(state);
+    }
+}
+impl std::fmt::Debug for XNamespace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "XNamespace({:?})", self.name.as_ref())
+    }
+}
+
+/// An expanded XML name (namespace + local name), owned via `Arc<str>`. Port of `XName`.
+#[derive(Clone)]
+pub struct XName {
+    local: Arc<str>,
+    namespace: XNamespace,
+}
+
+impl XName {
+    /// `XName.get(localName, namespaceName = "")`.
+    pub fn get(local_name: &str, namespace_name: &str) -> XName {
+        XName {
+            local: intern_str(local_name),
+            namespace: XNamespace::get(namespace_name),
+        }
+    }
+
+    /// `XName.fromExpanded(expanded)` — parse clark notation `"{ns}local"` or
+    /// bare `"local"`. Renamed `from_clark` to match the plan's API.
+    pub fn from_clark(expanded: &str) -> XName {
+        if expanded.starts_with('{') {
+            let close = expanded
+                .find('}')
+                .filter(|&i| i > 0)
+                .unwrap_or_else(|| panic!("Invalid expanded name: {expanded}"));
+            XName::get(&expanded[close + 1..], &expanded[1..close])
+        } else {
+            XName::get(expanded, "")
+        }
+    }
+
+    /// `name.LocalName`.
+    pub fn local_name(&self) -> &str {
+        &self.local
+    }
+
+    /// `name.Namespace`.
+    pub fn namespace(&self) -> &XNamespace {
+        &self.namespace
+    }
+
+    /// `name.NamespaceName`.
+    pub fn namespace_name(&self) -> &str {
+        self.namespace.namespace_name()
+    }
+
+    /// `name.toString()` — clark notation.
+    pub fn clark(&self) -> String {
+        if self.namespace.name.is_empty() {
+            self.local.to_string()
+        } else {
+            format!("{{{}}}{}", self.namespace.name, self.local)
+        }
+    }
+}
+
+impl PartialEq for XName {
+    fn eq(&self, other: &Self) -> bool {
+        // Pointer-identity fast path for interned local names (see `XNamespace`);
+        // falls back to a content compare, so equality/hash semantics are unchanged.
+        (Arc::ptr_eq(&self.local, &other.local) || self.local.as_ref() == other.local.as_ref())
+            && self.namespace == other.namespace
+    }
+}
+impl Eq for XName {}
+impl std::hash::Hash for XName {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.local.as_ref().hash(state);
+        self.namespace.hash(state);
+    }
+}
+impl std::fmt::Debug for XName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "XName({:?})", self.clark())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M1.2: arena DOM — port of XObject/XAttribute/XNode/XText/XComment/
+// XProcessingInstruction/XContainer/XElement/XDocument.
+//
+// The TS uses a pointer tree; Rust uses an arena (`Dom`) with `NodeId` handles so
+// in-place mutation is borrow-checker-friendly. Children live in an ordered
+// `content` vec (all node kinds); attributes are a separate per-element vec
+// (attributes are XObjects but NOT XNodes, exactly as in LINQ-to-XML).
+// ─────────────────────────────────────────────────────────────────────────────
+
+use std::any::Any;
+use std::collections::HashMap;
+
+/// Handle into the `Dom` arena.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct NodeId(pub u32);
+
+/// An XML declaration (`<?xml version encoding standalone?>`). Port of `XDeclaration`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct XDeclaration {
+    /// `version`.
+    pub version: Option<String>,
+    /// `encoding`.
+    pub encoding: Option<String>,
+    /// `standalone`.
+    pub standalone: Option<String>,
+}
+
+/// An attribute (name + value). Port of `XAttribute`.
+#[derive(Clone, Debug)]
+struct Attr {
+    name: XName,
+    value: String,
+}
+
+/// Processing-instruction payload. Boxed inside `NodeKind::Pi` so the rare PI
+/// variant does not size every node (NODE-KIND-01).
+#[derive(Clone, Debug)]
+struct PiData {
+    target: String,
+    data: String,
+}
+
+/// Node kind discriminant + kind-specific data.
+///
+/// The two large-but-rare variants are boxed (NODE-KIND-01): `Pi` (uncommon in
+/// docx) and `Document`'s declaration (one node per document). This keeps the
+/// enum sized by the common `Element { name: XName }` variant (~32 B) instead of
+/// the ~72 B `Document` declaration, shrinking every arena node.
+enum NodeKind {
+    Element {
+        name: XName,
+    },
+    Text(String),
+    Comment(String),
+    Pi(Box<PiData>),
+    Document {
+        declaration: Option<Box<XDeclaration>>,
+    },
+}
+
+struct NodeData {
+    kind: NodeKind,
+    parent: Option<NodeId>,
+    /// Ordered child nodes (containers only; empty for leaves).
+    content: Vec<NodeId>,
+    /// Attributes (elements only).
+    attrs: Vec<Attr>,
+}
+
+impl NodeData {
+    fn new(kind: NodeKind) -> Self {
+        NodeData {
+            kind,
+            parent: None,
+            content: Vec::new(),
+            attrs: Vec::new(),
+        }
+    }
+}
+
+/// The arena holding all nodes. Port of the LINQ-to-XML object graph.
+#[derive(Default)]
+pub struct Dom {
+    nodes: Vec<NodeData>,
+    /// Typed annotations, keyed by `NodeId`. Kept off `NodeData` because no
+    /// production path stores annotations (only the M1 foundation test), so the
+    /// common case is an empty map and every node avoids a 24-byte inline `Vec`.
+    annotations: HashMap<NodeId, Vec<Box<dyn Any>>>,
+}
+
+impl Dom {
+    /// `new`.
+    pub fn new() -> Self {
+        Dom {
+            nodes: Vec::new(),
+            annotations: HashMap::new(),
+        }
+    }
+
+    fn alloc(&mut self, kind: NodeKind) -> NodeId {
+        let id = NodeId(self.nodes.len() as u32);
+        self.nodes.push(NodeData::new(kind));
+        id
+    }
+
+    /// Number of nodes currently in the arena. Diagnostic + scratch-scope helper.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Capacity (allocated node slots) of the arena's backing `Vec`. Diagnostic:
+    /// [`with_scratch`](Self::with_scratch) reclaims LENGTH but not CAPACITY, so a
+    /// push against a full arena reallocs the whole buffer to the next doubling tier
+    /// and pins it. Scratch work that must not enlarge the persistent arena builds in
+    /// a dedicated `Dom`; this is how a test proves that (MEM-ATTRIBUTE-01).
+    pub fn node_capacity(&self) -> usize {
+        self.nodes.capacity()
+    }
+
+    /// Shrink the arena's backing `Vec` capacity to its current length. Lets a test
+    /// pin `capacity == length` so any subsequent internal push provably reallocs.
+    #[cfg(test)]
+    pub fn shrink_arena_to_fit(&mut self) {
+        self.nodes.shrink_to_fit();
+    }
+
+    /// Run `f`, then RECLAIM every node it allocated by truncating the arena back
+    /// to its pre-call length. For SCRATCH work whose output does not reference
+    /// the scratch nodes — e.g. building a normalized element only to serialize it
+    /// to a `String`. The nodes `f` creates are appended at the arena's end and
+    /// dropped on return (freeing their inline child/attr `Vec`s and names), so a
+    /// `NodeId` created inside `f` MUST NOT escape via `R` (it would dangle or, once
+    /// the slot is reused, alias a different node). Reading pre-existing nodes is
+    /// fine; those keep stable ids.
+    ///
+    /// This is what keeps per-atom format-change normalization (thousands of
+    /// distinct `w:rPr` on run-fragmented documents) from accumulating millions of
+    /// throwaway nodes in the persistent arena (MEM-ATTRIBUTE-01: the top single
+    /// allocation, a multi-GB arena `Vec`, came from exactly that leak).
+    pub fn with_scratch<R>(&mut self, f: impl FnOnce(&mut Dom) -> R) -> R {
+        let checkpoint = self.nodes.len();
+        let out = f(self);
+        self.nodes.truncate(checkpoint);
+        // A reused NodeId slot must not inherit a stale annotation. Production
+        // never annotates (the map is empty), so this is a no-op there.
+        if !self.annotations.is_empty() {
+            self.annotations.retain(|k, _| (k.0 as usize) < checkpoint);
+        }
+        out
+    }
+
+    fn data(&self, id: NodeId) -> &NodeData {
+        &self.nodes[id.0 as usize]
+    }
+    fn data_mut(&mut self, id: NodeId) -> &mut NodeData {
+        &mut self.nodes[id.0 as usize]
+    }
+
+    // ── constructors ────────────────────────────────────────────────────────
+    /// `new_document`.
+    pub fn new_document(&mut self) -> NodeId {
+        self.alloc(NodeKind::Document { declaration: None })
+    }
+    /// `new_element`.
+    pub fn new_element(&mut self, name: XName) -> NodeId {
+        self.alloc(NodeKind::Element { name })
+    }
+    /// `new_text`.
+    pub fn new_text(&mut self, value: &str) -> NodeId {
+        self.alloc(NodeKind::Text(value.to_string()))
+    }
+    /// `new_comment`.
+    pub fn new_comment(&mut self, value: &str) -> NodeId {
+        self.alloc(NodeKind::Comment(value.to_string()))
+    }
+    /// `new_pi`.
+    pub fn new_pi(&mut self, target: &str, data: &str) -> NodeId {
+        self.alloc(NodeKind::Pi(Box::new(PiData {
+            target: target.to_string(),
+            data: data.to_string(),
+        })))
+    }
+
+    // ── kind predicates / accessors ───────────────────────────────────────────
+    /// `is_element`.
+    pub fn is_element(&self, id: NodeId) -> bool {
+        matches!(self.data(id).kind, NodeKind::Element { .. })
+    }
+    /// `is_text`.
+    pub fn is_text(&self, id: NodeId) -> bool {
+        matches!(self.data(id).kind, NodeKind::Text(_))
+    }
+    /// `is_document`.
+    pub fn is_document(&self, id: NodeId) -> bool {
+        matches!(self.data(id).kind, NodeKind::Document { .. })
+    }
+    /// `is_comment`.
+    pub fn is_comment(&self, id: NodeId) -> bool {
+        matches!(self.data(id).kind, NodeKind::Comment(_))
+    }
+    /// `is_pi`.
+    pub fn is_pi(&self, id: NodeId) -> bool {
+        matches!(self.data(id).kind, NodeKind::Pi(_))
+    }
+
+    /// `element.Name` — element name, or None for non-elements.
+    pub fn name(&self, id: NodeId) -> Option<XName> {
+        match &self.data(id).kind {
+            NodeKind::Element { name } => Some(name.clone()),
+            _ => None,
+        }
+    }
+    /// `element.Name = n`.
+    pub fn set_name(&mut self, id: NodeId, new_name: XName) {
+        if let NodeKind::Element { name } = &mut self.data_mut(id).kind {
+            *name = new_name;
+        }
+    }
+
+    /// Text/Comment value, or None for other kinds.
+    pub fn text_value(&self, id: NodeId) -> Option<&str> {
+        match &self.data(id).kind {
+            NodeKind::Text(v) | NodeKind::Comment(v) => Some(v),
+            _ => None,
+        }
+    }
+    /// `set_text_value`.
+    pub fn set_text_value(&mut self, id: NodeId, value: &str) {
+        match &mut self.data_mut(id).kind {
+            NodeKind::Text(v) | NodeKind::Comment(v) => *v = value.to_string(),
+            _ => {}
+        }
+    }
+
+    /// `pi_target`.
+    pub fn pi_target(&self, id: NodeId) -> Option<&str> {
+        match &self.data(id).kind {
+            NodeKind::Pi(pi) => Some(&pi.target),
+            _ => None,
+        }
+    }
+    /// `pi_data`.
+    pub fn pi_data(&self, id: NodeId) -> Option<&str> {
+        match &self.data(id).kind {
+            NodeKind::Pi(pi) => Some(&pi.data),
+            _ => None,
+        }
+    }
+
+    /// `declaration`.
+    pub fn declaration(&self, id: NodeId) -> Option<&XDeclaration> {
+        match &self.data(id).kind {
+            NodeKind::Document { declaration } => declaration.as_deref(),
+            _ => None,
+        }
+    }
+    /// `set_declaration`.
+    pub fn set_declaration(&mut self, id: NodeId, decl: Option<XDeclaration>) {
+        if let NodeKind::Document { declaration } = &mut self.data_mut(id).kind {
+            *declaration = decl.map(Box::new);
+        }
+    }
+
+    // ── tree navigation ───────────────────────────────────────────────────────
+    /// `parent`.
+    pub fn parent(&self, id: NodeId) -> Option<NodeId> {
+        self.data(id).parent
+    }
+
+    /// `Nodes()` — all child nodes in document order (clone of the content vec).
+    pub fn nodes(&self, id: NodeId) -> Vec<NodeId> {
+        self.data(id).content.clone()
+    }
+
+    /// `FirstNode`.
+    pub fn first_node(&self, id: NodeId) -> Option<NodeId> {
+        self.data(id).content.first().copied()
+    }
+    /// `LastNode`.
+    pub fn last_node(&self, id: NodeId) -> Option<NodeId> {
+        self.data(id).content.last().copied()
+    }
+
+    /// `Elements()` / `Elements(name)` — child elements, optionally filtered.
+    /// Number of direct children of `id` (all node kinds). Cheap O(1) index —
+    /// paired with [`child_at`](Self::child_at) for non-allocating child
+    /// iteration on hot paths where [`elements`](Self::elements)' per-call
+    /// `Vec` is the cost (atomize). Re-read the count each loop step: it is
+    /// stable while the caller does not add/remove children of `id`.
+    pub fn child_count(&self, id: NodeId) -> usize {
+        self.data(id).content.len()
+    }
+
+    /// The `i`-th direct child of `id` (all node kinds). Panics out of bounds.
+    /// See [`child_count`](Self::child_count).
+    pub fn child_at(&self, id: NodeId, i: usize) -> NodeId {
+        self.data(id).content[i]
+    }
+
+    /// `elements`.
+    pub fn elements(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
+        self.data(id)
+            .content
+            .iter()
+            .copied()
+            .filter(|&c| match (&self.data(c).kind, filter) {
+                (NodeKind::Element { name }, Some(f)) => name == f,
+                (NodeKind::Element { .. }, None) => true,
+                _ => false,
+            })
+            .collect()
+    }
+
+    /// `Element(name)` — first matching child element.
+    pub fn element(&self, id: NodeId, filter: &XName) -> Option<NodeId> {
+        self.data(id)
+            .content
+            .iter()
+            .copied()
+            .find(|&c| matches!(&self.data(c).kind, NodeKind::Element { name } if name == filter))
+    }
+
+    /// `Descendants()` / `Descendants(name)` — all descendant elements (pre-order).
+    pub fn descendants(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        self.for_each_descendant_element(id, filter, |c| out.push(c));
+        out
+    }
+
+    /// DOM-ITER-03: visit every descendant element in document order without
+    /// allocating a result `Vec`. Same pre-order as [`descendants`]. The filter
+    /// selects which elements are *visited*; recursion still enters every
+    /// element child (XLinq `Descendants` semantics).
+    pub fn for_each_descendant_element(
+        &self,
+        id: NodeId,
+        filter: Option<&XName>,
+        mut visit: impl FnMut(NodeId),
+    ) {
+        // Iterative stack avoids deep recursion on large bodies.
+        let mut stack: Vec<(NodeId, usize)> = vec![(id, 0)];
+        while let Some((node, i)) = stack.last_mut() {
+            let n = self.child_count(*node);
+            if *i >= n {
+                stack.pop();
+                continue;
+            }
+            let c = self.child_at(*node, *i);
+            *i += 1;
+            if !self.is_element(c) {
+                continue;
+            }
+            let matches = match filter {
+                None => true,
+                Some(f) => self.name(c).as_ref() == Some(f),
+            };
+            if matches {
+                visit(c);
+            }
+            stack.push((c, 0));
+        }
+    }
+
+    /// `DescendantNodes()` — all descendant nodes (not just elements), pre-order.
+    pub fn descendant_nodes(&self, id: NodeId) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        self.walk_descendant_nodes(id, &mut out);
+        out
+    }
+    fn walk_descendant_nodes(&self, id: NodeId, out: &mut Vec<NodeId>) {
+        for &c in &self.data(id).content {
+            out.push(c);
+            if !self.data(c).content.is_empty() {
+                self.walk_descendant_nodes(c, out);
+            }
+        }
+    }
+
+    /// `DescendantsAndSelf()` — self (if element & matches) then descendants.
+    pub fn descendants_and_self(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        self.for_each_descendant_and_self(id, filter, |c| out.push(c));
+        out
+    }
+
+    /// DOM-ITER-03: non-allocating `DescendantsAndSelf` walk.
+    pub fn for_each_descendant_and_self(
+        &self,
+        id: NodeId,
+        filter: Option<&XName>,
+        mut visit: impl FnMut(NodeId),
+    ) {
+        if let NodeKind::Element { name } = &self.data(id).kind
+            && filter.is_none_or(|f| name == f)
+        {
+            visit(id);
+        }
+        self.for_each_descendant_element(id, filter, visit);
+    }
+
+    /// `Ancestors()` — parents from nearest to root (elements only).
+    pub fn ancestors(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let mut p = self.data(id).parent;
+        while let Some(pid) = p {
+            if let NodeKind::Element { name } = &self.data(pid).kind
+                && filter.is_none_or(|f| name == f)
+            {
+                out.push(pid);
+            }
+            p = self.data(pid).parent;
+        }
+        out
+    }
+
+    /// `AncestorsAndSelf()` — self then ancestors (elements only).
+    pub fn ancestors_and_self(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            match &self.data(c).kind {
+                NodeKind::Element { name } => {
+                    if filter.is_none_or(|f| name == f) {
+                        out.push(c);
+                    }
+                    cur = match self.data(c).parent {
+                        Some(p) if self.is_element(p) => Some(p),
+                        _ => None,
+                    };
+                }
+                _ => break,
+            }
+        }
+        out
+    }
+
+    /// `Document` — the owning XDocument, if any.
+    pub fn document(&self, id: NodeId) -> Option<NodeId> {
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            if self.is_document(c) {
+                return Some(c);
+            }
+            cur = self.data(c).parent;
+        }
+        None
+    }
+
+    /// `Root` — the document's root element.
+    pub fn root(&self, doc: NodeId) -> Option<NodeId> {
+        self.data(doc)
+            .content
+            .iter()
+            .copied()
+            .find(|&c| self.is_element(c))
+    }
+
+    fn index_in_parent(&self, id: NodeId) -> Option<(NodeId, usize)> {
+        let p = self.data(id).parent?;
+        let idx = self.data(p).content.iter().position(|&c| c == id)?;
+        Some((p, idx))
+    }
+
+    /// `NodesAfterSelf()`.
+    pub fn nodes_after_self(&self, id: NodeId) -> Vec<NodeId> {
+        match self.index_in_parent(id) {
+            Some((p, idx)) => self.data(p).content[idx + 1..].to_vec(),
+            None => Vec::new(),
+        }
+    }
+    /// `NodesBeforeSelf()`.
+    pub fn nodes_before_self(&self, id: NodeId) -> Vec<NodeId> {
+        match self.index_in_parent(id) {
+            Some((p, idx)) => self.data(p).content[..idx].to_vec(),
+            None => Vec::new(),
+        }
+    }
+
+    /// `NextElement` — first following sibling element.
+    pub fn next_element(&self, id: NodeId) -> Option<NodeId> {
+        self.nodes_after_self(id)
+            .into_iter()
+            .find(|&n| self.is_element(n))
+    }
+
+    /// `has_elements`.
+    pub fn has_elements(&self, id: NodeId) -> bool {
+        self.data(id).content.iter().any(|&c| self.is_element(c))
+    }
+    /// `has_attributes`.
+    pub fn has_attributes(&self, id: NodeId) -> bool {
+        !self.data(id).attrs.is_empty()
+    }
+
+    // ── attributes ────────────────────────────────────────────────────────────
+    /// `Attribute(name)` value.
+    pub fn attribute(&self, id: NodeId, name: &XName) -> Option<&str> {
+        self.data(id)
+            .attrs
+            .iter()
+            .find(|a| &a.name == name)
+            .map(|a| a.value.as_str())
+    }
+
+    /// `Attributes()` — (name, value) pairs in order (owned clones).
+    pub fn attributes(&self, id: NodeId) -> Vec<(XName, String)> {
+        self.data(id)
+            .attrs
+            .iter()
+            .map(|a| (a.name.clone(), a.value.clone()))
+            .collect()
+    }
+
+    /// Number of attributes on `id` (O(1)). Paired with [`attr_at`](Self::attr_at)
+    /// for non-allocating attribute walks (serializer / DOM-ITER-01).
+    pub fn attr_count(&self, id: NodeId) -> usize {
+        self.data(id).attrs.len()
+    }
+
+    /// The `i`-th attribute as borrowed `(name, value)`. Panics out of bounds.
+    pub fn attr_at(&self, id: NodeId, i: usize) -> (&XName, &str) {
+        let a = &self.data(id).attrs[i];
+        (&a.name, a.value.as_str())
+    }
+
+    /// `SetAttributeValue(name, value)` — add/update; `None` removes (matches the
+    /// TS where passing `null` removes the attribute).
+    pub fn set_attribute_value(&mut self, id: NodeId, name: &XName, value: Option<&str>) {
+        let attrs = &mut self.data_mut(id).attrs;
+        match value {
+            None => attrs.retain(|a| &a.name != name),
+            Some(v) => {
+                if let Some(a) = attrs.iter_mut().find(|a| &a.name == name) {
+                    a.value = v.to_string();
+                } else {
+                    attrs.push(Attr {
+                        name: name.clone(),
+                        value: v.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    /// True if `attr` is a namespace declaration (`xmlns` / `xmlns:*`).
+    pub fn is_namespace_declaration(&self, name: &XName) -> bool {
+        name.namespace_name() == "http://www.w3.org/2000/xmlns/"
+            || (name.namespace_name().is_empty() && name.local_name() == "xmlns")
+    }
+
+    // ── mutation ──────────────────────────────────────────────────────────────
+    fn detach(&mut self, id: NodeId) {
+        if let Some((p, idx)) = self.index_in_parent(id) {
+            self.data_mut(p).content.remove(idx);
+            self.data_mut(id).parent = None;
+        }
+    }
+
+    /// If `node` already has a parent, deep-clone it (LINQ-to-XML semantics);
+    /// otherwise return it as-is. Used before attaching content.
+    fn materialize(&mut self, node: NodeId) -> NodeId {
+        if self.data(node).parent.is_some() {
+            self.clone_subtree(node)
+        } else {
+            node
+        }
+    }
+
+    /// Centralized validation before a node is attached to a parent.
+    /// - `parent` must be a container (`Element` or `Document`).
+    /// - `node` must not be the same as `parent` (self-attachment).
+    /// - When `node` is unparented it must not be an ancestor of `parent`,
+    ///   which would create a cycle under its own descendant.
+    fn validate_attachment(&self, parent: NodeId, node: NodeId) {
+        if !self.is_element(parent) && !self.is_document(parent) {
+            panic!("cannot attach a node to a non-container parent {parent:?}");
+        }
+        if parent == node {
+            panic!("cannot attach a node to itself");
+        }
+        if self.data(node).parent.is_none() && self.is_ancestor_of(node, parent) {
+            panic!("cannot attach an ancestor beneath its own descendant");
+        }
+    }
+
+    /// True when `ancestor` is strictly above `descendant` on the parent chain.
+    fn is_ancestor_of(&self, ancestor: NodeId, descendant: NodeId) -> bool {
+        let mut cur = self.data(descendant).parent;
+        while let Some(id) = cur {
+            if id == ancestor {
+                return true;
+            }
+            cur = self.data(id).parent;
+        }
+        false
+    }
+
+    /// `Add(node)` — append a single node (cloning if already parented).
+    pub fn add(&mut self, parent: NodeId, node: NodeId) {
+        let n = self.materialize(node);
+        self.validate_attachment(parent, n);
+        self.data_mut(n).parent = Some(parent);
+        self.data_mut(parent).content.push(n);
+    }
+
+    /// `Add(text)` — append a fresh text node.
+    pub fn add_text(&mut self, parent: NodeId, value: &str) -> NodeId {
+        let t = self.new_text(value);
+        self.validate_attachment(parent, t);
+        self.data_mut(t).parent = Some(parent);
+        self.data_mut(parent).content.push(t);
+        t
+    }
+
+    /// `AddFirst(node)` — prepend.
+    pub fn add_first(&mut self, parent: NodeId, node: NodeId) {
+        let n = self.materialize(node);
+        self.validate_attachment(parent, n);
+        self.data_mut(n).parent = Some(parent);
+        self.data_mut(parent).content.insert(0, n);
+    }
+
+    /// `RemoveNodes()` — detach all children.
+    pub fn remove_nodes(&mut self, id: NodeId) {
+        let kids = std::mem::take(&mut self.data_mut(id).content);
+        for k in kids {
+            self.data_mut(k).parent = None;
+        }
+    }
+
+    /// `Remove()` — detach this node from its parent.
+    pub fn remove(&mut self, id: NodeId) {
+        self.detach(id);
+    }
+
+    /// `AddBeforeSelf(node)`.
+    pub fn add_before_self(&mut self, reference: NodeId, node: NodeId) {
+        let (p, idx) = self
+            .index_in_parent(reference)
+            .expect("No parent for AddBeforeSelf");
+        let n = self.materialize(node);
+        self.validate_attachment(p, n);
+        self.data_mut(n).parent = Some(p);
+        self.data_mut(p).content.insert(idx, n);
+    }
+
+    /// `AddAfterSelf(node)`.
+    pub fn add_after_self(&mut self, reference: NodeId, node: NodeId) {
+        let (p, idx) = self
+            .index_in_parent(reference)
+            .expect("No parent for AddAfterSelf");
+        let n = self.materialize(node);
+        self.validate_attachment(p, n);
+        self.data_mut(n).parent = Some(p);
+        self.data_mut(p).content.insert(idx + 1, n);
+    }
+
+    /// `ReplaceWith(nodes)` — replace this node with the given content.
+    pub fn replace_with(&mut self, reference: NodeId, nodes: &[NodeId]) {
+        let (p, idx) = self
+            .index_in_parent(reference)
+            .expect("No parent for ReplaceWith");
+        let mut materialized = Vec::with_capacity(nodes.len());
+        for &node in nodes {
+            let n = self.materialize(node);
+            self.validate_attachment(p, n);
+            self.data_mut(n).parent = Some(p);
+            materialized.push(n);
+        }
+        self.data_mut(reference).parent = None;
+        self.data_mut(p).content.splice(idx..=idx, materialized);
+    }
+
+    /// `element.Value` getter — concatenated descendant text.
+    ///
+    /// ATOM-TEXT-01: single direct text child (the common `w:t` / atom shape)
+    /// clones that string without a recursive walk.
+    pub fn value(&self, id: NodeId) -> String {
+        match self.value_str(id) {
+            std::borrow::Cow::Borrowed(s) => s.to_string(),
+            std::borrow::Cow::Owned(s) => s,
+        }
+    }
+
+    /// ATOM-TEXT-01: borrowed text when `id` has exactly one direct text child;
+    /// otherwise owned concatenated descendant text (same bytes as [`Self::value`]).
+    pub fn value_str(&self, id: NodeId) -> std::borrow::Cow<'_, str> {
+        let content = &self.data(id).content;
+        if content.len() == 1
+            && let NodeKind::Text(v) = &self.data(content[0]).kind
+        {
+            return std::borrow::Cow::Borrowed(v.as_str());
+        }
+        let mut s = String::new();
+        self.collect_text(id, &mut s);
+        std::borrow::Cow::Owned(s)
+    }
+
+    fn collect_text(&self, id: NodeId, s: &mut String) {
+        for &c in &self.data(id).content {
+            match &self.data(c).kind {
+                NodeKind::Text(v) => s.push_str(v),
+                NodeKind::Element { .. } | NodeKind::Document { .. } => self.collect_text(c, s),
+                _ => {}
+            }
+        }
+    }
+
+    /// `element.Value = v` — clear children, add a single text node.
+    pub fn set_value(&mut self, id: NodeId, value: &str) {
+        self.remove_nodes(id);
+        self.add_text(id, value);
+    }
+
+    /// Deep-clone a subtree into the same arena, returning the new root. The
+    /// clone has no parent. Port of `XElement.clone()` / `XContainer.clone()`.
+    ///
+    /// CLONE-01: walk children by index (no temporary `content` Vec clone) and
+    /// `reserve_exact` the destination content capacity so growth is one shot.
+    pub fn clone_subtree(&mut self, id: NodeId) -> NodeId {
+        let new_kind = match &self.data(id).kind {
+            NodeKind::Element { name } => NodeKind::Element { name: name.clone() },
+            NodeKind::Text(v) => NodeKind::Text(v.clone()),
+            NodeKind::Comment(v) => NodeKind::Comment(v.clone()),
+            NodeKind::Pi(pi) => NodeKind::Pi(pi.clone()),
+            NodeKind::Document { declaration } => NodeKind::Document {
+                declaration: declaration.clone(),
+            },
+        };
+        let n_kids = self.child_count(id);
+        let attrs = self.data(id).attrs.clone();
+        let copy = self.alloc(new_kind);
+        {
+            let d = self.data_mut(copy);
+            d.attrs = attrs;
+            d.content.reserve_exact(n_kids);
+        }
+        for i in 0..n_kids {
+            // Re-index each step: recursive clone may reallocate the arena.
+            let k = self.child_at(id, i);
+            let ck = self.clone_subtree(k);
+            self.validate_attachment(copy, ck);
+            self.data_mut(ck).parent = Some(copy);
+            self.data_mut(copy).content.push(ck);
+        }
+        copy
+    }
+
+    // ── annotations ───────────────────────────────────────────────────────────
+    // Stored in a `Dom` side table keyed by `NodeId` rather than inline on every
+    // `NodeData` (ANN-01): production never annotates, so the map stays empty and
+    // the hot per-node struct keeps its 24 bytes. Behavior is identical.
+    /// `AddAnnotation(obj)`.
+    pub fn add_annotation<T: Any + 'static>(&mut self, id: NodeId, annotation: T) {
+        self.annotations
+            .entry(id)
+            .or_default()
+            .push(Box::new(annotation));
+    }
+    /// `Annotation<T>()` — first annotation of type `T`.
+    pub fn annotation<T: Any + 'static>(&self, id: NodeId) -> Option<&T> {
+        self.annotations
+            .get(&id)?
+            .iter()
+            .find_map(|a| a.downcast_ref::<T>())
+    }
+    /// `RemoveAnnotations<T>()`.
+    pub fn remove_annotations<T: Any + 'static>(&mut self, id: NodeId) {
+        if let Some(v) = self.annotations.get_mut(&id) {
+            v.retain(|a| !a.is::<T>());
+            if v.is_empty() {
+                self.annotations.remove(&id);
+            }
+        }
+    }
+
+    // ── parse / serialize convenience (delegate to the submodules) ─────────────
+    /// Parse an XML string into a Document node (M1.3).
+    pub fn parse_xdocument(&mut self, xml: &str) -> NodeId {
+        parse::parse_xdocument(self, xml)
+    }
+    /// Serialize an element subtree to XML (M1.4).
+    pub fn serialize_element(&self, el: NodeId) -> String {
+        serialize::serialize_element(self, el)
+    }
+
+    /// HASH-STREAM: SHA-1 hex of serialized element with first WML default xmlns
+    /// stripped (same digest as hash of [`serialize_element`] after that strip).
+    pub fn serialize_element_sha1_hex(&self, el: NodeId) -> String {
+        serialize::serialize_element_sha1_hex(self, el)
+    }
+
+    /// HASH-STREAM-02: structure-only SHA-1 (no text nodes) with xmlns strip.
+    pub fn serialize_element_structure_sha1_hex(&self, el: NodeId) -> String {
+        serialize::serialize_element_structure_sha1_hex(self, el)
+    }
+    /// Serialize a whole document (declaration + root) (M1.4).
+    pub fn serialize_document(&self, doc: NodeId) -> String {
+        serialize::serialize_document(self, doc)
+    }
+}
+
+#[cfg(test)]
+mod node_layout_tests {
+    use super::*;
+
+    /// ANN-01 mechanism counter. `annotations` has no production caller (only the
+    /// M1 foundation test), so carrying a `Vec<Box<dyn Any>>` on every node is pure
+    /// per-node bloat: 24 bytes × N nodes of arena-realloc memcpy and RSS. After
+    /// moving it to a `Dom` side table, `NodeData` must drop by one `Vec` (24 B),
+    /// from 152 → 128 on this target. The bound (not an exact equality) guards
+    /// against silently regrowing the hot per-node struct.
+    #[test]
+    fn node_data_excludes_annotations_vec() {
+        let sz = std::mem::size_of::<NodeData>();
+        assert!(
+            sz <= 128,
+            "NodeData is {sz} bytes; ANN-01 requires <= 128 (annotations must live \
+             in the Dom side table, not inline on every node)"
+        );
+    }
+
+    /// NODE-KIND-01 mechanism counter. `NodeKind`'s size is set by its largest
+    /// variant plus a discriminant. `Document{declaration}` (~72 B, one node per
+    /// doc) and `Pi` (~48 B, rare in docx) inflated every node — including the
+    /// common `Element`/`Text`. Boxing those two rare variants drops the max
+    /// payload to `Element{XName}` (32 B); with 5 data-carrying variants Rust
+    /// can't niche the tag, so `NodeKind` = 32 + 8-byte tag = 40 B, and
+    /// `NodeData` falls 128 → 96 (originally 152). The bounds guard against
+    /// regrowth back toward the fat enum.
+    #[test]
+    fn node_kind_rare_variants_are_boxed() {
+        let kind = std::mem::size_of::<NodeKind>();
+        let node = std::mem::size_of::<NodeData>();
+        assert!(
+            kind <= 40,
+            "NodeKind is {kind} bytes; NODE-KIND-01 requires <= 40 (box the rare \
+             Document/Pi variants so they don't size every node)"
+        );
+        assert!(
+            node <= 96,
+            "NodeData is {node} bytes; NODE-KIND-01 requires <= 96 (was 128 after \
+             ANN-01, 152 originally)"
+        );
+    }
+}
+
+#[cfg(test)]
+mod intern_tests {
+    use super::*;
+
+    /// PARSE-01 mechanism proof. `XName::get`/`XNamespace::get` must intern their
+    /// `Arc<str>` so identical namespace/local strings — which recur on millions
+    /// of elements and attributes — share one allocation instead of a fresh
+    /// `Arc::from` each time. Verified by pointer identity of the backing `Arc`s.
+    /// Content-based `Eq`/`Hash` are unchanged, so this is parity-safe.
+    #[test]
+    fn identical_names_share_interned_arcs() {
+        let ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        let a = XName::get("p", ns);
+        let b = XName::get("p", ns);
+        assert!(
+            Arc::ptr_eq(&a.local, &b.local),
+            "PARSE-01: identical local names must share one interned Arc"
+        );
+        assert!(
+            Arc::ptr_eq(&a.namespace.name, &b.namespace.name),
+            "PARSE-01: identical namespaces must share one interned Arc"
+        );
+        // Interning must not change equality semantics.
+        assert_eq!(a, b);
+        assert_ne!(a, XName::get("r", ns));
+    }
+}

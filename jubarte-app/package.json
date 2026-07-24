@@ -1,0 +1,17 @@
+{
+  "name": "jubarte-app",
+  "private": true,
+  "version": "0.2.0",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "bump": "bun scripts/bump-version.mjs",
+    "art": "bun scripts/render-art.mjs",
+    "icons": "bun scripts/render-art.mjs && tauri icon assets/icon-1024.png"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2",
+    "@tauri-apps/cli": "^2"
+  }
+}

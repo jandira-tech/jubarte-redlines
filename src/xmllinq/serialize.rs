@@ -1,0 +1,672 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Port of `serializeElement` / `XDocument.toString` from `lib/xml-linq.ts`.
+//!
+//! Scope-aware namespace serialization: each element inherits its parent
+//! namespace scope and may add/override local `xmlns` declarations, so nested
+//! namespace scopes are not flattened to the root.
+//!
+//! SER-01: tags, attributes, and escapes are written directly into the final
+//! output buffer (no intermediate `attr_str` / `qname` String / always-alloc
+//! `escape_*` that re-allocates when nothing needs escaping).
+
+use std::collections::HashMap;
+
+use super::{Dom, NodeId, XName};
+
+const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
+const MC_NAMESPACE: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+
+/// Conventional OOXML prefixes (URI → prefix) so output matches Word's shape.
+fn well_known_prefix(ns: &str) -> Option<&'static str> {
+    Some(match ns {
+        "http://schemas.openxmlformats.org/wordprocessingml/2006/main" => "w",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships" => "r",
+        "http://schemas.openxmlformats.org/markup-compatibility/2006" => "mc",
+        "http://schemas.microsoft.com/office/word/2010/wordml" => "w14",
+        "http://schemas.microsoft.com/office/word/2012/wordml" => "w15",
+        "http://schemas.microsoft.com/office/word/2018/wordml/cex" => "w16cex",
+        "http://schemas.microsoft.com/office/word/2016/wordml/cid" => "w16cid",
+        "http://schemas.microsoft.com/office/word/2015/wordml/symex" => "w16se",
+        "http://schemas.openxmlformats.org/drawingml/2006/main" => "a",
+        "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" => "wp",
+        "http://schemas.openxmlformats.org/drawingml/2006/picture" => "pic",
+        "http://schemas.openxmlformats.org/officeDocument/2006/math" => "m",
+        "urn:schemas-microsoft-com:vml" => "v",
+        "urn:schemas-microsoft-com:office:office" => "o",
+        "urn:schemas-microsoft-com:office:word" => "w10",
+        "http://schemas.microsoft.com/office/word/2006/wordml" => "wne",
+        // Microsoft drawing/shape extensions. These MUST keep their conventional
+        // prefixes: `mc:Choice Requires="wps"` (etc.) is a prefix string evaluated
+        // against in-scope xmlns, so renaming wps→nsN dangles Requires and Word
+        // rejects the AlternateContent as "unreadable content".
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingShape" => "wps",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" => "wp14",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" => "wpg",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" => "wpc",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingInk" => "wpi",
+        "http://schemas.microsoft.com/office/word/2016/wordml" => "w16",
+        "http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash" => "w16sdtdh",
+        "http://schemas.microsoft.com/office/drawing/2010/main" => "a14",
+        "http://schemas.microsoft.com/office/drawing/2016/ink" => "aink",
+        "http://schemas.microsoft.com/office/drawing/2017/model3d" => "am3d",
+        "http://schemas.microsoft.com/office/drawing/2014/chartex" => "cx",
+        "http://schemas.microsoft.com/office/drawing/2015/9/8/chartex" => "cx1",
+        "http://schemas.microsoft.com/office/drawing/2015/10/21/chartex" => "cx2",
+        "http://schemas.microsoft.com/office/drawing/2016/5/9/chartex" => "cx3",
+        "http://schemas.microsoft.com/office/drawing/2016/5/10/chartex" => "cx4",
+        "http://schemas.microsoft.com/office/drawing/2016/5/11/chartex" => "cx5",
+        "http://schemas.microsoft.com/office/drawing/2016/5/12/chartex" => "cx6",
+        "http://schemas.microsoft.com/office/drawing/2016/5/13/chartex" => "cx7",
+        "http://schemas.microsoft.com/office/drawing/2016/5/14/chartex" => "cx8",
+        _ => return None,
+    })
+}
+
+/// Namespace prefix generator state.
+struct State {
+    counter: usize,
+}
+
+/// A scope in the namespace-prefix stack. Each element inherits its parent
+/// scope and may add/override local `xmlns:*`/`xmlns` declarations.
+struct Scope<'a> {
+    parent: Option<&'a Scope<'a>>,
+    local_uri_to_prefix: HashMap<String, String>,
+    local_prefix_to_uri: HashMap<String, String>,
+}
+
+impl Scope<'static> {
+    fn root() -> Scope<'static> {
+        let mut uri_to_prefix = HashMap::new();
+        let mut prefix_to_uri = HashMap::new();
+        uri_to_prefix.insert(XML_NAMESPACE.to_string(), "xml".to_string());
+        prefix_to_uri.insert("xml".to_string(), XML_NAMESPACE.to_string());
+        Scope {
+            parent: None,
+            local_uri_to_prefix: uri_to_prefix,
+            local_prefix_to_uri: prefix_to_uri,
+        }
+    }
+}
+
+impl<'a> Scope<'a> {
+    fn child(parent: &'a Scope<'a>, dom: &Dom, e: NodeId) -> Scope<'a> {
+        let mut uri_to_prefix = HashMap::new();
+        let mut prefix_to_uri = HashMap::new();
+        // DOM-ITER-01: walk attrs without cloning the attributes() Vec.
+        for i in 0..dom.attr_count(e) {
+            let (name, value) = dom.attr_at(e, i);
+            if !dom.is_namespace_declaration(name) {
+                continue;
+            }
+            let prefix = if name.local_name() == "xmlns" && name.namespace_name().is_empty() {
+                ""
+            } else {
+                name.local_name()
+            };
+            // Skip reserved / illegal re-declarations; `xml` is always bound.
+            if prefix == "xml" || prefix == "xmlns" || value == "http://www.w3.org/2000/xmlns/" {
+                continue;
+            }
+            uri_to_prefix.insert(value.to_string(), prefix.to_string());
+            prefix_to_uri.insert(prefix.to_string(), value.to_string());
+        }
+        Scope {
+            parent: Some(parent),
+            local_uri_to_prefix: uri_to_prefix,
+            local_prefix_to_uri: prefix_to_uri,
+        }
+    }
+
+    /// Active prefix→URI binding for `prefix` in this scope (local first, then ancestors).
+    fn active_prefix_uri(&self, prefix: &str) -> Option<&str> {
+        let mut scope = self;
+        loop {
+            if let Some(uri) = scope.local_prefix_to_uri.get(prefix) {
+                return Some(uri);
+            }
+            match scope.parent {
+                Some(parent) => scope = parent,
+                None => return None,
+            }
+        }
+    }
+
+    /// Resolve a prefix token to the URI it is bound to in this scope.
+    fn uri_for_prefix(&self, prefix: &str) -> Option<&str> {
+        self.active_prefix_uri(prefix)
+    }
+
+    /// Find the active prefix bound to `uri` in this scope.
+    fn prefix_for_uri(&self, uri: &str) -> Option<&str> {
+        if uri.is_empty() {
+            return Some("");
+        }
+        let mut scope = self;
+        loop {
+            if let Some(prefix) = scope.local_uri_to_prefix.get(uri)
+                && self.active_prefix_uri(prefix) == Some(uri)
+            {
+                return Some(prefix);
+            }
+            match scope.parent {
+                Some(parent) => scope = parent,
+                None => return None,
+            }
+        }
+    }
+
+    /// Assign (or reuse) a prefix for `uri` in this scope.
+    fn assign(&mut self, state: &mut State, uri: &str) -> String {
+        if uri.is_empty() {
+            return String::new();
+        }
+        if uri == XML_NAMESPACE {
+            return "xml".to_string();
+        }
+        if let Some(p) = self.prefix_for_uri(uri) {
+            return p.to_string();
+        }
+        let mut p = if let Some(p) = well_known_prefix(uri) {
+            if self.active_prefix_uri(p).is_none() {
+                p.to_string()
+            } else {
+                Self::next_generated(state, self)
+            }
+        } else {
+            Self::next_generated(state, self)
+        };
+        while self.active_prefix_uri(&p).is_some() {
+            p = Self::next_generated(state, self);
+        }
+        self.local_uri_to_prefix.insert(uri.to_string(), p.clone());
+        self.local_prefix_to_uri.insert(p.clone(), uri.to_string());
+        p
+    }
+
+    /// Register a prefix for `uri` in this scope if not already bound. Same scope-
+    /// state effect as [`assign`](Self::assign) with its return value discarded, but
+    /// allocates ONLY when a NEW binding is created — the common already-bound case
+    /// is a pure lookup. ALLOC-LEAN-01: `emit` calls this per element name and per
+    /// attribute name purely to register the prefix; the old code called `assign`,
+    /// which returned an owned `String`, so every already-bound call heap-allocated
+    /// a 1-byte prefix (e.g. `"w"`) only to drop it — tens of millions of wasted
+    /// allocations on run-fragmented documents. Byte-identical output: the scope
+    /// maps end in the same state, so every subsequently resolved prefix is the same.
+    fn ensure_prefix(&mut self, state: &mut State, uri: &str) {
+        if uri.is_empty() || uri == XML_NAMESPACE {
+            return; // assign returned String::new()/"xml" here without inserting
+        }
+        if self.prefix_for_uri(uri).is_some() {
+            return; // already bound — assign allocated+dropped a String here
+        }
+        // Not bound: pick + register a prefix (identical to `assign`'s else branch).
+        let mut p = if let Some(p) = well_known_prefix(uri) {
+            if self.active_prefix_uri(p).is_none() {
+                p.to_string()
+            } else {
+                Self::next_generated(state, self)
+            }
+        } else {
+            Self::next_generated(state, self)
+        };
+        while self.active_prefix_uri(&p).is_some() {
+            p = Self::next_generated(state, self);
+        }
+        self.local_uri_to_prefix.insert(uri.to_string(), p.clone());
+        self.local_prefix_to_uri.insert(p, uri.to_string());
+    }
+
+    fn next_generated(state: &mut State, scope: &Scope<'_>) -> String {
+        loop {
+            let p = format!("ns{}", state.counter);
+            state.counter += 1;
+            if scope.active_prefix_uri(&p).is_none() {
+                return p;
+            }
+        }
+    }
+}
+
+/// True for attributes whose value is a list of namespace prefixes that must be
+/// rewritten when prefixes are rebound in this scope.
+fn is_namespace_prefix_list(name: &XName) -> bool {
+    let ns = name.namespace_name();
+    let local = name.local_name();
+    if ns.is_empty() {
+        return local == "Requires";
+    }
+    ns == MC_NAMESPACE
+        && matches!(
+            local,
+            "Ignorable"
+                | "PreserveAttributes"
+                | "PreserveElements"
+                | "ProcessContent"
+                | "MustUnderstand"
+        )
+}
+
+/// Serialize an element subtree to an XML string (port of `serializeElement`).
+pub fn serialize_element(dom: &Dom, el: NodeId) -> String {
+    let mut state = State { counter: 0 };
+    let root_scope = Scope::root();
+    let mut out = String::new();
+    emit(dom, el, &root_scope, &mut state, &mut out);
+    out
+}
+
+/// HASH-STREAM-01 lite: SHA-1 (lowercase hex) of the serialized element with the
+/// first WML default-xmlns declaration stripped — byte-identical to
+/// `sha1_hex(serialize_element(el).replacen(WML_DEFAULT_XMLNS, "", 1))` without
+/// materializing the full XML string for hashing.
+pub fn serialize_element_sha1_hex(dom: &Dom, el: NodeId) -> String {
+    let mut state = State { counter: 0 };
+    let root_scope = Scope::root();
+    let mut out = HashXmlBuf::new();
+    emit(dom, el, &root_scope, &mut state, &mut out);
+    out.finish_hex()
+}
+
+/// HASH-STREAM-02: structure-only SHA-1 (element names + attributes + nesting;
+/// no text/comment/PI) with the same first WML default-xmlns strip as
+/// [`serialize_element_sha1_hex`]. Digest-identical to hashing a
+/// structure-clone then serializing, without allocating the structure DOM.
+pub fn serialize_element_structure_sha1_hex(dom: &Dom, el: NodeId) -> String {
+    let mut state = State { counter: 0 };
+    let root_scope = Scope::root();
+    let mut out = HashXmlBuf::new();
+    emit_structure(dom, el, &root_scope, &mut state, &mut out);
+    out.finish_hex()
+}
+
+/// Minimal output sink so serialize can target `String` or a streaming hasher.
+trait XmlBuf {
+    fn push_str(&mut self, s: &str);
+    fn push(&mut self, c: char);
+}
+
+impl XmlBuf for String {
+    #[inline]
+    fn push_str(&mut self, s: &str) {
+        String::push_str(self, s);
+    }
+    #[inline]
+    fn push(&mut self, c: char) {
+        String::push(self, c);
+    }
+}
+
+/// WordprocessingML default xmlns substring stripped once from block hash input
+/// (matches `preprocess::WML_DEFAULT_XMLNS` / PowerTools).
+const WML_DEFAULT_XMLNS: &str =
+    " xmlns=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"";
+
+/// Stream serialized XML into SHA-1, stripping the first WML default xmlns from
+/// the root open tag (same as `replacen` on the full string).
+struct HashXmlBuf {
+    hasher: sha1::Sha1,
+    /// Bytes of the root open tag until the first `>`.
+    open: String,
+    past_root_open: bool,
+}
+
+impl HashXmlBuf {
+    fn new() -> Self {
+        use sha1::Digest;
+        Self {
+            hasher: sha1::Sha1::new(),
+            open: String::with_capacity(256),
+            past_root_open: false,
+        }
+    }
+
+    fn finish_hex(mut self) -> String {
+        use sha1::Digest;
+        // Degenerate: no `>` seen (should not happen for well-formed emit).
+        if !self.past_root_open {
+            self.flush_open_tag();
+        }
+        crate::util::sha1::hex_string_from_bytes(&self.hasher.finalize())
+    }
+
+    fn flush_open_tag(&mut self) {
+        use sha1::Digest;
+        if let Some(i) = self.open.find(WML_DEFAULT_XMLNS) {
+            self.open.drain(i..i + WML_DEFAULT_XMLNS.len());
+        }
+        self.hasher.update(self.open.as_bytes());
+        self.open.clear();
+        self.past_root_open = true;
+    }
+}
+
+impl XmlBuf for HashXmlBuf {
+    fn push_str(&mut self, s: &str) {
+        use sha1::Digest;
+        if self.past_root_open {
+            self.hasher.update(s.as_bytes());
+            return;
+        }
+        self.open.push_str(s);
+        if let Some(gt) = self.open.find('>') {
+            let rest = self.open[gt + 1..].to_string();
+            self.open.truncate(gt + 1);
+            self.flush_open_tag();
+            if !rest.is_empty() {
+                self.hasher.update(rest.as_bytes());
+            }
+        }
+    }
+
+    fn push(&mut self, c: char) {
+        let mut buf = [0u8; 4];
+        self.push_str(c.encode_utf8(&mut buf));
+    }
+}
+
+/// SER-01: write `prefix:local` (or bare local) into `out` with no temporary String.
+#[inline]
+fn write_qname(out: &mut impl XmlBuf, prefix: &str, local: &str) {
+    if !prefix.is_empty() {
+        out.push_str(prefix);
+        out.push(':');
+    }
+    out.push_str(local);
+}
+
+/// SER-01: escape attribute values into `out`. Fast path when no special chars.
+#[inline]
+fn write_escape_attr(out: &mut impl XmlBuf, s: &str) {
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>' | b'"')) {
+        out.push_str(s);
+        return;
+    }
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+}
+
+/// SER-01: escape text content into `out`. Fast path when no special chars.
+#[inline]
+fn write_escape_text(out: &mut impl XmlBuf, s: &str) {
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>')) {
+        out.push_str(s);
+        return;
+    }
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(c),
+        }
+    }
+}
+
+/// Resolve prefix for a URI, assigning if needed.
+fn resolve_prefix(scope: &mut Scope<'_>, state: &mut State, uri: &str) -> String {
+    if let Some(p) = scope.prefix_for_uri(uri) {
+        return p.to_string();
+    }
+    scope.assign(state, uri)
+}
+
+/// Write namespace decls + real attrs + rewritten QName-list attrs into `out`.
+fn write_attributes(
+    out: &mut impl XmlBuf,
+    scope: &mut Scope<'_>,
+    state: &mut State,
+    real_attrs: &[(&XName, &str)],
+    prefix_list_attrs: &[(&XName, &str)],
+) {
+    // Namespace declarations first, sorted by prefix for determinism.
+    {
+        let mut decls: Vec<(&String, &String)> = scope.local_uri_to_prefix.iter().collect();
+        decls.sort_by(|a, b| a.1.cmp(b.1));
+        for (uri, prefix) in decls {
+            if prefix == "xml" || *uri == XML_NAMESPACE || prefix == "xmlns" {
+                continue;
+            }
+            if uri.is_empty() && !prefix.is_empty() {
+                continue;
+            }
+            if prefix.is_empty() {
+                out.push_str(" xmlns=\"");
+                write_escape_attr(out, uri);
+                out.push('"');
+            } else {
+                out.push_str(" xmlns:");
+                out.push_str(prefix);
+                out.push_str("=\"");
+                write_escape_attr(out, uri);
+                out.push('"');
+            }
+        }
+    }
+
+    for (name, value) in real_attrs {
+        // ALLOC-LEAN-01: ensure the binding, then borrow the prefix (&str) — the
+        // attr prefix is used once, immediately, so no owned String is needed.
+        // Every attr namespace was already ensured in emit's first pass, so this is
+        // a lookup; behavior matches `resolve_prefix` (ensure-then-return-prefix).
+        scope.ensure_prefix(state, name.namespace_name());
+        let prefix = scope.prefix_for_uri(name.namespace_name()).unwrap_or("");
+        out.push(' ');
+        write_qname(out, prefix, name.local_name());
+        out.push_str("=\"");
+        write_escape_attr(out, value);
+        out.push('"');
+    }
+
+    for (name, value) in prefix_list_attrs {
+        scope.ensure_prefix(state, name.namespace_name());
+        let prefix = scope.prefix_for_uri(name.namespace_name()).unwrap_or("");
+        out.push(' ');
+        write_qname(out, prefix, name.local_name());
+        out.push_str("=\"");
+        // Rewrite prefix tokens; write rewritten value with escapes, no join Vec.
+        let mut first = true;
+        let mut rewritten = String::new();
+        for token in value.split_whitespace() {
+            if !first {
+                rewritten.push(' ');
+            }
+            first = false;
+            if let Some(uri) = scope.uri_for_prefix(token)
+                && let Some(p) = scope.prefix_for_uri(uri)
+                && p != token
+            {
+                rewritten.push_str(p);
+                continue;
+            }
+            rewritten.push_str(token);
+        }
+        write_escape_attr(out, &rewritten);
+        out.push('"');
+    }
+}
+
+fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut impl XmlBuf) {
+    let ename = dom.name(e).expect("emit: non-element node");
+    let mut scope = Scope::child(parent, dom, e);
+
+    // First pass: assign prefixes for the element name, all attribute names,
+    // and all namespaces referenced by QName-list attribute values.
+    // DOM-ITER-01: borrow attr names/values; no attributes() Vec clones.
+    scope.ensure_prefix(state, ename.namespace_name());
+    let mut real_attrs: Vec<(&XName, &str)> = Vec::new();
+    let mut prefix_list_attrs: Vec<(&XName, &str)> = Vec::new();
+    for i in 0..dom.attr_count(e) {
+        let (name, value) = dom.attr_at(e, i);
+        if dom.is_namespace_declaration(name) {
+            continue;
+        }
+        scope.ensure_prefix(state, name.namespace_name());
+        if is_namespace_prefix_list(name) {
+            for token in value.split_whitespace() {
+                if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
+                    scope.ensure_prefix(state, &uri);
+                }
+            }
+            prefix_list_attrs.push((name, value));
+            continue;
+        }
+        real_attrs.push((name, value));
+    }
+
+    let tag_prefix = resolve_prefix(&mut scope, state, ename.namespace_name());
+    let local = ename.local_name();
+    let n_kids = dom.child_count(e);
+
+    // SER-01: open tag + attributes written straight into `out` (no attr_str).
+    out.push('<');
+    write_qname(out, &tag_prefix, local);
+    write_attributes(out, &mut scope, state, &real_attrs, &prefix_list_attrs);
+
+    if n_kids == 0 {
+        out.push_str(" />");
+        return;
+    }
+
+    out.push('>');
+    for i in 0..n_kids {
+        let k = dom.child_at(e, i);
+        if dom.is_element(k) {
+            emit(dom, k, &scope, state, out);
+        } else if dom.is_text(k) {
+            write_escape_text(out, dom.text_value(k).unwrap_or(""));
+        } else if dom.is_comment(k) {
+            out.push_str("<!--");
+            out.push_str(dom.text_value(k).unwrap_or(""));
+            out.push_str("-->");
+        } else if dom.is_pi(k) {
+            out.push_str("<?");
+            out.push_str(dom.pi_target(k).unwrap_or(""));
+            if let Some(data) = dom.pi_data(k)
+                && !data.is_empty()
+            {
+                out.push_str(data);
+            }
+            out.push_str("?>");
+        }
+    }
+    out.push_str("</");
+    write_qname(out, &tag_prefix, local);
+    out.push('>');
+}
+
+/// HASH-STREAM-02: like [`emit`] but drops all non-element children (text /
+/// comment / PI), matching `CloneForStructureHash` then serialize.
+fn emit_structure(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut impl XmlBuf) {
+    let ename = dom.name(e).expect("emit_structure: non-element node");
+    let mut scope = Scope::child(parent, dom, e);
+
+    scope.ensure_prefix(state, ename.namespace_name());
+    let mut real_attrs: Vec<(&XName, &str)> = Vec::new();
+    let mut prefix_list_attrs: Vec<(&XName, &str)> = Vec::new();
+    for i in 0..dom.attr_count(e) {
+        let (name, value) = dom.attr_at(e, i);
+        if dom.is_namespace_declaration(name) {
+            continue;
+        }
+        scope.ensure_prefix(state, name.namespace_name());
+        if is_namespace_prefix_list(name) {
+            for token in value.split_whitespace() {
+                if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
+                    scope.ensure_prefix(state, &uri);
+                }
+            }
+            prefix_list_attrs.push((name, value));
+            continue;
+        }
+        real_attrs.push((name, value));
+    }
+
+    let tag_prefix = resolve_prefix(&mut scope, state, ename.namespace_name());
+    let local = ename.local_name();
+    let n_kids = dom.child_count(e);
+
+    // Count element children only (structure clone has no text nodes).
+    let mut n_el = 0usize;
+    for i in 0..n_kids {
+        if dom.is_element(dom.child_at(e, i)) {
+            n_el += 1;
+        }
+    }
+
+    out.push('<');
+    write_qname(out, &tag_prefix, local);
+    write_attributes(out, &mut scope, state, &real_attrs, &prefix_list_attrs);
+
+    if n_el == 0 {
+        out.push_str(" />");
+        return;
+    }
+
+    out.push('>');
+    for i in 0..n_kids {
+        let k = dom.child_at(e, i);
+        if dom.is_element(k) {
+            emit_structure(dom, k, &scope, state, out);
+        }
+    }
+    out.push_str("</");
+    write_qname(out, &tag_prefix, local);
+    out.push('>');
+}
+
+/// Serialize a whole document (declaration + root), port of `XDocument.toString`.
+pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
+    let mut out = String::new();
+    if let Some(d) = dom.declaration(doc) {
+        out.push_str("<?xml version=\"");
+        out.push_str(d.version.as_deref().unwrap_or("1.0"));
+        out.push('"');
+        if let Some(enc) = &d.encoding {
+            out.push_str(" encoding=\"");
+            out.push_str(enc);
+            out.push('"');
+        }
+        if let Some(sa) = &d.standalone {
+            out.push_str(" standalone=\"");
+            out.push_str(sa);
+            out.push('"');
+        }
+        out.push_str("?>");
+    }
+    for i in 0..dom.child_count(doc) {
+        let k = dom.child_at(doc, i);
+        if dom.is_element(k) {
+            // Stream element into the same buffer (avoid intermediate String).
+            let mut state = State { counter: 0 };
+            let root_scope = Scope::root();
+            emit(dom, k, &root_scope, &mut state, &mut out);
+        } else if dom.is_text(k) {
+            write_escape_text(&mut out, dom.text_value(k).unwrap_or(""));
+        } else if dom.is_comment(k) {
+            out.push_str("<!--");
+            out.push_str(dom.text_value(k).unwrap_or(""));
+            out.push_str("-->");
+        } else if dom.is_pi(k) {
+            out.push_str("<?");
+            out.push_str(dom.pi_target(k).unwrap_or(""));
+            if let Some(data) = dom.pi_data(k)
+                && !data.is_empty()
+            {
+                out.push_str(data);
+            }
+            out.push_str("?>");
+        }
+    }
+    out
+}

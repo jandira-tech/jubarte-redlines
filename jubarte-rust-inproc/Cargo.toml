@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Long-lived stdin worker for neurotic_docx_bench speed harness.
+# Protocol matches docxodus-csharp-inproc (warm-vs-warm fair algorithm lane):
+#   READY
+#   COMPARE <base> <next> <out>  →  OK <bytes> <ms> | ERR <msg>
+#   QUIT                         →  BYE
+#
+# Built from the canonical jubarte source (path dep). Not published.
+[workspace]
+
+[package]
+name = "jubarte-rust-inproc"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "AGPL-3.0-only"
+description = "Long-lived compare_documents worker for neurotic_docx_bench (warm algorithm timing)"
+
+[[bin]]
+name = "jubarte-inproc"
+path = "src/main.rs"
+
+[dependencies]
+# Match CLI default allocator so warm-inproc timing is not system-allocator-biased.
+jubarte-redlines = { path = "..", default-features = false }
+mimalloc = { version = "0.1", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

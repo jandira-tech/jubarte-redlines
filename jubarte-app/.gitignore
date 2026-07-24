@@ -1,0 +1,6 @@
+node_modules/
+src-tauri/target/
+src-tauri/gen/schemas/
+assets/whale-check.png
+assets/icon-1024.png
+.DS_Store
