@@ -80,8 +80,8 @@ fn settings_special_ids(
 
 #[test]
 fn package_notes_and_settings_coherent_on_treasury_x_5lb() {
-    let a = std::fs::read("/Users/arthrod/Downloads/Sample-Treasury-Intercreditor-Agreement.docx");
-    let b = std::fs::read("/Users/arthrod/temp/T/ooxmlsdk/5lb102!.docx");
+    let a = std::env::var_os("JUBARTE_FIXTURE_A").and_then(|p| std::fs::read(p).ok());
+    let b = std::env::var_os("JUBARTE_FIXTURE_B").and_then(|p| std::fs::read(p).ok());
     let (Ok(a), Ok(b)) = (a, b) else {
         // fixtures not present in CI — skip
         eprintln!("fixtures missing; skip package coherence test");

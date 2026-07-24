@@ -40,13 +40,18 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 from collections import Counter
+from pathlib import Path
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
 HERE = os.path.dirname(os.path.abspath(__file__))
 CRATE = os.path.dirname(HERE)
-DEFAULT_CORPUS = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based"
+# Prefer BENCH_DIR; no developer-home hardcoded default (CR #3599948587).
+DEFAULT_CORPUS = os.environ.get(
+    "BENCH_DIR",
+    str(Path(CRATE).parent / "neurotic_docx_bench" / "corpus" / "word_based"),
+)
 DEFAULT_BIN = os.path.join(CRATE, "target", "release", "jubarte")
 BASELINE = os.path.join(HERE, "parity_baseline.tsv")
 OUT_DIR = os.path.join(CRATE, "_scratch", "parity_ladder")

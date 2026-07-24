@@ -33,6 +33,12 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
+/// Cap the intern pool so a pathological host (adversarial inputs) cannot grow
+/// the thread-local set without bound (gemini #3584751169, CR #3584798246).
+/// OOXML name vocabulary is far smaller; beyond the cap we still return a
+/// correct `Arc<str>`, just without interning.
+const STR_POOL_MAX: usize = 16_384;
+
 /// Return a shared interned `Arc<str>` for `s`, allocating only on first sight.
 /// Equality/hash of the result are byte-for-byte identical to a fresh `Arc::from`;
 /// only storage is shared, so interning is behavior-preserving.
@@ -43,6 +49,9 @@ fn intern_str(s: &str) -> Arc<str> {
             let p = pool.borrow();
             if let Some(existing) = p.get(s) {
                 return existing.clone();
+            }
+            if p.len() >= STR_POOL_MAX {
+                return Arc::from(s);
             }
         }
         let arc: Arc<str> = Arc::from(s);

@@ -16,9 +16,16 @@ set -euo pipefail
 
 CRATE="$(cd "$(dirname "$0")/.." && pwd)"
 BENCH="${BENCH_DIR:-$CRATE/../neurotic_docx_bench}"
-[ -d "$BENCH" ] || BENCH="/Users/arthrod/temp/T/neurotic_docx_bench"
+if [ ! -d "$BENCH" ]; then
+  echo "Error: neurotic_docx_bench not found at $BENCH (set BENCH_DIR)." >&2
+  exit 1
+fi
 N="${1:?usage: parity_ledger.sh <N|full> [bin]}"
 BIN="${2:-$CRATE/target/release/jubarte}"
+if [[ "$N" != "full" && ! "$N" =~ ^[1-9][0-9]*$ ]]; then
+  echo "N must be a positive integer or 'full'" >&2
+  exit 2
+fi
 
 SRC="$BENCH/corpus/word_based/docx_source"
 ORACLE="$BENCH/corpus/word_based/pdf_redlines_word"

@@ -81,6 +81,17 @@ fn anchor_ids(pkg: &PartFs) -> (Vec<String>, Vec<String>, Vec<String>) {
 /// Fresh pair: A has 4 comments (ids 0,1,3,4), B has 6 (superset, +19,20).
 /// GT (docx_lots_of_comments_addition_redline.docx): B's four comment parts
 /// byte-identical, 6/6/6 anchors. Ours must carry B's parts and anchor all 6.
+
+fn optional_bench_docx(name: &str) -> Option<Vec<u8>> {
+    let root = std::env::var_os("BENCH_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../neurotic_docx_bench");
+            p.is_dir().then_some(p)
+        })?;
+    std::fs::read(root.join("corpus/word_based/docx_source").join(name)).ok()
+}
+
 #[test]
 fn w1_superset_carries_revised_parts_byte_identical_with_anchors() {
     if !orig_fixtures_present() {
@@ -185,11 +196,11 @@ fn w2_single_side_comments_carried_with_anchors_not_orphaned() {
 /// (document_100 × lots_of_comments redline: all 6 B comments should anchor.)
 #[test]
 fn accept_revisions_preserves_comment_range_markers() {
-    let b_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline_addition_v_removal.docx";
+    let Some(b_path) = optional_bench_docx("docx_lots_of_comments_addition_redline_addition_v_removal.docx") else { eprintln!("skip: missing bench fixture"); return; };
     if !require_path(b_path) {
         return;
     }
-    let b = std::fs::read(b_path).unwrap();
+    let b = b_path.clone();
     let list_ids = |bytes: &[u8], tag: &str| -> HashSet<String> {
         let pkg = PartFs::open(bytes).unwrap();
         let xml = pkg.part_string("word/document.xml").unwrap();
@@ -223,13 +234,13 @@ fn accept_revisions_preserves_comment_range_markers() {
 /// **4** (one per body). Carry unique bodies with matched anchors (C2).
 #[test]
 fn document100_vs_lots_of_comments_carries_unique_bodies() {
-    let a_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/document_100_ultimate_demo_id_paraid_overflow.docx";
-    let b_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline_addition_v_removal.docx";
+    let Some(a_path) = optional_bench_docx("document_100_ultimate_demo_id_paraid_overflow.docx") else { eprintln!("skip: missing bench fixture"); return; };
+    let Some(b_path) = optional_bench_docx("docx_lots_of_comments_addition_redline_addition_v_removal.docx") else { eprintln!("skip: missing bench fixture"); return; };
     if !require_path(a_path) || !require_path(b_path) {
         return;
     }
-    let a = std::fs::read(a_path).unwrap();
-    let b = std::fs::read(b_path).unwrap();
+    let a = a_path.clone();
+    let b = b_path.clone();
     let pkg_b = PartFs::open(&b).unwrap();
     let b_ids = comment_ids(&pkg_b);
     assert_eq!(b_ids.len(), 6, "fixture must have 6 B comment ids");
@@ -258,13 +269,13 @@ fn document100_vs_lots_of_comments_carries_unique_bodies() {
 /// Prefer B's install path, then body-text dedupe.
 #[test]
 fn renumbered_same_text_comments_prefer_b_not_double_union() {
-    let a_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_redline.docx";
-    let b_path = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition_removal_redline_removal_v_addition.docx";
+    let Some(a_path) = optional_bench_docx("docx_lots_of_comments_addition_redline.docx") else { eprintln!("skip: missing bench fixture"); return; };
+    let Some(b_path) = optional_bench_docx("docx_lots_of_comments_addition_removal_redline_removal_v_addition.docx") else { eprintln!("skip: missing bench fixture"); return; };
     if !require_path(a_path) || !require_path(b_path) {
         return;
     }
-    let a = std::fs::read(a_path).unwrap();
-    let b = std::fs::read(b_path).unwrap();
+    let a = a_path.clone();
+    let b = b_path.clone();
     let pkg_a = PartFs::open(&a).unwrap();
     let pkg_b = PartFs::open(&b).unwrap();
     let a_ids = comment_ids(&pkg_a);

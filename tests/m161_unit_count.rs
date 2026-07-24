@@ -2,15 +2,32 @@ use jubarte::comparer::{WmlComparerSettings, compare_bodies_faithful};
 use jubarte::namespaces::W;
 use jubarte::xmllinq::Dom;
 use std::fs;
+use std::path::PathBuf;
+
+fn bench_docx(name: &str) -> Option<PathBuf> {
+    let root = std::env::var_os("BENCH_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../neurotic_docx_bench");
+            p.is_dir().then_some(p)
+        })?;
+    let path = root.join("corpus/word_based/docx_source").join(name);
+    path.is_file().then_some(path)
+}
 
 #[test]
 fn title_real_fixture_last_is_word_shape() {
-    let base = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/title_style_demo_id_paraid_overflow.docx";
-    let next = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source/title_style_demo_style_default_missing.docx";
+    let Some(base) = bench_docx("title_style_demo_id_paraid_overflow.docx") else {
+        eprintln!("skip: neurotic_docx_bench fixtures not found (set BENCH_DIR)");
+        return;
+    };
+    let Some(next) = bench_docx("title_style_demo_style_default_missing.docx") else {
+        return;
+    };
     // load via full package path - compare may need full doc
     // use CLI already; instead parse and compare bodies
-    let data_a = fs::read(base).unwrap();
-    let data_b = fs::read(next).unwrap();
+    let data_a = fs::read(&base).unwrap();
+    let data_b = fs::read(&next).unwrap();
     let xml_a = {
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(data_a)).unwrap();
         let mut f = z.by_name("word/document.xml").unwrap();

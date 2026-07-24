@@ -97,7 +97,18 @@ fn m4_f6_docpr_ids_unique_after_full_compare() {
     use std::io::Read;
     use zip::ZipArchive;
 
-    let corpus = "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source";
+    let corpus = {
+        let root = std::env::var("BENCH_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../neurotic_docx_bench"));
+        let c = root.join("corpus/word_based/docx_source");
+        if !c.is_dir() {
+            eprintln!("skip: bench corpus missing");
+            return;
+        }
+        c
+    };
+    let corpus = corpus.to_str().unwrap();
     let a = std::fs::read(format!("{corpus}/strict01_sdt_controls.docx"))
         .expect("strict01_sdt_controls fixture");
     let b = std::fs::read(format!("{corpus}/strict01.docx")).expect("strict01 fixture");

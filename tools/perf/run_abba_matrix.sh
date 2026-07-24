@@ -45,7 +45,7 @@ F5LB="${F5LB:-$OOXML/5lb102!.docx}"
 # four permanent fixtures without replacing them. Override with FILE_PAIRS_DIR.
 FILE_PAIRS_DIR="${FILE_PAIRS_DIR:-$OOXML/../neurotic_docx_bench/corpus/word_based/docx_source_randomized}"
 if [ ! -d "$FILE_PAIRS_DIR" ]; then
-  FILE_PAIRS_DIR="${FILE_PAIRS_DIR_ALT:-/Users/arthrod/temp/T/neurotic_docx_bench/corpus/word_based/docx_source_randomized}"
+  FILE_PAIRS_DIR="${FILE_PAIRS_DIR_ALT:-${BENCH_DIR:-$CRATE/../neurotic_docx_bench}/corpus/word_based/docx_source_randomized}"
 fi
 # Default sample pairs (short + mid + dense-ish short-into-long). Empty FILE_SAMPLE=0 to skip.
 FILE_SAMPLE="${FILE_SAMPLE:-1}"
