@@ -158,8 +158,7 @@ fn m135_file_120_still_pure_i_combines() {
     });
     assert!(
         pure_i && !thrash,
-        "file_120 M133 shape must hold: {:?}",
-        paras
+        "file_120 M133 shape must hold: {paras:?}"
     );
 }
 

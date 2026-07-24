@@ -21,11 +21,10 @@ const IMAGE_DOC: &[u8] = include_bytes!("fixtures/relids/image_doc.docx");
 fn moves_ppr_to_front_of_paragraph() {
     // pPr emitted AFTER the run -> must be moved to the front.
     let xml = format!(
-        "<w:document xmlns:w=\"{w}\"><w:body><w:p>\
+        "<w:document xmlns:w=\"{WNS}\"><w:body><w:p>\
          <w:r><w:t>hi</w:t></w:r>\
          <w:pPr><w:jc w:val=\"center\"/></w:pPr>\
-         </w:p></w:body></w:document>",
-        w = WNS
+         </w:p></w:body></w:document>"
     );
     let mut d = Dom::new();
     let doc = d.parse_xdocument(&xml);

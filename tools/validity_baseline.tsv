@@ -1,0 +1,5 @@
+# Ring 2 OpenXmlValidator ratchet baseline (plan D3).
+# Columns: pair_stem	error_id	description
+# Ratchet direction: this file must only ever shrink (NEW keys fail the sweep).
+# Initial bless is empty — first --validate sweep that finds issues should either
+# fix them or append keys with a written justification.

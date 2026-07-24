@@ -764,9 +764,8 @@ fn align_paragraph_style_fonts_with_normal(dom: &mut Dom, styles_root: NodeId) -
             // theme fonts (file_8 Title = majorHAnsi) or an existing face —
             // Word leaves those alone. file_33 Title/ListParagraph/Highlighted
             // ship with sz-only rPr and no rFonts element.
-            let rpr = match dom.element(style, &W::name("rPr")) {
-                Some(r) => r,
-                None => continue,
+            let Some(rpr) = dom.element(style, &W::name("rPr")) else {
+                continue;
             };
             if dom.element(rpr, &W::name("rFonts")).is_some() {
                 continue;
@@ -927,6 +926,451 @@ fn add_rpr_child_in_order(dom: &mut Dom, rpr: NodeId, child: NodeId, local: &str
 /// M-PAG mechanism 2b / M71: when the output Normal's effective run metrics
 /// differ from the REVISED document's, rewrite Normal's rPr to B's effective
 /// values with a `w:rPrChange` holding the old rPr. Originally scoped to
+/// Copy B's package chrome when the A-based package lacks it.
+///
+/// Theme fonts (major/minor HAnsi) drive Title/Heading faces; missing theme
+/// leaves LO on factory faces. Settings/fontTable/webSettings are likewise
+/// present on Word redlines whenever the revised side carries them (C3).
+/// Full docDefaults swap regressed sales_report×sample_document — leave
+/// docDefaults to the Normal merge path; only fill **missing** chrome parts.
+fn adopt_revised_styles_chrome(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
+    adopt_missing_theme_parts(out, pkg2, out_main);
+    // people.xml: Word redlines always carry author identity when B has comments
+    // (C2 residual layout for document_100×lots_of_comments).
+    const CHROME: [(&str, &str, &str, &str); 4] = [
+        (
+            "word/settings.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings",
+            "settings.xml",
+        ),
+        (
+            "word/webSettings.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/webSettings",
+            "webSettings.xml",
+        ),
+        (
+            "word/fontTable.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable",
+            "fontTable.xml",
+        ),
+        (
+            "word/people.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml",
+            "http://schemas.microsoft.com/office/2011/relationships/people",
+            "people.xml",
+        ),
+    ];
+    for (part, ctype, rel_type, target) in CHROME {
+        if out.part_bytes(part).is_some() {
+            continue;
+        }
+        let Some(bytes) = pkg2.part_bytes(part).map(<[u8]>::to_vec) else {
+            continue;
+        };
+        out.set_part(part, bytes);
+        out.add_content_type_override(&format!("/{part}"), ctype);
+        let has_rel = out
+            .read_rels_for(out_main)
+            .is_some_and(|r| r.items.iter().any(|i| i.rel_type == rel_type));
+        if !has_rel {
+            out.add_document_relationship(out_main, rel_type, target);
+        }
+    }
+}
+
+fn adopt_missing_theme_parts(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
+    let out_has_theme = out
+        .parts()
+        .iter()
+        .any(|p| p.starts_with("word/theme/") && p.ends_with(".xml"));
+    if out_has_theme {
+        return;
+    }
+    let b_themes: Vec<String> = pkg2
+        .parts()
+        .iter()
+        .filter(|p| p.starts_with("word/theme/") && p.ends_with(".xml"))
+        .cloned()
+        .collect();
+    for part in b_themes {
+        let Some(bytes) = pkg2.part_bytes(&part).map(<[u8]>::to_vec) else {
+            continue;
+        };
+        out.set_part(&part, bytes);
+        out.add_content_type_override(
+            &format!("/{part}"),
+            "application/vnd.openxmlformats-officedocument.theme+xml",
+        );
+        let has_theme_rel = out.read_rels_for(out_main).is_some_and(|r| {
+            r.items
+                .iter()
+                .any(|i| i.rel_type.ends_with("/theme") || i.target.contains("theme"))
+        });
+        if !has_theme_rel {
+            let target = part
+                .strip_prefix("word/")
+                .unwrap_or(part.as_str())
+                .to_string();
+            out.add_document_relationship(
+                out_main,
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme",
+                &target,
+            );
+        }
+    }
+}
+
+/// Minimal Word-like package chrome for thin demo packages (C5).
+///
+/// Word Compare always saves `settings` / `theme` / `fontTable` even when both
+/// inputs were bare (styles-only) demos. Without them LO falls back to factory
+/// faces that diverge from Word's redline PDF (blue_bold / quarterly_heading
+/// / right_aligned_italic class). Inject only when still missing after
+/// [`adopt_revised_styles_chrome`].
+fn ensure_factory_package_chrome(out: &mut PartFs, out_main: &str) {
+    // settings
+    if out.part_bytes("word/settings.xml").is_none() {
+        const SETTINGS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:zoom w:percent="100"/>
+  <w:defaultTabStop w:val="720"/>
+  <w:characterSpacingControl w:val="doNotCompress"/>
+  <w:compat/>
+</w:settings>"#;
+        out.set_part("word/settings.xml", SETTINGS.as_bytes().to_vec());
+        out.add_content_type_override(
+            "/word/settings.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml",
+        );
+        let has_rel = out
+            .read_rels_for(out_main)
+            .is_some_and(|r| r.items.iter().any(|i| i.rel_type.ends_with("/settings")));
+        if !has_rel {
+            out.add_document_relationship(
+                out_main,
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings",
+                "settings.xml",
+            );
+        }
+    }
+    // webSettings (Word always writes this; LO uses it for some wrap/compat)
+    if out.part_bytes("word/webSettings.xml").is_none() {
+        const WEB: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:webSettings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:optimizeForBrowser/>
+  <w:allowPNG/>
+</w:webSettings>"#;
+        out.set_part("word/webSettings.xml", WEB.as_bytes().to_vec());
+        out.add_content_type_override(
+            "/word/webSettings.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml",
+        );
+        let has_rel = out
+            .read_rels_for(out_main)
+            .is_some_and(|r| r.items.iter().any(|i| i.rel_type.ends_with("/webSettings")));
+        if !has_rel {
+            out.add_document_relationship(
+                out_main,
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/webSettings",
+                "webSettings.xml",
+            );
+        }
+    }
+    // fontTable
+    if out.part_bytes("word/fontTable.xml").is_none() {
+        const FONTS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:font w:name="Calibri"><w:panose1 w:val="020F0502020204030204"/><w:charset w:val="00"/><w:family w:val="swiss"/><w:pitch w:val="variable"/></w:font>
+  <w:font w:name="Times New Roman"><w:panose1 w:val="02020603050405020304"/><w:charset w:val="00"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font>
+  <w:font w:name="Arial"><w:panose1 w:val="020B0604020202020204"/><w:charset w:val="00"/><w:family w:val="swiss"/><w:pitch w:val="variable"/></w:font>
+</w:fonts>"#;
+        out.set_part("word/fontTable.xml", FONTS.as_bytes().to_vec());
+        out.add_content_type_override(
+            "/word/fontTable.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml",
+        );
+        let has_rel = out
+            .read_rels_for(out_main)
+            .is_some_and(|r| r.items.iter().any(|i| i.rel_type.ends_with("/fontTable")));
+        if !has_rel {
+            out.add_document_relationship(
+                out_main,
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable",
+                "fontTable.xml",
+            );
+        }
+    }
+    // theme
+    let out_has_theme = out
+        .parts()
+        .iter()
+        .any(|p| p.starts_with("word/theme/") && p.ends_with(".xml"));
+    if !out_has_theme {
+        // Compact Office Theme (major/minor Latin faces Word and LO both
+        // resolve). The format scheme is the complete Word-produced shape from
+        // the local redline corpus; DrawingML requires all four style lists.
+        const THEME: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme">
+  <a:themeElements>
+    <a:clrScheme name="Office">
+      <a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>
+      <a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>
+      <a:dk2><a:srgbClr val="1F497D"/></a:dk2>
+      <a:lt2><a:srgbClr val="EEECE1"/></a:lt2>
+      <a:accent1><a:srgbClr val="4F81BD"/></a:accent1>
+      <a:accent2><a:srgbClr val="C0504D"/></a:accent2>
+      <a:accent3><a:srgbClr val="9BBB59"/></a:accent3>
+      <a:accent4><a:srgbClr val="8064A2"/></a:accent4>
+      <a:accent5><a:srgbClr val="4BACC6"/></a:accent5>
+      <a:accent6><a:srgbClr val="F79646"/></a:accent6>
+      <a:hlink><a:srgbClr val="0000FF"/></a:hlink>
+      <a:folHlink><a:srgbClr val="800080"/></a:folHlink>
+    </a:clrScheme>
+    <a:fontScheme name="Office">
+      <a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
+      <a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
+    </a:fontScheme>
+    <a:fmtScheme name="Office">
+      <a:fillStyleLst>
+        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+        <a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:lumMod val="110000"/><a:satMod val="105000"/><a:tint val="67000"/></a:schemeClr></a:gs><a:gs pos="50000"><a:schemeClr val="phClr"><a:lumMod val="105000"/><a:satMod val="103000"/><a:tint val="73000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:lumMod val="105000"/><a:satMod val="109000"/><a:tint val="81000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>
+        <a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:satMod val="103000"/><a:lumMod val="102000"/><a:tint val="94000"/></a:schemeClr></a:gs><a:gs pos="50000"><a:schemeClr val="phClr"><a:satMod val="110000"/><a:lumMod val="100000"/><a:shade val="100000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:lumMod val="99000"/><a:satMod val="120000"/><a:shade val="78000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>
+      </a:fillStyleLst>
+      <a:lnStyleLst>
+        <a:ln w="12700" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln>
+        <a:ln w="19050" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln>
+        <a:ln w="25400" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln>
+      </a:lnStyleLst>
+      <a:effectStyleLst>
+        <a:effectStyle><a:effectLst/></a:effectStyle>
+        <a:effectStyle><a:effectLst/></a:effectStyle>
+        <a:effectStyle><a:effectLst><a:outerShdw blurRad="57150" dist="19050" dir="5400000" algn="ctr" rotWithShape="0"><a:srgbClr val="000000"><a:alpha val="63000"/></a:srgbClr></a:outerShdw></a:effectLst></a:effectStyle>
+      </a:effectStyleLst>
+      <a:bgFillStyleLst>
+        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+        <a:solidFill><a:schemeClr val="phClr"><a:tint val="95000"/><a:satMod val="170000"/></a:schemeClr></a:solidFill>
+        <a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:tint val="93000"/><a:satMod val="150000"/><a:shade val="98000"/><a:lumMod val="102000"/></a:schemeClr></a:gs><a:gs pos="50000"><a:schemeClr val="phClr"><a:tint val="98000"/><a:satMod val="130000"/><a:shade val="90000"/><a:lumMod val="103000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:shade val="63000"/><a:satMod val="120000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>
+      </a:bgFillStyleLst>
+    </a:fmtScheme>
+  </a:themeElements>
+</a:theme>"#;
+        out.set_part("word/theme/theme1.xml", THEME.as_bytes().to_vec());
+        out.add_content_type_override(
+            "/word/theme/theme1.xml",
+            "application/vnd.openxmlformats-officedocument.theme+xml",
+        );
+        let has_theme_rel = out.read_rels_for(out_main).is_some_and(|r| {
+            r.items
+                .iter()
+                .any(|i| i.rel_type.ends_with("/theme") || i.target.contains("theme"))
+        });
+        if !has_theme_rel {
+            out.add_document_relationship(
+                out_main,
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme",
+                "theme/theme1.xml",
+            );
+        }
+    }
+}
+
+/// Word-canonical `w:styleId` for a human-readable `w:name` (C3 / C5).
+///
+/// Word Compare rewrites numeric/`styleN` ids to ECMA-style ids (`heading 1` →
+/// `Heading1`, `Normal Table` → `TableNormal`). LO resolves layout from the
+/// id for many built-ins; leaving `w:styleId="2"` with `w:name="heading 1"`
+/// keeps the correct face in Word but wrong metrics under LO (tolerated-input
+/// demos score ~47 with matching body text).
+fn word_canonical_style_id(name: &str) -> String {
+    let n = name.trim();
+    // Case-insensitive built-ins (ECMA-376 + Word Compare observations).
+    let lower = n.to_ascii_lowercase();
+    match lower.as_str() {
+        "normal" => return "Normal".into(),
+        "heading 1" => return "Heading1".into(),
+        "heading 2" => return "Heading2".into(),
+        "heading 3" => return "Heading3".into(),
+        "heading 4" => return "Heading4".into(),
+        "heading 5" => return "Heading5".into(),
+        "heading 6" => return "Heading6".into(),
+        "heading 7" => return "Heading7".into(),
+        "heading 8" => return "Heading8".into(),
+        "heading 9" => return "Heading9".into(),
+        "default paragraph font" => return "DefaultParagraphFont".into(),
+        "normal table" => return "TableNormal".into(),
+        "no list" => return "NoList".into(),
+        "list paragraph" => return "ListParagraph".into(),
+        "footnote text" => return "FootnoteText".into(),
+        "footnote reference" => return "FootnoteReference".into(),
+        "endnote text" => return "EndnoteText".into(),
+        "endnote reference" => return "EndnoteReference".into(),
+        "title" => return "Title".into(),
+        "subtitle" => return "Subtitle".into(),
+        "hyperlink" => return "Hyperlink".into(),
+        "strong" => return "Strong".into(),
+        "emphasis" => return "Emphasis".into(),
+        "quote" => return "Quote".into(),
+        "intense quote" => return "IntenseQuote".into(),
+        "caption" => return "Caption".into(),
+        "text body" => return "Textbody".into(),
+        "preformatted text" => return "PreformattedText".into(),
+        "document title" => return "DocumentTitle".into(),
+        "highlighted style" => return "HighlightedStyle".into(),
+        "red bold character" => return "RedBoldCharacter".into(),
+        "blue italic character" => return "BlueItalicCharacter".into(),
+        "heading 1 char" => return "Heading1Char".into(),
+        "heading 2 char" => return "Heading2Char".into(),
+        "heading 3 char" => return "Heading3Char".into(),
+        "heading 4 char" => return "Heading4Char".into(),
+        "heading 5 char" => return "Heading5Char".into(),
+        "heading 6 char" => return "Heading6Char".into(),
+        "title char" => return "TitleChar".into(),
+        "footnote text char" => return "FootnoteTextChar".into(),
+        "default" => return "Default".into(),
+        "heading" => return "Heading".into(),
+        "list" => return "List".into(),
+        "index" => return "Index".into(),
+        _ => {}
+    }
+    // Generic: drop spaces/underscores/hyphens, PascalCase each token.
+    n.split(|c: char| c.is_whitespace() || c == '_' || c == '-')
+        .filter(|t| !t.is_empty())
+        .map(|t| {
+            let mut cs = t.chars();
+            match cs.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + cs.as_str(),
+            }
+        })
+        .collect()
+}
+
+/// Rename `w:styleId` values to Word-canonical ids derived from `w:name`.
+///
+/// Returns the old→new map (only entries that actually change). Also rewrites
+/// `basedOn` / `next` / `link` inside the stylesheet. Skips a rename when the
+/// target id is already claimed by a different style that is not itself renaming
+/// away (no silent merge).
+fn canonicalize_style_ids(
+    dom: &mut Dom,
+    styles_root: NodeId,
+) -> std::collections::HashMap<String, String> {
+    let style_nm = W::name("style");
+    let style_id = W::name("styleId");
+    let name_el = W::name("name");
+    let styles: Vec<NodeId> = dom.elements(styles_root, Some(&style_nm));
+
+    // Pass 1: desired renames (ignore collisions).
+    let mut desired: Vec<(NodeId, String, String)> = Vec::new();
+    for s in &styles {
+        let Some(old) = dom.attribute(*s, &style_id).map(|v| v.to_string()) else {
+            continue;
+        };
+        let Some(name) = dom
+            .element(*s, &name_el)
+            .and_then(|e| dom.attribute(e, &W::val()))
+            .map(|v| v.to_string())
+        else {
+            continue;
+        };
+        let new_id = word_canonical_style_id(&name);
+        if new_id.is_empty() || new_id == old {
+            continue;
+        }
+        desired.push((*s, old, new_id));
+    }
+
+    // Pass 2: drop collisions — target held by a non-renaming style, or two
+    // styles racing for the same target (first wins; prefer already-matching).
+    let leaving: std::collections::HashSet<String> =
+        desired.iter().map(|(_, old, _)| old.clone()).collect();
+    let mut taken_targets: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut renames: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut plan: Vec<(NodeId, String)> = Vec::new();
+    for (s, old, new_id) in desired {
+        if taken_targets.contains(&new_id) {
+            continue;
+        }
+        // Occupied by a style that stays put?
+        let occupied_by_stayer = styles.iter().any(|&other| {
+            dom.attribute(other, &style_id) == Some(new_id.as_str()) && !leaving.contains(&new_id)
+        });
+        if occupied_by_stayer {
+            continue;
+        }
+        taken_targets.insert(new_id.clone());
+        renames.insert(old, new_id.clone());
+        plan.push((s, new_id));
+    }
+    for (s, new_id) in &plan {
+        dom.set_attribute_value(*s, &style_id, Some(new_id));
+    }
+    // Rewrite basedOn / next / link vals that point at renamed ids.
+    for local in ["basedOn", "next", "link"] {
+        let nm = W::name(local);
+        for e in dom.descendants(styles_root, Some(&nm)) {
+            if let Some(v) = dom.attribute(e, &W::val())
+                && let Some(nv) = renames.get(v)
+            {
+                dom.set_attribute_value(e, &W::val(), Some(nv));
+            }
+        }
+    }
+    renames
+}
+
+/// Apply a styleId rename map to `pStyle` / `rStyle` / `tblStyle` under `root`.
+fn remap_style_refs(
+    dom: &mut Dom,
+    root: NodeId,
+    renames: &std::collections::HashMap<String, String>,
+) -> usize {
+    if renames.is_empty() {
+        return 0;
+    }
+    let mut n = 0;
+    for local in ["pStyle", "rStyle", "tblStyle"] {
+        let nm = W::name(local);
+        for e in dom.descendants(root, Some(&nm)) {
+            if let Some(v) = dom.attribute(e, &W::val())
+                && let Some(nv) = renames.get(v)
+            {
+                dom.set_attribute_value(e, &W::val(), Some(nv));
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// When the A-based styles part lacks `docDefaults` or `latentStyles`, copy
+/// them from B (Word redlines always carry both when B has a full stylesheet).
+/// Full styles swap is intentionally avoided — it regressed sales_report pairs.
+fn adopt_missing_styles_structure(dom: &mut Dom, out_root: NodeId, b_root: NodeId) -> bool {
+    let mut changed = false;
+    for local in ["docDefaults", "latentStyles"] {
+        let nm = W::name(local);
+        if dom.element(out_root, &nm).is_some() {
+            continue;
+        }
+        let Some(src) = dom.element(b_root, &nm) else {
+            continue;
+        };
+        let cloned = dom.clone_subtree(src);
+        // docDefaults / latentStyles sort before w:style children.
+        if let Some(first_style) = dom.element(out_root, &W::name("style")) {
+            dom.add_before_self(first_style, cloned);
+        } else {
+            dom.add_first(out_root, cloned);
+        }
+        changed = true;
+    }
+    changed
+}
+
 /// header/footer→Normal (footer knife-edge line box). M71 always runs it in
 /// Word mode so no-HF pairs like file_197 also get B's Calibri dd; M65 still
 /// skips both-bare Normal (file_170).
@@ -1340,6 +1784,73 @@ fn unique_part_name(out: &PartFs, want: &str, bytes: &[u8]) -> String {
                 }
             }
         }
+    }
+}
+
+/// Word Compare leaves the body-level final `sectPr` without
+/// headerReference/footerReference when an earlier mid-body section break
+/// already defines the same (kind, type) slot — later sections inherit.
+/// Evidence (docx_lots_of_comments_*, verdana×strict01, word_clean_strict01×…):
+/// Word's redline has HF only on mid `pPr/sectPr`; the body final is empty.
+/// Our pipeline sometimes leaves A's (or adopted) refs on the final as well,
+/// which dual-binds chrome and diverges from Word. Strip only the **body
+/// direct-child** final; mid multi-section even/default/first copies stay.
+fn strip_final_sectpr_inherited_header_footer(dom: &mut Dom, result_root: NodeId) {
+    let href = W::name("headerReference");
+    let fref = W::name("footerReference");
+    let type_name = W::name("type");
+    let Some(body) = dom.element(result_root, &W::body()) else {
+        return;
+    };
+    // Body-level final sectPr is a direct child of w:body (not pPr/sectPr).
+    let Some(final_sect) = dom.element(body, &W::name("sectPr")) else {
+        return;
+    };
+    let mut earlier_slots: std::collections::HashSet<(bool, String)> =
+        std::collections::HashSet::new();
+    for sect in dom.descendants(body, Some(&W::name("sectPr"))) {
+        if sect == final_sect {
+            continue;
+        }
+        for e in dom.elements(sect, None) {
+            let Some(n) = dom.name(e) else { continue };
+            let is_header = if n == href {
+                true
+            } else if n == fref {
+                false
+            } else {
+                continue;
+            };
+            let ty = dom
+                .attribute(e, &type_name)
+                .unwrap_or("default")
+                .to_string();
+            earlier_slots.insert((is_header, ty));
+        }
+    }
+    if earlier_slots.is_empty() {
+        return;
+    }
+    let mut to_remove: Vec<NodeId> = Vec::new();
+    for e in dom.elements(final_sect, None) {
+        let Some(n) = dom.name(e) else { continue };
+        let is_header = if n == href {
+            true
+        } else if n == fref {
+            false
+        } else {
+            continue;
+        };
+        let ty = dom
+            .attribute(e, &type_name)
+            .unwrap_or("default")
+            .to_string();
+        if earlier_slots.contains(&(is_header, ty)) {
+            to_remove.push(e);
+        }
+    }
+    for n in to_remove {
+        dom.remove(n);
     }
 }
 
@@ -1773,6 +2284,21 @@ fn compare_documents_impl(
     settings: &WmlComparerSettings,
     pre_process_original: bool,
 ) -> Result<Vec<u8>, OpcError> {
+    // IDENTICAL-INPUT-01: same input bytes → empty redline is the (accepted)
+    // original package. Avoids dual package prep, Dom parse, LCS, and produce.
+    // Critical for self-compare fixtures (e.g. redline × self).
+    if original == modified {
+        let mut owned = crate::strict_translation::strict_to_transitional_docx(original);
+        if settings.merge_replaced_paragraphs && docx_has_tracked_changes(&owned) {
+            owned = accept_revisions(&owned)?;
+        }
+        // IDENTICAL-INPUT still runs drawing/shape id fixups: source packages
+        // may carry colliding wp:docPr/@id (strict01 corpus) that the full
+        // produce path renumbers; skipping left S-dup-docpr-id regressions.
+        owned = crate::comparer::fixups::fix_up_drawing_ids_in_package(&owned)?;
+        return Ok(owned);
+    }
+
     // M8: normalize ISO/IEC 29500 "Strict" inputs to "Transitional" before any
     // PartFs::open sees them (mirrors the OpenXML SDK's pre-compare step).
     // Transitional packages round-trip byte-identical (zero-churn), so the
@@ -1790,6 +2316,11 @@ fn compare_documents_impl(
     {
         original_owned = accept_revisions(&original_owned)?;
         modified_owned = accept_revisions(&modified_owned)?;
+    }
+
+    // After prep, packages may still be byte-identical (rare non-self paths).
+    if original_owned == modified_owned {
+        return crate::comparer::fixups::fix_up_drawing_ids_in_package(&original_owned);
     }
 
     let original: &[u8] = &original_owned;
@@ -1822,12 +2353,12 @@ fn compare_documents_impl(
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
 
-    let xml1 = pkg1
-        .part_string(&main1)
-        .expect("original main document missing");
-    let xml2 = pkg2
-        .part_string(&main2)
-        .expect("modified main document missing");
+    let xml1 = pkg1.part_string(&main1).ok_or_else(|| {
+        OpcError::PartNotFound(format!("original main document missing: {main1}"))
+    })?;
+    let xml2 = pkg2.part_string(&main2).ok_or_else(|| {
+        OpcError::PartNotFound(format!("modified main document missing: {main2}"))
+    })?;
     // Strict/ISO OOXML uses purl.oclc.org namespace URIs; normalize to Transitional
     // (the only variant our XName tables model) so the body/markup is recognized.
     let xml1 = normalize_strict_namespaces(&xml1);
@@ -1837,10 +2368,16 @@ fn compare_documents_impl(
     let mut dom = Dom::new();
     let d1 = dom.parse_xdocument(&xml1);
     let d2 = dom.parse_xdocument(&xml2);
-    let root1 = dom.root(d1).expect("original has no root");
-    let root2 = dom.root(d2).expect("modified has no root");
-    let body1 = merged_body(&mut dom, root1).expect("original has no body");
-    let body2 = merged_body(&mut dom, root2).expect("modified has no body");
+    let root1 = dom
+        .root(d1)
+        .ok_or_else(|| OpcError::PartNotFound("original has no root element".into()))?;
+    let root2 = dom
+        .root(d2)
+        .ok_or_else(|| OpcError::PartNotFound("modified has no root element".into()))?;
+    let body1 = merged_body(&mut dom, root1)
+        .ok_or_else(|| OpcError::PartNotFound("original has no w:body".into()))?;
+    let body2 = merged_body(&mut dom, root2)
+        .ok_or_else(|| OpcError::PartNotFound("modified has no w:body".into()))?;
 
     // B.4 — reference-driven notes processing: parse both documents' notes
     // parts AND an independent copy of the original's parts (the withRevisions
@@ -1897,6 +2434,9 @@ fn compare_documents_impl(
     // it adds references to the final sectPr).
     if settings.merge_replaced_paragraphs {
         adopt_revised_header_footer(&mut dom, result_root, &pkg2, &mut out, &main1);
+        // Word inheritance: drop body-final HF slots already set on an earlier
+        // mid-section break (dual chrome otherwise). Mid multi-section copies stay.
+        strip_final_sectpr_inherited_header_footer(&mut dom, result_root);
         // M35: comments carryover — union parts (B's byte-identical when its
         // set ⊇ A's) + anchors re-injected at the equivalent text positions.
         crate::comparer::comments::carry_comments(
@@ -1916,11 +2456,22 @@ fn compare_documents_impl(
         crate::comparer::finalize::fix_up_revision_ids(&mut dom, &[result_root]);
     }
 
+    // Final drawing/shape id renumber immediately before serialize — package
+    // post-steps (reconcile, header/footer adopt, comments) can clone/graft
+    // drawings after the mid-produce FixUpDocPrIds pass (S-dup-docpr-id).
+    crate::comparer::fixups::fix_up_doc_pr_ids(&mut dom, result_root);
+    crate::comparer::fixups::fix_up_shape_ids(&mut dom, result_root);
+    crate::comparer::fixups::fix_up_shape_type_ids(&mut dom, result_root);
+
     let result_xml = dom.serialize_element(result_root);
     out.set_part(&main1, result_xml.into_bytes());
 
     // M4.H.8/H.9: copy styles/numbering referenced by inserted (modified) content
     // into the output so it stays Word-valid.
+    // Word-mode also: adopt missing docDefaults/latentStyles from B, then
+    // canonicalize styleIds (numeric/`styleN` → Heading1/…) and remap refs.
+    let mut style_renames: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for (part, is_styles) in [("word/styles.xml", true), ("word/numbering.xml", false)] {
         match (out.part_string(part), pkg2.part_string(part)) {
             (Some(to_xml), Some(from_xml)) => {
@@ -1930,6 +2481,10 @@ fn compare_documents_impl(
                 if let (Some(tr), Some(fr)) = (sd.root(td), sd.root(fd)) {
                     if is_styles {
                         crate::comparer::footnotes::copy_missing_styles(&mut sd, tr, fr);
+                        if settings.merge_replaced_paragraphs {
+                            let _ = adopt_missing_styles_structure(&mut sd, tr, fr);
+                            style_renames = canonicalize_style_ids(&mut sd, tr);
+                        }
                     } else {
                         crate::comparer::footnotes::copy_missing_numbering(&mut sd, tr, fr);
                     }
@@ -1956,8 +2511,82 @@ fn compare_documents_impl(
                     );
                 }
             }
+            // A has no styles part, B does: copy B wholesale then canonicalize.
+            (None, Some(from_xml)) if is_styles && settings.merge_replaced_paragraphs => {
+                let mut sd = Dom::new();
+                let fd = sd.parse_xdocument(&from_xml);
+                if let Some(fr) = sd.root(fd) {
+                    style_renames = canonicalize_style_ids(&mut sd, fr);
+                    out.set_part(part, sd.serialize_element(fr).into_bytes());
+                    out.add_content_type_override(
+                        "/word/styles.xml",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+                    );
+                    let has_rel = out
+                        .read_rels_for(&main1)
+                        .is_some_and(|r| r.items.iter().any(|i| i.rel_type.ends_with("/styles")));
+                    if !has_rel {
+                        out.add_document_relationship(
+                            &main1,
+                            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+                            "styles.xml",
+                        );
+                    }
+                }
+            }
+            // A has styles, B has none: still canonicalize A's ids (Word does).
+            (Some(to_xml), None) if is_styles && settings.merge_replaced_paragraphs => {
+                let mut sd = Dom::new();
+                let td = sd.parse_xdocument(&to_xml);
+                if let Some(tr) = sd.root(td) {
+                    style_renames = canonicalize_style_ids(&mut sd, tr);
+                    out.set_part(part, sd.serialize_element(tr).into_bytes());
+                }
+            }
             _ => {}
         }
+    }
+    // Remap pStyle/rStyle/tblStyle in every XML part that can carry them.
+    if settings.merge_replaced_paragraphs && !style_renames.is_empty() {
+        let part_names: Vec<String> = out
+            .parts()
+            .into_iter()
+            .filter(|p| {
+                p.ends_with(".xml")
+                    && (p.starts_with("word/document")
+                        || p.starts_with("word/header")
+                        || p.starts_with("word/footer")
+                        || p.starts_with("word/footnotes")
+                        || p.starts_with("word/endnotes")
+                        || p.starts_with("word/comments")
+                        || p == "word/styles.xml")
+            })
+            .collect();
+        for part in part_names {
+            let Some(xml) = out.part_string(&part) else {
+                continue;
+            };
+            let mut pd = Dom::new();
+            let doc = pd.parse_xdocument(&xml);
+            let Some(root) = pd.root(doc) else {
+                continue;
+            };
+            // styles.xml basedOn/next/link already remapped inside canonicalize.
+            if part == "word/styles.xml" {
+                continue;
+            }
+            if remap_style_refs(&mut pd, root, &style_renames) > 0 {
+                out.set_part(&part, pd.serialize_element(root).into_bytes());
+            }
+        }
+    }
+
+    // Word-mode: adopt B's package chrome (settings/fontTable/theme) when A is
+    // thin. When BOTH sides are bare demos (C5 formatting one-pagers), Word
+    // still saves factory settings/theme/fontTable — inject if still missing.
+    if settings.merge_replaced_paragraphs {
+        adopt_revised_styles_chrome(&mut out, &pkg2, &main1);
+        ensure_factory_package_chrome(&mut out, &main1);
     }
 
     // Word-parity: strip pStyle/rStyle that styles.xml does not define. LO maps
@@ -2123,12 +2752,44 @@ fn compare_documents_impl(
     // referenced definitions renumbered 1..n with real revision markup) into
     // the output package. Replaces the old by-id `compare_note_parts` model,
     // whose pairing broke whenever Word renumbered notes.
-    for (part, root) in [
-        (fn1.as_str(), notes_ctx.fn_with_revisions),
-        (en1.as_str(), notes_ctx.en_with_revisions),
+    let mut footnote_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut endnote_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (part, root, is_fn) in [
+        (fn1.as_str(), notes_ctx.fn_with_revisions, true),
+        (en1.as_str(), notes_ctx.en_with_revisions, false),
     ] {
         if let Some(r) = root {
+            let def = if is_fn { W::footnote() } else { W::endnote() };
+            let ids: std::collections::HashSet<String> = dom
+                .elements(r, Some(&def))
+                .into_iter()
+                .filter_map(|n| dom.attribute(n, &W::id()).map(str::to_string))
+                .collect();
+            if is_fn {
+                footnote_ids = ids;
+            } else {
+                endnote_ids = ids;
+            }
             out.set_part(part, dom.serialize_element(r).into_bytes());
+        }
+    }
+    // settings.xml may still list special footnote/endnote ids (e.g. id=1
+    // continuationNotice) that rectify dropped. Dangling settings refs make
+    // Word show "unreadable content" (OpenXmlValidator Semantic).
+    if let Some(sx) = out.part_string("word/settings.xml") {
+        let mut sd = Dom::new();
+        let sdoc = sd.parse_xdocument(&sx);
+        if let Some(sroot) = sd.root(sdoc) {
+            crate::comparer::footnotes::sync_settings_special_note_ids(
+                &mut sd,
+                sroot,
+                &footnote_ids,
+                &endnote_ids,
+            );
+            out.set_part(
+                "word/settings.xml",
+                sd.serialize_element(sroot).into_bytes(),
+            );
         }
     }
     // M4.H.x: header/footer CONTENT diff (Word redlines header/footer changes; we
@@ -2238,15 +2899,18 @@ fn compare_documents_impl(
             out.set_part(&part, n.into_bytes());
         }
     }
-    // Word-validity normalization on every validity-swept content part
+    // Word-validity normalization on every validity-swept content part — NOT
+    // document.xml alone. Word opens the package (headers/footers/notes/
+    // settings/styles/rels/content-types); a clean body with a corrupt notes
+    // or settings part still raises "unreadable content".
+    //
     // (validator sweep: 146/166 outputs carried schema errors Word's own
-    // redlines don't): canonicalize universal measures / fractional ints and
+    // redlines don't): canonicalize universal measures / fractional ints,
     // fix Strict artifacts (cnfStyle bitmask, wp14 percents, out-of-range
-    // paraIds). Scope notes: `word/charts/` (DrawingML) and `word/theme/`
-    // are included ON PURPOSE — the Strict percent→per-thousand rewrite
-    // covers the drawingml namespaces; `word/media/*.xml` is vacuous for
-    // binary payloads (`part_string` returns None) and only catches actual
-    // XML placed under media (chart-under-media class, 49cd707c).
+    // paraIds), and strip pt:* scratch so headers/notes don't ship Unids.
+    // Scope notes: `word/charts/` (DrawingML) and `word/theme/` are included
+    // ON PURPOSE — the Strict percent→per-thousand rewrite covers drawingml
+    // namespaces; `word/media/*.xml` is vacuous for binary payloads.
     for part in out.parts() {
         let is_swept = part == main1
             || part == "word/styles.xml"
@@ -2269,7 +2933,46 @@ fn compare_documents_impl(
             if let Some(vr) = vd.root(doc) {
                 crate::comparer::finalize::normalize_universal_measures(&mut vd, vr);
                 crate::comparer::finalize::fix_strict_validity_artifacts(&mut vd, vr);
+                crate::comparer::finalize::remove_powertools_scratch_markup(&mut vd, vr);
                 out.set_part(&part, vd.serialize_element(vr).into_bytes());
+            }
+        }
+    }
+    // Final package-level notes↔settings coherence (after the validity sweep
+    // re-serialized those parts). Dangling special-note ids in settings are a
+    // package bug, not a document.xml bug.
+    {
+        let collect_ids = |part: &str, local: &str| -> std::collections::HashSet<String> {
+            let mut set = std::collections::HashSet::new();
+            let Some(x) = out.part_string(part) else {
+                return set;
+            };
+            let mut d = Dom::new();
+            let doc = d.parse_xdocument(&x);
+            let Some(root) = d.root(doc) else {
+                return set;
+            };
+            let name = W::name(local);
+            for n in d.elements(root, Some(&name)) {
+                if let Some(id) = d.attribute(n, &W::id()) {
+                    set.insert(id.to_string());
+                }
+            }
+            set
+        };
+        let fn_ids = collect_ids("word/footnotes.xml", "footnote");
+        let en_ids = collect_ids("word/endnotes.xml", "endnote");
+        if let Some(sx) = out.part_string("word/settings.xml") {
+            let mut sd = Dom::new();
+            let sdoc = sd.parse_xdocument(&sx);
+            if let Some(sroot) = sd.root(sdoc) {
+                crate::comparer::footnotes::sync_settings_special_note_ids(
+                    &mut sd, sroot, &fn_ids, &en_ids,
+                );
+                out.set_part(
+                    "word/settings.xml",
+                    sd.serialize_element(sroot).into_bytes(),
+                );
             }
         }
     }

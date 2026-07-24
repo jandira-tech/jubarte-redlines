@@ -4,7 +4,7 @@
 
 [package]
 name = "jubarte"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
 license = "AGPL-3.0-only"
@@ -30,19 +30,47 @@ include = [
 [package.metadata.docs.rs]
 all-features = true
 
+# Workspace lint policy (plan A1). Groups at priority = -1; pedantic is NOT
+# enabled as a group — only individually chosen low-hit pedantic lints.
+[lints.rust]
+unsafe_code = "deny" # crate is 100% safe today; keep it that way
+
+[lints.clippy]
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+# Targeted pedantic (individually, NOT the group).
+# Dropped: redundant_closure_for_method_calls (>50 hits → follow-up).
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args = "warn"
+manual_let_else = "warn"
+needless_pass_by_value = "warn"
+
 [features]
-default = ["cli"]
+default = ["cli", "fast-alloc"]
 # The `jubarte` binary's CLI (clap). Library consumers can opt out with
 # `default-features = false` to keep the dependency tree minimal.
 cli = ["dep:clap"]
+# CLI global allocator (mimalloc). Default-on; disable with
+# `--no-default-features --features cli` to fall back to the system allocator
+# (used for allocator A/B measurement). Library-only builds never pull it in.
+fast-alloc = ["cli", "dep:mimalloc"]
+# P0-LAB-01: compiled-out stage counters / coarse timers (src/perf.rs).
+# Diagnostic only — never use a profiled build for final wall-time claims.
+perf-profile = []
 
 [dependencies]
 rdocx-opc = "0.1" # OPC/zip package layer
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # fallback / direct zip access if rdocx-opc's surface is insufficient
-quick-xml = "0.40.1"
+quick-xml = "0.41"
 regex = "1.12.4"
 sha1 = "0.10"
 clap = { version = "4.5", features = ["derive"], optional = true }
+# CLI-only global allocator. The redline pipeline is ~41% allocation self-time
+# (xmllinq node clone/drop churn, measured via samply on the RFP17 fixtures);
+# mimalloc cuts that per-alloc cost with zero behaviour change. Kept out of the
+# pure-library dependency tree so downstream consumers pick their own allocator.
+mimalloc = { version = "0.1", default-features = false, optional = true }
 
 [[bin]]
 name = "jubarte"
@@ -54,6 +82,8 @@ criterion = "0.8"
 # `parts` feature (= dep:zip) is built.
 ooxmlsdk = { version = "0.11", default-features = false, features = ["parts"] }
 tempfile = "3"
+# Ring 1½ schema-consistency oracle (tests/schema_consistency.rs).
+serde_json = "1"
 
 [[bench]]
 name = "redline"

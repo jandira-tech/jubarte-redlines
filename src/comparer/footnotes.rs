@@ -481,8 +481,16 @@ pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dang
 /// callers can choose to fail-loud vs skip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RectifyError {
-    MissingNoteDef { id: String },
-    MissingTargetPart { kind: &'static str },
+    /// A note definition id was not found in before ∪ after parts.
+    MissingNoteDef {
+        /// The missing note definition id.
+        id: String,
+    },
+    /// The withRevisions footnotes/endnotes part is absent.
+    MissingTargetPart {
+        /// `"footnotes"` or `"endnotes"`.
+        kind: &'static str,
+    },
 }
 
 impl std::fmt::Display for RectifyError {
@@ -511,8 +519,11 @@ impl std::error::Error for RectifyError {}
 /// `with_revisions` (where we keep separators and re-add the renumbered defs).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NotesSet {
+    /// `before`.
     pub before: Option<NodeId>,
+    /// `after`.
     pub after: Option<NodeId>,
+    /// `with_revisions`.
     pub with_revisions: Option<NodeId>,
 }
 
@@ -583,13 +594,15 @@ fn finalize_notes_part(
     super::finalize::coalesce_all_paragraphs(dom, root);
     super::finalize::move_paragraph_properties_first(dom, root);
     super::finalize::fix_paragraph_mark_revision_order(dom, root);
+    // C# finalization leaves pt:Status; we still strip Unid/other scratch so
+    // notes parts don't ship powertools markup Word must ignore.
+    super::finalize::remove_powertools_scratch_markup(dom, root);
     super::finalize::ignore_pt14_namespace(dom, root);
 }
 
 struct RectifyPlan {
     refs: Vec<NodeId>,
     defs: Vec<NodeId>,
-    new_ids: Vec<String>,
 }
 
 fn plan_rectify(
@@ -601,13 +614,11 @@ fn plan_rectify(
 ) -> Result<RectifyPlan, RectifyError> {
     let refs = dom.descendants(main_root, Some(ref_name));
     let mut defs = Vec::with_capacity(refs.len());
-    let mut new_ids = Vec::with_capacity(refs.len());
     for r in &refs {
         let old = dom.attribute(*r, &W::id()).unwrap_or("").to_string();
         let def = lookup_def(dom, notes.after, def_name, &old)
             .or_else(|| lookup_def(dom, notes.before, def_name, &old));
         let def = def.ok_or(RectifyError::MissingNoteDef { id: old })?;
-        new_ids.push((new_ids.len() + 1).to_string());
         defs.push(def);
     }
     // If references exist and the caller needs new defs written, the target
@@ -620,11 +631,7 @@ fn plan_rectify(
         };
         return Err(RectifyError::MissingTargetPart { kind });
     }
-    Ok(RectifyPlan {
-        refs,
-        defs,
-        new_ids,
-    })
+    Ok(RectifyPlan { refs, defs })
 }
 
 fn lookup_def(dom: &Dom, root: Option<NodeId>, def_name: &XName, old: &str) -> Option<NodeId> {
@@ -635,24 +642,93 @@ fn lookup_def(dom: &Dom, root: Option<NodeId>, def_name: &XName, old: &str) -> O
     })
 }
 
+/// Structural (non-content) note definitions that must survive rectify.
+/// Separators use fixed ids -1/0; `continuationNotice` is commonly id=1 and is
+/// listed from `w:settings`/`w:footnotePr` — dropping it while leaving the
+/// settings reference triggers Word "unreadable content" (OpenXmlValidator
+/// Semantic: settings references missing footnote/endnote id).
+fn is_structural_note(dom: &Dom, note: NodeId) -> bool {
+    match dom.attribute(note, &W::id()) {
+        Some("-1") | Some("0") => return true,
+        _ => {}
+    }
+    matches!(
+        dom.attribute(note, &W::name("type")),
+        Some("separator") | Some("continuationSeparator") | Some("continuationNotice")
+    )
+}
+
 fn apply_rectify(dom: &mut Dom, def_name: &XName, notes: &NotesSet, plan: &RectifyPlan) {
-    // strip all non-separator notes from the withRevisions part
+    // strip non-structural notes from the withRevisions part (keep separators
+    // and continuationNotice; drop stale content defs)
     if let Some(wr) = notes.with_revisions {
         for note in dom.elements(wr, Some(def_name)) {
-            let id = dom.attribute(note, &W::id());
-            if id != Some("-1") && id != Some("0") {
+            if !is_structural_note(dom, note) {
                 dom.remove(note);
             }
         }
     }
+    // Renumber content notes avoiding ids still held by structural notes
+    // (e.g. continuationNotice at id=1). Fall back to the planned 1..n
+    // sequence when nothing is reserved.
+    let reserved: std::collections::HashSet<String> = notes
+        .with_revisions
+        .map(|wr| {
+            dom.elements(wr, Some(def_name))
+                .into_iter()
+                .filter_map(|n| dom.attribute(n, &W::id()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut next = 1u32;
+    let mut assigned: Vec<String> = Vec::with_capacity(plan.refs.len());
+    for _ in 0..plan.refs.len() {
+        while reserved.contains(&next.to_string()) {
+            next += 1;
+        }
+        assigned.push(next.to_string());
+        next += 1;
+    }
     for (idx, r) in plan.refs.iter().enumerate() {
-        dom.set_attribute_value(*r, &W::id(), Some(&plan.new_ids[idx]));
+        dom.set_attribute_value(*r, &W::id(), Some(&assigned[idx]));
     }
     if let Some(wr) = notes.with_revisions {
         for (idx, def) in plan.defs.iter().enumerate() {
             let cloned = dom.clone_subtree(*def);
-            dom.set_attribute_value(cloned, &W::id(), Some(&plan.new_ids[idx]));
+            dom.set_attribute_value(cloned, &W::id(), Some(&assigned[idx]));
             dom.add(wr, cloned);
+        }
+    }
+}
+
+/// Drop `w:settings`/`w:footnotePr`/`w:endnotePr` children that reference note
+/// ids not present in the corresponding notes part. Rectify may remove
+/// special notes (or never re-emit them); a dangling settings reference is a
+/// Word repair-dialog trigger (validated by OpenXmlValidator Semantic).
+pub fn sync_settings_special_note_ids(
+    settings_dom: &mut Dom,
+    settings_root: NodeId,
+    footnote_ids: &std::collections::HashSet<String>,
+    endnote_ids: &std::collections::HashSet<String>,
+) {
+    for (pr_name, child_name, existing) in [
+        ("footnotePr", "footnote", footnote_ids),
+        ("endnotePr", "endnote", endnote_ids),
+    ] {
+        let pr = W::name(pr_name);
+        let child = W::name(child_name);
+        for pr_el in settings_dom.descendants(settings_root, Some(&pr)) {
+            let doomed: Vec<_> = settings_dom
+                .elements(pr_el, Some(&child))
+                .into_iter()
+                .filter(|&e| {
+                    let id = settings_dom.attribute(e, &W::id()).unwrap_or("");
+                    !id.is_empty() && !existing.contains(id)
+                })
+                .collect();
+            for e in doomed {
+                settings_dom.remove(e);
+            }
         }
     }
 }
@@ -907,7 +983,7 @@ pub fn process_footnote_endnote(
                     // format-change detection either.
                     let seqs = lcs::lcs(dom, fncus1, fncus2, settings);
                     lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, id_gen);
-                    let mut flat = produce::flatten_to_comparison_unit_atom_list(&seqs);
+                    let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
                     let new_content =
                         produce_note_redline(dom, &mut flat, is_footnote, true, settings, id_gen)
                             .expect("Internal error");
@@ -936,7 +1012,7 @@ pub fn process_footnote_endnote(
                 let fncus2 = units::get_comparison_unit_list(dom, &fncal2, settings);
                 let seqs = vec![CorrelatedSequence::inserted(fncus2)];
                 lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, id_gen);
-                let mut flat = produce::flatten_to_comparison_unit_atom_list(&seqs);
+                let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
                 // C# tolerates a missing rebuilt definition here (the throw is
                 // commented out :3202) — unlike the Equal/Deleted branches.
                 if let Some(new_content) =
@@ -974,11 +1050,14 @@ pub fn process_footnote_endnote(
                 let fncus2 = units::get_comparison_unit_list(dom, &fncal2, settings);
                 let seqs = vec![CorrelatedSequence::deleted(fncus2)];
                 lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, id_gen);
-                let mut flat = produce::flatten_to_comparison_unit_atom_list(&seqs);
-                if !flat.is_empty() {
-                    let new_content =
+                let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
+                // Tolerate missing rebuild (Inserted branch already does) — after
+                // ATOM-STACK path fix the note wrapper is present; keep soft fail
+                // so a future path bug does not panic the whole compare.
+                if !flat.is_empty()
+                    && let Some(new_content) =
                         produce_note_redline(dom, &mut flat, is_footnote, false, settings, id_gen)
-                            .expect("Internal error");
+                {
                     replace_nodes(dom, def_before, new_content);
                 }
             }

@@ -1,9 +1,10 @@
 1_5_line_spacing_id_paraid_overflow_24_id_paraid_overflow	L2-inventory	del:5v7 ins:1v2 pPrChange:3v1
-24_id_paraid_overflow_alternate_content	L0-modified	recon len 374 vs src 260
+24_id_paraid_overflow_alternate_content	L1-opseq	op[0] ours=ins:'Thisdocumentdemonstratesvalidusesofmc:Al' word=ins:'Thisdocumentdemonstratesvalidusesofmc:Al'
 24_id_paraid_overflow_blue_bold_centered_demo_id_paraid_overflow	L1-opseq	op[0] ours=ins:'BlueBoldCenteredDemo' word=ins:'BlueBoldCenteredDemoThisdocumentshowsblu'
 I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you_increase_indent_demo_id_paraid_overflow	L2-inventory	del:479v475 delInstrText:1v12 delText:236v238 pPrChange:0v1
 I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you_increase_indent_demo_id_paraid_overflow	L3-histogram	only-ours=['hyperlink'] only-word=['avLst', 'bookmarkEnd', 'bookmarkStart', 'cnfStyle', 'effectExtent', 'lastRenderedPageBreak', 'noProof', 'pPrChange']
-alternate_content_anchor_images	L0-original	recon len 374 vs src 260
+alternate_content_anchor_images	L2-inventory	del:11v12 ins:9v10
+alternate_content_anchor_images	L3-histogram	only-ours=[] only-word=['bookmarkEnd', 'bookmarkStart']
 blue_bold_centered_demo_id_paraid_overflow_blue_centered_title_demo_style_default_missing	L1-opseq	op[5] ours=ins:'Titlestylecentered' word=ins:'Titlestyle'
 blue_italic_text_demo_id_paraid_overflow_blue_underline_combo_demo_id_paraid_overflow	L3-histogram	only-ours=['pPr'] only-word=[]
 blue_underline_combo_demo_id_paraid_overflow_bold_and_italic_combo_style_default_missing	L1-opseq	op[3] ours=ins:'Demonstratingboldanditaliccombined' word=ins:'Demonstratingboldanditaliccombined.'
@@ -46,11 +47,11 @@ customer_satisfaction_survey_q4_suggesting_insertions_document_100_ultimate_demo
 document_100_ultimate_demo_id_paraid_overflow_docx_lots_of_comments_addition_redline_addition_v_removal	L1-opseq	op[0] ours=ins:'MicrosoftWordvs.GoogleDocsAcomprehensive' word=ins:'MicrosoftWordvs.GoogleDocsAcomprehensive'
 document_100_ultimate_demo_id_paraid_overflow_double_spacing_bold_demo_id_paraid_overflow	L2-inventory	pPrChange:1v2
 docx_lots_of_comments_addition_docx_lots_of_comments	L2-inventory	del:167v168 delText:75v78 tblPrChange:12v0
-docx_lots_of_comments_addition_docx_lots_of_comments	L3-histogram	only-ours=['rFonts', 'tblGridChange', 'tblPrChange'] only-word=['bookmarkEnd', 'bookmarkStart', 'lastRenderedPageBreak']
+docx_lots_of_comments_addition_docx_lots_of_comments	L3-histogram	only-ours=['rFonts', 'tblGridChange', 'tblPrChange'] only-word=['bookmarkEnd', 'bookmarkStart', 'lastRenderedPageBreak', 'szCs']
 docx_lots_of_comments_addition_redline_addition_v_removal_docx_lots_of_comments_addition_redline	L1-opseq	op[2] ours=eq:'3.Capabilitymatrix:Wordhasalltheexpected' word=eq:'3.Capabilitymatrix:Wordhasalltheexpected'
 docx_lots_of_comments_addition_redline_docx_lots_of_comments_addition_removal_redline_removal_v_addition	L0-modified	recon len 13787 vs src 13854
 docx_lots_of_comments_addition_removal_docx_lots_of_comments_addition	L2-inventory	ins:53v54 tblPrChange:13v0
-docx_lots_of_comments_addition_removal_docx_lots_of_comments_addition	L3-histogram	only-ours=['rFonts', 'tblGridChange', 'tblPrChange'] only-word=['bookmarkEnd', 'bookmarkStart', 'lastRenderedPageBreak']
+docx_lots_of_comments_addition_removal_docx_lots_of_comments_addition	L3-histogram	only-ours=['rFonts', 'tblGridChange', 'tblPrChange'] only-word=['bookmarkEnd', 'bookmarkStart', 'lastRenderedPageBreak', 'szCs']
 docx_lots_of_comments_addition_removal_redline_docx_lots_of_comments_addition_removal	L1-opseq	op[1] ours=del:'Parity:real-timecoauthoring,comments,@me' word=del:'Parity:real-timecoauthoring,comments,@me'
 docx_lots_of_comments_addition_removal_redline_removal_v_addition_docx_lots_of_comments_addition_removal_redline	L0-original	recon len 13787 vs src 13854
 docx_lots_of_comments_double_spacing_bold_demo_id_paraid_overflow	L1-opseq	op[0] ours=ins:'DoubleSpacingBoldDemoThisdocumentdemonst' word=ins:'DoubleSpacingBoldDemoThis'
@@ -130,11 +131,11 @@ numbered_list_italic_demo_id_paraid_overflow_numwords_fldsimple	L2-inventory	del
 numbered_list_italic_demo_id_paraid_overflow_numwords_fldsimple	L3-histogram	only-ours=['fldSimple', 'type'] only-word=['fldChar', 'instrText', 'lastRenderedPageBreak']
 numbered_list_italic_demo_id_paraid_overflow_numwords_fldsimple	S-rsid-leftover	1x rsid attributes remain
 numbered_list_italic_demo_id_paraid_overflow_open_sans_bold_underline_id_paraid_overflow	L2-inventory	del:7v8
+numwords_fldsimple_ole_object	L0-modified	recon len 9647 vs src 0
 numwords_fldsimple_ole_object	S-bare-wps-drawing	bare wps drawing (no AlternateContent/pict fallback)
-numwords_fldsimple_ole_object	gt-invalid	Word GT fails reconstruction; excluded
+ole_object_ooxml_style_link	L0-original	recon len 9647 vs src 0
 ole_object_ooxml_style_link	S-bare-wps-drawing	bare wps drawing (no AlternateContent/pict fallback)
-ole_object_ooxml_style_link	gt-invalid	Word GT fails reconstruction; excluded
-ooxml_style_link_open_sans_bold_underline_id_paraid_overflow	L2-inventory	del:63v64
+ooxml_style_link_open_sans_bold_underline_id_paraid_overflow	L2-inventory	del:63v64 delText:48v47
 ooxml_style_link_open_sans_bold_underline_id_paraid_overflow	L3-histogram	only-ours=[] only-word=['lastRenderedPageBreak']
 open_sans_bold_underline_id_paraid_overflow_open_sans_font_demo_id_paraid_overflow_2	L3-histogram	only-ours=['pPr'] only-word=[]
 open_sans_font_demo_id_paraid_overflow_2_open_sans_font_demo_id_paraid_overflow	L3-histogram	only-ours=['pPr'] only-word=[]
@@ -177,18 +178,18 @@ sample_document_really_repaired_word_repaired_sample_document_word_repair_of_our
 sample_document_word_repair_of_our_output_iter2_word_repaired_sample_document_word_repair_of_our_output_word_repaired	gt-invalid	Word GT fails reconstruction; excluded
 sample_document_word_repair_of_our_output_word_repaired_sd_2517_localized_heading_styles	gt-invalid	Word GT fails reconstruction; excluded
 sample_document_word_repair_of_our_output_word_repaired_small_font_size_demo_id_paraid_overflow	gt-invalid	Word GT fails reconstruction; excluded
-sd_2517_localized_heading_styles_sectpr_headerref	L2-inventory	del:2213v2214 delInstrText:179v313 delText:1635v2352 ins:23v25
+sd_2517_localized_heading_styles_sectpr_headerref	L2-inventory	del:2213v2214 delInstrText:179v313 delText:1646v2352 ins:23v25
 sd_2517_localized_heading_styles_sectpr_headerref	L3-histogram	only-ours=['tblCellMar', 'tblInd'] only-word=['anchorlock', 'bookmarkEnd', 'bookmarkStart', 'lastRenderedPageBreak', 'lock']
-sectpr_headerref_single_paragraph	L3-histogram	only-ours=['sz'] only-word=['anchorlock', 'lock']
+sectpr_headerref_single_paragraph	L3-histogram	only-ours=['sz'] only-word=['anchorlock', 'lock', 'noProof']
 sectpr_headerref_single_paragraph	S-rsid-leftover	1x rsid attributes remain
+small_font_size_demo_id_paraid_overflow_strict01_sdt_controls	L0-modified	recon len 9647 vs src 0
 small_font_size_demo_id_paraid_overflow_strict01_sdt_controls	S-bare-wps-drawing	bare wps drawing (no AlternateContent/pict fallback)
-small_font_size_demo_id_paraid_overflow_strict01_sdt_controls	gt-invalid	Word GT fails reconstruction; excluded
 small_font_size_demo_id_paraid_overflow_strikethrough_and_italic_combo_id_paraid_overflow	L2-inventory	pPrChange:1v0
 small_font_size_demo_id_paraid_overflow_strikethrough_and_italic_combo_id_paraid_overflow	L3-histogram	only-ours=['pPr', 'pPrChange'] only-word=[]
-strict01_sdt_controls_strict01	S-bare-wps-drawing	bare wps drawing (no AlternateContent/pict fallback)
-strict01_sdt_controls_strict01	gt-invalid	Word GT fails reconstruction; excluded
+strict01_sdt_controls_strict01	L0-modified	recon len 9647 vs src 0
+strict01_sdt_controls_strict01	L0-original	recon len 9647 vs src 0
+strict01_strikethrough_and_italic_combo_id_paraid_overflow	L0-original	recon len 9647 vs src 0
 strict01_strikethrough_and_italic_combo_id_paraid_overflow	S-bare-wps-drawing	bare wps drawing (no AlternateContent/pict fallback)
-strict01_strikethrough_and_italic_combo_id_paraid_overflow	gt-invalid	Word GT fails reconstruction; excluded
 strikethrough_and_italic_combo_id_paraid_overflow_strikethrough_bold_demo_id_paraid_overflow	L2-inventory	pPrChange:1v0
 strikethrough_and_italic_combo_id_paraid_overflow_strikethrough_bold_demo_id_paraid_overflow	L3-histogram	only-ours=['pPr', 'pPrChange'] only-word=[]
 strikethrough_bold_demo_id_paraid_overflow_strikethrough_text_demo_id_paraid_overflow	L3-histogram	only-ours=['pPr'] only-word=[]
@@ -236,23 +237,23 @@ training_materials_onboarding_program_suggesting_insertions_underline_text_demo_
 underline_text_demo_id_paraid_overflow_underline_text_formatting_demo_style_default_missing	L3-histogram	only-ours=['pPr'] only-word=[]
 underline_text_formatting_demo_style_default_missing_verdana_bold_large_font_id_paraid_overflow	L2-inventory	pPrChange:1v0
 underline_text_formatting_demo_style_default_missing_verdana_bold_large_font_id_paraid_overflow	L3-histogram	only-ours=['pPr', 'pPrChange'] only-word=[]
-verdana_bold_large_font_id_paraid_overflow_verdana_font_demo_id_paraid_overflow	L3-histogram	only-ours=['pPr'] only-word=[]
+verdana_bold_large_font_id_paraid_overflow_verdana_font_demo_id_paraid_overflow	L3-histogram	only-ours=['pPr'] only-word=['commentRangeEnd', 'commentRangeStart', 'commentReference', 'rStyle']
 verdana_bold_large_font_id_paraid_overflow_verdana_font_demo_id_paraid_overflow_2	S-rsid-leftover	1x rsid attributes remain
 verdana_bold_large_font_id_paraid_overflow_verdana_font_demo_id_paraid_overflow_2	gt-invalid	Word GT fails reconstruction; excluded
 verdana_font_demo_id_paraid_overflow_2_verdana_font_demo_id_paraid_overflow	gt-invalid	Word GT fails reconstruction; excluded
-verdana_font_demo_id_paraid_overflow_verdana_italic_centered_demo_id_paraid_overflow	L3-histogram	only-ours=['pPr'] only-word=[]
+verdana_font_demo_id_paraid_overflow_verdana_italic_centered_demo_id_paraid_overflow	L3-histogram	only-ours=['pPr'] only-word=['commentRangeEnd', 'commentRangeStart', 'commentReference', 'rStyle', 'sz', 'szCs']
 verdana_italic_centered_demo_id_paraid_overflow_vfdsdfcacawesd_suggesting_mixed_edits	gt-invalid	Word GT fails reconstruction; excluded
+verdana_italic_centered_demo_id_paraid_overflow_word_clean_strict01	L0-modified	recon len 9647 vs src 0
 verdana_italic_centered_demo_id_paraid_overflow_word_clean_strict01	S-bare-wps-drawing	bare wps drawing (no AlternateContent/pict fallback)
-verdana_italic_centered_demo_id_paraid_overflow_word_clean_strict01	gt-invalid	Word GT fails reconstruction; excluded
 vfdsdfcacawesd_suggesting_mixed_edits_yellow_highlight_demo_id_paraid_overflow	gt-invalid	Word GT fails reconstruction; excluded
+word_clean_strict01_word_tolerated_broken_media_rel	L0-original	recon len 9647 vs src 0
 word_clean_strict01_word_tolerated_broken_media_rel	S-bare-wps-drawing	bare wps drawing (no AlternateContent/pict fallback)
-word_clean_strict01_word_tolerated_broken_media_rel	gt-invalid	Word GT fails reconstruction; excluded
 word_tolerated_broken_media_rel_word_tolerated_duplicate_ppr	L2-inventory	del:2v3 pPrChange:0v1
 word_tolerated_broken_media_rel_word_tolerated_duplicate_ppr	L3-histogram	only-ours=[] only-word=['pPrChange', 'sz', 'szCs']
 word_tolerated_broken_media_rel_word_tolerated_duplicate_ppr	S-rsid-leftover	8x rsid attributes remain
 word_tolerated_duplicate_ppr_word_tolerated_misplaced_link	L3-histogram	only-ours=['spacing'] only-word=['ind']
 word_tolerated_duplicate_ppr_word_tolerated_misplaced_link	S-rsid-leftover	6x rsid attributes remain
-word_tolerated_misplaced_link_word_tolerated_misplaced_pgsz	L2-inventory	del:63v64 pPrChange:0v1
+word_tolerated_misplaced_link_word_tolerated_misplaced_pgsz	L2-inventory	del:63v64 delText:48v47 pPrChange:0v1
 word_tolerated_misplaced_link_word_tolerated_misplaced_pgsz	L3-histogram	only-ours=[] only-word=['formProt', 'pPrChange']
 word_tolerated_misplaced_pgsz_word_tolerated_misplaced_uipriority	L2-inventory	del:46v47
 word_tolerated_misplaced_pgsz_word_tolerated_misplaced_uipriority	L3-histogram	only-ours=['tblInd', 'tblLayout', 'tblStyle', 'type'] only-word=['formProt', 'lastRenderedPageBreak', 'proofErr', 'tblLook']

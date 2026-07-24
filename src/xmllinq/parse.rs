@@ -42,13 +42,13 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// True if the buffer at `pos` matches `s` (char-for-char).
+    /// PARSE-01b: no per-call `Vec<char>` allocation — walk `s.chars()` directly
+    /// against the already-materialized input buffer.
     fn starts_with(&self, s: &str) -> bool {
-        let sc: Vec<char> = s.chars().collect();
-        if self.pos + sc.len() > self.len() {
-            return false;
-        }
-        for (k, ch) in sc.iter().enumerate() {
-            if self.c[self.pos + k] != *ch {
+        for (off, ch) in s.chars().enumerate() {
+            let i = self.pos + off;
+            if i >= self.len() || self.c[i] != ch {
                 return false;
             }
         }
@@ -56,17 +56,28 @@ impl<'a> Parser<'a> {
     }
 
     /// Index of substring `s` at or after `from`, in char units.
+    /// PARSE-01b: match without allocating a needle `Vec<char>` each call.
     fn index_of(&self, s: &str, from: usize) -> Option<usize> {
-        let sc: Vec<char> = s.chars().collect();
-        if sc.is_empty() || from > self.len() {
+        if s.is_empty() || from > self.len() {
             return None;
         }
-        let mut i = from;
-        while i + sc.len() <= self.len() {
-            if self.c[i..i + sc.len()] == sc[..] {
+        // Call sites use short ASCII needles (`</`, `<!--`, `]]>`, `?>`, …).
+        let needle_chars: usize = s.chars().count();
+        let end = self.len().saturating_sub(needle_chars);
+        for i in from..=end {
+            if i + needle_chars > self.len() {
+                break;
+            }
+            let mut ok = true;
+            for (off, ch) in s.chars().enumerate() {
+                if self.c[i + off] != ch {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
                 return Some(i);
             }
-            i += 1;
         }
         None
     }
@@ -108,7 +119,10 @@ impl<'a> Parser<'a> {
                 // whitespace or `?>`. `<?xml-stylesheet` etc. are PIs.
                 let after = self.pos + 5;
                 let is_declaration = after >= len
-                    || self.c.get(after).map_or(true, |&ch| ch.is_whitespace() || ch == '?');
+                    || self
+                        .c
+                        .get(after)
+                        .is_none_or(|&ch| ch.is_whitespace() || ch == '?');
                 if is_declaration {
                     let end = self.index_of("?>", self.pos);
                     let decl_str = self.slice(self.pos, end.unwrap_or(len));
@@ -177,19 +191,27 @@ impl<'a> Parser<'a> {
         }
 
         // Build local namespace scope.
-        let mut local_scope = ns_scope.clone();
+        // PARSE-02: only clone the parent HashMap when this element declares
+        // xmlns / xmlns:*; the common OOXML interior path reuses the parent
+        // scope by reference (no HashMap clone per element).
+        let mut local_scope_owned: Option<HashMap<String, String>> = None;
         for (name, value) in &raw_attrs {
             if name == "xmlns" {
-                local_scope.insert(String::new(), value.clone());
+                local_scope_owned
+                    .get_or_insert_with(|| ns_scope.clone())
+                    .insert(String::new(), value.clone());
             } else if let Some(prefix) = name.strip_prefix("xmlns:") {
-                local_scope.insert(prefix.to_string(), value.clone());
+                local_scope_owned
+                    .get_or_insert_with(|| ns_scope.clone())
+                    .insert(prefix.to_string(), value.clone());
             }
         }
+        let local_scope: &HashMap<String, String> = local_scope_owned.as_ref().unwrap_or(ns_scope);
 
-        let el_name = resolve(&raw_name, false, &local_scope);
+        let el_name = resolve(&raw_name, false, local_scope);
         let el = self.dom.new_element(el_name);
         for (name, value) in &raw_attrs {
-            let an = resolve(name, true, &local_scope);
+            let an = resolve(name, true, local_scope);
             self.dom.set_attribute_value(el, &an, Some(value));
         }
 
@@ -233,7 +255,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.cur() == '<' {
-                let child = self.parse_element(&local_scope);
+                let child = self.parse_element(local_scope);
                 self.dom.add(el, child);
                 continue;
             }

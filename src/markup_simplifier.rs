@@ -120,27 +120,38 @@ fn is_rsid_attr(name: &XName) -> bool {
 }
 
 /// Port of `RemoveRsidTransform(node)` — drops `<w:rsid>` elements and all
-/// `w:rsid*` attributes, rebuilding the subtree. Returns `None` if the node
-/// itself is dropped (a `<w:rsid>`).
+/// `w:rsid*` attributes. Returns `None` if the node itself is dropped
+/// (a `<w:rsid>`).
+///
+/// RSID-INPLACE-01: mutates the existing subtree in place (same root
+/// `NodeId`) instead of rebuilding every node. Observable XML after the
+/// transform is unchanged; only intermediate allocation/drop work is removed.
 pub fn remove_rsid_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
     if !dom.is_element(node) {
-        // pass through a clone of the leaf (text/comment)
-        return Some(dom.clone_subtree(node));
+        return Some(node);
     }
     let name = dom.name(node).unwrap();
     if name == W::name("rsid") {
         return None;
     }
-    let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        if !is_rsid_attr(&an) {
-            dom.set_attribute_value(ne, &an, Some(&av));
+    // Strip rsid* attributes without rebuilding the element.
+    let rsid_attrs: Vec<_> = dom
+        .attributes(node)
+        .into_iter()
+        .filter(|(an, _)| is_rsid_attr(an))
+        .map(|(an, _)| an)
+        .collect();
+    for an in &rsid_attrs {
+        dom.set_attribute_value(node, an, None);
+    }
+    // Snapshot children — recursion may remove `w:rsid` siblings.
+    let kids: Vec<NodeId> = (0..dom.child_count(node))
+        .map(|i| dom.child_at(node, i))
+        .collect();
+    for k in kids {
+        if remove_rsid_transform(dom, k).is_none() {
+            dom.remove(k);
         }
     }
-    for child in dom.nodes(node) {
-        if let Some(tn) = remove_rsid_transform(dom, child) {
-            dom.add(ne, tn);
-        }
-    }
-    Some(ne)
+    Some(node)
 }

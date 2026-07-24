@@ -81,6 +81,17 @@ fn anchor_ids(pkg: &PartFs) -> (Vec<String>, Vec<String>, Vec<String>) {
 /// Fresh pair: A has 4 comments (ids 0,1,3,4), B has 6 (superset, +19,20).
 /// GT (docx_lots_of_comments_addition_redline.docx): B's four comment parts
 /// byte-identical, 6/6/6 anchors. Ours must carry B's parts and anchor all 6.
+
+fn optional_bench_docx(name: &str) -> Option<Vec<u8>> {
+    let root = std::env::var_os("BENCH_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../neurotic_docx_bench");
+            p.is_dir().then_some(p)
+        })?;
+    std::fs::read(root.join("corpus/word_based/docx_source").join(name)).ok()
+}
+
 #[test]
 fn w1_superset_carries_revised_parts_byte_identical_with_anchors() {
     if !orig_fixtures_present() {
@@ -176,5 +187,120 @@ fn w2_single_side_comments_carried_with_anchors_not_orphaned() {
         refs.iter().cloned().collect::<HashSet<_>>(),
         ids,
         "commentReference ids match the comment part"
+    );
+}
+
+/// accept_revisions must not drop comment range markers (nested ends after
+/// tables; starts inside w:del). Regression: outer nested ends and del-hoisted
+/// starts were lost → comment carry 2/6 on document_100×lots_of_comments.
+/// (document_100 × lots_of_comments redline: all 6 B comments should anchor.)
+#[test]
+fn accept_revisions_preserves_comment_range_markers() {
+    let Some(b_path) = optional_bench_docx("docx_lots_of_comments_addition_redline_addition_v_removal.docx") else { eprintln!("skip: missing bench fixture"); return; };
+    if !require_path(b_path) {
+        return;
+    }
+    let b = b_path.clone();
+    let list_ids = |bytes: &[u8], tag: &str| -> HashSet<String> {
+        let pkg = PartFs::open(bytes).unwrap();
+        let xml = pkg.part_string("word/document.xml").unwrap();
+        let mut dom = Dom::new();
+        let d = dom.parse_xdocument(&xml);
+        let root = dom.root(d).unwrap();
+        dom.descendants(root, Some(&W::name(tag)))
+            .into_iter()
+            .filter_map(|e| dom.attribute(e, &W::name("id")).map(str::to_string))
+            .collect()
+    };
+    let before_s = list_ids(&b, "commentRangeStart");
+    let before_e = list_ids(&b, "commentRangeEnd");
+    let accepted = jubarte::document_comparer::accept_revisions(&b).unwrap();
+    let after_s = list_ids(&accepted, "commentRangeStart");
+    let after_e = list_ids(&accepted, "commentRangeEnd");
+    let dropped_s: Vec<_> = before_s.difference(&after_s).collect();
+    let dropped_e: Vec<_> = before_e.difference(&after_e).collect();
+    assert_eq!(
+        after_s, before_s,
+        "accept dropped commentRangeStart ids: {dropped_s:?}"
+    );
+    assert_eq!(
+        after_e, before_e,
+        "accept dropped commentRangeEnd ids: {dropped_e:?}"
+    );
+}
+
+/// document_100 (no comments) × lots_of_comments redline (6 comment *ids* on B,
+/// only 4 unique bodies — Complex/Threaded are duplicated). Word redline keeps
+/// **4** (one per body). Carry unique bodies with matched anchors (C2).
+#[test]
+fn document100_vs_lots_of_comments_carries_unique_bodies() {
+    let Some(a_path) = optional_bench_docx("document_100_ultimate_demo_id_paraid_overflow.docx") else { eprintln!("skip: missing bench fixture"); return; };
+    let Some(b_path) = optional_bench_docx("docx_lots_of_comments_addition_redline_addition_v_removal.docx") else { eprintln!("skip: missing bench fixture"); return; };
+    if !require_path(a_path) || !require_path(b_path) {
+        return;
+    }
+    let a = a_path.clone();
+    let b = b_path.clone();
+    let pkg_b = PartFs::open(&b).unwrap();
+    let b_ids = comment_ids(&pkg_b);
+    assert_eq!(b_ids.len(), 6, "fixture must have 6 B comment ids");
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
+    let pkg = PartFs::open(&out).unwrap();
+    let ids = comment_ids(&pkg);
+    let (s, e, r) = anchor_ids(&pkg);
+    // Word-oracle parity: 4 unique bodies, not the raw 6-id set.
+    assert_eq!(
+        ids.len(),
+        4,
+        "Word keeps one def per unique body text; got {ids:?}"
+    );
+    assert_eq!(s.len(), 4, "starts={s:?}");
+    assert_eq!(e.len(), 4, "ends={e:?}");
+    assert_eq!(r.len(), 4, "refs={r:?}");
+    // Every remaining anchor resolves to a comment def.
+    for id in s.iter().chain(e.iter()).chain(r.iter()) {
+        assert!(ids.contains(id), "orphan anchor id {id}");
+    }
+}
+
+/// Same comment *texts* on A and B under different ids (Word renumbered the
+/// set across two redline-derived sources). Union-by-id produces 12 comments;
+/// Word keeps one per unique body (4 — fixtures ship Complex/Threaded dups).
+/// Prefer B's install path, then body-text dedupe.
+#[test]
+fn renumbered_same_text_comments_prefer_b_not_double_union() {
+    let Some(a_path) = optional_bench_docx("docx_lots_of_comments_addition_redline.docx") else { eprintln!("skip: missing bench fixture"); return; };
+    let Some(b_path) = optional_bench_docx("docx_lots_of_comments_addition_removal_redline_removal_v_addition.docx") else { eprintln!("skip: missing bench fixture"); return; };
+    if !require_path(a_path) || !require_path(b_path) {
+        return;
+    }
+    let a = a_path.clone();
+    let b = b_path.clone();
+    let pkg_a = PartFs::open(&a).unwrap();
+    let pkg_b = PartFs::open(&b).unwrap();
+    let a_ids = comment_ids(&pkg_a);
+    let b_ids = comment_ids(&pkg_b);
+    assert_eq!(a_ids.len(), 6);
+    assert_eq!(b_ids.len(), 6);
+    assert!(
+        a_ids != b_ids,
+        "fixture premise: ids differ so bare id-match fails"
+    );
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
+    let pkg = PartFs::open(&out).unwrap();
+    let ids = comment_ids(&pkg);
+    let (s, e, r) = anchor_ids(&pkg);
+    assert_eq!(
+        ids.len(),
+        4,
+        "must not double-union; one def per unique body; got {ids:?}"
+    );
+    assert_eq!(s.len(), 4, "starts={s:?}");
+    assert_eq!(e.len(), 4, "ends={e:?}");
+    assert_eq!(r.len(), 4, "refs={r:?}");
+    // Surviving ids must be a subset of B's (text-cover path installs B first).
+    assert!(
+        ids.is_subset(&b_ids),
+        "carried ids must come from B: {ids:?} not subset of {b_ids:?}"
     );
 }

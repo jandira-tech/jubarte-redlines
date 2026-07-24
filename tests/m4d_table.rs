@@ -21,6 +21,7 @@ fn grp(
         group_type: gt,
         contents,
         level: 0,
+        sha1_key: jubarte::util::sha1::sha1_fingerprint(sha),
         sha1_hash: sha.to_string(),
         correlated_sha1_hash: corr.map(|s| s.to_string()),
         structure_sha1_hash: None,

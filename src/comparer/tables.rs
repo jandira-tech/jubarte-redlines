@@ -25,14 +25,14 @@ pub static WORD_BREAK_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
         W::name("cr"),
         W::name("dayLong"),
         W::name("dayShort"),
-        W::name("drawing"),
-        W::name("pict"),
+        W::drawing(),
+        W::pict(),
         W::name("endnoteRef"),
         W::name("footnoteRef"),
         W::name("monthLong"),
         W::name("monthShort"),
         W::name("noBreakHyphen"),
-        W::name("object"),
+        W::object(),
         W::name("ptab"),
         W::name("separator"),
         W::name("sym"),
@@ -50,7 +50,7 @@ pub static WORD_BREAK_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
 pub static ALLOWABLE_RUN_CHILDREN: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::name("br"),
-        W::name("drawing"),
+        W::drawing(),
         W::name("cr"),
         W::name("dayLong"),
         W::name("dayShort"),
@@ -68,32 +68,32 @@ pub static ALLOWABLE_RUN_CHILDREN: LazyLock<HashSet<XName>> = LazyLock::new(|| {
         W::name("yearShort"),
         M::name("oMathPara"),
         M::name("oMath"),
-        W::name("fldChar"),
-        W::name("instrText"),
+        W::fld_char(),
+        W::instr_text(),
     ])
 });
 
 /// `ElementsToThrowAway` (:9023) — produce no atoms.
 pub static ELEMENTS_TO_THROW_AWAY: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
-        W::name("bookmarkStart"),
-        W::name("bookmarkEnd"),
+        W::bookmark_start(),
+        W::bookmark_end(),
         W::name("commentRangeStart"),
         W::name("commentRangeEnd"),
         W::name("lastRenderedPageBreak"),
         W::name("proofErr"),
-        W::name("tblPr"),
-        W::name("sectPr"),
+        W::tbl_pr(),
+        W::sect_pr(),
         W::name("permEnd"),
         W::name("permStart"),
         W::name("footnoteRef"),
         W::name("endnoteRef"),
         W::name("separator"),
         W::name("continuationSeparator"),
-        W::name("moveFromRangeStart"),
-        W::name("moveFromRangeEnd"),
-        W::name("moveToRangeStart"),
-        W::name("moveToRangeEnd"),
+        W::move_from_range_start(),
+        W::move_from_range_end(),
+        W::move_to_range_start(),
+        W::move_to_range_end(),
     ])
 });
 
@@ -101,12 +101,12 @@ pub static ELEMENTS_TO_THROW_AWAY: LazyLock<HashSet<XName>> = LazyLock::new(|| {
 pub static ELEMENTS_TO_HAVE_SHA1: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::p(),
-        W::name("tbl"),
-        W::name("tr"),
-        W::name("tc"),
-        W::name("drawing"),
-        W::name("pict"),
-        W::name("txbxContent"),
+        W::tbl(),
+        W::tr(),
+        W::tc(),
+        W::drawing(),
+        W::pict(),
+        W::txbx_content(),
     ])
 });
 
@@ -129,20 +129,15 @@ pub static INVALID_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
 });
 
 /// `ComparisonGroupingElements` (:9071) — ancestors used for hierarchical keys.
-pub static COMPARISON_GROUPING_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
-    set(&[
-        W::p(),
-        W::name("tbl"),
-        W::name("tr"),
-        W::name("tc"),
-        W::name("txbxContent"),
-    ])
-});
+pub static COMPARISON_GROUPING_ELEMENTS: LazyLock<HashSet<XName>> =
+    LazyLock::new(|| set(&[W::p(), W::tbl(), W::tr(), W::tc(), W::txbx_content()]));
 
 /// One `RecursionElements` (:9074) entry: an element that recurses into children
 /// while skipping the named property children (rebuilt structurally in Coalesce).
 pub struct RecursionInfo {
+    /// `element_name`.
     pub element_name: XName,
+    /// `child_property_names`.
     pub child_property_names: Option<Vec<XName>>,
 }
 
@@ -155,41 +150,28 @@ pub static RECURSION_ELEMENTS: LazyLock<Vec<RecursionInfo>> = LazyLock::new(|| {
     vec![
         mk(W::del(), None),
         mk(W::ins(), None),
-        mk(W::name("moveFrom"), None),
-        mk(W::name("moveTo"), None),
+        mk(W::move_from(), None),
+        mk(W::move_to(), None),
         mk(
-            W::name("tbl"),
-            Some(vec![
-                W::name("tblPr"),
-                W::name("tblGrid"),
-                W::name("tblPrEx"),
-            ]),
+            W::tbl(),
+            Some(vec![W::tbl_pr(), W::name("tblGrid"), W::name("tblPrEx")]),
         ),
-        mk(
-            W::name("tr"),
-            Some(vec![W::name("trPr"), W::name("tblPrEx")]),
-        ),
-        mk(
-            W::name("tc"),
-            Some(vec![W::name("tcPr"), W::name("tblPrEx")]),
-        ),
-        mk(W::name("pict"), Some(vec![VML::name("shapetype")])),
+        mk(W::tr(), Some(vec![W::tr_pr(), W::name("tblPrEx")])),
+        mk(W::tc(), Some(vec![W::tc_pr(), W::name("tblPrEx")])),
+        mk(W::pict(), Some(vec![VML::name("shapetype")])),
         mk(VML::name("group"), None),
         mk(VML::name("shape"), None),
         mk(VML::name("rect"), None),
         mk(VML::name("textbox"), None),
         mk(O::name("lock"), None),
-        mk(W::name("txbxContent"), None),
+        mk(W::txbx_content(), None),
         mk(W10::name("wrap"), None),
-        mk(
-            W::name("sdt"),
-            Some(vec![W::name("sdtPr"), W::name("sdtEndPr")]),
-        ),
-        mk(W::name("sdtContent"), None),
-        mk(W::name("hyperlink"), None),
+        mk(W::sdt(), Some(vec![W::name("sdtPr"), W::name("sdtEndPr")])),
+        mk(W::sdt_content(), None),
+        mk(W::hyperlink(), None),
         mk(W::name("fldSimple"), None),
         mk(VML::name("shapetype"), None),
-        mk(W::name("smartTag"), Some(vec![W::name("smartTagPr")])),
+        mk(W::smart_tag(), Some(vec![W::name("smartTagPr")])),
         mk(W::name("ruby"), Some(vec![W::name("rubyPr")])),
     ]
 });
@@ -255,7 +237,7 @@ pub static S_ELEMENTS_WITH_RELATIONSHIP_IDS: LazyLock<HashSet<XName>> = LazyLock
         W::name("footerReference"),
         W::name("headerReference"),
         W::name("headerSource"),
-        W::name("hyperlink"),
+        W::hyperlink(),
         W::name("printerSettings"),
         W::name("recipientData"),
         W::name("saveThroughXslt"),

@@ -7,6 +7,9 @@
 
 use std::io::Cursor;
 
+mod common;
+use common::validity::assert_word_valid_package;
+
 /// The redlined text of a document part: (inserted, deleted).
 fn redline_texts(bytes: &[u8]) -> (String, String) {
     let z = jubarte::opc::PartFs::open(bytes).unwrap();
@@ -91,7 +94,10 @@ fn run(orig: &str, modi: &str) -> Vec<u8> {
         date_time_for_revisions: "2020-01-01T00:00:00Z".to_string(),
         ..jubarte::comparer::WmlComparerSettings::powertools_faithful()
     };
-    jubarte::document_comparer::compare_documents_with_settings(&o, &m, &settings).unwrap()
+    let out =
+        jubarte::document_comparer::compare_documents_with_settings(&o, &m, &settings).unwrap();
+    assert_word_valid_package(&out);
+    out
 }
 
 fn golden_texts(name: &str) -> (String, String) {

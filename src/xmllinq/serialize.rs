@@ -3,6 +3,10 @@
 //! Scope-aware namespace serialization: each element inherits its parent
 //! namespace scope and may add/override local `xmlns` declarations, so nested
 //! namespace scopes are not flattened to the root.
+//!
+//! SER-01: tags, attributes, and escapes are written directly into the final
+//! output buffer (no intermediate `attr_str` / `qname` String / always-alloc
+//! `escape_*` that re-allocates when nothing needs escaping).
 
 use std::collections::HashMap;
 
@@ -88,8 +92,10 @@ impl<'a> Scope<'a> {
     fn child(parent: &'a Scope<'a>, dom: &Dom, e: NodeId) -> Scope<'a> {
         let mut uri_to_prefix = HashMap::new();
         let mut prefix_to_uri = HashMap::new();
-        for (name, value) in dom.attributes(e) {
-            if !dom.is_namespace_declaration(&name) {
+        // DOM-ITER-01: walk attrs without cloning the attributes() Vec.
+        for i in 0..dom.attr_count(e) {
+            let (name, value) = dom.attr_at(e, i);
+            if !dom.is_namespace_declaration(name) {
                 continue;
             }
             let prefix = if name.local_name() == "xmlns" && name.namespace_name().is_empty() {
@@ -101,8 +107,8 @@ impl<'a> Scope<'a> {
             if prefix == "xml" || prefix == "xmlns" || value == "http://www.w3.org/2000/xmlns/" {
                 continue;
             }
-            uri_to_prefix.insert(value.clone(), prefix.to_string());
-            prefix_to_uri.insert(prefix.to_string(), value.clone());
+            uri_to_prefix.insert(value.to_string(), prefix.to_string());
+            prefix_to_uri.insert(prefix.to_string(), value.to_string());
         }
         Scope {
             parent: Some(parent),
@@ -137,10 +143,10 @@ impl<'a> Scope<'a> {
         }
         let mut scope = self;
         loop {
-            if let Some(prefix) = scope.local_uri_to_prefix.get(uri) {
-                if self.active_prefix_uri(prefix) == Some(uri) {
-                    return Some(prefix);
-                }
+            if let Some(prefix) = scope.local_uri_to_prefix.get(uri)
+                && self.active_prefix_uri(prefix) == Some(uri)
+            {
+                return Some(prefix);
             }
             match scope.parent {
                 Some(parent) => scope = parent,
@@ -199,7 +205,11 @@ fn is_namespace_prefix_list(name: &XName) -> bool {
     ns == MC_NAMESPACE
         && matches!(
             local,
-            "Ignorable" | "PreserveAttributes" | "PreserveElements" | "ProcessContent" | "MustUnderstand"
+            "Ignorable"
+                | "PreserveAttributes"
+                | "PreserveElements"
+                | "ProcessContent"
+                | "MustUnderstand"
         )
 }
 
@@ -212,45 +222,177 @@ pub fn serialize_element(dom: &Dom, el: NodeId) -> String {
     out
 }
 
-fn qname(prefix: &str, name: &XName) -> String {
-    if prefix.is_empty() {
-        name.local_name().to_string()
-    } else {
-        format!("{}:{}", prefix, name.local_name())
+/// HASH-STREAM-01 lite: SHA-1 (lowercase hex) of the serialized element with the
+/// first WML default-xmlns declaration stripped — byte-identical to
+/// `sha1_hex(serialize_element(el).replacen(WML_DEFAULT_XMLNS, "", 1))` without
+/// materializing the full XML string for hashing.
+pub fn serialize_element_sha1_hex(dom: &Dom, el: NodeId) -> String {
+    let mut state = State { counter: 0 };
+    let root_scope = Scope::root();
+    let mut out = HashXmlBuf::new();
+    emit(dom, el, &root_scope, &mut state, &mut out);
+    out.finish_hex()
+}
+
+/// HASH-STREAM-02: structure-only SHA-1 (element names + attributes + nesting;
+/// no text/comment/PI) with the same first WML default-xmlns strip as
+/// [`serialize_element_sha1_hex`]. Digest-identical to hashing a
+/// structure-clone then serializing, without allocating the structure DOM.
+pub fn serialize_element_structure_sha1_hex(dom: &Dom, el: NodeId) -> String {
+    let mut state = State { counter: 0 };
+    let root_scope = Scope::root();
+    let mut out = HashXmlBuf::new();
+    emit_structure(dom, el, &root_scope, &mut state, &mut out);
+    out.finish_hex()
+}
+
+/// Minimal output sink so serialize can target `String` or a streaming hasher.
+trait XmlBuf {
+    fn push_str(&mut self, s: &str);
+    fn push(&mut self, c: char);
+}
+
+impl XmlBuf for String {
+    #[inline]
+    fn push_str(&mut self, s: &str) {
+        String::push_str(self, s);
+    }
+    #[inline]
+    fn push(&mut self, c: char) {
+        String::push(self, c);
     }
 }
 
-fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut String) {
-    let ename = dom.name(e).expect("emit: non-element node");
-    let mut scope = Scope::child(parent, dom, e);
+/// WordprocessingML default xmlns substring stripped once from block hash input
+/// (matches `preprocess::WML_DEFAULT_XMLNS` / PowerTools).
+const WML_DEFAULT_XMLNS: &str =
+    " xmlns=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"";
 
-    // First pass: assign prefixes for the element name, all attribute names,
-    // and all namespaces referenced by QName-list attribute values.
-    scope.assign(state, ename.namespace_name());
-    let attrs = dom.attributes(e);
-    let mut real_attrs: Vec<(XName, String)> = Vec::new();
-    let mut prefix_list_attrs: Vec<(XName, String)> = Vec::new();
-    for (name, value) in attrs {
-        if dom.is_namespace_declaration(&name) {
-            continue;
+/// Stream serialized XML into SHA-1, stripping the first WML default xmlns from
+/// the root open tag (same as `replacen` on the full string).
+struct HashXmlBuf {
+    hasher: sha1::Sha1,
+    /// Bytes of the root open tag until the first `>`.
+    open: String,
+    past_root_open: bool,
+}
+
+impl HashXmlBuf {
+    fn new() -> Self {
+        use sha1::Digest;
+        Self {
+            hasher: sha1::Sha1::new(),
+            open: String::with_capacity(256),
+            past_root_open: false,
         }
-        scope.assign(state, name.namespace_name());
-        if is_namespace_prefix_list(&name) {
-            for token in value.split_whitespace() {
-                if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
-                    scope.assign(state, &uri);
-                }
-            }
-            prefix_list_attrs.push((name, value));
-            continue;
-        }
-        real_attrs.push((name, value));
     }
 
-    // Build the attribute string. Namespace declarations come first, then
-    // real attributes, then the rewritten QName-list attributes.
-    // Sort declarations by prefix so serialization is deterministic.
-    let mut attr_str = String::new();
+    fn finish_hex(mut self) -> String {
+        use sha1::Digest;
+        // Degenerate: no `>` seen (should not happen for well-formed emit).
+        if !self.past_root_open {
+            self.flush_open_tag();
+        }
+        crate::util::sha1::hex_string_from_bytes(&self.hasher.finalize())
+    }
+
+    fn flush_open_tag(&mut self) {
+        use sha1::Digest;
+        if let Some(i) = self.open.find(WML_DEFAULT_XMLNS) {
+            self.open.drain(i..i + WML_DEFAULT_XMLNS.len());
+        }
+        self.hasher.update(self.open.as_bytes());
+        self.open.clear();
+        self.past_root_open = true;
+    }
+}
+
+impl XmlBuf for HashXmlBuf {
+    fn push_str(&mut self, s: &str) {
+        use sha1::Digest;
+        if self.past_root_open {
+            self.hasher.update(s.as_bytes());
+            return;
+        }
+        self.open.push_str(s);
+        if let Some(gt) = self.open.find('>') {
+            let rest = self.open[gt + 1..].to_string();
+            self.open.truncate(gt + 1);
+            self.flush_open_tag();
+            if !rest.is_empty() {
+                self.hasher.update(rest.as_bytes());
+            }
+        }
+    }
+
+    fn push(&mut self, c: char) {
+        let mut buf = [0u8; 4];
+        self.push_str(c.encode_utf8(&mut buf));
+    }
+}
+
+/// SER-01: write `prefix:local` (or bare local) into `out` with no temporary String.
+#[inline]
+fn write_qname(out: &mut impl XmlBuf, prefix: &str, local: &str) {
+    if !prefix.is_empty() {
+        out.push_str(prefix);
+        out.push(':');
+    }
+    out.push_str(local);
+}
+
+/// SER-01: escape attribute values into `out`. Fast path when no special chars.
+#[inline]
+fn write_escape_attr(out: &mut impl XmlBuf, s: &str) {
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>' | b'"')) {
+        out.push_str(s);
+        return;
+    }
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
+}
+
+/// SER-01: escape text content into `out`. Fast path when no special chars.
+#[inline]
+fn write_escape_text(out: &mut impl XmlBuf, s: &str) {
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>')) {
+        out.push_str(s);
+        return;
+    }
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(c),
+        }
+    }
+}
+
+/// Resolve prefix for a URI, assigning if needed.
+fn resolve_prefix(scope: &mut Scope<'_>, state: &mut State, uri: &str) -> String {
+    if let Some(p) = scope.prefix_for_uri(uri) {
+        return p.to_string();
+    }
+    scope.assign(state, uri)
+}
+
+/// Write namespace decls + real attrs + rewritten QName-list attrs into `out`.
+fn write_attributes(
+    out: &mut impl XmlBuf,
+    scope: &mut Scope<'_>,
+    state: &mut State,
+    real_attrs: &[(&XName, &str)],
+    prefix_list_attrs: &[(&XName, &str)],
+) {
+    // Namespace declarations first, sorted by prefix for determinism.
     {
         let mut decls: Vec<(&String, &String)> = scope.local_uri_to_prefix.iter().collect();
         decls.sort_by(|a, b| a.1.cmp(b.1));
@@ -262,80 +404,104 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut Strin
                 continue;
             }
             if prefix.is_empty() {
-                attr_str.push_str(&format!(" xmlns=\"{}\"", escape_attr(uri)));
+                out.push_str(" xmlns=\"");
+                write_escape_attr(out, uri);
+                out.push('"');
             } else {
-                attr_str.push_str(&format!(" xmlns:{}=\"{}\"", prefix, escape_attr(uri)));
+                out.push_str(" xmlns:");
+                out.push_str(prefix);
+                out.push_str("=\"");
+                write_escape_attr(out, uri);
+                out.push('"');
             }
         }
     }
 
     for (name, value) in real_attrs {
-        let prefix = scope
-            .prefix_for_uri(name.namespace_name())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| scope.assign(state, name.namespace_name()));
-        let qn = qname(&prefix, &name);
-        attr_str.push(' ');
-        attr_str.push_str(&qn);
-        attr_str.push_str("=\"");
-        attr_str.push_str(&escape_attr(&value));
-        attr_str.push('"');
+        let prefix = resolve_prefix(scope, state, name.namespace_name());
+        out.push(' ');
+        write_qname(out, &prefix, name.local_name());
+        out.push_str("=\"");
+        write_escape_attr(out, value);
+        out.push('"');
     }
 
     for (name, value) in prefix_list_attrs {
-        let prefix = scope
-            .prefix_for_uri(name.namespace_name())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| scope.assign(state, name.namespace_name()));
-        let qn = qname(&prefix, &name);
-        let rewritten = value
-            .split_whitespace()
-            .map(|token| {
-                if let Some(uri) = scope.uri_for_prefix(token) {
-                    if let Some(p) = scope.prefix_for_uri(uri) {
-                        if p != token { p.to_string() } else { token.to_string() }
-                    } else {
-                        token.to_string()
-                    }
-                } else {
-                    token.to_string()
+        let prefix = resolve_prefix(scope, state, name.namespace_name());
+        out.push(' ');
+        write_qname(out, &prefix, name.local_name());
+        out.push_str("=\"");
+        // Rewrite prefix tokens; write rewritten value with escapes, no join Vec.
+        let mut first = true;
+        let mut rewritten = String::new();
+        for token in value.split_whitespace() {
+            if !first {
+                rewritten.push(' ');
+            }
+            first = false;
+            if let Some(uri) = scope.uri_for_prefix(token)
+                && let Some(p) = scope.prefix_for_uri(uri)
+                && p != token
+            {
+                rewritten.push_str(p);
+                continue;
+            }
+            rewritten.push_str(token);
+        }
+        write_escape_attr(out, &rewritten);
+        out.push('"');
+    }
+}
+
+fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut impl XmlBuf) {
+    let ename = dom.name(e).expect("emit: non-element node");
+    let mut scope = Scope::child(parent, dom, e);
+
+    // First pass: assign prefixes for the element name, all attribute names,
+    // and all namespaces referenced by QName-list attribute values.
+    // DOM-ITER-01: borrow attr names/values; no attributes() Vec clones.
+    scope.assign(state, ename.namespace_name());
+    let mut real_attrs: Vec<(&XName, &str)> = Vec::new();
+    let mut prefix_list_attrs: Vec<(&XName, &str)> = Vec::new();
+    for i in 0..dom.attr_count(e) {
+        let (name, value) = dom.attr_at(e, i);
+        if dom.is_namespace_declaration(name) {
+            continue;
+        }
+        scope.assign(state, name.namespace_name());
+        if is_namespace_prefix_list(name) {
+            for token in value.split_whitespace() {
+                if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
+                    scope.assign(state, &uri);
                 }
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        attr_str.push(' ');
-        attr_str.push_str(&qn);
-        attr_str.push_str("=\"");
-        attr_str.push_str(&escape_attr(&rewritten));
-        attr_str.push('"');
+            }
+            prefix_list_attrs.push((name, value));
+            continue;
+        }
+        real_attrs.push((name, value));
     }
 
-    let tag = {
-        let prefix = scope
-            .prefix_for_uri(ename.namespace_name())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| scope.assign(state, ename.namespace_name()));
-        qname(&prefix, &ename)
-    };
+    let tag_prefix = resolve_prefix(&mut scope, state, ename.namespace_name());
+    let local = ename.local_name();
+    let n_kids = dom.child_count(e);
 
-    let kids = dom.nodes(e);
-    if kids.is_empty() {
-        out.push('<');
-        out.push_str(&tag);
-        out.push_str(&attr_str);
+    // SER-01: open tag + attributes written straight into `out` (no attr_str).
+    out.push('<');
+    write_qname(out, &tag_prefix, local);
+    write_attributes(out, &mut scope, state, &real_attrs, &prefix_list_attrs);
+
+    if n_kids == 0 {
         out.push_str(" />");
         return;
     }
 
-    out.push('<');
-    out.push_str(&tag);
-    out.push_str(&attr_str);
     out.push('>');
-    for k in kids {
+    for i in 0..n_kids {
+        let k = dom.child_at(e, i);
         if dom.is_element(k) {
             emit(dom, k, &scope, state, out);
         } else if dom.is_text(k) {
-            out.push_str(&escape_text(dom.text_value(k).unwrap_or("")));
+            write_escape_text(out, dom.text_value(k).unwrap_or(""));
         } else if dom.is_comment(k) {
             out.push_str("<!--");
             out.push_str(dom.text_value(k).unwrap_or(""));
@@ -343,16 +509,76 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut Strin
         } else if dom.is_pi(k) {
             out.push_str("<?");
             out.push_str(dom.pi_target(k).unwrap_or(""));
-            if let Some(data) = dom.pi_data(k) {
-                if !data.is_empty() {
-                    out.push_str(data);
-                }
+            if let Some(data) = dom.pi_data(k)
+                && !data.is_empty()
+            {
+                out.push_str(data);
             }
             out.push_str("?>");
         }
     }
     out.push_str("</");
-    out.push_str(&tag);
+    write_qname(out, &tag_prefix, local);
+    out.push('>');
+}
+
+/// HASH-STREAM-02: like [`emit`] but drops all non-element children (text /
+/// comment / PI), matching `CloneForStructureHash` then serialize.
+fn emit_structure(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut impl XmlBuf) {
+    let ename = dom.name(e).expect("emit_structure: non-element node");
+    let mut scope = Scope::child(parent, dom, e);
+
+    scope.assign(state, ename.namespace_name());
+    let mut real_attrs: Vec<(&XName, &str)> = Vec::new();
+    let mut prefix_list_attrs: Vec<(&XName, &str)> = Vec::new();
+    for i in 0..dom.attr_count(e) {
+        let (name, value) = dom.attr_at(e, i);
+        if dom.is_namespace_declaration(name) {
+            continue;
+        }
+        scope.assign(state, name.namespace_name());
+        if is_namespace_prefix_list(name) {
+            for token in value.split_whitespace() {
+                if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
+                    scope.assign(state, &uri);
+                }
+            }
+            prefix_list_attrs.push((name, value));
+            continue;
+        }
+        real_attrs.push((name, value));
+    }
+
+    let tag_prefix = resolve_prefix(&mut scope, state, ename.namespace_name());
+    let local = ename.local_name();
+    let n_kids = dom.child_count(e);
+
+    // Count element children only (structure clone has no text nodes).
+    let mut n_el = 0usize;
+    for i in 0..n_kids {
+        if dom.is_element(dom.child_at(e, i)) {
+            n_el += 1;
+        }
+    }
+
+    out.push('<');
+    write_qname(out, &tag_prefix, local);
+    write_attributes(out, &mut scope, state, &real_attrs, &prefix_list_attrs);
+
+    if n_el == 0 {
+        out.push_str(" />");
+        return;
+    }
+
+    out.push('>');
+    for i in 0..n_kids {
+        let k = dom.child_at(e, i);
+        if dom.is_element(k) {
+            emit_structure(dom, k, &scope, state, out);
+        }
+    }
+    out.push_str("</");
+    write_qname(out, &tag_prefix, local);
     out.push('>');
 }
 
@@ -364,18 +590,26 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
         out.push_str(d.version.as_deref().unwrap_or("1.0"));
         out.push('"');
         if let Some(enc) = &d.encoding {
-            out.push_str(&format!(" encoding=\"{enc}\""));
+            out.push_str(" encoding=\"");
+            out.push_str(enc);
+            out.push('"');
         }
         if let Some(sa) = &d.standalone {
-            out.push_str(&format!(" standalone=\"{sa}\""));
+            out.push_str(" standalone=\"");
+            out.push_str(sa);
+            out.push('"');
         }
         out.push_str("?>");
     }
-    for k in dom.nodes(doc) {
+    for i in 0..dom.child_count(doc) {
+        let k = dom.child_at(doc, i);
         if dom.is_element(k) {
-            out.push_str(&serialize_element(dom, k));
+            // Stream element into the same buffer (avoid intermediate String).
+            let mut state = State { counter: 0 };
+            let root_scope = Scope::root();
+            emit(dom, k, &root_scope, &mut state, &mut out);
         } else if dom.is_text(k) {
-            out.push_str(&escape_text(dom.text_value(k).unwrap_or("")));
+            write_escape_text(&mut out, dom.text_value(k).unwrap_or(""));
         } else if dom.is_comment(k) {
             out.push_str("<!--");
             out.push_str(dom.text_value(k).unwrap_or(""));
@@ -383,26 +617,13 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
         } else if dom.is_pi(k) {
             out.push_str("<?");
             out.push_str(dom.pi_target(k).unwrap_or(""));
-            if let Some(data) = dom.pi_data(k) {
-                if !data.is_empty() {
-                    out.push_str(data);
-                }
+            if let Some(data) = dom.pi_data(k)
+                && !data.is_empty()
+            {
+                out.push_str(data);
             }
             out.push_str("?>");
         }
     }
     out
-}
-
-fn escape_attr(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-fn escape_text(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
 }

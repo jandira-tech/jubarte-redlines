@@ -16,6 +16,16 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
+/// CLI-only global allocator. The redline pipeline spends ~41% of CPU self-time
+/// in allocation/copy/free/drop of xmllinq nodes (measured with samply on the
+/// RFP17 fixtures — `produce::coalesce_recurse`/`reconstruct_element` churn).
+/// mimalloc lowers that per-allocation cost; it changes performance only, never
+/// program semantics. Library consumers are unaffected (this lives in the
+/// binary). Toggle off with `--no-default-features --features cli` for A/B.
+#[cfg(feature = "fast-alloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Generate a tracked-changes (redline) .docx from two documents.
 ///
 /// The redline is the ORIGINAL document with every difference against MODIFIED

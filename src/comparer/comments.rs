@@ -109,6 +109,31 @@ fn b_carries_same_comments_as_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
     a.iter().all(|(id, text)| b.get(id) == Some(text))
 }
 
+/// True when B's multiset of comment *body texts* covers A's multiset
+/// (id-independent). Word renumbers the same comment set across sequential
+/// redline sources (lots_of_comments addition vs removal_v_addition share six
+/// bodies under disjoint ids). Id-match fails → naive union doubles anchors
+/// (12 vs Word's 6). Text multiset cover still refuses drop of an A-only body
+/// (PR #81 spirit: do not silently discard distinct comments).
+fn b_covers_comment_texts_of_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
+    let a = comment_id_text_of(pkg1);
+    if a.is_empty() {
+        return true;
+    }
+    let b = comment_id_text_of(pkg2);
+    let mut b_counts: HashMap<String, usize> = HashMap::new();
+    for text in b.values() {
+        *b_counts.entry(text.clone()).or_default() += 1;
+    }
+    for text in a.values() {
+        match b_counts.get_mut(text) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => return false,
+        }
+    }
+    true
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Start,
@@ -380,7 +405,6 @@ fn inject_side(
     let (merged_text, mut segs) = collect_segments(dom, result_root, b_side, author);
     let src_chars: Vec<char> = src_text.chars().collect();
     let merged_chars: Vec<char> = merged_text.chars().collect();
-
     // map each comment range through context matching, then flatten to
     // events sorted by (offset, source order) so nesting order is preserved
     let mut events: Vec<Event> = Vec::new();
@@ -685,6 +709,44 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
     }
 }
 
+/// Collapse identical comment body texts to one id (Word redline keeps one
+/// of each body). `docx_lots_of_comments_*` sources ship duplicate bodies
+/// under distinct ids; carrying all 6 vs Word's 4 shifts layout (C2 ~45 score).
+/// Keeps the first id per body text; strips later ids from the anchor set so
+/// [`drop_orphans`] removes their defs and aux-part rows.
+fn dedupe_anchored_by_body_text(out: &PartFs, anchored: &HashSet<String>) -> HashSet<String> {
+    let Some(xml) = out.part_string("word/comments.xml") else {
+        return anchored.clone();
+    };
+    let mut d = Dom::new();
+    let doc = d.parse_xdocument(&xml);
+    let Some(root) = d.root(doc) else {
+        return anchored.clone();
+    };
+    let mut seen_text: HashSet<String> = HashSet::new();
+    let mut keep: HashSet<String> = HashSet::new();
+    // Document order of comment elements = stable keep-first.
+    for c in d.elements(root, Some(&W::name("comment"))) {
+        let Some(id) = d.attribute(c, &W::name("id")).map(str::to_string) else {
+            continue;
+        };
+        if !anchored.contains(&id) {
+            continue;
+        }
+        let text: String = d
+            .descendants(c, Some(&W::t()))
+            .into_iter()
+            .map(|t| d.value(t))
+            .collect();
+        // Normalize whitespace so "Complex comment. " and "Complex comment." match.
+        let key = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if seen_text.insert(key) {
+            keep.insert(id);
+        }
+    }
+    keep
+}
+
 /// Entry point — run after the diff produced `result_root` but BEFORE it is
 /// serialized into `out` (anchors are injected into the result DOM).
 #[allow(clippy::too_many_arguments)]
@@ -708,10 +770,15 @@ pub fn carry_comments(
     let anchored = if ids_b.is_empty() {
         // only A has comments; its parts are already in out (out is A's clone)
         inject_side(dom, result_root, pkg1, main1, false, author, &no_map, None)
-    } else if ids_a.is_empty() || b_carries_same_comments_as_a(pkg1, pkg2) {
-        // B carries the union — parts byte-identical from B (gated on matching
-        // id AND text for every A comment; a bare numeric-id superset is not
-        // enough — same-id independently-authored comments would be dropped).
+    } else if ids_a.is_empty()
+        || b_carries_same_comments_as_a(pkg1, pkg2)
+        || b_covers_comment_texts_of_a(pkg1, pkg2)
+    {
+        // B carries the union — parts byte-identical from B. Two gates:
+        //   1. id+text match for every A comment (classic superset).
+        //   2. id-independent text multiset cover (M213): Word-renumbered
+        //      same-body comment sets across redline sources.
+        // Bare numeric-id superset alone is still not enough.
         install_parts_from(out, out_main, pkg2);
         inject_side(dom, result_root, pkg2, main2, true, author, &no_map, None)
     } else {
@@ -732,5 +799,34 @@ pub fn carry_comments(
         ));
         anchored
     };
+    // Word-parity: one comment def per unique body text, then strip orphans
+    // (including duplicate-body anchors left in the merged document).
+    let anchored = dedupe_anchored_by_body_text(out, &anchored);
+    // Also strip body anchors for dropped ids so they don't linger orphan-free
+    // as range markers without a comments.xml entry (Ring-1).
+    strip_unanchored_comment_markers(dom, result_root, &anchored);
     drop_orphans(out, out_main, &anchored);
+}
+
+/// Remove commentRangeStart/End/commentReference whose id is not in `keep`.
+fn strip_unanchored_comment_markers(dom: &mut Dom, result_root: NodeId, keep: &HashSet<String>) {
+    let names = [
+        W::name("commentRangeStart"),
+        W::name("commentRangeEnd"),
+        W::name("commentReference"),
+    ];
+    let mut dead: Vec<NodeId> = Vec::new();
+    for name in names {
+        for e in dom.descendants(result_root, Some(&name)) {
+            if dom
+                .attribute(e, &W::name("id"))
+                .is_none_or(|id| !keep.contains(id))
+            {
+                dead.push(e);
+            }
+        }
+    }
+    for e in dead {
+        dom.remove(e);
+    }
 }

@@ -39,26 +39,30 @@ impl WmlDocument {
 
     /// `MainDocumentPart` — parse (once) the main document and return its
     /// Document node. Subsequent calls return the cached node.
-    pub fn main_document(&mut self) -> NodeId {
+    ///
+    /// Returns [`OpcError::PartNotFound`] when the package has no main document
+    /// part (fallible input surface — never panics on missing user content).
+    pub fn main_document(&mut self) -> Result<NodeId, OpcError> {
         if let Some(id) = self.main_doc {
-            return id;
+            return Ok(id);
         }
         let name = self.main_document_part_name();
         let xml = self
             .part_fs
             .part_string(&name)
-            .expect("main document part missing");
+            .ok_or_else(|| OpcError::PartNotFound(name.clone()))?;
         let doc = self.dom.parse_xdocument(&xml);
         self.main_doc = Some(doc);
-        doc
+        Ok(doc)
     }
 
     /// The root element (`<w:document>`) of the main document part.
-    pub fn main_document_root(&mut self) -> NodeId {
-        let doc = self.main_document();
+    pub fn main_document_root(&mut self) -> Result<NodeId, OpcError> {
+        let doc = self.main_document()?;
+        let name = self.main_document_part_name();
         self.dom
             .root(doc)
-            .expect("main document has no root element")
+            .ok_or_else(|| OpcError::PartNotFound(format!("{name}: no root element")))
     }
 
     /// Borrow the arena DOM (read).

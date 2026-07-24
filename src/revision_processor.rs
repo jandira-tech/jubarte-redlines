@@ -3,62 +3,77 @@
 //! Scope (per the implementation plan): the ACCEPT path only. Reject,
 //! consolidate, and the HTML/markdown surfaces are out of scope.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 use crate::markup_simplifier::remove_rsid_transform;
 use crate::namespaces::{M, PT, W};
 use crate::xmllinq::{Dom, NodeId, XName};
 
+/// Local names of `RevisionProcessor.TrackedRevisionsElements` (W namespace).
+const TRACKED_REVISION_LOCALS: &[&str] = &[
+    "cellDel",
+    "cellIns",
+    "cellMerge",
+    "customXmlDelRangeEnd",
+    "customXmlDelRangeStart",
+    "customXmlInsRangeEnd",
+    "customXmlInsRangeStart",
+    "customXmlMoveFromRangeEnd",
+    "customXmlMoveFromRangeStart",
+    "customXmlMoveToRangeEnd",
+    "customXmlMoveToRangeStart",
+    "del",
+    "delInstrText",
+    "delText",
+    "ins",
+    "moveFrom",
+    "moveFromRangeEnd",
+    "moveFromRangeStart",
+    "moveTo",
+    "moveToRangeEnd",
+    "moveToRangeStart",
+    "numberingChange",
+    "pPrChange",
+    "rPrChange",
+    "sectPrChange",
+    "tblGridChange",
+    "tblPrChange",
+    "tblPrExChange",
+    "tcPrChange",
+    "trPrChange",
+];
+
+static TRACKED_REVISION_LOCAL_SET: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| TRACKED_REVISION_LOCALS.iter().copied().collect());
+
 /// `RevisionProcessor.TrackedRevisionsElements` — the element names whose
 /// presence indicates the document carries tracked revisions.
 pub fn tracked_revisions_elements() -> Vec<XName> {
-    [
-        "cellDel",
-        "cellIns",
-        "cellMerge",
-        "customXmlDelRangeEnd",
-        "customXmlDelRangeStart",
-        "customXmlInsRangeEnd",
-        "customXmlInsRangeStart",
-        "customXmlMoveFromRangeEnd",
-        "customXmlMoveFromRangeStart",
-        "customXmlMoveToRangeEnd",
-        "customXmlMoveToRangeStart",
-        "del",
-        "delInstrText",
-        "delText",
-        "ins",
-        "moveFrom",
-        "moveFromRangeEnd",
-        "moveFromRangeStart",
-        "moveTo",
-        "moveToRangeEnd",
-        "moveToRangeStart",
-        "numberingChange",
-        "pPrChange",
-        "rPrChange",
-        "sectPrChange",
-        "tblGridChange",
-        "tblPrChange",
-        "tblPrExChange",
-        "tcPrChange",
-        "trPrChange",
-    ]
-    .iter()
-    .map(|l| W::name(l))
-    .collect()
+    TRACKED_REVISION_LOCALS.iter().map(|l| W::name(l)).collect()
 }
 
 /// True if any descendant (or `root` itself) is a tracked-revision element.
 /// Port of `PartHasTrackedRevisions` applied to a single element tree.
+///
+/// ACCEPT-SCAN-01: non-allocating DFS + static local-name set (no per-call
+/// `Vec<XName>` / full `descendants_and_self` materialization).
 pub fn element_has_tracked_revisions(dom: &Dom, root: NodeId) -> bool {
-    let set = tracked_revisions_elements();
-    dom.descendants_and_self(root, None)
-        .into_iter()
-        .any(|e| match dom.name(e) {
-            Some(name) => set.contains(&name),
-            None => false,
-        })
+    fn walk(dom: &Dom, id: NodeId) -> bool {
+        if let Some(name) = dom.name(id)
+            && name.namespace_name() == W::URI
+            && TRACKED_REVISION_LOCAL_SET.contains(name.local_name())
+        {
+            return true;
+        }
+        for i in 0..dom.child_count(id) {
+            if walk(dom, dom.child_at(id, i)) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(dom, root)
 }
 
 /// Does `el` have a child element named `local` (in the W namespace)?
@@ -74,19 +89,27 @@ fn has_path(dom: &Dom, el: NodeId, a: &XName, b: &XName) -> bool {
 }
 
 /// Port of `AcceptMoveFromMoveToTransform` — unwrap `w:moveTo`, drop `w:moveFrom`.
+///
+/// ACCEPT-REUSE-CLEAN: subtrees with no moveFrom/moveTo (and no other tracked
+/// revision markers) are detached and returned as-is — `Dom::add` then reuses
+/// them without `clone_subtree`.
 pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
+    // No move/revision markers in this subtree → transfer ownership.
+    if !element_has_tracked_revisions(dom, node) {
+        return take_subtree(dom, node);
+    }
     if !dom.is_element(node) {
-        return vec![dom.clone_subtree(node)];
+        return take_subtree(dom, node);
     }
     let name = dom.name(node).unwrap();
-    if name == W::name("moveTo") {
+    if name == W::move_to() {
         let mut out = Vec::new();
         for c in dom.nodes(node) {
             out.extend(accept_move_from_move_to_transform(dom, c));
         }
         return out;
     }
-    if name == W::name("moveFrom") {
+    if name == W::move_from() {
         return vec![];
     }
     let ne = dom.new_element(name);
@@ -101,17 +124,43 @@ pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<No
     vec![ne]
 }
 
+/// Detach `node` from its parent (if any) and return it for reparenting.
+/// Unparented nodes are reused by [`Dom::add`] without cloning.
+fn take_subtree(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
+    if dom.parent(node).is_some() {
+        dom.remove(node);
+    }
+    vec![node]
+}
+
+/// Non-allocating presence of `name` on `root` or any descendant element.
+fn element_or_desc_has_name(dom: &Dom, root: NodeId, name: &XName) -> bool {
+    fn walk(dom: &Dom, id: NodeId, name: &XName) -> bool {
+        if dom.name(id).as_ref() == Some(name) {
+            return true;
+        }
+        let n = dom.child_count(id);
+        for i in 0..n {
+            if walk(dom, dom.child_at(id, i), name) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(dom, root, name)
+}
+
 /// True iff a transformed element still carries run/inline content (port of
 /// `HasRunContent`) — used to decide whether an emptied `w:hyperlink` survives.
 fn has_run_content(dom: &Dom, element: NodeId) -> bool {
     let content_names = [
-        W::name("r"),
-        W::name("smartTag"),
-        W::name("ins"),
-        W::name("del"),
-        W::name("hyperlink"),
-        W::name("fldSimple"),
-        W::name("sdt"),
+        W::r(),
+        W::smart_tag(),
+        W::ins(),
+        W::del(),
+        W::hyperlink(),
+        W::fld_simple(),
+        W::sdt(),
     ];
     dom.elements(element, None)
         .into_iter()
@@ -121,9 +170,17 @@ fn has_run_content(dom: &Dom, element: NodeId) -> bool {
 /// Port of `AcceptAllOtherRevisionsTransform` — accept inserts (unwrap `w:ins`),
 /// drop deletions and revision-range markers, accept formatting-change markers,
 /// handle deleted rows/tables, cell merges, and empty hyperlink shells.
+///
+/// ACCEPT-REUSE-CLEAN: when a subtree has no tracked-revision elements, detach
+/// and return it instead of `clone_subtree` + identity rebuild. Callers reparent
+/// via `Dom::add`, which reuses unparented nodes.
 pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
+    // Clean subtree (incl. plain text leaves): transfer, do not rebuild.
+    if !element_has_tracked_revisions(dom, node) {
+        return take_subtree(dom, node);
+    }
     if !dom.is_element(node) {
-        return vec![dom.clone_subtree(node)];
+        return take_subtree(dom, node);
     }
     let name = dom.name(node).unwrap();
 
@@ -186,44 +243,45 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
     }
 
     // w:tr / w:trPr / w:del → deleted row.
-    if name == W::name("tr") && has_path(dom, node, &W::name("trPr"), &W::del()) {
+    if name == W::tr() && has_path(dom, node, &W::tr_pr(), &W::del()) {
         return vec![];
     }
 
     // w:tbl whose rows are ALL deleted → drop the whole table.
-    if name == W::name("tbl") {
-        let rows = dom.elements(node, Some(&W::name("tr")));
+    if name == W::tbl() {
+        let rows = dom.elements(node, Some(&W::tr()));
         if !rows.is_empty()
             && rows
                 .iter()
-                .all(|&tr| has_path(dom, tr, &W::name("trPr"), &W::del()))
+                .all(|&tr| has_path(dom, tr, &W::tr_pr(), &W::del()))
         {
             return vec![];
         }
     }
 
-    // Accept deleted text: drop w:del.
+    // Accept deleted text: drop w:del. Hoist comment range markers that lived
+    // inside the deletion so nested/table comment anchors survive accept
+    // (docx_lots_of_comments redline: starts 9/10 sit between delText runs;
+    // dropping the whole w:del orphaned those comments → carry 2/6).
     if name == W::del() {
-        return vec![];
+        return hoist_comment_markers_from(dom, node);
     }
 
     // Vertically-merged cell markers.
-    if name == W::name("cellMerge") {
+    if name == W::cell_merge() {
         let parent_is_tcpr = dom
             .parent(node)
             .and_then(|p| dom.name(p))
-            .is_some_and(|pn| pn == W::name("tcPr"));
+            .is_some_and(|pn| pn == W::tc_pr());
         if parent_is_tcpr {
-            let vmerge = dom
-                .attribute(node, &W::name("vMerge"))
-                .map(|s| s.to_string());
+            let vmerge = dom.attribute(node, &W::v_merge()).map(|s| s.to_string());
             if vmerge.as_deref() == Some("rest") {
-                let v = dom.new_element(W::name("vMerge"));
+                let v = dom.new_element(W::v_merge());
                 dom.set_attribute_value(v, &W::val(), Some("restart"));
                 return vec![v];
             }
             if vmerge.as_deref() == Some("cont") {
-                let v = dom.new_element(W::name("vMerge"));
+                let v = dom.new_element(W::v_merge());
                 dom.set_attribute_value(v, &W::val(), Some("continue"));
                 return vec![v];
             }
@@ -231,7 +289,7 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
     }
 
     // w:hyperlink that collapses to an empty shell after accepting children → drop.
-    if name == W::name("hyperlink") {
+    if name == W::hyperlink() {
         let ne = dom.new_element(name);
         for (an, av) in dom.attributes(node) {
             dom.set_attribute_value(ne, &an, Some(&av));
@@ -269,29 +327,33 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
 /// cases). The fuller part-level pipeline (`AcceptRevisionsForPart`) adds
 /// deleted-paragraph-mark merging, move-from ranges, field codes, content
 /// controls, table merges, and OrderTcPr — see the module status note.
+///
+/// ACCEPT-SKIP-01: when the subtree has no tracked-revision elements, skip
+/// the two identity full-tree rebuilds (move + all-other) after RemoveRsid.
 pub fn accept_revisions_for_element(dom: &mut Dom, element: NodeId) -> NodeId {
+    let has_rev = element_has_tracked_revisions(dom, element);
     let e = remove_rsid_transform(dom, element).expect("root not dropped by rsid removal");
-    let e = {
+    let e = if has_rev {
         let v = accept_move_from_move_to_transform(dom, e);
         debug_assert_eq!(v.len(), 1);
-        v[0]
-    };
-    let e = {
+        let e = v[0];
         let v = accept_all_other_revisions_transform(dom, e);
         debug_assert_eq!(v.len(), 1);
         v[0]
+    } else {
+        e
     };
 
     // Strip PT.UniqueId / PT.RunIds attributes from all descendants.
-    let unique_id = PT::name("UniqueId");
-    let run_ids = PT::name("RunIds");
+    let unique_id = PT::unique_id();
+    let run_ids = PT::run_ids();
     for d in dom.descendants_and_self(e, None) {
         dom.set_attribute_value(d, &unique_id, None);
         dom.set_attribute_value(d, &run_ids, None);
     }
 
     // Remove empty w:numPr elements.
-    let num_pr = W::name("numPr");
+    let num_pr = W::num_pr();
     for np in dom.descendants(e, Some(&num_pr)) {
         if !dom.has_elements(np) {
             dom.remove(np);
@@ -318,7 +380,7 @@ pub fn accept_revisions_document(dom: &mut Dom, root: NodeId) -> NodeId {
 /// The "skipping" parent used by `ReverseRevisionsTransform` — nearest ancestor
 /// whose name is not `w:sdtContent`/`w:sdt`/`w:smartTag`.
 fn effective_parent(dom: &Dom, node: NodeId) -> Option<NodeId> {
-    let skip = [W::name("sdtContent"), W::name("sdt"), W::name("smartTag")];
+    let skip = [W::sdt_content(), W::sdt(), W::smart_tag()];
     dom.ancestors(node, None)
         .into_iter()
         .find(|&a| dom.name(a).is_some_and(|n| !skip.contains(&n)))
@@ -344,8 +406,7 @@ fn reverse_revisions_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         .and_then(|gp| dom.name(gp))
         .is_some_and(|n| n == W::p_pr());
 
-    let in_p_or_hyperlink =
-        matches!(&parent_name, Some(n) if *n == W::p() || *n == W::name("hyperlink"));
+    let in_p_or_hyperlink = matches!(&parent_name, Some(n) if *n == W::p() || *n == W::hyperlink());
 
     // Deleted run / deleted math char → w:ins (wrapping reversed children).
     if name == W::del() && (in_p_or_hyperlink || parent_name.as_ref() == Some(&M::name("r"))) {
@@ -364,10 +425,10 @@ fn reverse_revisions_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         return rebuild_named(dom, W::del(), node, false);
     }
     // Deleted / inserted table row (del/ins in trPr) → swap.
-    if name == W::del() && parent_name.as_ref() == Some(&W::name("trPr")) {
+    if name == W::del() && parent_name.as_ref() == Some(&W::tr_pr()) {
         return dom.new_element(W::ins());
     }
-    if name == W::ins() && parent_name.as_ref() == Some(&W::name("trPr")) {
+    if name == W::ins() && parent_name.as_ref() == Some(&W::tr_pr()) {
         return dom.new_element(W::del());
     }
 
@@ -427,7 +488,7 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
     let name = dom.name(node).unwrap();
 
     // Inserted numbering properties: numPr containing w:ins → drop.
-    if name == W::name("numPr") && dom.element(node, &W::ins()).is_some() {
+    if name == W::num_pr() && dom.element(node, &W::ins()).is_some() {
         return None;
     }
     // Property-change reverts: replace the prop element by the change's saved copy.
@@ -462,7 +523,7 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
     }
     // rPrChange: replace rPr by the change's saved rPr.
     if name == W::r_pr()
-        && let Some(chg) = dom.element(node, &W::name("rPrChange"))
+        && let Some(chg) = dom.element(node, &W::r_pr_change())
     {
         let saved = dom.element(chg, &W::r_pr());
         let new_rpr = match saved {
@@ -472,18 +533,15 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         return reject_revisions_for_part_transform(dom, new_rpr);
     }
     // numberingChange / cellDel / cellMerge → drop.
-    if name == W::name("numberingChange")
-        || name == W::name("cellDel")
-        || name == W::name("cellMerge")
-    {
+    if name == W::numbering_change() || name == W::cell_del() || name == W::cell_merge() {
         return None;
     }
     // tc whose tcPr contains a cellIns → drop the inserted cell.
-    if name == W::name("tc") {
+    if name == W::tc() {
         let has_cell_ins = dom
-            .elements(node, Some(&W::name("tcPr")))
+            .elements(node, Some(&W::tc_pr()))
             .into_iter()
-            .any(|tcpr| dom.element(tcpr, &W::name("cellIns")).is_some());
+            .any(|tcpr| dom.element(tcpr, &W::cell_ins()).is_some());
         if has_cell_ins {
             return None;
         }
@@ -505,7 +563,14 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
 /// `RejectRevisionsDocument` at element scope: revert property changes, invert
 /// the sense of every remaining revision, strip rsids, then accept. The net
 /// effect is the document's *original* (pre-revision) projection.
+///
+/// REJECT-SKIP-01: when the subtree has no tracked-revision elements, the
+/// reject/reverse/accept rebuilds are identity — only RemoveRsid is needed
+/// (in-place). Dirty trees take the full faithful path.
 pub fn reject_revisions_document(dom: &mut Dom, root: NodeId) -> NodeId {
+    if !element_has_tracked_revisions(dom, root) {
+        return remove_rsid_transform(dom, root).expect("reject clean: root not dropped by rsid");
+    }
     let reverted =
         reject_revisions_for_part_transform(dom, root).expect("reject: root must not be dropped");
     let reversed = reverse_revisions_transform(dom, reverted);
@@ -519,15 +584,20 @@ pub fn reject_revisions_document(dom: &mut Dom, root: NodeId) -> NodeId {
 /// doc-order tag stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TagType {
+    /// Public API item.
     Element,
+    /// Public API item.
     EmptyElement,
+    /// Public API item.
     EndElement,
 }
 
 /// `Tag` (RevisionProcessor.cs :2393): one open/empty/close event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tag {
+    /// `element`.
     pub element: NodeId,
+    /// `tag_type`.
     pub tag_type: TagType,
 }
 
@@ -541,13 +611,15 @@ pub fn descendant_and_self_tags(dom: &Dom, element: NodeId) -> Vec<Tag> {
         element,
         tag_type: TagType::Element,
     }];
-    // (children, next index) — mirrors the C# iterator stack.
-    let mut stack: Vec<(Vec<NodeId>, usize)> = vec![(dom.elements(element, None), 0)];
+    // DOM-ITER-04: stack of (element children, next index, last advanced element).
+    // Element-child lists still materialize (EndElement needs the finished id),
+    // but empty checks use `child_count` (no `nodes()` clone).
+    let mut stack: Vec<(Vec<NodeId>, usize)> = vec![(element_children_vec(dom, element), 0)];
     while let Some(top) = stack.last_mut() {
         if top.1 < top.0.len() {
             let current = top.0[top.1];
             top.1 += 1;
-            if dom.nodes(current).is_empty() {
+            if dom.child_count(current) == 0 {
                 out.push(Tag {
                     element: current,
                     tag_type: TagType::EmptyElement,
@@ -558,7 +630,7 @@ pub fn descendant_and_self_tags(dom: &Dom, element: NodeId) -> Vec<Tag> {
                 element: current,
                 tag_type: TagType::Element,
             });
-            stack.push((dom.elements(current, None), 0));
+            stack.push((element_children_vec(dom, current), 0));
             continue;
         }
         stack.pop();
@@ -578,27 +650,58 @@ pub fn descendant_and_self_tags(dom: &Dom, element: NodeId) -> Vec<Tag> {
     out
 }
 
+/// Direct element children (document order) without the `elements()` filter path.
+fn element_children_vec(dom: &Dom, id: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let n = dom.child_count(id);
+    for i in 0..n {
+        let c = dom.child_at(id, i);
+        if dom.is_element(c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// `BlockContentInfo` (RevisionProcessor.cs :52): prev/this/next links for
 /// block-level content. `iterate_block_content_elements` fills all three
 /// (`this` always `Some`); `get_paragraph_info` fills `previous` (= previous
 /// element sibling) and `this` only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockContentInfo {
+    /// `previous_block_content_element`.
     pub previous_block_content_element: Option<NodeId>,
+    /// `this_block_content_element`.
     pub this_block_content_element: Option<NodeId>,
+    /// `next_block_content_element`.
     pub next_block_content_element: Option<NodeId>,
 }
 
 /// First `w:p`/`w:tbl` among `roots`' descendants-and-self, document order.
+/// DOM-ITER-04: early-exit iterative walk (no full `descendants_and_self` Vec).
 fn first_block_content(dom: &Dom, roots: &[NodeId]) -> Option<NodeId> {
-    let (p, tbl) = (W::p(), W::name("tbl"));
+    let (p, tbl) = (W::p(), W::tbl());
+    let is_block = |e: NodeId| dom.name(e).is_some_and(|n| n == p || n == tbl);
     for &r in roots {
-        if let Some(hit) = dom
-            .descendants_and_self(r, None)
-            .into_iter()
-            .find(|&e| dom.name(e).is_some_and(|n| n == p || n == tbl))
-        {
-            return Some(hit);
+        if is_block(r) {
+            return Some(r);
+        }
+        let mut stack: Vec<(NodeId, usize)> = vec![(r, 0)];
+        while let Some((node, i)) = stack.last_mut() {
+            let n = dom.child_count(*node);
+            if *i >= n {
+                stack.pop();
+                continue;
+            }
+            let c = dom.child_at(*node, *i);
+            *i += 1;
+            if !dom.is_element(c) {
+                continue;
+            }
+            if is_block(c) {
+                return Some(c);
+            }
+            stack.push((c, 0));
         }
     }
     None
@@ -618,10 +721,12 @@ fn elements_after_self(dom: &Dom, id: NodeId) -> Vec<NodeId> {
 /// current element's FOLLOWING siblings (climbing ancestors up to `element`),
 /// so a table's inner paragraphs never appear once the table itself matched.
 pub fn iterate_block_content_elements(dom: &Dom, element: NodeId) -> Vec<BlockContentInfo> {
-    if dom.elements(element, None).is_empty() {
+    // DOM-ITER-04: one element-children collect (was two `elements()` calls).
+    let kids = element_children_vec(dom, element);
+    if kids.is_empty() {
         return Vec::new();
     }
-    let Some(first) = first_block_content(dom, &dom.elements(element, None)) else {
+    let Some(first) = first_block_content(dom, &kids) else {
         return Vec::new();
     };
 
@@ -657,11 +762,11 @@ pub fn iterate_block_content_elements(dom: &Dom, element: NodeId) -> Vec<BlockCo
 fn block_level_content_containers() -> [XName; 7] {
     [
         W::body(),
-        W::name("tc"),
-        W::name("txbxContent"),
-        W::name("hdr"),
-        W::name("ftr"),
-        W::name("endnote"),
+        W::tc(),
+        W::txbx_content(),
+        W::hdr(),
+        W::ftr(),
+        W::endnote(),
         W::footnote(),
     ]
 }
@@ -685,7 +790,7 @@ pub fn get_paragraph_info(dom: &Dom, content_element: NodeId) -> BlockContentInf
         "GetParagraphInfo called for element that is not child of content container"
     );
 
-    let (p, tc, txbx) = (W::p(), W::name("tc"), W::name("txbxContent"));
+    let (p, tc, txbx) = (W::p(), W::tc(), W::txbx_content());
     let mut paragraph = dom
         .descendants_and_self(content_element, None)
         .into_iter()
@@ -728,8 +833,8 @@ fn transform_instr_text_to_del_instr_text(dom: &mut Dom, node: NodeId) -> NodeId
         return dom.clone_subtree(node);
     }
     let name = dom.name(node).unwrap();
-    if name == W::name("instrText") {
-        let ne = dom.new_element(W::name("delInstrText"));
+    if name == W::instr_text() {
+        let ne = dom.new_element(W::del_instr_text());
         for (an, av) in dom.attributes(node) {
             dom.set_attribute_value(ne, &an, Some(&av));
         }
@@ -761,8 +866,14 @@ fn transform_instr_text_to_del_instr_text(dom: &mut Dom, node: NodeId) -> NodeId
 /// child ELEMENTS only (direct text under `w:p` is dropped, as in C#), and
 /// the wrapping del/ins carries no author/date attributes.
 pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: NodeId) -> NodeId {
+    // ACCEPT-SKIP-A1: no field marks → identity (keep parent links; do not detach).
+    let fld = W::fld_char();
+    let instr = W::instr_text();
+    if !element_or_desc_has_name(dom, node, &fld) && !element_or_desc_has_name(dom, node, &instr) {
+        return node;
+    }
     if !dom.is_element(node) {
-        return dom.clone_subtree(node);
+        return node;
     }
     let name = dom.name(node).unwrap();
     if name == W::p() {
@@ -771,13 +882,13 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
             let holds_fld_char = |d: &Dom| {
                 d.elements(e, Some(&W::r()))
                     .into_iter()
-                    .any(|r| d.element(r, &W::name("fldChar")).is_some())
+                    .any(|r| d.element(r, &W::fld_char()).is_some())
             };
             if n == W::del() && holds_fld_char(dom) {
                 2
             } else if n == W::ins() && holds_fld_char(dom) {
                 3
-            } else if n == W::r() && dom.element(e, &W::name("instrText")).is_some() {
+            } else if n == W::r() && dom.element(e, &W::instr_text()).is_some() {
                 4
             } else {
                 1
@@ -854,8 +965,8 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
 pub fn accept_move_from_ranges(dom: &mut Dom, document: NodeId) -> NodeId {
     use std::collections::{HashMap, HashSet};
 
-    let mfrs = W::name("moveFromRangeStart");
-    let mfre = W::name("moveFromRangeEnd");
+    let mfrs = W::move_from_range_start();
+    let mfre = W::move_from_range_end();
 
     let mut start_tags_in_range: Vec<NodeId> = Vec::new();
     let mut end_tags_in_range: Vec<NodeId> = Vec::new();
@@ -1024,14 +1135,22 @@ pub fn coalesque_paragraph_end_tags_in_move_from_transform(
 /// the code takes the plain recursive rebuild instead. Net effect: a deep
 /// identity rebuild. Both the TS goldens and the C# RP baselines were
 /// generated with this behavior, so we reproduce it rather than "fix" it.
+///
+/// ACCEPT-SKIP-A3: when the subtree has no `w:moveFromRangeStart`, every
+/// grouping key is "Other" and the transform is a pure identity rebuild —
+/// transfer `node` without cloning (common path for ins/del-only redlines).
 pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: NodeId) -> NodeId {
+    // ACCEPT-SKIP-A3: no moveFromRangeStart → identity (keep parent links).
+    if !element_or_desc_has_name(dom, node, &W::move_from_range_start()) {
+        return node;
+    }
     if !dom.is_element(node) {
         return dom.clone_subtree(node);
     }
     let name = dom.name(node).unwrap();
     if block_level_content_containers().contains(&name) {
-        let mfrs = W::name("moveFromRangeStart");
-        let mfre = W::name("moveFromRangeEnd");
+        let mfrs = W::move_from_range_start();
+        let mfre = W::move_from_range_end();
         let mark_in_open_range = |dom: &Dom, p: NodeId| {
             !dom.elements(p, Some(&mfrs)).is_empty() && dom.elements(p, Some(&mfre)).is_empty()
         };
@@ -1124,9 +1243,9 @@ pub fn accept_deleted_and_moved_from_content_controls(dom: &mut Dom, root: NodeI
     let cxdel_e = W::name("customXmlDelRangeEnd");
     let cxmf_s = W::name("customXmlMoveFromRangeStart");
     let cxmf_e = W::name("customXmlMoveFromRangeEnd");
-    let mfrs = W::name("moveFromRangeStart");
-    let mfre = W::name("moveFromRangeEnd");
-    let sdt = W::name("sdt");
+    let mfrs = W::move_from_range_start();
+    let mfre = W::move_from_range_end();
+    let sdt = W::sdt();
 
     let mut del_starts: Vec<NodeId> = Vec::new();
     let mut del_ends: Vec<NodeId> = Vec::new();
@@ -1251,9 +1370,9 @@ fn accept_deleted_and_moved_from_content_controls_transform(
         return vec![dom.clone_subtree(node)];
     }
     let name = dom.name(node).unwrap();
-    if name == W::name("sdt") && to_collapse.contains(&node) {
+    if name == W::sdt() && to_collapse.contains(&node) {
         let content = dom
-            .element(node, &W::name("sdtContent"))
+            .element(node, &W::sdt_content())
             .expect("collapsed w:sdt must carry sdtContent (C# NREs otherwise)");
         let mut out = Vec::new();
         for c in dom.nodes(content) {
@@ -1341,9 +1460,9 @@ fn collapse_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
         let kids = dom.elements(node, None);
         return kids.into_iter().map(|e| dom.clone_subtree(e)).collect();
     }
-    if name == W::name("sdt") {
+    if name == W::sdt() {
         let mut out = Vec::new();
-        for sc in dom.elements(node, Some(&W::name("sdtContent"))) {
+        for sc in dom.elements(node, Some(&W::sdt_content())) {
             for e in dom.elements(sc, None) {
                 out.push(dom.clone_subtree(e));
             }
@@ -1391,9 +1510,29 @@ fn paragraph_mark_is_deleted_or_moved_from(dom: &Dom, p: NodeId) -> bool {
         .is_some_and(|rpr| {
             dom.elements(rpr, None).into_iter().any(|e| {
                 dom.name(e)
-                    .is_some_and(|n| n == W::del() || n == W::name("moveFrom"))
+                    .is_some_and(|n| n == W::del() || n == W::move_from())
             })
         })
+}
+
+/// ACCEPT-SKIP-A5: non-allocating presence of any paragraph whose mark is
+/// deleted or moved-from under `root`.
+fn has_deleted_or_moved_from_paragraph_mark(dom: &Dom, root: NodeId) -> bool {
+    fn walk(dom: &Dom, id: NodeId) -> bool {
+        if dom.name(id).as_ref() == Some(&W::p())
+            && paragraph_mark_is_deleted_or_moved_from(dom, id)
+        {
+            return true;
+        }
+        let n = dom.child_count(id);
+        for i in 0..n {
+            if walk(dom, dom.child_at(id, i)) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(dom, root)
 }
 
 /// A.5a — `AcceptDeletedAndMoveFromParagraphMarksTransform` (:2119): the
@@ -1429,7 +1568,7 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
     }
 
     let body_sect_pr = if name == W::body() {
-        dom.element(node, &W::name("sectPr"))
+        dom.element(node, &W::sect_pr())
     } else {
         None
     };
@@ -1470,7 +1609,7 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                     }
                 }
             }
-        } else if tn == W::name("tbl") || tn.namespace_name() == M::URI {
+        } else if tn == W::tbl() || tn.namespace_name() == M::URI {
             current_key += 1;
             infos.push((false, current_key));
             state = 0;
@@ -1484,15 +1623,12 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
     let zipped: Vec<(BlockContentInfo, (bool, i32))> = chain.into_iter().zip(infos).collect();
     let grouped = crate::util::group_adjacent(zipped, |z| z.1.1);
 
-    let ne = dom.new_element(name.clone());
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
-    }
-    for e in dom.elements(node, Some(&W::name("tcPr"))) {
-        let ce = dom.clone_subtree(e);
-        dom.add(ne, ce);
-    }
-    for (_key, group) in grouped {
+    // Prebuild rebuilt block nodes, keyed by the original block element(s)
+    // they replace. Deleted-range merges map many originals → one paragraph.
+    // None = nuked empty deleted trailing para; markers_from_nuke are comment
+    // anchors hoisted out of that discarded para so they still emit.
+    let mut rebuilt: Vec<(Vec<NodeId>, Option<NodeId>, Vec<NodeId>)> = Vec::new();
+    for (_key, group) in &grouped {
         if group[0].1.0 {
             // DeletedRange: merge into one paragraph.
             let last_this = group.last().unwrap().0.this_block_content_element.unwrap();
@@ -1501,8 +1637,10 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                 let c = dom.clone_subtree(ppr);
                 dom.add(np, c);
             }
-            for z in &group {
+            let mut orig_ids = Vec::new();
+            for z in group {
                 let this = z.0.this_block_content_element.unwrap();
+                orig_ids.push(this);
                 for collapsed in collapse_paragraph_transform(dom, this) {
                     dom.add(np, collapsed);
                 }
@@ -1513,13 +1651,17 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                 .is_some_and(|rpr| dom.element(rpr, &W::del()).is_some());
             let next = group.last().unwrap().0.next_block_content_element;
             let next_is_none_or_tbl =
-                next.is_none() || next.is_some_and(|n| dom.name(n) == Some(W::name("tbl")));
+                next.is_none() || next.is_some_and(|n| dom.name(n) == Some(W::tbl()));
             if all_para_content_is_deleted(dom, np) && last_mark_is_del && next_is_none_or_tbl {
-                continue; // nuke: never attached
+                // Nuke empty deleted para, but keep comment anchors that lived
+                // inside its w:del runs (starts 9/10 between delText).
+                let markers = hoist_comment_markers_from(dom, np);
+                rebuilt.push((orig_ids, None, markers));
+            } else {
+                rebuilt.push((orig_ids, Some(np), Vec::new()));
             }
-            dom.add(ne, np);
         } else {
-            for z in &group {
+            for z in group {
                 let this = z.0.this_block_content_element.unwrap();
                 let rebuilt_name = dom.name(this).unwrap();
                 let re = dom.new_element(rebuilt_name);
@@ -1530,7 +1672,71 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                     let tc = accept_deleted_and_move_from_paragraph_marks_transform(dom, c);
                     dom.add(re, tc);
                 }
-                dom.add(ne, re);
+                rebuilt.push((vec![this], Some(re), Vec::new()));
+            }
+        }
+    }
+
+    let ne = dom.new_element(name.clone());
+    for (an, av) in dom.attributes(node) {
+        dom.set_attribute_value(ne, &an, Some(&av));
+    }
+    for e in dom.elements(node, Some(&W::tc_pr())) {
+        let ce = dom.clone_subtree(e);
+        dom.add(ne, ce);
+    }
+    // Emit in original element-child order so body-level commentRange*/bookmark*
+    // between tables and paragraphs are preserved. The prior rebuild only kept
+    // p/tbl chain members and dropped other body children — that deleted outer
+    // nested commentRangeEnd after tables (ids 2/66) and broke comment carry.
+    let mut emitted: HashSet<usize> = HashSet::new();
+    for c in dom.elements(node, None) {
+        let Some(cn) = dom.name(c) else {
+            continue;
+        };
+        if cn == W::tc_pr() || cn == W::sect_pr() {
+            continue;
+        }
+        if is_body_level_range_marker(&cn) {
+            let clone = dom.clone_subtree(c);
+            dom.add(ne, clone);
+            continue;
+        }
+        // Direct block content (p/tbl child of body/cell).
+        if let Some(ri) = rebuilt.iter().position(|(ids, _, _)| ids.contains(&c))
+            && emitted.insert(ri)
+        {
+            let (_ids, rebuilt_node, markers) = &rebuilt[ri];
+            if let Some(rebuilt_node) = rebuilt_node {
+                dom.add(ne, *rebuilt_node);
+            }
+            for &m in markers {
+                dom.add(ne, m);
+            }
+            continue;
+        }
+        // Nested block content under wrappers (w:sdt → sdtContent → p).
+        // The chain walks into sdt-wrapped paragraphs, but emit used to only
+        // match *direct* body children — so a surviving sdt's paragraph was
+        // rebuilt then never attached (m28 a5b_mixed: left=0 SDTs). Emit any
+        // rebuilt entry whose original id is under this child; nuked entries
+        // (None) drop the fully-deleted sdt while A.5b re-wraps survivors.
+        for (ri, (ids, rebuilt_node, markers)) in rebuilt.iter().enumerate() {
+            if emitted.contains(&ri) {
+                continue;
+            }
+            let nested = ids
+                .iter()
+                .any(|&id| id == c || dom.ancestors(id, None).into_iter().any(|a| a == c));
+            if !nested {
+                continue;
+            }
+            emitted.insert(ri);
+            if let Some(rebuilt_node) = rebuilt_node {
+                dom.add(ne, *rebuilt_node);
+            }
+            for &m in markers {
+                dom.add(ne, m);
             }
         }
     }
@@ -1541,12 +1747,43 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
     ne
 }
 
+/// Body/cell-level markers that must survive block-content rebuild (not p/tbl).
+fn is_body_level_range_marker(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && matches!(
+            name.local_name(),
+            "commentRangeStart"
+                | "commentRangeEnd"
+                | "bookmarkStart"
+                | "bookmarkEnd"
+                | "permStart"
+                | "permEnd"
+        )
+}
+
+/// Pull comment range markers out of a subtree being discarded (e.g. accepted
+/// `w:del`) so nested anchors between delText runs are not lost.
+fn hoist_comment_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for e in dom.descendants(node, None) {
+        let Some(n) = dom.name(e) else {
+            continue;
+        };
+        if n.namespace_name() == W::URI
+            && matches!(n.local_name(), "commentRangeStart" | "commentRangeEnd")
+        {
+            out.push(dom.clone_subtree(e));
+        }
+    }
+    out
+}
+
 // ─────────────── A.5b — content-control re-wrap after mark merge ────────────
 
 /// A.5b — `AnnotateRunElementsWithId` (:1935): number every descendant `w:r`
 /// with `pt:UniqueId` 0.. in document order (in place).
 pub fn annotate_run_elements_with_id(dom: &mut Dom, element: NodeId) {
-    let unique_id = PT::name("UniqueId");
+    let unique_id = PT::unique_id();
     for (run_id, r) in (0..).zip(dom.descendants(element, Some(&W::r()))) {
         dom.set_attribute_value(r, &unique_id, Some(&run_id.to_string()));
     }
@@ -1572,10 +1809,10 @@ fn descendants_trimmed(dom: &Dom, element: NodeId, trim: &XName) -> Vec<NodeId> 
 /// `w:sdt` a `pt:RunIds` (comma-joined `pt:UniqueId`s of its runs, trimmed at
 /// `w:txbxContent`) and its own `pt:UniqueId` (in place).
 pub fn annotate_content_controls_with_run_ids(dom: &mut Dom, element: NodeId) {
-    let unique_id = PT::name("UniqueId");
-    let run_ids_name = PT::name("RunIds");
-    let txbx = W::name("txbxContent");
-    for (sdt_id, e) in (0..).zip(dom.descendants(element, Some(&W::name("sdt")))) {
+    let unique_id = PT::unique_id();
+    let run_ids_name = PT::run_ids();
+    let txbx = W::txbx_content();
+    for (sdt_id, e) in (0..).zip(dom.descendants(element, Some(&W::sdt()))) {
         let ids: Vec<String> = descendants_trimmed(dom, e, &txbx)
             .into_iter()
             .filter(|&d2| dom.name(d2) == Some(W::r()))
@@ -1623,9 +1860,9 @@ pub fn add_block_level_content_controls(
 ) -> NodeId {
     use std::collections::HashSet;
 
-    let sdt = W::name("sdt");
-    let unique_id = PT::name("UniqueId");
-    let run_ids_name = PT::name("RunIds");
+    let sdt = W::sdt();
+    let unique_id = PT::unique_id();
+    let run_ids_name = PT::run_ids();
 
     let original_ccs = dom.descendants(original, Some(&sdt));
     let existing_ids: HashSet<String> = dom
@@ -1747,14 +1984,14 @@ pub fn add_block_level_content_controls(
         for (an, av) in dom.attributes(cc) {
             dom.set_attribute_value(new_cc, &an, Some(&av));
         }
-        let sdt_content = dom.new_element(W::name("sdtContent"));
+        let sdt_content = dom.new_element(W::sdt_content());
         for &e in &in_range {
             dom.add(sdt_content, e); // detached → moved, like the C#
         }
         let cc_props: Vec<NodeId> = dom
             .elements(cc, None)
             .into_iter()
-            .filter(|&e| dom.name(e) != Some(W::name("sdtContent")))
+            .filter(|&e| dom.name(e) != Some(W::sdt_content()))
             .collect();
         let mut cc_kids: Vec<NodeId> = cc_props.into_iter().map(|e| dom.clone_subtree(e)).collect();
         cc_kids.push(sdt_content);
@@ -1776,7 +2013,15 @@ pub fn add_block_level_content_controls(
 /// A.5b — `AcceptDeletedAndMoveFromParagraphMarks` (:2098): annotate runs and
 /// content controls (on the ORIGINAL, in place), run the A.5a transform, then
 /// re-wrap the content controls the transform stripped.
+///
+/// ACCEPT-SKIP-A5: when no paragraph mark is `pPr/rPr/(del|moveFrom)`, the
+/// A.5a grouping machine is a pure identity rebuild and annotate/rewrap do
+/// nothing useful — transfer `element` without cloning.
 pub fn accept_deleted_and_move_from_paragraph_marks(dom: &mut Dom, element: NodeId) -> NodeId {
+    // ACCEPT-SKIP-A5: no deleted/moved-from paragraph marks → identity.
+    if !has_deleted_or_moved_from_paragraph_mark(dom, element) {
+        return element;
+    }
     annotate_run_elements_with_id(dom, element);
     annotate_content_controls_with_run_ids(dom, element);
     let new_element = accept_deleted_and_move_from_paragraph_marks_transform(dom, element);
@@ -1790,13 +2035,13 @@ pub fn accept_deleted_and_move_from_paragraph_marks(dom: &mut Dom, element: Node
 fn a6_block_level_elements() -> [XName; 8] {
     [
         W::p(),
-        W::name("tbl"),
-        W::name("sdt"),
+        W::tbl(),
+        W::sdt(),
         W::del(),
         W::ins(),
         M::name("oMath"),
         M::name("oMathPara"),
-        W::name("moveTo"),
+        W::move_to(),
     ]
 }
 
@@ -1813,16 +2058,13 @@ fn remove_rows_left_empty_by_move_from_inner(dom: &mut Dom, node: NodeId) -> Opt
         return Some(dom.clone_subtree(node));
     }
     let name = dom.name(node).unwrap();
-    if name == W::name("tr") {
+    if name == W::tr() {
         let block = a6_block_level_elements();
-        let non_empty_cells = dom
-            .elements(node, Some(&W::name("tc")))
-            .into_iter()
-            .any(|tc| {
-                dom.elements(tc, None)
-                    .into_iter()
-                    .any(|tcc| dom.name(tcc).is_some_and(|n| block.contains(&n)))
-            });
+        let non_empty_cells = dom.elements(node, Some(&W::tc())).into_iter().any(|tc| {
+            dom.elements(tc, None)
+                .into_iter()
+                .any(|tcc| dom.name(tcc).is_some_and(|n| block.contains(&n)))
+        });
         if !non_empty_cells {
             return None;
         }
@@ -1874,12 +2116,21 @@ fn order_tc_pr(name: &XName) -> i32 {
 /// a group starting with a deleted cell (no anchor) is dropped. FAITHFUL:
 /// the rebuilt cell loses the original `w:tc` attributes, and an anchor cell
 /// without `w:tcPr` panics (C# NREs on `currentTcPr.Elements()`).
+///
+/// ACCEPT-SKIP-A7: when the subtree has no `w:cellDel`, transfer `node`
+/// without a full-tree identity rebuild (common path for redlines that only
+/// carry ins/del).
 pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
+    let cell_del = W::cell_del();
+    // ACCEPT-SKIP-A7: no cellDel → identity (keep parent links).
+    if !element_or_desc_has_name(dom, node, &cell_del) {
+        return node;
+    }
     if !dom.is_element(node) {
-        return dom.clone_subtree(node);
+        return node;
     }
     let name = dom.name(node).unwrap();
-    if name != W::name("tr") {
+    if name != W::tr() {
         let ne = dom.new_element(name);
         for (an, av) in dom.attributes(node) {
             dom.set_attribute_value(ne, &an, Some(&av));
@@ -1891,8 +2142,8 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         return ne;
     }
 
-    let tc_name = W::name("tc");
-    let cell_del = W::name("cellDel");
+    let tc_name = W::tc();
+    let cell_del = W::cell_del();
     let has_cell_del = |dom: &Dom, e: NodeId| !dom.descendants(e, Some(&cell_del)).is_empty();
 
     let children = dom.elements(node, None);
@@ -1913,7 +2164,7 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     };
     let grouped = crate::util::group_adjacent(children, |&e| key_of(dom, e));
 
-    let tr = dom.new_element(W::name("tr"));
+    let tr = dom.new_element(W::tr());
     for (an, av) in dom.attributes(node) {
         dom.set_attribute_value(tr, &an, Some(&av));
     }
@@ -1929,8 +2180,8 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         if has_cell_del(dom, first) {
             continue; // no anchor precedes: the whole group is dropped
         }
-        let tcpr_name = W::name("tcPr");
-        let grid_span_name = W::name("gridSpan");
+        let tcpr_name = W::tc_pr();
+        let grid_span_name = W::grid_span();
         // Anchor cells always carry tcPr in the C# path (NRE otherwise); unwrap once.
         let current_tc_pr = dom
             .element(first, &tcpr_name)
@@ -1993,18 +2244,18 @@ fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
         })
         .collect();
     let new_tbl = dom.clone_subtree(tbl);
-    for tr in dom.elements(new_tbl, Some(&W::name("tr"))) {
+    for tr in dom.elements(new_tbl, Some(&W::tr())) {
         let mut last_used: i64 = -1;
-        for tc in dom.elements(tr, Some(&W::name("tc"))) {
+        for tc in dom.elements(tr, Some(&W::tc())) {
             // Singular tcPr / tcW / gridSpan — avoid multi-Vec flat_map scans.
             let tc_w = dom
-                .element(tc, &W::name("tcPr"))
+                .element(tc, &W::tc_pr())
                 .and_then(|p| dom.element(p, &W::name("tcW")))
                 .filter(|&w| dom.attribute(w, &W::name("w")).is_some());
             let Some(tc_w) = tc_w else { continue };
             let grid_span: i64 = dom
-                .element(tc, &W::name("tcPr"))
-                .and_then(|p| dom.element(p, &W::name("gridSpan")))
+                .element(tc, &W::tc_pr())
+                .and_then(|p| dom.element(p, &W::grid_span()))
                 .and_then(|g| dom.attribute(g, &W::val()))
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1);
@@ -2026,11 +2277,47 @@ fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
 /// gate adjacent-table merge so clean content tables stay separate.
 fn table_has_revision_marks(dom: &Dom, tbl: NodeId) -> bool {
     for tag in ["ins", "del", "moveFrom", "moveTo", "cellIns", "cellDel"] {
-        if !dom.descendants(tbl, Some(&W::name(tag))).is_empty() {
+        if element_or_desc_has_name(dom, tbl, &W::name(tag)) {
             return true;
         }
     }
     false
+}
+
+/// True if any element under `root` has ≥2 adjacent direct `w:tbl` children
+/// where at least one member carries revision marks (the only case A.8 merges).
+fn subtree_needs_adjacent_table_merge(dom: &Dom, root: NodeId) -> bool {
+    let tbl_name = W::tbl();
+    fn walk(dom: &Dom, id: NodeId, tbl_name: &XName) -> bool {
+        if !dom.is_element(id) {
+            return false;
+        }
+        // Scan direct element children for adjacent tbl runs.
+        let kids = dom.elements(id, None);
+        let mut run = 0usize;
+        let mut run_has_rev = false;
+        for &k in &kids {
+            if dom.name(k).as_ref() == Some(tbl_name) {
+                run += 1;
+                if table_has_revision_marks(dom, k) {
+                    run_has_rev = true;
+                }
+                if run >= 2 && run_has_rev {
+                    return true;
+                }
+            } else {
+                run = 0;
+                run_has_rev = false;
+            }
+        }
+        for &k in &kids {
+            if walk(dom, k, tbl_name) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(dom, root, &tbl_name)
 }
 
 /// A.8 — `MergeAdjacentTablesTransform` (:464): where an element has direct
@@ -2046,12 +2333,19 @@ fn table_has_revision_marks(dom: &Dom, tbl: NodeId) -> bool {
 /// them into one 2-col 12-row table shifts LO page geometry and costs ~1–2
 /// score points on large-doc near-90 pairs. Gate: only merge a group when
 /// at least one member carries revision marks (ins/del/move/cellIns/cellDel).
+///
+/// ACCEPT-SKIP-A8: when no mergeable adjacent revision-bearing table group
+/// exists anywhere under `node`, transfer without a full-tree rebuild.
 pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
+    // ACCEPT-SKIP-A8: nothing to merge → identity (keep parent links).
+    if !subtree_needs_adjacent_table_merge(dom, node) {
+        return node;
+    }
     if !dom.is_element(node) {
-        return dom.clone_subtree(node);
+        return node;
     }
     let name = dom.name(node).unwrap();
-    let tbl_name = W::name("tbl");
+    let tbl_name = W::tbl();
     if dom.element(node, &tbl_name).is_none() {
         let ne = dom.new_element(name);
         for (an, av) in dom.attributes(node) {
@@ -2070,7 +2364,7 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
             return String::new();
         }
         let bidi = dom
-            .elements(e, Some(&W::name("tblPr")))
+            .elements(e, Some(&W::tbl_pr()))
             .into_iter()
             .any(|p| dom.element(p, &W::name("bidiVisual")).is_some());
         if bidi {
@@ -2119,7 +2413,7 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         rolled.dedup();
 
         let new_table = dom.new_element(tbl_name.clone());
-        for pr in dom.elements(group[0], Some(&W::name("tblPr"))) {
+        for pr in dom.elements(group[0], Some(&W::tbl_pr())) {
             let c = dom.clone_subtree(pr);
             dom.add(new_table, c);
         }
@@ -2134,23 +2428,23 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 
         for &tbl in &group {
             let fixed = fix_widths(dom, tbl);
-            for tr in dom.elements(fixed, Some(&W::name("tr"))) {
-                let new_row = dom.new_element(W::name("tr"));
+            for tr in dom.elements(fixed, Some(&W::tr())) {
+                let new_row = dom.new_element(W::tr());
                 for (an, av) in dom.attributes(tr) {
                     dom.set_attribute_value(new_row, &an, Some(&av));
                 }
                 let non_cells: Vec<NodeId> = dom
                     .elements(tr, None)
                     .into_iter()
-                    .filter(|&e| dom.name(e) != Some(W::name("tc")))
+                    .filter(|&e| dom.name(e) != Some(W::tc()))
                     .collect();
                 for e in non_cells {
                     let c = dom.clone_subtree(e);
                     dom.add(new_row, c);
                 }
-                for tc in dom.elements(tr, Some(&W::name("tc"))) {
+                for tc in dom.elements(tr, Some(&W::tc())) {
                     let w: Option<i64> = dom
-                        .element(tc, &W::name("tcPr"))
+                        .element(tc, &W::tc_pr())
                         .and_then(|p| dom.element(p, &W::name("tcW")))
                         .and_then(|t| dom.attribute(t, &W::name("w")))
                         .and_then(|v| v.parse().ok());
@@ -2160,12 +2454,12 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
                         continue;
                     };
                     let mut width_to_left = 0i64;
-                    for btc in dom.elements(tr, Some(&W::name("tc"))) {
+                    for btc in dom.elements(tr, Some(&W::tc())) {
                         if btc == tc {
                             break;
                         }
                         width_to_left += dom
-                            .element(btc, &W::name("tcPr"))
+                            .element(btc, &W::tc_pr())
                             .and_then(|p| dom.element(p, &W::name("tcW")))
                             .and_then(|t| dom.attribute(t, &W::name("w")))
                             .and_then(|v| v.parse::<i64>().ok())
@@ -2188,30 +2482,30 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 
                     let mut tcpr_kids: Vec<NodeId> = Vec::new();
                     let props: Vec<NodeId> = dom
-                        .elements(tc, Some(&W::name("tcPr")))
+                        .elements(tc, Some(&W::tc_pr()))
                         .into_iter()
                         .flat_map(|p| dom.elements(p, None))
-                        .filter(|&e| dom.name(e) != Some(W::name("gridSpan")))
+                        .filter(|&e| dom.name(e) != Some(W::grid_span()))
                         .collect();
                     for e in props {
                         tcpr_kids.push(dom.clone_subtree(e));
                     }
                     if grids_required != 1 {
-                        let gs = dom.new_element(W::name("gridSpan"));
+                        let gs = dom.new_element(W::grid_span());
                         dom.set_attribute_value(gs, &W::val(), Some(&grids_required.to_string()));
                         tcpr_kids.push(gs);
                     }
                     tcpr_kids.sort_by_key(|&e| order_tc_pr(&dom.name(e).unwrap()));
-                    let ordered_tc_pr = dom.new_element(W::name("tcPr"));
+                    let ordered_tc_pr = dom.new_element(W::tc_pr());
                     for e in tcpr_kids {
                         dom.add(ordered_tc_pr, e);
                     }
-                    let new_cell = dom.new_element(W::name("tc"));
+                    let new_cell = dom.new_element(W::tc());
                     dom.add(new_cell, ordered_tc_pr);
                     let body_kids: Vec<NodeId> = dom
                         .elements(tc, None)
                         .into_iter()
-                        .filter(|&e| dom.name(e) != Some(W::name("tcPr")))
+                        .filter(|&e| dom.name(e) != Some(W::tc_pr()))
                         .collect();
                     for e in body_kids {
                         let c = dom.clone_subtree(e);
@@ -2229,41 +2523,88 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 
 // ─────────────── A.9 — empty paragraph in empty cells ───────────────────────
 
+/// True if any `w:tc` under `root` has no element children other than `w:tcPr`
+/// (the A.9 empty-cell predicate). Non-allocating DFS for ACCEPT-SKIP-02.
+fn has_empty_table_cell(dom: &Dom, root: NodeId) -> bool {
+    let tc = W::tc();
+    let tcpr = W::tc_pr();
+    fn walk(dom: &Dom, id: NodeId, tc: &XName, tcpr: &XName) -> bool {
+        if let Some(name) = dom.name(id)
+            && name == *tc
+        {
+            // empty = no element child other than w:tcPr (incl. zero children)
+            let mut only_tcpr = true;
+            for i in 0..dom.child_count(id) {
+                let c = dom.child_at(id, i);
+                if dom.is_element(c) && dom.name(c).is_some_and(|n| n != *tcpr) {
+                    only_tcpr = false;
+                    break;
+                }
+            }
+            if only_tcpr {
+                return true;
+            }
+        }
+        for i in 0..dom.child_count(id) {
+            if walk(dom, dom.child_at(id, i), tc, tcpr) {
+                return true;
+            }
+        }
+        false
+    }
+    walk(dom, root, &tc, &tcpr)
+}
+
 /// A.9 — `AddEmptyParagraphToAnyEmptyCells` (:1448): a `w:tc` with no element
-/// children other than `w:tcPr` gains an empty `w:p`; everything else
-/// rebuilds recursively.
+/// children other than `w:tcPr` gains an empty `w:p`.
+///
+/// ACCEPT-INPLACE-A9: mutate empty cells in place (append `w:p`) instead of
+/// rebuilding the entire subtree. Returns the same `node` root (callers that
+/// rebind `e = add_empty...(dom, e)` stay correct).
 pub fn add_empty_paragraph_to_any_empty_cells(dom: &mut Dom, node: NodeId) -> NodeId {
     if !dom.is_element(node) {
-        return dom.clone_subtree(node);
+        return node;
     }
-    let name = dom.name(node).unwrap();
-    if name == W::name("tc")
-        && !dom
-            .elements(node, None)
-            .into_iter()
-            .any(|e| dom.name(e) != Some(W::name("tcPr")))
-    {
-        let ne = dom.new_element(W::name("tc"));
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
-        for e in dom.elements(node, None) {
-            let c = dom.clone_subtree(e);
-            dom.add(ne, c);
-        }
+    let tc = W::tc();
+    let tcpr = W::tc_pr();
+    // Collect empty cells first — cannot mutate while walking.
+    let mut empty: Vec<NodeId> = Vec::new();
+    collect_empty_table_cells(dom, node, &tc, &tcpr, &mut empty);
+    for cell in empty {
         let p = dom.new_element(W::p());
-        dom.add(ne, p);
-        return ne;
+        dom.add(cell, p);
     }
-    let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
-        dom.set_attribute_value(ne, &an, Some(&av));
+    node
+}
+
+fn collect_empty_table_cells(
+    dom: &Dom,
+    id: NodeId,
+    tc: &XName,
+    tcpr: &XName,
+    out: &mut Vec<NodeId>,
+) {
+    if let Some(name) = dom.name(id)
+        && name == *tc
+    {
+        let mut only_tcpr = true;
+        for i in 0..dom.child_count(id) {
+            let c = dom.child_at(id, i);
+            if dom.is_element(c) && dom.name(c).is_some_and(|n| n != *tcpr) {
+                only_tcpr = false;
+                break;
+            }
+        }
+        if only_tcpr {
+            out.push(id);
+        }
     }
-    for c in dom.nodes(node) {
-        let tc = add_empty_paragraph_to_any_empty_cells(dom, c);
-        dom.add(ne, tc);
+    for i in 0..dom.child_count(id) {
+        let c = dom.child_at(id, i);
+        if dom.is_element(c) {
+            collect_empty_table_cells(dom, c, tc, tcpr, out);
+        }
     }
-    ne
 }
 
 // ─────────────── A.10 — the full AcceptRevisionsForPart pipeline ────────────
@@ -2272,42 +2613,57 @@ pub fn add_empty_paragraph_to_any_empty_cells(dom: &mut Dom, node: NodeId) -> No
 /// 15-step transform order. `contains_move_from` is captured AFTER the
 /// field-code fixup but BEFORE AcceptMoveFromMoveTo consumes the `w:moveFrom`
 /// wrappers, gating RemoveRowsLeftEmptyByMoveFrom exactly like the C#.
+///
+/// ACCEPT-SKIP-01: when the subtree has no tracked-revision elements, skip
+/// every revision-semantic full-tree rebuild (field fixup, move*, all-other,
+/// deleted-cells, merge-adjacent). Still runs RemoveRsid, A.9 empty-cell
+/// fill (not revision-gated in C#), and UniqueId/numPr cleanup.
 pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId {
+    let has_rev = element_has_tracked_revisions(dom, root);
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
-    let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
-    let contains_move_from = !dom.descendants(e, Some(&W::name("moveFrom"))).is_empty();
-    let e = {
-        let v = accept_move_from_move_to_transform(dom, e);
-        debug_assert_eq!(v.len(), 1);
-        v[0]
-    };
-    let e = accept_move_from_ranges(dom, e);
-    let e = accept_paragraph_end_tags_in_move_from_transform(dom, e);
-    let e = accept_deleted_and_moved_from_content_controls(dom, e);
-    let e = accept_deleted_and_move_from_paragraph_marks(dom, e);
-    let e = if contains_move_from {
-        remove_rows_left_empty_by_move_from(dom, e)
+    let e = if has_rev {
+        let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
+        let contains_move_from = !dom.descendants(e, Some(&W::move_from())).is_empty();
+        let e = {
+            let v = accept_move_from_move_to_transform(dom, e);
+            debug_assert_eq!(v.len(), 1);
+            v[0]
+        };
+        let e = accept_move_from_ranges(dom, e);
+        let e = accept_paragraph_end_tags_in_move_from_transform(dom, e);
+        let e = accept_deleted_and_moved_from_content_controls(dom, e);
+        let e = accept_deleted_and_move_from_paragraph_marks(dom, e);
+        let e = if contains_move_from {
+            remove_rows_left_empty_by_move_from(dom, e)
+        } else {
+            e
+        };
+        let e = {
+            let v = accept_all_other_revisions_transform(dom, e);
+            debug_assert_eq!(v.len(), 1);
+            v[0]
+        };
+        let e = accept_deleted_cells_transform(dom, e);
+        merge_adjacent_tables_transform(dom, e)
     } else {
         e
     };
-    let e = {
-        let v = accept_all_other_revisions_transform(dom, e);
-        debug_assert_eq!(v.len(), 1);
-        v[0]
+    // ACCEPT-SKIP-02: A.9 is a full-tree rebuild; skip when no empty cells.
+    let e = if has_empty_table_cell(dom, e) {
+        add_empty_paragraph_to_any_empty_cells(dom, e)
+    } else {
+        e
     };
-    let e = accept_deleted_cells_transform(dom, e);
-    let e = merge_adjacent_tables_transform(dom, e);
-    let e = add_empty_paragraph_to_any_empty_cells(dom, e);
 
     // Strip PT.UniqueId / PT.RunIds attributes from all descendants.
-    let unique_id = PT::name("UniqueId");
-    let run_ids = PT::name("RunIds");
+    let unique_id = PT::unique_id();
+    let run_ids = PT::run_ids();
     for d in dom.descendants_and_self(e, None) {
         dom.set_attribute_value(d, &unique_id, None);
         dom.set_attribute_value(d, &run_ids, None);
     }
     // Remove empty w:numPr elements.
-    let num_pr = W::name("numPr");
+    let num_pr = W::num_pr();
     for np in dom.descendants(e, Some(&num_pr)) {
         if !dom.has_elements(np) {
             dom.remove(np);
@@ -2325,7 +2681,7 @@ fn accept_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
         return Some(dom.clone_subtree(node));
     }
     let name = dom.name(node).unwrap();
-    if name == W::name("pPrChange") || name == W::name("rPrChange") {
+    if name == W::p_pr_change() || name == W::r_pr_change() {
         return None;
     }
     let ne = dom.new_element(name);
@@ -2350,13 +2706,13 @@ fn reject_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
     }
     let name = dom.name(node).unwrap();
     if name == W::p_pr()
-        && let Some(chg) = dom.element(node, &W::name("pPrChange"))
+        && let Some(chg) = dom.element(node, &W::p_pr_change())
     {
         let inner = dom.element(chg, &W::p_pr());
         return inner.and_then(|i| reject_revisions_for_styles_transform(dom, i));
     }
     if name == W::r_pr()
-        && let Some(chg) = dom.element(node, &W::name("rPrChange"))
+        && let Some(chg) = dom.element(node, &W::r_pr_change())
     {
         let inner = dom.element(chg, &W::r_pr());
         return inner.and_then(|i| reject_revisions_for_styles_transform(dom, i));

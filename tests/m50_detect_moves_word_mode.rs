@@ -429,3 +429,51 @@ fn m123b_file_177_no_weak_body_diagonal_zip() {
         "weak cousins must not full-zip thrash, del={del} ins={ins}"
     );
 }
+
+/// Skip-ahead pure-delete gap: B jumps from shared intro to a table that A has
+/// later. Word shows the table early as moveTo; we must not leave it after the
+/// gap-only deletes (docx_lots_of_comments_addition_removal_redline × clean).
+#[test]
+fn m50_skip_ahead_equal_table_promotes_to_move() {
+    let mut dom = Dom::new();
+    let table = |label: &str| {
+        format!(
+            "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>{label} capability matrix row data here extra words</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+        )
+    };
+    // A: intro, A-only middle, then capability table
+    let base = [
+        para("1. Executive summary shared anchor text"),
+        para("Parity real-time coauthoring only in original document version"),
+        para("Evidence base and source notes only in original"),
+        table("Cap"),
+        para("4. Visual proof continues after table"),
+    ]
+    .concat();
+    // B: intro, capability table immediately (skips middle)
+    let next = [
+        para("1. Executive summary shared anchor text"),
+        table("Cap"),
+        para("4. Visual proof continues after table"),
+    ]
+    .concat();
+    let (r1, b1) = doc_body(&mut dom, &base);
+    let (r2, b2) = doc_body(&mut dom, &next);
+    let s = WmlComparerSettings::default();
+    let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
+    let xml = dom.serialize_element(out);
+
+    assert!(
+        xml.contains("moveFrom") || xml.contains("moveTo"),
+        "skip-ahead table must promote to move markup, got: {}",
+        &xml.chars().take(1200).collect::<String>()
+    );
+    // Capability table text should appear before pure-deleted middle content
+    // in serialization order (moveTo early).
+    let cap_pos = xml.find("Cap capability").expect("cap text");
+    let parity_pos = xml.find("Parity real-time").unwrap_or(usize::MAX);
+    assert!(
+        cap_pos < parity_pos,
+        "capability (moveTo) must serialize before A-only deleted middle; cap@{cap_pos} parity@{parity_pos}"
+    );
+}

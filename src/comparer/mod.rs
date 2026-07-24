@@ -10,6 +10,8 @@ pub mod formatchg;
 pub mod lcs;
 pub mod lcs_table;
 pub mod moves;
+/// Hand order tables for Ring 1½ schema oracle (`tests/schema_consistency.rs`).
+pub mod order_tables;
 pub mod parts;
 pub mod preprocess;
 pub mod produce;
@@ -31,6 +33,7 @@ pub use atoms::WmlComparerRevision;
 /// `PREDELETE_STAMP_ORIG`, not `is_some()`, or it will re-salt doc-B PreDelete
 /// runs and re-open the M-MOVE S1 bug.
 pub const PREDELETE_STAMP_ORIG: &str = "orig";
+/// Constant `PREDELETE_STAMP_REV`.
 pub const PREDELETE_STAMP_REV: &str = "rev";
 
 /// Compare two content-parent bodies (already accepted/clean) and produce a
@@ -96,11 +99,17 @@ pub fn compare_bodies_faithful(
 /// renumbered 1..n with finalized revision markup.
 #[derive(Debug, Default)]
 pub struct NotesContext {
+    /// `fn_before`.
     pub fn_before: Option<NodeId>,
+    /// `fn_after`.
     pub fn_after: Option<NodeId>,
+    /// `en_before`.
     pub en_before: Option<NodeId>,
+    /// `en_after`.
     pub en_after: Option<NodeId>,
+    /// `fn_with_revisions`.
     pub fn_with_revisions: Option<NodeId>,
+    /// `en_with_revisions`.
     pub en_with_revisions: Option<NodeId>,
 }
 
@@ -138,11 +147,8 @@ pub fn compare_bodies_faithful_with_notes(
     const SECT_GEOMETRY: [&str; 6] = ["type", "pgSz", "pgMar", "cols", "titlePg", "docGrid"];
     let saved_sectpr: Option<NodeId> = {
         let last_sect = |dom: &mut Dom, body: NodeId| {
-            dom.element(body, &W::name("sectPr")).or_else(|| {
-                dom.descendants(body, Some(&W::name("sectPr")))
-                    .last()
-                    .copied()
-            })
+            dom.element(body, &W::sect_pr())
+                .or_else(|| dom.descendants(body, Some(&W::sect_pr())).last().copied())
         };
         let sp1 = last_sect(dom, body1);
         // geometry source: revised doc in word mode (falling back to the base
@@ -153,7 +159,7 @@ pub fn compare_bodies_faithful_with_notes(
             sp1
         };
         sp.map(|sp| {
-            let clean = dom.new_element(W::name("sectPr"));
+            let clean = dom.new_element(W::sect_pr());
             for (an, av) in dom.attributes(sp) {
                 dom.set_attribute_value(clean, &an, Some(&av));
             }
@@ -165,7 +171,7 @@ pub fn compare_bodies_faithful_with_notes(
             // Walk every sectPr of body1 in document order (pPr-embedded mid
             // breaks first, final last) and take the LAST-seen ref per
             // (kind, w:type).
-            let chain: Vec<NodeId> = dom.descendants(body1, Some(&W::name("sectPr")));
+            let chain: Vec<NodeId> = dom.descendants(body1, Some(&W::sect_pr()));
             let type_attr = W::name("type");
             for kind in [W::name("headerReference"), W::name("footerReference")] {
                 for ty in ["even", "default", "first"] {
@@ -221,7 +227,7 @@ pub fn compare_bodies_faithful_with_notes(
                 // from preprocessing) and rsids can't fake a difference —
                 // identity compares must NOT emit a change record.
                 let geometry_of = |dom: &mut Dom, s: NodeId| -> String {
-                    let scratch = dom.new_element(W::name("sectPr"));
+                    let scratch = dom.new_element(W::sect_pr());
                     for c in SECT_GEOMETRY {
                         if let Some(n) = dom.element(s, &W::name(c)) {
                             let cc = dom.clone_subtree(n);
@@ -242,7 +248,7 @@ pub fn compare_bodies_faithful_with_notes(
                         &W::name("date"),
                         Some(&settings.date_time_for_revisions),
                     );
-                    let old_clean = dom.new_element(W::name("sectPr"));
+                    let old_clean = dom.new_element(W::sect_pr());
                     for child in SECT_GEOMETRY {
                         if let Some(c) = dom.element(old_sp, &W::name(child)) {
                             let cc = dom.clone_subtree(c);
@@ -265,7 +271,7 @@ pub fn compare_bodies_faithful_with_notes(
             let mut set = std::collections::HashSet::new();
             for b in [body1, body2] {
                 for ppr in dom.descendants(b, Some(&W::p_pr())) {
-                    for sp in dom.elements(ppr, Some(&W::name("sectPr"))) {
+                    for sp in dom.elements(ppr, Some(&W::sect_pr())) {
                         set.insert(finalize::sectpr_identity(dom, sp));
                     }
                 }
@@ -321,24 +327,52 @@ pub fn compare_bodies_faithful_with_notes(
     }
     crate::unid::assign_to_all_elements(dom, body1);
     crate::unid::assign_to_all_elements(dom, body2);
-    let acc1 = dom.clone_subtree(body1);
-    let acc1 = crate::revision_processor::accept_revisions_document(dom, acc1);
-    let _ = preprocess::hash_block_level_content(
-        dom,
-        body1,
-        acc1,
-        settings,
-        &preprocess::null_rel_resolver,
-    );
-    let rej2 = dom.clone_subtree(body2);
-    let rej2 = crate::revision_processor::reject_revisions_document(dom, rej2);
-    let _ = preprocess::hash_block_level_content(
-        dom,
-        body2,
-        rej2,
-        settings,
-        &preprocess::null_rel_resolver,
-    );
+
+    // COMPARE-CLEAN-PROJ-01 / REJECT-SKIP-01: mark-free trees do not need a
+    // full body clone + accept/reject rebuild just to stamp correlated hashes.
+    // Hashing clones already strip rsids, so self-projection equals
+    // accept/reject projection when there are no tracked-revision elements.
+    let has_rev1 = crate::revision_processor::element_has_tracked_revisions(dom, body1);
+    let has_rev2 = crate::revision_processor::element_has_tracked_revisions(dom, body2);
+
+    if has_rev1 {
+        let acc1 = dom.clone_subtree(body1);
+        let acc1 = crate::revision_processor::accept_revisions_document(dom, acc1);
+        let _ = preprocess::hash_block_level_content(
+            dom,
+            body1,
+            acc1,
+            settings,
+            &preprocess::null_rel_resolver,
+        );
+    } else {
+        let _ = preprocess::hash_block_level_content(
+            dom,
+            body1,
+            body1,
+            settings,
+            &preprocess::null_rel_resolver,
+        );
+    }
+    if has_rev2 {
+        let rej2 = dom.clone_subtree(body2);
+        let rej2 = crate::revision_processor::reject_revisions_document(dom, rej2);
+        let _ = preprocess::hash_block_level_content(
+            dom,
+            body2,
+            rej2,
+            settings,
+            &preprocess::null_rel_resolver,
+        );
+    } else {
+        let _ = preprocess::hash_block_level_content(
+            dom,
+            body2,
+            body2,
+            settings,
+            &preprocess::null_rel_resolver,
+        );
+    }
 
     // Accept existing tracked revisions in BOTH inputs to get their final state
     // before diffing (CompareInternal :746-747). Without this, inputs that already
@@ -352,25 +386,9 @@ pub fn compare_bodies_faithful_with_notes(
     // scratch against the now-accepted content — so the post-accept tree is
     // what gets hashed, not any cached value from the earlier projection pass.
     //
-    // Idempotency: `accept_revisions_document` is the element-level pipeline
-    // (RemoveRsid → AcceptMoveFromMoveTo → AcceptAllOtherRevisions → strip
-    // PT.UniqueId/RunIds → drop empty w:numPr); once all tracked-revision
-    // elements are gone, each subsequent accept is a no-op, so calling it on
-    // the same body twice is safe.
-    //
-    // Scope limitation: this is the element-level `AcceptRevisionsForElement`
-    // pipeline (revision_processor.rs:259), NOT docxodus's full part-level
-    // `AcceptRevisionsForPart` (RevisionProcessor.ts:1265-1336). The full
-    // part pipeline additionally runs FixUpDeletedOrInsertedFieldCodes,
-    // AcceptMoveFromRanges, AcceptParagraphEndTagsInMoveFrom,
-    // AcceptDeletedAndMovedFromContentControls,
-    // AcceptDeletedAndMoveFromParagraphMarks, RemoveRowsLeftEmptyByMoveFrom,
-    // AcceptDeletedCellsTransform, MergeAdjacentTablesTransform, and
-    // AddEmptyParagraphToAnyEmptyCells — those transforms are out of scope for
-    // this PR and would belong in a follow-up that wires them through
-    // `accept_revisions_document` (or a new part-level entry point). The
-    // residual golden-parity gap on move-heavy fixtures (e.g. inpi2) is
-    // plausibly explained by those omitted transforms.
+    // Idempotency: once all tracked-revision elements are gone, each subsequent
+    // accept is a no-op (ACCEPT-SKIP-01), so calling it on the same body twice
+    // is safe.
     let body1 = crate::revision_processor::accept_revisions_document(dom, body1);
     let body2 = crate::revision_processor::accept_revisions_document(dom, body2);
 
@@ -378,23 +396,30 @@ pub fn compare_bodies_faithful_with_notes(
     // rebuilds elements and was leaving ComparisonUnits with correlated=None
     // (process_correlated_hashes never paired). Self-project each body so
     // spacing-invariant correlated hashes (Word-visual) land on live groups.
+    //
+    // COMPARE-M122-SELF-01: hash projection does not need a body clone —
+    // `hash_block_level_content(source, after)` with source==after stamps
+    // from per-block hashing clones (Unids already on the live tree).
+    // COMPARE-CLEAN-PROJ-01: mark-free sides already stamped pre-accept; skip.
     if settings.merge_replaced_paragraphs {
-        let proj1 = dom.clone_subtree(body1);
-        let _ = preprocess::hash_block_level_content(
-            dom,
-            body1,
-            proj1,
-            settings,
-            &preprocess::null_rel_resolver,
-        );
-        let proj2 = dom.clone_subtree(body2);
-        let _ = preprocess::hash_block_level_content(
-            dom,
-            body2,
-            proj2,
-            settings,
-            &preprocess::null_rel_resolver,
-        );
+        if has_rev1 {
+            let _ = preprocess::hash_block_level_content(
+                dom,
+                body1,
+                body1,
+                settings,
+                &preprocess::null_rel_resolver,
+            );
+        }
+        if has_rev2 {
+            let _ = preprocess::hash_block_level_content(
+                dom,
+                body2,
+                body2,
+                settings,
+                &preprocess::null_rel_resolver,
+            );
+        }
     }
 
     // block hashes (group correlation reads pt:SHA1Hash off ancestors) —
@@ -433,18 +458,21 @@ pub fn compare_bodies_faithful_with_notes(
     // merge_replaced_paragraphs itself. Splitting these into independent
     // knobs would change Word-mode semantics; keep them coupled until a
     // deliberate settings redesign.
-    let seqs = if settings.merge_replaced_paragraphs {
+    let mut seqs = if settings.merge_replaced_paragraphs {
         lcs::detect_unrelated_sources_word_mode(dom, &cus1, &cus2, settings)
             .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
     } else {
         lcs::detect_unrelated_sources(&cus1, &cus2)
             .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
     };
+    // Word skip-ahead moves: Equal after pure A-only deletes → ins early +
+    // del late so detect_moves can emit moveTo/moveFrom (page-order parity).
+    moves::promote_skip_ahead_equals(&mut seqs, settings);
 
     let mut id = 1u32;
     lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, &mut id);
 
-    let mut flat = produce::flatten_to_comparison_unit_atom_list(&seqs);
+    let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
     // moves before format-changes (WmlComparer.ts:2322 then :2326).
     moves::detect_moves_in_atom_list(dom, &mut flat, settings);
     formatchg::detect_format_changes_in_atom_list(dom, &mut flat, settings);
@@ -547,7 +575,7 @@ pub fn compare_bodies_faithful_with_notes(
         // Remove only the FINAL-section sectPr (last in document order, whether a
         // direct body child or inside the last paragraph's pPr); keep all
         // intermediate section breaks.
-        if let Some(&last) = dom.descendants(root, Some(&W::name("sectPr"))).last() {
+        if let Some(&last) = dom.descendants(root, Some(&W::sect_pr())).last() {
             dom.remove(last);
         }
         if let (Some(clean), Some(body)) = (saved_sectpr, dom.element(root, &W::body())) {
@@ -596,6 +624,8 @@ pub fn compare_bodies_faithful_with_notes(
     // Word-mode: drop body spacing that only restates demo pPrDefault (line=276).
     if settings.merge_replaced_paragraphs {
         finalize::strip_redundant_demo_default_spacing(dom, root);
+        // C3/C5: incomplete lineRule=auto spacing → Word single-line or strip.
+        finalize::normalize_incomplete_spacing(dom, root);
         // NOTE: do not blanket-strip pure-del spacing — delete-heavy winners
         // (file_14/file_69) need source before/after for LO page parity.
         // file_33 residual pure-D spacing: M67 strips Heading residual only.
@@ -633,35 +663,69 @@ pub fn compare_bodies_faithful_with_notes(
     // runs never take this): merge fully-replaced paragraph pairs like Word.
     if settings.merge_replaced_paragraphs {
         finalize::reorder_replaced_blocks(dom, root);
+        // Short pure-D base trailing after insert-all-next → splice mid-stream
+        // near TOC/tip (document_100×comments; Word nests original on page 2).
+        finalize::splice_trailing_short_pure_dels_midstream(dom, root);
         finalize::merge_replaced_paragraphs(dom, root, &settings.author_for_revisions);
+        // M159: restore short pure-D before longer pure-I after merge reorder
+        // (text_highlight×times Word MIX|DEL|INS|MIX).
+        finalize::restore_short_del_before_long_ins(dom, root);
+        // M147: MIX digits-only pure-I + pure-D title → split (1_5×24 Word shape).
+        finalize::split_digits_ins_from_mixed_title(dom, root);
+        // M143: mid pure-D Demo title → fold into first numbered pure-I heading
+        // (double_spacing×eigenpal: Word MIX on `1. What this is` + del title).
+        finalize::fold_midstream_demo_title_into_numbered_heading(dom, root);
         finalize::drop_sectpr_from_deleted_marks(dom, root, &genuine_mid_sectprs);
         finalize::drop_hoisted_sectpr_artifacts(dom, root, &genuine_mid_sectprs);
         finalize::mark_fully_revised_rows(dom, root, settings, &mut id);
         finalize::synthesize_table_cell_margins(dom, root);
         finalize::ensure_default_page_size(dom, root);
+        // pPr-only multi-pass peels: warm pure-del/mixed once (no body structure
+        // mutation inside — structure folds re-classify after this block).
+        finalize::begin_para_classification_cache();
         // M83b/M87 after merge_replaced — last pure-del layout → pPrChange.
         finalize::last_pure_del_spacing_to_pprchange(dom, root, settings, &mut id);
+        // M228+M226+M231: one body walk — mid pure-D spacing promote, no-op
+        // equal-spacing pPrChange strip, default jc=left strip.
+        finalize::cleanup_spacing_and_default_jc(dom, root);
         // M92 after M69 strip path may leave empty with live spacing.
         finalize::trailing_empty_spacing_to_pprchange(dom, root, settings, &mut id);
         // M98b: mixed+empty trailing — park spacing on empty (file_167).
         finalize::mixed_spacing_to_following_empty(dom, root, settings, &mut id);
+        // M221: MIX Heading spacing → last pure-D residual (green_underline×heading_1).
+        finalize::park_mixed_spacing_onto_trailing_pure_del(dom, root, settings, &mut id);
+        // M230: MIX numPr → last empty pure-D (bullet_list_bold×bullet_list).
+        finalize::park_mixed_numpr_onto_trailing_empty_pure_del(dom, root, settings, &mut id);
         // M102c: last pure-del inherits prev live jc (file_148 center+spacing).
         finalize::last_pure_del_inherit_prev_jc(dom, root);
-        // Re-drop trailing empty pure-ins if merge reordered anything.
+        finalize::strip_last_pure_del_mark_only_ppr(dom, root);
+        // M87b: last pure-del with pPrChange drops mark-only del (file_55).
+        finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
+        finalize::end_para_classification_cache();
+        // Structure-mutating peels (invalidate pure-del/mixed classification).
         finalize::strip_trailing_empty_pure_ins(dom, root);
         finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
         finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
         // M105: pure-D short title + following MIX leading ins → Word subtitle
         // insert lands on title residual (file_7/5/130 document peel).
         finalize::fold_leading_ins_from_mix_into_preceding_pure_del(dom, root);
-        finalize::strip_last_pure_del_mark_only_ppr(dom, root);
-        // M87b: last pure-del with pPrChange drops mark-only del (file_55).
-        finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
+        // M144: trailing ins on MIX + following pure-D body that share a token
+        // → peel ins into pure-D (italic×justified "for a formal document look").
+        finalize::peel_trailing_ins_from_mix_into_following_pure_del(dom, root);
+        // M154: trailing del on MIX + following pure-I (justified_underline×justify_2).
+        finalize::peel_trailing_del_from_mix_into_following_pure_ins(dom, root);
     }
     // Final renumber after wrap_bare / stamped predeletes / row marks — any
     // w:id minted after the earlier fix_up_revision_ids pass would otherwise
     // collide with move ranges or comments once those anchors are present.
     finalize::fix_up_revision_ids(dom, &[root]);
+    // Re-run drawing/shape id fixups after Word-mode merge/wrap passes that may
+    // clone drawings (S-dup-docpr-id on strict01_sdt_controls×strict01: mid-path
+    // FixUpDocPrIds left a collision introduced later). Same sequential 1..n
+    // contract as the mid-path call.
+    fixups::fix_up_doc_pr_ids(dom, root);
+    fixups::fix_up_shape_ids(dom, root);
+    fixups::fix_up_shape_type_ids(dom, root);
     root
 }
 
@@ -670,34 +734,53 @@ use crate::comparison_log::ComparisonLog;
 /// Port of `CorrelationStatus`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CorrelationStatus {
+    /// Public API item.
     Nil,
+    /// Public API item.
     Normal,
+    /// Public API item.
     Unknown,
+    /// Public API item.
     Inserted,
+    /// Public API item.
     Deleted,
+    /// Public API item.
     Equal,
+    /// Public API item.
     Group,
+    /// Public API item.
     MovedSource,
+    /// Public API item.
     MovedDestination,
+    /// Public API item.
     FormatChanged,
 }
 
 /// Port of `ComparisonUnitGroupType`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ComparisonUnitGroupType {
+    /// Public API item.
     Paragraph,
+    /// Public API item.
     Table,
+    /// Public API item.
     Row,
+    /// Public API item.
     Cell,
+    /// Public API item.
     Textbox,
 }
 
 /// Port of `WmlComparerRevisionType`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WmlComparerRevisionType {
+    /// Public API item.
     Inserted,
+    /// Public API item.
     Deleted,
+    /// Public API item.
     Moved,
+    /// Public API item.
     FormatChanged,
 }
 
@@ -707,12 +790,19 @@ pub const DEFAULT_AUTHOR_FOR_REVISIONS: &str = "Open-Xml-PowerTools";
 /// Port of `WmlComparerSettings` (defaults verified against WmlComparer.ts:415-457).
 #[derive(Clone, Debug)]
 pub struct WmlComparerSettings {
+    /// `word_separators`.
     pub word_separators: Vec<char>,
+    /// `author_for_revisions`.
     pub author_for_revisions: String,
+    /// `date_time_for_revisions`.
     pub date_time_for_revisions: String,
+    /// `detail_threshold`.
     pub detail_threshold: f64,
+    /// `case_insensitive`.
     pub case_insensitive: bool,
+    /// `conflate_breaking_and_nonbreaking_spaces`.
     pub conflate_breaking_and_nonbreaking_spaces: bool,
+    /// `starting_id_for_footnotes_endnotes`.
     pub starting_id_for_footnotes_endnotes: i32,
     /// Word-visual default is TRUE so relocated blocks emit `w:moveFrom` /
     /// `w:moveTo` like Word Compare (broken_ones_two `file_8_file_9`: Word
@@ -720,9 +810,13 @@ pub struct WmlComparerSettings {
     /// library default was FALSE (`WmlComparer.ts:433`); use
     /// [`Self::powertools_faithful`] to keep that.
     pub detect_moves: bool,
+    /// `simplify_move_markup`.
     pub simplify_move_markup: bool,
+    /// `move_similarity_threshold`.
     pub move_similarity_threshold: f64,
+    /// `move_minimum_word_count`.
     pub move_minimum_word_count: usize,
+    /// `detect_format_changes`.
     pub detect_format_changes: bool,
     /// Word-visual alignment mode — the UMBRELLA gate for every
     /// beyond-PowerTools pass that aligns output with Word's own Compare
@@ -802,11 +896,14 @@ impl Default for WmlComparerSettings {
 
 /// Optional log holder used by the comparison pipeline.
 pub struct CompareContext {
+    /// `settings`.
     pub settings: WmlComparerSettings,
+    /// `log`.
     pub log: ComparisonLog,
 }
 
 impl CompareContext {
+    /// `new`.
     pub fn new(settings: WmlComparerSettings) -> Self {
         CompareContext {
             settings,

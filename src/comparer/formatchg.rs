@@ -65,6 +65,28 @@ pub fn are_run_properties_equal(dom: &mut Dom, a: Option<NodeId>, b: Option<Node
     dom.serialize_element(na) == dom.serialize_element(nb)
 }
 
+/// Cached `serialize(normalize_run_properties(rpr))` keyed by the `rPr` NodeId.
+///
+/// [`are_run_properties_equal`] normalizes AND serializes both operands on every
+/// call. In [`detect_format_changes_in_atom_list`] the same handful of distinct
+/// `rPr` elements recur across thousands of `Equal` atoms (runs share one `rPr`),
+/// so caching the normalized serialization collapses O(atoms) normalizations to
+/// O(distinct rPr). The value equals `are_run_properties_equal`'s per-operand
+/// serialization exactly, so a cached `==` of two such strings is that predicate.
+fn normalized_rpr_serialized(
+    dom: &mut Dom,
+    cache: &mut std::collections::HashMap<Option<NodeId>, String>,
+    rpr: Option<NodeId>,
+) -> String {
+    if let Some(s) = cache.get(&rpr) {
+        return s.clone();
+    }
+    let ne = normalize_run_properties(dom, rpr);
+    let s = dom.serialize_element(ne);
+    cache.insert(rpr, s.clone());
+    s
+}
+
 /// `GetFriendlyPropertyName`.
 pub fn friendly_property_name(local: &str) -> String {
     let s = match local {
@@ -177,6 +199,47 @@ fn projected_ppr_is_jc_only(dom: &Dom, ppr: NodeId) -> bool {
     kids.len() == 1 && dom.name(kids[0]) == Some(W::name("jc"))
 }
 
+/// First non-default `w:jc` child of a projected pPr, if any.
+fn projected_ppr_jc(dom: &Dom, ppr: NodeId) -> Option<NodeId> {
+    for c in dom.elements(ppr, None) {
+        if is_para_comparison_noise(dom, c) {
+            continue;
+        }
+        if dom.name(c) == Some(W::name("jc")) {
+            let val = dom.attribute(c, &W::val()).unwrap_or("");
+            if val != "left" && val != "start" {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+/// Project only the non-default `w:jc` from old pPr (justify/center removal class).
+fn project_jc_only_from(dom: &mut Dom, ppr: NodeId) -> Option<NodeId> {
+    let jc = projected_ppr_jc(dom, ppr)?;
+    let out = dom.new_element(W::p_pr());
+    let clone = dom.clone_subtree(jc);
+    dom.add(out, clone);
+    Some(out)
+}
+
+/// Signature of projected pPr with jc children ignored (for partial-removal gate).
+fn normalize_para_properties_without_jc(dom: &mut Dom, ppr: NodeId) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for c in dom.elements(ppr, None) {
+        if is_para_comparison_noise(dom, c) {
+            continue;
+        }
+        if dom.name(c) == Some(W::name("jc")) {
+            continue;
+        }
+        parts.push(prop_signature(dom, c));
+    }
+    parts.sort();
+    parts.join("\u{1}")
+}
+
 /// True when projected pPr has only `w:spacing` (bare A → spaced B body class).
 /// M130 (file_165): Word keeps live spacing + `pPrChange(empty old)` on
 /// Verdana bare × Ultimate Demo spaced bodies. Broader addition floods file_8.
@@ -241,11 +304,39 @@ pub fn detect_format_changes_in_atom_list(
     atoms: &mut [ComparisonUnitAtom],
     settings: &WmlComparerSettings,
 ) {
+    detect_format_changes_impl(dom, atoms, settings, true);
+}
+
+/// Uncached oracle (pre-PR4 behaviour: `are_run_properties_equal` directly). Kept
+/// to prove the per-rPr serialization cache preserves the EXACT format-change
+/// retagging on the same atoms — see `cached_format_changes_match_uncached`. This
+/// is the direct guard the review asked for (the corpus goldens guard it only
+/// through the volatility-tolerant structural comparator).
+#[cfg(test)]
+fn detect_format_changes_reference(
+    dom: &mut Dom,
+    atoms: &mut [ComparisonUnitAtom],
+    settings: &WmlComparerSettings,
+) {
+    detect_format_changes_impl(dom, atoms, settings, false);
+}
+
+fn detect_format_changes_impl(
+    dom: &mut Dom,
+    atoms: &mut [ComparisonUnitAtom],
+    settings: &WmlComparerSettings,
+    use_cache: bool,
+) {
     if !settings.detect_format_changes {
         return;
     }
     let mut run_changes: Vec<PendingRunFormatChange> = Vec::new();
     let mut para_changes: Vec<PendingParaFormatChange> = Vec::new();
+    // Cache each distinct rPr's normalized serialization: runs share one rPr, so
+    // this collapses O(Equal atoms) normalizations to O(distinct rPr). See
+    // [`normalized_rpr_serialized`].
+    let mut norm_cache: std::collections::HashMap<Option<NodeId>, String> =
+        std::collections::HashMap::new();
     for (i, atom) in atoms.iter().enumerate() {
         if atom.correlation_status != CorrelationStatus::Equal {
             continue;
@@ -283,13 +374,35 @@ pub fn detect_format_changes_in_atom_list(
                     // addition flooded file_8; jc-only + spacing-only only.
                     let empty_old = dom.new_element(W::p_pr());
                     para_changes.push((i, empty_old));
+                } else if projected_ppr_jc(dom, projected_old).is_some()
+                    && projected_ppr_jc(dom, projected_new).is_none()
+                    && normalize_para_properties_without_jc(dom, projected_old)
+                        == normalize_para_properties_without_jc(dom, projected_new)
+                {
+                    // M227 (justify×large_font ~78, center×center_bold): A had
+                    // non-default jc, B dropped it while other layout (e.g.
+                    // line=276) stayed equal. Full-clear M81 misses this —
+                    // new_sig is non-empty. Word emits pPrChange(jc only).
+                    if let Some(jc_old) = project_jc_only_from(dom, projected_old) {
+                        para_changes.push((i, jc_old));
+                    }
                 }
             }
             continue;
         }
         let old = get_run_properties_from_atom(dom, &before);
         let new = get_run_properties_from_atom(dom, atom);
-        if !are_run_properties_equal(dom, old, new) {
+        // Behavior-identical to `!are_run_properties_equal(dom, old, new)`: that
+        // predicate is `serialize(normalize(old)) == serialize(normalize(new))`,
+        // and the cache stores exactly those per-operand strings. The uncached
+        // branch is the equivalence oracle (test builds only).
+        let differ = if use_cache {
+            normalized_rpr_serialized(dom, &mut norm_cache, old)
+                != normalized_rpr_serialized(dom, &mut norm_cache, new)
+        } else {
+            !are_run_properties_equal(dom, old, new)
+        };
+        if differ {
             let changed = get_changed_property_names(dom, old, new);
             run_changes.push((i, old, new, changed));
         }
@@ -331,5 +444,145 @@ pub fn detect_format_changes_in_atom_list(
             old_para_properties: Some(old_ppr),
             changed_properties: vec!["paragraphFormatting".into()],
         });
+    }
+}
+
+/// PR4 — the per-`rPr` serialization cache MUST return exactly what a direct
+/// `normalize_run_properties` + `serialize_element` produces, on the first call
+/// and on cache hits, so that swapping [`are_run_properties_equal`] for a cached
+/// `==` in [`detect_format_changes_in_atom_list`] is behavior-preserving.
+#[cfg(test)]
+mod format_change_cache_tests {
+    use super::*;
+
+    fn rpr_with(dom: &mut Dom, children: &[(&str, &[(&str, &str)])]) -> NodeId {
+        let rpr = dom.new_element(W::r_pr());
+        for (local, attrs) in children {
+            let c = dom.new_element(W::name(local));
+            for (an, av) in *attrs {
+                dom.set_attribute_value(c, &W::name(an), Some(av));
+            }
+            dom.add(rpr, c);
+        }
+        rpr
+    }
+
+    fn direct(dom: &mut Dom, rpr: Option<NodeId>) -> String {
+        let ne = normalize_run_properties(dom, rpr);
+        dom.serialize_element(ne)
+    }
+
+    #[test]
+    fn format_changes_cache_matches_direct() {
+        let mut dom = Dom::new();
+        let bold = rpr_with(&mut dom, &[("b", &[])]);
+        let bold_sz = rpr_with(&mut dom, &[("b", &[]), ("sz", &[("val", "24")])]);
+        // Same props, different source order — normalization must canonicalize both.
+        let sz_bold = rpr_with(&mut dom, &[("sz", &[("val", "24")]), ("b", &[])]);
+        // Duplicate local names — relies on normalize's stable sort; must cache the
+        // same string as a direct call (review residual risk).
+        let dup = rpr_with(&mut dom, &[("b", &[("val", "1")]), ("b", &[("val", "0")])]);
+        let empty = dom.new_element(W::r_pr());
+        let cases = [
+            Some(bold),
+            Some(bold_sz),
+            Some(sz_bold),
+            Some(dup),
+            Some(empty),
+            None,
+        ];
+
+        let mut cache = std::collections::HashMap::new();
+        for &rpr in &cases {
+            let want = direct(&mut dom, rpr);
+            let got = normalized_rpr_serialized(&mut dom, &mut cache, rpr);
+            assert_eq!(got, want, "cached != direct for {rpr:?}");
+            // Cache hit must return the same value, not diverge.
+            let got2 = normalized_rpr_serialized(&mut dom, &mut cache, rpr);
+            assert_eq!(got2, want, "cache-hit != direct for {rpr:?}");
+        }
+        // bold_sz and sz_bold have identical properties ⇒ identical normal form.
+        assert_eq!(
+            normalized_rpr_serialized(&mut dom, &mut cache, Some(bold_sz)),
+            normalized_rpr_serialized(&mut dom, &mut cache, Some(sz_bold)),
+            "canonicalization must ignore source child order"
+        );
+    }
+
+    /// An Equal run atom whose nearest `w:r` carries a `w:rPr` with the given
+    /// children — so `get_run_properties_from_atom` finds it.
+    fn run_atom(dom: &mut Dom, rpr_children: &[(&str, &[(&str, &str)])]) -> ComparisonUnitAtom {
+        let r = dom.new_element(W::r());
+        let rpr = rpr_with(dom, rpr_children);
+        dom.add(r, rpr);
+        let t = dom.new_element(W::t());
+        dom.set_value(t, "x");
+        dom.add(r, t);
+        let mut a = ComparisonUnitAtom::new(t, vec![r], "h".to_string());
+        a.correlation_status = CorrelationStatus::Equal;
+        a
+    }
+
+    /// The direct guard the review asked for: the cached run-property comparison
+    /// must produce the EXACT same format-change retagging (status + changed
+    /// property names) as the uncached `are_run_properties_equal` path, on the
+    /// same atoms — covering adds, removes, value changes, reorders, and no-ops.
+    #[test]
+    fn cached_format_changes_match_uncached() {
+        type Props<'a> = &'a [(&'a str, &'a [(&'a str, &'a str)])];
+        let mut dom = Dom::new();
+        // (before rPr, after rPr) per Equal atom.
+        let specs: &[(Props, Props)] = &[
+            (&[("b", &[])], &[("b", &[]), ("i", &[])]), // add italic
+            (&[("b", &[])], &[("b", &[])]),             // identical
+            (&[("sz", &[("val", "20")])], &[("sz", &[("val", "24")])]), // size change
+            (&[], &[]),                                 // both empty
+            (&[("b", &[]), ("i", &[])], &[("i", &[]), ("b", &[])]), // reordered = same
+            (&[("color", &[("val", "FF0000")])], &[]),  // remove color
+        ];
+        let mut atoms = Vec::new();
+        for (before_props, after_props) in specs {
+            let mut a = run_atom(&mut dom, after_props);
+            let before = run_atom(&mut dom, before_props);
+            a.comparison_unit_atom_before = Some(Box::new(before));
+            atoms.push(a);
+        }
+        let settings = WmlComparerSettings::default();
+
+        let mut a_ref = atoms.clone();
+        detect_format_changes_reference(&mut dom, &mut a_ref, &settings);
+        let mut a_cached = atoms.clone();
+        detect_format_changes_in_atom_list(&mut dom, &mut a_cached, &settings);
+
+        let sig = |v: &[ComparisonUnitAtom]| -> Vec<(CorrelationStatus, Option<Vec<String>>)> {
+            v.iter()
+                .map(|a| {
+                    (
+                        a.correlation_status,
+                        a.format_change
+                            .as_ref()
+                            .map(|f| f.changed_properties.clone()),
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            sig(&a_ref),
+            sig(&a_cached),
+            "cached format-change retagging must match the uncached oracle"
+        );
+        // The workload must actually exercise both a change and a non-change.
+        assert!(
+            a_ref
+                .iter()
+                .any(|a| a.correlation_status == CorrelationStatus::FormatChanged),
+            "expected at least one FormatChanged"
+        );
+        assert!(
+            a_ref
+                .iter()
+                .any(|a| a.correlation_status == CorrelationStatus::Equal),
+            "expected at least one unchanged Equal"
+        );
     }
 }

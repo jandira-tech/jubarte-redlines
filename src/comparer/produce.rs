@@ -34,7 +34,7 @@ fn delete_text_in_opaque(dom: &mut Dom, node: NodeId, status: CorrelationStatus)
     if matches!(status, CorrelationStatus::Deleted) {
         // Hoist the name out of the loop — `W::name` allocates a fresh `XName`
         // on each call; `XName` is `Arc`-cheap to clone.
-        let del_text = W::name("delText");
+        let del_text = W::del_text();
         for t in dom.descendants(node, Some(&W::t())) {
             dom.set_name(t, del_text.clone());
         }
@@ -109,9 +109,9 @@ fn build_paragraph(
             .iter()
             .filter(|t| {
                 let n = dom.name(t.atom.content_element);
-                n == Some(W::t()) || n == Some(W::name("delText"))
+                n == Some(W::t()) || n == Some(W::del_text())
             })
-            .map(|t| dom.value(t.atom.content_element))
+            .map(|t| dom.value_str(t.atom.content_element).into_owned())
             .collect();
         if text.is_empty() {
             continue;
@@ -138,7 +138,7 @@ fn build_paragraph(
 /// Build `<w:r><w:t>text</w:t></w:r>` (or delText when `deleted`).
 fn build_text_run(dom: &mut Dom, text: &str, deleted: bool) -> NodeId {
     let r = dom.new_element(W::r());
-    let t = dom.new_element(if deleted { W::name("delText") } else { W::t() });
+    let t = dom.new_element(if deleted { W::del_text() } else { W::t() });
     if text.starts_with(' ') || text.ends_with(' ') {
         dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
     }
@@ -184,10 +184,28 @@ fn flatten_atoms(units: &[ComparisonUnit]) -> Vec<ComparisonUnitAtom> {
         .collect()
 }
 
+/// True when a before-side atom carries `pt:PreDelete="orig"` on itself or an
+/// ancestor (word-mode flattened A-only pre-existing deletion). Equal emit
+/// would drop the stamp (content comes from AFTER); force del+ins instead.
+fn atom_has_predelete_orig(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
+    let pre = PT::name("PreDelete");
+    if dom.attribute(atom.content_element, &pre) == Some(crate::comparer::PREDELETE_STAMP_ORIG) {
+        return true;
+    }
+    atom.ancestor_elements
+        .iter()
+        .any(|&a| dom.attribute(a, &pre) == Some(crate::comparer::PREDELETE_STAMP_ORIG))
+}
+
 /// M4.E.1 — `FlattenToComparisonUnitAtomList` (:4141): nested correlated tree →
 /// flat status-tagged atom list. Equal carries content/ancestors from the AFTER
 /// atom and a link to the BEFORE atom; zip truncates to the shorter side.
+///
+/// M-MOVE S1 exception: when the BEFORE atom is a PreDelete-orig span, emit
+/// Deleted(before)+Inserted(after) instead of Equal so history survives even
+/// if an upstream correlation path lost the salt (m36 / fresh-p4).
 pub fn flatten_to_comparison_unit_atom_list(
+    dom: &Dom,
     seqs: &[CorrelatedSequence],
 ) -> Vec<ComparisonUnitAtom> {
     let mut out = Vec::new();
@@ -196,6 +214,23 @@ pub fn flatten_to_comparison_unit_atom_list(
             CorrelationStatus::Equal => {
                 let before = flatten_atoms(cs.com_units_1.as_deref().unwrap_or(&[]));
                 let after = flatten_atoms(cs.com_units_2.as_deref().unwrap_or(&[]));
+                // M-MOVE S1: if any BEFORE atom is a PreDelete-orig span, emit
+                // the whole before run as Deleted and the whole after run as
+                // Inserted (paragraph/word granularity). Per-atom del+ins
+                // confetti fails convert_stamped coalescing and m36.
+                if before.iter().any(|b| atom_has_predelete_orig(dom, b)) {
+                    for b in &before {
+                        let mut del = b.clone();
+                        del.correlation_status = CorrelationStatus::Deleted;
+                        out.push(del);
+                    }
+                    for a in &after {
+                        let mut ins = a.clone();
+                        ins.correlation_status = CorrelationStatus::Inserted;
+                        out.push(ins);
+                    }
+                    continue;
+                }
                 for (b, a) in before.iter().zip(after.iter()) {
                     let mut atom = a.clone();
                     atom.correlation_status = CorrelationStatus::Equal;
@@ -228,7 +263,7 @@ fn is_ppr_atom(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
     dom.name(atom.content_element) == Some(W::p_pr())
 }
 fn atom_in_textbox(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
-    let txbx = W::name("txbxContent");
+    let txbx = W::txbx_content();
     atom.ancestor_elements
         .iter()
         .any(|&a| dom.name(a).as_ref() == Some(&txbx))
@@ -301,14 +336,14 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
 
     // ── Phase B (reverse) ──────────────────────────────────────────────────────
     let mut current: Option<Vec<String>> = None;
-    let mut current_elems: Option<Vec<NodeId>> = None;
+    // PATH-01: track the shared Arc chain (not a cloned Vec).
+    let mut current_elems: Option<std::sync::Arc<[NodeId]>> = None;
     for atom in atoms.iter_mut().rev() {
         if is_ppr_atom(dom, atom) && !atom_in_textbox(dom, atom) {
             let mut cur: Vec<String> = atom
                 .ancestor_elements
-                .clone()
-                .into_iter()
-                .map(|ae| unid_or_mint(dom, ae))
+                .iter()
+                .map(|&ae| unid_or_mint(dom, ae))
                 .collect();
             if let Some(d) = &deepest_unid
                 && let Some(first) = cur.first_mut()
@@ -317,7 +352,7 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
             }
             atom.ancestor_unids = Some(cur.clone());
             current = Some(cur);
-            current_elems = Some(atom.ancestor_elements.clone());
+            current_elems = Some(std::sync::Arc::clone(&atom.ancestor_elements));
         } else {
             let prefix = current.clone().unwrap_or_default();
             // Borrow the following paragraph's Unid prefix to bridge MATCHED A/B
@@ -427,19 +462,24 @@ fn status_str(s: CorrelationStatus) -> &'static str {
 }
 
 /// Stable first-key-seen bucket grouping (port of `groupByKey`).
-fn group_by_key_stable<K: Eq + std::hash::Hash + Clone>(
-    items: &[ComparisonUnitAtom],
+fn group_by_key_stable<'a, K: Eq + std::hash::Hash + Clone>(
+    items: &[&'a ComparisonUnitAtom],
     key: impl Fn(&ComparisonUnitAtom) -> K,
-) -> Vec<(K, Vec<ComparisonUnitAtom>)> {
+) -> Vec<(K, Vec<&'a ComparisonUnitAtom>)> {
+    // Groups hold references, not owned atoms: coalesce_recurse re-groups every
+    // atom at every nesting level, and ComparisonUnitAtom is fat (sha1_hash +
+    // ancestor_unids: Vec<String> + a recursive Box<before-atom>), so cloning
+    // per level was the dominant produce-phase allocation (samply). Grouping
+    // semantics are unchanged — only ownership.
     let mut order: Vec<K> = Vec::new();
-    let mut map: std::collections::HashMap<K, Vec<ComparisonUnitAtom>> =
+    let mut map: std::collections::HashMap<K, Vec<&'a ComparisonUnitAtom>> =
         std::collections::HashMap::new();
     for it in items {
         let k = key(it);
         if !map.contains_key(&k) {
             order.push(k.clone());
         }
-        map.entry(k).or_default().push(it.clone());
+        map.entry(k).or_default().push(*it);
     }
     order
         .into_iter()
@@ -453,9 +493,11 @@ fn group_by_key_stable<K: Eq + std::hash::Hash + Clone>(
 /// Add the `pt:Status` (+ move/format) attributes to a constructed node.
 fn tag_status(dom: &mut Dom, node: NodeId, status: CorrelationStatus, atom: &ComparisonUnitAtom) {
     match status {
-        CorrelationStatus::Deleted => dom.set_attribute_value(node, &PT::status(), Some("Deleted")),
+        CorrelationStatus::Deleted => {
+            dom.set_attribute_value(node, &PT::status(), Some("Deleted"));
+        }
         CorrelationStatus::Inserted => {
-            dom.set_attribute_value(node, &PT::status(), Some("Inserted"))
+            dom.set_attribute_value(node, &PT::status(), Some("Inserted"));
         }
         CorrelationStatus::MovedSource | CorrelationStatus::MovedDestination => {
             dom.set_attribute_value(node, &PT::status(), Some(status_str(status)));
@@ -487,7 +529,7 @@ fn tag_status(dom: &mut Dom, node: NodeId, status: CorrelationStatus, atom: &Com
 }
 
 fn is_txbx_from_level(dom: &Dom, atom: &ComparisonUnitAtom, level: usize) -> bool {
-    let txbx = W::name("txbxContent");
+    let txbx = W::txbx_content();
     atom.ancestor_elements
         .iter()
         .skip(level)
@@ -498,7 +540,7 @@ fn is_txbx_from_level(dom: &Dom, atom: &ComparisonUnitAtom, level: usize) -> boo
 /// level. `id_gen` is the `s_MaxId` analog (oMath revision ids).
 pub fn coalesce_recurse(
     dom: &mut Dom,
-    atoms: &[ComparisonUnitAtom],
+    atoms: &[&ComparisonUnitAtom],
     level: usize,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
@@ -636,10 +678,13 @@ pub fn coalesce_recurse(
         // Pure del → delText. MovedSource → w:t (Word Compare; see delete_text_in_opaque).
         if aname == W::t() {
             for (_key, gc) in &groupedchildren {
-                let text: String = gc.iter().map(|a| dom.value(a.content_element)).collect();
+                let text: String = gc
+                    .iter()
+                    .map(|a| dom.value_str(a.content_element).into_owned())
+                    .collect();
                 let first = &gc[0];
                 let elem_name = match first.correlation_status {
-                    CorrelationStatus::Deleted => W::name("delText"),
+                    CorrelationStatus::Deleted => W::del_text(),
                     _ => W::t(),
                 };
                 let te = dom.new_element(elem_name);
@@ -654,7 +699,7 @@ pub fn coalesce_recurse(
         }
 
         // w:drawing — clone + status (part relocation deferred to M4.H).
-        if aname == W::name("drawing") {
+        if aname == W::drawing() {
             for (_key, gc) in &groupedchildren {
                 for gcc in gc {
                     let d = dom.clone_subtree(gcc.content_element);
@@ -669,7 +714,7 @@ pub fn coalesce_recurse(
         // w:pict (VML image) — clone full subtree + status. Must not fall
         // through to reconstruct_element / empty Allowable shell: attribute-
         // only v:imagedata children emit no atoms when recursed (M74).
-        if aname == W::name("pict") {
+        if aname == W::pict() {
             for (_key, gc) in &groupedchildren {
                 for gcc in gc {
                     let d = dom.clone_subtree(gcc.content_element);
@@ -702,9 +747,9 @@ pub fn coalesce_recurse(
                 for gcc in gc {
                     let rev = match gcc.correlation_status {
                         CorrelationStatus::Deleted => Some(W::del()),
-                        CorrelationStatus::MovedSource => Some(W::name("moveFrom")),
+                        CorrelationStatus::MovedSource => Some(W::move_from()),
                         CorrelationStatus::Inserted => Some(W::ins()),
-                        CorrelationStatus::MovedDestination => Some(W::name("moveTo")),
+                        CorrelationStatus::MovedDestination => Some(W::move_to()),
                         _ => None,
                     };
                     let content = dom.clone_subtree(gcc.content_element);
@@ -764,20 +809,20 @@ pub fn coalesce_recurse(
         }
 
         // Container elements → ReconstructElement (props hoisted first).
-        let props: &[&str] = if aname == W::name("tbl") {
+        let props: &[&str] = if aname == W::tbl() {
             &["tblPr", "tblGrid"]
-        } else if aname == W::name("tr") {
+        } else if aname == W::tr() {
             &["trPr"]
-        } else if aname == W::name("tc") {
+        } else if aname == W::tc() {
             &["tcPr"]
-        } else if aname == W::name("sdt") {
+        } else if aname == W::sdt() {
             &["sdtPr", "sdtEndPr"]
         } else if aname == W::name("ruby") {
             &["rubyPr"]
         } else {
             &[]
         };
-        let pict_props = aname == W::name("pict");
+        let pict_props = aname == W::pict();
         let recon = reconstruct_element(
             dom, &g, ancestor, props, pict_props, level, settings, id_gen,
         );
@@ -791,7 +836,7 @@ pub fn coalesce_recurse(
 #[allow(clippy::too_many_arguments)]
 fn reconstruct_element(
     dom: &mut Dom,
-    g: &[ComparisonUnitAtom],
+    g: &[&ComparisonUnitAtom],
     ancestor: NodeId,
     props: &[&str],
     pict_props: bool,
@@ -826,7 +871,7 @@ fn reconstruct_element(
     // table-vmerge-colspan: effective tblW 6000/grid 3502·3509·3285, old
     // tblW 9360/union grid preserved in the change records. Ours dropped
     // the history entirely, so the old width kept rendering (2 vs 3 pages).
-    if settings.merge_replaced_paragraphs && aname == W::name("tbl") {
+    if settings.merge_replaced_paragraphs && aname == W::tbl() {
         // Bind the table element name once; the find_map below runs per atom.
         let is_tbl = |anc: NodeId| dom.name(anc).is_some_and(|nm| *nm.local_name() == *"tbl");
         // the OLD table node: Deleted atoms carry doc A's ancestors directly;
@@ -885,8 +930,8 @@ fn reconstruct_element(
             };
             // tblPr → tblPrChange
             if let (Some(new_pr), Some(old_pr)) = (
-                dom.element(ne, &W::name("tblPr")),
-                dom.element(old_tbl, &W::name("tblPr")),
+                dom.element(ne, &W::tbl_pr()),
+                dom.element(old_tbl, &W::tbl_pr()),
             ) {
                 let old_clone = dom.clone_subtree(old_pr);
                 strip_change(dom, old_clone, "tblPrChange");
@@ -948,7 +993,7 @@ fn reconstruct_element(
     // per-column gridCols (equal split of the page content width) plus
     // `tblW 0 auto`. GT table-vmerge-colspan_text-box: 1×4985 → 4675+4675;
     // GT nested-table-rowspan_numbered-list: 1×9970 → 4887+4905.
-    if settings.merge_replaced_paragraphs && aname == W::name("tbl") {
+    if settings.merge_replaced_paragraphs && aname == W::tbl() {
         rebuild_degenerate_grid(dom, ne, ancestor);
     }
     ne
@@ -1007,14 +1052,14 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     let grid_cols = dom.elements(grid, Some(&W::name("gridCol")));
     // real column count: max over rows of Σ gridSpan (default 1) per cell
     let real_cols = dom
-        .elements(tbl, Some(&W::name("tr")))
+        .elements(tbl, Some(&W::tr()))
         .into_iter()
         .map(|tr| {
-            dom.elements(tr, Some(&W::name("tc")))
+            dom.elements(tr, Some(&W::tc()))
                 .into_iter()
                 .map(|tc| {
-                    dom.element(tc, &W::name("tcPr"))
-                        .and_then(|pr| dom.element(pr, &W::name("gridSpan")))
+                    dom.element(tc, &W::tc_pr())
+                        .and_then(|pr| dom.element(pr, &W::grid_span()))
                         .and_then(|gs| dom.attribute(gs, &W::val()))
                         .and_then(|v| v.parse::<usize>().ok())
                         .unwrap_or(1)
@@ -1031,7 +1076,7 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     let content_width = dom
         .ancestors(src_tbl, None)
         .last()
-        .map(|&root| dom.descendants(root, Some(&W::name("sectPr"))))
+        .map(|&root| dom.descendants(root, Some(&W::sect_pr())))
         .and_then(|s| s.first().copied())
         .and_then(|sect| {
             let w: i64 = dom
@@ -1082,7 +1127,7 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     // tblStyleColBandSize). Insert after the last present predecessor so a
     // floating (tblpPr) or banded table stays schema-valid; mutate in place
     // when tblW already exists.
-    if let Some(tbl_pr) = dom.element(tbl, &W::name("tblPr")) {
+    if let Some(tbl_pr) = dom.element(tbl, &W::tbl_pr()) {
         let tblw = match dom.element(tbl_pr, &W::name("tblW")) {
             Some(e) => e,
             None => {
@@ -1104,7 +1149,9 @@ pub fn produce_new_wml_markup_from_correlated_sequence(
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) -> Vec<NodeId> {
-    coalesce_recurse(dom, atoms, 0, settings, id_gen)
+    // Borrow each atom once; coalesce_recurse threads &-slices (no atom clones).
+    let refs: Vec<&ComparisonUnitAtom> = atoms.iter().collect();
+    coalesce_recurse(dom, &refs, 0, settings, id_gen)
 }
 
 #[cfg(test)]
@@ -1118,7 +1165,7 @@ mod opaque_text_tests {
 
     /// `<w:drawing><w:r><w:t>txt</w:t></w:r></w:drawing>` — an opaque subtree.
     fn opaque_with_text(d: &mut Dom, txt: &str) -> NodeId {
-        let drawing = d.new_element(W::name("drawing"));
+        let drawing = d.new_element(W::drawing());
         let r = d.new_element(W::r());
         let t = d.new_element(W::t());
         d.add_text(t, txt);
@@ -1185,20 +1232,20 @@ mod opaque_text_tests {
         // `w:instrText` is not `w:t`, so the `W::t()` filter must leave it alone
         // even under a deletion (renaming it would corrupt the field code).
         let mut d = Dom::new();
-        let drawing = d.new_element(W::name("drawing"));
+        let drawing = d.new_element(W::drawing());
         let r = d.new_element(W::r());
-        let instr = d.new_element(W::name("instrText"));
+        let instr = d.new_element(W::instr_text());
         d.add_text(instr, "FIELD");
         d.add(r, instr);
         d.add(drawing, r);
         delete_text_in_opaque(&mut d, drawing, CorrelationStatus::Deleted);
         assert_eq!(
-            d.descendants(drawing, Some(&W::name("instrText"))).len(),
+            d.descendants(drawing, Some(&W::instr_text())).len(),
             1,
             "instrText untouched"
         );
         assert!(
-            d.descendants(drawing, Some(&W::name("delText"))).is_empty(),
+            d.descendants(drawing, Some(&W::del_text())).is_empty(),
             "no delText fabricated from instrText"
         );
     }

@@ -25,3 +25,4 @@ target
 
 # Local sweep outputs
 _scratch/
+.omo/
