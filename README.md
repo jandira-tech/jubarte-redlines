@@ -149,59 +149,41 @@ Same pin, other non-visual benches:
 **Native ≡ WASM:** 164/164 documents same score when both consumers are built
 from the same source commit. A speed win does not excuse a fidelity gap.
 
-### Speed — redline generation (lower median ms is better)
+### Speed — redline generation (ms per redline; lower is better)
 
-Two lanes matter:
+Source: [neurotic_docx_bench](https://github.com/jandira-tech/neurotic_docx_bench)
+`results/speed.jsonl`. Warm **inproc** = fair algorithm lane (no process spawn).
 
-1. **Fair algorithm (warm process)** — long-lived worker; spawn tax removed.
-2. **Shipping mode** — CLI (spawn + I/O) or WASM (in-process after init).
+#### Head-to-head: warm inproc (best large-N rows)
 
-#### This engine @ `7b21276` (same run, apples-to-apples)
+| tool | median ms | mean ms | p95 | /s | n | fail | run |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| **jubarte-rust-inproc** | **8.102** | 33.743 | 142.244 | 29.6 | 5000 | 0 | 2026-07-17T05:14:47Z |
+| docxodus-csharp-inproc | 9.431 | **29.903** | 110.731 | 33.4 | 4880 | 120 | 2026-07-15T20:05:06Z |
 
-1000 fixtures → **5000** pairs, seed 42, warmup 50, reps 1, **0 failures**.
-Immutable pack:
-`neurotic_docx_bench/results/redline_speed_bench/jubarte-wasm-inproc-7b21276-20260724T151752Z/`.
+- **Median:** we win (`8.102` &lt; `9.431`).
+- **Mean:** we lose (`33.743` &gt; `29.903`). Period.
+- That C# row has **120 failures** (no large-N zero-fail C# inproc row exists). There is no zero-fail large-N C# mean to compare.
+
+Same-day pair (2026-07-15T20:34:02Z): inproc median **9.34** (jubarte, fail 0) vs **11.454** (C#, fail 120).
+
+#### This pin @ `7b21276` (one run, 1000 fixtures → 5000 pairs, seed 42)
 
 | tool | mode | median ms | mean ms | p95 | p99 | /s | fail | n |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **jubarte-rust-inproc** | warm native (**fair algorithm**) | **9.15** | **38.19** | 164.5 | 266.4 | **26.2** | 0 | 5000 |
-| jubarte-rust | CLI spawn + I/O | 13.37 | 44.95 | 181.8 | 285.3 | 22.2 | 0 | 5000 |
-| jubarte-wasm | warm V8 WASM | 14.99 | 63.33 | 278.2 | 419.8 | 15.8 | 0 | 5000 |
+| jubarte-rust-inproc | warm native | 9.149 | 38.188 | 164.496 | 266.414 | 26.2 | 0 | 5000 |
+| jubarte-rust | CLI | 13.372 | 44.952 | 181.835 | 285.275 | 22.2 | 0 | 5000 |
+| jubarte-wasm | V8 WASM | 14.99 | 63.331 | 278.227 | 419.81 | 15.8 | 0 | 5000 |
 
-WASM / inproc median tax ≈ **1.64×**. CLI / inproc ≈ **1.46×** (Rust spawn is cheap).
+#### Other competitors (best published row per tool)
 
-#### Competitors (bench exporter best published rows)
-
-From [neurotic_docx_bench](https://github.com/jandira-tech/neurotic_docx_bench)
-`results/speed.jsonl` / `RESULTS.md` (not the same wall-clock day as the table
-above — still the load-bearing public numbers). Read **mode + n** before ranking.
-
-| tool | mode | median ms | mean ms | p95 | /s | n | fail | notes |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| **jubarte-rust-inproc** | warm native | **8.1–9.2** | ~34–38 | ~142–164 | ~26–30 | 5000 | 0 | fair algorithm baseline |
-| **docxodus-csharp-inproc** | warm .NET | **9.43** | 29.90 | 110.7 | 33.4 | 4880 | **120** | algorithm-close; **2.4% fail** on that row |
-| jubarte-rust | CLI | **9.7–13.4** | ~31–45 | ~123–182 | ~22–32 | 5000 | 0 | spawn + temp I/O |
-| jubarte-wasm | V8 WASM | **9.7–15.0** | ~41–63 | ~180–278 | ~16–24 | 5000 | 0 | same engine as native |
-| docx-redline-js | Node microbench | **1.45** | 2.79 | 6.91 | 358 | 90 | 0 | shallow text recon; **worst fidelity** (~50.5) |
-| superdoc | Python microbench (+ disk cycle) | **40.9** | 94.2 | 619.9 | 10.6 | 90 | 0 | not large-N; includes open/save path |
-| jubarte-lossless (TS port) | Node large-N | **54.6** | 168.2 | 592.5 | 5.9 | 4997 | 3 | older port family |
-| **docxodus** (npm WASM) | Mono/.NET WASM | **148.8** | 607.4 | 3212 | 1.6 | 496 | 4 | fat tail; not competitive on mean |
-| **docxodus-csharp** | cold .NET CLI | **208.4** | 441.6 | 911.9 | 2.3 | 50 | 0 | **startup tax**, not algorithm cost |
-
-**How to read competitors**
-
-| claim you want | compare these rows |
-| --- | --- |
-| “Is the *algorithm* faster?” | `jubarte-rust-inproc` vs `docxodus-csharp-inproc` |
-| “What do users pay at the CLI?” | `jubarte-rust` vs `docxodus-csharp` (CLI) |
-| “Portable WASM lane?” | `jubarte-wasm` vs npm `docxodus` |
-| “Fast but wrong?” | `docx-redline-js` (~1.5 ms) + fidelity ~50 |
-
-**Thesis line:** Jubarte is **more Word-faithful** (~+33 mean points vs docxodus
-on `script_redlines`) **and** competitive on the fair warm-process lane (~9 ms
-median, zero failures). WASM stays within ~1.6× of warm native with **no**
-fidelity drift vs native. Docxodus C# CLI “slowness” is mostly cold start;
-Docxodus npm WASM is an order of magnitude slower with a heavy tail.
+| tool | mode | median ms | mean ms | p95 | /s | n | fail |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| docx-redline-js | Node micro | 1.451 | 2.791 | 6.907 | 358.4 | 90 | 0 |
+| superdoc | Python micro | 40.888 | 94.191 | 619.931 | 10.6 | 90 | 0 |
+| jubarte-lossless | Node large-N | 54.642 | 168.184 | 592.49 | 5.9 | 4997 | 3 |
+| docxodus (npm WASM) | Mono WASM | 148.753 | 607.385 | 3212.297 | 1.6 | 496 | 4 |
+| docxodus-csharp | cold CLI | 208.388 | 441.646 | 911.873 | 2.3 | 50 | 0 |
 
 ### In-repo microbenches
 
