@@ -57,7 +57,7 @@ fn m50_relocated_block_emits_move_markup() {
     assert!(
         xml.contains("moveFrom") || xml.contains("MovedSource"),
         "relocated block must surface as move source, got snippet: {}",
-        &xml.chars().take(800).collect::<String>()
+        xml.chars().take(800).collect::<String>()
     );
     assert!(
         xml.contains("moveTo") || xml.contains("MovedDestination"),
@@ -314,7 +314,7 @@ fn m50_powertools_faithful_keeps_moves_off() {
     assert!(
         !xml.contains("moveFrom") && !xml.contains("moveTo"),
         "faithful mode must not emit move markup: {}",
-        &xml.chars().take(600).collect::<String>()
+        xml.chars().take(600).collect::<String>()
     );
 }
 
@@ -470,7 +470,7 @@ fn m50_skip_ahead_equal_table_promotes_to_move() {
     assert!(
         xml.contains("moveFrom") || xml.contains("moveTo"),
         "skip-ahead table must promote to move markup, got: {}",
-        &xml.chars().take(1200).collect::<String>()
+        xml.chars().take(1200).collect::<String>()
     );
     // Capability table text should appear before pure-deleted middle content
     // in serialization order (moveTo early).
