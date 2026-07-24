@@ -46,6 +46,9 @@ mkdir -p "$OUT"
 
 gen_ok=0 gen_fail=0 skipped=0
 : > "$OUT/sweep.log"
+# Manifest of artifacts produced by THIS sweep only (CR #3642397959).
+MANIFEST="$OUT/.sweep_manifest"
+: > "$MANIFEST"
 
 while IFS=, read -r stem _base _next _origin src_base src_next _rest; do
   [ "$stem" = "pair_stem" ] && continue
@@ -58,6 +61,7 @@ while IFS=, read -r stem _base _next _origin src_base src_next _rest; do
   fi
   if "$BIN" "$a" "$b" -o "$OUT/$stem.docx" --force --quiet 2>> "$OUT/sweep.log"; then
     gen_ok=$((gen_ok+1))
+    echo "$OUT/$stem.docx" >> "$MANIFEST"
   else
     gen_fail=$((gen_fail+1))
     echo "GENFAIL $stem" >> "$OUT/sweep.log"
@@ -69,15 +73,16 @@ echo "generation: ok=$gen_ok fail=$gen_fail skipped=$skipped"
 probe_ok=0 probe_fail=0
 if [ "$PROBE" = "--probe" ]; then
   : > "$OUT/probe.log"
-  for f in "$OUT"/*.docx; do
-    [ -e "$f" ] || break
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -e "$f" ] || continue
     if "$SCRIPT_DIR/word-open-probe.sh" "$f" 1 >> "$OUT/probe.log" 2>&1; then
       probe_ok=$((probe_ok+1))
     else
       probe_fail=$((probe_fail+1))
       echo "PROBEFAIL $(basename "$f")" >> "$OUT/probe.log"
     fi
-  done
+  done < "$MANIFEST"
   echo "word-open probe: opened=$probe_ok failed=$probe_fail"
 fi
 
@@ -95,8 +100,9 @@ if [ "$VALIDATE" = "--validate" ]; then
     else
       VBIN=$(find "$VALIDATOR_DIR/bin/Release" -name 'validate-docx' -o -name 'validate-docx.dll' 2>/dev/null | head -1)
       : > "$OUT/validate_findings.tsv"
-      for f in "$OUT"/*.docx; do
-        [ -e "$f" ] || break
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        [ -e "$f" ] || continue
         if [ -n "$VBIN" ] && [ "${VBIN##*.}" = "dll" ]; then
           dotnet "$VBIN" "$f" >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || true
         elif [ -x "$VBIN" ]; then
@@ -104,23 +110,28 @@ if [ "$VALIDATE" = "--validate" ]; then
         else
           (cd "$VALIDATOR_DIR" && dotnet run -c Release --no-build -- "$f") >>"$OUT/validate_findings.tsv" 2>>"$OUT/validate.log" || true
         fi
-      done
+      done < "$MANIFEST"
       # Ratchet: (stem, error_id) keys; NEW keys fail.
-      touch "$BASELINE"
-      awk -F'\t' 'NF>=2 {print $1"\t"$2}' "$BASELINE" | sort -u >"$OUT/.baseline_keys"
-      awk -F'\t' 'NF>=2 {print $1"\t"$2}' "$OUT/validate_findings.tsv" | sort -u >"$OUT/.current_keys"
-      NEW=$(comm -13 "$OUT/.baseline_keys" "$OUT/.current_keys" || true)
-      FIXED=$(comm -23 "$OUT/.baseline_keys" "$OUT/.current_keys" || true)
-      if [ -n "$NEW" ]; then
-        echo "VALIDATOR NEW findings (ratchet fail):" | tee -a "$OUT/validate.log"
-        echo "$NEW" | tee -a "$OUT/validate.log"
+      # Missing baseline must fail (not silently create empty) — CR #3599948509.
+      if [ ! -f "$BASELINE" ]; then
+        echo "error: validity baseline missing: $BASELINE" | tee -a "$OUT/validate.log" >&2
         validate_fail=1
       else
-        echo "validator: no NEW findings vs $BASELINE" | tee -a "$OUT/validate.log"
-      fi
-      if [ -n "$FIXED" ]; then
-        echo "VALIDATOR FIXED (re-bless baseline?):" | tee -a "$OUT/validate.log"
-        echo "$FIXED" | tee -a "$OUT/validate.log"
+        awk -F'\t' 'NF>=2 {print $1"\t"$2}' "$BASELINE" | sort -u >"$OUT/.baseline_keys"
+        awk -F'\t' 'NF>=2 {print $1"\t"$2}' "$OUT/validate_findings.tsv" | sort -u >"$OUT/.current_keys"
+        NEW=$(comm -13 "$OUT/.baseline_keys" "$OUT/.current_keys" || true)
+        FIXED=$(comm -23 "$OUT/.baseline_keys" "$OUT/.current_keys" || true)
+        if [ -n "$NEW" ]; then
+          echo "VALIDATOR NEW findings (ratchet fail):" | tee -a "$OUT/validate.log"
+          echo "$NEW" | tee -a "$OUT/validate.log"
+          validate_fail=1
+        else
+          echo "validator: no NEW findings vs $BASELINE" | tee -a "$OUT/validate.log"
+        fi
+        if [ -n "$FIXED" ]; then
+          echo "VALIDATOR FIXED (re-bless baseline?):" | tee -a "$OUT/validate.log"
+          echo "$FIXED" | tee -a "$OUT/validate.log"
+        fi
       fi
     fi
   fi

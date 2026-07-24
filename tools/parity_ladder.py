@@ -47,11 +47,15 @@ MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
 HERE = os.path.dirname(os.path.abspath(__file__))
 CRATE = os.path.dirname(HERE)
-# Prefer BENCH_DIR; no developer-home hardcoded default (CR #3599948587).
-DEFAULT_CORPUS = os.environ.get(
-    "BENCH_DIR",
-    str(Path(CRATE).parent / "neurotic_docx_bench" / "corpus" / "word_based"),
+# BENCH_DIR is the neurotic_docx_bench checkout root (same as parity_ledger.sh /
+# run_abba_matrix.sh). Append corpus/word_based for load_pairs (CR #3642348727).
+_BENCH_ROOT = Path(
+    os.environ.get(
+        "BENCH_DIR",
+        Path(CRATE).parent / "neurotic_docx_bench",
+    )
 )
+DEFAULT_CORPUS = str(_BENCH_ROOT / "corpus" / "word_based")
 DEFAULT_BIN = os.path.join(CRATE, "target", "release", "jubarte")
 BASELINE = os.path.join(HERE, "parity_baseline.tsv")
 OUT_DIR = os.path.join(CRATE, "_scratch", "parity_ladder")

@@ -9,22 +9,25 @@ Reads the two latest jubarte-rust script_redlines rows (164 = word_based,
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
 
-# Default: sibling of this checkout's parent (ooxmlsdk → ../neurotic_docx_bench),
-# then absolute temp-T path used on this machine.
+# Default: sibling of this checkout (or BENCH_DIR). No developer-home hardcode.
+_here = Path(__file__).resolve().parent
+_crate = _here.parent
+_bench_root = Path(os.environ["BENCH_DIR"]) if "BENCH_DIR" in os.environ else _crate.parent / "neurotic_docx_bench"
 _default_candidates = [
+    _bench_root / "results" / "bench.jsonl",
     Path("../neurotic_docx_bench/results/bench.jsonl"),
     Path("../../neurotic_docx_bench/results/bench.jsonl"),
-    Path("/Users/arthrod/temp/T/neurotic_docx_bench/results/bench.jsonl"),
 ]
 if len(sys.argv) > 1:
     path = Path(sys.argv[1])
 else:
     path = next((p for p in _default_candidates if p.is_file()), _default_candidates[0])
-rows = [json.loads(l) for l in path.open() if l.strip()]
+rows = [json.loads(line) for line in path.open() if line.strip()]
 jr = [
     r
     for r in rows

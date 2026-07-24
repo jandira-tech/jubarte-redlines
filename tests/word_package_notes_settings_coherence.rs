@@ -117,48 +117,20 @@ fn package_notes_and_settings_coherent_on_treasury_x_5lb() {
         "endnotes need separators: {en_ids:?}"
     );
 
-    // settings special list ⊆ notes part ids
-    let mut settings_xml = String::new();
-    zip.by_name("word/settings.xml")
-        .unwrap()
-        .read_to_string(&mut settings_xml)
-        .unwrap();
-    // extract footnotePr block children ids
-    if let Some(start) = settings_xml.find("footnotePr") {
-        let block = &settings_xml[start..];
-        let end = block
-            .find("</w:footnotePr>")
-            .or_else(|| block.find("/>"))
-            .unwrap_or(block.len().min(500));
-        let block = &block[..end];
-        for cap in block.split("id=\"").skip(1) {
-            let id = cap.split('"').next().unwrap_or("");
-            if id.is_empty() {
-                continue;
-            }
-            assert!(
-                fn_ids.contains(id),
-                "settings footnotePr id={id} missing from footnotes part {fn_ids:?}"
-            );
-        }
+    // settings special list ⊆ notes part ids (use helper — CR #3642397974)
+    let settings_fn = settings_special_ids(&mut zip, "footnote");
+    for id in &settings_fn {
+        assert!(
+            fn_ids.contains(id),
+            "settings footnotePr id={id} missing from footnotes part {fn_ids:?}"
+        );
     }
-    if let Some(start) = settings_xml.find("endnotePr") {
-        let block = &settings_xml[start..];
-        let end = block
-            .find("</w:endnotePr>")
-            .or_else(|| block.find("/>"))
-            .unwrap_or(block.len().min(500));
-        let block = &block[..end];
-        for cap in block.split("id=\"").skip(1) {
-            let id = cap.split('"').next().unwrap_or("");
-            if id.is_empty() {
-                continue;
-            }
-            assert!(
-                en_ids.contains(id),
-                "settings endnotePr id={id} missing from endnotes part {en_ids:?}"
-            );
-        }
+    let settings_en = settings_special_ids(&mut zip, "endnote");
+    for id in &settings_en {
+        assert!(
+            en_ids.contains(id),
+            "settings endnotePr id={id} missing from endnotes part {en_ids:?}"
+        );
     }
 
     // no powertools Unid left on notes (package parts Word loads)
@@ -171,6 +143,4 @@ fn package_notes_and_settings_coherent_on_treasury_x_5lb() {
         zip.by_name(part).unwrap().read_to_string(&mut s).unwrap();
         assert!(!s.contains("Unid="), "{part} still carries pt Unid scratch");
     }
-
-    let _ = settings_special_ids; // silence if unused in some paths
 }

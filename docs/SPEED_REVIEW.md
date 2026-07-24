@@ -33,20 +33,22 @@ So the fair-algorithm claim for *median* is sound; the mean/wall loss is a **tai
 |---|---|
 | Stdin base64 tax on large docs | **Rejected** — paths only |
 | Order / loadavg alone | Partial — always capture `sysctl -n vm.loadavg`; ABBA refuses A/B wins when load1 > ncpu |
-| **Arena / heap retention across 5000 compares in one process** | **Accepted residual cause** |
+| **Arena / heap retention across 5000 compares in one process** | **Hypothesis** (provisional — not worker-RSS-proven) |
 
-Evidence for retention:
+Evidence *consistent with* retention (circumstantial until worker-order RSS traces land):
 
 1. **Median favors inproc** (16.95 < 21.86) — typical-case algorithm+warm is faster than spawn.
 2. **Mean and wall favor CLI** — a heavy right tail on inproc dominates the average; CLI pays spawn every time but **starts each compare in a fresh process** (fresh mimalloc arenas, fresh `xmllinq` intern tables, no cumulative RSS).
 3. LCS_PERF_PLAN MEASURED #5 already flagged `PARSE-01` / mimalloc RSS growth (+1.2 GB class) on long runs; a 5000-pair warm worker is exactly that shape.
 4. Inproc timer excludes I/O; if it still loses mean, the *compare itself* is getting slower on late pairs (cache/allocator degradation), not I/O.
 
+This does **not** yet isolate heap retention from fixture order, system load, or size distribution. Treat mean/wall conclusions as provisional until a worker-specific RSS/order trace is captured.
+
 ### Pass condition
 
 Plan C1: *inproc ≤ CLI on median AND mean AND wall, **or** residual gap has a written measured cause.*
 
-**Verdict:** residual gap **documented** — mean/wall inproc loss attributed to long-lived process heap retention; median already favors inproc. Do **not** quote mean/wall as “algorithm win” for either side until a retention fix (periodic worker recycle, or arena reset) lands.
+**Verdict (provisional):** residual gap **documented as hypothesis** — mean/wall inproc loss *may* be long-lived process heap retention; median already favors inproc. Do **not** quote mean/wall as “algorithm win” for either side until a retention fix (periodic worker recycle, or arena reset) lands **or** worker-RSS evidence confirms the cause.
 
 ## Hygiene (C2)
 

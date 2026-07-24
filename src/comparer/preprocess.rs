@@ -854,15 +854,8 @@ fn emit_merged_run_fragments(frags: &[RunFrag], out: &mut String, structure_only
                         break;
                     }
                 }
-                if structure_only {
-                    if merged.is_empty() {
-                        // empty text fragment after merge is still a t leaf? clone
-                        // never emits empty-only text runs from empty t normally.
-                        out.push_str("<w:r><w:t /></w:r>");
-                    } else {
-                        out.push_str("<w:r><w:t /></w:r>");
-                    }
-                } else if merged.is_empty() {
+                // structure_only always drops text; empty merged also emits bare t.
+                if structure_only || merged.is_empty() {
                     out.push_str("<w:r><w:t /></w:r>");
                 } else {
                     out.push_str("<w:r><w:t>");
@@ -1158,6 +1151,10 @@ fn stream_simple_p_fragment(
 }
 
 fn escape_xml_attr(s: &str) -> String {
+    // Hot-path: most attr values need no escaping (CR #3642397970).
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>' | b'"')) {
+        return s.to_string();
+    }
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -1165,9 +1162,29 @@ fn escape_xml_attr(s: &str) -> String {
 }
 
 fn escape_xml_text(s: &str) -> String {
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>')) {
+        return s.to_string();
+    }
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod escape_xml_tests {
+    use super::{escape_xml_attr, escape_xml_text};
+
+    #[test]
+    fn plain_text_roundtrips_without_entities() {
+        assert_eq!(escape_xml_text("hello world"), "hello world");
+        assert_eq!(escape_xml_attr("id-42"), "id-42");
+    }
+
+    #[test]
+    fn specials_are_escaped() {
+        assert_eq!(escape_xml_text("a&b<c>d"), "a&amp;b&lt;c&gt;d");
+        assert_eq!(escape_xml_attr(r#"say "hi""#), "say &quot;hi&quot;");
+    }
 }
 
 /// HASH-STREAM-02: SHA-1 of the structure projection of `node` (elements + attrs

@@ -20,10 +20,16 @@ cd "$CRATE"
 
 mkdir -p "$OUT/bins"
 
-# Load gate
+# Load gate (macOS sysctl + Linux /proc/loadavg — CR #3642397978)
 if [[ "${ALLOW_LOAD:-0}" != "1" ]]; then
+  loadavg=""
   if loadavg=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}'); then
-    ncpu=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
+    :
+  elif [[ -r /proc/loadavg ]]; then
+    loadavg=$(awk '{print $1}' /proc/loadavg)
+  fi
+  if [[ -n "$loadavg" ]]; then
+    ncpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
     # bash arithmetic needs integers — scale *100
     la100=$(python3 -c "print(int(float('$loadavg')*100))")
     nc100=$((ncpu * 100))
@@ -66,5 +72,10 @@ echo "cand=$CAND" | tee -a "$OUT/bins.txt"
 shasum -a 256 "$BASE" "$CAND" | tee -a "$OUT/bins.txt"
 
 "$CRATE/tools/perf/run_abba_matrix.sh" "$BASE" "$CAND" "$OUT" "$ROUNDS"
-python3 "$CRATE/tools/perf/summarize.py" "$OUT/summary.tsv" --json "$OUT/verdict.json" --allow-regress
+# Enforce wall-time gate by default (CR #3642397982). Opt out with ALLOW_REGRESS=1.
+if [[ "${ALLOW_REGRESS:-0}" == "1" ]]; then
+  python3 "$CRATE/tools/perf/summarize.py" "$OUT/summary.tsv" --json "$OUT/verdict.json" --allow-regress
+else
+  python3 "$CRATE/tools/perf/summarize.py" "$OUT/summary.tsv" --json "$OUT/verdict.json"
+fi
 echo "wrote $OUT/verdict.json"
