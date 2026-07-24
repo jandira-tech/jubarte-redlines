@@ -15,14 +15,19 @@ from collections import defaultdict
 from pathlib import Path
 
 # Default: sibling of this checkout (or BENCH_DIR). No developer-home hardcode.
+# Explicit BENCH_DIR must not fall through to unrelated relative paths (CR #3645867376).
 _here = Path(__file__).resolve().parent
 _crate = _here.parent
-_bench_root = Path(os.environ["BENCH_DIR"]) if "BENCH_DIR" in os.environ else _crate.parent / "neurotic_docx_bench"
-_default_candidates = [
-    _bench_root / "results" / "bench.jsonl",
-    Path("../neurotic_docx_bench/results/bench.jsonl"),
-    Path("../../neurotic_docx_bench/results/bench.jsonl"),
-]
+if "BENCH_DIR" in os.environ:
+    _bench_root = Path(os.environ["BENCH_DIR"])
+    _default_candidates = [_bench_root / "results" / "bench.jsonl"]
+else:
+    _bench_root = _crate.parent / "neurotic_docx_bench"
+    _default_candidates = [
+        _bench_root / "results" / "bench.jsonl",
+        Path("../neurotic_docx_bench/results/bench.jsonl"),
+        Path("../../neurotic_docx_bench/results/bench.jsonl"),
+    ]
 if len(sys.argv) > 1:
     path = Path(sys.argv[1])
 else:
