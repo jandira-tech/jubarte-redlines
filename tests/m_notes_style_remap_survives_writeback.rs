@@ -6,8 +6,8 @@
 
 use std::io::{Cursor, Read, Write};
 
-use jubarte::document_comparer::compare_documents_with_settings;
 use jubarte::comparer::WmlComparerSettings;
+use jubarte::document_comparer::compare_documents_with_settings;
 
 const WNS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
@@ -109,9 +109,11 @@ fn footnote_pstyle_remapped_after_notes_writeback() {
     // styleId "1" with name "heading 1" → canonical Heading1 under Word-mode.
     let a = build_docx_with_footnote("1", "heading 1", "Shared body text");
     let b = build_docx_with_footnote("1", "heading 1", "Shared body text changed slightly");
-    let mut settings = WmlComparerSettings::default();
-    settings.merge_replaced_paragraphs = true; // Word-mode: canonicalize + remap
-    settings.author_for_revisions = "Tester".into();
+    let settings = WmlComparerSettings {
+        merge_replaced_paragraphs: true, // Word-mode: canonicalize + remap
+        author_for_revisions: "Tester".into(),
+        ..WmlComparerSettings::default()
+    };
     let out = compare_documents_with_settings(&a, &b, &settings).expect("compare");
     let styles = part(&out, "word/styles.xml");
     let notes = part(&out, "word/footnotes.xml");

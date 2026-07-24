@@ -1174,23 +1174,6 @@ fn escape_xml_text(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-#[cfg(test)]
-mod escape_xml_tests {
-    use super::{escape_xml_attr, escape_xml_text};
-
-    #[test]
-    fn plain_text_roundtrips_without_entities() {
-        assert_eq!(escape_xml_text("hello world"), "hello world");
-        assert_eq!(escape_xml_attr("id-42"), "id-42");
-    }
-
-    #[test]
-    fn specials_are_escaped() {
-        assert_eq!(escape_xml_text("a&b<c>d"), "a&amp;b&lt;c&gt;d");
-        assert_eq!(escape_xml_attr(r#"say "hi""#), "say &quot;hi&quot;");
-    }
-}
-
 /// HASH-STREAM-02: SHA-1 of the structure projection of `node` (elements + attrs
 /// only). Digest-identical to `block_sha1(clone_for_structure_hash(...))`.
 pub fn structure_sha1(dom: &Dom, node: NodeId) -> String {
@@ -1337,4 +1320,21 @@ pub fn hash_block_level_content(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod escape_xml_tests {
+    use super::{escape_xml_attr, escape_xml_text};
+
+    #[test]
+    fn plain_text_roundtrips_without_entities() {
+        assert_eq!(escape_xml_text("hello world"), "hello world");
+        assert_eq!(escape_xml_attr("id-42"), "id-42");
+    }
+
+    #[test]
+    fn specials_are_escaped() {
+        assert_eq!(escape_xml_text("a&b<c>d"), "a&amp;b&lt;c&gt;d");
+        assert_eq!(escape_xml_attr(r#"say "hi""#), "say &quot;hi&quot;");
+    }
 }

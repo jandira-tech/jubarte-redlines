@@ -40,10 +40,7 @@ thread_local! {
     static IN_HOOK: Cell<bool> = const { Cell::new(false) };
 }
 
-static ALLOC_CNT_BY_BUCKET: [AtomicUsize; NBUCKETS] = {
-    const Z: AtomicUsize = AtomicUsize::new(0);
-    [Z; NBUCKETS]
-};
+static ALLOC_CNT_BY_BUCKET: [AtomicUsize; NBUCKETS] = [const { AtomicUsize::new(0) }; NBUCKETS];
 static TOTAL_ALLOCS: AtomicUsize = AtomicUsize::new(0);
 static COUNTING: AtomicUsize = AtomicUsize::new(0);
 /// Sampled `(size_bucket, backtrace)`; symbolized post-run to avoid paying
@@ -68,10 +65,10 @@ fn sample_bt(b: usize) {
         return;
     }
     let bt = Backtrace::force_capture();
-    if let Ok(mut v) = SAMPLES.lock() {
-        if v.len() < MAX_SAMPLES {
-            v.push((b, bt));
-        }
+    if let Ok(mut v) = SAMPLES.lock()
+        && v.len() < MAX_SAMPLES
+    {
+        v.push((b, bt));
     }
     IN_HOOK.with(|f| f.set(false));
 }
@@ -86,7 +83,7 @@ fn on_alloc(size: usize) {
     }
     ALLOC_CNT_BY_BUCKET[bucket(size)].fetch_add(1, Ordering::Relaxed);
     let n = TOTAL_ALLOCS.fetch_add(1, Ordering::Relaxed) + 1;
-    if n % SAMPLE_EVERY == 0 {
+    if n.is_multiple_of(SAMPLE_EVERY) {
         sample_bt(bucket(size));
     }
 }
@@ -154,7 +151,10 @@ fn main() {
     COUNTING.store(0, Ordering::Relaxed);
 
     let total = TOTAL_ALLOCS.load(Ordering::Relaxed);
-    println!("total allocations: {total} | out {:.2} MiB\n", out.len() as f64 / 1048576.0);
+    println!(
+        "total allocations: {total} | out {:.2} MiB\n",
+        out.len() as f64 / 1048576.0
+    );
 
     // Size-class histogram of allocation COUNT.
     println!("{:>8}  {:>14}  {:>7}   bar", "sizecls", "allocs", "share");
@@ -162,7 +162,7 @@ fn main() {
         .map(|i| (i, ALLOC_CNT_BY_BUCKET[i].load(Ordering::Relaxed)))
         .filter(|&(_, c)| c > 0)
         .collect();
-    rows.sort_by(|x, y| y.1.cmp(&x.1));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1));
     for (i, cnt) in &rows {
         let lo = 1usize << i;
         let hi = lo.saturating_mul(2) - 1;
@@ -172,9 +172,14 @@ fn main() {
     }
 
     // Aggregate sampled sites: each sample stands for ~SAMPLE_EVERY allocations.
-    let samples = SAMPLES.lock().map(|v| {
-        v.iter().map(|(b, bt)| (*b, site_key(bt))).collect::<Vec<_>>()
-    }).unwrap_or_default();
+    let samples = SAMPLES
+        .lock()
+        .map(|v| {
+            v.iter()
+                .map(|(b, bt)| (*b, site_key(bt)))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let mut by_site: std::collections::HashMap<String, (usize, [usize; NBUCKETS])> =
         std::collections::HashMap::new();
     for (b, key) in &samples {
@@ -184,7 +189,7 @@ fn main() {
     }
     let mut sites: Vec<(String, usize, [usize; NBUCKETS])> =
         by_site.into_iter().map(|(k, (c, h))| (k, c, h)).collect();
-    sites.sort_by(|x, y| y.1.cmp(&x.1));
+    sites.sort_by_key(|r| std::cmp::Reverse(r.1));
     println!(
         "\n=== dominant allocation SITES (sampled 1/{SAMPLE_EVERY}; {} samples) ===",
         samples.len()
@@ -199,7 +204,10 @@ fn main() {
             .max_by_key(|(_, c)| **c)
             .unwrap_or((0, &0));
         let lo = 1usize << bi;
-        println!("\n  ~{est:>11} allocs ({share:>4.1}%)  [mostly {lo}-{}B]", (lo * 2 - 1));
+        println!(
+            "\n  ~{est:>11} allocs ({share:>4.1}%)  [mostly {lo}-{}B]",
+            (lo * 2 - 1)
+        );
         println!("    {key}");
     }
 }

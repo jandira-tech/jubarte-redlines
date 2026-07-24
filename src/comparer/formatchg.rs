@@ -577,7 +577,12 @@ mod format_change_cache_tests {
         // 500 DISTINCT rPr nodes with identical content — every lookup is a cache
         // miss (distinct NodeId keys), so every call normalizes afresh.
         let rprs: Vec<NodeId> = (0..500)
-            .map(|_| rpr_with(&mut dom, &[("b", &[]), ("sz", &[("val", "24")]), ("i", &[])]))
+            .map(|_| {
+                rpr_with(
+                    &mut dom,
+                    &[("b", &[]), ("sz", &[("val", "24")]), ("i", &[])],
+                )
+            })
             .collect();
         let mut cache = std::collections::HashMap::new();
         let mut scratch = Dom::new();
@@ -593,7 +598,8 @@ mod format_change_cache_tests {
         // grow by a single node — the old same-arena path leaked all 4 per distinct rPr
         // (~2000 here) into the persistent `Vec`.
         assert_eq!(
-            grew, 0,
+            grew,
+            0,
             "normalizing {} distinct rPr grew the persistent arena by {grew} nodes; \
              scratch normalization must build in its own arena",
             rprs.len()

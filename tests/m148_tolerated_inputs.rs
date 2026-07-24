@@ -245,7 +245,13 @@ fn canonicalizes_numeric_style_ids_to_word_names() {
         main.contains("ListParagraph"),
         "body must remap list pStyle to ListParagraph: {main}"
     );
-    for stale in ["style20", "w:val=\"2\"", "w:val=\"14\"", "w:val='2'", "w:val='14'"] {
+    for stale in [
+        "style20",
+        "w:val=\"2\"",
+        "w:val=\"14\"",
+        "w:val='2'",
+        "w:val='14'",
+    ] {
         assert!(
             !main.contains(stale),
             "body must not keep stale style id {stale}: {main}"

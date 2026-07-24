@@ -38,6 +38,38 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-features
 
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # LLVM source-based coverage needs llvm-profdata/llvm-cov, which ship
+          # in this component rather than the default toolchain.
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      # Downloads a prebuilt binary instead of `cargo install` (minutes → seconds).
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate coverage (lcov)
+        # Source-based coverage via -Cinstrument-coverage. Doctests are excluded:
+        # instrumenting them still requires nightly, and this crate is stable-only
+        # (see the MSRV job) — so the number is honest about what it measures.
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          files: lcov.info
+          # Public repo, so uploads work tokenless — but tokenless is rate-limited
+          # and can drop reports. The secret is used when present.
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # A silently-missing report is worse than a red build: it looks like
+          # coverage simply didn't change.
+          fail_ci_if_error: true
+          verbose: true
+
   msrv:
     name: MSRV (1.88)
     runs-on: ubuntu-latest

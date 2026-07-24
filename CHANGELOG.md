@@ -15,12 +15,38 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-24
+
 ### Fixed
 
+- **CI was red and the test suite did not compile.** Two integration tests
+  had drifted out of sync with the helpers they call: `m35_comments` passed
+  `optional_bench_docx`'s `Option<Vec<u8>>` (file *bytes*) to a
+  `require_path(&str)` guard, and `word_package_notes_settings_coherence`
+  destructured an `Option` with a `Result` pattern after its loader moved to
+  `.ok()`. The `m35_comments` guards were also redundant — the preceding
+  `let Some(…) else { return }` already skips the missing-fixture case.
+- `clippy --all-targets --all-features -- -D warnings` and `cargo fmt --check`
+  both pass again: `items_after_test_module` in `comparer::preprocess` (the
+  `escape_xml_tests` module now sits at end of file), plus accumulated lint
+  drift in `examples/` — `const Z; [Z; N]` atomic-array splats replaced with
+  inline `const {}` blocks, four descending `sort_by` comparators expressed as
+  `sort_by_key(Reverse)`, and one `Default` field reassignment folded into
+  struct-update syntax.
 - Residual Word-visual peels on the finalize path (M216–M233): empty pure-D
   folds, MIX Heading/spacing/numPr parks (gated), mid pure-D live spacing
   promotion, schema-default `jc` left/start strip, jc-only `pPrChange` removal.
   Full main ledger **mean 90.04 / median 95.67** (n=164) at `d094de0`.
+
+### Continuous integration
+
+- Coverage is now measured and published. A `coverage` job runs
+  `cargo llvm-cov --all-features --workspace --lcov` and uploads to Codecov via
+  `codecov/codecov-action@v7`; [`codecov.yml`](codecov.yml) sets an `auto`
+  project target with a 1% tolerance and an 80% patch target, and excludes
+  `tests/`, `benches/`, `examples/`, `tools/`, `parity/` and `scripts/` from the
+  denominator. The README's Codecov badge and coverage row have existed for
+  some time but had never received an upload.
 
 ### Performance
 
@@ -111,6 +137,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.5.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.5.1
 [0.5.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.5.0
 [0.2.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.2.0
 [0.1.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.1.0

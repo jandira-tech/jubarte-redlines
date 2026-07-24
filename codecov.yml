@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Codecov configuration for jubarte-redlines.
+# Validate after editing:  curl -X POST --data-binary @codecov.yml https://codecov.io/validate
+
+coverage:
+  status:
+    # Whole-repo coverage. `auto` compares against the base commit rather than a
+    # fixed number, so the gate is "don't regress" instead of an arbitrary line
+    # that either blocks everything or means nothing.
+    project:
+      default:
+        target: auto
+        # Coverage wobbles by a fraction of a percent for reasons unrelated to
+        # the diff (test ordering, inlining). Allow that without failing a PR.
+        threshold: 1%
+        if_ci_failed: error
+
+    # New and changed lines. This is the gate that actually matters — it keeps
+    # incoming code tested without demanding anyone retrofit the whole engine.
+    patch:
+      default:
+        target: 80%
+        threshold: 0%
+        # A docs-only or config-only PR has no coverable lines; that is a pass,
+        # not a failure.
+        if_no_uploads: success
+        only_pulls: true
+
+# One upload per CI run, so there is nothing to wait for or merge.
+codecov:
+  require_ci_to_pass: true
+  notify:
+    wait_for_ci: true
+
+comment:
+  layout: "condensed_header, diff, files, footer"
+  behavior: default
+  # Don't comment on PRs that move no covered lines — the bot should be signal.
+  require_changes: true
+
+github_checks:
+  annotations: true
+
+# Excluded from the coverage denominator. These are either test/bench harnesses
+# (measuring them tells you the tests ran, which `cargo test` already proves) or
+# developer tooling that ships to nobody.
+ignore:
+  - "tests/**"
+  - "benches/**"
+  - "examples/**"
+  - "tools/**"
+  - "parity/**"
+  - "scripts/**"
