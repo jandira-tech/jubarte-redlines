@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Free Word Redline Tool — Compare Two .docx in Your Browser | Jubarte</title>
+<meta name="description" content="Compare two Word documents and get a real tracked-changes redline. Five free, no account. Runs in your browser — your documents never leave your machine." />
+<!-- All four domains serve this page; the canonical consolidates them onto one
+     host so search engines don't split signals across duplicates. -->
+<link rel="canonical" href="https://redlines.free/" />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#FAFAF8" />
+
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Jubarte" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:url" content="https://redlines.free/" />
+<meta property="og:title" content="Drop two Word documents. Get a perfect redline." />
+<meta property="og:description" content="Real Word tracked changes, five free, no account. Runs in your browser — your documents never leave your machine." />
+<meta property="og:image" content="https://redlines.free/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Jubarte — drop two Word documents, get a perfect redline. Five free redlines. Nothing is uploaded." />
+
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Drop two Word documents. Get a perfect redline." />
+<meta name="twitter:description" content="Real Word tracked changes, five free, no account. Runs in your browser — your documents never leave your machine." />
+<meta name="twitter:image" content="https://redlines.free/og.png" />
+
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/styles.css" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebApplication",
+      "@id": "https://redlines.free/#app",
+      "name": "Jubarte",
+      "url": "https://redlines.free/",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Any (web browser)",
+      "browserRequirements": "Requires WebAssembly and JavaScript",
+      "description": "Compares two Microsoft Word .docx documents and produces a real tracked-changes redline, entirely in the browser.",
+      "featureList": [
+        "Word tracked changes (insertions, deletions, moves, format changes)",
+        "Runs locally in the browser — documents are never uploaded",
+        "Five free redlines, no account required"
+      ],
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "description": "Five free redlines, no account required"
+      },
+      "publisher": { "@id": "https://redlines.free/#org" }
+    },
+    {
+      "@type": "Organization",
+      "@id": "https://redlines.free/#org",
+      "name": "Jandira Technologies, LLC",
+      "url": "https://jubarte.pro/",
+      "email": "support@jubarte.pro"
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://redlines.free/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Are my documents uploaded to a server?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. The comparison engine is WebAssembly that runs inside the page, on your own device. Your documents are read by JavaScript in your browser and are never sent to us or to any third party."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What do I get back?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "A .docx file with genuine Word tracked revisions — insertions, deletions, moves and formatting changes — that Microsoft Word can accept, reject, and filter by author."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How much does it cost?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The first five redlines are free, with no account and no card. After that, get in touch at contact@arthur.law."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="/">JUBARTE<span class="dot">.</span>REDLINE<span class="dot">.</span>ENGINE</a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#how">How it works</a>
+      <!-- ABOUT leaves the app entirely: the Worker 302s to arthur.law. -->
+      <a href="/about">About</a>
+      <a class="nav-contact" href="#contact">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <div class="wrap">
+      <p class="eyebrow reveal d1">DOCX<span class="sep">·</span>TRACKED CHANGES<span class="sep">·</span>IN YOUR BROWSER</p>
+      <h1 class="reveal d2">Drop two Word documents. Get a <span class="mark">perfect redline</span>.</h1>
+      <p class="lede reveal d3">
+        Jubarte compares two <code>.docx</code> files and produces a real Word redline —
+        insertions, deletions, moves and format changes — that opens clean in Microsoft
+        Word. The comparison runs as WebAssembly inside this page, so your documents never
+        leave your machine.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= CONSOLE ================= -->
+  <section class="console-sec reveal d4" id="app">
+    <div class="wrap">
+      <div class="meter" id="meter" hidden>
+        <span class="meter-label">Free redlines</span>
+        <span class="pips" id="pips" aria-hidden="true"></span>
+        <span class="meter-count" id="meter-count"></span>
+      </div>
+
+      <div class="zones">
+        <div class="dropzone" id="zone-original" data-slot="original" tabindex="0" role="button"
+             aria-label="Original document — drop a .docx or press Enter to browse">
+          <span class="stripe" aria-hidden="true"></span>
+          <span class="zone-eyebrow">Original</span>
+          <svg class="docglyph" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="currentColor" opacity=".16" />
+            <path d="M15 2v5h5" fill="none" stroke="currentColor" stroke-width="1.4" />
+            <path d="M8.5 13h7M8.5 16.5h7M8.5 9.5H12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+          </svg>
+          <div class="fileinfo">
+            <div class="filename">Drop a .docx<br /><em>or click to browse</em></div>
+            <div class="filemeta"></div>
+          </div>
+        </div>
+
+        <button class="swap" id="swap" title="Swap original ↔ modified" aria-label="Swap documents">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M8 3 4 7l4 4" /><path d="M4 7h16" /><path d="m16 21 4-4-4-4" /><path d="M20 17H4" />
+          </svg>
+        </button>
+
+        <div class="dropzone" id="zone-modified" data-slot="modified" tabindex="0" role="button"
+             aria-label="Modified document — drop a .docx or press Enter to browse">
+          <span class="stripe" aria-hidden="true"></span>
+          <span class="zone-eyebrow">Modified</span>
+          <svg class="docglyph" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="currentColor" opacity=".16" />
+            <path d="M15 2v5h5" fill="none" stroke="currentColor" stroke-width="1.4" />
+            <path d="M8.5 13h7M8.5 16.5h4.5M8.5 9.5H12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            <path d="m14.5 17.5 5-5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity=".6" />
+          </svg>
+          <div class="fileinfo">
+            <div class="filename">Drop a .docx<br /><em>or click to browse</em></div>
+            <div class="filemeta"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <label class="field">
+          <span class="field-label">Revisions by</span>
+          <input id="author" type="text" spellcheck="false" placeholder="Jubarte" value="Jubarte" />
+        </label>
+        <button class="btn btn-primary" id="run" disabled>
+          <span class="label">Create redline</span> <span class="arr">→</span>
+        </button>
+      </div>
+
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+
+      <div class="result" id="result" hidden>
+        <div class="result-head">
+          <svg class="ok" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="2" y="2" width="20" height="20" fill="currentColor" opacity=".12" />
+            <path d="m7 12.5 3 3 6-6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <div class="result-title">
+            <strong id="outname">redline.docx</strong>
+            <span class="submeta" id="outmeta"></span>
+          </div>
+        </div>
+        <div class="chips" id="chips"></div>
+        <a class="btn btn-ghost" id="download" download>Download redline <span class="arr">↓</span></a>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap"><div class="divider"></div></div>
+
+  <!-- ================= HOW IT WORKS ================= -->
+  <section id="how">
+    <div class="wrap">
+      <p class="sec-label"><span class="sq"></span> / HOW IT WORKS</p>
+      <div class="offers">
+        <div class="offer">
+          <span class="num">01</span>
+          <h3>Nothing is uploaded</h3>
+          <p>The comparison engine is the same Rust core that ships in the desktop app, compiled to WebAssembly and run inside this tab. Your documents are read by JavaScript in your own browser and never sent to a server — <a href="/privacy">the privacy policy says so in writing</a>.</p>
+          <p class="shape">Local · WebAssembly</p>
+        </div>
+        <div class="offer">
+          <span class="num">02</span>
+          <h3>A real Word redline</h3>
+          <p>Not a diff view or a PDF overlay. You get a .docx with genuine tracked revisions that Word can accept, reject, and filter by author — insertions, deletions, moves and formatting changes alike.</p>
+          <p class="shape">OOXML · tracked changes</p>
+        </div>
+        <div class="offer">
+          <span class="num">03</span>
+          <h3>Five on the house</h3>
+          <p>The first five redlines are free, with no account and no card. After that, get in touch — most people who arrive here have a recurring document problem worth a conversation rather than a subscription.</p>
+          <p class="shape">Then · Contact</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap"><div class="divider"></div></div>
+
+  <!-- ================= FAQ ================= -->
+  <!-- Mirrors the FAQPage JSON-LD in <head> verbatim. If you edit one, edit the
+       other — schema that describes content the page doesn't show is a quality
+       problem, not a ranking trick. -->
+  <section id="faq">
+    <div class="wrap">
+      <p class="sec-label"><span class="sq"></span> / QUESTIONS</p>
+      <div class="faq">
+        <div class="faq-item">
+          <h3>Are my documents uploaded to a server?</h3>
+          <p>No. The comparison engine is WebAssembly that runs inside the page, on your own device. Your documents are read by JavaScript in your browser and are never sent to us or to any third party.</p>
+        </div>
+        <div class="faq-item">
+          <h3>What do I get back?</h3>
+          <p>A .docx file with genuine Word tracked revisions — insertions, deletions, moves and formatting changes — that Microsoft Word can accept, reject, and filter by author.</p>
+        </div>
+        <div class="faq-item">
+          <h3>How much does it cost?</h3>
+          <p>The first five redlines are free, with no account and no card. After that, get in touch at <a href="mailto:contact@arthur.law">contact@arthur.law</a>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CONTACT / PAYWALL ================= -->
+  <!-- Doubles as the paywall: app.js sets .is-wall and scrolls here once the
+       allowance is spent. Same markup either way — no second component to keep
+       in sync, and the section stays reachable from the nav at any time. -->
+  <section class="contact" id="contact">
+    <div class="wrap">
+      <p class="sec-label"><span class="sq"></span> / <span id="contact-label">CONTACT</span></p>
+      <h2 id="contact-head">Let's get rid of <span class="mark">that problem nobody wants to solve.</span></h2>
+      <p id="contact-body">
+        Best fit for: technology companies, legal departments, law firms, founders, and
+        legal-tech teams dealing with contracts, privacy, governance, AI adoption, legal
+        operations, or cross-border US/Brazil work.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" id="contact-cta" href="mailto:contact@arthur.law?subject=Jubarte%20redlines">Contact <span class="arr">→</span></a>
+        <a class="btn btn-ghost" href="/about">About <span class="arr">→</span></a>
+      </div>
+      <p class="email">Or write directly: <a href="mailto:contact@arthur.law">contact@arthur.law</a></p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-top">
+      <span class="c">© MMXXVI Jandira Technologies · New York · São Paulo</span>
+      <div class="foot-social">
+        <a href="/privacy">PRIVACY</a>
+        <a href="/terms">TERMS</a>
+        <a href="/about">ARTHUR.LAW</a>
+        <a href="https://github.com/arthrod">GH</a>
+      </div>
+    </div>
+    <p class="disclaimer">
+      <strong>Attorney advertising.</strong> This page is for general informational purposes
+      and does not create an attorney-client relationship. Jubarte is provided as-is; verify
+      every redline before relying on it. Prior results do not guarantee a similar outcome.
+    </p>
+  </div>
+</footer>
+
+<input type="file" id="picker" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden />
+<script type="module" src="/app.js"></script>
+</body>
+</html>

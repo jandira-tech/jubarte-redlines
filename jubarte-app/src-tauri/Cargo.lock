@@ -1743,12 +1743,13 @@ dependencies = [
 
 [[package]]
 name = "jubarte-app"
-version = "0.2.0"
+version = "0.6.0"
 dependencies = [
  "jubarte",
  "quick-xml 0.40.1",
  "serde",
  "serde_json",
+ "swift-rs",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

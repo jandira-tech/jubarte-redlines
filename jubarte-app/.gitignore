@@ -1,6 +1,45 @@
+# ── Dependencies & build outputs ──────────────────────────────────────────
 node_modules/
+dist/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
 src-tauri/target/
 src-tauri/gen/schemas/
+src-tauri/storekit/.build/
+src-tauri/storekit/.swiftpm/
+src-tauri/storekit/**/*.o
+src-tauri/storekit/**/*.a
+
+# Generated art (sources are assets/*.svg; regenerate with `bun run icons`)
 assets/whale-check.png
 assets/icon-1024.png
+
+# ── Secrets & Apple credentials — NEVER commit ────────────────────────────
+.env
+.env.*
+!.env.example
+*.p8
+*.p12
+*.pem
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+**/AuthKey_*.p8
+.asc_client.py
+.make_jwt.sh
+src-tauri/embedded.provisionprofile
+
+# ── OS / editor / local agent scratch ─────────────────────────────────────
 .DS_Store
+.idea/
+*.swp
+*.swo
+*~
+.claude/
+.crush/
+.omo/
+_scratch/

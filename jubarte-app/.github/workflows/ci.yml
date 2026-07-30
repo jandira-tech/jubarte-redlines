@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# The app depends on the AGPL engine via a path relative to the monorepo layout:
+#   jubarte-rs/jubarte-app/src-tauri  →  jubarte = { path = "../.." }
+# CI recreates that layout by checking out both private repos nested.
+jobs:
+  rust:
+    name: fmt + clippy + check + test
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: engine/jubarte-app/src-tauri
+    steps:
+      - name: Checkout engine (jubarte-rs)
+        uses: actions/checkout@v4
+        with:
+          repository: arthrod/jubarte-rs
+          path: engine
+          persist-credentials: false
+          # Fine-grained PAT with Contents: Read on arthrod/jubarte-rs
+          # (secret JUBARTE_RS_TOKEN). Falls back to github.token when the
+          # workflow is allowed to read that private repo.
+          token: ${{ secrets.JUBARTE_RS_TOKEN || github.token }}
+
+      - name: Checkout app into engine/jubarte-app
+        uses: actions/checkout@v4
+        with:
+          path: engine/jubarte-app
+          persist-credentials: false
+
+      - name: Rust toolchain (MSRV from Cargo.toml)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine/jubarte-app/src-tauri -> target
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+      # correctness is deny in Cargo.toml; style/perf stay warn until cleaned up.
+      - name: clippy
+        run: cargo clippy --all-targets -- -D clippy::correctness
+
+      - name: check
+        run: cargo check --all-targets
+
+      - name: test
+        run: cargo test --all-targets
+
+      - name: line coverage ≥ 80% (business logic)
+        # Tauri shell (`main.rs`) and StoreKit FFI wrappers need a real App Store
+        # context; gate the pure free-quota module which carries the money path.
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov --locked --version 0.8.7 || true
+          cargo llvm-cov --fail-under-lines 80 \
+            --ignore-filename-regex 'main\.rs|storekit\.rs' \
+            --summary-only
+
+  frontend:
+    name: frontend lockfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.19"
+      - name: Install (frozen lockfile)
+        run: bun install --frozen-lockfile
+      - name: Package scripts present
+        run: |
+          test -f package.json
+          test -f src/index.html
+          test -f src-tauri/tauri.conf.json

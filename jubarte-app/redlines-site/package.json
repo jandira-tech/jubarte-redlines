@@ -1,0 +1,32 @@
+{
+  "name": "redlines-site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "bun run sync-wasm && wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "cf-typegen": "wrangler types",
+    "sync-wasm": "bun scripts/sync-wasm.mjs",
+    "render-og": "node scripts/render-og.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply jubarte-redlines-quota --local",
+    "db:migrate:remote": "wrangler d1 migrations apply jubarte-redlines-quota --remote"
+  },
+  "dependencies": {
+    "hono": "^4.12.30"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
+    "@cloudflare/vitest-pool-workers": "^0.18.4",
+    "@cloudflare/workers-types": "^5.20260714.1",
+    "@resvg/resvg-js": "^2.6.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.110.0"
+  }
+}

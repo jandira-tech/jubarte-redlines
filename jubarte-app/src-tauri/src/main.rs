@@ -7,6 +7,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod quota;
+mod storekit;
+
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -75,7 +78,12 @@ fn stat_files(paths: Vec<String>) -> Vec<FileInfo> {
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
-            Some(FileInfo { path: p, name, size: meta.len(), modified_ms })
+            Some(FileInfo {
+                path: p,
+                name,
+                size: meta.len(),
+                modified_ms,
+            })
         })
         .collect()
 }
@@ -140,7 +148,11 @@ fn author_from_core_xml(xml: &str) -> Option<String> {
                     .xml10_content()
                     .map(|c| c.into_owned())
                     .unwrap_or_else(|_| String::from_utf8_lossy(t.as_ref()).into_owned());
-                if cur == 1 { creator.push_str(&text) } else { last_mod.push_str(&text) }
+                if cur == 1 {
+                    creator.push_str(&text)
+                } else {
+                    last_mod.push_str(&text)
+                }
             }
             // 0.40 surfaces entities as their own event between text chunks.
             Ok(Event::GeneralRef(r)) if cur != 0 => {
@@ -157,7 +169,11 @@ fn author_from_core_xml(xml: &str) -> Option<String> {
                     },
                 };
                 if let Some(c) = resolved {
-                    if cur == 1 { creator.push(c) } else { last_mod.push(c) }
+                    if cur == 1 {
+                        creator.push(c)
+                    } else {
+                        last_mod.push(c)
+                    }
                 }
             }
             Ok(Event::Eof) => break,
@@ -180,16 +196,52 @@ fn take_pending_files(state: tauri::State<'_, PendingFiles>) -> Vec<String> {
 
 #[tauri::command]
 async fn create_redline(
+    app: tauri::AppHandle,
     original: String,
     modified: String,
     author: String,
     filename: Option<String>,
 ) -> Result<RedlineOutcome, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    // Free-tier gate: reserve a free slot *before* the compare (under the
+    // quota mutex) so concurrent redlines cannot all slip through at the
+    // FREE_LIMIT - 1 boundary. Entitled users skip the free pool entirely.
+    let entitled = storekit::is_entitled_for_gate().await;
+    let reserved_free = if entitled {
+        false
+    } else if quota::try_reserve_free_use(&app) {
+        true
+    } else {
+        return Err(quota::FREE_LIMIT_ERR.to_string());
+    };
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
         run_compare(&original, &modified, &author, filename.as_deref())
     })
     .await
-    .map_err(|_| "The comparison crashed — this document pair may hit an engine bug.".to_string())?
+    .map_err(|_| {
+        "The comparison crashed — this document pair may hit an engine bug.".to_string()
+    });
+    match outcome {
+        Ok(Ok(outcome)) => {
+            // Free-tier already counted via try_reserve; entitled path still
+            // bumps the badge counter for UX continuity.
+            if entitled {
+                quota::record_use(&app);
+            }
+            Ok(outcome)
+        }
+        Ok(Err(e)) => {
+            if reserved_free {
+                quota::release_free_use(&app);
+            }
+            Err(e)
+        }
+        Err(e) => {
+            if reserved_free {
+                quota::release_free_use(&app);
+            }
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
@@ -211,7 +263,9 @@ fn reveal_path(path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn save_copy(src: String, dest: String) -> Result<(), String> {
-    std::fs::copy(&src, &dest).map(|_| ()).map_err(|e| e.to_string())
+    std::fs::copy(&src, &dest)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn open_with(args: &[&str]) -> Result<(), String> {
@@ -233,9 +287,13 @@ fn open_with(args: &[&str]) -> Result<(), String> {
         c.args(args);
         c
     };
-    cmd.status()
-        .map_err(|e| e.to_string())
-        .and_then(|s| if s.success() { Ok(()) } else { Err("could not open".into()) })
+    cmd.status().map_err(|e| e.to_string()).and_then(|s| {
+        if s.success() {
+            Ok(())
+        } else {
+            Err("could not open".into())
+        }
+    })
 }
 
 fn run_compare(
@@ -245,11 +303,14 @@ fn run_compare(
     filename: Option<&str>,
 ) -> Result<RedlineOutcome, String> {
     let t0 = std::time::Instant::now();
-    let orig = std::fs::read(original)
-        .map_err(|e| format!("Could not read the original ({e})"))?;
+    let orig = std::fs::read(original).map_err(|e| format!("Could not read the original ({e})"))?;
     let modif = std::fs::read(modified)
         .map_err(|e| format!("Could not read the modified document ({e})"))?;
-    let author = if author.trim().is_empty() { "Jubarte" } else { author.trim() };
+    let author = if author.trim().is_empty() {
+        "Jubarte"
+    } else {
+        author.trim()
+    };
 
     let redline = document_comparer::compare_documents(&orig, &modif, author)
         .map_err(|e| format!("Comparison failed: {e}"))?;
@@ -368,7 +429,7 @@ fn unique_named_output_path(original: &str, name: &str) -> String {
 fn parse_preview(xml: &str) -> (Vec<PreviewParagraph>, bool) {
     use quick_xml::events::{BytesStart, Event};
 
-    fn attr_author(e: &BytesStart) -> Option<String> {
+    fn attr_author(e: &BytesStart<'_>) -> Option<String> {
         e.try_get_attribute("w:author")
             .ok()
             .flatten()
@@ -386,10 +447,10 @@ fn parse_preview(xml: &str) -> (Vec<PreviewParagraph>, bool) {
     let mut truncated = false;
 
     let push_text = |runs: &mut Vec<PreviewRun>,
-                         kind: &'static str,
-                         author: Option<String>,
-                         text: &str,
-                         total_chars: &mut usize| {
+                     kind: &'static str,
+                     author: Option<String>,
+                     text: &str,
+                     total_chars: &mut usize| {
         *total_chars += text.len();
         if let Some(last) = runs.last_mut()
             && last.kind == kind
@@ -398,7 +459,11 @@ fn parse_preview(xml: &str) -> (Vec<PreviewParagraph>, bool) {
             last.text.push_str(text);
             return;
         }
-        runs.push(PreviewRun { kind, text: text.to_string(), author });
+        runs.push(PreviewRun {
+            kind,
+            text: text.to_string(),
+            author,
+        });
     };
 
     loop {
@@ -455,7 +520,9 @@ fn parse_preview(xml: &str) -> (Vec<PreviewParagraph>, bool) {
                 }
                 b"r" => run_d -= 1,
                 b"t" | b"delText" => in_text = false,
-                b"p" => paragraphs.push(PreviewParagraph { runs: std::mem::take(&mut runs) }),
+                b"p" => paragraphs.push(PreviewParagraph {
+                    runs: std::mem::take(&mut runs),
+                }),
                 _ => {}
             },
             Ok(Event::Empty(e)) if run_d > 0 => match e.local_name().as_ref() {
@@ -508,6 +575,12 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(PendingFiles(Mutex::new(initial_docx_args())))
+        .setup(|app| {
+            // Handle renewals / out-of-band transactions for the whole session.
+            storekit::start_transaction_listener();
+            quota::init(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             stat_files,
             default_author,
@@ -517,6 +590,11 @@ fn main() {
             open_path,
             reveal_path,
             save_copy,
+            quota::quota_status,
+            storekit::storekit_fetch_products,
+            storekit::storekit_purchase,
+            storekit::storekit_current_entitlement,
+            storekit::storekit_restore,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Jubarte")
@@ -554,7 +632,9 @@ mod tests {
 
     #[test]
     fn prefers_creator_over_last_modified_by() {
-        let xml = core("<dc:creator>Jamie Coppin</dc:creator><cp:lastModifiedBy>Joshua Jenkins</cp:lastModifiedBy>");
+        let xml = core(
+            "<dc:creator>Jamie Coppin</dc:creator><cp:lastModifiedBy>Joshua Jenkins</cp:lastModifiedBy>",
+        );
         assert_eq!(author_from_core_xml(&xml).as_deref(), Some("Jamie Coppin"));
     }
 
@@ -562,37 +642,54 @@ mod tests {
     fn falls_back_to_last_modified_by_when_creator_empty() {
         // Real-world shape: dc:creator is a system name that was cleared, the
         // human is in lastModifiedBy.
-        let xml = core("<dc:creator></dc:creator><cp:lastModifiedBy>Michelle Champagne</cp:lastModifiedBy>");
-        assert_eq!(author_from_core_xml(&xml).as_deref(), Some("Michelle Champagne"));
+        let xml = core(
+            "<dc:creator></dc:creator><cp:lastModifiedBy>Michelle Champagne</cp:lastModifiedBy>",
+        );
+        assert_eq!(
+            author_from_core_xml(&xml).as_deref(),
+            Some("Michelle Champagne")
+        );
     }
 
     #[test]
     fn falls_back_when_creator_is_only_whitespace() {
-        let xml = core("<dc:creator>   </dc:creator><cp:lastModifiedBy>K. Nguyen</cp:lastModifiedBy>");
+        let xml =
+            core("<dc:creator>   </dc:creator><cp:lastModifiedBy>K. Nguyen</cp:lastModifiedBy>");
         assert_eq!(author_from_core_xml(&xml).as_deref(), Some("K. Nguyen"));
     }
 
     #[test]
     fn returns_none_when_both_missing_or_empty() {
-        assert_eq!(author_from_core_xml(&core("<dc:creator></dc:creator>")), None);
+        assert_eq!(
+            author_from_core_xml(&core("<dc:creator></dc:creator>")),
+            None
+        );
         assert_eq!(author_from_core_xml(&core("")), None);
     }
 
     #[test]
     fn decodes_entities_in_a_name() {
         let xml = core("<dc:creator>Ben &amp; Jerry &lt;legal&gt;</dc:creator>");
-        assert_eq!(author_from_core_xml(&xml).as_deref(), Some("Ben & Jerry <legal>"));
+        assert_eq!(
+            author_from_core_xml(&xml).as_deref(),
+            Some("Ben & Jerry <legal>")
+        );
     }
 
     #[test]
     fn trims_surrounding_whitespace() {
         let xml = core("<dc:creator>  Arthur Rodrigues  </dc:creator>");
-        assert_eq!(author_from_core_xml(&xml).as_deref(), Some("Arthur Rodrigues"));
+        assert_eq!(
+            author_from_core_xml(&xml).as_deref(),
+            Some("Arthur Rodrigues")
+        );
     }
 
     #[test]
     fn ignores_unrelated_docx_metadata() {
-        let xml = core("<dc:title>Master Services Agreement</dc:title><dc:subject>none</dc:subject><cp:keywords>a b c</cp:keywords><dc:creator>Acme Counsel</dc:creator>");
+        let xml = core(
+            "<dc:title>Master Services Agreement</dc:title><dc:subject>none</dc:subject><cp:keywords>a b c</cp:keywords><dc:creator>Acme Counsel</dc:creator>",
+        );
         assert_eq!(author_from_core_xml(&xml).as_deref(), Some("Acme Counsel"));
     }
 }

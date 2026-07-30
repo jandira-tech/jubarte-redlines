@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "jubarte-site",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "workers_dev": true,
+  // A route (not a custom_domain) layers on top of the existing proxied A record
+  // Cloudflare imported from Porkbun (jubarte.pro -> parking IP): the route
+  // intercepts the request at the edge and serves this worker, so the parking
+  // origin is never contacted. Needs only the workers_routes permission. (The
+  // stale parking A record can be tidied up in the dashboard later; harmless.)
+  "routes": [
+    { "pattern": "jubarte.pro/*", "zone_name": "jubarte.pro" }
+  ],
+  "observability": { "enabled": true }
+}

@@ -1,0 +1,20 @@
+node_modules/
+.wrangler/
+dist/
+
+# Wrangler-generated binding types (`bun run cf-typegen`).
+worker-configuration.d.ts
+
+# Secrets — never commit.
+.env
+.dev.vars
+.dev.vars.*
+
+# NOTE: public/vendor/jubarte_wasm* is deliberately NOT ignored.
+#
+# It is build output, which normally would be — but the crate it is built from
+# (jubarte-wasm) lives in the parent jubarte-redlines checkout, not in this
+# repository. Ignoring it would leave a fresh clone of jubarte-app unable to
+# build or deploy the site at all. Committed, the folder is self-contained.
+# Refresh it with `bun run sync-wasm` from inside a full jubarte-redlines
+# checkout, and commit the result alongside whatever engine change caused it.

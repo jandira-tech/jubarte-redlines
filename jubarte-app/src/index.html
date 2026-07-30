@@ -24,7 +24,7 @@
   <div class="appbar" data-tauri-drag-region>
     <span class="appbar-gutter" aria-hidden="true"></span>
     <span class="appbar-title">JUBARTE · REDLINE ENGINE</span>
-    <span class="appbar-ver" id="appbar-ver">v0.2.0</span>
+    <span class="appbar-ver" id="appbar-ver">v0.6.0</span>
   </div>
 
   <div class="cols">
@@ -109,6 +109,10 @@
           <button class="btn ghost" id="save-copy" disabled>Save a copy…</button>
         </div>
 
+        <!-- Free-tier badge: paywall.js fills & reveals it while unsubscribed;
+             clicking it opens the subscribe sheet. -->
+        <button class="freeleft" id="free-left" hidden></button>
+
         <label class="field" id="filename-field">
           <span class="field-label">File name</span>
           <input id="filename" type="text" spellcheck="false" placeholder="redline.docx" />
@@ -158,6 +162,51 @@
 
   <div class="toasts" id="toasts"></div>
 
+  <!-- Subscription paywall. Hidden by default; paywall.js reveals it on launch
+       when there's no active entitlement, and hides it once subscribed. -->
+  <div class="paywall" id="paywall" role="dialog" aria-modal="true" aria-labelledby="pw-title" tabindex="-1" hidden>
+    <div class="paywall-card">
+      <svg class="pw-whale" viewBox="0 0 560 360" fill="none" aria-hidden="true">
+        <g transform="rotate(-5 280 200)">
+          <path d="M 76 192 C 82 172 112 156 150 146 C 196 132 258 112 310 110 C 356 108 402 118 448 148 C 458 152 464 150 470 144 C 478 128 494 106 520 92 C 512 112 508 126 502 134 C 514 140 526 148 540 160 C 520 164 498 160 480 162 C 470 164 460 166 452 166 C 420 190 382 228 328 252 C 270 278 194 286 148 268 C 114 254 88 230 81 208 C 76 198 74 194 76 192 Z" fill="#25628F" />
+          <path d="M 208 228 C 246 240 286 268 322 298 C 334 308 338 320 330 326 C 296 326 254 306 226 280 C 206 260 200 240 208 228 Z" fill="#8FB8CE" />
+          <circle cx="122" cy="196" r="5" fill="#0B1E2D" />
+        </g>
+      </svg>
+      <h2 class="paywall-title" id="pw-title">Unlock Jubarte</h2>
+      <p class="paywall-sub" id="pw-sub">Unlimited tracked-changes redlines that open cleanly in Microsoft Word.</p>
+
+      <div class="paywall-price">
+        <span class="pw-amount" id="pw-price">$99.99</span>
+        <span class="pw-period" id="pw-period">per year</span>
+      </div>
+
+      <p class="paywall-terms" id="pw-terms">
+        Jubarte Pro Yearly is an auto-renewable subscription billed $99.99 per year. It
+        renews automatically unless cancelled at least 24 hours before the end of the
+        current period. Manage or cancel anytime in System Settings → Apple ID →
+        Subscriptions.
+      </p>
+
+      <div class="paywall-actions">
+        <button type="button" class="btn cta" id="pw-subscribe">
+          Subscribe · <span id="pw-cta-price">$99.99/yr</span>
+        </button>
+        <button type="button" class="btn ghost" id="pw-restore">Restore purchase</button>
+        <button type="button" class="btn ghost" id="pw-later" hidden>Not now — keep using free redlines</button>
+      </div>
+
+      <p class="paywall-status" id="paywall-status" hidden></p>
+
+      <p class="paywall-legal">
+        <a href="#" id="pw-terms-link">Terms of Use (EULA)</a>
+        <span aria-hidden="true">·</span>
+        <a href="#" id="pw-privacy-link">Privacy Policy</a>
+      </p>
+    </div>
+  </div>
+
   <script src="app.js"></script>
+  <script type="module" src="paywall.js"></script>
 </body>
 </html>
