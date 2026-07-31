@@ -14,7 +14,7 @@
 
 [package]
 name = "jubarte-app"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 rust-version = "1.88"
 publish = false
@@ -39,7 +39,7 @@ quick-xml = "0.40"
 # Path to the enclosing engine checkout when this repo is the `jubarte-app`
 # submodule of arthrod/jubarte-rs. Once `jubarte` is on crates.io, prefer:
 #   jubarte = { version = "0.x", default-features = false }
-jubarte = { path = "../..", default-features = false }
+jubarte = { package = "jubarte-redlines", path = "../..", default-features = false }
 
 # Runtime FFI glue to the Swift StoreKit 2 helper (Mac App Store builds only).
 [target.'cfg(target_os = "macos")'.dependencies]

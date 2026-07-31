@@ -8,6 +8,25 @@ features bump the **minor**, fixes bump the **patch**).
 See [README → Versioning & release](README.md#versioning--release) for how to cut
 a new version.
 
+## [0.6.1] — 2026-07-30
+
+### Fixed
+- **The app could not be built at all.** The engine crate was renamed
+  `jubarte` → `jubarte-redlines` in the engine repo's v0.5.1 release, but
+  `src-tauri/Cargo.toml` still required a package literally named `jubarte`, so
+  every build died with `no matching package named 'jubarte' found`. The path
+  dependency now renames explicitly
+  (`jubarte = { package = "jubarte-redlines", path = "../.." }`), which keeps
+  the `use jubarte::…` imports in `main.rs` unchanged.
+
+### Submission
+- Resubmission of 0.6.0's feature set after App Review rejection
+  (submission `35ab86d9`, 2026-07-28) under guidelines 2.1(b) and 3.1.2(c).
+  Both causes were App Store Connect metadata, not app code:
+  the "Jubarte Pro Yearly" In-App Purchase was never attached to the review
+  submission, and the App Description carried no Terms of Use (EULA) link.
+  No user-facing behaviour changed in this version.
+
 ## [0.6.0] — 2026-07-21
 
 ### Added
