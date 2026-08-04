@@ -595,6 +595,455 @@ fn cascade_normal_change_to_based_styles(
     changed
 }
 
+// ---------------------------------------------------------------------------
+// Workstream S — style-chain resolution.
+// ---------------------------------------------------------------------------
+
+/// A `w:basedOn` chain longer than this is treated as malformed and truncated.
+/// Word's own limit on style inheritance depth is well below it; the cap only
+/// exists so a pathological stylesheet cannot make resolution quadratic.
+const MAX_STYLE_CHAIN_DEPTH: usize = 32;
+
+/// `w:style` child order (wml.xsd `CT_Style` sequence). A `w:pPr` or `w:rPr`
+/// materialized on a table style must land before `w:tblPr`/`w:trPr`/`w:tcPr`,
+/// not at the end — appending produced `TableGrid` with `tblPr` before `rPr`,
+/// which the OOXML validator rejects.
+const STYLE_CHILD_ORDER: &[&str] = &[
+    "name",
+    "aliases",
+    "basedOn",
+    "next",
+    "link",
+    "autoRedefine",
+    "hidden",
+    "uiPriority",
+    "semiHidden",
+    "unhideWhenUsed",
+    "qFormat",
+    "locked",
+    "personal",
+    "personalCompose",
+    "personalReply",
+    "rsid",
+    "pPr",
+    "rPr",
+    "tblPr",
+    "trPr",
+    "tcPr",
+    "tblStylePr",
+];
+
+/// Insert `child` under `parent` at the position `order` gives its `local`
+/// name: immediately before the first existing child that sorts after it, else
+/// appended. Unknown names sort last, so they never displace a known one.
+fn insert_child_by_rank(
+    dom: &mut Dom,
+    parent: NodeId,
+    child: NodeId,
+    local: &str,
+    rank_of: &dyn Fn(&str) -> usize,
+) {
+    let new_rank = rank_of(local);
+    let successor = dom.elements(parent, None).into_iter().find(|&e| {
+        dom.name(e)
+            .is_some_and(|n| rank_of(n.local_name()) > new_rank)
+    });
+    match successor {
+        Some(s) => dom.add_before_self(s, child),
+        None => dom.add(parent, child),
+    }
+}
+
+/// Rank of a `w:style` child in [`STYLE_CHILD_ORDER`].
+fn style_child_rank(local: &str) -> usize {
+    STYLE_CHILD_ORDER
+        .iter()
+        .position(|&n| n == local)
+        .unwrap_or(usize::MAX)
+}
+
+/// Rank of a `w:pPr` child in [`crate::comparer::order_tables::PPR_ORDER`].
+fn ppr_child_rank(local: &str) -> usize {
+    crate::comparer::order_tables::PPR_ORDER
+        .iter()
+        .find(|(n, _)| *n == local)
+        .map(|(_, r)| *r as usize)
+        .unwrap_or(usize::MAX)
+}
+
+/// Children of a style's `w:pPr`/`w:rPr` that are not formatting: revision
+/// records, section properties, and revision-save ids.
+fn is_style_prop_noise(name: &crate::xmllinq::XName) -> bool {
+    matches!(
+        name.local_name(),
+        "pPrChange" | "rPrChange" | "sectPr" | "sectPrChange" | "rsid"
+    )
+}
+
+/// Order-independent signature of one formatting element: expanded name, its
+/// non-`rsid` attributes sorted by name, then its children's signatures in
+/// document order (child order carries meaning inside `w:tabs`, `w:pBdr`, …).
+fn style_prop_signature(dom: &Dom, node: NodeId) -> String {
+    let Some(n) = dom.name(node) else {
+        return String::new();
+    };
+    let mut out = n.clark();
+    let mut attrs: Vec<(String, String)> = dom
+        .attributes(node)
+        .into_iter()
+        .filter(|(a, _)| {
+            !a.local_name().to_ascii_lowercase().starts_with("rsid")
+                && !dom.is_namespace_declaration(a)
+        })
+        .map(|(a, v)| (a.clark(), v))
+        .collect();
+    attrs.sort();
+    for (a, v) in attrs {
+        out.push('\u{1}');
+        out.push_str(&a);
+        out.push('=');
+        out.push_str(&v);
+    }
+    for c in dom.elements(node, None) {
+        out.push('\u{2}');
+        out.push_str(&style_prop_signature(dom, c));
+    }
+    out
+}
+
+/// Signature of a style's DECLARED `w:pPr`/`w:rPr` block: the formatting
+/// children it writes itself, ignoring everything it inherits. Empty string
+/// when the block is absent or holds only noise.
+fn declared_props_signature(dom: &Dom, style: NodeId, local: &str) -> String {
+    let Some(block) = dom.element(style, &W::name(local)) else {
+        return String::new();
+    };
+    let mut parts: Vec<String> = Vec::new();
+    for c in dom.elements(block, None) {
+        let Some(n) = dom.name(c) else { continue };
+        if is_style_prop_noise(&n) {
+            continue;
+        }
+        parts.push(style_prop_signature(dom, c));
+    }
+    parts.sort();
+    parts.join("\u{3}")
+}
+
+/// Property elements whose ATTRIBUTES are independent inherited values: a link
+/// in the chain that sets some of them leaves the rest inherited instead of
+/// replacing the element wholesale.
+///
+/// `w:rFonts` is the one that decides real documents. Oracle evidence
+/// (`Hello_docx_world × multi_image_types`): A's `Heading3Char` writes
+/// `asciiTheme="minorHAnsi" hAnsiTheme="minorHAnsi"` and B's omits both, and
+/// Word records **no change** on any of `Heading3Char`..`Heading9Char` —
+/// because omitting them inherits exactly `minorHAnsi` from `docDefaults`.
+/// Comparing the element whole marks all seven as changed. `w:lang` behaves the
+/// same way (`val` / `eastAsia` / `bidi` are separate slots).
+///
+/// The same per-attribute rule is already relied on by
+/// [`effective_normal_rpr_metrics`] for the footer-metric cascade.
+const ATTR_MERGED_PROPS: &[&str] = &["rFonts", "lang"];
+
+/// `w:rFonts` attribute pairs that are alternatives for one typeface slot:
+/// naming either clears the other, so a nearer link that switches a slot to an
+/// explicit face must not leave the farther link's theme reference standing.
+const RFONTS_ALTERNATIVE_SLOTS: [[&str; 2]; 4] = [
+    ["ascii", "asciiTheme"],
+    ["hAnsi", "hAnsiTheme"],
+    ["eastAsia", "eastAsiaTheme"],
+    ["cs", "cstheme"],
+];
+
+/// A style's EFFECTIVE `w:pPr`/`w:rPr`, resolved the way Word resolves a style
+/// chain: `w:docDefaults` first, then each `w:basedOn` ancestor from the root of
+/// the chain downwards, then the style's own declared properties. Keyed by
+/// element name so a nearer link overrides a farther one, except for
+/// [`ATTR_MERGED_PROPS`], which merge attribute-by-attribute.
+fn effective_style_props(
+    dom: &Dom,
+    styles_root: NodeId,
+    by_id: &std::collections::HashMap<String, NodeId>,
+    style: NodeId,
+    local: &str,
+    default_local: &str,
+) -> std::collections::BTreeMap<String, String> {
+    // Walk basedOn to the root of the chain, guarding against cycles.
+    let mut chain: Vec<NodeId> = Vec::new();
+    let mut seen: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+    let mut cur = Some(style);
+    while let Some(s) = cur {
+        if !seen.insert(s) || chain.len() >= MAX_STYLE_CHAIN_DEPTH {
+            break;
+        }
+        chain.push(s);
+        cur = dom
+            .element(s, &W::name("basedOn"))
+            .and_then(|b| dom.attribute(b, &W::val()))
+            .and_then(|v| by_id.get(v).copied());
+    }
+    chain.reverse();
+
+    type Props = std::collections::BTreeMap<String, String>;
+    type Slots = std::collections::BTreeMap<String, Props>;
+    let mut props: Props = Props::new();
+    let mut slots: Slots = Slots::new();
+
+    let absorb = |props: &mut Props, slots: &mut Slots, block: NodeId| {
+        for c in dom.elements(block, None) {
+            let Some(n) = dom.name(c) else { continue };
+            if is_style_prop_noise(&n) {
+                continue;
+            }
+            if !ATTR_MERGED_PROPS.contains(&n.local_name()) {
+                props.insert(n.clark(), style_prop_signature(dom, c));
+                continue;
+            }
+            let slot = slots.entry(n.clark()).or_default();
+            for (a, v) in dom.attributes(c) {
+                if a.local_name().to_ascii_lowercase().starts_with("rsid")
+                    || dom.is_namespace_declaration(&a)
+                {
+                    continue;
+                }
+                if n.local_name() == "rFonts" {
+                    for pair in RFONTS_ALTERNATIVE_SLOTS {
+                        if pair.contains(&a.local_name()) {
+                            // Slots are keyed by EXPANDED name; the alternative
+                            // shares this attribute's namespace.
+                            for other in pair {
+                                slot.remove(&a.namespace().name(other).clark());
+                            }
+                        }
+                    }
+                }
+                slot.insert(a.clark(), v);
+            }
+        }
+    };
+    if let Some(dd) = dom
+        .element(styles_root, &W::name("docDefaults"))
+        .and_then(|d| dom.element(d, &W::name(default_local)))
+        .and_then(|d| dom.element(d, &W::name(local)))
+    {
+        absorb(&mut props, &mut slots, dd);
+    }
+    for s in chain {
+        if let Some(block) = dom.element(s, &W::name(local)) {
+            absorb(&mut props, &mut slots, block);
+        }
+    }
+    for (name, attrs) in slots {
+        let sig = attrs
+            .into_iter()
+            .map(|(a, v)| format!("{a}={v}"))
+            .collect::<Vec<_>>()
+            .join("\u{1}");
+        props.insert(name, sig);
+    }
+    props
+}
+
+/// The key a style is matched across the two stylesheets by: `(type, name)`,
+/// falling back to the styleId when the style carries no `w:name`.
+///
+/// Matching on the NAME rather than the id is what makes this survive
+/// [`canonicalize_style_ids`], which has already rewritten the output's ids
+/// (`SD_StrikeChar` → `SDStrikeChar`) while the revised package still holds the
+/// originals. The canonical id is a pure function of the name, so equal names
+/// are exactly the styles that canonicalization would have unified.
+fn style_match_key(dom: &Dom, style: NodeId) -> Option<(String, String)> {
+    let ty = dom
+        .attribute(style, &W::name("type"))
+        .unwrap_or("paragraph")
+        .to_string();
+    let key = dom
+        .element(style, &W::name("name"))
+        .and_then(|n| dom.attribute(n, &W::val()))
+        .map(|v| v.to_ascii_lowercase())
+        .or_else(|| {
+            dom.attribute(style, &W::name("styleId"))
+                .map(|v| v.to_ascii_lowercase())
+        })?;
+    Some((ty, key))
+}
+
+/// Wrap `old` (a `w:pPr`/`w:rPr` clone) in a `w:pPrChange`/`w:rPrChange` record
+/// and append it to `block`, which is where CT_PPr / CT_RPr put it.
+fn append_style_change_record(
+    dom: &mut Dom,
+    styles_root: NodeId,
+    block: NodeId,
+    old: NodeId,
+    change_local: &str,
+    settings: &WmlComparerSettings,
+) {
+    let chg = dom.new_element(W::name(change_local));
+    let id = next_free_revision_id(dom, styles_root);
+    dom.set_attribute_value(chg, &W::name("id"), Some(&id.to_string()));
+    dom.set_attribute_value(
+        chg,
+        &W::name("author"),
+        Some(&settings.author_for_revisions),
+    );
+    dom.set_attribute_value(
+        chg,
+        &W::name("date"),
+        Some(&settings.date_time_for_revisions),
+    );
+    dom.add(chg, old);
+    dom.add(block, chg);
+}
+
+/// Workstream S — adopt the REVISED document's definition of every style both
+/// documents define, recording the ORIGINAL definition on the `w:style` itself.
+///
+/// Word's Compare stylesheet resolves the style chain on both sides and, where
+/// a style resolves differently, writes B's declared properties live with A's
+/// inside a `w:pPrChange` / `w:rPrChange` on the `w:style` element. Oracle
+/// evidence (`two_column_two_page × vrect_node`): 18 styles marked, `Title`
+/// live at B's `sz=56` with A's `sz=52 color=17365D` in `w:rPrChange` and A's
+/// `pBdr` + `after=300` in `w:pPrChange`. Over the 564 corpus pairs that have a
+/// Word oracle, 52.5% of the oracle stylesheets carry style-level change
+/// markup.
+///
+/// [`crate::comparer::footnotes::copy_missing_styles`] is keyed on
+/// `(type, styleId)` and skips an id already present whatever its body, so
+/// before this pass the output kept **A's** definition and recorded nothing:
+/// content on both sides rendered with the original's fonts, sizes and borders
+/// and the change was invisible. 136 of 597 corpus pairs carry at least one
+/// such live collision; they score a mean 59.7 against 79.4 for the pairs
+/// without one.
+///
+/// Two guards keep this from manufacturing empty change records:
+/// - the EFFECTIVE properties must differ (so a stylesheet reaching the same
+///   result through `basedOn` is not marked), and
+/// - the DECLARED properties must differ (so a difference that actually lives
+///   in an ancestor is recorded on that ancestor, once, and not restated on
+///   every style below it).
+///
+/// `Normal` is excluded — it is owned by [`merge_normal_style_spacing`] /
+/// [`merge_normal_style_rpr`], whose rules are calibrated against a separate
+/// body of oracle evidence. Styles already carrying change markup are left
+/// alone, which is also what lets [`cascade_normal_change_to_based_styles`]
+/// (M111) keep acting as the fallback for styles this pass does not touch.
+fn merge_revised_style_definitions(
+    dom: &mut Dom,
+    out_root: NodeId,
+    b_root: NodeId,
+    settings: &WmlComparerSettings,
+) -> bool {
+    let style_nm = W::name("style");
+    let style_id = W::name("styleId");
+    let normal_out = find_normal_style(dom, out_root);
+    let normal_b = find_normal_style(dom, b_root);
+
+    let index_by_id = |dom: &Dom, root: NodeId| -> std::collections::HashMap<String, NodeId> {
+        dom.elements(root, Some(&style_nm))
+            .into_iter()
+            .filter_map(|s| Some((dom.attribute(s, &style_id)?.to_string(), s)))
+            .collect()
+    };
+    let out_by_id = index_by_id(dom, out_root);
+    let b_by_id = index_by_id(dom, b_root);
+
+    let mut b_by_key: std::collections::HashMap<(String, String), NodeId> =
+        std::collections::HashMap::new();
+    for s in dom.elements(b_root, Some(&style_nm)) {
+        if let Some(k) = style_match_key(dom, s) {
+            b_by_key.entry(k).or_insert(s);
+        }
+    }
+
+    let mut changed = false;
+    for style in dom.elements(out_root, Some(&style_nm)) {
+        if Some(style) == normal_out {
+            continue;
+        }
+        let Some(key) = style_match_key(dom, style) else {
+            continue;
+        };
+        let Some(&b_style) = b_by_key.get(&key) else {
+            continue;
+        };
+        if Some(b_style) == normal_b {
+            continue;
+        }
+        for (local, default_local, change_local) in [
+            ("pPr", "pPrDefault", "pPrChange"),
+            ("rPr", "rPrDefault", "rPrChange"),
+        ] {
+            let a_declared = declared_props_signature(dom, style, local);
+            let b_declared = declared_props_signature(dom, b_style, local);
+            if a_declared == b_declared {
+                continue;
+            }
+            let a_eff =
+                effective_style_props(dom, out_root, &out_by_id, style, local, default_local);
+            let b_eff = effective_style_props(dom, b_root, &b_by_id, b_style, local, default_local);
+            if a_eff == b_eff {
+                continue;
+            }
+            // Already tracked (an inbound stylesheet with pending redline, or an
+            // earlier pass) — do not stack a second record on the same block.
+            if dom
+                .element(style, &W::name(local))
+                .is_some_and(|blk| dom.element(blk, &W::name(change_local)).is_some())
+            {
+                continue;
+            }
+
+            // Old = A's declared block, change history stripped: the inner pPr
+            // of a pPrChange is CT_PPrBase and may not itself carry one.
+            let old = match dom.element(style, &W::name(local)) {
+                Some(blk) => {
+                    let clone = dom.clone_subtree(blk);
+                    for c in dom.descendants(clone, Some(&W::name(change_local))) {
+                        dom.remove(c);
+                    }
+                    clone
+                }
+                None => dom.new_element(W::name(local)),
+            };
+
+            // Live = B's declared block. Materialize A's when absent, keeping
+            // CT_Style order (pPr precedes rPr).
+            let block = match dom.element(style, &W::name(local)) {
+                Some(blk) => {
+                    let stale: Vec<NodeId> = dom
+                        .elements(blk, None)
+                        .into_iter()
+                        .filter(|&c| dom.name(c).is_none_or(|n| !is_style_prop_noise(&n)))
+                        .collect();
+                    for c in stale {
+                        dom.remove(c);
+                    }
+                    blk
+                }
+                None => {
+                    let blk = dom.new_element(W::name(local));
+                    insert_child_by_rank(dom, style, blk, local, &style_child_rank);
+                    blk
+                }
+            };
+            if let Some(b_block) = dom.element(b_style, &W::name(local)) {
+                for c in dom.elements(b_block, None) {
+                    let Some(n) = dom.name(c) else { continue };
+                    if is_style_prop_noise(&n) {
+                        continue;
+                    }
+                    let clone = dom.clone_subtree(c);
+                    dom.add(block, clone);
+                }
+            }
+            append_style_change_record(dom, out_root, block, old, change_local, settings);
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// M79 — Word-mode single-line normalization on paragraph styles.
 ///
 /// Word Compare writes `line=240 lineRule=auto` onto Heading/Title/ListParagraph
@@ -691,12 +1140,10 @@ fn normalize_word_paragraph_style_line(dom: &mut Dom, styles_root: NodeId) -> bo
             dom.set_attribute_value(sp, &W::name("after"), Some("0"));
             dom.set_attribute_value(sp, &W::name("line"), Some("240"));
             dom.set_attribute_value(sp, &W::name("lineRule"), Some("auto"));
-            // spacing first in pPr (before pPrChange if any)
-            if let Some(chg) = dom.element(ppr, &W::name("pPrChange")) {
-                dom.add_before_self(chg, sp);
-            } else {
-                dom.add_first(ppr, sp);
-            }
+            // CT_PPrBase order, not "first" and not "just before pPrChange":
+            // once workstream S puts B's declared `ind`/`contextualSpacing` on
+            // ListParagraph, both of those land spacing after its successors.
+            insert_child_by_rank(dom, ppr, sp, "spacing", &ppr_child_rank);
             changed = true;
         }
     }
@@ -2729,7 +3176,12 @@ fn compare_documents_impl(
         let od = sd.parse_xdocument(&out_xml);
         let bd = sd.parse_xdocument(&b_xml);
         if let (Some(or), Some(br)) = (sd.root(od), sd.root(bd)) {
-            let mut changed = merge_normal_style_spacing(&mut sd, or, br, settings);
+            // Workstream S runs FIRST, while the output stylesheet still holds
+            // A's definitions: `merge_normal_style_*` below rewrites Normal to
+            // B's values, and every style based on Normal would then resolve its
+            // "original" chain against the already-revised Normal.
+            let mut changed = merge_revised_style_definitions(&mut sd, or, br, settings);
+            changed |= merge_normal_style_spacing(&mut sd, or, br, settings);
             // M-PAG mechanism 2b / M71: rewrite Normal rPr to B's effective
             // metrics when they differ. Formerly gated on header/footer→Normal
             // (footer knife-edge). That skipped file_197 (no HF): Word writes
