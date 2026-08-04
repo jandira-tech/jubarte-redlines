@@ -4066,6 +4066,12 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
                 ("between", 50),
                 ("bar", 60),
             ],
+            // Not a PowerTools table — C# has no numPr container, so a source
+            // writing numId before ilvl was copied through and rejected by the
+            // validator (Sch_UnexpectedElementContentExpectingComplex on
+            // w:ilvl). CT_NumPr sequence; kept in sync with
+            // order_tables::NUMPR_ORDER by tests/schema_consistency.rs.
+            "numPr" => crate::comparer::order_tables::NUMPR_ORDER,
             _ => &[],
         };
         table
@@ -4082,6 +4088,7 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
         "tcBorders",
         "tblBorders",
         "pBdr",
+        "numPr",
     ];
     for el in dom.descendants_and_self(root, None) {
         let Some(name) = dom.name(el) else { continue };

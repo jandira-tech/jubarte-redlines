@@ -968,18 +968,14 @@ fn reconstruct_element(
                 strip_change(dom, old_clone, "tblGridChange");
                 if dom.serialize_element(old_clone) != dom.serialize_element(new_grid) {
                     let change = dom.new_element(W::name("tblGridChange"));
+                    // w:id ONLY. CT_TblGridChange is the one revision-history
+                    // element that does not extend CT_TrackChange, so it
+                    // declares neither w:author nor w:date — unlike the
+                    // tblPrChange directly above, which does. Copying that
+                    // block wholesale made the validator report
+                    // Sch_UndeclaredAttribute on both.
                     dom.set_attribute_value(change, &W::id(), Some(&id_gen.to_string()));
                     *id_gen += 1;
-                    dom.set_attribute_value(
-                        change,
-                        &W::author(),
-                        Some(&settings.author_for_revisions),
-                    );
-                    dom.set_attribute_value(
-                        change,
-                        &W::date(),
-                        Some(&settings.date_time_for_revisions),
-                    );
                     dom.add(change, old_clone);
                     dom.add(new_grid, change);
                 } else {
