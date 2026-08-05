@@ -1850,12 +1850,25 @@ pub fn do_lcs_algorithm(
     // last para shreds on "and". Word does whole-sentence del/ins. Multi-para
     // windows (font_size × green_bold) may legitimately stitch on "text" —
     // leave those alone (require pmarks==1).
+    // Sides may carry table ROWS in flattened windows (diff_after6×7:
+    // L[w×9] R[w×35+3R] — the ['.', pMark] anchor survived because the
+    // pure-word-sides requirement skipped the gate entirely). The RUN must
+    // still be pure Words; the single-paragraph GLUE arm below keeps the
+    // pure-word-sides requirement via its own pmarks conditions.
+    let sides_pure_words = cul1.iter().all(|c| matches!(c, ComparisonUnit::Word(_)))
+        && cul2.iter().all(|c| matches!(c, ComparisonUnit::Word(_)));
+    let sides_words_or_rows = cul1.iter().all(|c| match c {
+        ComparisonUnit::Word(_) => true,
+        ComparisonUnit::Group(g) => g.group_type == ComparisonUnitGroupType::Row,
+    }) && cul2.iter().all(|c| match c {
+        ComparisonUnit::Word(_) => true,
+        ComparisonUnit::Group(g) => g.group_type == ComparisonUnitGroupType::Row,
+    });
     if settings.merge_replaced_paragraphs
         && len > 0
         && len <= 3
         && !is_only_paragraph_mark
-        && cul1.iter().all(|c| matches!(c, ComparisonUnit::Word(_)))
-        && cul2.iter().all(|c| matches!(c, ComparisonUnit::Word(_)))
+        && sides_words_or_rows
         && cul1[i1..i1 + len]
             .iter()
             .all(|c| matches!(c, ComparisonUnit::Word(_)))
@@ -1891,7 +1904,7 @@ pub fn do_lcs_algorithm(
                 inter / (t1.len().min(t2.len()) as f64) + 1e-12 < 0.08
             }
         };
-        if (pmarks1 == 1 && pmarks2 == 1) || multi_para_unrelated {
+        if (sides_pure_words && pmarks1 == 1 && pmarks2 == 1) || multi_para_unrelated {
             let mut alpha = String::new();
             for u in &cul1[i1..i1 + len] {
                 for a in u.descendant_atoms() {
@@ -2227,6 +2240,19 @@ fn step_h(
         };
         let lg = crate::util::group_adjacent(cul1.iter().cloned(), |u| key(u));
         let rg = crate::util::group_adjacent(cul2.iter().cloned(), |u| key(u));
+        if std::env::var("JUBARTE_TRACE").is_ok() {
+            let toks = |units: &[ComparisonUnit]| -> Vec<String> {
+                let raw = para_text_tokens_from_units(dom, units);
+                significant_tokens(&raw).into_iter().take(8).collect()
+            };
+            let lgs: Vec<String> = lg.iter().map(|g| format!("{}:{}", g.0, g.1.len())).collect();
+            let rgs: Vec<String> = rg.iter().map(|g| format!("{}:{}", g.0, g.1.len())).collect();
+            eprintln!("H1seam lg=[{}] rg=[{}]", lgs.join(","), rgs.join(","));
+            if lg.len() == 1 {
+                let all: Vec<ComparisonUnit> = rg.iter().flat_map(|g| g.1.iter().cloned()).collect();
+                eprintln!("H1seam t1={:?} t2={:?}", toks(&lg[0].1), toks(&all));
+            }
+        }
         let group_textless = |dom: &Dom, units: &[ComparisonUnit]| -> bool {
             units.iter().all(|u| {
                 u.descendant_atoms().iter().all(|a| {
