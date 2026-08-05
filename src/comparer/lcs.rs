@@ -1908,7 +1908,13 @@ pub fn do_lcs_algorithm(
                 "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it",
                 "of", "on", "or", "the", "to", "with", "text",
             ];
-            if GLUE.contains(&alpha.as_str()) {
+            // UNREL-GLUE extension (diff_after6×diff_after7, 48.1): a run
+            // with NO alphabetic content at all — e.g. ['.', pMark], which
+            // Step F keeps because the pPr atom is not a w:t — is never a
+            // Word anchor in an UNRELATED window (the pMark pivot in
+            // related/single-para windows is untouched: this arm requires
+            // multi_para_unrelated).
+            if GLUE.contains(&alpha.as_str()) || (multi_para_unrelated && alpha.is_empty()) {
                 len = 0;
             }
         }
