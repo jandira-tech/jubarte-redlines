@@ -110,15 +110,6 @@ fn docdefaults_ppr_spacing(dom: &Dom, styles_root: NodeId) -> Option<(String, St
     Some((get("after"), get("line"), get("lineRule")))
 }
 
-/// Word's factory-default Normal spacing when B is empty and A had *stored*
-/// Normal spacing to rewrite (GT sd-2517_sectpr-headerref / m37).
-const FACTORY_NORMAL_SPACING: (&str, &str, &str) = ("160", "278", "auto");
-
-/// When both Normals store no spacing but A still has an effective cascade
-/// (docDefaults and/or a non-spacing Normal pPr), Word rewrites Normal to
-/// single-line after=0 line=240 (file_77_file_78, file_33_file_34). Distinct
-/// from [`FACTORY_NORMAL_SPACING`] — using 160/278 here leaves LO at +2 pages.
-const EMPTY_B_SINGLE_LINE_NORMAL: (&str, &str, &str) = ("0", "240", "auto");
 /// Revision record element local names that carry a `w:id` identifying the
 /// change. Word treats a colliding id on any of these as the same revision
 /// record and drops the later one, so a newly synthesized `w:*Change` must not
@@ -198,21 +189,6 @@ fn merge_normal_style_spacing(
             Some((a, l, r))
         }
     };
-    // Full cascade for B: stored → docDefaults → `fallback` factory.
-    let b_cascade =
-        |dom: &Dom, styles_root: NodeId, style: Option<NodeId>, fallback: (&str, &str, &str)| {
-            if let Some(s) = stored(dom, style) {
-                return s;
-            }
-            if let Some(s) = dd_val(dom, styles_root) {
-                return s;
-            }
-            (
-                fallback.0.to_string(),
-                fallback.1.to_string(),
-                fallback.2.to_string(),
-            )
-        };
     let a_stored = stored(dom, Some(a_style));
     let b_style = find_normal_style(dom, b_root);
     let b_stored = stored(dom, b_style);
@@ -243,44 +219,71 @@ fn merge_normal_style_spacing(
     ) && b_structured
         && !a_structured;
 
-    let b_target: Option<(String, String, String)> = match (&a_stored, &b_stored) {
-        (None, None) => match (&a_dd, &b_dd) {
-            // file_8: identical dd both sides → leave Normal empty — unless
-            // M106 (B structured rPr, A bare) needs Word's empty+pPrChange.
-            (Some(a), Some(b)) if a == b && !m106_same_dd_clear => return false,
-            (Some(_), Some(_)) if m106_same_dd_clear => None,
-            // file_46 / 76 / 198: B Normal has non-spacing pPr (+ differing dd)
-            // → Word writes B's dd. file_19 both bare → leave empty.
-            (Some(_), Some(b)) if b_structured => Some(b.clone()),
-            (Some(_), Some(_)) => return false,
-            // file_34 A-rPr / file_104 A-pPr: promote B dd. file_69 bare → empty.
-            (None, Some(b)) if a_structured => Some(b.clone()),
-            (None, Some(_)) => return false,
-            // file_77 A-pPr / file_33 B-rPr / file_103 B-pPr → 0/240.
-            // file_145 both bare → leave empty (not 0/240).
-            (Some(_), None) if a_structured || b_structured => {
-                let (a, l, r) = EMPTY_B_SINGLE_LINE_NORMAL;
-                Some((a.to_string(), l.to_string(), r.to_string()))
-            }
-            (Some(_), None) => return false,
-            (None, None) => return false,
-        },
-        // A empty, B stored: target B's stored values only.
-        (None, Some(b)) => Some(b.clone()),
-        // A stored, B empty: cascade B. If that cascade equals the package
-        // docDefaults already on the A-based stylesheet, Word CLEARS A's
-        // stored spacing without materializing cascade onto Normal (file_22:
-        // A 0/240 + shared dd 200/276 → empty Normal + pPrChange).
-        (Some(_), None) => {
-            let casc = b_cascade(dom, b_root, b_style, FACTORY_NORMAL_SPACING);
-            if a_dd.as_ref() == Some(&casc) {
-                None // clear explicit spacing
-            } else {
-                Some(casc)
-            }
+    // ── Word's Normal-spacing target (derived 2026-08-04) ────────────────────
+    // The previous case cascade here (stored/dd/factory arms) was fit pair-by-
+    // pair and both over- and under-fired: 44 of 760 corpus pairs carried the
+    // wrong LIVE Normal spacing (e.g. basic_table_shading×basic_tracked_change:
+    // Word live = none, ours = factory 160/278 → global vertical drift).
+    // Rebuilding the truth table from every corpus Word oracle (zero ambiguous
+    // input groups) gives one closed form, verified 751/752:
+    //
+    //   Word rewrites Normal so B's EFFECTIVE spacing survives under the
+    //   OUTPUT stylesheet's (= A's) docDefaults:
+    //     ctx(attr)   = A.docDefaults spacing attr, else app default
+    //                   (after=0, line=240, lineRule=auto)
+    //     b_eff(attr) = B Normal stored attr, else B.docDefaults attr,
+    //                   else app default   — cascade is PER ATTRIBUTE
+    //     target      = { attr where b_eff(attr) != ctx(attr) } over
+    //                   {after, line}; when line is written, lineRule =
+    //                   b_eff(lineRule) rides along; empty target ⇒ clear.
+    //
+    //   The bare+bare gate stays: Word never materializes dd into an
+    //   untouched Normal even when docDefaults differ (file_19/145).
+    //
+    // The per-attribute cascade is what the old arms could not express: Word
+    // mixes sources within one spacing element (B stored line=259 + B dd
+    // after=160 → live after=160 line=259) and OMITS attrs already provided
+    // by A's docDefaults (A dd line=276 == B line → live a0/l- only).
+    // The old FACTORY_NORMAL_SPACING / EMPTY_B_SINGLE_LINE_NORMAL constants
+    // fall out: 0/240 is just b_eff = app defaults under a non-default A dd,
+    // and 160/278 was B's own dd all along on the pairs that motivated it.
+    let raw_a_dd = docdefaults_ppr_spacing(dom, out_root);
+    let raw_b_dd = docdefaults_ppr_spacing(dom, b_root);
+    let raw_b_sp = b_style.and_then(|s| normal_spacing(dom, s));
+    let pick = |raw: &Option<(String, String, String)>, i: usize| -> Option<String> {
+        raw.as_ref().and_then(|t| {
+            let v = match i {
+                0 => &t.0,
+                1 => &t.1,
+                _ => &t.2,
+            };
+            (!v.is_empty()).then(|| v.clone())
+        })
+    };
+    const APP_DEFAULT: [&str; 3] = ["0", "240", "auto"];
+    let ctx = |i: usize| pick(&raw_a_dd, i).unwrap_or_else(|| APP_DEFAULT[i].to_string());
+    let b_eff = |i: usize| {
+        pick(&raw_b_sp, i)
+            .or_else(|| pick(&raw_b_dd, i))
+            .unwrap_or_else(|| APP_DEFAULT[i].to_string())
+    };
+    let b_target: Option<(String, String, String)> = if !a_structured
+        && !b_structured
+        && a_stored.is_none()
+        && b_stored.is_none()
+    {
+        // both Normals bare: Word leaves the style untouched (m106 requires a
+        // structured B, so it cannot land here)
+        return false;
+    } else {
+        let after = if b_eff(0) != ctx(0) { b_eff(0) } else { String::new() };
+        let line = if b_eff(1) != ctx(1) { b_eff(1) } else { String::new() };
+        let rule = if line.is_empty() { String::new() } else { b_eff(2) };
+        if after.is_empty() && line.is_empty() {
+            None
+        } else {
+            Some((after, line, rule))
         }
-        // Both stored: B's stored wins when different.
-        (Some(_), Some(b)) => Some(b.clone()),
     };
     // Identity: A already has the same explicit spacing we would write.
     if let (Some(a), Some(b)) = (&a_stored, &b_target)
@@ -348,13 +351,11 @@ fn merge_normal_style_spacing(
                 s
             }
         };
-        // Word materializes missing `w:after` as "0" when a line metric is
-        // present (file_196: B stores line=276 only → after=0 line=276).
-        let after = if after.is_empty() && !line.is_empty() {
-            "0"
-        } else {
-            after.as_str()
-        };
+        // No after-materialization here: the delta rule already writes an
+        // explicit "0" when B's effective after must override A's docDefaults
+        // (file_196), and Word OMITS after when the context already supplies
+        // it (12 corpus oracles carry line=... with no after attribute).
+        let after = after.as_str();
         let set = |dom: &mut Dom, name: &str, v: &str| {
             dom.set_attribute_value(
                 spacing,

@@ -1906,19 +1906,30 @@ pub fn do_lcs_algorithm(
         len = 0;
     }
 
-    // M-TBL rule 3 (parity/_scratch/table_class_forensics.md): when both sides
-    // of the window hold tables, a common run made ONLY of textless units
-    // (empty paragraphs) is a false anchor — it drags A's table past B's
-    // early tables, so A's table merges with a LATE positional partner while
-    // B's first tables come out as pure insertions. Word merges with the
-    // FIRST same-slot table (GT support-tickets-table_table-bookmark-end:
-    // A's ticket table merges cell-wise with B table 1). Discarding the
-    // anchor falls through to Step H's Table/Para dispatch, which pairs
-    // table runs first-to-first. Word-mode only.
+    // M-TBL rule 3 (parity/_scratch/table_class_forensics.md): when a table is
+    // in play, a common run made ONLY of textless units (empty paragraphs) is
+    // a false anchor — it drags A's table past B's early tables, so A's table
+    // merges with a LATE positional partner while B's first tables come out as
+    // pure insertions. Word merges with the FIRST same-slot table (GT
+    // support-tickets-table_table-bookmark-end: A's ticket table merges
+    // cell-wise with B table 1). Discarding the anchor falls through to Step
+    // H's Table/Para dispatch, which pairs table runs first-to-first.
+    // Word-mode only.
+    //
+    // ONE-sided tables hit the same physics (2026-08-04): when only one side
+    // holds a table, an empty-paragraph anchor splices that table into the
+    // middle of the other side's deleted/inserted run instead of Word's
+    // whole-region replacement (oracle: 227 ins-first contiguous replacements
+    // vs 23 interleaved). sublist_issue×super_basic_table anchored A's interior
+    // empties against B's between-tables empty (49.80 vs lossless 100.00);
+    // basic_table_shading×basic_tracked_change anchored A's trailing empty
+    // against B's first empty, dragging the deleted table ahead of B's
+    // inserted paragraphs. Paragraph-merge pivot windows carry no tables and
+    // are untouched.
     if len > 0
         && settings.merge_replaced_paragraphs
-        && count_gt(&cul1, ComparisonUnitGroupType::Table) > 0
-        && count_gt(&cul2, ComparisonUnitGroupType::Table) > 0
+        && (count_gt(&cul1, ComparisonUnitGroupType::Table) > 0
+            || count_gt(&cul2, ComparisonUnitGroupType::Table) > 0)
         && cul1[i1..i1 + len].iter().all(|u| {
             u.descendant_atoms().iter().all(|a| {
                 dom.name(a.content_element) != Some(W::t())
