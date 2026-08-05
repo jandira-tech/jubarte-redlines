@@ -1609,6 +1609,15 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
         for i in 0..kids.len().saturating_sub(1) {
             let ins_p = kids[i];
             let del_p = kids[i + 1];
+            // The fold target must be a PARAGRAPH: an all-deleted TABLE also
+            // satisfies para_is_pure_deleted's descendant checks, and folding
+            // moved its cell runs into a paragraph and deleted the tbl
+            // element outright (multipara_cell×missing_separator: assembled
+            // [p×5, tbl, p] lost the tbl here; diff_after16×19 lost its
+            // table the same way, 41.6 vs docxodus 100).
+            if dom.name(del_p) != Some(W::p()) {
+                continue;
+            }
             if !para_is_pure_inserted(dom, ins_p) || !para_is_pure_deleted(dom, del_p) {
                 continue;
             }
