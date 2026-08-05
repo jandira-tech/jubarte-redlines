@@ -1763,9 +1763,28 @@ pub fn do_lcs_algorithm(
             let ends_at_pil = |cul: &[ComparisonUnit]| {
                 cul.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu))
             };
+            let xor_single = (pil1.len() == 1) != (pil2.len() == 1);
+            // M×N (both sides multi-paragraph) joins the seam class ONLY on
+            // near-zero TEXT overlap: word hashes include formatting, so a
+            // related revision pair (file_N chains — same words, changed
+            // rPr) hash-jaccards to ~0 and would merge wholesale; comparing
+            // the lowercase text tokens instead keeps those correlated
+            // (two_column_simple×word_native_bullet_circle text-overlap 0,
+    // oracle junction M~ at block 2 — lossless a9e4a33ac shipped the
+            // same class at +831.5 A/B).
+            // Equal paragraph counts take the m45 zip (MIX title | pure-I |
+            // pure-D | MIX last), not the seam — see the fast-path gate.
+            let both_multi = pil1.len() > 1 && pil2.len() > 1 && pil1.len() != pil2.len();
+            if std::env::var("JUB_TRACE").is_ok() {
+                eprintln!(
+                    "[gate2] n1={} n2={} pil1={} pil2={} xor={} multi={} end1={} end2={}",
+                    cul1.len(), cul2.len(), pil1.len(), pil2.len(),
+                    xor_single, both_multi, ends_at_pil(&cul1), ends_at_pil(&cul2)
+                );
+            }
             if !pil1.is_empty()
                 && !pil2.is_empty()
-                && ((pil1.len() == 1) != (pil2.len() == 1))
+                && (xor_single || both_multi)
                 && ends_at_pil(&cul1)
                 && ends_at_pil(&cul2)
             {
@@ -1802,6 +1821,39 @@ pub fn do_lcs_algorithm(
                 };
                 let has_strong_share = shared.iter().any(|(_, lc)| *lc >= 5);
                 let both_compact = e1.len() <= 16 && e2.len() <= 16;
+                let text_tokens = |cul: &[ComparisonUnit]| -> std::collections::HashSet<String> {
+                    cul.iter()
+                        .filter(|cu| !unit_is_single_atom_ppr(dom, cu))
+                        .filter_map(|cu| {
+                            let text: String = cu
+                                .descendant_atoms()
+                                .iter()
+                                .filter(|dca| dom.name(dca.content_element) == Some(W::t()))
+                                .map(|dca| dom.value_str(dca.content_element))
+                                .collect();
+                            let t = text.trim().to_lowercase();
+                            if t.chars().any(|c| c.is_alphanumeric()) {
+                                Some(t)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
+                let text_ok = if both_multi {
+                    let t1 = text_tokens(&cul1);
+                    let t2 = text_tokens(&cul2);
+                    let shared_t = t1.intersection(&t2).count();
+                    let union_t = t1.len() + t2.len() - shared_t;
+                    let tj = if union_t > 0 {
+                        shared_t as f64 / union_t as f64
+                    } else {
+                        0.0
+                    };
+                    tj < 0.2
+                } else {
+                    true
+                };
                 // WHOLESALE gate: the carrier seam is a whole-body
                 // replacement behavior. Both sides of the unknown must start
                 // at their document body's FIRST content block — a residual
@@ -1904,7 +1956,7 @@ pub fn do_lcs_algorithm(
                     && starts_at_body_head(&cul2)
                     && ends_at_body_tail(&cul1)
                     && ends_at_body_tail(&cul2);
-                if jaccard < 0.2 && !(has_strong_share && both_compact) && wholesale {
+                if jaccard < 0.2 && !(has_strong_share && both_compact) && wholesale && text_ok {
                     let split_paras = |cul: &[ComparisonUnit]| -> Vec<Vec<ComparisonUnit>> {
                         let mut paras = Vec::new();
                         let mut cur = Vec::new();
@@ -4712,6 +4764,67 @@ pub fn detect_unrelated_sources_word_mode(
         let mut residual_settings = settings.clone();
         residual_settings.detail_threshold = 0.005;
         return Some(lcs(dom, left, right, &residual_settings));
+    }
+    // Junction seam (mirrors jubarte-first a9e4a33ac, +831.5 lossless A/B):
+    // even between unrelated documents Word merges the LAST inserted
+    // paragraph with the FIRST deleted one into a single mix paragraph when
+    // the inserted junction paragraph carries text (38/52 wholesale oracles
+    // junction-M; the true-pure cases all have an empty junction). Interior
+    // carrier keeps A's mark deleted; a document-final carrier (no A tail)
+    // keeps the mark live via the Equal pilcrow pair.
+    {
+        let is_para_group = |u: &ComparisonUnit| {
+            as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Paragraph)
+        };
+        let ends_pil = |v: &[ComparisonUnit]| {
+            v.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu))
+        };
+        let has_text = |v: &[ComparisonUnit]| {
+            v.iter().any(|cu| {
+                cu.descendant_atoms().iter().any(|dca| {
+                    dom.name(dca.content_element) == Some(W::t())
+                        && !dom.value_str(dca.content_element).trim().is_empty()
+                })
+            })
+        };
+        // Equal-count unrelated pairs take the m45 paragraph zip instead
+        // (Word: MIX title | pure-I B body | pure-D A body | MIX last —
+        // pinned by m45_equal_count_para_zip; the seam shape starved that
+        // post-pass and dropped blue_underline×bold_italic 99.69→70.56).
+        let counts_differ = n1 != n2;
+        if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last()) {
+            if counts_differ && is_para_group(first_a) && is_para_group(last_b) {
+                let carrier_a = group_contents(first_a);
+                let carrier_b = group_contents(last_b);
+                if ends_pil(&carrier_a) && ends_pil(&carrier_b) && has_text(&carrier_b) {
+                    let mut out = Vec::new();
+                    if cu2.len() > 1 {
+                        out.push(CorrelatedSequence::inserted(cu2[..cu2.len() - 1].to_vec()));
+                    }
+                    let b_words = carrier_b[..carrier_b.len() - 1].to_vec();
+                    if !b_words.is_empty() {
+                        out.push(CorrelatedSequence::inserted(b_words));
+                    }
+                    let a_words = carrier_a[..carrier_a.len() - 1].to_vec();
+                    if !a_words.is_empty() {
+                        out.push(CorrelatedSequence::deleted(a_words));
+                    }
+                    if cu1.len() > 1 {
+                        out.push(CorrelatedSequence::deleted(vec![
+                            carrier_a.last().unwrap().clone(),
+                        ]));
+                        out.push(CorrelatedSequence::deleted(cu1[1..].to_vec()));
+                    } else {
+                        out.push(CorrelatedSequence::paired(
+                            CorrelationStatus::Equal,
+                            vec![carrier_a.last().unwrap().clone()],
+                            vec![carrier_b.last().unwrap().clone()],
+                        ));
+                    }
+                    return Some(out);
+                }
+            }
+        }
     }
     Some(vec![
         CorrelatedSequence::inserted(cu2.to_vec()),

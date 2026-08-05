@@ -111,23 +111,37 @@ fn unrelated_wholedoc_replacement_no_mixed_first_para() {
     let out = compare_documents(&a, &b, "C1").expect("compare");
     let kinds = para_kinds(&document_xml(&out));
 
-    // No MIX paragraph that blends Zulu insert vocab with Alpha/Bravo/Charlie del.
-    let bad_mix = kinds.iter().any(|(ins, del, t)| {
-        *ins && *del
-            && t.contains("Zulu")
-            && (t.contains("Alpha") || t.contains("Bravo") || t.contains("Charlie"))
-    });
+    // Word's junction seam (corpus truth table over wholesale-shaped pairs:
+    // 38/52 oracles carry a mix at the junction whenever the inserted
+    // junction paragraph is text-bearing; jubarte-first a9e4a33ac): the
+    // LAST inserted paragraph and the FIRST deleted paragraph share ONE
+    // carrier paragraph. Exactly one such mix, at the junction — never in
+    // B's lead paragraphs.
+    let mix_count = kinds.iter().filter(|(ins, del, _)| *ins && *del).count();
     assert!(
-        !bad_mix,
-        "unrelated whole-doc replacement must not mix first ins+del: {kinds:?}"
+        mix_count <= 1,
+        "at most the junction paragraph mixes ins+del: {kinds:?}"
     );
+    if let Some(pos) = kinds.iter().position(|(ins, del, _)| *ins && *del) {
+        let (_, _, t) = &kinds[pos];
+        assert!(
+            t.contains("Zulu") && t.contains("Alpha"),
+            "the junction mixes B's LAST paragraph with A's FIRST: {kinds:?}"
+        );
+        assert!(
+            kinds[..pos]
+                .iter()
+                .all(|(ins, del, _)| *ins && !*del),
+            "B's lead paragraphs stay pure-ins: {kinds:?}"
+        );
+    }
 
     // Pure ins block for novel content and pure del for base content exist.
     let pure_ins = kinds
         .iter()
         .any(|(ins, del, t)| *ins && !*del && t.contains("Zulu"));
     let pure_del = kinds.iter().any(|(ins, del, t)| {
-        !*ins && *del && (t.contains("Alpha") || t.contains("Bravo") || t.contains("Charlie"))
+        !*ins && *del && (t.contains("Bravo") || t.contains("Charlie"))
     });
     assert!(pure_ins, "expected pure-ins novel block: {kinds:?}");
     assert!(pure_del, "expected pure-del base block: {kinds:?}");
