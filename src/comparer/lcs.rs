@@ -1735,6 +1735,246 @@ pub fn do_lcs_algorithm(
         return out;
     }
 
+    // M-CARRIER (sd_1919_word_simple x diff_after5, 99/400 superdoc oracles):
+    // M-by-1 wholesale replacement. When the unknown is all-Words on both
+    // sides, EXACTLY one side is a single paragraph (one pilcrow), both
+    // streams end at a pilcrow, and content-word jaccard is < 0.2 (with the
+    // compact strong-share rescue), Word rides the replacement into a CARRIER
+    // paragraph: B's last-paragraph words inserted, A's first-paragraph words
+    // deleted, fused by an Equal pilcrow pair; leading B paragraphs stay
+    // pure-ins, trailing A paragraphs pure-del. Mirrors the lossless engine's
+    // M-by-1 arm (jubarte-first WmlComparer.ts, commit ff4d09d67).
+    if settings.merge_replaced_paragraphs {
+        let all_words1 = cul1.iter().all(|c| matches!(c, ComparisonUnit::Word(_)));
+        let all_words2 = cul2.iter().all(|c| matches!(c, ComparisonUnit::Word(_)));
+        if all_words1 && all_words2 {
+            let pil1: Vec<usize> = cul1
+                .iter()
+                .enumerate()
+                .filter(|(_, cu)| unit_is_single_atom_ppr(dom, cu))
+                .map(|(i, _)| i)
+                .collect();
+            let pil2: Vec<usize> = cul2
+                .iter()
+                .enumerate()
+                .filter(|(_, cu)| unit_is_single_atom_ppr(dom, cu))
+                .map(|(i, _)| i)
+                .collect();
+            let ends_at_pil = |cul: &[ComparisonUnit]| {
+                cul.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu))
+            };
+            if !pil1.is_empty()
+                && !pil2.is_empty()
+                && ((pil1.len() == 1) != (pil2.len() == 1))
+                && ends_at_pil(&cul1)
+                && ends_at_pil(&cul2)
+            {
+                let entries = |cul: &[ComparisonUnit]| -> Vec<(String, usize)> {
+                    cul.iter()
+                        .filter(|cu| !unit_is_single_atom_ppr(dom, cu))
+                        .filter_map(|cu| {
+                            let text: String = cu
+                                .descendant_atoms()
+                                .iter()
+                                .filter(|dca| dom.name(dca.content_element) == Some(W::t()))
+                                .map(|dca| dom.value_str(dca.content_element))
+                                .collect();
+                            let letters = text.chars().filter(|c| c.is_alphanumeric()).count();
+                            if letters > 0 {
+                                Some((cu.sha1().to_string(), letters))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
+                let e1 = entries(&cul1);
+                let e2 = entries(&cul2);
+                let h2: std::collections::HashSet<&str> =
+                    e2.iter().map(|(h, _)| h.as_str()).collect();
+                let shared: Vec<&(String, usize)> =
+                    e1.iter().filter(|(h, _)| h2.contains(h.as_str())).collect();
+                let union = e1.len() + e2.len() - shared.len();
+                let jaccard = if union > 0 {
+                    shared.len() as f64 / union as f64
+                } else {
+                    0.0
+                };
+                let has_strong_share = shared.iter().any(|(_, lc)| *lc >= 5);
+                let both_compact = e1.len() <= 16 && e2.len() <= 16;
+                // WHOLESALE gate: the carrier seam is a whole-body
+                // replacement behavior. Both sides of the unknown must start
+                // at their document body's FIRST content block — a residual
+                // unknown pairing A's trailing paragraph with B's leading
+                // paragraphs across Equal-matched middles must NOT merge
+                // (diff_after6 x diff_after7: the arm fused B's block-2 words
+                // with A's block-6 paragraph across two equal tables,
+                // 100.00 -> 51.50; sd_1919 and the 99-seam class all start
+                // at both body heads).
+                let starts_at_body_head = |cul: &[ComparisonUnit]| -> bool {
+                    let body_name = W::name("body");
+                    let p_name = W::name("p");
+                    let tbl_name = W::name("tbl");
+                    let Some(first_cu) = cul.first() else {
+                        return false;
+                    };
+                    let atoms = first_cu.descendant_atoms();
+                    let Some(first_atom) = atoms.first() else {
+                        return false;
+                    };
+                    let mut body_para = None;
+                    for &ae in first_atom.ancestor_elements.iter() {
+                        if dom.name(ae) == Some(p_name.clone()) {
+                            if let Some(par) = dom.parent(ae) {
+                                if dom.name(par) == Some(body_name.clone()) {
+                                    body_para = Some((ae, par));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let Some((para, body)) = body_para else {
+                        return false;
+                    };
+                    for child in dom.elements(body, None) {
+                        let nm = dom.name(child);
+                        if nm == Some(p_name.clone()) || nm == Some(tbl_name.clone()) {
+                            return child == para;
+                        }
+                    }
+                    false
+                };
+                // ...and END at their body's last CONTENT block (trailing
+                // empty paragraphs tolerated): diff_after6 x diff_after7's
+                // unknown covers B's three lead paragraphs but B continues
+                // with two content tables — Word keeps A's deleted paragraph
+                // whole after them instead of merging into a mid-body seam.
+                let ends_at_body_tail = |cul: &[ComparisonUnit]| -> bool {
+                    let body_name = W::name("body");
+                    let p_name = W::name("p");
+                    let t_name = W::t();
+                    let Some(last_cu) = cul.last() else {
+                        return false;
+                    };
+                    let atoms = last_cu.descendant_atoms();
+                    let Some(last_atom) = atoms.last() else {
+                        return false;
+                    };
+                    let mut body_block = None;
+                    for &ae in last_atom.ancestor_elements.iter() {
+                        if let Some(par) = dom.parent(ae) {
+                            if dom.name(par) == Some(body_name.clone()) {
+                                body_block = Some((ae, par));
+                                break;
+                            }
+                        }
+                    }
+                    let Some((block, body)) = body_block else {
+                        return false;
+                    };
+                    let mut seen = false;
+                    for child in dom.elements(body, None) {
+                        if child == block {
+                            seen = true;
+                            continue;
+                        }
+                        if !seen {
+                            continue;
+                        }
+                        let nm = dom.name(child);
+                        if nm != Some(p_name.clone()) {
+                            if nm == Some(W::name("sectPr")) {
+                                continue;
+                            }
+                            return false;
+                        }
+                        let mut has_text = false;
+                        dom.for_each_descendant_element(child, Some(&t_name), |el| {
+                            if !dom.value_str(el).trim().is_empty() {
+                                has_text = true;
+                            }
+                        });
+                        if has_text {
+                            return false;
+                        }
+                    }
+                    true
+                };
+                let wholesale = starts_at_body_head(&cul1)
+                    && starts_at_body_head(&cul2)
+                    && ends_at_body_tail(&cul1)
+                    && ends_at_body_tail(&cul2);
+                if jaccard < 0.2 && !(has_strong_share && both_compact) && wholesale {
+                    let split_paras = |cul: &[ComparisonUnit]| -> Vec<Vec<ComparisonUnit>> {
+                        let mut paras = Vec::new();
+                        let mut cur = Vec::new();
+                        for cu in cul {
+                            cur.push(cu.clone());
+                            if unit_is_single_atom_ppr(dom, cu) {
+                                paras.push(std::mem::take(&mut cur));
+                            }
+                        }
+                        if !cur.is_empty() {
+                            paras.push(cur);
+                        }
+                        paras
+                    };
+                    let paras_a = split_paras(&cul1);
+                    let paras_b = split_paras(&cul2);
+                    let lead_b: Vec<ComparisonUnit> = paras_b[..paras_b.len() - 1]
+                        .iter()
+                        .flat_map(|p| p.iter().cloned())
+                        .collect();
+                    if !lead_b.is_empty() {
+                        out.push(CorrelatedSequence::inserted(lead_b));
+                    }
+                    let carrier_b = paras_b.last().unwrap();
+                    let carrier_a = &paras_a[0];
+                    let b_words: Vec<ComparisonUnit> =
+                        carrier_b[..carrier_b.len() - 1].to_vec();
+                    if !b_words.is_empty() {
+                        out.push(CorrelatedSequence::inserted(b_words));
+                    }
+                    let a_words: Vec<ComparisonUnit> =
+                        carrier_a[..carrier_a.len() - 1].to_vec();
+                    if !a_words.is_empty() {
+                        out.push(CorrelatedSequence::deleted(a_words));
+                    }
+                    // Carrier paragraph mark, split by region position
+                    // (mirrors the lossless engine's RelocateRegionMarkSurvival
+                    // evidence, jubarte-first d44dc0749):
+                    // - INTERIOR carrier (M×1: A paragraphs follow) — A's mark
+                    //   DELETED, A pPr live, B's pMark absorbed (an Equal pair
+                    //   left the pilcrow unmarked: sd_1919 52.73→51.55).
+                    // - DOCUMENT-FINAL carrier (1×N: no A tail) — the region's
+                    //   surviving mark stays LIVE with B's pPr + pPrChange,
+                    //   which the Equal pilcrow pair produces downstream
+                    //   (m148 canonicalizes_numeric_style_ids: B's
+                    //   ListParagraph must survive live in the carrier).
+                    if paras_a.len() > 1 {
+                        out.push(CorrelatedSequence::deleted(vec![
+                            carrier_a.last().unwrap().clone(),
+                        ]));
+                    } else {
+                        out.push(CorrelatedSequence::paired(
+                            CorrelationStatus::Equal,
+                            vec![carrier_a.last().unwrap().clone()],
+                            vec![carrier_b.last().unwrap().clone()],
+                        ));
+                    }
+                    let tail_a: Vec<ComparisonUnit> = paras_a[1..]
+                        .iter()
+                        .flat_map(|p| p.iter().cloned())
+                        .collect();
+                    if !tail_a.is_empty() {
+                        out.push(CorrelatedSequence::deleted(tail_a));
+                    }
+                    return out;
+                }
+            }
+        }
+    }
+
     // Step B — longest common run (Word-mode ranks by non-separator content).
     let (mut i1, mut i2, mut len) = if settings.merge_replaced_paragraphs {
         longest_common_run_with_dom(Some(dom), &cul1, &cul2, Some(settings))
