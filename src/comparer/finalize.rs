@@ -1615,6 +1615,31 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
             if !para_body_text_is_whitespace_only(dom, ins_p) {
                 continue;
             }
+            // A run-less bare empty inserted paragraph is B's STRUCTURE when
+            // more inserted block content follows the deleted run — Word
+            // keeps it as its own inserted paragraph (anchor_images×annot2:
+            // B's two leading empties before an inserted table; folding them
+            // displaced the whole page, 44.1 vs sibling 100.00). When B has
+            // nothing after the dels, the run-less fold IS Word's shape
+            // (file_173_file_174 scored 100.00 with it). Skip the fold only
+            // for run-less empties with following inserted block content.
+            if dom.descendants(ins_p, Some(&W::t())).is_empty() {
+                let mut later_ins = false;
+                let mut seen_del_p = false;
+                for &k2 in &kids {
+                    if k2 == del_p {
+                        seen_del_p = true;
+                        continue;
+                    }
+                    if seen_del_p && !dom.descendants(k2, Some(&W::ins())).is_empty() {
+                        later_ins = true;
+                        break;
+                    }
+                }
+                if later_ins {
+                    continue;
+                }
+            }
             // Need real deleted content (not empty mark-only del).
             if para_body_text_is_whitespace_only(dom, del_p) {
                 continue;

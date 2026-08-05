@@ -2193,10 +2193,33 @@ fn step_h(
         };
         let lg = crate::util::group_adjacent(cul1.iter().cloned(), |u| key(u));
         let rg = crate::util::group_adjacent(cul2.iter().cloned(), |u| key(u));
+        let group_textless = |dom: &Dom, units: &[ComparisonUnit]| -> bool {
+            units.iter().all(|u| {
+                u.descendant_atoms().iter().all(|a| {
+                    dom.name(a.content_element) != Some(W::t())
+                        || dom.value_str(a.content_element).trim().is_empty()
+                })
+            })
+        };
         let (mut il, mut ir) = (0usize, 0usize);
         loop {
             let (before_l, before_r) = (il, ir);
-            if lg[il].0 == rg[ir].0 {
+            // Scope: only SHORT runs of bare paragraph marks (B's structural
+            // empties, ≤3) — larger textless groups keep positional pairing
+            // (meeting_agenda×meeting_minutes was exactly 100.00 with it).
+            let bare_pmarks = |units: &[ComparisonUnit]| -> bool {
+                units.len() <= 3
+                    && units.iter().all(|u| unit_is_single_atom_ppr(dom, u))
+            };
+            if lg[il].0 == "Word"
+                && rg[ir].0 == "Word"
+                && ir == 0
+                && bare_pmarks(&rg[ir].1)
+                && !group_textless(dom, &lg[il].1)
+            {
+                out.push(CorrelatedSequence::inserted(rg[ir].1.clone()));
+                ir += 1;
+            } else if lg[il].0 == rg[ir].0 {
                 out.push(CorrelatedSequence::paired(
                     CorrelationStatus::Unknown,
                     lg[il].1.clone(),
