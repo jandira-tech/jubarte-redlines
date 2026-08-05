@@ -1926,10 +1926,17 @@ pub fn do_lcs_algorithm(
     // against B's first empty, dragging the deleted table ahead of B's
     // inserted paragraphs. Paragraph-merge pivot windows carry no tables and
     // are untouched.
+    // Row groups count too: H4 flattens para+table documents into mixed
+    // word+Row windows, so at anchor time the table is VISIBLE only as its
+    // rows (sublist_issue×super_basic_table traces L[w×23] R[RRwRRw] — the
+    // len=1 pMark anchor there merges B's between-tables empty paragraph
+    // into A's first paragraph instead of Word's pure replacement).
     if len > 0
         && settings.merge_replaced_paragraphs
         && (count_gt(&cul1, ComparisonUnitGroupType::Table) > 0
-            || count_gt(&cul2, ComparisonUnitGroupType::Table) > 0)
+            || count_gt(&cul2, ComparisonUnitGroupType::Table) > 0
+            || count_gt(&cul1, ComparisonUnitGroupType::Row) > 0
+            || count_gt(&cul2, ComparisonUnitGroupType::Row) > 0)
         && cul1[i1..i1 + len].iter().all(|u| {
             u.descendant_atoms().iter().all(|a| {
                 dom.name(a.content_element) != Some(W::t())
