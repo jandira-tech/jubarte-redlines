@@ -834,6 +834,10 @@ pub struct WmlComparerSettings {
     /// `powertools_faithful()` (all off); intermediate combinations are
     /// deliberately not expressible — they have no oracle.
     pub merge_replaced_paragraphs: bool,
+    /// True while resolving stamp-confetti RESIDUAL windows (nested calls
+    /// from `stamp_confetti_then_replace`): their glue-anchor physics are
+    /// corpus-tuned and the UNREL-GLUE void must not fire inside them.
+    pub in_stamp_residual: bool,
 }
 
 /// The word-visual default for [`WmlComparerSettings::detail_threshold`] —
@@ -894,7 +898,8 @@ impl Default for WmlComparerSettings {
             move_minimum_word_count: 6,
             merge_replaced_paragraphs: true,
             detect_format_changes: true,
-        }
+                    in_stamp_residual: false,
+}
     }
 }
 

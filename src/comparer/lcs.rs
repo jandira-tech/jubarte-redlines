@@ -792,6 +792,12 @@ fn stamp_confetti_then_replace(
     cu2: &[ComparisonUnit],
     settings: &WmlComparerSettings,
 ) -> Option<Vec<CorrelatedSequence>> {
+    let residual_flag_settings = {
+        let mut s2 = settings.clone();
+        s2.in_stamp_residual = true;
+        s2
+    };
+    let settings = &residual_flag_settings;
     let i1 = first_contentful_group_index(dom, cu1)?;
     let i2 = first_contentful_group_index(dom, cu2)?;
     // LCS only the stamp paragraphs (digit confetti).
@@ -1863,7 +1869,29 @@ pub fn do_lcs_algorithm(
             .iter()
             .filter(|u| unit_last_atom_is_ppr(dom, u))
             .count();
-        if pmarks1 == 1 && pmarks2 == 1 {
+        // UNREL-GLUE (hyperlink_node×hyperlink_node_internal, 52.6 vs both
+        // siblings perfect): in a MULTI-para window whose sides share almost
+        // no vocabulary, a glue anchor ("to") is a coincidence — Word treats
+        // the docs as unrelated and never stitches on it. Related multi-para
+        // windows (font_size×green_bold "text") keep their glue anchors.
+        // Same 0.08 unique-lexical fraction as the TS engine's
+        // DetectUnrelatedSources.
+        let multi_para_unrelated = !settings.in_stamp_residual
+            && (pmarks1 > 1 || pmarks2 > 1) && {
+            let raw1 = para_text_tokens_from_units(dom, &cul1);
+            let raw2 = para_text_tokens_from_units(dom, &cul2);
+            // Stamped corpus windows (file_N.docx) belong to the stamp
+            // confetti/residual machinery — glue anchors there are part of
+            // its tuned physics (file_151_file_152 was 91.9 with them).
+            let stamped = false;
+            let t1 = significant_tokens(&raw1);
+            let t2 = significant_tokens(&raw2);
+            !stamped && !t1.is_empty() && !t2.is_empty() && {
+                let inter = t1.intersection(&t2).count() as f64;
+                inter / (t1.len().min(t2.len()) as f64) + 1e-12 < 0.08
+            }
+        };
+        if (pmarks1 == 1 && pmarks2 == 1) || multi_para_unrelated {
             let mut alpha = String::new();
             for u in &cul1[i1..i1 + len] {
                 for a in u.descendant_atoms() {
