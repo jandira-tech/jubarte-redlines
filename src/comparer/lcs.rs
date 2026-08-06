@@ -5092,10 +5092,14 @@ pub fn detect_unrelated_sources_word_mode(
         let counts_differ = n1 != n2;
         // M323: both-table pairs must not take the junction seam — Word meshes
         // titles + first-slot tables (H2); seam pure-I/Ds wholesale (MIX=1).
+        // M324: parallel lettered-section demos (rstyle combos) also must not
+        // seam — Word free-meshes line-by-line (MIX≥15); seam pure-I/Ds (~10).
         let both_tables = has_table(cu1) && has_table(cu2);
+        let parallel_sections = parallel_sectioned_demos(dom, cu1, cu2);
         if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last())
             && counts_differ
             && !both_tables
+            && !parallel_sections
             && is_para_group(first_a)
             && is_para_group(last_b)
         {
@@ -5138,6 +5142,21 @@ pub fn detect_unrelated_sources_word_mode(
     // (Free word-LCS+rehash helped color×highlight but regressed
     // highlight×bold into a pure-D then pure-I block — keep full LCS.)
     if parallel_sectioned_demos(dom, cu1, cu2) {
+        // M324: free word-LCS + rehash so A)/B)/C) section lines mesh (Word
+        // ~15–21 MIX on rstyle combos). return None alone still pure-I/Ds via
+        // group LCS with disjoint hashes. Narrow: only when junction seam
+        // would have fired (unequal contentful counts).
+        if n1 != n2 {
+            let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
+            let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
+            if !left.is_empty() && !right.is_empty() {
+                rehash_words_by_text_content(dom, &mut left);
+                rehash_words_by_text_content(dom, &mut right);
+                let mut residual_settings = settings.clone();
+                residual_settings.detail_threshold = 0.005;
+                return Some(lcs(dom, left, right, &residual_settings));
+            }
+        }
         return None;
     }
     // M323 (hyperlink_cases×table_tester ~42.7): both sides table-bearing with
