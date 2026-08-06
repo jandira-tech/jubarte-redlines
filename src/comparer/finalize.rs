@@ -3757,8 +3757,19 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 let del_has_spacing = dom
                     .element(d, &W::p_pr())
                     .is_some_and(|dp| dom.element(dp, &W::name("spacing")).is_some());
-                let adopt_del_ppr =
-                    (del_structural && !ins_structural) || (ins_jc_only && del_has_spacing);
+                // M344 (nda×report ~56→98): pure-I ListNumber reference + pure-D
+                // Heading1 title both structural — old gate kept ListNumber MIX
+                // (pagefair thrash). Word/e3 adopt Deleted Heading1 + del mark.
+                let ins_list_style = dom.element(last_ins, &W::p_pr()).is_some_and(|ip| {
+                    dom.element(ip, &W::name("pStyle")).is_some_and(|ps| {
+                        let v = dom.attribute(ps, &W::val()).unwrap_or("").to_ascii_lowercase();
+                        v.starts_with("list")
+                    })
+                });
+                let del_heading = para_has_heading_or_title_style(dom, d);
+                let adopt_del_ppr = (del_structural && !ins_structural)
+                    || (ins_jc_only && del_has_spacing)
+                    || (del_heading && ins_list_style);
                 // M218: mark-only empty pure-D fold — Word parks the deleted
                 // pilcrow on the pure-I carrier (contract_review MIX + mark_del).
                 // Do not strip to a bare pure-I; adopt the empty del's pPr/rPr/del.
