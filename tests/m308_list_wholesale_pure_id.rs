@@ -205,6 +205,27 @@ fn unrelated_list_wholesale_is_pure_id_not_carrier_mix() {
 }
 
 #[test]
+fn long_numbered_prose_keeps_mix_not_pure_id() {
+    // M308c / Word oracle list_with_indents×lists_sub: long numbered lorem
+    // (list-heavy but NOT short items) must keep MIX carrier on last next
+    // item, not wholesale pure-I/D. Unpacked Word seq=IMDDDD.
+    let long = "The um has been the industry's standard dummy text ever since the 1500s, when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five centuries.";
+    let a = docx_list(&[(long, 0), (long, 0), (long, 0), (long, 0)]);
+    let b = docx_list(&[("Item Sub paragraph sub paragraph", 0), ("Item 2", 0)]);
+    let out = compare_documents_with_settings(&a, &b, &word_settings()).expect("compare");
+    let xml = document_xml(&out);
+    let paras = body_paragraphs(&xml);
+    let item2 = paras
+        .iter()
+        .find(|p| text_of(p).contains("Item 2"))
+        .expect("Item 2 must appear");
+    assert!(
+        has_ins(item2) && has_del(item2),
+        "Word MIX carrier: Item 2 pure-ins fused with long A del; got pure-I/D? {item2}"
+    );
+}
+
+#[test]
 fn plain_demo_x_catalog_still_mixes_body() {
     // Guard: M307 shape must not break when we gate list wholesale pure-I/D.
     // Plain (non-list) 3×2 demo×catalog still wants MIX on the body.

@@ -162,6 +162,37 @@ fn mostly_list_paras(dom: &Dom, paras: &[Vec<ComparisonUnit>]) -> bool {
         .count();
     with_num * 2 >= contentful.len()
 }
+
+/// M308c: Word pure-I/D list wholesale only when contentful items are short
+/// (bullet/number items). Long numbered prose (list_with_indents ~40+ words
+/// per para) keeps Word MIX/carrier (unpacked oracle: IMDDDD), not pure-I/D.
+/// Short-item exhibits: broken_list×multiple_nodes (max ≤4), basic_list (≤5).
+const SHORT_LIST_ITEM_MAX_CONTENT_UNITS: usize = 12;
+
+fn short_item_list_paras(dom: &Dom, paras: &[Vec<ComparisonUnit>]) -> bool {
+    let contentful: Vec<&Vec<ComparisonUnit>> = paras
+        .iter()
+        .filter(|p| p.iter().any(|cu| !unit_is_single_atom_ppr(dom, cu)))
+        .collect();
+    if contentful.is_empty() {
+        return false;
+    }
+    contentful.iter().all(|p| {
+        let n = p
+            .iter()
+            .filter(|cu| !unit_is_single_atom_ppr(dom, cu))
+            .count();
+        n <= SHORT_LIST_ITEM_MAX_CONTENT_UNITS
+    })
+}
+
+fn short_item_list_groups(dom: &Dom, xs: &[&ComparisonUnit]) -> bool {
+    if xs.is_empty() {
+        return false;
+    }
+    xs.iter()
+        .all(|u| para_text_token_list(dom, u).len() <= SHORT_LIST_ITEM_MAX_CONTENT_UNITS)
+}
 fn unit_first_atom_is_ppr(dom: &Dom, u: &ComparisonUnit) -> bool {
     u.descendant_atoms()
         .first()
@@ -2013,18 +2044,20 @@ pub fn do_lcs_algorithm(
                     };
                     let paras_a = split_paras(&cul1);
                     let paras_b = split_paras(&cul2);
-                    // M308 (broken_list × multiple_nodes_in_list ~52):
-                    // both-multi wholesale with zero hash share where BOTH
-                    // sides are list-heavy (numPr on ≥ half of contentful
-                    // paras). Word pure-I all B then pure-D all A; M-CARRIER
-                    // fusion puts B's last list item into a MIX with A's first
-                    // (ins "TWO" + del "Item 1") and LO drops ~45 pts.
-                    // Plain prose demos (bold_underline × book_catalog, M307)
-                    // stay on the carrier path — they are not mostly-list.
+                    // M308c (broken_list × multiple_nodes_in_list):
+                    // both-multi wholesale, zero hash share, BOTH sides
+                    // list-heavy AND short-item. Word pure-I all B then pure-D
+                    // all A (unpacked oracle IIIDDDDDDDDDDE). Long numbered
+                    // prose (list_with_indents, max~42 words) is list-heavy
+                    // but Word keeps MIX carrier (IMDDDD) — do not pure-I/D.
+                    // Plain demos (bold_underline × book_catalog, M307) stay
+                    // on the carrier path — not mostly-list.
                     if shared.is_empty()
                         && both_multi
                         && mostly_list_paras(dom, &paras_a)
                         && mostly_list_paras(dom, &paras_b)
+                        && short_item_list_paras(dom, &paras_a)
+                        && short_item_list_paras(dom, &paras_b)
                     {
                         out.push(CorrelatedSequence::inserted(cul2.to_vec()));
                         out.push(CorrelatedSequence::deleted(cul1.to_vec()));
@@ -3054,7 +3087,15 @@ fn step_h(
                 let n = xs.iter().filter(|u| unit_para_has_numpr(dom, u)).count();
                 n * 2 >= xs.len()
             };
-            if body_j + 1e-12 < 0.12 && mostly(&list_left) && mostly(&list_right) {
+            // M308c: also require short-item lists (see short_item_list_groups).
+            // Unpacked Word: list_with_indents×lists_sub is list-heavy but long
+            // prose → MIX; broken_list short items → pure-I/D.
+            if body_j + 1e-12 < 0.12
+                && mostly(&list_left)
+                && mostly(&list_right)
+                && short_item_list_groups(dom, &list_left)
+                && short_item_list_groups(dom, &list_right)
+            {
                 for u in cul2 {
                     out.push(CorrelatedSequence::inserted(vec![u.clone()]));
                 }
@@ -4691,13 +4732,15 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::deleted(cu1.to_vec()),
         ]);
     }
-    // M308 (broken_list × multiple_nodes ~52): both sides list-heavy
-    // (numPr on ≥ half of contentful paras), unequal contentful counts,
-    // near-zero body text jaccard. Group hashes often collide on list
-    // chrome so `disjoint` is false and classic unrelated never fires;
-    // full LCS then carrier-mixes B's last item with A's first. Word is
-    // pure-I all next then pure-D all base. Plain prose demos stay off
-    // this path (not mostly-list) so M307 MIX body survives.
+    // M308c (broken_list × multiple_nodes): both sides list-heavy short
+    // items, unequal contentful counts, near-zero body text jaccard.
+    // Group hashes often collide on list chrome so `disjoint` is false and
+    // classic unrelated never fires; full LCS then carrier-mixes B's last
+    // item with A's first. Word pure-I all next then pure-D all base
+    // (unpacked oracle IIIDDDDDDDDDDE). Long numbered prose
+    // (list_with_indents, max~42 words) is list-heavy but Word keeps MIX
+    // carrier (IMDDDD) — require short items. Plain demos stay off
+    // (not mostly-list) so M307 MIX body survives.
     if settings.merge_replaced_paragraphs
         && short_n >= 2
         && long_n > short_n
@@ -4708,21 +4751,27 @@ pub fn detect_unrelated_sources_word_mode(
             &para_text_tokens_from_units(dom, cu1),
             &para_text_tokens_from_units(dom, cu2),
         );
-        let mostly_list = |cu: &[ComparisonUnit]| -> bool {
-            let contentful: Vec<&ComparisonUnit> = cu
-                .iter()
-                .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
-                .collect();
-            if contentful.is_empty() {
+        let cl: Vec<&ComparisonUnit> = cu1
+            .iter()
+            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .collect();
+        let cr: Vec<&ComparisonUnit> = cu2
+            .iter()
+            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .collect();
+        let mostly_list = |xs: &[&ComparisonUnit]| -> bool {
+            if xs.is_empty() {
                 return false;
             }
-            let with_num = contentful
-                .iter()
-                .filter(|u| unit_para_has_numpr(dom, u))
-                .count();
-            with_num * 2 >= contentful.len()
+            let with_num = xs.iter().filter(|u| unit_para_has_numpr(dom, u)).count();
+            with_num * 2 >= xs.len()
         };
-        if body_j + 1e-12 < 0.12 && mostly_list(cu1) && mostly_list(cu2) {
+        if body_j + 1e-12 < 0.12
+            && mostly_list(&cl)
+            && mostly_list(&cr)
+            && short_item_list_groups(dom, &cl)
+            && short_item_list_groups(dom, &cr)
+        {
             return Some(vec![
                 CorrelatedSequence::inserted(cu2.to_vec()),
                 CorrelatedSequence::deleted(cu1.to_vec()),
