@@ -139,3 +139,49 @@ fn two_column_x_nested_table_title_pure_i_then_pure_d() {
         "Word shape ~I+150D MIX=0; got I={n_i} D={n_d} MIX={n_m}"
     );
 }
+
+#[test]
+fn broken_list_x_nested_table_title_pure_i_then_pure_d() {
+    // Same M312 gate; base is medium list (contentful ~18 < old n≥20 floor).
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__broken_complex_list_293fda86.docx");
+    let b = src.join("behavior__sd_2672_nested_table_dfac08bb.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: corpus not available at {}", src.display());
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &word_settings(),
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    let paras = body_para_classes(&xml);
+    let first_content = paras
+        .iter()
+        .find(|(_, t)| !t.trim().is_empty())
+        .expect("contentful para");
+    assert_eq!(
+        first_content.0, 'I',
+        "Word pure-I next title; got {:?} text={:?}",
+        first_content.0,
+        &first_content.1[..first_content.1.len().min(80)]
+    );
+    assert!(
+        !first_content.1.contains("ONE") && first_content.0 != 'M',
+        "must not MIX nested-table title with list item: {:?}",
+        &first_content.1[..first_content.1.len().min(100)]
+    );
+    let n_m = paras.iter().filter(|(c, _)| *c == 'M').count();
+    let n_i = paras.iter().filter(|(c, _)| *c == 'I').count();
+    let n_d = paras.iter().filter(|(c, _)| *c == 'D').count();
+    assert!(
+        n_i >= 1 && n_d >= 10 && n_m == 0,
+        "Word IDDD… MIX=0; got I={n_i} D={n_d} MIX={n_m}"
+    );
+}
