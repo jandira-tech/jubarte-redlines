@@ -3187,31 +3187,6 @@ fn should_fold_multi_del_at_document_scale(
         }
     }
 
-    // M314 (comment×restart_list Word IIIIIIIIDDD): multi pure-I are all
-    // 1-token / ≤2-alnum labels (ONE/A/C) + multi pure-D multi-word prose with
-    // zero I×D Jaccard. Absolute gap is often 30–39 (< 40 floor) so C1 still
-    // forced a fold of last "C" into "Python-docx Comment Test". Skip fold.
-    // file_54 short "b"×demo title still folds when any content pure-I is a
-    // longer content line (not all labels) or first pure-D is a short Demo
-    // title with residual relatedness — m139 keeps Line Spacing text either way.
-    if content_inss.len() >= 3 && content_dels.len() >= 2 {
-        let all_label_i = content_inss
-            .iter()
-            .all(|&p| para_body_is_very_short(dom, p) || para_word_atom_count(dom, p) <= 1);
-        let any_content_related = content_inss.iter().any(|&i| {
-            content_dels
-                .iter()
-                .any(|&d| should_fold_ins_del_pair(dom, i, d))
-        });
-        let first_del_words = content_dels
-            .first()
-            .map(|&d| para_word_atom_count(dom, d))
-            .unwrap_or(0);
-        if all_label_i && !any_content_related && first_del_words >= 3 {
-            return false;
-        }
-    }
-
     // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
     if inss.len() < 3 || dels.len() < 3 {
         return true;
@@ -3517,19 +3492,6 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 if sole_del && following_content && !should_fold_ins_del_pair(dom, last_ins, d) {
                     continue;
                 }
-                // M317 (basic_comment×sample): long pure-I next + sole short
-                // pure-D base token ("test"). Word pure-I stream (no MIX);
-                // trailing sole-del always-fold (m44) MIX-ed "test" into the
-                // last sample line. Skip when pure-I run is long, last pure-I
-                // multi-word, sole pure-D is a single token, Jaccard 0.
-                if sole_del
-                    && inss.len() >= 10
-                    && para_word_atom_count(dom, d) <= 1
-                    && para_word_atom_count(dom, last_ins) >= 3
-                    && !should_fold_ins_del_pair(dom, last_ins, d)
-                {
-                    continue;
-                }
                 // C1 / KNOWN ISSUE #2: multi-del boundary fold gated on
                 // document-scale relatedness (unrelated whole-doc replacement
                 // must not mix last pure-I with first pure-D).
@@ -3557,8 +3519,6 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // pure-D (green_underline×heading_1: "First green underlined
                 // item" is 4 tokens — Word folds last pure-I body into it).
                 // Single-token pure-I ("Ouch.") still folds (M89).
-                //
-                // M140 sole pure-I multi-word + short pure-D (2..=3 tokens).
                 if dels.len() > 1 && inss.len() == 1 {
                     let it = para_revision_body_text(dom, last_ins);
                     let dt = para_revision_body_text(dom, d);
@@ -3571,62 +3531,13 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         continue;
                     }
                 }
-                // M316 (support_tickets×table_bookmark_end): multi pure-I next
-                // headers then multi pure-D short **non-Demo** base title
-                // ("Support Tickets"). Word IIIDDD…. Do NOT block M90 Demo
-                // title folds (file_38 "Center Alignment Demo", file_11
-                // "Superscript Demo") — those look like Demo titles.
-                // image_p_spacing×dropcaps: first pure-D may be empty — gate on
-                // first content pure-D ("SOME TITLE") instead of the shell.
-                if dels.len() > 1 && inss.len() >= 2 {
-                    let d_content = dels
-                        .iter()
-                        .copied()
-                        .find(|&p| !para_revision_body_text(dom, p).trim().is_empty())
-                        .unwrap_or(d);
-                    if !para_looks_like_demo_title(dom, d_content) {
-                        let it = para_revision_body_text(dom, last_ins);
-                        let dt = para_revision_body_text(dom, d_content);
-                        let ins_toks = body_token_set(&it).len();
-                        let del_toks = body_token_set(&dt).len();
-                        if ins_toks >= 3
-                            && (1..=3).contains(&del_toks)
-                            && !should_fold_ins_del_pair(dom, last_ins, d_content)
-                        {
-                            continue;
-                        }
-                    }
-                }
                 // M124 (file_29): last pure-I is a 1–2 char residual ("a") in a
                 // **short** pure-I run (≤2 paras: e.g. "ONE"+"a") + multi pure-D
                 // — Word keeps pure-I separate. Longer pure-I runs (file_54:
                 // a/x/x/b) still fold last short "b" into first D (Word MIX
                 // "b1.5 Line Spacing Demo"). M90 still folds content pure-I.
-                //
-                // M314 (comment×restart_list): longer pure-I run of **only**
-                // 1-token / ≤2-alnum labels (ONE/A/B/C) + multi pure-D multi-word
-                // prose with zero boundary Jaccard — Word pure-I/D (IIIIIIIDDD).
-                // Gap often sits just under the 40-atom C1 floor so multi-del
-                // still folded last "C" into the comment title.
-                if dels.len() > 1 && para_body_is_very_short(dom, last_ins) {
-                    if inss.len() <= 2 {
-                        continue;
-                    }
-                    let content_i: Vec<NodeId> = inss
-                        .iter()
-                        .copied()
-                        .filter(|&p| !para_has_no_text(dom, p))
-                        .collect();
-                    let all_label_i = !content_i.is_empty()
-                        && content_i.iter().all(|&p| {
-                            para_body_is_very_short(dom, p) || para_word_atom_count(dom, p) <= 1
-                        });
-                    if all_label_i
-                        && para_word_atom_count(dom, d) >= 3
-                        && !should_fold_ins_del_pair(dom, last_ins, d)
-                    {
-                        continue;
-                    }
+                if dels.len() > 1 && inss.len() <= 2 && para_body_is_very_short(dom, last_ins) {
+                    continue;
                 }
                 // M139 (file_82): multi pure-D after a **long** pure-I run
                 // (≥10 paras: contract body) when first pure-D is an unrelated
