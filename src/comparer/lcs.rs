@@ -4907,11 +4907,13 @@ pub fn detect_unrelated_sources_word_mode(
                 rehash_words_by_text_content(dom, &mut left);
                 rehash_words_by_text_content(dom, &mut right);
                 let mut residual_settings = settings.clone();
-                // 0.005 voids short shared phrases on long demos: "Sample text"
-                // is 2 tokens / ~620 words ≈ 0.003. Word free-meshes those
-                // property lines (bold×color MIX≥11). Use 0 so any non-empty
-                // pure-word run survives Step G for this gated free-mesh path.
-                residual_settings.detail_threshold = 0.0;
+                // Parallel A)/B)/C) demos mesh long section labels so 0.005 is
+                // enough (M324). Short OOXML property testers share only short
+                // phrases ("Sample text" ≈ 2/~620 ≈ 0.003) — use 0 so Step G
+                // keeps those pure-word runs (bold_vals×color Word MIX≥11).
+                let short_prop = short_ooxml_property_demo(dom, cu1)
+                    && short_ooxml_property_demo(dom, cu2);
+                residual_settings.detail_threshold = if short_prop { 0.0 } else { 0.005 };
                 return Some(lcs(dom, left, right, &residual_settings));
             }
             // Product too large / empty — fall through to full LCS.
