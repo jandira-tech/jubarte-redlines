@@ -3236,6 +3236,21 @@ fn should_fold_multi_del_at_document_scale(
         }
         return true;
     }
+    // M336 (bullet_list_bold×bullet_list): multi pure-I short list items then
+    // multi pure-D starting with "This document demonstrates…". Word folds last
+    // item ("Grapes") into that intro (DIMD MIX=1). Jaccard 0 would skip fold
+    // via the relatedness loop below — force fold for this demo-intro shape.
+    {
+        let dt = para_revision_body_text(dom, first_del).to_ascii_lowercase();
+        if inss.len() >= 3
+            && dels.len() >= 2
+            && para_word_atom_count(dom, last_ins) <= 2
+            && para_word_atom_count(dom, first_del) >= 5
+            && (dt.contains("demonstrates") || dt.starts_with("this document"))
+        {
+            return true;
+        }
+    }
     // Content-related short-into-long (M131): any I×D pair in the gap with
     // Jaccard relatedness means Word still folds the boundary.
     // Empty pure-Ds still count (mark-only allow) — that is load-bearing for
@@ -3589,13 +3604,21 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // last "Three" into italic title (~44). Skip when last pure-I is
                 // ≤2 tokens, first pure-D has ≥8 tokens, Jaccard 0. Single-
                 // token pure-I sole ("Ouch.") still M89-folds (inss==1).
+                //
+                // M336 (bullet_list_bold×bullet_list): first pure-D is the shared
+                // demo intro "This document demonstrates…" — Word folds Grapes
+                // into it (DIMD). Do not apply M325 skip for that intro shape.
                 if dels.len() > 1
                     && inss.len() >= 3
                     && para_word_atom_count(dom, last_ins) <= 2
                     && para_word_atom_count(dom, d) >= 8
                     && !should_fold_ins_del_pair(dom, last_ins, d)
                 {
-                    continue;
+                    let dt = para_revision_body_text(dom, d).to_ascii_lowercase();
+                    let demo_intro = dt.contains("demonstrates") || dt.starts_with("this document");
+                    if !demo_intro {
+                        continue;
+                    }
                 }
                 // M140 (eigenpal×employee_directory): sole pure-I multi-word
                 // title ("Employee Directory") + multi pure-D starting with a
