@@ -3571,6 +3571,20 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 {
                     continue;
                 }
+                // M325 (italic_rstyle × base_ordered): multi pure-I short list
+                // items ("One"/"Two"/"Three") + multi pure-D long unrelated demo
+                // title. Word pure-I/Ds (IIIIIIIIDDDD…); multi-del fold MIX-ed
+                // last "Three" into italic title (~44). Skip when last pure-I is
+                // ≤2 tokens, first pure-D has ≥8 tokens, Jaccard 0. Single-
+                // token pure-I sole ("Ouch.") still M89-folds (inss==1).
+                if dels.len() > 1
+                    && inss.len() >= 3
+                    && para_word_atom_count(dom, last_ins) <= 2
+                    && para_word_atom_count(dom, d) >= 8
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
+                    continue;
+                }
                 // M140 (eigenpal×employee_directory): sole pure-I multi-word
                 // title ("Employee Directory") + multi pure-D starting with a
                 // short unrelated title/slug ("eigenpal/docx-editor", ≤3 tokens)

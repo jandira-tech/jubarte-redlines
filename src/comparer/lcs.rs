@@ -5144,12 +5144,17 @@ pub fn detect_unrelated_sources_word_mode(
     if parallel_sectioned_demos(dom, cu1, cu2) {
         // M324: free word-LCS + rehash so A)/B)/C) section lines mesh (Word
         // ~15–21 MIX on rstyle combos). return None alone still pure-I/Ds via
-        // group LCS with disjoint hashes. Narrow: only when junction seam
-        // would have fired (unequal contentful counts).
-        if n1 != n2 {
+        // group LCS with disjoint hashes. Cap to short demos: free word-LCS on
+        // large docs is O(n·m) and can hang (italic×base_ordered / long lists).
+        // Rstyle combo demos are ≤~50 contentful groups each.
+        if n1 != n2 && n1 <= 50 && n2 <= 50 {
             let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
             let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
-            if !left.is_empty() && !right.is_empty() {
+            // Soft cap on flattened word/unit product (rstyle demos are small).
+            if !left.is_empty()
+                && !right.is_empty()
+                && left.len().saturating_mul(right.len()) <= 250_000
+            {
                 rehash_words_by_text_content(dom, &mut left);
                 rehash_words_by_text_content(dom, &mut right);
                 let mut residual_settings = settings.clone();
