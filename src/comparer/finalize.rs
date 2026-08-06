@@ -3046,6 +3046,19 @@ fn para_looks_like_demo_title(dom: &Dom, p: NodeId) -> bool {
         .is_some_and(|s| s.eq_ignore_ascii_case("demo"))
 }
 
+/// Live `w:pStyle` is Title / Heading* (Heading1, Heading2, …).
+fn para_has_heading_or_title_style(dom: &Dom, p: NodeId) -> bool {
+    let Some(ppr) = dom.element(p, &W::p_pr()) else {
+        return false;
+    };
+    let Some(ps) = dom.element(ppr, &W::name("pStyle")) else {
+        return false;
+    };
+    let val = dom.attribute(ps, &W::val()).unwrap_or("");
+    let v = val.to_ascii_lowercase();
+    v == "title" || v.starts_with("heading")
+}
+
 /// Token Jaccard of two body strings. Used to avoid folding unrelated pure-I
 /// / pure-D neighbors (file_33: Word keeps pure-I "Summary" and pure-D
 /// "Heading 1 Style Demo" separate; folding invents a mixed para and costs
@@ -3529,6 +3542,34 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         && !should_fold_ins_del_pair(dom, last_ins, d)
                     {
                         continue;
+                    }
+                }
+                // M319 (support_tickets×table_bookmark_end): multi pure-I next
+                // where last pure-I is a **Heading/Title** style header
+                // ("Test 1 – Fixed Width Table", Heading2) + multi pure-D short
+                // non-Demo base title ("Support Tickets"). Word IIIDDD…. Stamp
+                // confetti body folds (file_37 last pure-I has no pStyle) still
+                // M90-fold — heading-style gate is load-bearing.
+                if dels.len() > 1
+                    && inss.len() >= 2
+                    && para_has_heading_or_title_style(dom, last_ins)
+                {
+                    let d_content = dels
+                        .iter()
+                        .copied()
+                        .find(|&p| !para_revision_body_text(dom, p).trim().is_empty())
+                        .unwrap_or(d);
+                    if !para_looks_like_demo_title(dom, d_content) {
+                        let it = para_revision_body_text(dom, last_ins);
+                        let dt = para_revision_body_text(dom, d_content);
+                        let ins_toks = body_token_set(&it).len();
+                        let del_toks = body_token_set(&dt).len();
+                        if ins_toks >= 3
+                            && (1..=3).contains(&del_toks)
+                            && !should_fold_ins_del_pair(dom, last_ins, d_content)
+                        {
+                            continue;
+                        }
                     }
                 }
                 // M124 (file_29): last pure-I is a 1–2 char residual ("a") in a
