@@ -4778,6 +4778,31 @@ pub fn detect_unrelated_sources_word_mode(
             ]);
         }
     }
+    // M311b (image_inline×rtl_page_numpages ~15): next is multi-unit but
+    // entirely textless (pPr-only empties). contentful count is 0 so ok_counts
+    // never fires and full LCS drops empty pure-I layout. Word pure-I all
+    // empty next then pure-D base (unpacked ~31 I + 1 D). Force wholesale
+    // pure-I/D on full unit lists. Trace: n_cu2=32 g2=0 g1=1.
+    let unit_textless = |u: &ComparisonUnit| -> bool {
+        u.descendant_atoms().iter().all(|a| {
+            dom.name(a.content_element) != Some(W::t())
+                || dom.value_str(a.content_element).trim().is_empty()
+        }) && !group_has_drawing_or_pict(dom, u)
+    };
+    let textless_multi =
+        |cu: &[ComparisonUnit]| -> bool { cu.len() >= 3 && cu.iter().all(unit_textless) };
+    if textless_multi(cu2) && !groups1.is_empty() && !has_table(cu1) && !has_table(cu2) {
+        return Some(vec![
+            CorrelatedSequence::inserted(cu2.to_vec()),
+            CorrelatedSequence::deleted(cu1.to_vec()),
+        ]);
+    }
+    if textless_multi(cu1) && !groups2.is_empty() && !has_table(cu1) && !has_table(cu2) {
+        return Some(vec![
+            CorrelatedSequence::inserted(cu2.to_vec()),
+            CorrelatedSequence::deleted(cu1.to_vec()),
+        ]);
+    }
     let ok_counts = (short_n > 3 && long_n > 3)
         || ((2..=3).contains(&short_n) && long_n > 3 && !has_table(short_cu))
         || (stamped && disjoint && (2..=6).contains(&short_n) && long_n > 6 && n2 == short_n);

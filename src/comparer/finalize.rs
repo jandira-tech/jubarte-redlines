@@ -1616,6 +1616,36 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
+    // M311c: wholesale empty pure-I layout then pure-D residual (image×rtl:
+    // ~31 empty pure-I + 1 pure-D). Folding every empty into the del wiped
+    // Word's pure-I layout. Skip the fold entirely when ≥3 empty pure-I
+    // lead a body with no contentful pure-I.
+    {
+        let kids: Vec<NodeId> = dom
+            .elements(body, None)
+            .into_iter()
+            .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+            .collect();
+        let empty_pure_i = kids
+            .iter()
+            .filter(|&&k| {
+                dom.name(k) == Some(W::p())
+                    && para_is_pure_inserted(dom, k)
+                    && para_body_text_is_whitespace_only(dom, k)
+            })
+            .count();
+        let content_pure_i = kids
+            .iter()
+            .filter(|&&k| {
+                dom.name(k) == Some(W::p())
+                    && para_is_pure_inserted(dom, k)
+                    && !para_body_text_is_whitespace_only(dom, k)
+            })
+            .count();
+        if empty_pure_i >= 3 && content_pure_i == 0 {
+            return;
+        }
+    }
     loop {
         let kids: Vec<NodeId> = dom
             .elements(body, None)
@@ -3429,6 +3459,18 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     .find(|&&p| !para_has_no_text(dom, p))
                     .copied()
                     .unwrap_or(inss[inss.len() - 1]);
+                // M311d (image×rtl): sole pure-D after ≥3 empty pure-I is
+                // wholesale empty next layout + one deleted residual. Word
+                // keeps pure-I empties (oracle ~31 I + 1 D). The sole_del
+                // always-fold path would eat empties one-by-one into the del.
+                if sole_del
+                    && inss.len() >= 3
+                    && inss.iter().all(|&p| {
+                        para_has_no_text(dom, p) || para_body_text_is_whitespace_only(dom, p)
+                    })
+                {
+                    continue;
+                }
                 // M77: mid-document sole pure-D after pure-I must not fold into
                 // the preceding ins when body texts are unrelated and more
                 // content follows (file_33: pure-I "Summary" + pure-D "Heading
