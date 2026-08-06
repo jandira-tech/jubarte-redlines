@@ -3568,7 +3568,17 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // pure-D empty; empty-del always-fold MIX-ed last license line.
                 // Content sole-del (m44 "24"/titles) has body text; short demos
                 // have inss ≪ 10.
-                if sole_del && inss.len() >= 10 && para_revision_body_text(dom, d).trim().is_empty()
+                //
+                // M341 (missing_sectpr×missing_separator): short pure-I stream
+                // (empties + "PARTIES" + "something") + sole empty pure-D of the
+                // base title shell. Word IIIIM (pure-I "something", MIX empty);
+                // empty-del fold MIX-ed "something" into the shell (~66 vs e3
+                // ~97). Skip sole empty pure-D when last pure-I has body text.
+                if sole_del
+                    && para_revision_body_text(dom, d).trim().is_empty()
+                    && (inss.len() >= 10
+                        || (inss.len() >= 2
+                            && !para_revision_body_text(dom, last_ins).trim().is_empty()))
                 {
                     continue;
                 }

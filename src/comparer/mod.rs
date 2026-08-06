@@ -641,10 +641,14 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::trailing_empty_spacing_to_pprchange(dom, root, settings, &mut id);
         // M83a: drop B's trailing empty pure-ins before sectPr (file_23).
         finalize::strip_trailing_empty_pure_ins(dom, root);
-        // M85a: empty pure-ins before trailing pure-del residual (file_49).
-        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        // M341: fold whitespace pure-I into pure-D **before** M85a strip so
+        // missing_sectpr×separator keeps pure-I "something" + MIX empty+del
+        // base title (Word IIIIM). Strip-first removed the empty, then
+        // merge_replaced MIX-ed "something" into the del (~66 vs e3 ~97).
         // M86: whitespace pure-ins + following pure-del → mixed (file_88).
         finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        // M85a: empty pure-ins before trailing pure-del residual (file_49).
+        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
         // M85b: last pure-del mark-only pPr → bare del (file_186/49).
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
         finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
@@ -708,8 +712,9 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::end_para_classification_cache();
         // Structure-mutating peels (invalidate pure-del/mixed classification).
         finalize::strip_trailing_empty_pure_ins(dom, root);
-        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        // M341: fold before strip (see pre-merge order note above).
         finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
         // M105: pure-D short title + following MIX leading ins → Word subtitle
         // insert lands on title residual (file_7/5/130 document peel).
         finalize::fold_leading_ins_from_mix_into_preceding_pure_del(dom, root);
