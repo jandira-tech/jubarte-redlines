@@ -5096,10 +5096,13 @@ pub fn detect_unrelated_sources_word_mode(
         // seam — Word free-meshes line-by-line (MIX≥15); seam pure-I/Ds (~10).
         let both_tables = has_table(cu1) && has_table(cu2);
         let parallel_sections = parallel_sectioned_demos(dom, cu1, cu2);
+        let short_prop_demos =
+            short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2);
         if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last())
             && counts_differ
             && !both_tables
             && !parallel_sections
+            && !short_prop_demos
             && is_para_group(first_a)
             && is_para_group(last_b)
         {
@@ -5141,27 +5144,30 @@ pub fn detect_unrelated_sources_word_mode(
     // LCS when both sides carry ≥3 shared lettered section headers.
     // (Free word-LCS+rehash helped color×highlight but regressed
     // highlight×bold into a pure-D then pure-I block — keep full LCS.)
-    if parallel_sectioned_demos(dom, cu1, cu2) {
-        // M324: free word-LCS + rehash so A)/B)/C) section lines mesh (Word
-        // ~15–21 MIX on rstyle combos). return None alone still pure-I/Ds via
-        // group LCS with disjoint hashes. Cap to short demos: free word-LCS on
-        // large docs is O(n·m) and can hang (italic×base_ordered / long lists).
-        // Rstyle combo demos are ≤~50 contentful groups each.
-        if n1 != n2 && n1 <= 50 && n2 <= 50 {
-            let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
-            let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
-            // Soft cap on flattened word/unit product (rstyle demos are small).
-            if !left.is_empty()
-                && !right.is_empty()
-                && left.len().saturating_mul(right.len()) <= 250_000
-            {
-                rehash_words_by_text_content(dom, &mut left);
-                rehash_words_by_text_content(dom, &mut right);
-                let mut residual_settings = settings.clone();
-                residual_settings.detail_threshold = 0.005;
-                return Some(lcs(dom, left, right, &residual_settings));
-            }
+    // M324: free word-LCS for parallel A)/B)/C) rstyle demos.
+    // M326: also short OOXML property testers without lettered sections on
+    // both sides (bold_vals×color — Word multi-MIX). Cap size to avoid hangs.
+    let free_mesh_demos = (parallel_sectioned_demos(dom, cu1, cu2)
+        || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2)))
+        && n1 != n2
+        && n1 <= 50
+        && n2 <= 50;
+    if free_mesh_demos {
+        let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
+        let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
+        if !left.is_empty()
+            && !right.is_empty()
+            && left.len().saturating_mul(right.len()) <= 250_000
+        {
+            rehash_words_by_text_content(dom, &mut left);
+            rehash_words_by_text_content(dom, &mut right);
+            let mut residual_settings = settings.clone();
+            residual_settings.detail_threshold = 0.005;
+            return Some(lcs(dom, left, right, &residual_settings));
         }
+        return None;
+    }
+    if parallel_sectioned_demos(dom, cu1, cu2) {
         return None;
     }
     // M323 (hyperlink_cases×table_tester ~42.7): both sides table-bearing with
@@ -5236,6 +5242,39 @@ fn parallel_sectioned_demos(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[Comparison
         return false;
     }
     l1.intersection(&l2).count() >= 3
+}
+
+/// Short OOXML property-tester demos (bold_vals×color, highlight×italic): titles
+/// mention OOXML/`w:`/`tester`/ST_OnOff and contentful count is small.
+fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
+    if cu.len() > 50 {
+        return false;
+    }
+    let Some(i) = first_contentful_group_index(dom, cu) else {
+        return false;
+    };
+    // Join raw w:t text (not re-tokenized) so "ST_OnOff" / "w:b" survive.
+    let mut text = String::new();
+    for a in cu[i].descendant_atoms() {
+        if dom.name(a.content_element) == Some(W::t()) {
+            text.push_str(&dom.value_str(a.content_element));
+        }
+    }
+    let lower = text.to_ascii_lowercase();
+    lower.contains("ooxml")
+        || lower.contains("tester")
+        || lower.contains("st_onoff")
+        || lower.contains("w:b")
+        || lower.contains("w:i")
+        || lower.contains("w:sz")
+        || lower.contains("w:color")
+        || lower.contains("w:strike")
+        || lower.contains("w:highlight")
+        || lower.contains("font size")
+        || lower.contains("half-point")
+        || lower.contains("bold")
+        || lower.contains("color sample")
+        || lower.contains("italic")
 }
 
 /// M4.C.12 — `SetAfterUnids` (:7114): when an Unknown is a single group vs a
