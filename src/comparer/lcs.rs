@@ -4921,13 +4921,21 @@ pub fn detect_unrelated_sources_word_mode(
         // cells (IDIMDI MIX≥1); pure-I/D wholesale under-meshes. Require no shared
         // title first-token (M323 SuperDoc pairs stay on full LCS) and low body
         // jaccard so related table cousins keep structure mesh.
+        // M336: short Demo cousins sharing first title token (Bullet List Bold
+        // Demo × Bullet List Demo). M330 blocks free-mesh on last-sig "Demo"
+        // alone (left_alignment×line_spacing thrash). Word free-meshes last
+        // list item into bold intro (DIMD); pure-I/D leaves Grapes separate.
+        // Equal-count free-mesh only for short_related_demo_cousins (bullet
+        // bold×plain both n=5). Other free-mesh paths keep n1 != n2.
+        let related_demo = short_related_demo_cousins(dom, cu1, cu2, n1, n2);
         let free_mesh_demos = !stamped_pair
             && (parallel_sectioned_demos(dom, cu1, cu2)
                 || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
                 || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50)
                 || ooxml_x_short_table_demo(dom, cu1, cu2)
-                || both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2))
-            && n1 != n2
+                || both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2)
+                || related_demo)
+            && (related_demo || n1 != n2)
             && n1 <= 50
             && n2 <= 50;
         // M331: short Demo list×prose — Word free-meshes positionally (MMMDD:
@@ -5002,11 +5010,13 @@ pub fn detect_unrelated_sources_word_mode(
                     short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2);
                 let ooxml_tbl = ooxml_x_short_table_demo(dom, cu1, cu2);
                 let both_tbl = both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2);
-                residual_settings.detail_threshold = if short_prop || ooxml_tbl || both_tbl {
-                    0.0
-                } else {
-                    0.005
-                };
+                let related_demo = short_related_demo_cousins(dom, cu1, cu2, n1, n2);
+                residual_settings.detail_threshold =
+                    if short_prop || ooxml_tbl || both_tbl || related_demo {
+                        0.0
+                    } else {
+                        0.005
+                    };
                 return Some(lcs(dom, left, right, &residual_settings));
             }
             // Product too large / empty — fall through to full LCS.
@@ -5478,6 +5488,56 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
         || lower.contains("bold")
         || lower.contains("color sample")
         || lower.contains("italic")
+}
+
+/// Short Demo cousins with the **same first significant title token** (Bullet/
+/// Font/Track) and last-sig Demo. Free-mesh Word shape for bullet_list_bold×
+/// bullet_list (DIMD). Does **not** match left_alignment×line_spacing (first
+/// tokens Left vs Line) which Word keeps MMIM via full LCS.
+fn short_related_demo_cousins(
+    dom: &Dom,
+    cu1: &[ComparisonUnit],
+    cu2: &[ComparisonUnit],
+    n1: usize,
+    n2: usize,
+) -> bool {
+    if !(2..=8).contains(&n1) || !(2..=8).contains(&n2) {
+        return false;
+    }
+    if has_table_units(cu1) || has_table_units(cu2) {
+        return false;
+    }
+    let (Some(i1), Some(i2)) = (
+        first_contentful_group_index(dom, cu1),
+        first_contentful_group_index(dom, cu2),
+    ) else {
+        return false;
+    };
+    let a0 = para_text_token_list(dom, &cu1[i1]);
+    let b0 = para_text_token_list(dom, &cu2[i2]);
+    let last_demo = matches!(
+        (last_significant_token(&a0), last_significant_token(&b0)),
+        (Some(x), Some(y)) if x.eq_ignore_ascii_case("demo") && y.eq_ignore_ascii_case("demo")
+    );
+    if !last_demo {
+        return false;
+    }
+    let first_same = a0
+        .first()
+        .zip(b0.first())
+        .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b) && a.chars().count() >= 4);
+    if !first_same {
+        return false;
+    }
+    // Body residual overlap low-to-moderate (related demos, not identical).
+    if cu1.len() < 2 || cu2.len() < 2 {
+        return true;
+    }
+    let body_j = token_jaccard(
+        &para_text_tokens_from_units(dom, &cu1[1..]),
+        &para_text_tokens_from_units(dom, &cu2[1..]),
+    );
+    body_j + 1e-12 < 0.55
 }
 
 /// Short Demo-title cousins where exactly one side is list-heavy (numPr on ≥
