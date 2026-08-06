@@ -5329,7 +5329,13 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
         || lower.contains("italic")
 }
 
-/// First contentful titles share last significant token (Document/Demo/Test).
+/// First contentful titles share a **document-family** last significant token.
+///
+/// M327 free-meshed any shared last-sig ≥4 chars. That also matched demo cousins
+/// ending in "Demo" / "overflow" (left_alignment_demo×line_spacing_demo, etc.)
+/// and free-meshed them off their Word pure-I/D 100 stamps (−30..−54 on full
+/// ITT 0ab0e1c). Only allow last-sig that identifies SuperDoc table/tab/tester
+/// docs Word free-meshes (Document / Tester / Test), not Demo/overflow/docx.
 fn titles_share_last_sig(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[ComparisonUnit]) -> bool {
     let (Some(i1), Some(i2)) = (
         first_contentful_group_index(dom, cu1),
@@ -5340,7 +5346,10 @@ fn titles_share_last_sig(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[ComparisonUni
     let a0 = para_text_token_list(dom, &cu1[i1]);
     let b0 = para_text_token_list(dom, &cu2[i2]);
     match (last_significant_token(&a0), last_significant_token(&b0)) {
-        (Some(x), Some(y)) => x.eq_ignore_ascii_case(y) && x.chars().count() >= 4,
+        (Some(x), Some(y)) if x.eq_ignore_ascii_case(y) && x.chars().count() >= 4 => {
+            let xl = x.to_ascii_lowercase();
+            matches!(xl.as_str(), "document" | "tester" | "test")
+        }
         _ => false,
     }
 }
