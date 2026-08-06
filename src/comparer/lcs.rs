@@ -5098,11 +5098,13 @@ pub fn detect_unrelated_sources_word_mode(
         let parallel_sections = parallel_sectioned_demos(dom, cu1, cu2);
         let short_prop_demos =
             short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2);
+        let last_sig_titles = titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50;
         if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last())
             && counts_differ
             && !both_tables
             && !parallel_sections
             && !short_prop_demos
+            && !last_sig_titles
             && is_para_group(first_a)
             && is_para_group(last_b)
         {
@@ -5147,8 +5149,11 @@ pub fn detect_unrelated_sources_word_mode(
     // M324: free word-LCS for parallel A)/B)/C) rstyle demos.
     // M326: also short OOXML property testers without lettered sections on
     // both sides (bold_vals×color — Word multi-MIX). Cap size to avoid hangs.
+    // M327: short demos whose titles share last-sig (table_tester×tab:
+    // Document) — Word free-meshes; pure-I/D wholesale under-meshes.
     let free_mesh_demos = (parallel_sectioned_demos(dom, cu1, cu2)
-        || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2)))
+        || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
+        || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50))
         && n1 != n2
         && n1 <= 50
         && n2 <= 50;
@@ -5275,6 +5280,22 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
         || lower.contains("bold")
         || lower.contains("color sample")
         || lower.contains("italic")
+}
+
+/// First contentful titles share last significant token (Document/Demo/Test).
+fn titles_share_last_sig(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[ComparisonUnit]) -> bool {
+    let (Some(i1), Some(i2)) = (
+        first_contentful_group_index(dom, cu1),
+        first_contentful_group_index(dom, cu2),
+    ) else {
+        return false;
+    };
+    let a0 = para_text_token_list(dom, &cu1[i1]);
+    let b0 = para_text_token_list(dom, &cu2[i2]);
+    match (last_significant_token(&a0), last_significant_token(&b0)) {
+        (Some(x), Some(y)) => x.eq_ignore_ascii_case(y) && x.chars().count() >= 4,
+        _ => false,
+    }
 }
 
 /// M4.C.12 — `SetAfterUnids` (:7114): when an Unknown is a single group vs a
