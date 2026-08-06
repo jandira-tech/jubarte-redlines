@@ -5019,8 +5019,10 @@ pub fn detect_unrelated_sources_word_mode(
     // M310 (ooxml rstyle combo demos ~34–42): parallel property testers share
     // lettered section skeleton A) B) C) D) and bullet chrome. Content hashes
     // are disjoint so classic unrelated pure-I/D fires, but Word meshes
-    // MIX line-by-line (unpacked oracle ~21 MIX paras). Force full LCS when
-    // both sides carry ≥3 shared lettered section headers.
+    // MIX line-by-line (unpacked oracle ~21 MIX paras). Force full document
+    // LCS when both sides carry ≥3 shared lettered section headers.
+    // (Free word-LCS+rehash helped color×highlight but regressed
+    // highlight×bold into a pure-D then pure-I block — keep full LCS.)
     if parallel_sectioned_demos(dom, cu1, cu2) {
         return None;
     }
