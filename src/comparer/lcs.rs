@@ -4803,6 +4803,27 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::deleted(cu1.to_vec()),
         ]);
     }
+    // M315 (hummingbird wrap × employment ~42): short **base** is a single
+    // contentful paragraph vs long next (n≥5), body Jaccard ~0. Classic count
+    // gate needs short in [2,3] so n1==1 never short-circuits; full LCS free-
+    // meshes the wrap into a mid employment email pure-I (Word: pure-I stream
+    // + tail MIX only). Force pure-I next / pure-D base. Table-free both sides.
+    if settings.merge_replaced_paragraphs
+        && n1 == 1
+        && n2 >= 5
+        && !has_table(cu1)
+        && !has_table(cu2)
+        && {
+            let b1 = para_text_tokens_from_units(dom, cu1);
+            let b2 = para_text_tokens_from_units(dom, cu2);
+            !b1.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.05
+        }
+    {
+        return Some(vec![
+            CorrelatedSequence::inserted(cu2.to_vec()),
+            CorrelatedSequence::deleted(cu1.to_vec()),
+        ]);
+    }
     // M312 (two_column_two_page × sd_2672_nested_table ~33.8): short **next**
     // is title + empty + tables (contentful n≈2–6, has_table) vs long
     // table-free base (n≥12; also broken_complex_list×nested_table ~18). Classic
