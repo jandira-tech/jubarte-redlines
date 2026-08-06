@@ -3544,6 +3544,8 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // pure-D (green_underline×heading_1: "First green underlined
                 // item" is 4 tokens — Word folds last pure-I body into it).
                 // Single-token pure-I ("Ouch.") still folds (M89).
+                //
+                // M140 sole pure-I multi-word + short pure-D (2..=3 tokens).
                 if dels.len() > 1 && inss.len() == 1 {
                     let it = para_revision_body_text(dom, last_ins);
                     let dt = para_revision_body_text(dom, d);
@@ -3551,6 +3553,23 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     let del_toks = body_token_set(&dt).len();
                     if ins_toks >= 2
                         && (2..=3).contains(&del_toks)
+                        && !should_fold_ins_del_pair(dom, last_ins, d)
+                    {
+                        continue;
+                    }
+                }
+                // M316 (support_tickets×table_bookmark_end): multi pure-I next
+                // headers then multi pure-D short **non-Demo** base title
+                // ("Support Tickets"). Word IIIDDD…. Do NOT block M90 Demo
+                // title folds (file_38 "Center Alignment Demo", file_11
+                // "Superscript Demo") — those look like Demo titles.
+                if dels.len() > 1 && inss.len() >= 2 && !para_looks_like_demo_title(dom, d) {
+                    let it = para_revision_body_text(dom, last_ins);
+                    let dt = para_revision_body_text(dom, d);
+                    let ins_toks = body_token_set(&it).len();
+                    let del_toks = body_token_set(&dt).len();
+                    if ins_toks >= 3
+                        && (1..=3).contains(&del_toks)
                         && !should_fold_ins_del_pair(dom, last_ins, d)
                     {
                         continue;
