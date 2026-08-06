@@ -2830,26 +2830,15 @@ fn step_h(
                     if re.len() > n_eq {
                         out.push(CorrelatedSequence::inserted(re[n_eq..].to_vec()));
                     }
-                } else if lg[il].0 == "Table"
-                    && settings.merge_replaced_paragraphs
-                    // Only the short-checklist × multi-table shape (hr_onboarding):
-                    // one side has a single table, the other ≥3. Single×single
-                    // zero-Jaccard tables still cell-merge positionally (Word:
-                    // project_tasks×q1_sales, q1_sales×quarterly — pure del+ins
-                    // regressed those ~−30 pts).
-                    && ((left_tables == 1 && right_tables >= 3)
-                        || (right_tables == 1 && left_tables >= 3))
-                    && {
-                        let j = token_jaccard(
-                            &para_text_tokens_from_units(dom, &lg[il].1),
-                            &para_text_tokens_from_units(dom, &rg[ir].1),
-                        );
-                        j + 1e-12 < 0.05
-                    }
-                {
-                    out.push(CorrelatedSequence::inserted(rg[ir].1.clone()));
-                    out.push(CorrelatedSequence::deleted(lg[il].1.clone()));
                 } else {
+                    // M320 (support_tickets×table_bookmark_end; hr_onboarding×proof):
+                    // Word merges the short side's sole table with the FIRST
+                    // same-slot table on the multi-table side (cell-wise MIX:
+                    // R1C1×Ticket ID / checklist×thesis). A prior 1×≥3
+                    // zero-Jaccard pure-I/D short-circuit skipped that mesh
+                    // (~47 support_tickets, ~49 hr_onboarding). Always Unknown
+                    // so DoLcsAlgorithmForTable / positional rows can run.
+                    // Single×single zero-Jaccard tables already took this path.
                     out.push(CorrelatedSequence::paired(
                         CorrelationStatus::Unknown,
                         lg[il].1.clone(),
