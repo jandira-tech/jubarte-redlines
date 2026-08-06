@@ -81,9 +81,10 @@ fn run(a: &std::path::Path, b: &std::path::Path) {
     let n_m = cls.iter().filter(|&&c| c == 'M').count();
     let n_i = cls.iter().filter(|&&c| c == 'I').count();
     let n_d = cls.iter().filter(|&&c| c == 'D').count();
-    // Word ~21 MIX. Pure wholesale is MIX≤1 with long I then D blocks.
+    // Word ~25 MIX. M329: free-mesh must not be blocked by large_related
+    // (hl×bold jaccard≈0.22 + sig≥40). Pre-M329 free-mesh skipped → MIX≈14.
     assert!(
-        n_m >= 8,
+        n_m >= 18,
         "Word multi-meshes parallel rstyle demos; got MIX={n_m} I={n_i} D={n_d} seq={}",
         cls.iter().collect::<String>()
     );

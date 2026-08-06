@@ -4914,24 +4914,23 @@ pub fn detect_unrelated_sources_word_mode(
             && n1 != n2
             && n1 <= 50
             && n2 <= 50;
-        // Guard: large-vocab related prose stays on full LCS (M318).
-        let large_related = {
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            let s1 = significant_tokens(&b1);
-            let s2 = significant_tokens(&b2);
-            s1.len() >= 40 && s2.len() >= 40 && token_jaccard(&b1, &b2) + 1e-12 >= 0.08
-        };
-        if free_mesh_demos && !large_related {
+        // M329: free-mesh demos always free-mesh — do NOT gate on large_related.
+        // highlight×bold has sig≥40 each and jaccard≈0.22 (shared sample/rstyle/
+        // ooxml) so the old large_related guard skipped free-mesh and pure-I/D'd
+        // (MIX≈14 vs Word≈25). large_related remains for M318 legal prose only
+        // (memo×nda is not free_mesh_demos).
+        if free_mesh_demos {
             let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
             let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
+            // M329: raise product cap. highlight×bold is ~471×580 ≈ 273k which
+            // exceeded the old 250k cap → free-mesh returned None → pure-I/D
+            // (MIX≈14 vs Word≈25). 600k covers OOXML rstyle demos; still size-
+            // gated so huge legal free-mesh cannot hang.
             if !left.is_empty()
                 && !right.is_empty()
-                && left.len().saturating_mul(right.len()) <= 250_000
+                && left.len().saturating_mul(right.len()) <= 600_000
             {
-                // M328d: case-fold free-mesh rehash so "Sample"×"sample" match
-                // (highlight×bold). Case-sensitive under-meshed M14 vs Word M25;
-                // global case-fold regressed stamp confetti — free-mesh only.
+                // M328d: case-fold free-mesh rehash so "Sample"×"sample" match.
                 rehash_words_by_text_content_opts(dom, &mut left, true);
                 rehash_words_by_text_content_opts(dom, &mut right, true);
                 let mut residual_settings = settings.clone();
