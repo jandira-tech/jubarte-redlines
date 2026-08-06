@@ -5090,8 +5090,12 @@ pub fn detect_unrelated_sources_word_mode(
         // pinned by m45_equal_count_para_zip; the seam shape starved that
         // post-pass and dropped blue_underline×bold_italic 99.69→70.56).
         let counts_differ = n1 != n2;
+        // M323: both-table pairs must not take the junction seam — Word meshes
+        // titles + first-slot tables (H2); seam pure-I/Ds wholesale (MIX=1).
+        let both_tables = has_table(cu1) && has_table(cu2);
         if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last())
             && counts_differ
+            && !both_tables
             && is_para_group(first_a)
             && is_para_group(last_b)
         {
@@ -5135,6 +5139,36 @@ pub fn detect_unrelated_sources_word_mode(
     // highlight×bold into a pure-D then pure-I block — keep full LCS.)
     if parallel_sectioned_demos(dom, cu1, cu2) {
         return None;
+    }
+    // M323 (hyperlink_cases×table_tester ~42.7): both sides table-bearing with
+    // shared title first token ("SuperDoc") — refuse pure-I/D wholesale so full
+    // LCS/H2 first-slot table mesh can run (junction seam already skipped
+    // above for both-tables). Unrelated both-table pairs without shared title
+    // lead keep pure-I/D.
+    if has_table(cu1)
+        && has_table(cu2)
+        && let (Some(i1), Some(i2)) = (
+            first_contentful_group_index(dom, cu1),
+            first_contentful_group_index(dom, cu2),
+        )
+    {
+        let a0 = para_text_token_list(dom, &cu1[i1]);
+        let b0 = para_text_token_list(dom, &cu2[i2]);
+        let first_same = a0
+            .first()
+            .zip(b0.first())
+            .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b));
+        if first_same && !a0.is_empty() && !b0.is_empty() {
+            let last_diff = match (last_significant_token(&a0), last_significant_token(&b0)) {
+                (Some(x), Some(y)) => !x.eq_ignore_ascii_case(y),
+                _ => true,
+            };
+            let sa: std::collections::HashSet<String> = a0.iter().cloned().collect();
+            let sb: std::collections::HashSet<String> = b0.iter().cloned().collect();
+            if last_diff && token_jaccard(&sa, &sb) + 1e-12 < 0.55 {
+                return None;
+            }
+        }
     }
     Some(vec![
         CorrelatedSequence::inserted(cu2.to_vec()),
