@@ -1522,39 +1522,56 @@ pub fn strip_trailing_empty_pure_ins(dom: &mut Dom, root: NodeId) {
 /// When residual pure-dels follow (catalog/table demos: B ends empty after table,
 /// A residual is pure-D), Word still omits the blank (`… tbl D D D`) while we
 /// kept `… tbl Ei D D D` (file_49, file_75, file_35, file_102, …).
+///
+/// M311: do **not** strip a long run of empty pure-I (≥3). That is wholesale
+/// next-document layout Word keeps (image_inline×rtl_page_numpages: Word
+/// pure-I ~31 empty next paras then pure-D image; unbounded M85a left only
+/// the pure-D and scored ~15). Cap strip to at most two empties.
 pub fn strip_empty_pure_ins_before_trailing_pure_dels(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
-    // Strip multiple consecutive empties (loop until stable).
-    loop {
-        let kids = dom.elements(body, None);
-        let non_sect: Vec<NodeId> = kids
-            .into_iter()
-            .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
-            .collect();
-        if non_sect.len() < 2 {
-            return;
+    let kids = dom.elements(body, None);
+    let non_sect: Vec<NodeId> = kids
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    if non_sect.len() < 2 {
+        return;
+    }
+    // Trailing pure-del run: find first index of the run.
+    let mut run_start = non_sect.len();
+    while run_start > 0 {
+        let k = non_sect[run_start - 1];
+        if dom.name(k) == Some(W::p()) && para_is_pure_deleted(dom, k) {
+            run_start -= 1;
+        } else {
+            break;
         }
-        // Trailing pure-del run: find first index of the run.
-        let mut run_start = non_sect.len();
-        while run_start > 0 {
-            let k = non_sect[run_start - 1];
-            if dom.name(k) == Some(W::p()) && para_is_pure_deleted(dom, k) {
-                run_start -= 1;
-            } else {
-                break;
-            }
+    }
+    if run_start == non_sect.len() || run_start == 0 {
+        return;
+    }
+    // Count consecutive empty pure-ins immediately before the pure-del run.
+    let mut empty_run = 0usize;
+    let mut i = run_start;
+    while i > 0 && para_is_empty_pure_ins(dom, non_sect[i - 1]) {
+        empty_run += 1;
+        i -= 1;
+    }
+    if empty_run == 0 {
+        return;
+    }
+    // Wholesale empty next layout (≥3) — Word keeps all (image×rtl).
+    if empty_run >= 3 {
+        return;
+    }
+    // Strip at most two trailing empties before pure-dels (M85a original).
+    for j in 0..empty_run {
+        let victim = non_sect[run_start - 1 - j];
+        if para_is_empty_pure_ins(dom, victim) {
+            dom.remove(victim);
         }
-        if run_start == non_sect.len() || run_start == 0 {
-            // No pure-del run, or body is all pure-dels.
-            return;
-        }
-        let before = non_sect[run_start - 1];
-        if !para_is_empty_pure_ins(dom, before) {
-            return;
-        }
-        dom.remove(before);
     }
 }
 
