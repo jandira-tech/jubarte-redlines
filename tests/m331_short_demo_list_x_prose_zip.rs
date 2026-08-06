@@ -80,8 +80,5 @@ fn numbered_list_italic_x_open_sans_mmmdd() {
         "Word D=2 residual list items; got D={n_d} seq={seq}"
     );
     assert_eq!(n_i, 0, "Word I=0; got I={n_i} seq={seq}");
-    assert!(
-        seq.starts_with("MMMDD"),
-        "Word shape MMMDD…; got {seq}"
-    );
+    assert!(seq.starts_with("MMMDD"), "Word shape MMMDD…; got {seq}");
 }

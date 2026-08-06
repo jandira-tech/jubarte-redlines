@@ -5410,6 +5410,18 @@ fn both_tables_unrelated_free_mesh(
     if !has_table_units(cu1) || !has_table_units(cu2) {
         return false;
     }
+    // One side multi-table (border widths: 7 tbl). pirates×table_left (1×2)
+    // free-mesh confetti regressed pagefair 70→42 — keep pure-I/D there.
+    let n_tbl = |cu: &[ComparisonUnit]| -> usize {
+        cu.iter()
+            .filter(|u| {
+                as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table)
+            })
+            .count()
+    };
+    if n_tbl(cu1).max(n_tbl(cu2)) < 4 {
+        return false;
+    }
     let (Some(i1), Some(i2)) = (
         first_contentful_group_index(dom, cu1),
         first_contentful_group_index(dom, cu2),
