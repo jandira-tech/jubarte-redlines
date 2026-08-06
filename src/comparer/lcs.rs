@@ -4911,8 +4911,8 @@ pub fn detect_unrelated_sources_word_mode(
                 // enough (M324). Short OOXML property testers share only short
                 // phrases ("Sample text" ≈ 2/~620 ≈ 0.003) — use 0 so Step G
                 // keeps those pure-word runs (bold_vals×color Word MIX≥11).
-                let short_prop = short_ooxml_property_demo(dom, cu1)
-                    && short_ooxml_property_demo(dom, cu2);
+                let short_prop =
+                    short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2);
                 residual_settings.detail_threshold = if short_prop { 0.0 } else { 0.005 };
                 return Some(lcs(dom, left, right, &residual_settings));
             }
@@ -5293,6 +5293,8 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
         || lower.contains("w:color")
         || lower.contains("w:strike")
         || lower.contains("w:highlight")
+        || lower.contains("w:rfonts")
+        || lower.contains("rfonts")
         || lower.contains("font size")
         || lower.contains("half-point")
         || lower.contains("bold")
