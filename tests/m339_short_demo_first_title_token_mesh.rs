@@ -102,3 +102,38 @@ fn left_alignment_x_line_spacing_still_mmim() {
     let n_m = cls.iter().filter(|&&c| c == 'M').count();
     assert_eq!(n_m, 3, "must not thrash left×line; MIX={n_m}");
 }
+
+#[test]
+fn font_family_x_font_size_not_overmeshed() {
+    // M339b: generic "Font" first-token must not free-mesh (Word MMDM).
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let a = src.join("font_family_demo_id_paraid_overflow.docx");
+    let b = src.join("font_size_12_demo_id_paraid_overflow.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip");
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &WmlComparerSettings {
+            author_for_revisions: "Redline".into(),
+            merge_replaced_paragraphs: true,
+            ..WmlComparerSettings::default()
+        },
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    let cls = body_para_classes(&xml);
+    let seq: String = cls.iter().collect();
+    // Word MMDM (or close). Free-mesh over-mesh was MMMD.
+    assert!(
+        seq.starts_with("MMD") || seq.starts_with("MDM") || seq == "MMDM",
+        "Word MMDM-ish; free-mesh thrash was MMMD; got {seq}"
+    );
+    assert_ne!(seq, "MMMD", "must not over-mesh Font Family×Size");
+}

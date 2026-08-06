@@ -5027,10 +5027,8 @@ pub fn detect_unrelated_sources_word_mode(
                 let ooxml_tbl = ooxml_x_short_table_demo(dom, cu1, cu2);
                 let both_tbl = both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2);
                 let cell_tbl = short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2);
-                let first_tok =
-                    short_demos_share_first_title_token(dom, cu1, cu2, n1, n2);
                 residual_settings.detail_threshold =
-                    if short_prop || ooxml_tbl || both_tbl || cell_tbl || first_tok {
+                    if short_prop || ooxml_tbl || both_tbl || cell_tbl {
                         0.0
                     } else {
                         0.005
@@ -5602,6 +5600,17 @@ fn short_demos_share_first_title_token(
         a.eq_ignore_ascii_case(b) && a.chars().count() >= 3
     });
     if !first_same {
+        return false;
+    }
+    // M339b: Tab Alignment×Tab Tests free-mesh is the load-bearing case.
+    // Generic first tokens on both Demo titles (Font/Track/Green/…) over-mesh
+    // at free-word LCS (Font Family×Font Size MMMD vs Word MMDM, −26).
+    let first = a0[0].to_ascii_lowercase();
+    const GENERIC_STYLE: &[&str] = &[
+        "font", "track", "green", "right", "left", "center", "title", "project",
+        "one", "this",
+    ];
+    if GENERIC_STYLE.iter().any(|g| *g == first.as_str()) {
         return false;
     }
     // Residual body not near-identical (related demos, not EQ cousins).
