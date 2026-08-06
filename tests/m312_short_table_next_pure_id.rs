@@ -256,7 +256,7 @@ fn list_with_table_break_x_plain_3x3_title_pure_i() {
         .iter()
         .find(|(_, t)| !t.trim().is_empty())
         .expect("contentful");
-    assert_eq!(first_content.0, 'I', "got {:?}", first_content);
+    assert_eq!(first_content.0, 'I', "got {first_content:?}");
     assert!(
         !first_content.1.contains("ONE"),
         "must not MIX list item into title: {:?}",
