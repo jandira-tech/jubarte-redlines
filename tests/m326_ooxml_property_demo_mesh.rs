@@ -69,8 +69,11 @@ fn bold_vals_x_color_multi_mix() {
     let n_m = cls.iter().filter(|&&c| c == 'M').count();
     let n_i = cls.iter().filter(|&&c| c == 'I').count();
     let n_d = cls.iter().filter(|&&c| c == 'D').count();
+    // Word free-meshes property lines (oracle ~11 MIX). Pre-M328 free-mesh sat
+    // after common-run `return None`, so shared "Sample"/"text" skipped free
+    // mesh and left pure-I/D (MIX≈3). M328 moves free-mesh earlier → MIX≥8.
     assert!(
-        n_m >= 3,
+        n_m >= 8,
         "Word multi-meshes OOXML property demos; got MIX={n_m} I={n_i} D={n_d} seq={}",
         cls.iter().collect::<String>()
     );

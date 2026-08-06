@@ -4872,6 +4872,52 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::deleted(cu1.to_vec()),
         ]);
     }
+    // M328: free word-LCS for OOXML property / parallel-section / last-sig title
+    // demos **before** ok_counts / disjoint / common-run gates.
+    //
+    // Prior free-mesh (M324/M326/M327) sat deep inside the pure-I/D path, after
+    // `if !disjoint { return None }` and after common-word `return None`.
+    // bold_vals×color often shares group hashes on table chrome / "Sample text"
+    // so disjoint=false → free-mesh never ran → pure-I/D (MIX≈3) while Word
+    // free-meshes line-by-line (MIX≥11). Run free-mesh first when demos match.
+    // Cap size to avoid hangs. Do **not** free-mesh large-vocab legal prose
+    // (M318/M321 regressed memo×nda).
+    {
+        let free_mesh_demos = (parallel_sectioned_demos(dom, cu1, cu2)
+            || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
+            || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50))
+            && n1 != n2
+            && n1 <= 50
+            && n2 <= 50;
+        // Guard: large-vocab related prose stays on full LCS (M318).
+        let large_related = {
+            let b1 = para_text_tokens_from_units(dom, cu1);
+            let b2 = para_text_tokens_from_units(dom, cu2);
+            let s1 = significant_tokens(&b1);
+            let s2 = significant_tokens(&b2);
+            s1.len() >= 40 && s2.len() >= 40 && token_jaccard(&b1, &b2) + 1e-12 >= 0.08
+        };
+        if free_mesh_demos && !large_related {
+            let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
+            let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
+            if !left.is_empty()
+                && !right.is_empty()
+                && left.len().saturating_mul(right.len()) <= 250_000
+            {
+                rehash_words_by_text_content(dom, &mut left);
+                rehash_words_by_text_content(dom, &mut right);
+                let mut residual_settings = settings.clone();
+                // 0.005 voids short shared phrases on long demos: "Sample text"
+                // is 2 tokens / ~620 words ≈ 0.003. Word free-meshes those
+                // property lines (bold×color MIX≥11). Use 0 so any non-empty
+                // pure-word run survives Step G for this gated free-mesh path.
+                residual_settings.detail_threshold = 0.0;
+                return Some(lcs(dom, left, right, &residual_settings));
+            }
+            // Product too large / empty — fall through to full LCS.
+            return None;
+        }
+    }
     let ok_counts = (short_n > 3 && long_n > 3)
         || ((2..=3).contains(&short_n) && long_n > 3 && !has_table(short_cu))
         || (stamped && disjoint && (2..=6).contains(&short_n) && long_n > 6 && n2 == short_n);
@@ -5139,39 +5185,9 @@ pub fn detect_unrelated_sources_word_mode(
             }
         }
     }
-    // M310 (ooxml rstyle combo demos ~34–42): parallel property testers share
-    // lettered section skeleton A) B) C) D) and bullet chrome. Content hashes
-    // are disjoint so classic unrelated pure-I/D fires, but Word meshes
-    // MIX line-by-line (unpacked oracle ~21 MIX paras). Force full document
-    // LCS when both sides carry ≥3 shared lettered section headers.
-    // (Free word-LCS+rehash helped color×highlight but regressed
-    // highlight×bold into a pure-D then pure-I block — keep full LCS.)
-    // M324: free word-LCS for parallel A)/B)/C) rstyle demos.
-    // M326: also short OOXML property testers without lettered sections on
-    // both sides (bold_vals×color — Word multi-MIX). Cap size to avoid hangs.
-    // M327: short demos whose titles share last-sig (table_tester×tab:
-    // Document) — Word free-meshes; pure-I/D wholesale under-meshes.
-    let free_mesh_demos = (parallel_sectioned_demos(dom, cu1, cu2)
-        || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
-        || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50))
-        && n1 != n2
-        && n1 <= 50
-        && n2 <= 50;
-    if free_mesh_demos {
-        let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
-        let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
-        if !left.is_empty()
-            && !right.is_empty()
-            && left.len().saturating_mul(right.len()) <= 250_000
-        {
-            rehash_words_by_text_content(dom, &mut left);
-            rehash_words_by_text_content(dom, &mut right);
-            let mut residual_settings = settings.clone();
-            residual_settings.detail_threshold = 0.005;
-            return Some(lcs(dom, left, right, &residual_settings));
-        }
-        return None;
-    }
+    // M310/M324: parallel lettered-section demos — free-mesh already handled
+    // above (M328). If we reach here, free-mesh was not eligible; refuse
+    // pure-I/D so full LCS can still try structure mesh.
     if parallel_sectioned_demos(dom, cu1, cu2) {
         return None;
     }
