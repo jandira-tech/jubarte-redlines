@@ -4838,11 +4838,15 @@ pub fn detect_unrelated_sources_word_mode(
     // then pure-D all base, body jaccard 0). Require short=next, base table-free,
     // near-zero body-token overlap so table-bookmark cell merges and short-base
     // table×long next (employee_directory) stay on full LCS.
+    // M332: skip when base is OOXML property tester × short table-title next —
+    // Word free-meshes (rfonts×table_left DMDI); pure-I/D under-meshes (−32).
     if settings.merge_replaced_paragraphs
         && n2 == short_n
         && (1..=8).contains(&short_n)
         && long_n >= 4
         && has_table(cu2)
+        && !ooxml_x_short_table_demo(dom, cu1, cu2)
+        && !both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2)
         && {
             let b1 = para_text_tokens_from_units(dom, cu1);
             let b2 = para_text_tokens_from_units(dom, cu2);
@@ -4907,10 +4911,19 @@ pub fn detect_unrelated_sources_word_mode(
                 if t1.to_ascii_lowercase().starts_with("file_")
                     && t2.to_ascii_lowercase().starts_with("file_")
         );
+        // M332: OOXML property tester × short table-title demo (rfonts×table_left
+        // indent). Word free-meshes section "E) Table samples…" with table titles
+        // (shape DMDI, MIX≥1); pure-I/D wholesale under-meshes (pure ID, −32).
+        // M333: both-table unrelated (pirates×border) — Word free-meshes table
+        // cells (IDIMDI MIX≥1); pure-I/D wholesale under-meshes. Require no shared
+        // title first-token (M323 SuperDoc pairs stay on full LCS) and low body
+        // jaccard so related table cousins keep structure mesh.
         let free_mesh_demos = !stamped_pair
             && (parallel_sectioned_demos(dom, cu1, cu2)
                 || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
-                || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50))
+                || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50)
+                || ooxml_x_short_table_demo(dom, cu1, cu2)
+                || both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2))
             && n1 != n2
             && n1 <= 50
             && n2 <= 50;
@@ -4984,7 +4997,13 @@ pub fn detect_unrelated_sources_word_mode(
                 // keeps those pure-word runs (bold_vals×color Word MIX≥11).
                 let short_prop =
                     short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2);
-                residual_settings.detail_threshold = if short_prop { 0.0 } else { 0.005 };
+                let ooxml_tbl = ooxml_x_short_table_demo(dom, cu1, cu2);
+                let both_tbl = both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2);
+                residual_settings.detail_threshold = if short_prop || ooxml_tbl || both_tbl {
+                    0.0
+                } else {
+                    0.005
+                };
                 return Some(lcs(dom, left, right, &residual_settings));
             }
             // Product too large / empty — fall through to full LCS.
@@ -5218,12 +5237,14 @@ pub fn detect_unrelated_sources_word_mode(
         let short_prop_demos =
             short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2);
         let last_sig_titles = titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50;
+        let ooxml_tbl = ooxml_x_short_table_demo(dom, cu1, cu2);
         if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last())
             && counts_differ
             && !both_tables
             && !parallel_sections
             && !short_prop_demos
             && !last_sig_titles
+            && !ooxml_tbl
             && is_para_group(first_a)
             && is_para_group(last_b)
         {
@@ -5336,6 +5357,79 @@ fn parallel_sectioned_demos(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[Comparison
         return false;
     }
     l1.intersection(&l2).count() >= 3
+}
+
+/// Short table-title demo: has ≥1 table, first contentful title mentions
+/// "table", contentful groups ≤8 (sd_1494 table_left_indent: 2 titles + tables).
+fn short_table_title_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
+    if !has_table_units(cu) {
+        return false;
+    }
+    let contentful = cu
+        .iter()
+        .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+        .count();
+    if contentful == 0 || contentful > 8 {
+        return false;
+    }
+    let Some(i) = first_contentful_group_index(dom, cu) else {
+        return false;
+    };
+    let mut text = String::new();
+    for a in cu[i].descendant_atoms() {
+        if dom.name(a.content_element) == Some(W::t()) {
+            text.push_str(&dom.value_str(a.content_element));
+        }
+    }
+    text.to_ascii_lowercase().contains("table")
+}
+
+/// One side OOXML property tester, other short table-title demo. Word meshes
+/// OOXML "E) Table samples" section with table titles; pure-I/D does not.
+fn ooxml_x_short_table_demo(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[ComparisonUnit]) -> bool {
+    (short_ooxml_property_demo(dom, cu1) && short_table_title_demo(dom, cu2))
+        || (short_ooxml_property_demo(dom, cu2) && short_table_title_demo(dom, cu1))
+}
+
+/// Both sides table-bearing, unequal contentful counts, low body overlap, titles
+/// do not share first token. Word free-meshes table cells (pirates×border
+/// IDIMDI); pure-I/D wholesale (pure ID). SuperDoc pairs sharing "SuperDoc"
+/// first token stay on full LCS (M323).
+fn both_tables_unrelated_free_mesh(
+    dom: &Dom,
+    cu1: &[ComparisonUnit],
+    cu2: &[ComparisonUnit],
+    n1: usize,
+    n2: usize,
+) -> bool {
+    // Both substantial (pirates×border ~28×22). Short table-next demos
+    // (list×plain_3x3, hyperlink×rtl_table) must keep M312 pure-I/D.
+    if n1 < 10 || n2 < 10 || n1 > 40 || n2 > 40 || n1 == n2 {
+        return false;
+    }
+    if !has_table_units(cu1) || !has_table_units(cu2) {
+        return false;
+    }
+    let (Some(i1), Some(i2)) = (
+        first_contentful_group_index(dom, cu1),
+        first_contentful_group_index(dom, cu2),
+    ) else {
+        return false;
+    };
+    let a0 = para_text_token_list(dom, &cu1[i1]);
+    let b0 = para_text_token_list(dom, &cu2[i2]);
+    let first_same = a0
+        .first()
+        .zip(b0.first())
+        .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b));
+    if first_same {
+        return false;
+    }
+    let body_j = token_jaccard(
+        &para_text_tokens_from_units(dom, cu1),
+        &para_text_tokens_from_units(dom, cu2),
+    );
+    body_j + 1e-12 < 0.08
 }
 
 /// Short OOXML property-tester demos (bold_vals×color, highlight×italic): titles
