@@ -4892,16 +4892,21 @@ pub fn detect_unrelated_sources_word_mode(
     if !disjoint {
         return None;
     }
-    // M318 (memo×nda): large-vocab related prose with body Jaccard ≥ 0.08
-    // must not pure-I/D wholesale even when group hashes are disjoint. Word
-    // meshes MIX. Placed before any pure-I/D fallthrough so stamp/empty/MxN
-    // paths cannot skip it. Unrelated demos (M312) stay under jaccard 0.05.
+    // M318 (memo×nda): large-vocab related prose with body Jaccard ≥ 0.08.
+    // Group hashes are often fully disjoint so classic pure-I/D wholesale
+    // fires. Return None so the caller runs full group LCS (may still mesh
+    // poorly when structure hashes never equal — better than pure-I/D for
+    // shared-vocab legal pairs). Free word-LCS mesh is a follow-up. Unrelated
+    // demos (M312) stay under jaccard 0.05.
     {
         let b1 = para_text_tokens_from_units(dom, cu1);
         let b2 = para_text_tokens_from_units(dom, cu2);
         let s1 = significant_tokens(&b1);
         let s2 = significant_tokens(&b2);
-        if s1.len() >= 40 && s2.len() >= 40 && token_jaccard(&b1, &b2) + 1e-12 >= 0.08 {
+        if s1.len() >= 40
+            && s2.len() >= 40
+            && token_jaccard(&b1, &b2) + 1e-12 >= 0.08
+        {
             return None;
         }
     }
@@ -5143,22 +5148,6 @@ pub fn detect_unrelated_sources_word_mode(
     // highlight×bold into a pure-D then pure-I block — keep full LCS.)
     if parallel_sectioned_demos(dom, cu1, cu2) {
         return None;
-    }
-    // M318 (memo×nda ~46): both sides substantial multi-para prose with body
-    // Jaccard ~0.10 and disjoint group hashes → classic pure-I/D wholesale
-    // fires, but Word meshes MIX (~15 MIX paras). Keep full LCS when each side
-    // has a large significant vocabulary and residual Jaccard ≥ 0.08. True
-    // unrelated short demos stay below the vocab floor or under 0.08 (M312
-    // pairs are jaccard ~0). Related stamped cousins (file_175) already skip
-    // via confetti_ok=false / high residual paths earlier.
-    {
-        let b1 = para_text_tokens_from_units(dom, cu1);
-        let b2 = para_text_tokens_from_units(dom, cu2);
-        let s1 = significant_tokens(&b1);
-        let s2 = significant_tokens(&b2);
-        if s1.len() >= 40 && s2.len() >= 40 && token_jaccard(&b1, &b2) + 1e-12 >= 0.08 {
-            return None;
-        }
     }
     Some(vec![
         CorrelatedSequence::inserted(cu2.to_vec()),
