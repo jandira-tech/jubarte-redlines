@@ -171,13 +171,16 @@ pub fn friendly_property_name(local: &str) -> String {
 }
 
 fn prop_signature(dom: &mut Dom, prop: NodeId) -> String {
-    // NormalizePropertyElement: name + non-rsid attrs sorted; compare by serialization.
+    // NormalizePropertyElement: name + non-rsid / non-pt attrs sorted; compare by
+    // serialization. Must drop pt:Unid (and other pt scratch) — otherwise M227's
+    // without-jc equality never holds across A/B trees (each Unid is unique) and
+    // center×center_bold title loses pPrChange(jc) history Word keeps.
     let cn = dom.name(prop).unwrap();
     let pe = dom.new_element(cn);
     let mut attrs: Vec<(XName, String)> = dom
         .attributes(prop)
         .into_iter()
-        .filter(|(an, _)| !is_rsid_attr(an))
+        .filter(|(an, _)| !is_rsid_attr(an) && an.namespace_name() != PT::URI)
         .collect();
     // ALLOC-LEAN-01: compare &str, don't allocate a String key per comparison.
     attrs.sort_by(|(a, _), (b, _)| a.local_name().cmp(b.local_name()));
@@ -301,6 +304,35 @@ fn projected_ppr_is_spacing_only(dom: &Dom, ppr: NodeId) -> bool {
         .filter(|&c| !is_para_comparison_noise(dom, c))
         .collect();
     kids.len() == 1 && dom.name(kids[0]) == Some(W::name("spacing"))
+}
+
+/// True when projected pPr carries a `w:spacing` child.
+fn projected_ppr_has_spacing(dom: &Dom, ppr: NodeId) -> bool {
+    dom.elements(ppr, None)
+        .into_iter()
+        .any(|c| !is_para_comparison_noise(dom, c) && dom.name(c) == Some(W::name("spacing")))
+}
+
+/// Signature of projected pPr with spacing children ignored (spacing-addition gate).
+fn normalize_para_properties_without_spacing(dom: &mut Dom, ppr: NodeId) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for c in dom.elements(ppr, None) {
+        if is_para_comparison_noise(dom, c) {
+            continue;
+        }
+        if dom.name(c) == Some(W::name("spacing")) {
+            continue;
+        }
+        if dom.name(c) == Some(W::name("jc")) {
+            let val = dom.attribute(c, &W::val()).unwrap_or("");
+            if val == "left" || val == "start" {
+                continue;
+            }
+        }
+        parts.push(prop_signature(dom, c));
+    }
+    parts.sort();
+    parts.join("\u{1}")
 }
 
 /// Project old-side pPr children for `w:pPrChange` (CT_PPrBase noise-stripped).
@@ -438,8 +470,38 @@ fn detect_format_changes_impl(
                     // non-default jc, B dropped it while other layout (e.g.
                     // line=276) stayed equal. Full-clear M81 misses this —
                     // new_sig is non-empty. Word emits pPrChange(jc only).
+                    //
+                    // Gate relies on prop_signature ignoring pt:Unid (same as
+                    // rPr normalize) so equal spacing line=276 matches across trees.
                     if let Some(jc_old) = project_jc_only_from(dom, projected_old) {
                         para_changes.push((i, jc_old));
+                    }
+                } else if projected_ppr_jc(dom, projected_old).is_none()
+                    && projected_ppr_jc(dom, projected_new).is_some()
+                    && normalize_para_properties_without_jc(dom, projected_old)
+                        == normalize_para_properties_without_jc(dom, projected_new)
+                {
+                    // M232 (center_2×center title, LO ~81→target Word 100): A
+                    // lacked non-default jc, B added it while other layout
+                    // (line=276) stayed equal. M102 requires empty old_sig and
+                    // misses spacing+jc addition. Word: live jc + empty
+                    // pPrChange (format-revision gold under LO).
+                    let empty_old = dom.new_element(W::p_pr());
+                    para_changes.push((i, empty_old));
+                } else if !projected_ppr_has_spacing(dom, projected_old)
+                    && projected_ppr_has_spacing(dom, projected_new)
+                {
+                    // M251 (two_col_index×two_col_tab): A had tabs only, B
+                    // tabs+spacing line=276. Word: live tabs+spacing +
+                    // pPrChange(old tabs). M130 requires empty old_sig and
+                    // misses non-empty equal props (tabs). Require non-empty
+                    // without-spacing signature so bare×spaced stays on M130
+                    // (empty old), and rest-of-pPr equality so file_8-class
+                    // multi-prop churn does not flood.
+                    let rest_old = normalize_para_properties_without_spacing(dom, projected_old);
+                    let rest_new = normalize_para_properties_without_spacing(dom, projected_new);
+                    if !rest_old.is_empty() && rest_old == rest_new {
+                        para_changes.push((i, projected_old));
                     }
                 }
             }
@@ -729,6 +791,100 @@ mod format_change_cache_tests {
                 .iter()
                 .any(|a| a.correlation_status == CorrelationStatus::Equal),
             "expected at least one unchanged Equal"
+        );
+    }
+    #[test]
+    fn m227_jc_drop_with_equal_spacing_tags_format_changed() {
+        let mut dom = Dom::new();
+        // Distinct pt:Unid on each spacing (real A/B trees always differ).
+        let unid = XName::from_clark(&format!("{{{}}}Unid", PT::URI));
+        // B (live): spacing only
+        let new_ppr = dom.new_element(W::p_pr());
+        let sp_n = dom.new_element(W::name("spacing"));
+        dom.set_attribute_value(sp_n, &W::name("line"), Some("276"));
+        dom.set_attribute_value(sp_n, &unid, Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        dom.add(new_ppr, sp_n);
+        // A (before): spacing + jc center
+        let old_ppr = dom.new_element(W::p_pr());
+        let sp_o = dom.new_element(W::name("spacing"));
+        dom.set_attribute_value(sp_o, &W::name("line"), Some("276"));
+        dom.set_attribute_value(sp_o, &unid, Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        dom.add(old_ppr, sp_o);
+        let jc = dom.new_element(W::name("jc"));
+        dom.set_attribute_value(jc, &W::val(), Some("center"));
+        dom.set_attribute_value(jc, &unid, Some("cccccccccccccccccccccccccccccccc"));
+        dom.add(old_ppr, jc);
+
+        let mut before = ComparisonUnitAtom::new(old_ppr, vec![], "h0");
+        before.correlation_status = CorrelationStatus::Equal;
+        let mut atom = ComparisonUnitAtom::new(new_ppr, vec![], "h1");
+        atom.correlation_status = CorrelationStatus::Equal;
+        atom.comparison_unit_atom_before = Some(Box::new(before));
+
+        let mut atoms = vec![atom];
+        let settings = WmlComparerSettings::default();
+        detect_format_changes_in_atom_list(&mut dom, &mut atoms, &settings);
+        assert_eq!(
+            atoms[0].correlation_status,
+            CorrelationStatus::FormatChanged,
+            "M227 must retag Equal pPr when A had jc and B dropped it with equal spacing"
+        );
+        let fc = atoms[0].format_change.as_ref().expect("format_change");
+        let old = fc.old_para_properties.expect("old_para_properties");
+        let ser = dom.serialize_element(old);
+        assert!(
+            ser.contains("jc") && ser.contains("center"),
+            "old pPr={ser}"
+        );
+        // Should be jc-only projection (not full spacing+jc)
+        assert!(
+            !ser.contains("spacing"),
+            "M227 projects jc-only into OldPPr; got {ser}"
+        );
+    }
+
+    #[test]
+    fn m232_jc_add_with_equal_spacing_tags_format_changed() {
+        let mut dom = Dom::new();
+        let unid = XName::from_clark(&format!("{{{}}}Unid", PT::URI));
+        // B (live): spacing + jc center
+        let new_ppr = dom.new_element(W::p_pr());
+        let sp_n = dom.new_element(W::name("spacing"));
+        dom.set_attribute_value(sp_n, &W::name("line"), Some("276"));
+        dom.set_attribute_value(sp_n, &unid, Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        dom.add(new_ppr, sp_n);
+        let jc = dom.new_element(W::name("jc"));
+        dom.set_attribute_value(jc, &W::val(), Some("center"));
+        dom.set_attribute_value(jc, &unid, Some("jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj"));
+        dom.add(new_ppr, jc);
+        // A (before): spacing only
+        let old_ppr = dom.new_element(W::p_pr());
+        let sp_o = dom.new_element(W::name("spacing"));
+        dom.set_attribute_value(sp_o, &W::name("line"), Some("276"));
+        dom.set_attribute_value(sp_o, &unid, Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        dom.add(old_ppr, sp_o);
+
+        let mut before = ComparisonUnitAtom::new(old_ppr, vec![], "h0");
+        before.correlation_status = CorrelationStatus::Equal;
+        let mut atom = ComparisonUnitAtom::new(new_ppr, vec![], "h1");
+        atom.correlation_status = CorrelationStatus::Equal;
+        atom.comparison_unit_atom_before = Some(Box::new(before));
+
+        let mut atoms = vec![atom];
+        let settings = WmlComparerSettings::default();
+        detect_format_changes_in_atom_list(&mut dom, &mut atoms, &settings);
+        assert_eq!(
+            atoms[0].correlation_status,
+            CorrelationStatus::FormatChanged,
+            "M232 must retag Equal pPr when B adds jc with equal spacing"
+        );
+        let fc = atoms[0].format_change.as_ref().expect("format_change");
+        let old = fc.old_para_properties.expect("old_para_properties");
+        let ser = dom.serialize_element(old);
+        // Empty old pPr (Word shape: live jc + pPrChange empty)
+        assert!(
+            !ser.contains("jc") && !ser.contains("spacing"),
+            "M232 projects empty old into OldPPr; got {ser}"
         );
     }
 }

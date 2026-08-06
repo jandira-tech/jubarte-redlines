@@ -267,24 +267,33 @@ fn merge_normal_style_spacing(
             .or_else(|| pick(&raw_b_dd, i))
             .unwrap_or_else(|| APP_DEFAULT[i].to_string())
     };
-    let b_target: Option<(String, String, String)> = if !a_structured
-        && !b_structured
-        && a_stored.is_none()
-        && b_stored.is_none()
-    {
-        // both Normals bare: Word leaves the style untouched (m106 requires a
-        // structured B, so it cannot land here)
-        return false;
-    } else {
-        let after = if b_eff(0) != ctx(0) { b_eff(0) } else { String::new() };
-        let line = if b_eff(1) != ctx(1) { b_eff(1) } else { String::new() };
-        let rule = if line.is_empty() { String::new() } else { b_eff(2) };
-        if after.is_empty() && line.is_empty() {
-            None
+    let b_target: Option<(String, String, String)> =
+        if !a_structured && !b_structured && a_stored.is_none() && b_stored.is_none() {
+            // both Normals bare: Word leaves the style untouched (m106 requires a
+            // structured B, so it cannot land here)
+            return false;
         } else {
-            Some((after, line, rule))
-        }
-    };
+            let after = if b_eff(0) != ctx(0) {
+                b_eff(0)
+            } else {
+                String::new()
+            };
+            let line = if b_eff(1) != ctx(1) {
+                b_eff(1)
+            } else {
+                String::new()
+            };
+            let rule = if line.is_empty() {
+                String::new()
+            } else {
+                b_eff(2)
+            };
+            if after.is_empty() && line.is_empty() {
+                None
+            } else {
+                Some((after, line, rule))
+            }
+        };
     // Identity: A already has the same explicit spacing we would write.
     if let (Some(a), Some(b)) = (&a_stored, &b_target)
         && a == b
@@ -2987,6 +2996,11 @@ fn compare_documents_impl(
     crate::comparer::fixups::fix_up_doc_pr_ids(&mut dom, result_root);
     crate::comparer::fixups::fix_up_shape_ids(&mut dom, result_root);
     crate::comparer::fixups::fix_up_shape_type_ids(&mut dom, result_root);
+    // M243c late: dual pilcrow del+ins on pure-ins body can be re-stamped after
+    // mid-path strip; run again immediately before serialize.
+    if settings.merge_replaced_paragraphs {
+        crate::comparer::finalize::strip_del_pilcrow_from_pure_ins_body(&mut dom, result_root);
+    }
 
     let result_xml = dom.serialize_element(result_root);
     out.set_part(&main1, result_xml.into_bytes());
@@ -2996,6 +3010,9 @@ fn compare_documents_impl(
     // Word-mode also: adopt missing docDefaults/latentStyles from B, then
     // canonicalize styleIds (numeric/`styleN` → Heading1/…) and remap refs.
     let mut style_renames: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    // B numId → fresh id when A already owned that id for a different abstract.
+    let mut numbering_id_remaps: std::collections::HashMap<i32, i32> =
         std::collections::HashMap::new();
     for (part, is_styles) in [("word/styles.xml", true), ("word/numbering.xml", false)] {
         match (out.part_string(part), pkg2.part_string(part)) {
@@ -3011,7 +3028,8 @@ fn compare_documents_impl(
                             style_renames = canonicalize_style_ids(&mut sd, tr);
                         }
                     } else {
-                        crate::comparer::footnotes::copy_missing_numbering(&mut sd, tr, fr);
+                        numbering_id_remaps =
+                            crate::comparer::footnotes::copy_missing_numbering(&mut sd, tr, fr);
                     }
                     out.set_part(part, sd.serialize_element(tr).into_bytes());
                 }
@@ -3106,6 +3124,44 @@ fn compare_documents_impl(
         }
     }
 
+    // M233 (bullet disc×square): after numbering merge remaps B's colliding
+    // numId, rewrite live body numPr to B's new id + pPrChange(old). Without
+    // this, Equal list paras keep A's numId and LO paints the wrong glyph.
+    if settings.merge_replaced_paragraphs
+        && !numbering_id_remaps.is_empty()
+        && let Some(xml) = out.part_string(&main1)
+    {
+        let mut pd = Dom::new();
+        let doc = pd.parse_xdocument(&xml);
+        if let Some(root) = pd.root(doc) {
+            let mut id_gen = 1u32;
+            // Prefer max existing revision id + 1 when present.
+            for e in pd.descendants(root, None) {
+                if let Some(id) = pd
+                    .attribute(e, &W::id())
+                    .and_then(|v| v.parse::<u32>().ok())
+                {
+                    id_gen = id_gen.max(id + 1);
+                }
+            }
+            let numbering_root = out.part_string("word/numbering.xml").and_then(|nx| {
+                let nd = pd.parse_xdocument(&nx);
+                pd.root(nd)
+            });
+            let n = crate::comparer::footnotes::apply_numbering_id_remaps_to_document(
+                &mut pd,
+                root,
+                &numbering_id_remaps,
+                numbering_root,
+                settings,
+                &mut id_gen,
+            );
+            if n > 0 {
+                out.set_part(&main1, pd.serialize_element(root).into_bytes());
+            }
+        }
+    }
+
     // Word-mode: adopt B's package chrome (settings/fontTable/theme) when A is
     // thin. When BOTH sides are bare demos (C5 formatting one-pagers), Word
     // still saves factory settings/theme/fontTable — inject if still missing.
@@ -3157,6 +3213,38 @@ fn compare_documents_impl(
                     out.set_part(&part, pd.serialize_element(root).into_bytes());
                 }
             }
+        }
+    }
+
+    // Word-parity region mark survival (port of jubarte-first
+    // RelocateRegionMarkSurvival — lossless 07bd8ba21/d44dc0749/7e4dec618):
+    // inside a maximal run of fully-changed body paragraphs, only the LAST
+    // A-origin mark survives; interior pPrChange paragraphs flip to A's old
+    // props + deleted mark (liveStyle-without-oldStyle skips, RELATED docs
+    // split instead); interior junction mixes get their mark deleted even
+    // without a pPrChange; a DOCUMENT-FINAL region tail receives the donated
+    // live props + pPrChange with a live mark. Verified on lossless at +270
+    // corpus points across the three rules.
+    if settings.merge_replaced_paragraphs
+        && let Some(xml) = out.part_string(&main1)
+    {
+        let mut pd = Dom::new();
+        let doc = pd.parse_xdocument(&xml);
+        if let Some(root) = pd.root(doc)
+            && relocate_region_mark_survival(&mut pd, root, settings)
+        {
+            // M243c: region-mark survival re-stamps dual del pilcrows onto pure-ins
+            // list bodies; strip again after the package-level mutate.
+            crate::comparer::finalize::strip_del_pilcrow_from_pure_ins_body(&mut pd, root);
+            // M263: pure-D empty before pure-I empty (annot2). Region survival
+            // may re-stamp del pilcrows; drop after that so Test 1→I empty→Test 2.
+            crate::comparer::finalize::drop_pure_d_empty_before_pure_i_empty(&mut pd, root);
+            // M264 after strip_del_pilcrow so del pilcrow before table survives.
+            crate::comparer::finalize::del_pilcrow_on_pure_ins_before_table(&mut pd, root);
+            crate::comparer::finalize::insert_pure_d_empty_before_table_after_pure_ins(
+                &mut pd, root,
+            );
+            out.set_part(&main1, pd.serialize_element(root).into_bytes());
         }
     }
 
@@ -3520,6 +3608,285 @@ fn compare_documents_impl(
     out.to_zip()
 }
 
+/// Port of jubarte-first `RelocateRegionMarkSurvival` (see call site).
+/// Returns true when the document was mutated.
+fn relocate_region_mark_survival(
+    dom: &mut Dom,
+    root: crate::xmllinq::NodeId,
+    settings: &WmlComparerSettings,
+) -> bool {
+    use crate::xmllinq::NodeId;
+    let Some(body) = dom
+        .element(root, &W::body())
+        .or_else(|| dom.element(root, &W::body()))
+    else {
+        return false;
+    };
+    let has_desc = |dom: &Dom, n: NodeId, name: &crate::xmllinq::XName| -> bool {
+        let mut found = false;
+        dom.for_each_descendant_element(n, Some(name), |_| found = true);
+        found
+    };
+    let has_live_text = |dom: &Dom, n: NodeId| -> bool {
+        let mut found = false;
+        dom.for_each_descendant_element(n, Some(&W::t()), |t| {
+            if !dom.value_str(t).trim().is_empty() {
+                found = true;
+            }
+        });
+        found
+    };
+    struct RegionPara {
+        el: crate::xmllinq::NodeId,
+        a_origin: bool,
+        has_chg: bool,
+        is_tbl: bool,
+    }
+    let p_pr_change = W::name("pPrChange");
+    let p_style = W::name("pStyle");
+    let mut regions: Vec<Vec<RegionPara>> = Vec::new();
+    let mut current: Vec<RegionPara> = Vec::new();
+    for el in dom.elements(body, None) {
+        let nm = dom.name(el);
+        if nm == Some(W::tbl()) {
+            // Wholesale-deleted tables extend the region as A-origin members;
+            // inserted tables join as B-origin; any other table flushes.
+            let has_del_text = has_desc(dom, el, &W::del_text());
+            let live = has_live_text(dom, el);
+            if has_del_text && !live {
+                current.push(RegionPara {
+                    el,
+                    a_origin: true,
+                    has_chg: false,
+                    is_tbl: true,
+                });
+            } else if !has_del_text && has_desc(dom, el, &W::ins()) {
+                current.push(RegionPara {
+                    el,
+                    a_origin: false,
+                    has_chg: false,
+                    is_tbl: true,
+                });
+            } else if !current.is_empty() {
+                regions.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        if nm != Some(W::p()) {
+            continue;
+        }
+        let ppr = dom.element(el, &W::p_pr());
+        let mark_rpr = ppr.and_then(|pp| dom.element(pp, &W::r_pr()));
+        let mark_del = mark_rpr.is_some_and(|rp| dom.element(rp, &W::del()).is_some());
+        let mark_ins = mark_rpr.is_some_and(|rp| dom.element(rp, &W::ins()).is_some());
+        let has_chg = ppr.is_some_and(|pp| dom.element(pp, &p_pr_change).is_some());
+        let equal_text_run = dom.elements(el, Some(&W::r())).iter().any(|&r| {
+            dom.elements(r, Some(&W::t()))
+                .iter()
+                .any(|&t| !dom.value_str(t).is_empty())
+        });
+        let has_ins_run = has_desc(dom, el, &W::ins());
+        let has_del_run = has_desc(dom, el, &W::del());
+        let changed = mark_del || mark_ins || has_chg || has_ins_run || has_del_run;
+        if !changed || equal_text_run {
+            if !current.is_empty() {
+                regions.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(RegionPara {
+            el,
+            a_origin: !mark_ins,
+            has_chg,
+            is_tbl: false,
+        });
+    }
+    if !current.is_empty() {
+        regions.push(current);
+    }
+
+    let mut id_gen: u32 = 700_000;
+    let mut mutated = false;
+    for region in &regions {
+        let a_idx: Vec<usize> = region
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.a_origin)
+            .map(|(i, _)| i)
+            .collect();
+        let Some(&last_a) = a_idx.last() else {
+            continue;
+        };
+        for (i, rp) in region.iter().enumerate() {
+            if i == last_a || rp.is_tbl {
+                continue;
+            }
+            if !rp.has_chg {
+                // Interior junction-mix paragraphs WITHOUT a pPrChange: delete
+                // the paragraph mark so ACCEPT merges the carrier into the
+                // region's surviving paragraph (35/49 seam oracles).
+                if !rp.a_origin {
+                    continue;
+                }
+                let is_mix = has_desc(dom, rp.el, &W::ins()) && has_desc(dom, rp.el, &W::del());
+                if !is_mix {
+                    continue;
+                }
+                let ppr = match dom.element(rp.el, &W::p_pr()) {
+                    Some(pp) => pp,
+                    None => {
+                        let pp = dom.new_element(W::p_pr());
+                        dom.add_first(rp.el, pp);
+                        pp
+                    }
+                };
+                let rpr = dom.element(ppr, &W::r_pr());
+                if rpr.is_some_and(|rp2| dom.element(rp2, &W::del()).is_some()) {
+                    continue;
+                }
+                let mark = dom.new_element(W::del());
+                dom.set_attribute_value(mark, &W::id(), Some(&id_gen.to_string()));
+                id_gen += 1;
+                dom.set_attribute_value(mark, &W::author(), Some(&settings.author_for_revisions));
+                dom.set_attribute_value(mark, &W::date(), Some(&settings.date_time_for_revisions));
+                match rpr {
+                    Some(rp2) => dom.add_first(rp2, mark),
+                    None => {
+                        let rp2 = dom.new_element(W::r_pr());
+                        dom.add(rp2, mark);
+                        dom.add(ppr, rp2);
+                    }
+                }
+                mutated = true;
+                continue;
+            }
+            // M246 (two_column×vrect ~69→34 fair): pure-ins paragraphs that
+            // only carry a numbering-id remap `pPrChange` (M233) must keep
+            // live B props (remapped numId + body spacing). Interior flip
+            // restores old numId + abstract `w:ind` live, strips spacing, and
+            // stamps a del pilcrow that `strip_del_pilcrow_from_pure_ins_body`
+            // then removes — leaving pure-I with hanging ind and no spacing.
+            // Also avoids document-final donate of list pPr onto trailing pure-D.
+            // Equal list lines with live `w:r/w:t` never enter the region
+            // (equal_text_run), so disc×square M233 is unaffected.
+            if !rp.a_origin && has_desc(dom, rp.el, &W::ins()) && !has_desc(dom, rp.el, &W::del()) {
+                continue;
+            }
+            // Interior pPrChange flip.
+            let Some(ppr) = dom.element(rp.el, &W::p_pr()) else {
+                continue;
+            };
+            let Some(chg) = dom.element(ppr, &p_pr_change) else {
+                continue;
+            };
+            let old_ppr = dom.element(chg, &W::p_pr());
+            let live_has_style = dom.element(ppr, &p_style).is_some();
+            let old_has_style = old_ppr.is_some_and(|op| dom.element(op, &p_style).is_some());
+            if live_has_style && !old_has_style {
+                // Split exception (RELATED docs): flipping would strip a live
+                // pStyle A never had (diff_after11×16, hyperlink×pageref).
+                continue;
+            }
+            // Document-final region-survival transplant (4b): donate B's live
+            // props + the change record to the region's last A paragraph when
+            // it ends the body (trailing sectPr tolerated), then keep its mark
+            // live.
+            let target = &region[last_a];
+            if !target.is_tbl {
+                let siblings = dom.elements(body, None);
+                let t_pos = siblings.iter().position(|&s| s == target.el);
+                let doc_final = t_pos.is_some_and(|tp| {
+                    siblings[tp + 1..]
+                        .iter()
+                        .all(|&s| dom.name(s) == Some(W::sect_pr()))
+                });
+                let t_ppr_existing = dom.element(target.el, &W::p_pr());
+                let t_has_chg =
+                    t_ppr_existing.is_some_and(|tp| dom.element(tp, &p_pr_change).is_some());
+                if doc_final && !t_has_chg {
+                    let t_ppr = match t_ppr_existing {
+                        Some(tp) => tp,
+                        None => {
+                            let tp = dom.new_element(W::p_pr());
+                            dom.add_first(target.el, tp);
+                            tp
+                        }
+                    };
+                    for child in dom.elements(t_ppr, None) {
+                        if dom.name(child) != Some(W::r_pr()) {
+                            dom.remove(child);
+                        }
+                    }
+                    let donor_children = dom.elements(ppr, None);
+                    let mut live_props: Vec<crate::xmllinq::NodeId> = Vec::new();
+                    let mut donated_chg: Option<crate::xmllinq::NodeId> = None;
+                    for &child in &donor_children {
+                        let cn = dom.name(child);
+                        if cn == Some(W::r_pr()) {
+                            continue;
+                        }
+                        if cn == Some(p_pr_change.clone()) {
+                            donated_chg = Some(dom.clone_subtree(child));
+                            continue;
+                        }
+                        live_props.push(dom.clone_subtree(child));
+                    }
+                    for prop in live_props.into_iter().rev() {
+                        dom.add_first(t_ppr, prop);
+                    }
+                    // pPrChange sits AFTER rPr in CT_PPr's sequence.
+                    if let Some(dc) = donated_chg {
+                        dom.add(t_ppr, dc);
+                    }
+                    if let Some(t_rpr) = dom.element(t_ppr, &W::r_pr())
+                        && let Some(t_del) = dom.element(t_rpr, &W::del())
+                    {
+                        dom.remove(t_del);
+                    }
+                    // `mutated` is set after the interior flip below; transplant
+                    // always pairs with that flip on the same donor paragraph.
+                }
+            }
+            // Strip B's live props and the change record; keep the mark's rPr.
+            let old_props: Vec<crate::xmllinq::NodeId> = old_ppr
+                .map(|op| {
+                    dom.elements(op, None)
+                        .into_iter()
+                        .map(|c| dom.clone_subtree(c))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for child in dom.elements(ppr, None) {
+                if dom.name(child) != Some(W::r_pr()) {
+                    dom.remove(child);
+                }
+            }
+            for prop in old_props.into_iter().rev() {
+                dom.add_first(ppr, prop);
+            }
+            let rpr_existing = dom.element(ppr, &W::r_pr());
+            let already_del = rpr_existing.is_some_and(|rp2| dom.element(rp2, &W::del()).is_some());
+            if !already_del {
+                let mark = dom.new_element(W::del());
+                dom.set_attribute_value(mark, &W::id(), Some(&id_gen.to_string()));
+                id_gen += 1;
+                dom.set_attribute_value(mark, &W::author(), Some(&settings.author_for_revisions));
+                dom.set_attribute_value(mark, &W::date(), Some(&settings.date_time_for_revisions));
+                match rpr_existing {
+                    Some(rp2) => dom.add_first(rp2, mark),
+                    None => {
+                        let rp2 = dom.new_element(W::r_pr());
+                        dom.add(rp2, mark);
+                        dom.add(ppr, rp2);
+                    }
+                }
+            }
+            mutated = true;
+        }
+    }
+    mutated
+}
+
 #[cfg(test)]
 mod tests {
     //! Word-validity regressions for synthesized revision records. Word treats
@@ -3683,5 +4050,382 @@ mod tests {
         assert_eq!(word_canonical_style_id("heading 1"), "Heading1");
         assert_eq!(word_canonical_style_id("document title"), "DocumentTitle");
         assert_eq!(word_canonical_style_id("my custom style"), "MyCustomStyle");
+    }
+
+    // ── RelocateRegionMarkSurvival ──────────────────────────────────────────
+    // Unit tests drive the real post-produce pass on minimal body XML fixtures.
+
+    const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    fn wrap_body(body_inner: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="{W_NS}">
+  <w:body>
+{body_inner}
+  </w:body>
+</w:document>"#
+        )
+    }
+
+    fn run_region_survival(xml: &str) -> (bool, String) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("document root");
+        let settings = WmlComparerSettings::default();
+        let mutated = relocate_region_mark_survival(&mut dom, root, &settings);
+        let out = dom.serialize_element(root);
+        (mutated, out)
+    }
+
+    fn body_paras(out: &str) -> Vec<String> {
+        // Split serialized body paragraphs for position-sensitive assertions.
+        let mut paras = Vec::new();
+        let mut rest = out;
+        while let Some(start) = rest.find("<w:p") {
+            let from = &rest[start..];
+            let end = from
+                .find("</w:p>")
+                .map(|i| i + "</w:p>".len())
+                .or_else(|| from.find("/>").map(|i| i + 2))
+                .expect("paragraph closed");
+            paras.push(from[..end].to_string());
+            rest = &from[end..];
+        }
+        paras
+    }
+
+    /// Interior pPrChange paragraphs flip to A's old props + deleted mark;
+    /// the region's last A-origin keeps its live mark when not document-final
+    /// for the donor path's strip on interiors only.
+    #[test]
+    fn region_survival_interior_pprchange_flips_to_old_props_and_del_mark() {
+        // Region: interior Title (B live + pPrChange of A's Title) → pure del
+        // → last A del (region survivor). After pass: interior has A's pStyle
+        // Title live, no pPrChange, and pPr/rPr/del mark.
+        let xml = wrap_body(
+            r#"
+    <w:p>
+      <w:pPr>
+        <w:pStyle w:val="Normal"/>
+        <w:pPrChange w:id="1" w:author="Author" w:date="1970-01-01T00:00:00Z">
+          <w:pPr><w:pStyle w:val="Title"/></w:pPr>
+        </w:pPrChange>
+        <w:rPr><w:del w:id="10" w:author="Author" w:date="1970-01-01T00:00:00Z"/></w:rPr>
+      </w:pPr>
+      <w:del w:id="11" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>old title</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p>
+      <w:pPr>
+        <w:rPr><w:del w:id="12" w:author="Author" w:date="1970-01-01T00:00:00Z"/></w:rPr>
+      </w:pPr>
+      <w:del w:id="13" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>body gone</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p>
+      <w:pPr>
+        <w:rPr><w:del w:id="14" w:author="Author" w:date="1970-01-01T00:00:00Z"/></w:rPr>
+      </w:pPr>
+      <w:del w:id="15" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>tail</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p><w:r><w:t>equal after region</w:t></w:r></w:p>
+"#,
+        );
+        let (mutated, out) = run_region_survival(&xml);
+        assert!(mutated, "interior pPrChange must mutate");
+        let paras = body_paras(&out);
+        assert!(
+            paras.len() >= 3,
+            "expected ≥3 paragraphs, got {}",
+            paras.len()
+        );
+        // Interior (first): flipped — A's Title live, no pPrChange.
+        assert!(
+            paras[0].contains(r#"w:val="Title""#),
+            "interior should carry A's old pStyle Title: {}",
+            paras[0]
+        );
+        assert!(
+            !paras[0].contains("pPrChange"),
+            "interior pPrChange must be stripped: {}",
+            paras[0]
+        );
+        assert!(
+            paras[0].contains("<w:del"),
+            "interior mark must be deleted: {}",
+            paras[0]
+        );
+        // Last A-origin in region is not flipped away from its del mark.
+        assert!(
+            paras[2].contains("<w:del"),
+            "region-final A keeps deleted mark: {}",
+            paras[2]
+        );
+    }
+
+    /// liveStyle-without-oldStyle: skip the flip so B's named style is not stripped
+    /// (RELATED-docs split exception: Heading1 live, style-less old pPr).
+    #[test]
+    fn region_survival_skips_live_style_without_old_style() {
+        let xml = wrap_body(
+            r#"
+    <w:p>
+      <w:pPr>
+        <w:pStyle w:val="Heading1"/>
+        <w:pPrChange w:id="1" w:author="Author" w:date="1970-01-01T00:00:00Z">
+          <w:pPr/>
+        </w:pPrChange>
+        <w:rPr><w:del w:id="10" w:author="Author" w:date="1970-01-01T00:00:00Z"/></w:rPr>
+      </w:pPr>
+      <w:del w:id="11" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>heading text</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p>
+      <w:pPr>
+        <w:rPr><w:del w:id="12" w:author="Author" w:date="1970-01-01T00:00:00Z"/></w:rPr>
+      </w:pPr>
+      <w:del w:id="13" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>tail</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p><w:r><w:t>equal</w:t></w:r></w:p>
+"#,
+        );
+        let (mutated, out) = run_region_survival(&xml);
+        let paras = body_paras(&out);
+        assert!(
+            paras[0].contains(r#"w:val="Heading1""#),
+            "live Heading1 must survive skip: {}",
+            paras[0]
+        );
+        assert!(
+            paras[0].contains("pPrChange"),
+            "skip leaves pPrChange intact: {}",
+            paras[0]
+        );
+        // No flip → no mutation from this region (skip path).
+        assert!(!mutated, "liveStyle-without-oldStyle should not mutate");
+    }
+
+    /// Interior junction-mix (ins + del runs, no pPrChange): delete the mark.
+    #[test]
+    fn region_survival_interior_junction_mix_gets_del_mark() {
+        let xml = wrap_body(
+            r#"
+    <w:p>
+      <w:pPr/>
+      <w:ins w:id="1" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:t>new</w:t></w:r>
+      </w:ins>
+      <w:del w:id="2" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>old</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p>
+      <w:pPr>
+        <w:rPr><w:del w:id="3" w:author="Author" w:date="1970-01-01T00:00:00Z"/></w:rPr>
+      </w:pPr>
+      <w:del w:id="4" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>tail</w:delText></w:r>
+      </w:del>
+    </w:p>
+"#,
+        );
+        let (mutated, out) = run_region_survival(&xml);
+        assert!(mutated, "junction mix must get a del mark");
+        let paras = body_paras(&out);
+        assert!(
+            paras[0].contains("<w:pPr>") && paras[0].contains("<w:del"),
+            "mix paragraph mark must be deleted via pPr/rPr/del: {}",
+            paras[0]
+        );
+        // Ensure the del is on the paragraph mark (rPr), not only the run del.
+        assert!(
+            paras[0].contains("<w:rPr>") && paras[0].contains("<w:del"),
+            "del mark must sit under pPr/rPr: {}",
+            paras[0]
+        );
+    }
+
+    /// Document-final region: last A-origin receives donated live props + pPrChange
+    /// with a LIVE mark (del removed); interior still flips.
+    #[test]
+    fn region_survival_document_final_transplant_donates_to_last_a() {
+        let xml = wrap_body(
+            r#"
+    <w:p>
+      <w:pPr>
+        <w:pStyle w:val="ListParagraph"/>
+        <w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>
+        <w:pPrChange w:id="1" w:author="Author" w:date="1970-01-01T00:00:00Z">
+          <w:pPr><w:pStyle w:val="Normal"/></w:pPr>
+        </w:pPrChange>
+        <w:rPr><w:del w:id="10" w:author="Author" w:date="1970-01-01T00:00:00Z"/></w:rPr>
+      </w:pPr>
+      <w:del w:id="11" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>carrier</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p>
+      <w:pPr>
+        <w:rPr><w:del w:id="12" w:author="Author" w:date="1970-01-01T00:00:00Z"/></w:rPr>
+      </w:pPr>
+      <w:del w:id="13" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>last a body</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:sectPr/>
+"#,
+        );
+        let (mutated, out) = run_region_survival(&xml);
+        assert!(mutated, "document-final transplant must mutate");
+        let paras = body_paras(&out);
+        assert_eq!(paras.len(), 2, "two body paragraphs before sectPr");
+        // Last A: donated ListParagraph + numPr + pPrChange; mark live (no del under rPr).
+        assert!(
+            paras[1].contains(r#"w:val="ListParagraph""#),
+            "last A should receive donated ListParagraph: {}",
+            paras[1]
+        );
+        assert!(
+            paras[1].contains("pPrChange"),
+            "last A should receive donated pPrChange: {}",
+            paras[1]
+        );
+        assert!(
+            paras[1].contains("numPr"),
+            "last A should receive donated numPr: {}",
+            paras[1]
+        );
+        // Live mark: rPr should not carry del after transplant.
+        let last_ppr_end = paras[1].find("</w:pPr>").unwrap_or(paras[1].len());
+        let last_ppr = &paras[1][..last_ppr_end];
+        assert!(
+            !last_ppr.contains("<w:del"),
+            "document-final last A mark must be LIVE (no del in pPr): {last_ppr}"
+        );
+        // Interior flipped to old Normal.
+        assert!(
+            paras[0].contains(r#"w:val="Normal""#),
+            "interior flipped to A's Normal: {}",
+            paras[0]
+        );
+        assert!(
+            !paras[0].contains("pPrChange"),
+            "interior pPrChange stripped: {}",
+            paras[0]
+        );
+    }
+
+    /// Wholesale-deleted table extends the region as A-origin; interior before
+    /// the table is not treated as region-final survivor.
+    #[test]
+    fn region_survival_deleted_table_extends_region_so_interior_before_table_flips() {
+        let xml = wrap_body(
+            r#"
+    <w:p>
+      <w:pPr>
+        <w:pStyle w:val="Normal"/>
+        <w:pPrChange w:id="1" w:author="Author" w:date="1970-01-01T00:00:00Z">
+          <w:pPr><w:pStyle w:val="Title"/></w:pPr>
+        </w:pPrChange>
+        <w:rPr><w:del w:id="10" w:author="Author" w:date="1970-01-01T00:00:00Z"/></w:rPr>
+      </w:pPr>
+      <w:del w:id="11" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>before table</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:tbl>
+      <w:tr>
+        <w:tc>
+          <w:p>
+            <w:del w:id="20" w:author="Author" w:date="1970-01-01T00:00:00Z">
+              <w:r><w:delText>cell</w:delText></w:r>
+            </w:del>
+          </w:p>
+        </w:tc>
+      </w:tr>
+    </w:tbl>
+    <w:p><w:r><w:t>equal after</w:t></w:r></w:p>
+"#,
+        );
+        let (mutated, out) = run_region_survival(&xml);
+        assert!(
+            mutated,
+            "para before deleted table is interior (table is last A) and must flip"
+        );
+        let paras = body_paras(&out);
+        assert!(
+            paras[0].contains(r#"w:val="Title""#),
+            "interior before table flips to old Title: {}",
+            paras[0]
+        );
+        assert!(
+            !paras[0].contains("pPrChange"),
+            "interior pPrChange stripped when table extends region: {}",
+            paras[0]
+        );
+    }
+
+    /// Inserted table is B-origin; equal/mixed table flushes the region.
+    #[test]
+    fn region_survival_inserted_table_is_b_origin_member_not_flush() {
+        // Region: A del para + inserted table. Only one A-origin → no interior
+        // flip (last A is the para). Mutation false is OK; assert membership by
+        // ensuring a subsequent equal does not leave a partial flip elsewhere.
+        let xml = wrap_body(
+            r#"
+    <w:p>
+      <w:pPr>
+        <w:pStyle w:val="Normal"/>
+        <w:pPrChange w:id="1" w:author="Author" w:date="1970-01-01T00:00:00Z">
+          <w:pPr><w:pStyle w:val="Title"/></w:pPr>
+        </w:pPrChange>
+        <w:rPr><w:del w:id="10" w:author="Author" w:date="1970-01-01T00:00:00Z"/></w:rPr>
+      </w:pPr>
+      <w:del w:id="11" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>before ins table</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:tbl>
+      <w:tr>
+        <w:tc>
+          <w:p>
+            <w:ins w:id="20" w:author="Author" w:date="1970-01-01T00:00:00Z">
+              <w:r><w:t>new cell</w:t></w:r>
+            </w:ins>
+          </w:p>
+        </w:tc>
+      </w:tr>
+    </w:tbl>
+    <w:p>
+      <w:pPr>
+        <w:rPr><w:del w:id="12" w:author="Author" w:date="1970-01-01T00:00:00Z"/></w:rPr>
+      </w:pPr>
+      <w:del w:id="13" w:author="Author" w:date="1970-01-01T00:00:00Z">
+        <w:r><w:delText>after table still region</w:delText></w:r>
+      </w:del>
+    </w:p>
+"#,
+        );
+        // Two A-origin paras with an inserted (B) table between them form one
+        // region; first A is interior → flips.
+        let (mutated, out) = run_region_survival(&xml);
+        assert!(
+            mutated,
+            "A para before B-table is interior when region continues after table"
+        );
+        let paras = body_paras(&out);
+        assert!(
+            paras[0].contains(r#"w:val="Title""#) && !paras[0].contains("pPrChange"),
+            "first A flips as interior of extended region: {}",
+            paras[0]
+        );
     }
 }

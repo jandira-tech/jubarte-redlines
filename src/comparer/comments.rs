@@ -452,13 +452,23 @@ fn new_anchor(dom: &mut Dom, kind: Kind, id: &str) -> NodeId {
     e
 }
 
-/// The GT reference-run shape: `w:rStyle CommentReference` + `w:commentReference`.
+/// The GT reference-run shape: `w:rStyle CommentReference` + default
+/// `sz`/`szCs` (Word materializes docDefaults 22/22 onto comment markers —
+/// nested_comments / verdana comment-heavy pairs; LO ink differs without them)
+/// + `w:commentReference`.
 fn new_reference_run(dom: &mut Dom, id: &str) -> NodeId {
     let r = dom.new_element(W::r());
     let rpr = dom.new_element(W::r_pr());
     let style = dom.new_element(W::name("rStyle"));
     dom.set_attribute_value(style, &W::val(), Some("CommentReference"));
     dom.add(rpr, style);
+    // EG_RPrBase: rStyle before sz. Values match common rPrDefault (half-points).
+    let sz = dom.new_element(W::name("sz"));
+    dom.set_attribute_value(sz, &W::val(), Some("22"));
+    dom.add(rpr, sz);
+    let sz_cs = dom.new_element(W::name("szCs"));
+    dom.set_attribute_value(sz_cs, &W::val(), Some("22"));
+    dom.add(rpr, sz_cs);
     dom.add(r, rpr);
     let cref = dom.new_element(W::name("commentReference"));
     dom.set_attribute_value(cref, &W::name("id"), Some(id));

@@ -610,7 +610,7 @@ fn m4_h9_copy_missing_numbering_keeps_abstractnum_before_num() {
     d.set_attribute_value(num9, &W::name("numId"), Some("9"));
     d.add(from, num9);
 
-    copy_missing_numbering(&mut d, to, from);
+    let _ = copy_missing_numbering(&mut d, to, from);
 
     // schema order: every abstractNum precedes every num
     let kids = d.elements(to, None);
@@ -657,7 +657,7 @@ fn e1_identical_abstractnum_reused_not_duplicated() {
     // from: IDENTICAL content but abstractNumId=7 and different nsid + num 2 → 7
     let from = mk_notes_root(&mut d, "7", "BBBB", "2");
 
-    copy_missing_numbering(&mut d, to, from);
+    let _ = copy_missing_numbering(&mut d, to, from);
 
     let ans = d.elements(to, Some(&W::name("abstractNum")));
     assert_eq!(ans.len(), 1, "identical abstractNum reused, not duplicated");
@@ -696,7 +696,7 @@ fn e1_colliding_ids_get_fresh_ids() {
     let to = mk(&mut d, "0");
     let from = mk(&mut d, "8"); // different lvl content → no content match
 
-    copy_missing_numbering(&mut d, to, from);
+    let _ = copy_missing_numbering(&mut d, to, from);
 
     // from's abstractNum got a fresh id (1)
     let an_ids: Vec<String> = d
@@ -770,7 +770,7 @@ fn e1_retained_ids_advance_the_watermark() {
     mk_num(&mut d, from, "6", "6");
     mk_num(&mut d, from, "5", "6");
 
-    copy_missing_numbering(&mut d, to, from);
+    let _ = copy_missing_numbering(&mut d, to, from);
 
     let an_ids: Vec<String> = d
         .elements(to, Some(&W::name("abstractNum")))
@@ -828,7 +828,7 @@ fn e1_basic_noncolliding_copy_preserves_prior_behavior() {
     d.add(n, r);
     d.add(from, n);
 
-    copy_missing_numbering(&mut d, to, from);
+    let _ = copy_missing_numbering(&mut d, to, from);
 
     let ans: Vec<NodeId> = d.elements(to, Some(&W::name("abstractNum")));
     assert_eq!(ans.len(), 1, "abstractNum copied exactly once");
@@ -878,7 +878,7 @@ fn e1_malformed_elements_are_skipped() {
     d.set_attribute_value(bad_num_no_ref, &W::name("numId"), Some("3"));
     d.add(from, bad_num_no_ref);
 
-    copy_missing_numbering(&mut d, to, from);
+    let _ = copy_missing_numbering(&mut d, to, from);
 
     assert!(
         d.elements(to, Some(&W::name("abstractNum"))).is_empty(),
@@ -914,7 +914,7 @@ fn e1_num_with_same_id_and_mapped_reference_is_not_duplicated() {
     let to: NodeId = mk(&mut d);
     let from: NodeId = mk(&mut d);
 
-    copy_missing_numbering(&mut d, to, from);
+    let _ = copy_missing_numbering(&mut d, to, from);
 
     assert_eq!(
         d.elements(to, Some(&W::name("num"))).len(),
@@ -951,7 +951,7 @@ fn e1_schema_order_respects_numpicbullet_and_nummacatcleanup() {
     d.add(n, r);
     d.add(from, n);
 
-    copy_missing_numbering(&mut d, to, from);
+    let _ = copy_missing_numbering(&mut d, to, from);
 
     let names: Vec<String> = d
         .elements(to, None)

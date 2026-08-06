@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "dgSpecHash": "Cqoh5D+EZFc=",
+  "success": true,
+  "projectFilePath": "/Users/arthrod/temp/T/jubarte-redlines/tools/validate-docx/validate-docx.csproj",
+  "expectedPackageFiles": [
+    "/Users/arthrod/.nuget/packages/documentformat.openxml/3.2.0/documentformat.openxml.3.2.0.nupkg.sha512",
+    "/Users/arthrod/.nuget/packages/documentformat.openxml.framework/3.2.0/documentformat.openxml.framework.3.2.0.nupkg.sha512",
+    "/Users/arthrod/.nuget/packages/system.io.packaging/8.0.1/system.io.packaging.8.0.1.nupkg.sha512",
+    "/Users/arthrod/.nuget/packages/microsoft.netcore.app.ref/8.0.23/microsoft.netcore.app.ref.8.0.23.nupkg.sha512",
+    "/Users/arthrod/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.23/microsoft.aspnetcore.app.ref.8.0.23.nupkg.sha512",
+    "/Users/arthrod/.nuget/packages/microsoft.netcore.app.host.osx-arm64/8.0.23/microsoft.netcore.app.host.osx-arm64.8.0.23.nupkg.sha512"
+  ],
+  "logs": []
+}

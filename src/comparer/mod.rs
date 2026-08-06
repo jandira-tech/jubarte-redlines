@@ -676,12 +676,80 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::restore_short_del_before_long_ins(dom, root);
         // M147: MIX digits-only pure-I + pure-D title → split (1_5×24 Word shape).
         finalize::split_digits_ins_from_mixed_title(dom, root);
+        // M268/M284: first-body wholesale MIX→pure-I/D when following is pure-D
+        // stream ≥2 (pirates title|captain log). Style demos follow with pure-I
+        // body — gate aborts (04-22 un-gated M268 median −10). Fair tip-to-tip.
+        finalize::split_first_body_wholesale_mix_into_pure_id(dom, root);
         // M143: mid pure-D Demo title → fold into first numbered pure-I heading
         // (double_spacing×eigenpal: Word MIX on `1. What this is` + del title).
         finalize::fold_midstream_demo_title_into_numbered_heading(dom, root);
         finalize::drop_sectpr_from_deleted_marks(dom, root, &genuine_mid_sectprs);
         finalize::drop_hoisted_sectpr_artifacts(dom, root, &genuine_mid_sectprs);
         finalize::mark_fully_revised_rows(dom, root, settings, &mut id);
+        // M266: pure-D multi-row table under B props+tblPrChange → split at
+        // following pure-I empty table's row count (Word 2+3 on pirates).
+        // Re-measure fair vs tip baseline; keep only if net ≥0.
+        finalize::split_pure_del_table_at_following_pure_ins_rows(dom, root);
+        // M275 pure-D table empty del-shell strip: structure Word-shaped but
+        // multipara fair −35.4 — leave mark_fully_revised_rows shells.
+        // M273 dual-numPr first-body mesh: probe vs same tip looked +13 but
+        // same-pipeline vs 02-22 cand was LO-neg −3.06 on psm — leave pure-I|D.
+        // M277: lead short dual-numPr pure-I + pure-D → MIX (dropcaps×list_font
+        // APPOINTMENT|Dropcaps). Fair tip-to-tip; keep only if net ≥0.
+        finalize::fold_lead_short_dual_numpr_pure_i_into_following_pure_d(dom, root);
+        // M269/M288: last pure-I list item (numPr) + following pure-D body → MIX
+        // (bullet Grapes|document; listspacer×indents long pure-D+numPr). M288
+        // allows pure-D numPr when del ≥20 toks (not short ONE). Fair tip-to-tip.
+        finalize::fold_trailing_pure_ins_list_item_into_following_pure_del_body(dom, root);
+        // M271: after M269 I* M D*, relocate MIX del onto first pure-I list
+        // item (custom_list_numbering lead Num1|SECTION; fair +2.17).
+        finalize::relocate_trailing_mix_del_onto_first_pure_ins_list(dom, root);
+        // M285 short residual MIX last→first of numPr run: structure=Word
+        // (diff2 Lvl1-a|This is a test) but fair tip-to-tip −0.87 — REVERTED.
+        // finalize::relocate_short_mix_del_onto_first_of_preceding_numpr_run(dom, root);
+        // M272 multi zip pure-I/D numPr: structure OK but fair tip-to-tip
+        // ~flat/−0.01 vs M271 — leave M271 only until LO-positive.
+        // M270: wholesale pure-I* then pure-D* (no drawings) → move pure-D
+        // after lead pure-I+empties (green_underline×header; fair +17.6).
+        // M270b: pure-D token cap ≤16 so long-body I*D* (list_spacer) stays.
+        finalize::relocate_wholesale_pure_d_after_lead_pure_ins(dom, root);
+        // M282: after M270 early pure-D park, mesh short title pure-D onto last
+        // pure-I list item (exported_list_font×exporttest a…b|APPOINTMENT).
+        // Fair tip-to-tip; keep only if net ≥0.
+        finalize::fold_interleaved_short_pure_d_into_last_pure_ins_list(dom, root);
+        // M283: lead MIX+numPr with list residual del (Item1…) over pure-I
+        // list prefix → peel del onto pure-D stream head (broken_list_missing
+        // ×multiple_nodes Word pure-I|I|D*). Style demos lack pure-I+numPr
+        // after lead — safe. Fair tip-to-tip; keep only if net ≥0 + multipara.
+        finalize::peel_lead_list_mix_del_onto_pure_d_stream_head(dom, root);
+        // M278: trailing pure-D residual after pure-I tables → after lead pure-I
+        // paras (pirates×table_border_widths Word III D* TM I TI…). Fair tip-to-tip.
+        finalize::relocate_trailing_pure_d_before_pure_ins_tables(dom, root);
+        // M289 AFTER M278: I+ D+ TI I* → I+ TI I* D* (list_with_break×table_break
+        // Word pure-I table before base residual). Pure-D followed by TI only
+        // (not TD — pirates early pure-D). Must run after M278 so M278 does not
+        // reverse the late pure-D park. Fair tip-to-tip; keep if net≥0.
+        finalize::relocate_mid_pure_d_after_pure_ins_table_block(dom, root);
+        // M302 REVERTED: italic Three|OOXML peel fair −7.07.
+        finalize::peel_list_label_mix_long_body_del_onto_following_pure_d(dom, root);
+        // M303: lead list MIX short PageN del → pure-D stream head after pure-I
+        // block (two_col×multi Page1 after TWO). Fair tip-to-tip; keep if net≥0.
+        finalize::peel_lead_list_mix_short_page_del_onto_pure_d_stream(dom, root);
+        // M290/M293: mid MIX short ins (≤2 chars) + long del (≥4) before pure-D
+        // → peel del after MIX (list_spacer1 b|14.9; bookmark×broken a|bookmark
+        // with table only after junction). Fair tip-to-tip; keep if net≥0.
+        finalize::peel_mid_short_ins_mix_long_del_onto_following_pure_d(dom, root);
+        // M292: mid MIX heading ins (3..=8 toks, no numPr) + long del (≥8)
+        // before pure-D (auto_page_break×list_enter Heading|Generally notice).
+        // Fair tip-to-tip; keep if net≥0.
+        finalize::peel_mid_heading_mix_long_del_onto_following_pure_d(dom, root);
+        // M298 REVERTED: Word peel basic_list heading MIX LO-neg fair −14.4.
+        finalize::peel_list_numpr_mix_unrelated_del_onto_following_pure_d(dom, root);
+        // M279: pure-D multi-row table + following pure-I 1-row → mesh pure-I
+        // cells into pure-D first row (border A1|B1 into Flats row). Fair tip-to-tip.
+        finalize::mesh_following_pure_ins_table_into_pure_del_table(dom, root);
+        // M280 indent×pirates midstream MIX split+reorder: structure=Word but
+        // fair −1.0 on target — REVERTED (Word shape LO-neg under our emit).
         finalize::synthesize_table_cell_margins(dom, root);
         finalize::ensure_default_page_size(dom, root);
         // pPr-only multi-pass peels: warm pure-del/mixed once (no body structure
@@ -718,6 +786,44 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::peel_trailing_ins_from_mix_into_following_pure_del(dom, root);
         // M154: trailing del on MIX + following pure-I (justified_underline×justify_2).
         finalize::peel_trailing_del_from_mix_into_following_pure_ins(dom, root);
+        // M252: trailing whitespace-only del on equal para → next residual
+        // (two_col_index Page4 clean equal; Word parks space on residual).
+        finalize::peel_trailing_ws_del_onto_following_residual(dom, root);
+        // M258: last residual trailing single-digit pure-D after ins → own para
+        // (two_col_index Word pure-D "5" after Page/I6 residual).
+        finalize::peel_trailing_digit_del_from_last_residual(dom, root);
+        // M260: pure-I tabs-only inherits spacing from previous pure-D/MIX
+        // (two_col Page4 Word live spacing 276).
+        finalize::inherit_spacing_onto_pure_ins_from_prev(dom, root);
+        // M261: MIX residual drops tabs-only pPrChange (Word residual no history).
+        finalize::strip_tabs_only_pprchange_from_mix_residual(dom, root);
+        // M262n: pure-I ListParagraph+numPr only strip after=0 line=240
+        // (comment×complex_list Word; multipara PARTIES exempt).
+        finalize::strip_single_line_spacing_from_pure_ins_listpara(dom, root);
+        // M286: pure-I+numPr strip pPrChange (list_table×spacer Word pure-I
+        // list has no history; tip numPr/ind under pPrChange). Fair tip-to-tip.
+        finalize::strip_pprchange_from_pure_ins_list_items(dom, root);
+        // M304: pure-I+numPr default spacing line=240 (exporttest Word single).
+        // Fair tip-to-tip; keep if net≥0.
+        finalize::ensure_default_single_spacing_on_pure_ins_list_items(dom, root);
+        // M305: after merge_replaced has created MIX, copy demo line=276 from
+        // following pure-D onto bare MIX (paragraph_spacing_missing×export list
+        // font). Must run post-merge (early strip path has no MIX yet).
+        finalize::ensure_demo_line276_on_mix_before_pure_del(dom, root);
+        // M287 empty pure-I before list residual pure-D (Export|empty|ONE):
+        // structure=Word but fair tip-to-tip −0.35 on list_spacer — REVERTED.
+        // finalize::insert_empty_pure_ins_before_list_residual_pure_d(dom, root);
+        // M263: drop pure-D empty immediately before pure-I empty (annot2).
+        finalize::drop_pure_d_empty_before_pure_i_empty(dom, root);
+        // M264: pure-I content before table → del pilcrow (annot2 duration).
+        finalize::del_pilcrow_on_pure_ins_before_table(dom, root);
+        // M265: pure-D empty between pure-I content and following table (annot2).
+        finalize::insert_pure_d_empty_before_table_after_pure_ins(dom, root);
+        // M254n first-MIX lead split was LO-neg under wrong pipeline; M268
+        // gated first-body wholesale MIX→pure-I/D is fair +0.26 (see finalize).
+        // M243c: pure-I body with dual pilcrow ins+del (no delText) → strip del
+        // after all peels that may re-stamp marks.
+        finalize::strip_del_pilcrow_from_pure_ins_body(dom, root);
     }
     // Final renumber after wrap_bare / stamped predeletes / row marks — any
     // w:id minted after the earlier fix_up_revision_ids pass would otherwise
@@ -898,8 +1004,8 @@ impl Default for WmlComparerSettings {
             move_minimum_word_count: 6,
             merge_replaced_paragraphs: true,
             detect_format_changes: true,
-                    in_stamp_residual: false,
-}
+            in_stamp_residual: false,
+        }
     }
 }
 
