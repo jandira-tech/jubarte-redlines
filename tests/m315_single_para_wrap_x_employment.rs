@@ -74,6 +74,16 @@ fn tiff_x_hf_normal_no_mid_body_mix_of_tiff_title() {
     let mut f = zip.by_name("word/document.xml").unwrap();
     let mut xml = String::new();
     f.read_to_string(&mut xml).unwrap();
+    // M322: Word head-junctions first pure-I with TIFF title (not last-I×TIFF).
+    let first_mix_is_head = xml.split("<w:p").skip(1).take(3).any(|p| {
+        p.contains("w:ins")
+            && p.contains("w:del")
+            && (p.contains("TIFF") || p.contains("document with"))
+    });
+    assert!(
+        first_mix_is_head,
+        "Word MIX first next para with TIFF title at head, not tail"
+    );
     // Must not leave tiff title pure-missing while mid body pure-I only —
     // expect del of tiff title somewhere
     assert!(

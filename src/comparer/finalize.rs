@@ -3059,6 +3059,26 @@ fn para_has_heading_or_title_style(dom: &Dom, p: NodeId) -> bool {
     v == "title" || v.starts_with("heading")
 }
 
+/// Shared significant token (len≥4) between short-title pure-D and first pure-I
+/// (M322 head-junction). Boilerplate "this"/"with"/"from" excluded.
+fn short_title_shares_sig_token(ins_text: &str, del_text: &str) -> bool {
+    const BOILER: &[&str] = &[
+        "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than",
+        "then", "when", "what", "which", "into", "over", "only", "also", "just", "more", "most",
+        "some", "such", "other", "about",
+    ];
+    let sig = |s: &str| -> std::collections::HashSet<String> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .filter(|t| t.len() >= 4)
+            .map(|t| t.to_ascii_lowercase())
+            .filter(|t| !BOILER.iter().any(|b| b == t))
+            .collect()
+    };
+    let a = sig(ins_text);
+    let b = sig(del_text);
+    !a.is_empty() && a.intersection(&b).next().is_some()
+}
+
 /// Token Jaccard of two body strings. Used to avoid folding unrelated pure-I
 /// / pure-D neighbors (file_33: Word keeps pure-I "Summary" and pure-D
 /// "Heading 1 Style Demo" separate; folding invents a mixed para and costs
@@ -3466,12 +3486,29 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // Prefer last **non-empty** pure-I as fold carrier. Empty pure-I
                 // after digits "24" (1_5×24 B shape) would otherwise be the
                 // carrier and bypass M101 digits-only on the real last content.
-                let last_ins = inss
+                let mut last_ins = inss
                     .iter()
                     .rev()
                     .find(|&&p| !para_has_no_text(dom, p))
                     .copied()
                     .unwrap_or(inss[inss.len() - 1]);
+                // M322 (tiff×h_f_normal): short pure-D title ("TIFF test document")
+                // after a long pure-I stream. Word head-junctions the **first**
+                // content pure-I with the title (MIX at start); last-I fold
+                // wrongly MIX-ed the final license line with TIFF (~41). Require
+                // a shared significant token (len≥4) so hummingbird×employment
+                // (no shared token, Word tail MIX only) keeps last-I fold.
+                if inss.len() >= 5
+                    && (1..=6).contains(&para_word_atom_count(dom, d))
+                    && let Some(first_ins) =
+                        inss.iter().copied().find(|&p| !para_has_no_text(dom, p))
+                {
+                    let it = para_revision_body_text(dom, first_ins);
+                    let dt = para_revision_body_text(dom, d);
+                    if short_title_shares_sig_token(&it, &dt) {
+                        last_ins = first_ins;
+                    }
+                }
                 // M311d (image×rtl / rtl_mixed×rtl_page): ≥3 empty pure-I then
                 // pure-D residual(s). Word keeps pure-I empties. sole_del
                 // always-fold and multi-del boundary fold would eat empties
@@ -3503,6 +3540,15 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // content follows (file_33). Whole-doc trailing sole-del (m44)
                 // still always folds.
                 if sole_del && following_content && !should_fold_ins_del_pair(dom, last_ins, d) {
+                    continue;
+                }
+                // M322b (tiff×h_f after head-junction): long pure-I stream + sole
+                // empty pure-D (drawing shell / mark-only). Word keeps trailing
+                // pure-D empty; empty-del always-fold MIX-ed last license line.
+                // Content sole-del (m44 "24"/titles) has body text; short demos
+                // have inss ≪ 10.
+                if sole_del && inss.len() >= 10 && para_revision_body_text(dom, d).trim().is_empty()
+                {
                     continue;
                 }
                 // C1 / KNOWN ISSUE #2: multi-del boundary fold gated on

@@ -4885,8 +4885,9 @@ pub fn detect_unrelated_sources_word_mode(
     // Group hashes are often fully disjoint so classic pure-I/D wholesale
     // fires. Return None so the caller runs full group LCS (may still mesh
     // poorly when structure hashes never equal — better than pure-I/D for
-    // shared-vocab legal pairs). Free word-LCS mesh is a follow-up. Unrelated
-    // demos (M312) stay under jaccard 0.05.
+    // shared-vocab legal pairs). Free word-LCS was tried (M321) and still
+    // pure-I/Ds employment×lease (MIX=1) while regressing memo×nda multi-MIX
+    // 4→1 — keep None. Unrelated demos (M312) stay under jaccard 0.05.
     {
         let b1 = para_text_tokens_from_units(dom, cu1);
         let b2 = para_text_tokens_from_units(dom, cu2);
