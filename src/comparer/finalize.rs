@@ -3074,17 +3074,21 @@ fn should_fold_multi_del_at_document_scale(
         return true;
     }
 
-    // M308b (tight): skip fold only for *list-wholesale* pure-I/D where both
-    // sides of the contentful gap are list-heavy (numPr on ≥ half of contentful
-    // I and D paras), counts are asymmetric (more D content than I), and no
-    // contentful I×D pair is Jaccard-related. Word pure-I short list next then
-    // pure-D long list base (broken_list × multiple_nodes ~52→79).
+    // M308d (tight): skip fold for *short-item list-wholesale* pure-I/D.
+    // LCS/unrelated may already emit pure-I all next then pure-D all base
+    // (basic_list×sd_1707, broken_list×multiple_nodes — unpacked Word pure-I/D
+    // seqs). multi-del fold would re-MIX last pure-I into first pure-D.
     //
-    // Full-corpus A/B of the loose M308 gate (numPr only on last_ins) was
-    // **net-negative** (−0.24 mean): file_197×198 −55, bullet_list cousins −25,
-    // because empty-del relatedness was also suppressed globally. Restore the
-    // classic M131 empty-inclusive relatedness loop below; keep only this
-    // contentful-list exception.
+    // Require: both sides list-heavy, short items (≤12 word-atoms), no
+    // contentful Jaccard relatedness, last pure-I has numPr, and either
+    // word-count or *paragraph-count* asymmetry (D ≥ 2× I). Word-count alone
+    // failed when next has a long title + list heading vs many short base
+    // items (M309: del_w < 2×ins_w but 8 pure-D vs 2 pure-I).
+    //
+    // Long numbered prose (list_with_indents) is excluded by the short-item
+    // cap so Word MIX (IMDDDD) is preserved. Empty-del M131 loop restored
+    // below for stamp cousins (file_197).
+    const SHORT_LIST_ITEM_MAX_WORDS: usize = 12;
     let content_dels: Vec<NodeId> = dels
         .iter()
         .copied()
@@ -3095,10 +3099,19 @@ fn should_fold_multi_del_at_document_scale(
         .copied()
         .filter(|&i| !para_revision_body_text(dom, i).trim().is_empty())
         .collect();
-    if content_inss.len() >= 2 && content_dels.len() >= 3 {
+    // content_inss.len() == 2: Word pure-I/D for short next (title+heading or
+    // two list items) vs long short-item list base (basic_list×sd_1707,
+    // broken_list×multiple_nodes — unpacked IID… / IIID…).
+    // content_inss >= 3: Word keeps MIX carrier on last next item
+    // (broken_list×list_spacer seq IIIMD… — fold must run).
+    if content_inss.len() == 2 && content_dels.len() >= 3 {
         let list_frac = |ps: &[NodeId]| -> f64 {
             let n = ps.iter().filter(|&&p| para_has_live_numpr(dom, p)).count();
             n as f64 / ps.len() as f64
+        };
+        let all_short = |ps: &[NodeId]| -> bool {
+            ps.iter()
+                .all(|&p| para_word_atom_count(dom, p) <= SHORT_LIST_ITEM_MAX_WORDS)
         };
         let any_content_related = content_inss.iter().any(|&i| {
             content_dels
@@ -3113,14 +3126,15 @@ fn should_fold_multi_del_at_document_scale(
             .iter()
             .map(|&p| para_word_atom_count(dom, p))
             .sum();
-        // Both sides list-heavy; D side longer (wholesale residual); no
-        // contentful relatedness. Require live numPr on last_ins (B's last
-        // list item is the fold carrier Word leaves pure-ins).
+        let count_asymmetric = content_dels.len() >= content_inss.len().saturating_mul(2).max(1);
+        let words_asymmetric = del_w >= ins_w.saturating_mul(2).max(1);
         if list_frac(&content_inss) + 1e-12 >= 0.5
             && list_frac(&content_dels) + 1e-12 >= 0.5
+            && all_short(&content_inss)
+            && all_short(&content_dels)
             && para_has_live_numpr(dom, last_ins)
             && !any_content_related
-            && del_w >= ins_w.saturating_mul(2).max(1)
+            && (words_asymmetric || count_asymmetric)
         {
             return false;
         }
