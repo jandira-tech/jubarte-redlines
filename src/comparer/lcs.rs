@@ -4847,6 +4847,7 @@ pub fn detect_unrelated_sources_word_mode(
         && has_table(cu2)
         && !ooxml_x_short_table_demo(dom, cu1, cu2)
         && !both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2)
+        && !short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2)
         && {
             let b1 = para_text_tokens_from_units(dom, cu1);
             let b2 = para_text_tokens_from_units(dom, cu2);
@@ -4939,15 +4940,19 @@ pub fn detect_unrelated_sources_word_mode(
         // jaccard so related table cousins keep structure mesh.
         // (M336 free-mesh of related Demo cousins over-meshed bullet bold×plain
         // into 4 MIX vs Word 1 — fold is in finalize instead.)
+        // M338: short cell-only table next × long report-with-table (report×
+        // table_doc Word MIX≥10; pure-I/D MIX=0). Allow n up to 80 for the
+        // long report side (clinical trial report ~39 contentful).
         let free_mesh_demos = !stamped_pair
             && (parallel_sectioned_demos(dom, cu1, cu2)
                 || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
                 || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50)
                 || ooxml_x_short_table_demo(dom, cu1, cu2)
-                || both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2))
+                || both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2)
+                || short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2))
             && n1 != n2
-            && n1 <= 50
-            && n2 <= 50;
+            && n1 <= 80
+            && n2 <= 80;
         // M331: short Demo list×prose — Word free-meshes positionally (MMMDD:
         // zip first min contentful as MIX, pure-I/D residual list items). Flat
         // word free-LCS pure-I/Ds the prose side first (IIMDDDD). Positional
@@ -5020,11 +5025,13 @@ pub fn detect_unrelated_sources_word_mode(
                     short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2);
                 let ooxml_tbl = ooxml_x_short_table_demo(dom, cu1, cu2);
                 let both_tbl = both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2);
-                residual_settings.detail_threshold = if short_prop || ooxml_tbl || both_tbl {
-                    0.0
-                } else {
-                    0.005
-                };
+                let cell_tbl = short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2);
+                residual_settings.detail_threshold =
+                    if short_prop || ooxml_tbl || both_tbl || cell_tbl {
+                        0.0
+                    } else {
+                        0.005
+                    };
                 return Some(lcs(dom, left, right, &residual_settings));
             }
             // Product too large / empty — fall through to full LCS.
@@ -5410,6 +5417,71 @@ fn short_table_title_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
 fn ooxml_x_short_table_demo(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[ComparisonUnit]) -> bool {
     (short_ooxml_property_demo(dom, cu1) && short_table_title_demo(dom, cu2))
         || (short_ooxml_property_demo(dom, cu2) && short_table_title_demo(dom, cu1))
+}
+
+/// Short **cell-only** table next (table_doc is a single top-level `w:tbl` of
+/// short labels) × long report-with-table base. Word free-meshes cell tokens
+/// (report×table_doc MIX≥10); pure-I/D wholesale is pure ID. Does **not** match
+/// SD-2672 short table demos ("SD-2672 plain 3x3") which Word pure-I/Ds.
+fn short_cell_table_x_long_table_doc(
+    dom: &Dom,
+    cu1: &[ComparisonUnit],
+    cu2: &[ComparisonUnit],
+    n1: usize,
+    n2: usize,
+) -> bool {
+    if !has_table_units(cu1) || !has_table_units(cu2) {
+        return false;
+    }
+    let (short_n, long_n, short_cu) = if n1 <= n2 {
+        (n1, n2, cu1)
+    } else {
+        (n2, n1, cu2)
+    };
+    // table_doc: contentful groups ≈ 1 (one table). Allow a few empties/titles.
+    if !(1..=4).contains(&short_n) || !(15..=80).contains(&long_n) {
+        return false;
+    }
+    // Short side table-heavy: every contentful top-level unit is a table, or the
+    // only non-table contentful is ≤2 tokens (no SD demo title prose).
+    let mut non_tbl_content = 0usize;
+    let mut saw_tbl = false;
+    for u in short_cu {
+        let Some(g) = as_group(u) else { continue };
+        let toks = para_text_token_list(dom, u);
+        if g.group_type == ComparisonUnitGroupType::Table {
+            saw_tbl = true;
+            continue;
+        }
+        if toks.is_empty() {
+            continue;
+        }
+        non_tbl_content += 1;
+        if toks.len() > 2 {
+            return false;
+        }
+        let first = toks[0].to_ascii_lowercase();
+        if first.starts_with("sd") || first.contains("demo") || first == "table" {
+            return false;
+        }
+    }
+    if !saw_tbl || non_tbl_content > 1 {
+        return false;
+    }
+    // Cell vocabulary is small (table_doc ~12 short labels). Large short demos
+    // with multi-cell prose stay off this path.
+    let short_toks = para_text_tokens_from_units(dom, short_cu);
+    if short_toks.len() < 4 || short_toks.len() > 40 {
+        return false;
+    }
+    if short_toks.iter().any(|t| t.chars().count() > 24) {
+        return false;
+    }
+    let body_j = token_jaccard(
+        &para_text_tokens_from_units(dom, cu1),
+        &para_text_tokens_from_units(dom, cu2),
+    );
+    body_j + 1e-12 < 0.12
 }
 
 /// Both sides table-bearing, unequal contentful counts, low body overlap, titles
