@@ -4803,6 +4803,35 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::deleted(cu1.to_vec()),
         ]);
     }
+    // M312 (two_column_two_page × sd_2672_nested_table ~33.8): short **next**
+    // is title + empty + tables (contentful n≈2–6, has_table) vs long
+    // table-free base prose (n≥20). Classic short-vs-long requires
+    // `!has_table(short_cu)` so this never short-circuits; full LCS MIX-merges
+    // next title into first base body (Word: pure-I title then pure-D all base,
+    // seq I+150×D, body jaccard 0). Require short=next, base table-free, near-
+    // zero body-token overlap so table-bookmark cell merges and short-base
+    // table×long next (employee_directory) stay on full LCS.
+    if settings.merge_replaced_paragraphs
+        && n2 == short_n
+        && (2..=8).contains(&short_n)
+        && long_n >= 20
+        && has_table(cu2)
+        && !has_table(cu1)
+        && {
+            let b1 = para_text_tokens_from_units(dom, cu1);
+            let b2 = para_text_tokens_from_units(dom, cu2);
+            if b1.is_empty() && b2.is_empty() {
+                false
+            } else {
+                token_jaccard(&b1, &b2) + 1e-12 < 0.05
+            }
+        }
+    {
+        return Some(vec![
+            CorrelatedSequence::inserted(cu2.to_vec()),
+            CorrelatedSequence::deleted(cu1.to_vec()),
+        ]);
+    }
     let ok_counts = (short_n > 3 && long_n > 3)
         || ((2..=3).contains(&short_n) && long_n > 3 && !has_table(short_cu))
         || (stamped && disjoint && (2..=6).contains(&short_n) && long_n > 6 && n2 == short_n);
