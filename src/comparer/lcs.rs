@@ -4914,6 +4914,50 @@ pub fn detect_unrelated_sources_word_mode(
             && n1 != n2
             && n1 <= 50
             && n2 <= 50;
+        // M331: short Demo list×prose — Word free-meshes positionally (MMMDD:
+        // zip first min contentful as MIX, pure-I/D residual list items). Flat
+        // word free-LCS pure-I/Ds the prose side first (IIMDDDD). Positional
+        // free-word LCS per zipped para pair then residual pure I/D.
+        // Resolve each pair fully — detect_unrelated output is not re-LCS'd.
+        if short_demo_list_x_prose(dom, cu1, cu2, n1, n2) {
+            let contentful = |cu: &[ComparisonUnit]| -> Vec<ComparisonUnit> {
+                cu.iter()
+                    .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                    .cloned()
+                    .collect()
+            };
+            let left_c = contentful(cu1);
+            let right_c = contentful(cu2);
+            if !left_c.is_empty() && !right_c.is_empty() {
+                let z = left_c.len().min(right_c.len());
+                let mut residual_settings = settings.clone();
+                residual_settings.detail_threshold = 0.0;
+                let mut out = Vec::new();
+                for i in 0..z {
+                    let mut left: Vec<ComparisonUnit> = group_contents(&left_c[i]);
+                    let mut right: Vec<ComparisonUnit> = group_contents(&right_c[i]);
+                    rehash_words_by_text_content_opts(dom, &mut left, true);
+                    rehash_words_by_text_content_opts(dom, &mut right, true);
+                    if left.is_empty() && right.is_empty() {
+                        continue;
+                    }
+                    if left.is_empty() {
+                        out.push(CorrelatedSequence::inserted(right));
+                    } else if right.is_empty() {
+                        out.push(CorrelatedSequence::deleted(left));
+                    } else {
+                        out.extend(lcs(dom, left, right, &residual_settings));
+                    }
+                }
+                for u in &right_c[z..] {
+                    out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                }
+                for u in &left_c[z..] {
+                    out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                }
+                return Some(out);
+            }
+        }
         // M329: free-mesh demos always free-mesh — do NOT gate on large_related.
         // highlight×bold has sig≥40 each and jaccard≈0.22 (shared sample/rstyle/
         // ooxml) so the old large_related guard skipped free-mesh and pure-I/D'd
@@ -5327,6 +5371,81 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
         || lower.contains("bold")
         || lower.contains("color sample")
         || lower.contains("italic")
+}
+
+/// Short Demo-title cousins where exactly one side is list-heavy (numPr on ≥
+/// half of contentful paras). Word free-meshes titles/bodies (MMMDD); full LCS
+/// pure-I/Ds the non-list side. Both titles end "Demo" so
+/// [`titles_share_last_sig`] whitelist does not free-mesh them.
+fn short_demo_list_x_prose(
+    dom: &Dom,
+    cu1: &[ComparisonUnit],
+    cu2: &[ComparisonUnit],
+    n1: usize,
+    n2: usize,
+) -> bool {
+    if !(2..=6).contains(&n1) || !(2..=6).contains(&n2) {
+        return false;
+    }
+    if has_table_units(cu1) || has_table_units(cu2) {
+        return false;
+    }
+    let ends_demo = |cu: &[ComparisonUnit]| -> bool {
+        let Some(i) = first_contentful_group_index(dom, cu) else {
+            return false;
+        };
+        let toks = para_text_token_list(dom, &cu[i]);
+        last_significant_token(&toks).is_some_and(|t| t.eq_ignore_ascii_case("demo"))
+    };
+    if !ends_demo(cu1) || !ends_demo(cu2) {
+        return false;
+    }
+    // List-ish: numPr on ≥ half of contentful paras, OR text list markers
+    // ("First/Second/Third … item") without numPr (numbered_list_italic_demo
+    // fixtures omit numPr in source XML).
+    let listish = |cu: &[ComparisonUnit]| -> bool {
+        let xs: Vec<&ComparisonUnit> = cu
+            .iter()
+            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .collect();
+        if xs.len() < 2 {
+            return false;
+        }
+        let with_num = xs.iter().filter(|u| unit_para_has_numpr(dom, u)).count();
+        if with_num * 2 >= xs.len() {
+            return true;
+        }
+        let text_list = xs
+            .iter()
+            .filter(|u| {
+                let t = para_text_token_list(dom, u);
+                let Some(first) = t.first() else {
+                    return false;
+                };
+                let f = first.to_ascii_lowercase();
+                (f == "first" || f == "second" || f == "third" || f == "fourth")
+                    && t.iter().any(|w| w.eq_ignore_ascii_case("item"))
+            })
+            .count();
+        text_list >= 2 && text_list * 2 >= xs.len().saturating_sub(2)
+    };
+    let l1 = listish(cu1);
+    let l2 = listish(cu2);
+    // Exactly one side list-heavy — not both (M308 pure-I/D) and not neither
+    // (left_alignment×line_spacing stays on full LCS MMIM).
+    if l1 == l2 {
+        return false;
+    }
+    let body_j = token_jaccard(
+        &para_text_tokens_from_units(dom, cu1),
+        &para_text_tokens_from_units(dom, cu2),
+    );
+    body_j + 1e-12 < 0.25
+}
+
+fn has_table_units(cu: &[ComparisonUnit]) -> bool {
+    cu.iter()
+        .any(|u| as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table))
 }
 
 /// First contentful titles share a **document-family** last significant token.
