@@ -3222,6 +3222,18 @@ fn should_fold_multi_del_at_document_scale(
 
     // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
     if inss.len() < 3 || dels.len() < 3 {
+        // M334 (pirates×table_left IDI): single short pure-I next title then multi
+        // pure-D base with Jaccard 0 — Word keeps pure-I | pure-D stream. Old
+        // always-fold MIX-ed "Table with left indent" into "Captain's Log" and
+        // tanked pagefair (70→41). Content pure-I that is related still folds
+        // (should_fold_ins_del_pair).
+        if inss.len() == 1
+            && dels.len() >= 3
+            && para_word_atom_count(dom, last_ins) <= 8
+            && !should_fold_ins_del_pair(dom, last_ins, first_del)
+        {
+            return false;
+        }
         return true;
     }
     // Content-related short-into-long (M131): any I×D pair in the gap with

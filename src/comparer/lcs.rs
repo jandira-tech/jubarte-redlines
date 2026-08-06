@@ -4883,6 +4883,27 @@ pub fn detect_unrelated_sources_word_mode(
             }
         }
     {
+        // M334 (pirates×table_left ~41→Word IDI): when **both** sides have
+        // tables, Word pure-I's first contentful next title, pure-Ds all base,
+        // pure-I's residual next (IDI). Classic pure-I all next then pure-D base
+        // (ID) under-meshes pagefair (−28). Table-free base (M312 two_column×
+        // nested) stays pure-I all next then pure-D base (Word pure ID).
+        if has_table(cu1) {
+            if let Some(fi) = first_contentful_group_index(dom, cu2) {
+                let mut out = Vec::new();
+                out.push(CorrelatedSequence::inserted(vec![cu2[fi].clone()]));
+                // pure-D each base unit separately (multi-unit deleted can confetti)
+                for u in cu1 {
+                    out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                }
+                for (i, u) in cu2.iter().enumerate() {
+                    if i != fi {
+                        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                    }
+                }
+                return Some(out);
+            }
+        }
         return Some(vec![
             CorrelatedSequence::inserted(cu2.to_vec()),
             CorrelatedSequence::deleted(cu1.to_vec()),
@@ -5414,9 +5435,7 @@ fn both_tables_unrelated_free_mesh(
     // free-mesh confetti regressed pagefair 70→42 — keep pure-I/D there.
     let n_tbl = |cu: &[ComparisonUnit]| -> usize {
         cu.iter()
-            .filter(|u| {
-                as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table)
-            })
+            .filter(|u| as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table))
             .count()
     };
     if n_tbl(cu1).max(n_tbl(cu2)) < 4 {
