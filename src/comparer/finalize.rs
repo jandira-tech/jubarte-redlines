@@ -3459,12 +3459,11 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     .find(|&&p| !para_has_no_text(dom, p))
                     .copied()
                     .unwrap_or(inss[inss.len() - 1]);
-                // M311d (image×rtl): sole pure-D after ≥3 empty pure-I is
-                // wholesale empty next layout + one deleted residual. Word
-                // keeps pure-I empties (oracle ~31 I + 1 D). The sole_del
-                // always-fold path would eat empties one-by-one into the del.
-                if sole_del
-                    && inss.len() >= 3
+                // M311d (image×rtl / rtl_mixed×rtl_page): ≥3 empty pure-I then
+                // pure-D residual(s). Word keeps pure-I empties. sole_del
+                // always-fold and multi-del boundary fold would eat empties
+                // into the del run one-by-one.
+                if inss.len() >= 3
                     && inss.iter().all(|&p| {
                         para_has_no_text(dom, p) || para_body_text_is_whitespace_only(dom, p)
                     })
