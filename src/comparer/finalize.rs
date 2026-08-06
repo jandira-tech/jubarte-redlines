@@ -3187,6 +3187,31 @@ fn should_fold_multi_del_at_document_scale(
         }
     }
 
+    // M314 (comment×restart_list Word IIIIIIIIDDD): multi pure-I are all
+    // 1-token / ≤2-alnum labels (ONE/A/C) + multi pure-D multi-word prose with
+    // zero I×D Jaccard. Absolute gap is often 30–39 (< 40 floor) so C1 still
+    // forced a fold of last "C" into "Python-docx Comment Test". Skip fold.
+    // file_54 short "b"×demo title still folds when any content pure-I is a
+    // longer content line (not all labels) or first pure-D is a short Demo
+    // title with residual relatedness — m139 keeps Line Spacing text either way.
+    if content_inss.len() >= 3 && content_dels.len() >= 2 {
+        let all_label_i = content_inss
+            .iter()
+            .all(|&p| para_body_is_very_short(dom, p) || para_word_atom_count(dom, p) <= 1);
+        let any_content_related = content_inss.iter().any(|&i| {
+            content_dels
+                .iter()
+                .any(|&d| should_fold_ins_del_pair(dom, i, d))
+        });
+        let first_del_words = content_dels
+            .first()
+            .map(|&d| para_word_atom_count(dom, d))
+            .unwrap_or(0);
+        if all_label_i && !any_content_related && first_del_words >= 3 {
+            return false;
+        }
+    }
+
     // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
     if inss.len() < 3 || dels.len() < 3 {
         return true;
@@ -3536,8 +3561,31 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // — Word keeps pure-I separate. Longer pure-I runs (file_54:
                 // a/x/x/b) still fold last short "b" into first D (Word MIX
                 // "b1.5 Line Spacing Demo"). M90 still folds content pure-I.
-                if dels.len() > 1 && inss.len() <= 2 && para_body_is_very_short(dom, last_ins) {
-                    continue;
+                //
+                // M314 (comment×restart_list): longer pure-I run of **only**
+                // 1-token / ≤2-alnum labels (ONE/A/B/C) + multi pure-D multi-word
+                // prose with zero boundary Jaccard — Word pure-I/D (IIIIIIIDDD).
+                // Gap often sits just under the 40-atom C1 floor so multi-del
+                // still folded last "C" into the comment title.
+                if dels.len() > 1 && para_body_is_very_short(dom, last_ins) {
+                    if inss.len() <= 2 {
+                        continue;
+                    }
+                    let content_i: Vec<NodeId> = inss
+                        .iter()
+                        .copied()
+                        .filter(|&p| !para_has_no_text(dom, p))
+                        .collect();
+                    let all_label_i = !content_i.is_empty()
+                        && content_i.iter().all(|&p| {
+                            para_body_is_very_short(dom, p) || para_word_atom_count(dom, p) <= 1
+                        });
+                    if all_label_i
+                        && para_word_atom_count(dom, d) >= 3
+                        && !should_fold_ins_del_pair(dom, last_ins, d)
+                    {
+                        continue;
+                    }
                 }
                 // M139 (file_82): multi pure-D after a **long** pure-I run
                 // (≥10 paras: contract body) when first pure-D is an unrelated
