@@ -4949,7 +4949,8 @@ pub fn detect_unrelated_sources_word_mode(
                 || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50)
                 || ooxml_x_short_table_demo(dom, cu1, cu2)
                 || both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2)
-                || short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2))
+                || short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2)
+                || short_demos_share_first_title_token(dom, cu1, cu2, n1, n2))
             && n1 != n2
             && n1 <= 80
             && n2 <= 80;
@@ -5026,8 +5027,10 @@ pub fn detect_unrelated_sources_word_mode(
                 let ooxml_tbl = ooxml_x_short_table_demo(dom, cu1, cu2);
                 let both_tbl = both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2);
                 let cell_tbl = short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2);
+                let first_tok =
+                    short_demos_share_first_title_token(dom, cu1, cu2, n1, n2);
                 residual_settings.detail_threshold =
-                    if short_prop || ooxml_tbl || both_tbl || cell_tbl {
+                    if short_prop || ooxml_tbl || both_tbl || cell_tbl || first_tok {
                         0.0
                     } else {
                         0.005
@@ -5568,6 +5571,45 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
         || lower.contains("bold")
         || lower.contains("color sample")
         || lower.contains("italic")
+}
+
+/// Short demos sharing the **first** significant title token (Tab Alignment ×
+/// Tab Tests). Word free-meshes positionally (MMMMM…); pure-I/D leaves MIX≈1.
+/// Requires n1≠n2 (equal-count bullet_list_bold×bullet_list stays on finalize
+/// M336 fold — free-mesh over-meshed to 4 MIX). Table-free only.
+fn short_demos_share_first_title_token(
+    dom: &Dom,
+    cu1: &[ComparisonUnit],
+    cu2: &[ComparisonUnit],
+    n1: usize,
+    n2: usize,
+) -> bool {
+    if !(3..=15).contains(&n1) || !(3..=15).contains(&n2) || n1 == n2 {
+        return false;
+    }
+    if has_table_units(cu1) || has_table_units(cu2) {
+        return false;
+    }
+    let (Some(i1), Some(i2)) = (
+        first_contentful_group_index(dom, cu1),
+        first_contentful_group_index(dom, cu2),
+    ) else {
+        return false;
+    };
+    let a0 = para_text_token_list(dom, &cu1[i1]);
+    let b0 = para_text_token_list(dom, &cu2[i2]);
+    let first_same = a0.first().zip(b0.first()).is_some_and(|(a, b)| {
+        a.eq_ignore_ascii_case(b) && a.chars().count() >= 3
+    });
+    if !first_same {
+        return false;
+    }
+    // Residual body not near-identical (related demos, not EQ cousins).
+    let body_j = token_jaccard(
+        &para_text_tokens_from_units(dom, cu1),
+        &para_text_tokens_from_units(dom, cu2),
+    );
+    body_j + 1e-12 < 0.45
 }
 
 /// Short Demo-title cousins where exactly one side is list-heavy (numPr on ≥
