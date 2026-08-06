@@ -5016,10 +5016,56 @@ pub fn detect_unrelated_sources_word_mode(
             }
         }
     }
+    // M310 (ooxml rstyle combo demos ~34–42): parallel property testers share
+    // lettered section skeleton A) B) C) D) and bullet chrome. Content hashes
+    // are disjoint so classic unrelated pure-I/D fires, but Word meshes
+    // MIX line-by-line (unpacked oracle ~21 MIX paras). Force full LCS when
+    // both sides carry ≥3 shared lettered section headers.
+    if parallel_sectioned_demos(dom, cu1, cu2) {
+        return None;
+    }
     Some(vec![
         CorrelatedSequence::inserted(cu2.to_vec()),
         CorrelatedSequence::deleted(cu1.to_vec()),
     ])
+}
+
+/// Lettered section headers at contentful para starts: `A)`, `B)`, …
+fn section_letter_labels(dom: &Dom, cu: &[ComparisonUnit]) -> std::collections::HashSet<char> {
+    let mut labels = std::collections::HashSet::new();
+    for u in cu {
+        if as_group(u).is_none() {
+            continue;
+        }
+        if para_text_token_list(dom, u).is_empty() {
+            continue;
+        }
+        let mut lead = String::new();
+        for a in u.descendant_atoms() {
+            if dom.name(a.content_element) == Some(W::t()) {
+                lead.push_str(&dom.value_str(a.content_element));
+                if lead.len() >= 8 {
+                    break;
+                }
+            }
+        }
+        let t = lead.trim_start();
+        let b = t.as_bytes();
+        if b.len() >= 2 && b[0].is_ascii_uppercase() && b[1] == b')' {
+            labels.insert(b[0] as char);
+        }
+    }
+    labels
+}
+
+/// True when both docs look like parallel multi-section demos Word meshes.
+fn parallel_sectioned_demos(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[ComparisonUnit]) -> bool {
+    let l1 = section_letter_labels(dom, cu1);
+    let l2 = section_letter_labels(dom, cu2);
+    if l1.len() < 3 || l2.len() < 3 {
+        return false;
+    }
+    l1.intersection(&l2).count() >= 3
 }
 
 /// M4.C.12 — `SetAfterUnids` (:7114): when an Unknown is a single group vs a
