@@ -4814,7 +4814,7 @@ pub fn detect_unrelated_sources_word_mode(
     if settings.merge_replaced_paragraphs
         && n2 == short_n
         && (1..=8).contains(&short_n)
-        && long_n >= 8
+        && long_n >= 4
         && has_table(cu2)
         && {
             let b1 = para_text_tokens_from_units(dom, cu1);

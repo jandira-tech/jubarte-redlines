@@ -231,6 +231,42 @@ fn hyperlink_x_rtl_table_title_pure_i_then_pure_d() {
 }
 
 #[test]
+fn list_with_table_break_x_plain_3x3_title_pure_i() {
+    // Medium list+table base (contentful ~4–6) × short plain_3x3 next.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__list_with_table_break_ff0c4c1f.docx");
+    let b = src.join("behavior__sd_2672_plain_3x3_87943d5d.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: corpus not available at {}", src.display());
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &word_settings(),
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    let paras = body_para_classes(&xml);
+    let first_content = paras
+        .iter()
+        .find(|(_, t)| !t.trim().is_empty())
+        .expect("contentful");
+    assert_eq!(first_content.0, 'I', "got {:?}", first_content);
+    assert!(
+        !first_content.1.contains("ONE"),
+        "must not MIX list item into title: {:?}",
+        first_content.1
+    );
+    let n_m = paras.iter().filter(|(c, _)| *c == 'M').count();
+    assert_eq!(n_m, 0, "Word IDDD… MIX=0; MIX={n_m}");
+}
+
+#[test]
 fn table_autofit_x_merged_cells_keeps_table_not_body_pure_id_stream() {
     // Anti-regression for M313: Word body is a single EQ table (seq E).
     // Wholesale pure-I/D would emit many top-level pure-I then pure-D paras
