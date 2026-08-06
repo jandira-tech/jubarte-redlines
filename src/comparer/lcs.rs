@@ -1383,6 +1383,13 @@ fn token_jaccard(
 /// Rehash word units by concatenated `w:t` text only (ignore rPr). Used so
 /// residual short×short LCS can Equal shared tokens across format demos.
 fn rehash_words_by_text_content(dom: &Dom, units: &mut [ComparisonUnit]) {
+    rehash_words_by_text_content_opts(dom, units, false);
+}
+
+/// Text-content rehash; optional ASCII case-fold for free-mesh paths where Word
+/// matches "Sample"×"sample" (M328d). Keep case-sensitive for residual peels
+/// that share stamped filenames / exact casing (file_197 confetti).
+fn rehash_words_by_text_content_opts(dom: &Dom, units: &mut [ComparisonUnit], case_fold: bool) {
     use crate::util::sha1::{sha1_fingerprint, sha1_hex};
     for u in units.iter_mut() {
         if let ComparisonUnit::Word(w) = u {
@@ -1393,7 +1400,12 @@ fn rehash_words_by_text_content(dom: &Dom, units: &mut [ComparisonUnit]) {
                 }
             }
             if !text.is_empty() {
-                w.sha1_hash = sha1_hex(&text);
+                let key = if case_fold {
+                    text.to_ascii_lowercase()
+                } else {
+                    text
+                };
+                w.sha1_hash = sha1_hex(&key);
                 // keep the cached fingerprint in sync with the mutated hash
                 w.sha1_key = sha1_fingerprint(&w.sha1_hash);
             }
@@ -4883,9 +4895,22 @@ pub fn detect_unrelated_sources_word_mode(
     // Cap size to avoid hangs. Do **not** free-mesh large-vocab legal prose
     // (M318/M321 regressed memo×nda).
     {
-        let free_mesh_demos = (parallel_sectioned_demos(dom, cu1, cu2)
-            || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
-            || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50))
+        // Stamped file_N.docx pairs share last-sig "docx" — free-mesh confetti
+        // them and thrash stamp residual (file_197 M4→M2). Keep stamps on the
+        // confetti pure-I/D path below.
+        let stamped_pair = matches!(
+            (
+                first_contentful_para_text(dom, cu1),
+                first_contentful_para_text(dom, cu2),
+            ),
+            (Some(t1), Some(t2))
+                if t1.to_ascii_lowercase().starts_with("file_")
+                    && t2.to_ascii_lowercase().starts_with("file_")
+        );
+        let free_mesh_demos = !stamped_pair
+            && (parallel_sectioned_demos(dom, cu1, cu2)
+                || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
+                || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50))
             && n1 != n2
             && n1 <= 50
             && n2 <= 50;
@@ -4904,8 +4929,11 @@ pub fn detect_unrelated_sources_word_mode(
                 && !right.is_empty()
                 && left.len().saturating_mul(right.len()) <= 250_000
             {
-                rehash_words_by_text_content(dom, &mut left);
-                rehash_words_by_text_content(dom, &mut right);
+                // M328d: case-fold free-mesh rehash so "Sample"×"sample" match
+                // (highlight×bold). Case-sensitive under-meshed M14 vs Word M25;
+                // global case-fold regressed stamp confetti — free-mesh only.
+                rehash_words_by_text_content_opts(dom, &mut left, true);
+                rehash_words_by_text_content_opts(dom, &mut right, true);
                 let mut residual_settings = settings.clone();
                 // Parallel A)/B)/C) demos mesh long section labels so 0.005 is
                 // enough (M324). Short OOXML property testers share only short
