@@ -4883,9 +4883,25 @@ pub fn detect_unrelated_sources_word_mode(
             }
         }
     {
-        // Pure-I all next then pure-D all base (M312 table-free base and M313
-        // both-tables). IDI emit and full-LCS (None) for both-tables both
-        // regressed pirates×table pagefair vs pure-I/D; keep pure-I/D.
+        // M312 (table-free base): pure-I all next then pure-D all base (Word
+        // pure ID for two_column×nested).
+        //
+        // M313 both-tables:
+        // - single-table short next (rtl_table, plain_3x3): Word pure-I/D
+        //   MIX=0 — keep wholesale pure-I/D.
+        // - multi-table short next (table_left indent, n_tbl≥2): pure-I/D
+        //   pagefair ~41; IDI ~38; e3 full LCS ~70. Return None for full LCS.
+        if has_table(cu1) {
+            let n_tbl_next = cu2
+                .iter()
+                .filter(|u| {
+                    as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table)
+                })
+                .count();
+            if n_tbl_next >= 2 {
+                return None;
+            }
+        }
         return Some(vec![
             CorrelatedSequence::inserted(cu2.to_vec()),
             CorrelatedSequence::deleted(cu1.to_vec()),

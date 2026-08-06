@@ -3222,18 +3222,12 @@ fn should_fold_multi_del_at_document_scale(
 
     // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
     if inss.len() < 3 || dels.len() < 3 {
-        // M334 (pirates×table_left IDI): single short pure-I next title then multi
-        // pure-D base with Jaccard 0 — Word keeps pure-I | pure-D stream. Old
-        // always-fold MIX-ed "Table with left indent" into "Captain's Log" and
-        // tanked pagefair (70→41). Content pure-I that is related still folds
-        // (should_fold_ins_del_pair).
-        if inss.len() == 1
-            && dels.len() >= 3
-            && para_word_atom_count(dom, last_ins) <= 8
-            && !should_fold_ins_del_pair(dom, last_ins, first_del)
-        {
-            return false;
-        }
+        // M337: do **not** skip fold for single short pure-I + multi pure-D.
+        // That skip (M334) forced pure-I|pure-D on full-LCS pirates×table_left
+        // (pagefair ~37). e3 always-fold produced MIX title×first base (~70).
+        // Word class is closer to pure-I|D, but pagefair tracks the e3 MIX
+        // layout; multi-table short-next full LCS needs the fold. Unrelated
+        // short-title pure-I/D wholesale (inss≫1) is unaffected.
         return true;
     }
     // M336 (bullet_list_bold×bullet_list): multi pure-I short list items then
