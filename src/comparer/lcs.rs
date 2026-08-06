@@ -4903,10 +4903,7 @@ pub fn detect_unrelated_sources_word_mode(
         let b2 = para_text_tokens_from_units(dom, cu2);
         let s1 = significant_tokens(&b1);
         let s2 = significant_tokens(&b2);
-        if s1.len() >= 40
-            && s2.len() >= 40
-            && token_jaccard(&b1, &b2) + 1e-12 >= 0.08
-        {
+        if s1.len() >= 40 && s2.len() >= 40 && token_jaccard(&b1, &b2) + 1e-12 >= 0.08 {
             return None;
         }
     }
