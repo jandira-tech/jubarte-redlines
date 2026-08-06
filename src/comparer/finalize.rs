@@ -3576,16 +3576,25 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // ("Support Tickets"). Word IIIDDD…. Do NOT block M90 Demo
                 // title folds (file_38 "Center Alignment Demo", file_11
                 // "Superscript Demo") — those look like Demo titles.
-                if dels.len() > 1 && inss.len() >= 2 && !para_looks_like_demo_title(dom, d) {
-                    let it = para_revision_body_text(dom, last_ins);
-                    let dt = para_revision_body_text(dom, d);
-                    let ins_toks = body_token_set(&it).len();
-                    let del_toks = body_token_set(&dt).len();
-                    if ins_toks >= 3
-                        && (1..=3).contains(&del_toks)
-                        && !should_fold_ins_del_pair(dom, last_ins, d)
-                    {
-                        continue;
+                // image_p_spacing×dropcaps: first pure-D may be empty — gate on
+                // first content pure-D ("SOME TITLE") instead of the shell.
+                if dels.len() > 1 && inss.len() >= 2 {
+                    let d_content = dels
+                        .iter()
+                        .copied()
+                        .find(|&p| !para_revision_body_text(dom, p).trim().is_empty())
+                        .unwrap_or(d);
+                    if !para_looks_like_demo_title(dom, d_content) {
+                        let it = para_revision_body_text(dom, last_ins);
+                        let dt = para_revision_body_text(dom, d_content);
+                        let ins_toks = body_token_set(&it).len();
+                        let del_toks = body_token_set(&dt).len();
+                        if ins_toks >= 3
+                            && (1..=3).contains(&del_toks)
+                            && !should_fold_ins_del_pair(dom, last_ins, d_content)
+                        {
+                            continue;
+                        }
                     }
                 }
                 // M124 (file_29): last pure-I is a 1–2 char residual ("a") in a
