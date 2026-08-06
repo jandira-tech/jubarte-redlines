@@ -49,3 +49,37 @@ fn hummingbird_x_employment_no_mid_email_wrap_mix() {
     let ins = xml.matches("<w:ins").count();
     assert!(ins >= 20, "Word pure-I employment stream; ins={ins}");
 }
+
+#[test]
+fn tiff_x_hf_normal_no_mid_body_mix_of_tiff_title() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("behavior__tiff_image_2d531f83.docx");
+    let b = src.join("super_editor__h_f_normal_5d2a8d96.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip");
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &WmlComparerSettings {
+            author_for_revisions: "Redline".into(),
+            merge_replaced_paragraphs: true,
+            ..WmlComparerSettings::default()
+        },
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    // Must not leave tiff title pure-missing while mid body pure-I only —
+    // expect del of tiff title somewhere
+    assert!(
+        xml.contains("TIFF") && (xml.contains("<w:del") || xml.contains("delText")),
+        "TIFF base title should appear as deleted markup"
+    );
+    let ins = xml.matches("<w:ins").count();
+    assert!(ins >= 20, "long next pure-I stream; ins={ins}");
+}

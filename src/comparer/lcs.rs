@@ -4808,15 +4808,20 @@ pub fn detect_unrelated_sources_word_mode(
     // gate needs short in [2,3] so n1==1 never short-circuits; full LCS free-
     // meshes the wrap into a mid employment email pure-I (Word: pure-I stream
     // + tail MIX only). Force pure-I next / pure-D base. Table-free both sides.
+    //
+    // Also tiff_image×h_f_normal (n1≈2: title + drawing-only empty): same
+    // wholesale pure-I/D Word shape when body Jaccard ~0 and base text is a
+    // short title (≤8 significant tokens).
     if settings.merge_replaced_paragraphs
-        && n1 == 1
+        && (1..=2).contains(&n1)
         && n2 >= 5
         && !has_table(cu1)
         && !has_table(cu2)
         && {
             let b1 = para_text_tokens_from_units(dom, cu1);
             let b2 = para_text_tokens_from_units(dom, cu2);
-            !b1.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.05
+            let sig1 = significant_tokens(&b1);
+            !b1.is_empty() && sig1.len() <= 8 && token_jaccard(&b1, &b2) + 1e-12 < 0.05
         }
     {
         return Some(vec![
