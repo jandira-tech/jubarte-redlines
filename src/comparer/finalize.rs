@@ -3517,6 +3517,19 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 if sole_del && following_content && !should_fold_ins_del_pair(dom, last_ins, d) {
                     continue;
                 }
+                // M317 (basic_comment×sample): long pure-I next + sole short
+                // pure-D base token ("test"). Word pure-I stream (no MIX);
+                // trailing sole-del always-fold (m44) MIX-ed "test" into the
+                // last sample line. Skip when pure-I run is long, last pure-I
+                // multi-word, sole pure-D is a single token, Jaccard 0.
+                if sole_del
+                    && inss.len() >= 10
+                    && para_word_atom_count(dom, d) <= 1
+                    && para_word_atom_count(dom, last_ins) >= 3
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
+                    continue;
+                }
                 // C1 / KNOWN ISSUE #2: multi-del boundary fold gated on
                 // document-scale relatedness (unrelated whole-doc replacement
                 // must not mix last pure-I with first pure-D).
