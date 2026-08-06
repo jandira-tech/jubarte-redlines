@@ -5610,7 +5610,7 @@ fn short_demos_share_first_title_token(
         "font", "track", "green", "right", "left", "center", "title", "project",
         "one", "this",
     ];
-    if GENERIC_STYLE.iter().any(|g| *g == first.as_str()) {
+    if GENERIC_STYLE.contains(&first.as_str()) {
         return false;
     }
     // Residual body not near-identical (related demos, not EQ cousins).
