@@ -4823,9 +4823,7 @@ pub fn detect_unrelated_sources_word_mode(
             // Next must carry a short title-class vocabulary (SD-2672 / "plain
             // 3x3" / "RTL"). Digit-only table shells (merged_cells) have empty
             // significant sets — Word keeps EQ, not pure-I/D.
-            if next_sig.is_empty() || next_sig.len() > 24 {
-                false
-            } else if b1.is_empty() {
+            if next_sig.is_empty() || next_sig.len() > 24 || b1.is_empty() {
                 false
             } else {
                 token_jaccard(&b1, &b2) + 1e-12 < 0.05
