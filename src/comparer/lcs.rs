@@ -4883,10 +4883,9 @@ pub fn detect_unrelated_sources_word_mode(
             }
         }
     {
-        // Pure-I all next then pure-D all base. Tried IDI (I first title | D base
-        // | I residual) for both-table short-next (M334) — matched Word class
-        // seq but pagefair regressed pirates×table_left further (38 vs e3 70).
-        // Keep classic ID until a pagefair-positive interleave is found.
+        // Pure-I all next then pure-D all base (M312 table-free base and M313
+        // both-tables). IDI emit and full-LCS (None) for both-tables both
+        // regressed pirates×table pagefair vs pure-I/D; keep pure-I/D.
         return Some(vec![
             CorrelatedSequence::inserted(cu2.to_vec()),
             CorrelatedSequence::deleted(cu1.to_vec()),
