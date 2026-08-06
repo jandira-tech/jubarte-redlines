@@ -326,16 +326,7 @@ fn normalized_abstract_num_signature(dom: &mut Dom, abstract_num: NodeId) -> Str
 /// id-remap (colliding abstractNumId/numId get fresh ids past the destination
 /// maximum, with num references rewired), and schema-order insertion.
 /// Malformed elements (missing/unparseable ids) are skipped like C#.
-///
-/// Returns `old_numId → new_numId` for B-side `w:num` entries that were
-/// reassigned because A already used the same numId for a *different*
-/// abstract (disc×square bullets). Callers must rewrite live body `numPr`
-/// references via [`apply_numbering_id_remaps_to_document`].
-pub fn copy_missing_numbering(
-    dom: &mut Dom,
-    to_root: NodeId,
-    from_root: NodeId,
-) -> std::collections::HashMap<i32, i32> {
+pub fn copy_missing_numbering(dom: &mut Dom, to_root: NodeId, from_root: NodeId) {
     let abstract_num = W::name("abstractNum");
     let num = W::name("num");
     let abstract_num_id = W::name("abstractNumId");
@@ -356,8 +347,6 @@ pub fn copy_missing_numbering(
 
     // source abstractNumId → destination abstractNumId
     let mut abstract_map: std::collections::HashMap<i32, i32> = std::collections::HashMap::new();
-    // B numId reassigned because A kept the same id for a different abstract.
-    let mut num_remaps: std::collections::HashMap<i32, i32> = std::collections::HashMap::new();
 
     for an in dom.elements(from_root, Some(&abstract_num)) {
         let Some(from_id) = get_int_attribute(dom, an, &abstract_num_id) else {
@@ -426,7 +415,6 @@ pub fn copy_missing_numbering(
             if let Some(e) = dom.element(cloned, &abstract_num_id) {
                 dom.set_attribute_value(e, &W::val(), Some(&mapped.to_string()));
             }
-            num_remaps.insert(from_num_id, max_num_id);
             add_numbering_child_in_schema_order(dom, to_root, cloned);
         } else {
             // retained numId — advance the watermark so a later collision
@@ -441,206 +429,6 @@ pub fn copy_missing_numbering(
             add_numbering_child_in_schema_order(dom, to_root, cloned);
         }
     }
-    num_remaps
-}
-
-/// After [`copy_missing_numbering`] reassigns B's colliding `numId`s, rewrite
-/// **live** (non pure-del) body `w:numPr/w:numId` to the new id and record the
-/// old id under `w:pPrChange` (Word disc×square: live square + pPrChange disc).
-/// Pure-deleted paragraphs keep A's numId so deleted list glyphs stay correct.
-pub fn apply_numbering_id_remaps_to_document(
-    dom: &mut Dom,
-    root: NodeId,
-    remaps: &std::collections::HashMap<i32, i32>,
-    numbering_root: Option<NodeId>,
-    settings: &WmlComparerSettings,
-    id_gen: &mut u32,
-) -> usize {
-    if remaps.is_empty() {
-        return 0;
-    }
-    let mut changed = 0usize;
-    let paras: Vec<NodeId> = dom.descendants(root, Some(&W::p()));
-    for p in paras {
-        if para_is_pure_deleted_for_num_remap(dom, p) {
-            continue;
-        }
-        let Some(ppr) = dom.element(p, &W::p_pr()) else {
-            continue;
-        };
-        let Some(num_pr) = dom.element(ppr, &W::name("numPr")) else {
-            continue;
-        };
-        let Some(num_id_el) = dom.element(num_pr, &W::name("numId")) else {
-            continue;
-        };
-        let Some(old_id) = dom
-            .attribute(num_id_el, &W::val())
-            .and_then(|v| v.parse::<i32>().ok())
-        else {
-            continue;
-        };
-        let Some(&new_id) = remaps.get(&old_id) else {
-            continue;
-        };
-        // M286 — pure-I list paras in a **wholesale pure-I list prefix** (body
-        // starts pure-I, e.g. list_table×spacer) must not get numId-remap
-        // pPrChange (Word has none). Still flip live numId. Custom-list-style
-        // docs (lead MIX then pure-I) keep pPrChange stamps — fair LO-neg when
-        // stripped. Still flip live numId for collision safety.
-        let pure_i = para_is_pure_inserted_for_num_remap(dom, p);
-        let skip_pprchange = pure_i && body_starts_with_pure_ins_list(dom, root);
-        // Stamp pPrChange(old) before flipping live numId (Word parity on equal/MIX).
-        if !skip_pprchange && dom.element(ppr, &W::name("pPrChange")).is_none() {
-            let old_inner = dom.new_element(W::p_pr());
-            for local in ["pStyle", "numPr", "ind"] {
-                if let Some(c) = dom.element(ppr, &W::name(local)) {
-                    let cl = dom.clone_subtree(c);
-                    dom.add(old_inner, cl);
-                }
-            }
-            // Word injects hanging/left from the OLD abstract's lvl pPr into
-            // pPrChange (disc×square: hanging=360). Live layout still comes
-            // from numbering; this matches revision history shape for LO.
-            if dom.element(old_inner, &W::name("ind")).is_none() {
-                let ilvl = dom
-                    .element(num_pr, &W::name("ilvl"))
-                    .and_then(|e| dom.attribute(e, &W::val()))
-                    .and_then(|v| v.parse::<i32>().ok())
-                    .unwrap_or(0);
-                if let Some(ind) = level_indent_from_numbering(dom, numbering_root, old_id, ilvl) {
-                    dom.add(old_inner, ind);
-                }
-            }
-            let chg = dom.new_element(W::name("pPrChange"));
-            dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
-            *id_gen += 1;
-            dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
-            dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
-            dom.add(chg, old_inner);
-            dom.add(ppr, chg);
-        }
-        // Pure-I wholesale list prefix: drop any pre-existing pPrChange.
-        if skip_pprchange && let Some(chg) = dom.element(ppr, &W::name("pPrChange")) {
-            dom.remove(chg);
-        }
-        dom.set_attribute_value(num_id_el, &W::val(), Some(&new_id.to_string()));
-        changed += 1;
-    }
-    changed
-}
-
-/// Pure-I for numId remap: body has `w:ins`, no body `w:del` / delText.
-fn para_is_pure_inserted_for_num_remap(dom: &Dom, p: NodeId) -> bool {
-    if dom.name(p) != Some(W::p()) {
-        return false;
-    }
-    let body_kids: Vec<NodeId> = dom
-        .elements(p, None)
-        .into_iter()
-        .filter(|&c| dom.name(c) != Some(W::p_pr()))
-        .collect();
-    let has_body_ins = body_kids.iter().any(|&c| dom.name(c) == Some(W::ins()));
-    let has_body_del = body_kids.iter().any(|&c| {
-        dom.name(c) == Some(W::del()) || !dom.descendants(c, Some(&W::del_text())).is_empty()
-    });
-    has_body_ins && !has_body_del
-}
-
-/// True when the first non-empty body para is pure-I (wholesale B list), not
-/// MIX (custom_list lead Num1|SECTION). Used to gate M286 pure-I pPrChange strip.
-fn body_starts_with_pure_ins_list(dom: &Dom, root: NodeId) -> bool {
-    let Some(body) = dom.element(root, &W::body()) else {
-        return false;
-    };
-    for p in dom.elements(body, None) {
-        if dom.name(p) != Some(W::p()) {
-            if dom.name(p) == Some(W::name("sectPr")) {
-                break;
-            }
-            continue;
-        }
-        // Skip empty pure-I spacers.
-        let body_kids: Vec<NodeId> = dom
-            .elements(p, None)
-            .into_iter()
-            .filter(|&c| dom.name(c) != Some(W::p_pr()))
-            .collect();
-        let empty = body_kids.iter().all(|&c| {
-            let texts: String = dom
-                .descendants(c, Some(&W::t()))
-                .into_iter()
-                .map(|t| dom.value_str(t))
-                .collect();
-            let dels: String = dom
-                .descendants(c, Some(&W::del_text()))
-                .into_iter()
-                .map(|t| dom.value_str(t))
-                .collect();
-            texts.trim().is_empty() && dels.trim().is_empty()
-        });
-        if empty {
-            continue;
-        }
-        return para_is_pure_inserted_for_num_remap(dom, p);
-    }
-    false
-}
-
-/// Resolve `w:ind` from `numbering.xml` abstract level for a numId/ilvl pair.
-fn level_indent_from_numbering(
-    dom: &mut Dom,
-    numbering_root: Option<NodeId>,
-    num_id: i32,
-    ilvl: i32,
-) -> Option<NodeId> {
-    let numbering = numbering_root?;
-    let num_el = dom
-        .elements(numbering, Some(&W::name("num")))
-        .into_iter()
-        .find(|&e| get_int_attribute(dom, e, &W::name("numId")) == Some(num_id))?;
-    let abs_id = dom
-        .element(num_el, &W::name("abstractNumId"))
-        .and_then(|e| get_int_attribute(dom, e, &W::val()))?;
-    let abs = dom
-        .elements(numbering, Some(&W::name("abstractNum")))
-        .into_iter()
-        .find(|&e| get_int_attribute(dom, e, &W::name("abstractNumId")) == Some(abs_id))?;
-    let lvl = dom
-        .elements(abs, Some(&W::name("lvl")))
-        .into_iter()
-        .find(|&e| get_int_attribute(dom, e, &W::name("ilvl")) == Some(ilvl))?;
-    let lvl_ppr = dom.element(lvl, &W::p_pr())?;
-    let ind = dom.element(lvl_ppr, &W::name("ind"))?;
-    Some(dom.clone_subtree(ind))
-}
-
-fn para_is_pure_deleted_for_num_remap(dom: &Dom, p: NodeId) -> bool {
-    if dom.descendants(p, Some(&W::del())).is_empty() {
-        return false;
-    }
-    if !dom.descendants(p, Some(&W::ins())).is_empty() {
-        return false;
-    }
-    for t in dom.descendants(p, Some(&W::t())) {
-        let mut in_del = false;
-        for a in dom.ancestors_and_self(t, None) {
-            if dom.name(a).as_ref() == Some(&W::del()) {
-                in_del = true;
-                break;
-            }
-            if a == p {
-                break;
-            }
-        }
-        if !in_del {
-            let v = dom.value(t);
-            if !v.trim().is_empty() {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 /// Word-mode repair (beyond PowerTools): Word synthesizes a default decimal

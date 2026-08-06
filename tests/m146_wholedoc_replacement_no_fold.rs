@@ -129,7 +129,9 @@ fn unrelated_wholedoc_replacement_no_mixed_first_para() {
             "the junction mixes B's LAST paragraph with A's FIRST: {kinds:?}"
         );
         assert!(
-            kinds[..pos].iter().all(|(ins, del, _)| *ins && !*del),
+            kinds[..pos]
+                .iter()
+                .all(|(ins, del, _)| *ins && !*del),
             "B's lead paragraphs stay pure-ins: {kinds:?}"
         );
     }
@@ -138,9 +140,9 @@ fn unrelated_wholedoc_replacement_no_mixed_first_para() {
     let pure_ins = kinds
         .iter()
         .any(|(ins, del, t)| *ins && !*del && t.contains("Zulu"));
-    let pure_del = kinds
-        .iter()
-        .any(|(ins, del, t)| !*ins && *del && (t.contains("Bravo") || t.contains("Charlie")));
+    let pure_del = kinds.iter().any(|(ins, del, t)| {
+        !*ins && *del && (t.contains("Bravo") || t.contains("Charlie"))
+    });
     assert!(pure_ins, "expected pure-ins novel block: {kinds:?}");
     assert!(pure_del, "expected pure-del base block: {kinds:?}");
 }

@@ -1761,8 +1761,7 @@ pub fn do_lcs_algorithm(
                 .map(|(i, _)| i)
                 .collect();
             let ends_at_pil = |cul: &[ComparisonUnit]| {
-                cul.last()
-                    .is_some_and(|cu| unit_is_single_atom_ppr(dom, cu))
+                cul.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu))
             };
             let xor_single = (pil1.len() == 1) != (pil2.len() == 1);
             // M×N (both sides multi-paragraph) joins the seam class ONLY on
@@ -1771,7 +1770,7 @@ pub fn do_lcs_algorithm(
             // rPr) hash-jaccards to ~0 and would merge wholesale; comparing
             // the lowercase text tokens instead keeps those correlated
             // (two_column_simple×word_native_bullet_circle text-overlap 0,
-            // oracle junction M~ at block 2 — lossless a9e4a33ac shipped the
+    // oracle junction M~ at block 2 — lossless a9e4a33ac shipped the
             // same class at +831.5 A/B).
             // Equal paragraph counts take the m45 zip (MIX title | pure-I |
             // pure-D | MIX last), not the seam — see the fast-path gate.
@@ -1779,14 +1778,8 @@ pub fn do_lcs_algorithm(
             if std::env::var("JUB_TRACE").is_ok() {
                 eprintln!(
                     "[gate2] n1={} n2={} pil1={} pil2={} xor={} multi={} end1={} end2={}",
-                    cul1.len(),
-                    cul2.len(),
-                    pil1.len(),
-                    pil2.len(),
-                    xor_single,
-                    both_multi,
-                    ends_at_pil(&cul1),
-                    ends_at_pil(&cul2)
+                    cul1.len(), cul2.len(), pil1.len(), pil2.len(),
+                    xor_single, both_multi, ends_at_pil(&cul1), ends_at_pil(&cul2)
                 );
             }
             if !pil1.is_empty()
@@ -1883,12 +1876,13 @@ pub fn do_lcs_algorithm(
                     };
                     let mut body_para = None;
                     for &ae in first_atom.ancestor_elements.iter() {
-                        if dom.name(ae) == Some(p_name.clone())
-                            && let Some(par) = dom.parent(ae)
-                            && dom.name(par) == Some(body_name.clone())
-                        {
-                            body_para = Some((ae, par));
-                            break;
+                        if dom.name(ae) == Some(p_name.clone()) {
+                            if let Some(par) = dom.parent(ae) {
+                                if dom.name(par) == Some(body_name.clone()) {
+                                    body_para = Some((ae, par));
+                                    break;
+                                }
+                            }
                         }
                     }
                     let Some((para, body)) = body_para else {
@@ -1920,11 +1914,11 @@ pub fn do_lcs_algorithm(
                     };
                     let mut body_block = None;
                     for &ae in last_atom.ancestor_elements.iter() {
-                        if let Some(par) = dom.parent(ae)
-                            && dom.name(par) == Some(body_name.clone())
-                        {
-                            body_block = Some((ae, par));
-                            break;
+                        if let Some(par) = dom.parent(ae) {
+                            if dom.name(par) == Some(body_name.clone()) {
+                                body_block = Some((ae, par));
+                                break;
+                            }
                         }
                     }
                     let Some((block, body)) = body_block else {
@@ -1979,17 +1973,6 @@ pub fn do_lcs_algorithm(
                     };
                     let paras_a = split_paras(&cul1);
                     let paras_b = split_paras(&cul2);
-                    // M236 (annot2×annotations_import): zero-overlap 1×N wholesale
-                    // must pure-I all B + pure-D all A. Carrier fusion put A's del
-                    // mark on B's first live para (Word pure-ins every B para).
-                    // Keep the carrier path when there is ANY hash share (sd_1919).
-                    // Note: both_multi + empty shared (annot2 pil 2×8) still needs
-                    // table-aware residual — wholesale pure-I/D regressed LO ~71→64.
-                    if shared.is_empty() && xor_single {
-                        out.push(CorrelatedSequence::inserted(cul2.to_vec()));
-                        out.push(CorrelatedSequence::deleted(cul1.to_vec()));
-                        return out;
-                    }
                     let lead_b: Vec<ComparisonUnit> = paras_b[..paras_b.len() - 1]
                         .iter()
                         .flat_map(|p| p.iter().cloned())
@@ -1999,11 +1982,13 @@ pub fn do_lcs_algorithm(
                     }
                     let carrier_b = paras_b.last().unwrap();
                     let carrier_a = &paras_a[0];
-                    let b_words: Vec<ComparisonUnit> = carrier_b[..carrier_b.len() - 1].to_vec();
+                    let b_words: Vec<ComparisonUnit> =
+                        carrier_b[..carrier_b.len() - 1].to_vec();
                     if !b_words.is_empty() {
                         out.push(CorrelatedSequence::inserted(b_words));
                     }
-                    let a_words: Vec<ComparisonUnit> = carrier_a[..carrier_a.len() - 1].to_vec();
+                    let a_words: Vec<ComparisonUnit> =
+                        carrier_a[..carrier_a.len() - 1].to_vec();
                     if !a_words.is_empty() {
                         out.push(CorrelatedSequence::deleted(a_words));
                     }
@@ -2196,7 +2181,8 @@ pub fn do_lcs_algorithm(
         // windows (font_size×green_bold "text") keep their glue anchors.
         // Same 0.08 unique-lexical fraction as the TS engine's
         // DetectUnrelatedSources.
-        let multi_para_unrelated = !settings.in_stamp_residual && (pmarks1 > 1 || pmarks2 > 1) && {
+        let multi_para_unrelated = !settings.in_stamp_residual
+            && (pmarks1 > 1 || pmarks2 > 1) && {
             let raw1 = para_text_tokens_from_units(dom, &cul1);
             let raw2 = para_text_tokens_from_units(dom, &cul2);
             // Stamped corpus windows (file_N.docx) belong to the stamp
@@ -2551,18 +2537,11 @@ fn step_h(
                 let raw = para_text_tokens_from_units(dom, units);
                 significant_tokens(&raw).into_iter().take(8).collect()
             };
-            let lgs: Vec<String> = lg
-                .iter()
-                .map(|g| format!("{}:{}", g.0, g.1.len()))
-                .collect();
-            let rgs: Vec<String> = rg
-                .iter()
-                .map(|g| format!("{}:{}", g.0, g.1.len()))
-                .collect();
+            let lgs: Vec<String> = lg.iter().map(|g| format!("{}:{}", g.0, g.1.len())).collect();
+            let rgs: Vec<String> = rg.iter().map(|g| format!("{}:{}", g.0, g.1.len())).collect();
             eprintln!("H1seam lg=[{}] rg=[{}]", lgs.join(","), rgs.join(","));
             if lg.len() == 1 {
-                let all: Vec<ComparisonUnit> =
-                    rg.iter().flat_map(|g| g.1.iter().cloned()).collect();
+                let all: Vec<ComparisonUnit> = rg.iter().flat_map(|g| g.1.iter().cloned()).collect();
                 eprintln!("H1seam t1={:?} t2={:?}", toks(&lg[0].1), toks(&all));
             }
         }
@@ -2581,7 +2560,8 @@ fn step_h(
             // empties, ≤3) — larger textless groups keep positional pairing
             // (meeting_agenda×meeting_minutes was exactly 100.00 with it).
             let bare_pmarks = |units: &[ComparisonUnit]| -> bool {
-                units.len() <= 3 && units.iter().all(|u| unit_is_single_atom_ppr(dom, u))
+                units.len() <= 3
+                    && units.iter().all(|u| unit_is_single_atom_ppr(dom, u))
             };
             if lg[il].0 == "Word"
                 && rg[ir].0 == "Word"
@@ -2961,149 +2941,6 @@ fn step_h(
                     if i == ti {
                         continue;
                     }
-                    out.push(CorrelatedSequence::deleted(vec![u.clone()]));
-                }
-                return out;
-            }
-        }
-        // M237 (multipara_cell×missing_separator ~70→100; also hyperlink next):
-        // base is title + 1 table + many trailing empties (left_len > M208's
-        // ≤5), next is multi pure-prose (rc≥2; may include empties so
-        // rc < right_paras). Free LCS / D-first put MIX(title) first
-        // (MIIII D…). Word pure-I all-but-last next, free-mesh last next ×
-        // title, pure-D table residual (IIIIMD… / IIMDD…). Same direction
-        // as M208; near-zero title×prose jaccard keeps related Agenda
-        // families on free LCS.
-        // left_len ≥ 8: multipara has title+table+many empties (~14); annot2
-        // is short table doc (~6) — wholesale pure-I/D there regressed LO
-        // ~71→64 (table residual markup ≠ Word).
-        let m237 = left_tables == 1
-            && lc == 1
-            && left_len <= 20
-            && right_tables == 0
-            && rc >= 2
-            && right_len == right_paras
-            && (2..=12).contains(&right_len);
-        if m237
-            && cul2.len() >= 2
-            && let Some(ti) = first_contentful_idx(cul1)
-        {
-            let last_p = cul2.len() - 1;
-            let j_first = token_jaccard(
-                &para_text_tokens(dom, &cul1[ti]),
-                &para_text_tokens(dom, &cul2[0]),
-            );
-            let j_content = first_contentful_idx(cul2).map_or(0.0, |ri| {
-                token_jaccard(
-                    &para_text_tokens(dom, &cul1[ti]),
-                    &para_text_tokens(dom, &cul2[ri]),
-                )
-            });
-            let j_last = token_jaccard(
-                &para_text_tokens(dom, &cul2[last_p]),
-                &para_text_tokens(dom, &cul1[ti]),
-            );
-            if j_first + 1e-12 < 0.15 && j_content + 1e-12 < 0.15 && j_last + 1e-12 < 0.15 {
-                // Empty/whitespace last next: pure-I all next then pure-D base
-                // so M86/M238 fold parks Heading1 on the boundary MIX
-                // (missing_separator). Contentful last next: M208 free-mesh
-                // last × title (hyperlink_node_internal Word IIMDD…).
-                let last_empty = para_text_token_list(dom, &cul2[last_p]).is_empty();
-                if last_empty {
-                    for u in cul2 {
-                        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
-                    }
-                    for u in cul1 {
-                        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
-                    }
-                } else {
-                    for u in &cul2[..last_p] {
-                        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
-                    }
-                    out.push(CorrelatedSequence::paired(
-                        CorrelationStatus::Unknown,
-                        vec![cul1[ti].clone()],
-                        vec![cul2[last_p].clone()],
-                    ));
-                    for (i, u) in cul1.iter().enumerate() {
-                        if i == ti {
-                            continue;
-                        }
-                        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
-                    }
-                }
-                return out;
-            }
-        }
-        // M241 reverse (prose×table pure-I/D) tried for two_col×table_indent
-        // (+5 LO) but regressed pirates×table_left_indent ~54→38 on same-path
-        // fair A/B — wholesale pure-I/D of long multi-table residuals is not
-        // Word-safe. Leave reverse on free LCS until a tighter residual gate.
-        //
-        // M243 (pci_table×pre_separated_list ~74): long base with ≥1 table and
-        // many body blocks (left_len≥10) × short pure-prose list next
-        // (rc≥4, no tables). Free LCS mixes each list line with table-cell
-        // text (MMMMIMMMM D…). Word pure-I all next then pure-D base
-        // (IIIIIIIII DDDD…). Exclude short table bases (annot2 left_len~6)
-        // and any next with tables (pirates B has tables).
-        // Residual after outer LCS may be tiny on the table side (pci: llen=2
-        // table+empty, lc=0) while next is the full pure-prose list. Require
-        // no contentful paras on left residual and left_len≤3 so short
-        // annot2-class residuals (llen~4) stay off pure-I/D wholesale.
-        let m243 = left_tables >= 1
-            && right_tables == 0
-            && lc == 0
-            && left_len <= 3
-            && rc >= 4
-            && right_len == right_paras
-            && (4..=12).contains(&right_len);
-        if m243 {
-            let j_body = token_jaccard(
-                &para_text_tokens_from_units(dom, cul1),
-                &para_text_tokens_from_units(dom, cul2),
-            );
-            if j_body + 1e-12 < 0.12 {
-                for u in cul2 {
-                    out.push(CorrelatedSequence::inserted(vec![u.clone()]));
-                }
-                for u in cul1 {
-                    out.push(CorrelatedSequence::deleted(vec![u.clone()]));
-                }
-                return out;
-            }
-        }
-        // M244 (two_col_tab×table_left_indent): reverse of M237 — short pure-
-        // prose base (page labels, 0 tables) × compact multi-table next.
-        // Free LCS meshes first PageN into the first table title (MIX + drops
-        // pure-D Page1). Word pure-I all next then pure-D all base
-        // (I[I]III[I]DDDDD). Require every left contentful para ≤3 word tokens
-        // and tight window sizes so long multi-table residuals (pirates×
-        // table_indent) stay on free LCS (M241 reverse regressed pirates
-        // ~54→38).
-        let m244 = left_tables == 0
-            && right_tables >= 1
-            && lc >= 3
-            && lc == left_paras
-            && left_len == left_paras
-            && (3..=8).contains(&left_len)
-            && right_len <= 10
-            && rc >= 1;
-        if m244 {
-            let left_all_short = cul1.iter().all(|u| {
-                if !as_group(u).is_some_and(|g| g.group_type == Paragraph) {
-                    return true;
-                }
-                para_text_token_list(dom, u).len() <= 3
-            });
-            let j_body = token_jaccard(
-                &para_text_tokens_from_units(dom, cul1),
-                &para_text_tokens_from_units(dom, cul2),
-            );
-            if left_all_short && j_body + 1e-12 < 0.12 {
-                for u in cul2 {
-                    out.push(CorrelatedSequence::inserted(vec![u.clone()]));
-                }
-                for u in cul1 {
                     out.push(CorrelatedSequence::deleted(vec![u.clone()]));
                 }
                 return out;
@@ -4704,51 +4541,6 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::deleted(cu1.to_vec()),
         ]);
     }
-    // M245 (comment×complex_list_def_issue): sole contentful base para (often
-    // a comment-only line) × multi pure-prose next list. Full word LCS meshes
-    // the last list item ("FOUR") with "My comment" into one MIX. Word pure-I
-    // all next then pure-D base (IIII…I M). Require n1==1, n2≥4, both table-
-    // free, near-zero body jaccard. Reverse (long base × sole next) and any
-    // table-bearing side (annot2 A has a table) stay on full LCS.
-    // Finalize multi-del fold must also keep this shape (see M245 in
-    // should_fold_multi_del_at_document_scale) — pure-I/D alone still merged
-    // last list item into the sole comment del.
-    if n1 == 1 && n2 >= 4 && !has_table(cu1) && !has_table(cu2) {
-        let j = token_jaccard(
-            &para_text_tokens_from_units(dom, cu1),
-            &para_text_tokens_from_units(dom, cu2),
-        );
-        if j + 1e-12 < 0.12 {
-            return Some(vec![
-                CorrelatedSequence::inserted(cu2.to_vec()),
-                CorrelatedSequence::deleted(cu1.to_vec()),
-            ]);
-        }
-    }
-    // M248 (superdoc_table_tester×nda): compact multi-table base (n1 4..=20
-    // with a table) × long pure-prose next (n2 8..=40, no tables). Full LCS
-    // meshes signature lines into table residual ("Receiving Party" × "LTR
-    // text…"). Word pure-I all next then pure-D base. Exclude next with tables
-    // (pirates). Near-zero body jaccard. NDA never reaches step_h (shared
-    // empty pPr common-run), so this must live on the top-level unrelated
-    // short-circuit.
-    if has_table(cu1) && !has_table(cu2) && (4..=20).contains(&n1) && (8..=40).contains(&n2) {
-        let j = token_jaccard(
-            &para_text_tokens_from_units(dom, cu1),
-            &para_text_tokens_from_units(dom, cu2),
-        );
-        if j + 1e-12 < 0.12 {
-            return Some(vec![
-                CorrelatedSequence::inserted(cu2.to_vec()),
-                CorrelatedSequence::deleted(cu1.to_vec()),
-            ]);
-        }
-    }
-    // M253 attempted (pirates×table_left_indent top-level multi-table×multi-table
-    // pure-I/D): structure Word-shaped (pure-I title) but fair LO 53.8→40.6
-    // (−13.2). Word pure-I/D redline scores ~81 on same oracle — our pure-I/D
-    // table emit (tbl count/layout) is not LO-safe. Same class as M241 residual
-    // pure-I/D ~54→38. Leave free LCS until table pure-I/D emit matches Word.
     // Count gate:
     //  - classic C#: both sides >3 contentful groups
     //  - short-vs-long relaxation: smaller side in [2,3], larger >3, short table-free
@@ -4984,8 +4776,9 @@ pub fn detect_unrelated_sources_word_mode(
         let is_para_group = |u: &ComparisonUnit| {
             as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Paragraph)
         };
-        let ends_pil =
-            |v: &[ComparisonUnit]| v.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu));
+        let ends_pil = |v: &[ComparisonUnit]| {
+            v.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu))
+        };
         let has_text = |v: &[ComparisonUnit]| {
             v.iter().any(|cu| {
                 cu.descendant_atoms().iter().any(|dca| {
@@ -4999,45 +4792,40 @@ pub fn detect_unrelated_sources_word_mode(
         // pinned by m45_equal_count_para_zip; the seam shape starved that
         // post-pass and dropped blue_underline×bold_italic 99.69→70.56).
         let counts_differ = n1 != n2;
-        if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last())
-            && counts_differ
-            && is_para_group(first_a)
-            && is_para_group(last_b)
-        {
-            let carrier_a = group_contents(first_a);
-            let carrier_b = group_contents(last_b);
-            if ends_pil(&carrier_a) && ends_pil(&carrier_b) && has_text(&carrier_b) {
-                let mut out = Vec::new();
-                if cu2.len() > 1 {
-                    out.push(CorrelatedSequence::inserted(cu2[..cu2.len() - 1].to_vec()));
+        if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last()) {
+            if counts_differ && is_para_group(first_a) && is_para_group(last_b) {
+                let carrier_a = group_contents(first_a);
+                let carrier_b = group_contents(last_b);
+                if ends_pil(&carrier_a) && ends_pil(&carrier_b) && has_text(&carrier_b) {
+                    let mut out = Vec::new();
+                    if cu2.len() > 1 {
+                        out.push(CorrelatedSequence::inserted(cu2[..cu2.len() - 1].to_vec()));
+                    }
+                    let b_words = carrier_b[..carrier_b.len() - 1].to_vec();
+                    if !b_words.is_empty() {
+                        out.push(CorrelatedSequence::inserted(b_words));
+                    }
+                    let a_words = carrier_a[..carrier_a.len() - 1].to_vec();
+                    if !a_words.is_empty() {
+                        out.push(CorrelatedSequence::deleted(a_words));
+                    }
+                    if cu1.len() > 1 {
+                        out.push(CorrelatedSequence::deleted(vec![
+                            carrier_a.last().unwrap().clone(),
+                        ]));
+                        out.push(CorrelatedSequence::deleted(cu1[1..].to_vec()));
+                    } else {
+                        out.push(CorrelatedSequence::paired(
+                            CorrelationStatus::Equal,
+                            vec![carrier_a.last().unwrap().clone()],
+                            vec![carrier_b.last().unwrap().clone()],
+                        ));
+                    }
+                    return Some(out);
                 }
-                let b_words = carrier_b[..carrier_b.len() - 1].to_vec();
-                if !b_words.is_empty() {
-                    out.push(CorrelatedSequence::inserted(b_words));
-                }
-                let a_words = carrier_a[..carrier_a.len() - 1].to_vec();
-                if !a_words.is_empty() {
-                    out.push(CorrelatedSequence::deleted(a_words));
-                }
-                if cu1.len() > 1 {
-                    out.push(CorrelatedSequence::deleted(vec![
-                        carrier_a.last().unwrap().clone(),
-                    ]));
-                    out.push(CorrelatedSequence::deleted(cu1[1..].to_vec()));
-                } else {
-                    out.push(CorrelatedSequence::paired(
-                        CorrelationStatus::Equal,
-                        vec![carrier_a.last().unwrap().clone()],
-                        vec![carrier_b.last().unwrap().clone()],
-                    ));
-                }
-                return Some(out);
             }
         }
     }
-    // M255 attempted (shape_group×list free LCS when drawings): Word mid-mesh
-    // scores ~88; pure-I/D tip ~69; free LCS tip ~62 (−6.7). Our free LCS mesh
-    // is LO-worse than pure-I/D until emit matches Word. Keep pure-I/D.
     Some(vec![
         CorrelatedSequence::inserted(cu2.to_vec()),
         CorrelatedSequence::deleted(cu1.to_vec()),
