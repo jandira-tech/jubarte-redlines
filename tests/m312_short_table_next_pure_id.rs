@@ -167,7 +167,8 @@ fn broken_list_x_nested_table_title_pure_i_then_pure_d() {
         .find(|(_, t)| !t.trim().is_empty())
         .expect("contentful para");
     assert_eq!(
-        first_content.0, 'I',
+        first_content.0,
+        'I',
         "Word pure-I next title; got {:?} text={:?}",
         first_content.0,
         &first_content.1[..first_content.1.len().min(80)]
@@ -183,5 +184,87 @@ fn broken_list_x_nested_table_title_pure_i_then_pure_d() {
     assert!(
         n_i >= 1 && n_d >= 10 && n_m == 0,
         "Word IDDD… MIX=0; got I={n_i} D={n_d} MIX={n_m}"
+    );
+}
+
+#[test]
+fn hyperlink_x_rtl_table_title_pure_i_then_pure_d() {
+    // M313: base may have a table; next short rtl_table title; jaccard 0.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__superdoc_hyperlink_cases_1dde9cd3.docx");
+    let b = src.join("behavior__sd_2672_rtl_table_63bd9d10.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: corpus not available at {}", src.display());
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &word_settings(),
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    let paras = body_para_classes(&xml);
+    let first_content = paras
+        .iter()
+        .find(|(_, t)| !t.trim().is_empty())
+        .expect("contentful para");
+    assert_eq!(
+        first_content.0,
+        'I',
+        "Word pure-I next title; got {:?} text={:?}",
+        first_content.0,
+        &first_content.1[..first_content.1.len().min(80)]
+    );
+    assert!(
+        !first_content.1.to_ascii_lowercase().contains("hyperlink")
+            && !first_content.1.contains("SuperDoc"),
+        "must not MIX rtl title with hyperlink base: {:?}",
+        &first_content.1[..first_content.1.len().min(100)]
+    );
+    let n_m = paras.iter().filter(|(c, _)| *c == 'M').count();
+    assert_eq!(n_m, 0, "Word IDDD… MIX=0; got MIX={n_m}");
+}
+
+#[test]
+fn table_autofit_x_merged_cells_keeps_table_not_body_pure_id_stream() {
+    // Anti-regression for M313: Word body is a single EQ table (seq E).
+    // Wholesale pure-I/D would emit many top-level pure-I then pure-D paras
+    // instead of keeping a `w:tbl` shell. Nested cell markup still has ins/del.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__table_autofit_colspan_1fd7723c.docx");
+    let b = src.join("super_editor__table_merged_cells_9c349334.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: corpus not available at {}", src.display());
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &word_settings(),
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    assert!(
+        xml.contains("<w:tbl"),
+        "EQ table pair must retain a table shell, not dissolve into pure-I/D paras"
+    );
+    // Top-level body children: if wholesale pure-I/D, body starts with many
+    // consecutive pure-I paragraphs and no table. Require a table near the body
+    // start (within first content units).
+    let body = xml.find("<w:body").map(|i| &xml[i..]).unwrap_or(&xml);
+    let tbl_at = body.find("<w:tbl").unwrap_or(usize::MAX);
+    let pure_i_stream = body.matches("<w:p").take(5).count() >= 5 && tbl_at > 2000;
+    assert!(
+        !pure_i_stream || tbl_at < 1500,
+        "must not wholesale pure-I stream before table; tbl_at={tbl_at}"
     );
 }

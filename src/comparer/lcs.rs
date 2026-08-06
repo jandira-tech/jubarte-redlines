@@ -4816,14 +4816,41 @@ pub fn detect_unrelated_sources_word_mode(
         && (1..=8).contains(&short_n)
         && long_n >= 8
         && has_table(cu2)
-        && !has_table(cu1)
         && {
             let b1 = para_text_tokens_from_units(dom, cu1);
             let b2 = para_text_tokens_from_units(dom, cu2);
-            if b1.is_empty() && b2.is_empty() {
+            let next_sig = significant_tokens(&b2);
+            // Next must carry a short title-class vocabulary (SD-2672 / "plain
+            // 3x3" / "RTL"). Digit-only table shells (merged_cells) have empty
+            // significant sets — Word keeps EQ, not pure-I/D.
+            if next_sig.is_empty() || next_sig.len() > 24 {
+                false
+            } else if b1.is_empty() {
                 false
             } else {
                 token_jaccard(&b1, &b2) + 1e-12 < 0.05
+            }
+        }
+        && {
+            // M312: base table-free (two_column, broken_list).
+            // M313: base may carry a table (hyperlink_cases×rtl_table) when it
+            // still has ≥4 non-table contentful groups AND contentful group
+            // sha1s are fully disjoint. table_autofit×merged_cells is Word EQ
+            // (digit-only next / overlapping structure) — full LCS.
+            if !has_table(cu1) {
+                true
+            } else if !disjoint {
+                false
+            } else {
+                let non_tbl = cu1
+                    .iter()
+                    .filter(|u| {
+                        as_group(u).is_some_and(|g| g.group_type != ComparisonUnitGroupType::Table)
+                            && (run_real_text_len(dom, std::slice::from_ref(u)) > 0
+                                || group_has_drawing_or_pict(dom, u))
+                    })
+                    .count();
+                non_tbl >= 4
             }
         }
     {
