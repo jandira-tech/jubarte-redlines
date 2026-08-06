@@ -3073,9 +3073,18 @@ fn should_fold_multi_del_at_document_scale(
     if !boundary_empty_del && should_fold_ins_del_pair(dom, last_ins, first_del) {
         return true;
     }
-    // Contentful I/D only — empty pure-Ds auto-pass should_fold_ins_del_pair
-    // (mark-only allow) and would force fold on every list wholesale gap that
-    // carries empty separators between items (broken_list × multiple_nodes).
+
+    // M308b (tight): skip fold only for *list-wholesale* pure-I/D where both
+    // sides of the contentful gap are list-heavy (numPr on ≥ half of contentful
+    // I and D paras), counts are asymmetric (more D content than I), and no
+    // contentful I×D pair is Jaccard-related. Word pure-I short list next then
+    // pure-D long list base (broken_list × multiple_nodes ~52→79).
+    //
+    // Full-corpus A/B of the loose M308 gate (numPr only on last_ins) was
+    // **net-negative** (−0.24 mean): file_197×198 −55, bullet_list cousins −25,
+    // because empty-del relatedness was also suppressed globally. Restore the
+    // classic M131 empty-inclusive relatedness loop below; keep only this
+    // contentful-list exception.
     let content_dels: Vec<NodeId> = dels
         .iter()
         .copied()
@@ -3086,30 +3095,51 @@ fn should_fold_multi_del_at_document_scale(
         .copied()
         .filter(|&i| !para_revision_body_text(dom, i).trim().is_empty())
         .collect();
-    let any_content_related = content_inss.iter().any(|&i| {
-        content_dels
+    if content_inss.len() >= 2 && content_dels.len() >= 3 {
+        let list_frac = |ps: &[NodeId]| -> f64 {
+            let n = ps.iter().filter(|&&p| para_has_live_numpr(dom, p)).count();
+            n as f64 / ps.len() as f64
+        };
+        let any_content_related = content_inss.iter().any(|&i| {
+            content_dels
+                .iter()
+                .any(|&d| should_fold_ins_del_pair(dom, i, d))
+        });
+        let ins_w: usize = content_inss
             .iter()
-            .any(|&d| should_fold_ins_del_pair(dom, i, d))
-    });
-    // M308: list-boundary pure-I/D wholesale. Last pure-I carries numPr
-    // (B list item); contentful pure-D residual is long and unrelated. Word
-    // keeps pure-I/D (broken_list × multiple_nodes). Do not require numPr on
-    // the first content del — produce often parks A's numPr into pPrChange.
-    if content_inss.len() >= 2
-        && content_dels.len() >= 3
-        && para_has_live_numpr(dom, last_ins)
-        && !any_content_related
-    {
-        return false;
+            .map(|&p| para_word_atom_count(dom, p))
+            .sum();
+        let del_w: usize = content_dels
+            .iter()
+            .map(|&p| para_word_atom_count(dom, p))
+            .sum();
+        // Both sides list-heavy; D side longer (wholesale residual); no
+        // contentful relatedness. Require live numPr on last_ins (B's last
+        // list item is the fold carrier Word leaves pure-ins).
+        if list_frac(&content_inss) + 1e-12 >= 0.5
+            && list_frac(&content_dels) + 1e-12 >= 0.5
+            && para_has_live_numpr(dom, last_ins)
+            && !any_content_related
+            && del_w >= ins_w.saturating_mul(2).max(1)
+        {
+            return false;
+        }
     }
+
     // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
     if inss.len() < 3 || dels.len() < 3 {
         return true;
     }
-    // Content-related short-into-long (M131): any *contentful* I×D pair in the
-    // gap with Jaccard relatedness means Word still folds the boundary.
-    if any_content_related {
-        return true;
+    // Content-related short-into-long (M131): any I×D pair in the gap with
+    // Jaccard relatedness means Word still folds the boundary.
+    // Empty pure-Ds still count (mark-only allow) — that is load-bearing for
+    // stamp-file cousins (file_197×198). Do not content-filter this loop.
+    for &i in inss {
+        for &d in dels {
+            if should_fold_ins_del_pair(dom, i, d) {
+                return true;
+            }
+        }
     }
     let ins_words: usize = inss.iter().map(|&p| para_word_atom_count(dom, p)).sum();
     let del_words: usize = dels.iter().map(|&p| para_word_atom_count(dom, p)).sum();
