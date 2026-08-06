@@ -267,24 +267,33 @@ fn merge_normal_style_spacing(
             .or_else(|| pick(&raw_b_dd, i))
             .unwrap_or_else(|| APP_DEFAULT[i].to_string())
     };
-    let b_target: Option<(String, String, String)> = if !a_structured
-        && !b_structured
-        && a_stored.is_none()
-        && b_stored.is_none()
-    {
-        // both Normals bare: Word leaves the style untouched (m106 requires a
-        // structured B, so it cannot land here)
-        return false;
-    } else {
-        let after = if b_eff(0) != ctx(0) { b_eff(0) } else { String::new() };
-        let line = if b_eff(1) != ctx(1) { b_eff(1) } else { String::new() };
-        let rule = if line.is_empty() { String::new() } else { b_eff(2) };
-        if after.is_empty() && line.is_empty() {
-            None
+    let b_target: Option<(String, String, String)> =
+        if !a_structured && !b_structured && a_stored.is_none() && b_stored.is_none() {
+            // both Normals bare: Word leaves the style untouched (m106 requires a
+            // structured B, so it cannot land here)
+            return false;
         } else {
-            Some((after, line, rule))
-        }
-    };
+            let after = if b_eff(0) != ctx(0) {
+                b_eff(0)
+            } else {
+                String::new()
+            };
+            let line = if b_eff(1) != ctx(1) {
+                b_eff(1)
+            } else {
+                String::new()
+            };
+            let rule = if line.is_empty() {
+                String::new()
+            } else {
+                b_eff(2)
+            };
+            if after.is_empty() && line.is_empty() {
+                None
+            } else {
+                Some((after, line, rule))
+            }
+        };
     // Identity: A already has the same explicit spacing we would write.
     if let (Some(a), Some(b)) = (&a_stored, &b_target)
         && a == b

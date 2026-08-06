@@ -3027,6 +3027,13 @@ const MULTI_DEL_GAP_MAX_DOC_FRACTION: f64 = 0.60;
 /// Absolute floor: short demos must still fold (file_54 / bullet_list).
 const MULTI_DEL_GAP_MIN_WORDS_TO_SKIP: usize = 40;
 
+fn para_has_live_numpr(dom: &Dom, p: NodeId) -> bool {
+    let Some(ppr) = dom.element(p, &W::p_pr()) else {
+        return false;
+    };
+    dom.element(ppr, &W::name("numPr")).is_some()
+}
+
 fn should_fold_ins_del_pair(dom: &Dom, ins_p: NodeId, del_p: NodeId) -> bool {
     let it = para_revision_body_text(dom, ins_p);
     let dt = para_revision_body_text(dom, del_p);
@@ -3066,18 +3073,43 @@ fn should_fold_multi_del_at_document_scale(
     if !boundary_empty_del && should_fold_ins_del_pair(dom, last_ins, first_del) {
         return true;
     }
+    // Contentful I/D only — empty pure-Ds auto-pass should_fold_ins_del_pair
+    // (mark-only allow) and would force fold on every list wholesale gap that
+    // carries empty separators between items (broken_list × multiple_nodes).
+    let content_dels: Vec<NodeId> = dels
+        .iter()
+        .copied()
+        .filter(|&d| !para_revision_body_text(dom, d).trim().is_empty())
+        .collect();
+    let content_inss: Vec<NodeId> = inss
+        .iter()
+        .copied()
+        .filter(|&i| !para_revision_body_text(dom, i).trim().is_empty())
+        .collect();
+    let any_content_related = content_inss.iter().any(|&i| {
+        content_dels
+            .iter()
+            .any(|&d| should_fold_ins_del_pair(dom, i, d))
+    });
+    // M308: list-boundary pure-I/D wholesale. Last pure-I carries numPr
+    // (B list item); contentful pure-D residual is long and unrelated. Word
+    // keeps pure-I/D (broken_list × multiple_nodes). Do not require numPr on
+    // the first content del — produce often parks A's numPr into pPrChange.
+    if content_inss.len() >= 2
+        && content_dels.len() >= 3
+        && para_has_live_numpr(dom, last_ins)
+        && !any_content_related
+    {
+        return false;
+    }
     // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
     if inss.len() < 3 || dels.len() < 3 {
         return true;
     }
-    // Content-related short-into-long (M131): any I×D pair in the gap with
-    // Jaccard relatedness means Word still folds the boundary.
-    for &i in inss {
-        for &d in dels {
-            if should_fold_ins_del_pair(dom, i, d) {
-                return true;
-            }
-        }
+    // Content-related short-into-long (M131): any *contentful* I×D pair in the
+    // gap with Jaccard relatedness means Word still folds the boundary.
+    if any_content_related {
+        return true;
     }
     let ins_words: usize = inss.iter().map(|&p| para_word_atom_count(dom, p)).sum();
     let del_words: usize = dels.iter().map(|&p| para_word_atom_count(dom, p)).sum();

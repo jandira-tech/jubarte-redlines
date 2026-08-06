@@ -101,7 +101,9 @@ fn text_of(p: &str) -> String {
         let after = &rest[i..];
         let Some(gt) = after.find('>') else { break };
         let content = &after[gt + 1..];
-        let Some(end) = content.find("</w:t>") else { break };
+        let Some(end) = content.find("</w:t>") else {
+            break;
+        };
         t.push_str(&content[..end]);
         rest = &content[end..];
     }

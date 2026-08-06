@@ -898,8 +898,8 @@ impl Default for WmlComparerSettings {
             move_minimum_word_count: 6,
             merge_replaced_paragraphs: true,
             detect_format_changes: true,
-                    in_stamp_residual: false,
-}
+            in_stamp_residual: false,
+        }
     }
 }
 

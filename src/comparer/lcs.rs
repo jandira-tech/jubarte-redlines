@@ -128,6 +128,40 @@ fn atom_is_ppr(dom: &Dom, a: &ComparisonUnitAtom) -> bool {
 fn unit_is_single_atom_ppr(dom: &Dom, u: &ComparisonUnit) -> bool {
     matches!(u, ComparisonUnit::Word(w) if w.contents.len() == 1 && atom_is_ppr(dom, &w.contents[0]))
 }
+
+/// True when this unit's enclosing `w:p` carries live `w:numPr` (list item).
+fn unit_para_has_numpr(dom: &Dom, u: &ComparisonUnit) -> bool {
+    let p_name = W::name("p");
+    let num_pr = W::name("numPr");
+    for atom in u.descendant_atoms() {
+        for &ae in atom.ancestor_elements.iter() {
+            if dom.name(ae) != Some(p_name.clone()) {
+                continue;
+            }
+            if let Some(ppr) = dom.element(ae, &W::p_pr()) {
+                return dom.element(ppr, &num_pr).is_some();
+            }
+            return false;
+        }
+    }
+    false
+}
+
+/// ≥ half of contentful paragraphs (non-empty word stream) carry `numPr`.
+fn mostly_list_paras(dom: &Dom, paras: &[Vec<ComparisonUnit>]) -> bool {
+    let contentful: Vec<&Vec<ComparisonUnit>> = paras
+        .iter()
+        .filter(|p| p.iter().any(|cu| !unit_is_single_atom_ppr(dom, cu)))
+        .collect();
+    if contentful.is_empty() {
+        return false;
+    }
+    let with_num = contentful
+        .iter()
+        .filter(|p| p.iter().any(|cu| unit_para_has_numpr(dom, cu)))
+        .count();
+    with_num * 2 >= contentful.len()
+}
 fn unit_first_atom_is_ppr(dom: &Dom, u: &ComparisonUnit) -> bool {
     u.descendant_atoms()
         .first()
@@ -1761,7 +1795,8 @@ pub fn do_lcs_algorithm(
                 .map(|(i, _)| i)
                 .collect();
             let ends_at_pil = |cul: &[ComparisonUnit]| {
-                cul.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu))
+                cul.last()
+                    .is_some_and(|cu| unit_is_single_atom_ppr(dom, cu))
             };
             let xor_single = (pil1.len() == 1) != (pil2.len() == 1);
             // M×N (both sides multi-paragraph) joins the seam class ONLY on
@@ -1770,7 +1805,7 @@ pub fn do_lcs_algorithm(
             // rPr) hash-jaccards to ~0 and would merge wholesale; comparing
             // the lowercase text tokens instead keeps those correlated
             // (two_column_simple×word_native_bullet_circle text-overlap 0,
-    // oracle junction M~ at block 2 — lossless a9e4a33ac shipped the
+            // oracle junction M~ at block 2 — lossless a9e4a33ac shipped the
             // same class at +831.5 A/B).
             // Equal paragraph counts take the m45 zip (MIX title | pure-I |
             // pure-D | MIX last), not the seam — see the fast-path gate.
@@ -1778,8 +1813,14 @@ pub fn do_lcs_algorithm(
             if std::env::var("JUB_TRACE").is_ok() {
                 eprintln!(
                     "[gate2] n1={} n2={} pil1={} pil2={} xor={} multi={} end1={} end2={}",
-                    cul1.len(), cul2.len(), pil1.len(), pil2.len(),
-                    xor_single, both_multi, ends_at_pil(&cul1), ends_at_pil(&cul2)
+                    cul1.len(),
+                    cul2.len(),
+                    pil1.len(),
+                    pil2.len(),
+                    xor_single,
+                    both_multi,
+                    ends_at_pil(&cul1),
+                    ends_at_pil(&cul2)
                 );
             }
             if !pil1.is_empty()
@@ -1876,13 +1917,12 @@ pub fn do_lcs_algorithm(
                     };
                     let mut body_para = None;
                     for &ae in first_atom.ancestor_elements.iter() {
-                        if dom.name(ae) == Some(p_name.clone()) {
-                            if let Some(par) = dom.parent(ae) {
-                                if dom.name(par) == Some(body_name.clone()) {
-                                    body_para = Some((ae, par));
-                                    break;
-                                }
-                            }
+                        if dom.name(ae) == Some(p_name.clone())
+                            && let Some(par) = dom.parent(ae)
+                            && dom.name(par) == Some(body_name.clone())
+                        {
+                            body_para = Some((ae, par));
+                            break;
                         }
                     }
                     let Some((para, body)) = body_para else {
@@ -1914,11 +1954,11 @@ pub fn do_lcs_algorithm(
                     };
                     let mut body_block = None;
                     for &ae in last_atom.ancestor_elements.iter() {
-                        if let Some(par) = dom.parent(ae) {
-                            if dom.name(par) == Some(body_name.clone()) {
-                                body_block = Some((ae, par));
-                                break;
-                            }
+                        if let Some(par) = dom.parent(ae)
+                            && dom.name(par) == Some(body_name.clone())
+                        {
+                            body_block = Some((ae, par));
+                            break;
                         }
                     }
                     let Some((block, body)) = body_block else {
@@ -1973,6 +2013,23 @@ pub fn do_lcs_algorithm(
                     };
                     let paras_a = split_paras(&cul1);
                     let paras_b = split_paras(&cul2);
+                    // M308 (broken_list × multiple_nodes_in_list ~52):
+                    // both-multi wholesale with zero hash share where BOTH
+                    // sides are list-heavy (numPr on ≥ half of contentful
+                    // paras). Word pure-I all B then pure-D all A; M-CARRIER
+                    // fusion puts B's last list item into a MIX with A's first
+                    // (ins "TWO" + del "Item 1") and LO drops ~45 pts.
+                    // Plain prose demos (bold_underline × book_catalog, M307)
+                    // stay on the carrier path — they are not mostly-list.
+                    if shared.is_empty()
+                        && both_multi
+                        && mostly_list_paras(dom, &paras_a)
+                        && mostly_list_paras(dom, &paras_b)
+                    {
+                        out.push(CorrelatedSequence::inserted(cul2.to_vec()));
+                        out.push(CorrelatedSequence::deleted(cul1.to_vec()));
+                        return out;
+                    }
                     let lead_b: Vec<ComparisonUnit> = paras_b[..paras_b.len() - 1]
                         .iter()
                         .flat_map(|p| p.iter().cloned())
@@ -1982,13 +2039,11 @@ pub fn do_lcs_algorithm(
                     }
                     let carrier_b = paras_b.last().unwrap();
                     let carrier_a = &paras_a[0];
-                    let b_words: Vec<ComparisonUnit> =
-                        carrier_b[..carrier_b.len() - 1].to_vec();
+                    let b_words: Vec<ComparisonUnit> = carrier_b[..carrier_b.len() - 1].to_vec();
                     if !b_words.is_empty() {
                         out.push(CorrelatedSequence::inserted(b_words));
                     }
-                    let a_words: Vec<ComparisonUnit> =
-                        carrier_a[..carrier_a.len() - 1].to_vec();
+                    let a_words: Vec<ComparisonUnit> = carrier_a[..carrier_a.len() - 1].to_vec();
                     if !a_words.is_empty() {
                         out.push(CorrelatedSequence::deleted(a_words));
                     }
@@ -2181,8 +2236,7 @@ pub fn do_lcs_algorithm(
         // windows (font_size×green_bold "text") keep their glue anchors.
         // Same 0.08 unique-lexical fraction as the TS engine's
         // DetectUnrelatedSources.
-        let multi_para_unrelated = !settings.in_stamp_residual
-            && (pmarks1 > 1 || pmarks2 > 1) && {
+        let multi_para_unrelated = !settings.in_stamp_residual && (pmarks1 > 1 || pmarks2 > 1) && {
             let raw1 = para_text_tokens_from_units(dom, &cul1);
             let raw2 = para_text_tokens_from_units(dom, &cul2);
             // Stamped corpus windows (file_N.docx) belong to the stamp
@@ -2537,11 +2591,18 @@ fn step_h(
                 let raw = para_text_tokens_from_units(dom, units);
                 significant_tokens(&raw).into_iter().take(8).collect()
             };
-            let lgs: Vec<String> = lg.iter().map(|g| format!("{}:{}", g.0, g.1.len())).collect();
-            let rgs: Vec<String> = rg.iter().map(|g| format!("{}:{}", g.0, g.1.len())).collect();
+            let lgs: Vec<String> = lg
+                .iter()
+                .map(|g| format!("{}:{}", g.0, g.1.len()))
+                .collect();
+            let rgs: Vec<String> = rg
+                .iter()
+                .map(|g| format!("{}:{}", g.0, g.1.len()))
+                .collect();
             eprintln!("H1seam lg=[{}] rg=[{}]", lgs.join(","), rgs.join(","));
             if lg.len() == 1 {
-                let all: Vec<ComparisonUnit> = rg.iter().flat_map(|g| g.1.iter().cloned()).collect();
+                let all: Vec<ComparisonUnit> =
+                    rg.iter().flat_map(|g| g.1.iter().cloned()).collect();
                 eprintln!("H1seam t1={:?} t2={:?}", toks(&lg[0].1), toks(&all));
             }
         }
@@ -2560,8 +2621,7 @@ fn step_h(
             // empties, ≤3) — larger textless groups keep positional pairing
             // (meeting_agenda×meeting_minutes was exactly 100.00 with it).
             let bare_pmarks = |units: &[ComparisonUnit]| -> bool {
-                units.len() <= 3
-                    && units.iter().all(|u| unit_is_single_atom_ppr(dom, u))
+                units.len() <= 3 && units.iter().all(|u| unit_is_single_atom_ppr(dom, u))
             };
             if lg[il].0 == "Word"
                 && rg[ir].0 == "Word"
@@ -2962,6 +3022,48 @@ fn step_h(
     let left_only_ptt = left_len == left_tables + left_paras + left_textboxes;
     let right_only_ptt = right_len == right_tables + right_paras + right_textboxes;
     if left_only_ptt && right_only_ptt {
+        // M308 (broken_list × multiple_nodes): unequal pure-para lists with
+        // near-zero text overlap and numPr on ≥ half of contentful paras on
+        // BOTH sides. Word pure-I all next then pure-D all base; H4 flatten
+        // + word LCS carrier-fuses the last B item into a MIX with A's first.
+        if settings.merge_replaced_paragraphs
+            && left_tables == 0
+            && right_tables == 0
+            && left_paras != right_paras
+            && left_paras >= 2
+            && right_paras >= 2
+        {
+            let body_j = token_jaccard(
+                &para_text_tokens_from_units(dom, cul1),
+                &para_text_tokens_from_units(dom, cul2),
+            );
+            let list_left = cul1
+                .iter()
+                .filter(|u| as_group(u).is_some_and(|g| g.group_type == Paragraph))
+                .filter(|u| !para_text_token_list(dom, u).is_empty())
+                .collect::<Vec<_>>();
+            let list_right = cul2
+                .iter()
+                .filter(|u| as_group(u).is_some_and(|g| g.group_type == Paragraph))
+                .filter(|u| !para_text_token_list(dom, u).is_empty())
+                .collect::<Vec<_>>();
+            let mostly = |xs: &[&ComparisonUnit]| {
+                if xs.is_empty() {
+                    return false;
+                }
+                let n = xs.iter().filter(|u| unit_para_has_numpr(dom, u)).count();
+                n * 2 >= xs.len()
+            };
+            if body_j + 1e-12 < 0.12 && mostly(&list_left) && mostly(&list_right) {
+                for u in cul2 {
+                    out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                }
+                for u in cul1 {
+                    out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                }
+                return out;
+            }
+        }
         // M168 (project_plan×project_proposal): short pure-para docs, titles
         // share first token ("Project") but not last-sig (Plan vs Proposal),
         // body residual unrelated. Flat pure-I/D whole titles (~81); Word
@@ -4589,6 +4691,44 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::deleted(cu1.to_vec()),
         ]);
     }
+    // M308 (broken_list × multiple_nodes ~52): both sides list-heavy
+    // (numPr on ≥ half of contentful paras), unequal contentful counts,
+    // near-zero body text jaccard. Group hashes often collide on list
+    // chrome so `disjoint` is false and classic unrelated never fires;
+    // full LCS then carrier-mixes B's last item with A's first. Word is
+    // pure-I all next then pure-D all base. Plain prose demos stay off
+    // this path (not mostly-list) so M307 MIX body survives.
+    if settings.merge_replaced_paragraphs
+        && short_n >= 2
+        && long_n > short_n
+        && !has_table(cu1)
+        && !has_table(cu2)
+    {
+        let body_j = token_jaccard(
+            &para_text_tokens_from_units(dom, cu1),
+            &para_text_tokens_from_units(dom, cu2),
+        );
+        let mostly_list = |cu: &[ComparisonUnit]| -> bool {
+            let contentful: Vec<&ComparisonUnit> = cu
+                .iter()
+                .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                .collect();
+            if contentful.is_empty() {
+                return false;
+            }
+            let with_num = contentful
+                .iter()
+                .filter(|u| unit_para_has_numpr(dom, u))
+                .count();
+            with_num * 2 >= contentful.len()
+        };
+        if body_j + 1e-12 < 0.12 && mostly_list(cu1) && mostly_list(cu2) {
+            return Some(vec![
+                CorrelatedSequence::inserted(cu2.to_vec()),
+                CorrelatedSequence::deleted(cu1.to_vec()),
+            ]);
+        }
+    }
     let ok_counts = (short_n > 3 && long_n > 3)
         || ((2..=3).contains(&short_n) && long_n > 3 && !has_table(short_cu))
         || (stamped && disjoint && (2..=6).contains(&short_n) && long_n > 6 && n2 == short_n);
@@ -4776,9 +4916,8 @@ pub fn detect_unrelated_sources_word_mode(
         let is_para_group = |u: &ComparisonUnit| {
             as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Paragraph)
         };
-        let ends_pil = |v: &[ComparisonUnit]| {
-            v.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu))
-        };
+        let ends_pil =
+            |v: &[ComparisonUnit]| v.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu));
         let has_text = |v: &[ComparisonUnit]| {
             v.iter().any(|cu| {
                 cu.descendant_atoms().iter().any(|dca| {
@@ -4792,37 +4931,39 @@ pub fn detect_unrelated_sources_word_mode(
         // pinned by m45_equal_count_para_zip; the seam shape starved that
         // post-pass and dropped blue_underline×bold_italic 99.69→70.56).
         let counts_differ = n1 != n2;
-        if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last()) {
-            if counts_differ && is_para_group(first_a) && is_para_group(last_b) {
-                let carrier_a = group_contents(first_a);
-                let carrier_b = group_contents(last_b);
-                if ends_pil(&carrier_a) && ends_pil(&carrier_b) && has_text(&carrier_b) {
-                    let mut out = Vec::new();
-                    if cu2.len() > 1 {
-                        out.push(CorrelatedSequence::inserted(cu2[..cu2.len() - 1].to_vec()));
-                    }
-                    let b_words = carrier_b[..carrier_b.len() - 1].to_vec();
-                    if !b_words.is_empty() {
-                        out.push(CorrelatedSequence::inserted(b_words));
-                    }
-                    let a_words = carrier_a[..carrier_a.len() - 1].to_vec();
-                    if !a_words.is_empty() {
-                        out.push(CorrelatedSequence::deleted(a_words));
-                    }
-                    if cu1.len() > 1 {
-                        out.push(CorrelatedSequence::deleted(vec![
-                            carrier_a.last().unwrap().clone(),
-                        ]));
-                        out.push(CorrelatedSequence::deleted(cu1[1..].to_vec()));
-                    } else {
-                        out.push(CorrelatedSequence::paired(
-                            CorrelationStatus::Equal,
-                            vec![carrier_a.last().unwrap().clone()],
-                            vec![carrier_b.last().unwrap().clone()],
-                        ));
-                    }
-                    return Some(out);
+        if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last())
+            && counts_differ
+            && is_para_group(first_a)
+            && is_para_group(last_b)
+        {
+            let carrier_a = group_contents(first_a);
+            let carrier_b = group_contents(last_b);
+            if ends_pil(&carrier_a) && ends_pil(&carrier_b) && has_text(&carrier_b) {
+                let mut out = Vec::new();
+                if cu2.len() > 1 {
+                    out.push(CorrelatedSequence::inserted(cu2[..cu2.len() - 1].to_vec()));
                 }
+                let b_words = carrier_b[..carrier_b.len() - 1].to_vec();
+                if !b_words.is_empty() {
+                    out.push(CorrelatedSequence::inserted(b_words));
+                }
+                let a_words = carrier_a[..carrier_a.len() - 1].to_vec();
+                if !a_words.is_empty() {
+                    out.push(CorrelatedSequence::deleted(a_words));
+                }
+                if cu1.len() > 1 {
+                    out.push(CorrelatedSequence::deleted(vec![
+                        carrier_a.last().unwrap().clone(),
+                    ]));
+                    out.push(CorrelatedSequence::deleted(cu1[1..].to_vec()));
+                } else {
+                    out.push(CorrelatedSequence::paired(
+                        CorrelationStatus::Equal,
+                        vec![carrier_a.last().unwrap().clone()],
+                        vec![carrier_b.last().unwrap().clone()],
+                    ));
+                }
+                return Some(out);
             }
         }
     }
