@@ -4993,11 +4993,17 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // (≤2); this covers long list streams.
                 // M373 (toc×broken_list −2.3): pure-D Heading "Generalities"
                 // is only 12 alnum — old ≥20 left short pure-I "a" folding into
-                // Heading1 MIX. Lower floor to ≥10; short Demo titles (≤9
-                // alnum) still M90-fold (file_54 "b"+Demo).
+                // Heading1 MIX.
+                //
+                // M381 (file_54×file_55 −32): short pure-I "b" **does** free-
+                // mesh with short demo title "1.5 Line Spacing Demo" (Word MIX).
+                // Skip only when pure-D is **long prose** (≥8 word-atoms) **or**
+                // Heading* style (TOC "a"×"Generalities"); bare short Demo
+                // titles (≤6 words, no Heading) still fold.
                 if dels.len() > 1
                     && para_body_is_very_short(dom, last_ins)
                     && para_body_alnum_len(dom, d) >= 10
+                    && (para_word_atom_count(dom, d) >= 8 || para_has_heading_style(dom, d))
                 {
                     continue;
                 }
