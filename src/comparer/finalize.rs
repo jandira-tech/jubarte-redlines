@@ -4774,13 +4774,22 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
             // paragraphs Word never produces.
             if dels.len() != 1 || inss.len() != 1 || !para_has_real_del(dom, dels[0]) {
                 // M393 (broken_list×broken Word IDDD…I…D): multi-del + multi-ins
-                // after a leading pure-I is Word list-cluster interleave.
-                // Moving all mid-stream ins before the first del collapses to
-                // pure-I-all then pure-D-all and free-meshes "a"×"Item 1".
+                // after a leading pure-I is Word list-cluster interleave **only
+                // when the del run includes nested list items (ilvl≥1)**. Broader
+                // skip thrash free-mesh demos (file_197×198 −50 pagefair).
+                let del_has_nested = dels.iter().any(|&p| {
+                    dom.element(p, &W::p_pr())
+                        .and_then(|ppr| dom.element(ppr, &W::name("numPr")))
+                        .and_then(|num| dom.element(num, &W::name("ilvl")))
+                        .and_then(|il| dom.attribute(il, &W::val()))
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .is_some_and(|v| v >= 1)
+                });
                 if del_start > 0
                     && classes[del_start - 1] == Some(true)
                     && dels.len() >= 2
                     && inss.len() >= 2
+                    && del_has_nested
                 {
                     i = ins_start; // advance past this del run; leave interleave
                     continue;
@@ -5024,9 +5033,21 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 }
                 // M393b: second pure-I block (short list labels a/b/TWO) before
                 // residual pure-D list items — Word keeps pure-I then pure-D
-                // (no free-mesh of "a"×"First shown").
+                // (no free-mesh of "a"×"First shown"). Require a nested pure-D
+                // earlier in the document (first list cluster already emitted).
+                let prior_nested_del = (0..ins_start).any(|idx| {
+                    classes[idx] == Some(false)
+                        && dom
+                            .element(children[idx], &W::p_pr())
+                            .and_then(|ppr| dom.element(ppr, &W::name("numPr")))
+                            .and_then(|num| dom.element(num, &W::name("ilvl")))
+                            .and_then(|il| dom.attribute(il, &W::val()))
+                            .and_then(|v| v.parse::<u32>().ok())
+                            .is_some_and(|v| v >= 1)
+                });
                 if !dels.is_empty()
                     && !inss.is_empty()
+                    && prior_nested_del
                     && inss
                         .iter()
                         .filter(|&&p| !para_has_no_text(dom, p))
