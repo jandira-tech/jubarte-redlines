@@ -4286,6 +4286,26 @@ fn should_fold_multi_del_at_document_scale(
     if !boundary_empty_del && should_fold_ins_del_pair(dom, last_ins, first_del) {
         return true;
     }
+    // M385 (nda×report residual −26.6): List* pure-I × short Heading/Title
+    // pure-D ("MUTUAL NON-DISCLOSURE AGREEMENT", 3 words) free-meshes in Word
+    // (MIX Heading1 + del mark + ins citation). Whole-doc Jaccard miss would
+    // skip via the document-scale gap below; force fold for this boundary.
+    {
+        let last_ins_list = dom.element(last_ins, &W::p_pr()).is_some_and(|ip| {
+            dom.element(ip, &W::name("pStyle")).is_some_and(|ps| {
+                dom.attribute(ps, &W::val())
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .starts_with("list")
+            })
+        });
+        if last_ins_list
+            && para_has_heading_or_title_style(dom, first_del)
+            && (1..=6).contains(&para_word_atom_count(dom, first_del))
+        {
+            return true;
+        }
+    }
 
     // M308d (tight): skip fold for *short-item list-wholesale* pure-I/D.
     // LCS/unrelated may already emit pure-I all next then pure-D all base
@@ -4635,7 +4655,33 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     && !carrier_has_mark_del
                     && first_mark_only_empty
                     && (dels.len() == 1 || all_dels_mark_only_empty);
-                let del_foldable = para_has_real_del(dom, dels[0]) || mark_only_empty_del;
+                // M385 (nda×report residual −26.6): multi pure-I ending in
+                // List* style + multi pure-D starting with mark-only empty
+                // Heading/Title. Word free-meshes into MIX Heading1+del mark
+                // (M344 adopt). mark_only_empty_del required inss.len()==1, so
+                // multi-I never set del_foldable for empty heading pure-D.
+                let last_content_ins = inss
+                    .iter()
+                    .rev()
+                    .find(|&&p| !para_has_no_text(dom, p))
+                    .copied()
+                    .unwrap_or(carrier);
+                let last_ins_list_style =
+                    dom.element(last_content_ins, &W::p_pr()).is_some_and(|ip| {
+                        dom.element(ip, &W::name("pStyle")).is_some_and(|ps| {
+                            dom.attribute(ps, &W::val())
+                                .unwrap_or("")
+                                .to_ascii_lowercase()
+                                .starts_with("list")
+                        })
+                    });
+                let heading_empty_mark_fold = first_mark_only_empty
+                    && !carrier_has_mark_del
+                    && para_has_heading_or_title_style(dom, dels[0])
+                    && last_ins_list_style;
+                let del_foldable = para_has_real_del(dom, dels[0])
+                    || mark_only_empty_del
+                    || heading_empty_mark_fold;
                 if !del_foldable {
                     continue;
                 }
@@ -4980,19 +5026,39 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 //
                 // M380 (file_197×file_198 −55): short single-token Heading pure-D
                 // ("Images") **does** free-mesh with last pure-I body in Word
-                // (MIX). Only multi-word/long **Heading*** titles take the skip
+                // (MIX). Only multi-word short **Heading*** titles take the skip
                 // — "Images" (1 word) still folds.
                 //
                 // M380b (file_83×file_84 −50): **Title** pure-D ("CONTRACT FOR
                 // CONTRACTS") also free-meshes with last pure-I body in Word.
                 // Restrict M371 to Heading* only (not Title).
+                //
+                // M385 (nda×report −26.6): List* pure-I × short Heading pure-D
+                // title free-meshes (MIX Heading1). Do not skip list carriers.
+                //
+                // M386 (calibri×center / heading_4×helvetica −41/−39): short
+                // stamp demos (2 pure-I) free-mesh Heading-styled body pure-D
+                // ("Calibri font with Heading 2…", "Demonstrating Heading 4…")
+                // even when pure-D is multi-word. M371 skip requires a **longer**
+                // pure-I stream (≥3) **and** a short title Heading (2..=6 words,
+                // e.g. "Mixed Formatting Test" after 6 pure-I in word_mixed).
+                let last_ins_list_style_m371 =
+                    dom.element(last_ins, &W::p_pr()).is_some_and(|ip| {
+                        dom.element(ip, &W::name("pStyle")).is_some_and(|ps| {
+                            dom.attribute(ps, &W::val())
+                                .unwrap_or("")
+                                .to_ascii_lowercase()
+                                .starts_with("list")
+                        })
+                    });
                 if dels.len() > 1
-                    && inss.len() >= 2
+                    && inss.len() >= 3
                     && para_has_heading_style(dom, d)
                     && !para_has_heading_or_title_style(dom, last_ins)
                     && para_body_alnum_len(dom, last_ins) >= 20
-                    && (para_word_atom_count(dom, d) >= 2 || para_body_alnum_len(dom, d) >= 15)
+                    && (2..=6).contains(&para_word_atom_count(dom, d))
                     && !should_fold_ins_del_pair(dom, last_ins, d)
+                    && !last_ins_list_style_m371
                 {
                     continue;
                 }
@@ -5052,10 +5118,17 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 let del_heading = para_has_heading_or_title_style(dom, d);
                 // Defense: if a long-prose×list fold still happens, never adopt
                 // ListParagraph onto the prose carrier (M363 skip-fold is primary).
+                //
+                // M384 (file_45 residual −13.6): M382 free-meshes 1–2 word list
+                // pure-D "First item" into long pure-I MIX, but del_list_multi
+                // used `word_atoms > 1` so short list labels still blocked
+                // adopt_del_ppr — MIX lacked Word's live numPr + del mark.
+                // Align threshold with M382 (≥3 word-atoms = soft-break multi-
+                // word list content); 1–2 word list labels still adopt numPr.
                 let ins_long_prose = para_body_alnum_len(dom, last_ins) >= 20;
                 let del_list_multi = del_structural
                     && para_has_live_numpr(dom, d)
-                    && para_word_atom_count(dom, d) > 1;
+                    && para_word_atom_count(dom, d) >= 3;
                 let adopt_del_ppr =
                     (del_structural && !ins_structural && !(ins_long_prose && del_list_multi))
                         || (ins_jc_only && del_has_spacing)
