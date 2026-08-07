@@ -5632,7 +5632,12 @@ fn short_table_title_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
             text.push_str(&dom.value_str(a.content_element));
         }
     }
-    text.to_ascii_lowercase().contains("table")
+    let lower = text.to_ascii_lowercase();
+    // M332: "table" titles (table_left_indent).
+    // M350: short SD-2672 RTL table title — Word free-meshes a few cells with
+    // OOXML residual (rfonts×rtl MIX≥3); pure-I/D wholesale under-meshes.
+    // Do **not** match plain_3x3 (Word pure-I/Ds those).
+    lower.contains("table") || lower.contains("rtl")
 }
 
 /// One side OOXML property tester, other short table-title demo. Word meshes
