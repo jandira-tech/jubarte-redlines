@@ -5311,6 +5311,77 @@ pub fn detect_unrelated_sources_word_mode(
             ]);
         }
     }
+    // M412 (text_color_highlight × threaded_comment ~48.7): both sides short
+    // (≤4 contentful groups), first significant tokens differ. Full LCS free-
+    // meshes first next ("Text") into base (MIX), dropping pure-I title. Word
+    // pure-I's first next title(s) then free-meshes residual ("Text 2"×base).
+    // Peel pure-I leading next contentful until first token matches base or
+    // max 2, free-mesh residual.
+    if settings.merge_replaced_paragraphs
+        && !has_table(cu1)
+        && !has_table(cu2)
+        && (1..=4).contains(&n1)
+        && (1..=4).contains(&n2)
+    {
+        let contentful = |cu: &[ComparisonUnit]| -> Vec<ComparisonUnit> {
+            cu.iter()
+                .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                .cloned()
+                .collect()
+        };
+        let left_c = contentful(cu1);
+        let right_c = contentful(cu2);
+        if !left_c.is_empty() && right_c.len() >= 2 {
+            let first_tok = |u: &ComparisonUnit| -> Option<String> {
+                para_text_token_list(dom, u)
+                    .into_iter()
+                    .find(|t| t.chars().count() >= 3)
+                    .map(|t| t.to_ascii_lowercase())
+            };
+            let t1 = first_tok(&left_c[0]);
+            let t2 = first_tok(&right_c[0]);
+            let titles_differ = match (t1.as_deref(), t2.as_deref()) {
+                (Some(a), Some(b)) => a != b,
+                _ => true,
+            };
+            let b1 = para_text_tokens_from_units(dom, cu1);
+            let b2 = para_text_tokens_from_units(dom, cu2);
+            if titles_differ && token_jaccard(&b1, &b2) + 1e-12 < 0.25 {
+                // Peel first next contentful as pure-I (Word pure-I "Text").
+                let peel_r = 1usize.min(right_c.len().saturating_sub(1));
+                let mut out = Vec::new();
+                for u in &right_c[..peel_r] {
+                    out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                }
+                // Also pure-I empties between peeled titles if present on next.
+                // Free-mesh residual next with all base.
+                let mut left: Vec<ComparisonUnit> =
+                    left_c.iter().flat_map(group_contents).collect();
+                let mut right: Vec<ComparisonUnit> =
+                    right_c[peel_r..].iter().flat_map(group_contents).collect();
+                if !left.is_empty()
+                    && !right.is_empty()
+                    && left.len().saturating_mul(right.len()) <= 50_000
+                {
+                    rehash_words_by_text_content_opts(dom, &mut left, true);
+                    rehash_words_by_text_content_opts(dom, &mut right, true);
+                    let mut residual_settings = settings.clone();
+                    residual_settings.detail_threshold = 0.0;
+                    out.extend(lcs(dom, left, right, &residual_settings));
+                    return Some(out);
+                }
+                for u in &right_c[peel_r..] {
+                    out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                }
+                for u in &left_c {
+                    out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                }
+                if !out.is_empty() {
+                    return Some(out);
+                }
+            }
+        }
+    }
     // M404: LCS already pure-I/D via M308c for basic_list×sd_1707; interleave
     // gate in finalize keeps IIDDD (see finalize::interleave_list_cluster).
     // M312 (two_column_two_page × sd_2672_nested_table ~33.8): short **next**
