@@ -5809,6 +5809,41 @@ pub fn detect_unrelated_sources_word_mode(
         if long_multitable_x_short_table_free_mesh(dom, cu1, cu2, n1, n2) {
             // Fall through to free_mesh_demos (same function later).
         } else {
+            // M424 (sd_2517 × gridbefore_vmerge ~43.7): long multi-table base
+            // (n1≫, has tables) × short single-table next. Wholesale pure-I/D
+            // pure-I's all next cells first (IIII…DDD); Word pure-I's first
+            // title only, pure-D all base, pure-I residual table cells near
+            // end (IDDD…I…I, MIX≈2). Peel first contentful next as pure-I,
+            // pure-D all base, pure-I rest next.
+            let n_tbl_base = cu1
+                .iter()
+                .filter(|u| {
+                    as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table)
+                })
+                .count();
+            let n_tbl_next = cu2
+                .iter()
+                .filter(|u| {
+                    as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table)
+                })
+                .count();
+            let first_c = cu2
+                .iter()
+                .position(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty());
+            if n_tbl_base >= 2
+                && n_tbl_next == 1
+                && long_n >= 20
+                && let Some(fc) = first_c
+                && fc + 1 < cu2.len()
+            {
+                // Title (+ any leading empties through first contentful), then
+                // pure-D all base, pure-I residual next table cells.
+                return Some(vec![
+                    CorrelatedSequence::inserted(cu2[..=fc].to_vec()),
+                    CorrelatedSequence::deleted(cu1.to_vec()),
+                    CorrelatedSequence::inserted(cu2[fc + 1..].to_vec()),
+                ]);
+            }
             return Some(vec![
                 CorrelatedSequence::inserted(cu2.to_vec()),
                 CorrelatedSequence::deleted(cu1.to_vec()),
