@@ -5027,9 +5027,11 @@ pub fn detect_unrelated_sources_word_mode(
             let left_c = contentful(cu1);
             let right_c = contentful(cu2);
             if left_c.len() >= 2 && right_c.len() >= 2 {
-                // First significant token (≥3 chars). bold_vals×color: "This"
-                // vs "OOXML" → peel. italic×rFonts both start "OOXML" → keep
-                // flat free-mesh (Word MIX titles; peel thrased pagefair).
+                // First significant token (≥3 chars).
+                // M346: bold_vals×color "This" vs "OOXML" → peel pure-I titles.
+                // M349: italic×rFonts both "OOXML" → Word MIX titles then pure-I
+                // body samples (MMIIII…); flat free-mesh over-meshes body
+                // (MMMMM…). Zip first 2 contentful free-mesh, pure-I/D residual.
                 let first_tok = |u: &ComparisonUnit| -> Option<String> {
                     para_text_token_list(dom, u)
                         .into_iter()
@@ -5042,6 +5044,8 @@ pub fn detect_unrelated_sources_word_mode(
                     (Some(a), Some(b)) => a != b,
                     _ => true,
                 };
+                let mut residual_settings = settings.clone();
+                residual_settings.detail_threshold = 0.0;
                 if titles_differ {
                     // Peel leading pure-I next titles until a line that shares
                     // sample vocabulary with residual base (or max 3 titles).
@@ -5067,8 +5071,6 @@ pub fn detect_unrelated_sources_word_mode(
                     peel_r = peel_r.max(1).min(right_c.len().saturating_sub(1));
                     // Peel first base title only (demo intro) as pure-D.
                     let peel_l = 1usize.min(left_c.len().saturating_sub(1));
-                    let mut residual_settings = settings.clone();
-                    residual_settings.detail_threshold = 0.0;
                     let mut out = Vec::new();
                     for u in &right_c[..peel_r] {
                         out.push(CorrelatedSequence::inserted(vec![u.clone()]));
@@ -5093,6 +5095,66 @@ pub fn detect_unrelated_sources_word_mode(
                         out.push(CorrelatedSequence::inserted(vec![u.clone()]));
                     }
                     for u in &left_c[peel_l..] {
+                        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                    }
+                    if !out.is_empty() {
+                        return Some(out);
+                    }
+                } else {
+                    // M349: shared first title token (OOXML×OOXML property demos).
+                    // Free-mesh first min(2) contentful (title+section header).
+                    // Residual: pure-I/D when body samples are disjoint (italic×
+                    // rFonts: Word MMIIII…DDDD…; fox/Arabic vs Sample text) —
+                    // flat free-mesh over-meshed body (MMMMM…). When both
+                    // residuals share the word "sample" (highlight×italic),
+                    // free-mesh residual instead (Word MDMIMDMMMM…; pure-I thrash).
+                    let z = 2usize.min(left_c.len()).min(right_c.len());
+                    let mut out = Vec::new();
+                    for i in 0..z {
+                        let mut left: Vec<ComparisonUnit> = group_contents(&left_c[i]);
+                        let mut right: Vec<ComparisonUnit> = group_contents(&right_c[i]);
+                        rehash_words_by_text_content_opts(dom, &mut left, true);
+                        rehash_words_by_text_content_opts(dom, &mut right, true);
+                        if left.is_empty() && right.is_empty() {
+                            continue;
+                        }
+                        if left.is_empty() {
+                            out.push(CorrelatedSequence::inserted(right));
+                        } else if right.is_empty() {
+                            out.push(CorrelatedSequence::deleted(left));
+                        } else {
+                            out.extend(lcs(dom, left, right, &residual_settings));
+                        }
+                    }
+                    let residual_has_sample = |groups: &[ComparisonUnit]| -> bool {
+                        groups.iter().any(|u| {
+                            para_text_token_list(dom, u)
+                                .into_iter()
+                                .any(|t| t.eq_ignore_ascii_case("sample"))
+                        })
+                    };
+                    let left_res = &left_c[z..];
+                    let right_res = &right_c[z..];
+                    let both_sample =
+                        residual_has_sample(left_res) && residual_has_sample(right_res);
+                    if both_sample && !left_res.is_empty() && !right_res.is_empty() {
+                        let mut left: Vec<ComparisonUnit> =
+                            left_res.iter().flat_map(group_contents).collect();
+                        let mut right: Vec<ComparisonUnit> =
+                            right_res.iter().flat_map(group_contents).collect();
+                        if left.len().saturating_mul(right.len()) <= 600_000 {
+                            rehash_words_by_text_content_opts(dom, &mut left, true);
+                            rehash_words_by_text_content_opts(dom, &mut right, true);
+                            out.extend(lcs(dom, left, right, &residual_settings));
+                            if !out.is_empty() {
+                                return Some(out);
+                            }
+                        }
+                    }
+                    for u in right_res {
+                        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                    }
+                    for u in left_res {
                         out.push(CorrelatedSequence::deleted(vec![u.clone()]));
                     }
                     if !out.is_empty() {
