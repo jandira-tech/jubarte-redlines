@@ -4953,11 +4953,18 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // multi-del fold MIX-ed last pure-I body with Heading1 adopt
                 // (Heading1 on "A final paragraph…"). Skip when last pure-I is
                 // not heading and first pure-D is heading/title, Jaccard miss.
+                //
+                // M380 (file_197×file_198 −55): short single-token Heading pure-D
+                // ("Images") **does** free-mesh with last pure-I body in Word
+                // (MIX). Only multi-word/long headings (≥2 word-atoms **or**
+                // alnum ≥ 15) take the M371 skip — "Images" (1 word, 6 alnum)
+                // still folds.
                 if dels.len() > 1
                     && inss.len() >= 2
                     && para_has_heading_or_title_style(dom, d)
                     && !para_has_heading_or_title_style(dom, last_ins)
                     && para_body_alnum_len(dom, last_ins) >= 20
+                    && (para_word_atom_count(dom, d) >= 2 || para_body_alnum_len(dom, d) >= 15)
                     && !should_fold_ins_del_pair(dom, last_ins, d)
                 {
                     continue;
