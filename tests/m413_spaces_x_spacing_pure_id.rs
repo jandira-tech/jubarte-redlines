@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M411 — lease×memo pure-I all next then pure-D all base.
+//! M413 — short section base × short title-page next: pure-I/D (not free-mesh).
 //!
-//! Word: continuous pure-I memo then pure-D lease. legal_mid_splice_cut was
-//! cutting memo at "1. Business Operations" and interleaving pure-D mid-doc.
+//! Word pure-I's all title-page next then pure-D section base. Engine free-
+//! meshed last next date into base engagement header (DI).
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -53,11 +53,11 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 }
 
 #[test]
-fn lease_x_memo_is_pure_i_then_pure_d() {
+fn spaces_x_spacing_pure_i_date() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
-    let a = src.join("evals__lease_agreement_7081191d.docx");
-    let b = src.join("evals__memorandum_258c774a.docx");
+    let a = src.join("super_editor__doc_with_spaces_from_styles_734ca26f.docx");
+    let b = src.join("super_editor__doc_with_spacing_e3d47bd7.docx");
     if !a.exists() || !b.exists() {
         eprintln!("skip: fixtures missing");
         return;
@@ -78,38 +78,25 @@ fn lease_x_memo_is_pure_i_then_pure_d() {
     f.read_to_string(&mut xml).unwrap();
     let paras = body_paras(&xml);
 
-    // Seq must be I…I D…D (no D then I again mid-stream).
-    let mut saw_d = false;
-    let mut saw_i_after_d = false;
-    for (i, d, _) in &paras {
-        if *d && !*i {
-            saw_d = true;
-        }
-        if saw_d && *i && !*d {
-            saw_i_after_d = true;
-            break;
-        }
-    }
+    let pure_i_date = paras
+        .iter()
+        .any(|(i, d, t)| *i && !*d && t.contains("March") && t.contains("2040"));
     assert!(
-        !saw_i_after_d,
-        "expected pure-I-all then pure-D-all, got mid pure-I after pure-D: {:?}",
+        pure_i_date,
+        "expected pure-I March 10, 2040; got {:?}",
         paras
             .iter()
             .map(|(i, d, t)| format!(
                 "{}{} {:?}",
                 if *i { "I" } else { "" },
                 if *d { "D" } else { "" },
-                t.chars().take(25).collect::<String>()
+                t.chars().take(50).collect::<String>()
             ))
             .collect::<Vec<_>>()
     );
-
-    let pure_i_memo = paras
+    // No DI free-mesh of date into engagement header.
+    let di_date = paras
         .iter()
-        .any(|(i, d, t)| *i && !*d && t.trim() == "MEMORANDUM");
-    let pure_d_lease = paras
-        .iter()
-        .any(|(i, d, t)| !*i && *d && t.to_ascii_lowercase().contains("commercial lease"));
-    assert!(pure_i_memo, "expected pure-I MEMORANDUM");
-    assert!(pure_d_lease, "expected pure-D Commercial Lease");
+        .any(|(i, d, t)| *i && *d && (t.contains("March") || t.contains("ENGAGEMENT")));
+    assert!(!di_date, "unexpected DI free-mesh of date/engagement");
 }

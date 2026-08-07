@@ -40,7 +40,9 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
                 let r2 = &r[i..];
                 let Some(gt) = r2.find('>') else { break };
                 let after_t = &r2[gt + 1..];
-                let Some(end) = after_t.find(end_tag) else { break };
+                let Some(end) = after_t.find(end_tag) else {
+                    break;
+                };
                 text.push_str(&after_t[..end]);
                 r = &after_t[end + end_tag.len()..];
             }

@@ -5382,6 +5382,56 @@ pub fn detect_unrelated_sources_word_mode(
             }
         }
     }
+    // M413 (doc_with_spaces_from_styles × doc_with_spacing ~46.1): short base
+    // section (≤3 contentful) × short title-page next (4..=10). Full LCS free-
+    // meshes last next date ("March 10, 2040") into base engagement header
+    // (DI). Word pure-I all next then pure-D all base (I7 D2). M412 only covers
+    // both sides ≤4 contentful. Near-zero body Jaccard only.
+    //
+    // Use contentful **paragraph** counts (not sha1 list length alone): empty
+    // layout groups on title pages can inflate n2 past the gate while still
+    // needing pure-I/D.
+    {
+        let contentful_n = |cu: &[ComparisonUnit]| -> usize {
+            cu.iter()
+                .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                .count()
+        };
+        let cn1 = contentful_n(cu1);
+        let cn2 = contentful_n(cu2);
+        if settings.merge_replaced_paragraphs
+            && !has_table(cu1)
+            && !has_table(cu2)
+            && (1..=3).contains(&cn1)
+            && (4..=12).contains(&cn2)
+        {
+            let b1 = para_text_tokens_from_units(dom, cu1);
+            let b2 = para_text_tokens_from_units(dom, cu2);
+            let j = token_jaccard(&b1, &b2);
+            if !b1.is_empty() && !b2.is_empty() && j + 1e-12 < 0.05 {
+                return Some(vec![
+                    CorrelatedSequence::inserted(cu2.to_vec()),
+                    CorrelatedSequence::deleted(cu1.to_vec()),
+                ]);
+            }
+        }
+        // Reverse M413: short title-page base × short section next.
+        if settings.merge_replaced_paragraphs
+            && !has_table(cu1)
+            && !has_table(cu2)
+            && (4..=12).contains(&cn1)
+            && (1..=3).contains(&cn2)
+        {
+            let b1 = para_text_tokens_from_units(dom, cu1);
+            let b2 = para_text_tokens_from_units(dom, cu2);
+            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.05 {
+                return Some(vec![
+                    CorrelatedSequence::inserted(cu2.to_vec()),
+                    CorrelatedSequence::deleted(cu1.to_vec()),
+                ]);
+            }
+        }
+    }
     // M404: LCS already pure-I/D via M308c for basic_list×sd_1707; interleave
     // gate in finalize keeps IIDDD (see finalize::interleave_list_cluster).
     // M312 (two_column_two_page × sd_2672_nested_table ~33.8): short **next**
@@ -5910,6 +5960,8 @@ pub fn detect_unrelated_sources_word_mode(
                     CorrelatedSequence::deleted(cu1.to_vec()),
                 ]);
             }
+            // M413 emp×lease residual free-mesh: already tried as M395 — pagefair
+            // thrash emp 51.7→46 despite more multi-MIX. Keep pure mid-splice.
             if let Some(cut) = legal_mid_splice_cut(dom, cu2) {
                 // next = cu2 pure-I leading, base = cu1 pure-D mid, next rest pure-I
                 let mut out = Vec::new();

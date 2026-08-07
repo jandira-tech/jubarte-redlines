@@ -4677,6 +4677,22 @@ fn should_fold_multi_del_at_document_scale(
         }
     }
 
+    // M413 (doc_with_spaces × doc_with_spacing ~46.1): multi pure-I title-page
+    // next (≥4 contentful) × short pure-D section base (1..=2 contentful).
+    // M90 force-fold (dels < 3 → always fold) MIX-es last pure-I date into
+    // first pure-D engagement header. Word pure-I all next then pure-D base
+    // (I7 D2). Skip when boundary Jaccard is low.
+    {
+        let content_inss_n = content_inss.len();
+        let content_dels_n = content_dels.len();
+        if content_inss_n >= 4
+            && (1..=2).contains(&content_dels_n)
+            && !any_content_related
+            && !should_fold_ins_del_pair(dom, last_ins, first_del)
+        {
+            return false;
+        }
+    }
     // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
     if inss.len() < 3 || dels.len() < 3 {
         // M337: do **not** skip fold for single short pure-I + multi pure-D.
