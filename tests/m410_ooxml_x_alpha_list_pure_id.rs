@@ -2,10 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M403 — short annotation features × fields_test "html input type" free-mesh.
-//!
-//! Word free-meshes "html input type" with annotation body ("Oftentimes…").
-//! Engine previously MIX-meshed Product with Oftentimes and left pure-I html.
+//! M410 — OOXML property demo × short alpha-list pure-I/D (not free-mesh).
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -34,27 +31,18 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
         let has_ins = p.contains("<w:ins");
         let has_del = p.contains("<w:del") || p.contains("<w:delText");
         let mut text = String::new();
-        let mut r = p;
-        while let Some(i) = r.find("<w:t") {
-            let r2 = &r[i..];
-            let Some(gt) = r2.find('>') else { break };
-            let after_t = &r2[gt + 1..];
-            let Some(end) = after_t.find("</w:t>") else {
-                break;
-            };
-            text.push_str(&after_t[..end]);
-            r = &after_t[end + 6..];
-        }
-        r = p;
-        while let Some(i) = r.find("<w:delText") {
-            let r2 = &r[i..];
-            let Some(gt) = r2.find('>') else { break };
-            let after_t = &r2[gt + 1..];
-            let Some(end) = after_t.find("</w:delText>") else {
-                break;
-            };
-            text.push_str(&after_t[..end]);
-            r = &after_t[end + 12..];
+        for (tag, end_tag) in [("<w:t", "</w:t>"), ("<w:delText", "</w:delText>")] {
+            let mut r = p;
+            while let Some(i) = r.find(tag) {
+                let r2 = &r[i..];
+                let Some(gt) = r2.find('>') else { break };
+                let after_t = &r2[gt + 1..];
+                let Some(end) = after_t.find(end_tag) else {
+                    break;
+                };
+                text.push_str(&after_t[..end]);
+                r = &after_t[end + end_tag.len()..];
+            }
         }
         paras.push((has_ins, has_del, text));
     }
@@ -62,11 +50,11 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 }
 
 #[test]
-fn features_x_fields_meshes_html_with_annotation() {
+fn bold_vals_x_complex_list_is_pure_id() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
-    let a = src.join("super_editor__features_redlines_comments_annotation_769ed131.docx");
-    let b = src.join("super_editor__fields_test_4a8ffd8c.docx");
+    let a = src.join("super_editor__ooxml_bold_vals_demo_9e688d8f.docx");
+    let b = src.join("super_editor__complex_list_def_issue_326369f9.docx");
     if !a.exists() || !b.exists() {
         eprintln!("skip: fixtures missing");
         return;
@@ -86,23 +74,22 @@ fn features_x_fields_meshes_html_with_annotation() {
     let mut xml = String::new();
     f.read_to_string(&mut xml).unwrap();
     let paras = body_paras(&xml);
-
-    // Word: MIX containing html input type + annotation body, not pure-I html
-    // after MIX Product×annotation.
-    let mix_html = paras
-        .iter()
-        .any(|(i, d, t)| *i && *d && t.to_ascii_lowercase().contains("html input type"));
-    assert!(
-        mix_html,
-        "expected MIX of html input type with annotation; paras={paras:?}"
-    );
-
-    // Product field should be pure-I (not MIX with Oftentimes).
-    let product_mix = paras.iter().any(|(i, d, t)| {
-        *i && *d && t.contains("Product") && t.to_ascii_lowercase().contains("oftentimes")
+    let mix = paras.iter().any(|(i, d, t)| {
+        *i && *d && (t.contains("FOUR") || t.to_ascii_lowercase().contains("st_onoff"))
     });
     assert!(
-        !product_mix,
-        "Product should not free-mesh with Oftentimes when html meshes; paras={paras:?}"
+        !mix,
+        "expected pure-I/D, not MIX on FOUR×OOXML: {:?}",
+        paras
+            .iter()
+            .filter(|(i, d, _)| *i && *d)
+            .map(|(_, _, t)| t.as_str())
+            .collect::<Vec<_>>()
     );
+    let pure_i_one = paras.iter().any(|(i, d, t)| *i && !*d && t == "ONE");
+    let pure_d_bold = paras
+        .iter()
+        .any(|(i, d, t)| !*i && *d && t.to_ascii_lowercase().contains("st_onoff"));
+    assert!(pure_i_one, "expected pure-I ONE");
+    assert!(pure_d_bold, "expected pure-D OOXML bold intro");
 }

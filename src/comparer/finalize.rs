@@ -4790,14 +4790,11 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         .and_then(|v| v.parse::<u32>().ok())
                         .is_some_and(|v| v >= 1)
                 });
-                let legal_mid_splice = (3..=20).contains(&del_start)
-                    && dels.len() >= 5
-                    && inss.len() >= 5;
+                let legal_mid_splice =
+                    (3..=20).contains(&del_start) && dels.len() >= 5 && inss.len() >= 5;
                 // Memo×nda: pure-D memo headers first (del_start==0) then pure-I NDA.
-                let memo_headers_first = del_start == 0
-                    && (3..=20).contains(&dels.len())
-                    && inss.len() >= 5
-                    && {
+                let memo_headers_first =
+                    del_start == 0 && (3..=20).contains(&dels.len()) && inss.len() >= 5 && {
                         let t0 = para_revision_body_text(dom, dels[0]).to_ascii_lowercase();
                         t0.starts_with("memorandum")
                             || t0.starts_with("to")
@@ -5256,6 +5253,34 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     let dt = para_revision_body_text(dom, d).to_ascii_lowercase();
                     let demo_intro = dt.contains("demonstrates") || dt.starts_with("this document");
                     if !demo_intro {
+                        continue;
+                    }
+                }
+                // M410 (bold_vals × complex_list_def): multi pure-I short alpha
+                // labels (ONE/a/FOUR) then multi pure-D OOXML intro. multi-del
+                // fold MIX-es last "FOUR" into OOXML body. Skip when ≥3 pure-I
+                // are ≤2-token labels and first pure-D is long OOXML/demo prose.
+                if dels.len() > 1
+                    && inss.len() >= 5
+                    && para_word_atom_count(dom, last_ins) <= 2
+                    && para_word_atom_count(dom, last_ins) >= 1
+                    && para_word_atom_count(dom, d) >= 10
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
+                    let short_labels = inss
+                        .iter()
+                        .filter(|&&p| {
+                            let n = para_word_atom_count(dom, p);
+                            (1..=2).contains(&n)
+                        })
+                        .count();
+                    let dt = para_revision_body_text(dom, d).to_ascii_lowercase();
+                    let ooxml_intro = dt.contains("ooxml")
+                        || dt.contains("st_onoff")
+                        || dt.contains("w:b")
+                        || dt.contains("w:i")
+                        || (dt.contains("demonstrates") && dt.contains("sample"));
+                    if short_labels * 2 >= inss.len() && ooxml_intro {
                         continue;
                     }
                 }

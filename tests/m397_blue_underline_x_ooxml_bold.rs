@@ -71,10 +71,7 @@ fn file_2_center_bold_demo_pure_i_short_first_not_ooxml_head_mesh() {
     let cls = body_classes(&xml);
     // After stamp, first non-stamp content should be pure-I short Demo title
     // (not pure-D OOXML title). Word: M stamp, I Center Aligned..., I body.
-    let first_content = cls
-        .iter()
-        .enumerate()
-        .find(|&(_, &c)| c != 'M' && c != 'E');
+    let first_content = cls.iter().enumerate().find(|&(_, &c)| c != 'M' && c != 'E');
     let Some((i, &c)) = first_content else {
         panic!("expected content paras");
     };

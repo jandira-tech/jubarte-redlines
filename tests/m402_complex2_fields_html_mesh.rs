@@ -99,9 +99,9 @@ fn complex2_x_fields_meshes_html_with_one() {
     }
     // Accept MIX with html and a nearby pure-D ONE (still better than pure-I
     // html after pure-D ONE wholesale).
-    let html_i = paras.iter().position(|(i, _d, t)| {
-        *i && t.to_ascii_lowercase().contains("html input type")
-    });
+    let html_i = paras
+        .iter()
+        .position(|(i, _d, t)| *i && t.to_ascii_lowercase().contains("html input type"));
     let one_d = paras
         .iter()
         .position(|(i, d, t)| !*i && *d && t.trim() == "ONE");

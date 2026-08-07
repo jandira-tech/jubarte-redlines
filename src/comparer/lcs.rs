@@ -220,7 +220,10 @@ fn legal_mid_splice_cut(dom: &Dom, cu: &[ComparisonUnit]) -> Option<usize> {
                 if let Some(ppr) = dom.element(ae, &W::p_pr())
                     && let Some(ps) = dom.element(ppr, &W::name("pStyle"))
                 {
-                    let v = dom.attribute(ps, &W::val()).unwrap_or("").to_ascii_lowercase();
+                    let v = dom
+                        .attribute(ps, &W::val())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
                     if let Some(rest) = v.strip_prefix("heading") {
                         heading_level = rest.parse().ok().or(Some(1));
                     } else if v == "title" {
@@ -244,8 +247,7 @@ fn legal_mid_splice_cut(dom: &Dom, cu: &[ComparisonUnit]) -> Option<usize> {
                 && toks.len() <= 10
         };
         // Count body section markers only (Heading2+ or numbered "1. X"), not Title/H1.
-        let is_section = num_prefix
-            || heading_level.is_some_and(|h| h >= 2);
+        let is_section = num_prefix || heading_level.is_some_and(|h| h >= 2);
         if is_section {
             markers += 1;
             if markers >= 3 {
@@ -345,6 +347,35 @@ fn looks_like_short_alpha_list(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     (1..=4).contains(&contentful)
 }
 
+/// M410 fingerprint: short alpha-list *cluster* (complex_list_def: ONE/a/b/c/TWO…).
+///
+/// More contentful paras than M402 (5..=20) but each still ≤2 short tokens.
+/// Distinguishes short Demo titles and legal prose.
+fn looks_like_short_alpha_list_cluster(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
+    let mut contentful = 0usize;
+    let mut single = 0usize;
+    for u in cu {
+        let toks = para_text_token_list(dom, u);
+        if toks.is_empty() {
+            continue;
+        }
+        contentful += 1;
+        if contentful > 20 {
+            return false;
+        }
+        if toks.len() > 2 {
+            return false;
+        }
+        if toks.iter().any(|t| t.chars().count() > 12) {
+            return false;
+        }
+        if toks.len() == 1 && toks[0].chars().count() <= 5 {
+            single += 1;
+        }
+    }
+    (5..=20).contains(&contentful) && single * 2 >= contentful
+}
+
 /// M402 fingerprint: fields_test-class doc carrying "html input type".
 ///
 /// Word free-meshes that residual line with short alpha-list base tokens.
@@ -387,12 +418,6 @@ fn looks_like_short_annotation_doc(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     }
     saw_marker && (1..=6).contains(&contentful)
 }
-
-
-
-
-
-
 
 /// ≥ half of contentful paragraphs (non-empty word stream) carry `numPr`.
 fn mostly_list_paras(dom: &Dom, paras: &[Vec<ComparisonUnit>]) -> bool {
@@ -1158,7 +1183,7 @@ fn stamp_confetti_then_replace(
     //     even when residual pairs already cover a body (file_140/125/84/129);
     //     file_163 min ~0.125 stays on residual pairs (was 100 under pairs)
     let pairs = stamp_residual_pairs(dom, &rest1, &rest2);
-    
+
     // M133: when residual pairs include an off-diagonal body match (e.g.
     // file_120 A body0 ↔ B body1 on trailing "style"), do not diagonal-zip —
     // that would force A body0↔B body0 ("This document" ordered-prefix thrash)
@@ -3370,7 +3395,9 @@ fn step_h(
                 n * 2 >= xs.len()
             };
             let cut = first_list_cluster_end(dom, cul1);
-            let has_nested = list_left.iter().any(|u| unit_para_ilvl(dom, u).unwrap_or(0) >= 1);
+            let has_nested = list_left
+                .iter()
+                .any(|u| unit_para_ilvl(dom, u).unwrap_or(0) >= 1);
             if body_j + 1e-12 < 0.25
                 && mostly(&list_left)
                 && mostly(&list_right)
@@ -5242,15 +5269,46 @@ pub fn detect_unrelated_sources_word_mode(
     {
         let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
         let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
-        if !left.is_empty()
-            && !right.is_empty()
-            && left.len().saturating_mul(right.len()) <= 50_000
+        if !left.is_empty() && !right.is_empty() && left.len().saturating_mul(right.len()) <= 50_000
         {
             rehash_words_by_text_content_opts(dom, &mut left, true);
             rehash_words_by_text_content_opts(dom, &mut right, true);
             let mut residual_settings = settings.clone();
             residual_settings.detail_threshold = 0.0;
             return Some(lcs(dom, left, right, &residual_settings));
+        }
+    }
+    // M410 (bold_vals × complex_list_def ~53.6): short OOXML property base ×
+    // short alpha-list next. Full LCS free-meshes last list token ("FOUR") with
+    // OOXML intro (MIX). Word pure-I all list then pure-D all OOXML
+    // (IIII…DDDDE). OOXML side may carry demo tables — only require alpha
+    // side table-free. Content fingerprint — reverse of M402 free-mesh fields.
+    if settings.merge_replaced_paragraphs
+        && short_ooxml_property_demo(dom, cu1)
+        && !has_table(cu2)
+        && (looks_like_short_alpha_list(dom, cu2) || looks_like_short_alpha_list_cluster(dom, cu2))
+    {
+        let b1 = para_text_tokens_from_units(dom, cu1);
+        let b2 = para_text_tokens_from_units(dom, cu2);
+        if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.10 {
+            return Some(vec![
+                CorrelatedSequence::inserted(cu2.to_vec()),
+                CorrelatedSequence::deleted(cu1.to_vec()),
+            ]);
+        }
+    }
+    if settings.merge_replaced_paragraphs
+        && !has_table(cu1)
+        && (looks_like_short_alpha_list(dom, cu1) || looks_like_short_alpha_list_cluster(dom, cu1))
+        && short_ooxml_property_demo(dom, cu2)
+    {
+        let b1 = para_text_tokens_from_units(dom, cu1);
+        let b2 = para_text_tokens_from_units(dom, cu2);
+        if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.10 {
+            return Some(vec![
+                CorrelatedSequence::inserted(cu2.to_vec()),
+                CorrelatedSequence::deleted(cu1.to_vec()),
+            ]);
         }
     }
     // M404: LCS already pure-I/D via M308c for basic_list×sd_1707; interleave

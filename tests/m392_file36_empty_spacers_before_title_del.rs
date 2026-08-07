@@ -88,19 +88,27 @@ fn file36_x_37_empty_pure_i_spacers_before_contract_review_del() {
 
     // Find pure-D "Contract Review" (first body occurrence; table cells may
     // also appear later — take first pure-D match).
-    let title_i = paras.iter().position(|(_i, d, t)| {
-        *d && !_i && t.contains("Contract Review") && !t.contains("file_")
-    });
+    let title_i = paras
+        .iter()
+        .position(|(_i, d, t)| *d && !_i && t.contains("Contract Review") && !t.contains("file_"));
     let Some(ti) = title_i else {
         panic!(
             "expected pure-D Contract Review; paras={:?}",
             paras
                 .iter()
-                .map(|(i, d, t)| format!("{}{}/{}", if *i { "I" } else { "" }, if *d { "D" } else { "" }, t))
+                .map(|(i, d, t)| format!(
+                    "{}{}/{}",
+                    if *i { "I" } else { "" },
+                    if *d { "D" } else { "" },
+                    t
+                ))
                 .collect::<Vec<_>>()
         );
     };
-    assert!(ti >= 2, "expected empty pure-I spacers before pure-D title; ti={ti}");
+    assert!(
+        ti >= 2,
+        "expected empty pure-I spacers before pure-D title; ti={ti}"
+    );
     // Word: at least one empty pure-I immediately before pure-D title.
     let (has_ins, has_del, text) = &paras[ti - 1];
     assert!(

@@ -114,7 +114,9 @@ fn basic_list_x_sd1707_pure_i_next_then_pure_d_list() {
         "Heading pure-I must precede list pure-D (Word IIDDD…); hi={hi} di={di} paras={paras:?}"
     );
     // No pure-D list item before heading.
-    let early_list = paras[..hi].iter().any(|(i, d, t)| !*i && *d && t.contains("List item"));
+    let early_list = paras[..hi]
+        .iter()
+        .any(|(i, d, t)| !*i && *d && t.contains("List item"));
     assert!(
         !early_list,
         "list pure-D must not precede Heading pure-I; paras={paras:?}"
