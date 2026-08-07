@@ -12,7 +12,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::namespaces::{MC, PT, R, W, W14, WP14};
+use crate::namespaces::{M, MC, PT, R, W, W14, WP14};
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use super::WmlComparerSettings;
@@ -2052,6 +2052,15 @@ pub fn trailing_empty_spacing_to_pprchange(
 fn para_has_no_text(dom: &Dom, p: NodeId) -> bool {
     dom.descendants(p, Some(&W::t())).is_empty()
         && dom.descendants(p, Some(&W::name("delText"))).is_empty()
+}
+
+/// True when a paragraph carries OMML math (`m:oMath` / `m:oMathPara`).
+///
+/// M419: math shells have no `w:t` so they look like M311d layout empties, but
+/// Word still MIX-es the last math pure-I into the first pure-D title.
+fn para_has_omath(dom: &Dom, p: NodeId) -> bool {
+    !dom.descendants(p, Some(&M::name("oMath"))).is_empty()
+        || !dom.descendants(p, Some(&M::name("oMathPara"))).is_empty()
 }
 
 /// True when `p` is an empty pure-inserted paragraph (no text, has ins, no del).
@@ -5236,9 +5245,15 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // pure-D residual(s). Word keeps pure-I empties. sole_del
                 // always-fold and multi-del boundary fold would eat empties
                 // into the del run one-by-one.
+                //
+                // M419 (math_delimiter × math_eqarr): OMML-only pure-I shells
+                // also have no w:t but Word MIX-es the last math into the first
+                // pure-D title (IIIIMDD). Do not treat math shells as M311d
+                // layout empties — require no oMath/oMathPara under the pure-I.
                 if inss.len() >= 3
                     && inss.iter().all(|&p| {
-                        para_has_no_text(dom, p) || para_body_text_is_whitespace_only(dom, p)
+                        (para_has_no_text(dom, p) || para_body_text_is_whitespace_only(dom, p))
+                            && !para_has_omath(dom, p)
                     })
                 {
                     continue;
@@ -5335,9 +5350,13 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // must not mix last pure-I with first pure-D).
                 //
                 // C1 / KNOWN ISSUE #2 continued: multi-del document-scale gate.
-                // M368 also allows empty-shell × short pure-D through M77 above
-                // when the residual looks sole-del only because a table breaks
-                // the pure-D run (sdts×shape "Before" before deleted table).
+                // M368: empty-shell × short pure-D (sdts×shape "Before" before
+                // deleted table). M419 (math_delimiter × math_eqarr ~45.6): multi
+                // pure-I math shells (OMML only, no w:t) + multi pure-D long
+                // titles — empty_shell × long first pure-D was blocked → IIIIIDDD;
+                // Word MIX-es last math into "m:d Delimiter…" (IIIIMDD). Fold any
+                // empty/math shell pure-I into the pure-D boundary (not only when
+                // first pure-D is short).
                 if !sole_del
                     && !should_fold_multi_del_at_document_scale(
                         dom, container, last_ins, d, inss, dels,
@@ -5345,8 +5364,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 {
                     let empty_shell = para_has_no_text(dom, last_ins)
                         || para_body_text_is_whitespace_only(dom, last_ins);
-                    let short_del = (1..=6).contains(&para_word_atom_count(dom, d));
-                    if !(empty_shell && short_del) {
+                    if !empty_shell {
                         continue;
                     }
                 }
