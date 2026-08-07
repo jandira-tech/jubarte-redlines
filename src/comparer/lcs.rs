@@ -5050,7 +5050,34 @@ pub fn detect_unrelated_sources_word_mode(
                 };
                 let mut residual_settings = settings.clone();
                 residual_settings.detail_threshold = 0.0;
-                if titles_differ {
+                // M356: only peel titles when residual body vocab is sparse
+                // (vals×color residual_j≈0.04 — flat free-mesh confetti-MIX-es
+                // the color title). High residual overlap (bold_rstyle×vals
+                // residual_j≈0.16) must keep flat free-mesh like 27c (Word
+                // DXMDMD…; peel→finalize title fold thrash IDDMD… −42).
+                let residual_tok_set =
+                    |groups: &[ComparisonUnit]| -> std::collections::HashSet<String> {
+                        let mut s = std::collections::HashSet::new();
+                        for u in groups {
+                            for t in para_text_token_list(dom, u) {
+                                let lower = t.to_ascii_lowercase();
+                                if lower.chars().count() >= 2 {
+                                    s.insert(lower);
+                                }
+                            }
+                        }
+                        s
+                    };
+                let residual_j = if left_c.len() >= 2 && right_c.len() >= 2 {
+                    token_jaccard(
+                        &residual_tok_set(&left_c[1..]),
+                        &residual_tok_set(&right_c[1..]),
+                    )
+                } else {
+                    0.0
+                };
+                let peel_titles = titles_differ && residual_j + 1e-12 < 0.10;
+                if peel_titles {
                     // Peel leading pure-I next titles until a line that shares
                     // sample vocabulary with residual base (or max 3 titles).
                     let sampleish = |u: &ComparisonUnit| -> bool {
@@ -5104,14 +5131,21 @@ pub fn detect_unrelated_sources_word_mode(
                     if !out.is_empty() {
                         return Some(out);
                     }
-                } else {
+                } else if !titles_differ && residual_j + 1e-12 < 0.25 {
                     // M349: shared first title token (OOXML×OOXML property demos).
                     // Free-mesh first min(2) contentful (title+section header).
                     // Residual: pure-I/D when body samples are disjoint (italic×
-                    // rFonts: Word MMIIII…DDDD…; fox/Arabic vs Sample text) —
-                    // flat free-mesh over-meshed body (MMMMM…). When both
-                    // residuals share the word "sample" (highlight×italic),
-                    // free-mesh residual instead (Word MDMIMDMMMM…; pure-I thrash).
+                    // rFonts: Word MMIIII…DDDD…); free-mesh residual when both
+                    // share "sample" (highlight×italic).
+                    //
+                    // M356: when titles *differ* but residual_j ≥ 0.10, skip peel
+                    // and fall through to flat free_mesh_demos below (bold_rstyle
+                    // ×vals Word DXMDMD…).
+                    // M357: same-title but high residual overlap (size×strike
+                    // residual_j≈0.30) also fall through to flat free-mesh —
+                    // M349 zip-first-2 thrash empty pure-D section seams (−10
+                    // vs 27c). italic×rFonts (0.14) and hl×italic (0.20) stay
+                    // on the M349 residual peel.
                     let z = 2usize.min(left_c.len()).min(right_c.len());
                     let mut out = Vec::new();
                     for i in 0..z {
