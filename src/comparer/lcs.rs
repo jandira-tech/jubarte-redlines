@@ -1239,6 +1239,9 @@ fn stamp_confetti_then_replace(
         if (2..=6).contains(&rest2.len()) && rest1.len() >= 8 {
             // Peel when long subtitle's last sig token appears in short body
             // (same M105 token rule, sides swapped).
+            // M396: ignore boilerplate last-sig ("Formatting" on "1. Inline
+            // Text Formatting") — that wrongly fired peel_body for file_34
+            // comprehensive×strikethrough and skipped M131 head-mesh.
             let peel_body = rest2.len() >= 2 && rest1.len() >= 2 && {
                 let sub_toks = para_text_token_list(dom, &rest1[1]);
                 let last = last_significant_token(&sub_toks);
@@ -1246,6 +1249,12 @@ fn stamp_confetti_then_replace(
                 let title = para_text_tokens_joined(dom, &rest1[0]);
                 last.is_some_and(|tok| {
                     let key = tok.to_ascii_lowercase();
+                    if M128_BOILERPLATE_SIG
+                        .iter()
+                        .any(|b| key.eq_ignore_ascii_case(b))
+                    {
+                        return false;
+                    }
                     body.iter().any(|t| t.eq_ignore_ascii_case(&key))
                         && !title.iter().any(|t| t.eq_ignore_ascii_case(&key))
                 })
@@ -1286,11 +1295,23 @@ fn stamp_confetti_then_replace(
             // free-meshed B into A dels (score ~39). Modest long residual
             // (≤40 groups — demo class) keeps any non-boiler share; large long
             // residual needs both ≥5 shared sigs **and** residual jaccard ≥0.12.
+            //
+            // M396 (file_34×file_35): comprehensive DOCX demo residual is ~70
+            // groups (not multi-section essay). Cap 40 skipped M131 → pure-I
+            // short + pure-D long (Word multi-MIX titles, ~45). Extend modest
+            // demo-class to ≤80 when short residual title ends with "Demo"
+            // (formatting cousin) and share≥1 ("strikethrough"). file_196
+            // residual 100+ still uses the strict ≥5/j≥0.12 arm.
             let k = (rest2.len() + 1).min(rest1.len());
             let head1 = rest1[..k].to_vec();
             let share = residual_shared_sig_count(dom, &rest1, &rest2);
+            let short_demo_title = rest2
+                .first()
+                .is_some_and(|u| residual_title_ends_demo(dom, u));
             let m131_ok = if rest1.len() <= 40 {
                 share >= 1
+            } else if rest1.len() <= 80 && short_demo_title && share >= 1 {
+                true
             } else {
                 share >= 5 && {
                     let t1 = para_text_tokens_from_units(dom, rest1.as_slice());
