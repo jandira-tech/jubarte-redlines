@@ -1305,6 +1305,57 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M367 (sdts×shape_group −4.3): Word omits body `w:pStyle=Normal` and
+/// `w:bidi=0` on pure-inserted paragraphs (shape_group writes both; Word
+/// redline is bare mark-only pPr). LO inherits Normal's docDefaults differently
+/// when the attribute is present vs absent — thrash pagefair. Pure-D keeps
+/// source A pPr (bookmark/list structure). Only strip the default pair.
+pub fn strip_redundant_normal_pstyle_and_bidi(dom: &mut Dom, root: NodeId) {
+    let mut drop: Vec<NodeId> = Vec::new();
+    for p in dom.descendants(root, Some(&W::p())) {
+        if !para_is_pure_inserted(dom, p) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        if let Some(ps) = dom.element(ppr, &W::name("pStyle")) {
+            let v = dom.attribute(ps, &W::val()).unwrap_or("");
+            if v.eq_ignore_ascii_case("Normal") {
+                drop.push(ps);
+            }
+        }
+        if let Some(bidi) = dom.element(ppr, &W::name("bidi")) {
+            let v = dom.attribute(bidi, &W::val()).unwrap_or("1");
+            // Word omits explicit LTR default; val absent / "0" / "false".
+            if v.is_empty() || v == "0" || v.eq_ignore_ascii_case("false") {
+                drop.push(bidi);
+            }
+        }
+    }
+    for n in drop {
+        if dom.parent(n).is_some() {
+            dom.remove(n);
+        }
+    }
+    // Drop empty pure-I pPr shells left with only mark rPr? Keep mark rPr.
+    // If pPr becomes empty (no children), remove it.
+    let mut empty_ppr = Vec::new();
+    for p in dom.descendants(root, Some(&W::p())) {
+        if !para_is_pure_inserted(dom, p) {
+            continue;
+        }
+        if let Some(ppr) = dom.element(p, &W::p_pr())
+            && dom.elements(ppr, None).is_empty()
+        {
+            empty_ppr.push(ppr);
+        }
+    }
+    for ppr in empty_ppr {
+        dom.remove(ppr);
+    }
+}
+
 /// True when a paragraph has deleted content, no live (non-del) `w:t` text,
 /// and no `w:ins` — pure deleted body paragraph.
 fn para_is_pure_deleted(dom: &Dom, p: NodeId) -> bool {

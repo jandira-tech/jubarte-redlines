@@ -628,6 +628,9 @@ pub fn compare_bodies_faithful_with_notes(
     // Word-mode: drop body spacing that only restates demo pPrDefault (line=276).
     if settings.merge_replaced_paragraphs {
         finalize::strip_redundant_demo_default_spacing(dom, root);
+        // M367: pure-I pStyle=Normal + bidi=0 restates defaults (shape_group);
+        // Word omits them on pure-I mark pPr (sdts×shape −4.3 LO thrash).
+        finalize::strip_redundant_normal_pstyle_and_bidi(dom, root);
         // C3/C5: incomplete lineRule=auto spacing → Word single-line or strip.
         finalize::normalize_incomplete_spacing(dom, root);
         // NOTE: do not blanket-strip pure-del spacing — delete-heavy winners
