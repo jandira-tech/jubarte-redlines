@@ -2350,6 +2350,7 @@ fn adopt_revised_header_footer(
     pkg2: &PartFs,
     out: &mut PartFs,
     out_main: &str,
+    settings: &WmlComparerSettings,
 ) {
     let href = W::name("headerReference");
     let fref = W::name("footerReference");
@@ -2485,8 +2486,13 @@ fn adopt_revised_header_footer(
         // under a fresh name instead of dropping or clobbering it — byte-safe
         // existence check (part_string is None for binary parts)
         let part = unique_part_name(out, &src_part, &bytes);
-        if out.part_bytes(&part).is_none() {
+        let newly_adopted = out.part_bytes(&part).is_none();
+        if newly_adopted {
             out.set_part(&part, bytes);
+            // M378 (tiff×h_f −3.3): B-only header/footer content is pure-I in
+            // Word (base had no HF). Copying B live left page numbers + labels
+            // as Equal and thrash LO pagefair. Mark body content as inserted.
+            mark_adopted_hf_content_as_inserted(out, &part, settings);
         }
         let ct = if is_header {
             "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
@@ -2597,6 +2603,115 @@ fn adopt_revised_header_footer(
         dom.set_attribute_value(refel, &R::name("id"), Some(&new_rid));
         dom.add_first(out_sect, refel);
     }
+}
+
+/// M378 — wrap body content of a newly adopted B-only header/footer as pure-I.
+/// Word Compare marks PAGE fields + labels as inserts when the original had no
+/// HF; a live copy of B's part renders without revision chrome (−3 pagefair on
+/// tiff×h_f_normal).
+fn mark_adopted_hf_content_as_inserted(
+    out: &mut PartFs,
+    part: &str,
+    settings: &WmlComparerSettings,
+) {
+    let Some(xml) = out.part_string(part) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return;
+    };
+    // Root is w:hdr or w:ftr.
+    let mut next_id: u32 = 1;
+    let author = settings.author_for_revisions.as_str();
+    let date = settings.date_time_for_revisions.as_str();
+    let paras: Vec<NodeId> = dom.descendants(root, Some(&W::p()));
+    for p in paras {
+        // Skip if already has revision markup.
+        if !dom.descendants(p, Some(&W::ins())).is_empty()
+            || !dom.descendants(p, Some(&W::del())).is_empty()
+        {
+            continue;
+        }
+        let kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| dom.name(c) != Some(W::p_pr()))
+            .collect();
+        if kids.is_empty() {
+            continue;
+        }
+        // Any contentful child? (run / hyperlink / sdt / drawing container)
+        let has_content = kids.iter().any(|&c| {
+            let Some(n) = dom.name(c) else {
+                return false;
+            };
+            n == W::r()
+                || n == W::hyperlink()
+                || n == W::name("sdt")
+                || n == W::name("drawing")
+                || n.local_name() == "AlternateContent"
+        });
+        if !has_content {
+            continue;
+        }
+        // Single wrapper around all body kids (Word PAGE field shape).
+        let ins = dom.new_element(W::ins());
+        dom.set_attribute_value(ins, &W::author(), Some(author));
+        dom.set_attribute_value(ins, &W::date(), Some(date));
+        let id = next_id.to_string();
+        next_id += 1;
+        dom.set_attribute_value(ins, &W::id(), Some(&id));
+        // Insert wrapper before first body child, then move kids into it.
+        if let Some(&first) = kids.first() {
+            if dom.parent(first).is_some() {
+                dom.add_before_self(first, ins);
+            } else {
+                dom.add(p, ins);
+            }
+        } else {
+            dom.add(p, ins);
+        }
+        for c in kids {
+            if dom.parent(c).is_none() {
+                continue;
+            }
+            dom.remove(c);
+            dom.add(ins, c);
+        }
+        // Word also stamps mark ins on pPr/rPr for PAGE-number paras.
+        if let Some(ppr) = dom.element(p, &W::p_pr()) {
+            let rpr = match dom.element(ppr, &W::r_pr()) {
+                Some(r) => r,
+                None => {
+                    let r = dom.new_element(W::r_pr());
+                    // rPr last-ish before pPrChange if any; otherwise append.
+                    if let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) {
+                        dom.add_before_self(ppc, r);
+                    } else {
+                        dom.add(ppr, r);
+                    }
+                    r
+                }
+            };
+            if dom.element(rpr, &W::ins()).is_none() && dom.element(rpr, &W::del()).is_none() {
+                let mark = dom.new_element(W::ins());
+                dom.set_attribute_value(mark, &W::author(), Some(author));
+                dom.set_attribute_value(mark, &W::date(), Some(date));
+                let mid = next_id.to_string();
+                next_id += 1;
+                dom.set_attribute_value(mark, &W::id(), Some(&mid));
+                // Mark first under rPr (Word: ins then rStyle).
+                if let Some(first) = dom.elements(rpr, None).first().copied() {
+                    dom.add_before_self(first, mark);
+                } else {
+                    dom.add(rpr, mark);
+                }
+            }
+        }
+    }
+    out.set_part(part, dom.serialize_element(root).into_bytes());
 }
 
 /// D.6 — `WmlComparer.GetRevisions` (:3940) byte facade: list every tracked
@@ -2959,7 +3074,7 @@ fn compare_documents_impl(
     // the original supplied none (must run BEFORE the result serialization —
     // it adds references to the final sectPr).
     if settings.merge_replaced_paragraphs {
-        adopt_revised_header_footer(&mut dom, result_root, &pkg2, &mut out, &main1);
+        adopt_revised_header_footer(&mut dom, result_root, &pkg2, &mut out, &main1, settings);
         // Word inheritance: drop body-final HF slots already set on an earlier
         // mid-section break (dual chrome otherwise). Mid multi-section copies stay.
         strip_final_sectpr_inherited_header_footer(&mut dom, result_root);
