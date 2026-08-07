@@ -1270,11 +1270,14 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
         let before = dom.attribute(sp, &W::name("before")).unwrap_or("");
         let rule = dom.attribute(sp, &W::name("lineRule")).unwrap_or("");
         // Only the demo-default pattern (line 276 ± after 200 ± lineRule auto).
+        // M352: do **not** strip on pure-inserted paras — Word keeps line=276
+        // on pure-I next (line_break×line_space_table); strip was for live/
+        // MIX center demos only (center_alignment ~79→100).
         let line_ok = line == "276";
         let after_ok = after.is_empty() || after == "200";
         let before_ok = before.is_empty();
         let rule_ok = rule.is_empty() || rule == "auto";
-        if line_ok && after_ok && before_ok && rule_ok {
+        if line_ok && after_ok && before_ok && rule_ok && !para_is_pure_inserted(dom, p) {
             to_remove.push(sp);
             continue;
         }
