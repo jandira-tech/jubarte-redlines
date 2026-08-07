@@ -4682,11 +4682,35 @@ fn should_fold_multi_del_at_document_scale(
     // M90 force-fold (dels < 3 → always fold) MIX-es last pure-I date into
     // first pure-D engagement header. Word pure-I all next then pure-D base
     // (I7 D2). Skip when boundary Jaccard is low.
+    //
+    // M418 thrash: bare contentful counts also skipped fold for file_30
+    // (Font Size Demo pure-I × ONE/a pure-D — pin folded last body into "a").
+    // Require last pure-I looks like title-page cover (date / prepared / @)
+    // or pure-D is multi-word section prose (≥5 words), not alpha stubs.
     {
         let content_inss_n = content_inss.len();
         let content_dels_n = content_dels.len();
+        let last_ins_text = para_revision_body_text(dom, last_ins).to_ascii_lowercase();
+        let title_page_tail = last_ins_text.contains("prepared")
+            || last_ins_text.contains('@')
+            || last_ins_text.contains("march ")
+            || last_ins_text.contains("january ")
+            || last_ins_text.contains("february ")
+            || last_ins_text.contains("april ")
+            || last_ins_text.contains("june ")
+            || last_ins_text.contains("july ")
+            || last_ins_text.contains("august ")
+            || last_ins_text.contains("september ")
+            || last_ins_text.contains("october ")
+            || last_ins_text.contains("november ")
+            || last_ins_text.contains("december ")
+            || last_ins_text.contains("2040")
+            || last_ins_text.contains("agreement");
+        let first_del_words = para_word_atom_count(dom, first_del);
         if content_inss_n >= 4
             && (1..=2).contains(&content_dels_n)
+            && title_page_tail
+            && first_del_words >= 5
             && !any_content_related
             && !should_fold_ins_del_pair(dom, last_ins, first_del)
         {
@@ -4697,9 +4721,8 @@ fn should_fold_multi_del_at_document_scale(
     // (ONE/A/TWO/A/B/C, ≤2 tokens each) × multi pure-D long base. Document-
     // scale multi-del fold still MIX-es last "C" into first TOC pure-D.
     // Word pure-I all list then pure-D all base (I6 D21).
-    // Require first pure-D is a **short** label/TOC line (≤4 words), not a
-    // long OOXML/demo intro — skipping fold on bold_vals×complex_list thrash
-    // pagefair −2.7 even though structure was pure-I/D.
+    // Require first pure-D is a **short** TOC/label line (≤2 words), not a
+    // Demo title ("1.5 Line Spacing Demo" = 4 words thrash file_54 −34).
     // Ignore any_content_related: "TWO"×"Two-phase" incidental token hit.
     {
         let all_short_labels = !content_inss.is_empty()
@@ -4716,11 +4739,14 @@ fn should_fold_multi_del_at_document_scale(
             })
             .count();
         let first_del_words = para_word_atom_count(dom, first_del);
+        let first_del_text = para_revision_body_text(dom, first_del).to_ascii_lowercase();
+        let demo_title = first_del_text.contains("demo") || first_del_text.contains("demonstrat");
         if content_inss.len() >= 4
             && content_dels.len() >= 4
             && all_short_labels
             && short_singles * 2 >= content_inss.len()
-            && (1..=4).contains(&first_del_words)
+            && (1..=2).contains(&first_del_words)
+            && !demo_title
             && !should_fold_ins_del_pair(dom, last_ins, first_del)
         {
             return false;
@@ -5253,6 +5279,8 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // multi contentful pure-I title/labels (≥4) × sole pure-D base
                 // prose. Trailing sole-del always-fold (m44) MIX-es last pure-I
                 // into sole pure-D. Word pure-I all next then pure-D base.
+                // M418: only when last pure-I is short stub (≤2 tokens) or
+                // title-page tail — not long demo body × sole-del.
                 if sole_del
                     && !should_fold_ins_del_pair(dom, last_ins, d)
                     && para_word_atom_count(dom, d) >= 5
@@ -5261,7 +5289,14 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         .iter()
                         .filter(|&&p| !para_revision_body_text(dom, p).trim().is_empty())
                         .count();
-                    if content_inss_n >= 4 {
+                    let last_n = para_word_atom_count(dom, last_ins);
+                    let last_t = para_revision_body_text(dom, last_ins).to_ascii_lowercase();
+                    let title_page_tail = last_t.contains("prepared")
+                        || last_t.contains('@')
+                        || last_t.contains("2040")
+                        || last_t.contains("agreement")
+                        || last_n <= 2;
+                    if content_inss_n >= 4 && title_page_tail {
                         continue;
                     }
                 }

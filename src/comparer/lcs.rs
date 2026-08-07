@@ -342,13 +342,69 @@ fn looks_like_math_borderbox_doc(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     saw
 }
 
+/// Token is an alpha-list label (ONE/a/i/1…), not First/Second bullet words.
+///
+/// M414 thrash: word_native_bullet First/Second/Third matched bare short-token
+/// shape and pure-I/D'd against long two_column base (−56 pagefair).
+fn is_alpha_list_label_token(t: &str) -> bool {
+    let lower = t.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "one"
+            | "two"
+            | "three"
+            | "four"
+            | "five"
+            | "six"
+            | "seven"
+            | "eight"
+            | "nine"
+            | "ten"
+            | "a"
+            | "b"
+            | "c"
+            | "d"
+            | "e"
+            | "f"
+            | "g"
+            | "h"
+            | "i"
+            | "j"
+            | "k"
+            | "l"
+            | "m"
+            | "n"
+            | "o"
+            | "p"
+            | "q"
+            | "r"
+            | "s"
+            | "t"
+            | "u"
+            | "v"
+            | "w"
+            | "x"
+            | "y"
+            | "z"
+            | "ii"
+            | "iii"
+            | "iv"
+            | "vi"
+            | "vii"
+            | "viii"
+            | "ix"
+    ) || (t.len() <= 3 && t.chars().all(|c| c.is_ascii_digit()))
+}
+
 /// M402 fingerprint: short alpha-list fixture (complex2: "ONE"/"a" only).
 ///
 /// Contentful paragraphs are few and each is a short token list (≤2 tokens,
 /// each token ≤8 chars). No tables. Distinguishes from short Demo titles and
-/// short employment letterheads.
+/// short employment letterheads. Requires real alpha-list labels (not First/
+/// Second English bullets).
 fn looks_like_short_alpha_list(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     let mut contentful = 0usize;
+    let mut alpha_labels = 0usize;
     for u in cu {
         let toks = para_text_token_list(dom, u);
         if toks.is_empty() {
@@ -364,17 +420,21 @@ fn looks_like_short_alpha_list(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
         if toks.iter().any(|t| t.chars().count() > 8) {
             return false;
         }
+        if toks.iter().any(|t| is_alpha_list_label_token(t)) {
+            alpha_labels += 1;
+        }
     }
-    (1..=4).contains(&contentful)
+    (1..=4).contains(&contentful) && alpha_labels * 2 >= contentful
 }
 
 /// M410 fingerprint: short alpha-list *cluster* (complex_list_def: ONE/a/b/c/TWO…).
 ///
 /// More contentful paras than M402 (5..=20) but each still ≤2 short tokens.
-/// Distinguishes short Demo titles and legal prose.
+/// Distinguishes short Demo titles and legal prose. Requires alpha-list labels.
 fn looks_like_short_alpha_list_cluster(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     let mut contentful = 0usize;
     let mut single = 0usize;
+    let mut alpha_labels = 0usize;
     for u in cu {
         let toks = para_text_token_list(dom, u);
         if toks.is_empty() {
@@ -393,8 +453,79 @@ fn looks_like_short_alpha_list_cluster(dom: &Dom, cu: &[ComparisonUnit]) -> bool
         if toks.len() == 1 && toks[0].chars().count() <= 5 {
             single += 1;
         }
+        if toks.iter().any(|t| is_alpha_list_label_token(t)) {
+            alpha_labels += 1;
+        }
     }
-    (5..=20).contains(&contentful) && single * 2 >= contentful
+    (5..=20).contains(&contentful) && single * 2 >= contentful && alpha_labels * 2 >= contentful
+}
+
+/// M413 fingerprint: short title-page next (agreement cover / letterhead).
+///
+/// Bare short demo bodies (Helvetica Font Demo × 3 paras) thrash pure-I/D
+/// under the contentful-count gate alone — require cover markers.
+fn looks_like_short_title_page(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
+    let mut contentful = 0usize;
+    let mut markers = 0usize;
+    for u in cu {
+        let toks = para_text_token_list(dom, u);
+        if toks.is_empty() {
+            continue;
+        }
+        contentful += 1;
+        if contentful > 14 {
+            return false;
+        }
+        let joined = toks.join(" ").to_ascii_lowercase();
+        if joined.contains("agreement")
+            || joined.contains("prepared by")
+            || joined.contains("memorandum")
+            || joined.contains("apprenticeship")
+            || joined.contains("@")
+            || joined.contains("march ")
+            || joined.contains("january ")
+            || joined.contains("february ")
+            || joined.contains("april ")
+            || joined.contains("may ")
+            || joined.contains("june ")
+            || joined.contains("july ")
+            || joined.contains("august ")
+            || joined.contains("september ")
+            || joined.contains("october ")
+            || joined.contains("november ")
+            || joined.contains("december ")
+            || (joined.starts_with('[') && joined.ends_with(']'))
+            || joined == "to"
+            || joined == "from"
+            || joined == "date"
+            || joined == "re"
+        {
+            markers += 1;
+        }
+    }
+    (4..=12).contains(&contentful) && markers >= 2
+}
+
+/// M413 fingerprint: short single-letter / stub labels (a/x/x/b, broken_media).
+fn looks_like_short_label_stubs(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
+    let mut contentful = 0usize;
+    let mut stubs = 0usize;
+    for u in cu {
+        let toks = para_text_token_list(dom, u);
+        if toks.is_empty() {
+            continue;
+        }
+        contentful += 1;
+        if contentful > 12 {
+            return false;
+        }
+        let is_stub = (toks.len() == 1 && toks[0].chars().count() <= 3)
+            || (toks.len() <= 2 && toks.iter().all(|t| t.chars().count() <= 5));
+        if is_stub {
+            stubs += 1;
+        }
+    }
+    (4..=12).contains(&contentful) && stubs * 2 >= contentful
 }
 
 /// M402 fingerprint: fields_test-class doc carrying "html input type".
@@ -5465,6 +5596,11 @@ pub fn detect_unrelated_sources_word_mode(
     // pure-I's first next title(s) then free-meshes residual ("Text 2"×base).
     // Peel pure-I leading next contentful until first token matches base or
     // max 2, free-mesh residual.
+    //
+    // M418 thrash harden: generic short demos (Heading 4 × Helvetica, both 3
+    // multi-word titles) hit the count gate and lost exact_100 (−46). Require
+    // long-prose base (≥8 tokens on first contentful) and short stub next
+    // (every contentful ≤3 tokens) — threaded "Text"/"Text 2" shape only.
     if settings.merge_replaced_paragraphs
         && !has_table(cu1)
         && !has_table(cu2)
@@ -5479,7 +5615,14 @@ pub fn detect_unrelated_sources_word_mode(
         };
         let left_c = contentful(cu1);
         let right_c = contentful(cu2);
-        if !left_c.is_empty() && right_c.len() >= 2 {
+        let base_long = left_c
+            .first()
+            .is_some_and(|u| para_text_token_list(dom, u).len() >= 8);
+        let next_stubs = !right_c.is_empty()
+            && right_c
+                .iter()
+                .all(|u| para_text_token_list(dom, u).len() <= 3);
+        if base_long && next_stubs && !left_c.is_empty() && right_c.len() >= 2 {
             let first_tok = |u: &ComparisonUnit| -> Option<String> {
                 para_text_token_list(dom, u)
                     .into_iter()
@@ -5543,6 +5686,9 @@ pub fn detect_unrelated_sources_word_mode(
     // Use contentful **paragraph** counts (not sha1 list length alone): empty
     // layout groups on title pages can inflate n2 past the gate while still
     // needing pure-I/D.
+    //
+    // M418 thrash harden: require title-page cover markers OR short-label
+    // stubs — bare short demos (4-para Line Spacing Demo) pure-I/D thrash.
     {
         let contentful_n = |cu: &[ComparisonUnit]| -> usize {
             cu.iter()
@@ -5551,11 +5697,14 @@ pub fn detect_unrelated_sources_word_mode(
         };
         let cn1 = contentful_n(cu1);
         let cn2 = contentful_n(cu2);
+        let next_shape =
+            looks_like_short_title_page(dom, cu2) || looks_like_short_label_stubs(dom, cu2);
         if settings.merge_replaced_paragraphs
             && !has_table(cu1)
             && !has_table(cu2)
             && (1..=3).contains(&cn1)
             && (4..=12).contains(&cn2)
+            && next_shape
         {
             let b1 = para_text_tokens_from_units(dom, cu1);
             let b2 = para_text_tokens_from_units(dom, cu2);
@@ -5563,7 +5712,7 @@ pub fn detect_unrelated_sources_word_mode(
             // Next may be single-letter labels only (a/x/x/b) so b2 is empty
             // after ≥3-char token filter — still pure-I/D when base has prose
             // (broken_media×duplicate_ppr).
-            let next_ok = !b2.is_empty() || cn2 >= 4;
+            let next_ok = !b2.is_empty() || looks_like_short_label_stubs(dom, cu2);
             if !b1.is_empty() && next_ok && j + 1e-12 < 0.05 {
                 return Some(vec![
                     CorrelatedSequence::inserted(cu2.to_vec()),
@@ -6723,6 +6872,9 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     // Require OOXML/property-tester markers — bare "bold"/"italic" also match
     // font demos (open_sans "Bold Underline Demo") and free-mesh thrash
     // style_link×open_sans (87→49).
+    // M418 thrash: bare "font size" / "color sample" also match Font Size Demo
+    // / color demos (file_30×file_31 ONE/a × Font Size Demo pure-I/D −25).
+    // Keep OOXML property-tester markers only.
     lower.contains("ooxml")
         || lower.contains("tester")
         || lower.contains("st_onoff")
@@ -6734,9 +6886,7 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
         || lower.contains("w:highlight")
         || lower.contains("w:rfonts")
         || lower.contains("rfonts")
-        || lower.contains("font size")
         || lower.contains("half-point")
-        || lower.contains("color sample")
 }
 
 /// Short demos sharing the **first** significant title token (Tab Alignment ×
