@@ -5090,6 +5090,62 @@ pub fn detect_unrelated_sources_word_mode(
                 }
             }
         }
+        // M347: both-table unrelated free-mesh (pirates×border). Word pure-I
+        // next titles first (IIID…IM…IIII), word free-mesh confetti-MIX-es titles
+        // (DDDMMM…). Peel leading non-table groups pure-I/D, free-mesh residual
+        // (tables + trailing body).
+        if free_mesh_demos && both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2) {
+            let is_tbl = |u: &ComparisonUnit| -> bool {
+                as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table)
+            };
+            let peel_leading_nontbl = |cu: &[ComparisonUnit]| -> usize {
+                let mut n = 0usize;
+                for u in cu {
+                    if is_tbl(u) {
+                        break;
+                    }
+                    n += 1;
+                }
+                // Keep at least one residual unit if possible.
+                n.min(cu.len().saturating_sub(1))
+            };
+            let peel_l = peel_leading_nontbl(cu1);
+            let peel_r = peel_leading_nontbl(cu2);
+            // Only peel when next has leading non-table prose (border titles).
+            if peel_r >= 2 {
+                let mut residual_settings = settings.clone();
+                residual_settings.detail_threshold = 0.0;
+                let mut out = Vec::new();
+                for u in &cu2[..peel_r] {
+                    out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                }
+                for u in &cu1[..peel_l] {
+                    out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                }
+                let mut left: Vec<ComparisonUnit> =
+                    cu1[peel_l..].iter().flat_map(group_contents).collect();
+                let mut right: Vec<ComparisonUnit> =
+                    cu2[peel_r..].iter().flat_map(group_contents).collect();
+                if !left.is_empty()
+                    && !right.is_empty()
+                    && left.len().saturating_mul(right.len()) <= 600_000
+                {
+                    rehash_words_by_text_content_opts(dom, &mut left, true);
+                    rehash_words_by_text_content_opts(dom, &mut right, true);
+                    out.extend(lcs(dom, left, right, &residual_settings));
+                    return Some(out);
+                }
+                for u in &cu2[peel_r..] {
+                    out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                }
+                for u in &cu1[peel_l..] {
+                    out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                }
+                if !out.is_empty() {
+                    return Some(out);
+                }
+            }
+        }
         // M329: free-mesh demos always free-mesh — do NOT gate on large_related.
         // highlight×bold has sig≥40 each and jaccard≈0.22 (shared sample/rstyle/
         // ooxml) so the old large_related guard skipped free-mesh and pure-I/D'd
