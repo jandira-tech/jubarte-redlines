@@ -1727,6 +1727,21 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
             //    long pure-D residual follows. Word keeps the empty pure-I
             //    spacer (two_column×vrect); folding contaminated first pure-D
             //    with vrect spacing (line=240) and thrased layout 79→34.
+            // M359: skip when pure-D is long prose (list_with_indents items
+            // ≥13 words) or pure-I carries a drawing. Empty drawing pure-I
+            // × long list pure-D (list×shape_group) was folding the first
+            // list item into the empty shell; multi-del then MIX-ed last
+            // "My test with some shapes." with that list text (Word/27c
+            // pure-I/D III…DDD; pagefair −9.4). Short list items still fold
+            // (basic_list "List item 1" ≤12 words).
+            let del_words = para_word_atom_count(dom, del_p);
+            let ins_has_drawing = !dom.descendants(ins_p, Some(&W::name("drawing"))).is_empty()
+                || !dom
+                    .descendants(ins_p, Some(&W::name("AlternateContent")))
+                    .is_empty();
+            if del_words > 12 || ins_has_drawing {
+                continue;
+            }
             let del_structural = dom
                 .element(del_p, &W::p_pr())
                 .is_some_and(|dp| ppr_has_structural_props(dom, dp));
@@ -3246,6 +3261,11 @@ fn should_fold_multi_del_at_document_scale(
         .copied()
         .filter(|&i| !para_revision_body_text(dom, i).trim().is_empty())
         .collect();
+    let any_content_related = content_inss.iter().any(|&i| {
+        content_dels
+            .iter()
+            .any(|&d| should_fold_ins_del_pair(dom, i, d))
+    });
     // content_inss.len() == 2: Word pure-I/D for short next (title+heading or
     // two list items) vs long short-item list base (basic_list×sd_1707,
     // broken_list×multiple_nodes — unpacked IID… / IIID…).
@@ -3260,11 +3280,6 @@ fn should_fold_multi_del_at_document_scale(
             ps.iter()
                 .all(|&p| para_word_atom_count(dom, p) <= SHORT_LIST_ITEM_MAX_WORDS)
         };
-        let any_content_related = content_inss.iter().any(|&i| {
-            content_dels
-                .iter()
-                .any(|&d| should_fold_ins_del_pair(dom, i, d))
-        });
         let ins_w: usize = content_inss
             .iter()
             .map(|&p| para_word_atom_count(dom, p))
@@ -3580,6 +3595,23 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     .find(|&&p| !para_has_no_text(dom, p))
                     .copied()
                     .unwrap_or(inss[inss.len() - 1]);
+                // M359 (list_with_indents×shape_group): trailing pure-I is an
+                // empty/drawing shell then pure-D long unrelated list prose.
+                // Word folds the **last** pure-I (drawing) with first pure-D
+                // (IIII…XDDDD). Preferring last content pure-I MIX-ed "My test
+                // with some shapes." into the list (−9.4 vs 27c). When the last
+                // pure-I is empty/whitespace and first pure-D is long unrelated
+                // content, keep the last pure-I as carrier.
+                let trailing = inss[inss.len() - 1];
+                if inss.len() >= 3
+                    && trailing != last_ins
+                    && (para_has_no_text(dom, trailing)
+                        || para_body_text_is_whitespace_only(dom, trailing))
+                    && para_word_atom_count(dom, d) > 12
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
+                    last_ins = trailing;
+                }
                 // M322 (tiff×h_f_normal): short pure-D title ("TIFF test document")
                 // after a long pure-I stream. Word head-junctions the **first**
                 // content pure-I with the title (MIX at start); last-I fold
@@ -3679,9 +3711,14 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // M336 (bullet_list_bold×bullet_list): first pure-D is the shared
                 // demo intro "This document demonstrates…" — Word folds Grapes
                 // into it (DIMD). Do not apply M325 skip for that intro shape.
+                //
+                // M359: empty/drawing last pure-I (0 tokens) must still fold with
+                // long pure-D (list×shape Word X shell + list delText). M325
+                // treated empty as ≤2 tokens and skipped the fold entirely.
                 if dels.len() > 1
                     && inss.len() >= 3
                     && para_word_atom_count(dom, last_ins) <= 2
+                    && para_word_atom_count(dom, last_ins) >= 1
                     && para_word_atom_count(dom, d) >= 8
                     && !should_fold_ins_del_pair(dom, last_ins, d)
                 {
