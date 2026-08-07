@@ -1273,11 +1273,15 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
         // M352: do **not** strip on pure-inserted paras — Word keeps line=276
         // on pure-I next (line_break×line_space_table); strip was for live/
         // MIX center demos only (center_alignment ~79→100).
+        // M353: also keep when pStyle is present (localized_heading pure-D
+        // Heading/Title carry line=276; Word keeps them — bare Normal demos
+        // still strip).
         let line_ok = line == "276";
         let after_ok = after.is_empty() || after == "200";
         let before_ok = before.is_empty();
         let rule_ok = rule.is_empty() || rule == "auto";
-        if line_ok && after_ok && before_ok && rule_ok && !para_is_pure_inserted(dom, p) {
+        let keep = para_is_pure_inserted(dom, p) || dom.element(ppr, &W::name("pStyle")).is_some();
+        if line_ok && after_ok && before_ok && rule_ok && !keep {
             to_remove.push(sp);
             continue;
         }
