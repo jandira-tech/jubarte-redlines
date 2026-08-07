@@ -2067,9 +2067,24 @@ pub fn strip_empty_pure_ins_before_trailing_pure_dels(dom: &mut Dom, root: NodeI
     if empty_run >= 3 {
         return;
     }
+    // M389 (file_82×83 −18.9 vs fddb): Word keeps a **single** empty pure-I
+    // spacer before trailing pure-D short demo title ("Title Style Centered
+    // Demo"). B may end with 1–2 empties; M85a stripped all. Keep one spacer
+    // when the first pure-D is a short demo/title residual.
+    let first_del = non_sect[run_start];
+    let keep_one_demo_spacer = (1..=2).contains(&empty_run)
+        && (para_looks_like_demo_title(dom, first_del)
+            || para_has_heading_or_title_style(dom, first_del));
     // Strip at most two trailing empties before pure-dels (M85a original).
-    for j in 0..empty_run {
-        let victim = non_sect[run_start - 1 - j];
+    // When keeping a demo spacer, leave the empty closest to the pure-D run.
+    let strip_n = if keep_one_demo_spacer {
+        empty_run.saturating_sub(1)
+    } else {
+        empty_run
+    };
+    for j in 0..strip_n {
+        // Strip farthest empties first (index run_start - empty_run + j).
+        let victim = non_sect[run_start - empty_run + j];
         if para_is_empty_pure_ins(dom, victim) {
             dom.remove(victim);
         }
@@ -2205,6 +2220,27 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
             // Need real deleted content (not empty mark-only del).
             if para_body_text_is_whitespace_only(dom, del_p) {
                 continue;
+            }
+            // M389 (file_82×83 −18.9): Word keeps empty pure-I spacer before
+            // multi pure-D short demo titles ("Title Style Centered Demo"…).
+            // Folding the empty into first pure-D invents MIX and drops the
+            // spacer. Skip run-less empty pure-I × demo/title pure-D when ≥2
+            // pure-D residual paras follow.
+            if dom.descendants(ins_p, Some(&W::t())).is_empty()
+                && (para_looks_like_demo_title(dom, del_p)
+                    || para_has_heading_or_title_style(dom, del_p))
+            {
+                let mut following_pure_d = 0usize;
+                for &k in kids.iter().skip(i + 1) {
+                    if dom.name(k) == Some(W::p()) && para_is_pure_deleted(dom, k) {
+                        following_pure_d += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if following_pure_d >= 2 {
+                    continue;
+                }
             }
             // M345: empty pure-I fold must not thrash pure-D layout.
             //
