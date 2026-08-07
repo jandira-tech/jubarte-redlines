@@ -2714,6 +2714,110 @@ fn mark_adopted_hf_content_as_inserted(
     out.set_part(part, dom.serialize_element(root).into_bytes());
 }
 
+/// M379 — when the original has no real footnotes/endnotes separators but the
+/// revised document does, copy B's notes part into the package. Word carries
+/// separator + continuationSeparator (often with drawings) even when body has
+/// zero footnote refs (tiff×h_f_normal). Empty shells thrash LO page geometry.
+fn adopt_b_notes_when_a_lacks_separators(
+    out: &mut PartFs,
+    pkg1: &PartFs,
+    pkg2: &PartFs,
+    out_main: &str,
+) {
+    for (part, rel_suffix, ct) in [
+        (
+            "word/footnotes.xml",
+            "footnotes",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+        ),
+        (
+            "word/endnotes.xml",
+            "endnotes",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml",
+        ),
+    ] {
+        let a_has_sep = pkg1.part_string(part).is_some_and(|x| {
+            x.contains("w:type=\"separator\"") || x.contains("w:type='separator'")
+        });
+        if a_has_sep {
+            continue;
+        }
+        let Some(b_xml) = pkg2.part_string(part) else {
+            continue;
+        };
+        if !(b_xml.contains("w:type=\"separator\"") || b_xml.contains("w:type='separator'")) {
+            continue;
+        }
+        // Also skip if out already has a real separator part (paired compare).
+        let out_has_sep = out.part_string(part).is_some_and(|x| {
+            x.contains("w:type=\"separator\"") || x.contains("w:type='separator'")
+        });
+        if out_has_sep {
+            continue;
+        }
+        out.set_part(part, b_xml.into_bytes());
+        out.add_content_type_override(&format!("/{part}"), ct);
+        // Ensure main-document relationship.
+        let has_rel = out.read_rels_for(out_main).is_some_and(|r| {
+            r.items
+                .iter()
+                .any(|i| i.rel_type.ends_with(&format!("/{rel_suffix}")))
+        });
+        if !has_rel {
+            let target = part.strip_prefix("word/").unwrap_or(part);
+            out.add_document_relationship(
+                out_main,
+                &format!(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{rel_suffix}"
+                ),
+                target,
+            );
+        }
+        // Carry notes-part rels + media (separator drawings).
+        if let Some(nrels) = pkg2.read_rels_for(part) {
+            let mut rels_xml = String::from(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+                 <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+            );
+            for nr in &nrels.items {
+                let mode = nr
+                    .target_mode
+                    .as_deref()
+                    .map(|m| format!(" TargetMode=\"{m}\""))
+                    .unwrap_or_default();
+                let mut rel_target_out = nr.target.clone();
+                if nr.target_mode.as_deref() != Some("External") {
+                    let t = pkg2.resolve_rel_target(part, &nr.target);
+                    if let Some(tb) = pkg2.part_bytes(&t).map(<[u8]>::to_vec) {
+                        let t_out = unique_part_name(out, &t, &tb);
+                        if out.part_bytes(&t_out).is_none() {
+                            out.set_part(&t_out, tb);
+                        }
+                        if t_out != t {
+                            rel_target_out = t_out.rsplit('/').next().unwrap_or(&t_out).to_string();
+                        }
+                    }
+                }
+                let xe = |s: &str| {
+                    s.replace('&', "&amp;")
+                        .replace('<', "&lt;")
+                        .replace('"', "&quot;")
+                };
+                rels_xml.push_str(&format!(
+                    "<Relationship Id=\"{}\" Type=\"{}\" Target=\"{}\"{}/>",
+                    xe(&nr.id),
+                    xe(&nr.rel_type),
+                    xe(&rel_target_out),
+                    mode
+                ));
+            }
+            rels_xml.push_str("</Relationships>");
+            let base = part.rsplit('/').next().unwrap_or(part);
+            out.set_part(&format!("word/_rels/{base}.rels"), rels_xml.into_bytes());
+        }
+    }
+}
+
 /// D.6 — `WmlComparer.GetRevisions` (:3940) byte facade: list every tracked
 /// revision in a redline `.docx` — main-part groups, footnote/endnote
 /// definition groups, `w:rPrChange` format changes, then (settings-gated)
@@ -3437,6 +3541,11 @@ fn compare_documents_impl(
             }
             out.set_part(part, dom.serialize_element(r).into_bytes());
         }
+    }
+    // M379: after B.4 notes writeback — if A had no separators, B.4 left empty
+    // shells or skipped; copy B's separator/continuationSeparator notes.
+    if settings.merge_replaced_paragraphs {
+        adopt_b_notes_when_a_lacks_separators(&mut out, &pkg1, &pkg2, &main1);
     }
     // settings.xml may still list special footnote/endnote ids (e.g. id=1
     // continuationNotice) that rectify dropped. Dangling settings refs make
