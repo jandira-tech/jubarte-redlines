@@ -5654,6 +5654,9 @@ fn ooxml_x_short_table_demo(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[Comparison
 /// M351: one side short OOXML property demo, other short table-free prose
 /// (not an OOXML tester). Word free-meshes bold_vals×diff_before8 (MMM…);
 /// pure-I/D / flat LCS under-meshes (IMD…).
+///
+/// Do **not** match short font/demo titles (open_sans "… Demo", style_link×
+/// open_sans Word pure-I titles; free-mesh thrash pagefair 87→49).
 fn ooxml_x_short_prose_demo(
     dom: &Dom,
     cu1: &[ComparisonUnit],
@@ -5675,11 +5678,27 @@ fn ooxml_x_short_prose_demo(
     if has_table_units(prose_cu) || !(1..=4).contains(&prose_n) {
         return false;
     }
-    let contentful = prose_cu
+    let contentful: Vec<_> = prose_cu
         .iter()
         .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
-        .count();
-    (1..=2).contains(&contentful)
+        .collect();
+    if !(1..=2).contains(&contentful.len()) {
+        return false;
+    }
+    // Reject Demo / "document demonstrates" titles (style/font demos).
+    // Keep comment-like prose (diff_before: "Here's some text… comment").
+    let title = para_text_token_list(dom, contentful[0])
+        .into_iter()
+        .map(|t| t.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let joined = title.join(" ");
+    if title.iter().any(|t| t == "demo" || t == "tester")
+        || joined.contains("demonstrates")
+        || joined.contains("document shows")
+    {
+        return false;
+    }
+    true
 }
 
 /// Short **cell-only** table next (table_doc is a single top-level `w:tbl` of
@@ -5870,6 +5889,9 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
         }
     }
     let lower = text.to_ascii_lowercase();
+    // Require OOXML/property-tester markers — bare "bold"/"italic" also match
+    // font demos (open_sans "Bold Underline Demo") and free-mesh thrash
+    // style_link×open_sans (87→49).
     lower.contains("ooxml")
         || lower.contains("tester")
         || lower.contains("st_onoff")
@@ -5883,9 +5905,7 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
         || lower.contains("rfonts")
         || lower.contains("font size")
         || lower.contains("half-point")
-        || lower.contains("bold")
         || lower.contains("color sample")
-        || lower.contains("italic")
 }
 
 /// Short demos sharing the **first** significant title token (Tab Alignment ×

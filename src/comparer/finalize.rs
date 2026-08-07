@@ -3873,11 +3873,25 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         }
                     }
                 } else if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
-                    if let Some(irpr) = dom.element(ippr, &W::r_pr())
-                        && (dom.element(irpr, &W::ins()).is_some()
-                            || dom.element(irpr, &W::del()).is_some())
-                    {
-                        dom.remove(irpr);
+                    // M354 (tiff×h_f): Word keeps next mark rPr fonts/sz on the
+                    // folded MIX title (Arial/sz32). Do **not** drop the whole
+                    // rPr when stripping ins/del mark elements — that left bare
+                    // MIX with no pPr (pagefair thrash 41→37).
+                    if let Some(irpr) = dom.element(ippr, &W::r_pr()) {
+                        let mark_kids: Vec<_> = dom
+                            .elements(irpr, None)
+                            .into_iter()
+                            .filter(|&c| {
+                                let n = dom.name(c);
+                                n == Some(W::ins()) || n == Some(W::del())
+                            })
+                            .collect();
+                        for c in mark_kids {
+                            dom.remove(c);
+                        }
+                        if dom.elements(irpr, None).is_empty() {
+                            dom.remove(irpr);
+                        }
                     }
                     if dom.elements(ippr, None).is_empty() {
                         dom.remove(ippr);
