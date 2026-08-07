@@ -681,8 +681,6 @@ pub fn compare_bodies_faithful_with_notes(
         // M159: restore short pure-D before longer pure-I after merge reorder
         // (text_highlight×times Word MIX|DEL|INS|MIX).
         finalize::restore_short_del_before_long_ins(dom, root);
-        // M388: memo headers after title MIX before pure-I body.
-        finalize::splice_memo_headers_after_title_mix(dom, root);
         // M147: MIX digits-only pure-I + pure-D title → split (1_5×24 Word shape).
         finalize::split_digits_ins_from_mixed_title(dom, root);
         // M143: mid pure-D Demo title → fold into first numbered pure-I heading
