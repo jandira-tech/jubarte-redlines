@@ -1470,6 +1470,324 @@ fn spacing_is_list_single_line(dom: &Dom, ppr: NodeId) -> bool {
         && (before.is_empty() || before == "0")
 }
 
+/// M377 (tiff×h_f −3.4): short-title MIX free-meshes one shared significant
+/// token as EQ. Word: `ins "This is a" + del "TIFF test" + EQ " document" +
+/// ins " with:"`. Wholesale ins+del keeps "document" on both sides and thrash
+/// LO pagefair vs 27c free-mesh.
+///
+/// Gates: MIX, ≤6 tokens each side, exactly one shared alnum token len≥4 that
+/// is the last del token and appears once in ins. Leaves long-body MIX alone
+/// (hummingbird/emp contracts).
+pub fn free_mesh_shared_title_token_in_mix(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    for &p in &kids {
+        if dom.name(p) != Some(W::p()) {
+            continue;
+        }
+        let has_ins = !dom.descendants(p, Some(&W::ins())).is_empty();
+        let has_del = !dom.descendants(p, Some(&W::del())).is_empty();
+        if !has_ins || !has_del {
+            continue;
+        }
+        // Collect body revision wrappers in order (ignore pPr).
+        let body_kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| dom.name(c) != Some(W::p_pr()))
+            .collect();
+        if body_kids.is_empty() {
+            continue;
+        }
+        // Simple wholesale shape only: one ins then one del (or del then ins).
+        let mut ins_nodes = Vec::new();
+        let mut del_nodes = Vec::new();
+        let mut other = false;
+        for &c in &body_kids {
+            let n = dom.name(c);
+            if n == Some(W::ins()) {
+                ins_nodes.push(c);
+            } else if n == Some(W::del()) {
+                del_nodes.push(c);
+            } else {
+                other = true;
+                break;
+            }
+        }
+        if other || ins_nodes.is_empty() || del_nodes.is_empty() {
+            continue;
+        }
+        // Only wholesale 1+1 or small confetti of same status groups.
+        if ins_nodes.len() > 2 || del_nodes.len() > 2 {
+            continue;
+        }
+
+        let mut ins_text = String::new();
+        for &ins in &ins_nodes {
+            for t in dom.descendants(ins, Some(&W::t())) {
+                ins_text.push_str(&dom.value_str(t));
+            }
+        }
+        let mut del_text = String::new();
+        for &del in &del_nodes {
+            for t in dom.descendants(del, Some(&W::name("delText"))) {
+                del_text.push_str(&dom.value_str(t));
+            }
+        }
+        if ins_text.is_empty() || del_text.is_empty() {
+            continue;
+        }
+        let ins_toks: Vec<String> = alnum_tokens(&ins_text);
+        let del_toks: Vec<String> = alnum_tokens(&del_text);
+        // Short titles only (≤6 tokens each).
+        if ins_toks.len() > 6 || del_toks.len() > 6 || ins_toks.len() < 2 || del_toks.len() < 2 {
+            continue;
+        }
+        // Shared significant tokens (len≥4).
+        let del_set: std::collections::HashSet<&str> =
+            del_toks.iter().map(String::as_str).collect();
+        let shared: Vec<&str> = ins_toks
+            .iter()
+            .map(String::as_str)
+            .filter(|t| t.len() >= 4 && del_set.contains(t))
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        if shared.len() != 1 {
+            continue;
+        }
+        let shared = shared[0];
+        // Must be last del token (Word free-meshes trailing title word).
+        if del_toks.last().map(String::as_str) != Some(shared) {
+            continue;
+        }
+        // Exactly once in each stream.
+        if ins_toks.iter().filter(|t| t.as_str() == shared).count() != 1
+            || del_toks.iter().filter(|t| t.as_str() == shared).count() != 1
+        {
+            continue;
+        }
+
+        // Case-preserving label from del tail.
+        let Some(eq_label) = trailing_alnum_token(&del_text) else {
+            continue;
+        };
+        if !eq_label.eq_ignore_ascii_case(shared) {
+            continue;
+        }
+
+        // Split ins text around shared token (first occurrence, case-insensitive).
+        let Some((ins_before, ins_after)) = split_around_token(&ins_text, &eq_label) else {
+            continue;
+        };
+        let Some(del_prefix) = strip_trailing_alnum_token(&del_text, &eq_label) else {
+            continue;
+        };
+
+        // Author/date from first ins.
+        let (author, date, id) = {
+            let mut a = "Redline".to_string();
+            let mut d = "1970-01-01T00:00:00Z".to_string();
+            let mut id = "0".to_string();
+            if let Some(&ins) = ins_nodes.first() {
+                if let Some(v) = dom.attribute(ins, &W::author()) {
+                    a = v.to_string();
+                }
+                if let Some(v) = dom.attribute(ins, &W::date()) {
+                    d = v.to_string();
+                }
+                if let Some(v) = dom.attribute(ins, &W::id()) {
+                    id = v.to_string();
+                }
+            }
+            (a, d, id)
+        };
+
+        // Capture run rPr from first ins run for rebuilt runs.
+        let sample_rpr = ins_nodes
+            .first()
+            .and_then(|&ins| dom.element(ins, &W::r()))
+            .and_then(|r| dom.element(r, &W::r_pr()))
+            .map(|rpr| dom.clone_subtree(rpr));
+
+        // Remove old body kids.
+        for c in body_kids {
+            if dom.parent(c).is_some() {
+                dom.remove(c);
+            }
+        }
+
+        // Rebuild Word order: ins_before | del_prefix | EQ | ins_after
+        let _ = id;
+        rebuild_title_free_mesh(
+            dom,
+            p,
+            &ins_before,
+            &del_prefix,
+            &eq_label,
+            &ins_after,
+            &author,
+            &date,
+            sample_rpr,
+        );
+    }
+}
+
+/// Alnum tokens lowercased.
+fn alnum_tokens(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_ascii_lowercase())
+        .collect()
+}
+
+/// Split `text` into (before, after) around first case-insensitive alnum token
+/// matching `label`. Separators around the token: before keeps trailing space
+/// if present before token; after keeps leading space if present after token
+/// moved into EQ as leading space when del had " document" shape.
+fn split_around_token(text: &str, label: &str) -> Option<(String, String)> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i].1.is_alphanumeric() {
+            let start_i = i;
+            let start_byte = chars[i].0;
+            while i < chars.len() && chars[i].1.is_alphanumeric() {
+                i += 1;
+            }
+            let end_byte = if i < chars.len() {
+                chars[i].0
+            } else {
+                text.len()
+            };
+            let tok = &text[start_byte..end_byte];
+            if tok.eq_ignore_ascii_case(label) {
+                let before = text[..start_byte].to_string();
+                let after = text[end_byte..].to_string();
+                // Avoid empty both (token-only).
+                if before.trim().is_empty() && after.trim().is_empty() {
+                    return None;
+                }
+                let _ = start_i;
+                return Some((before, after));
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Rebuild short-title MIX free-mesh body on `p`.
+#[allow(clippy::too_many_arguments)]
+fn rebuild_title_free_mesh(
+    dom: &mut Dom,
+    p: NodeId,
+    ins_before: &str,
+    del_prefix: &str,
+    eq_label: &str,
+    ins_after: &str,
+    author: &str,
+    date: &str,
+    sample_rpr: Option<NodeId>,
+) {
+    let mut next_id = 1u32;
+    // Word: ins_before (trim end space — space moves into EQ)
+    let ib = ins_before.trim_end();
+    if !ib.is_empty() {
+        add_revision_text_run(
+            dom,
+            p,
+            W::ins(),
+            ib,
+            false,
+            author,
+            date,
+            &mut next_id,
+            sample_rpr,
+        );
+    }
+    let dp = del_prefix.trim_end();
+    if !dp.is_empty() {
+        add_revision_text_run(
+            dom,
+            p,
+            W::del(),
+            dp,
+            true,
+            author,
+            date,
+            &mut next_id,
+            None, // del runs usually bare of fancy rPr
+        );
+    }
+    // EQ with leading space + label (Word " document")
+    let eq_r = dom.new_element(W::r());
+    if let Some(rpr) = sample_rpr {
+        let c = dom.clone_subtree(rpr);
+        dom.add(eq_r, c);
+    }
+    let eq_t = dom.new_element(W::t());
+    let eq_text = format!(" {eq_label}");
+    dom.set_attribute_value(eq_t, &XNamespace::xml().name("space"), Some("preserve"));
+    dom.add_text(eq_t, &eq_text);
+    dom.add(eq_r, eq_t);
+    dom.add(p, eq_r);
+    // ins_after keeps leading space if any (" with:")
+    if !ins_after.is_empty() {
+        add_revision_text_run(
+            dom,
+            p,
+            W::ins(),
+            ins_after,
+            false,
+            author,
+            date,
+            &mut next_id,
+            sample_rpr,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_revision_text_run(
+    dom: &mut Dom,
+    p: NodeId,
+    wrapper: crate::xmllinq::XName,
+    text: &str,
+    deleted: bool,
+    author: &str,
+    date: &str,
+    next_id: &mut u32,
+    sample_rpr: Option<NodeId>,
+) {
+    let w = dom.new_element(wrapper);
+    dom.set_attribute_value(w, &W::author(), Some(author));
+    dom.set_attribute_value(w, &W::date(), Some(date));
+    let id = next_id.to_string();
+    *next_id += 1;
+    dom.set_attribute_value(w, &W::id(), Some(&id));
+    let r = dom.new_element(W::r());
+    if let Some(rpr) = sample_rpr {
+        let c = dom.clone_subtree(rpr);
+        dom.add(r, c);
+    }
+    let te = dom.new_element(if deleted { W::name("delText") } else { W::t() });
+    if text.starts_with(' ') || text.ends_with(' ') {
+        dom.set_attribute_value(te, &XNamespace::xml().name("space"), Some("preserve"));
+    }
+    dom.add_text(te, text);
+    dom.add(r, te);
+    dom.add(w, r);
+    dom.add(p, w);
+}
+
 /// True when a paragraph has deleted content, no live (non-del) `w:t` text,
 /// and no `w:ins` — pure deleted body paragraph.
 fn para_is_pure_deleted(dom: &Dom, p: NodeId) -> bool {

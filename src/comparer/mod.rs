@@ -730,6 +730,9 @@ pub fn compare_bodies_faithful_with_notes(
         // with the same token (ordered_list×sublist Word MIX). After mix peels
         // so fold_leading_ins does not steal the label onto a preceding Item.
         finalize::residual_short_label_zip(dom, root);
+        // M377: short-title MIX free-mesh shared sig token as EQ (tiff×h_f
+        // "document" −3.4 vs wholesale ins+del).
+        finalize::free_mesh_shared_title_token_in_mix(dom, root);
         // M376: after merge/park peels — strip list line=240/jc that mid pure-D
         // absorbed from pure-I list residual (bookmark×broken_complex −0.6).
         finalize::strip_list_layout_from_mid_pure_del(dom, root);
