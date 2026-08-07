@@ -5356,6 +5356,36 @@ pub fn detect_unrelated_sources_word_mode(
             ]);
         }
     }
+    // M416 (heading_font × hummingbird ~52.9): short **next** is a single long
+    // wrap paragraph (≥20 tokens) vs short table-free base (3..=8 contentful).
+    // Full LCS free-meshes wrap into first base (DI). Word pure-I wrap then
+    // pure-D all base (I1 D4). Reverse-M413 thrash was dropcaps×list_font
+    // (free-mesh better pagefair); here Word structure is pure-I/D.
+    if settings.merge_replaced_paragraphs && !has_table(cu1) && !has_table(cu2) {
+        let left_toks: Vec<Vec<String>> = cu1
+            .iter()
+            .filter(|u| as_group(u).is_some())
+            .map(|u| para_text_token_list(dom, u))
+            .filter(|t| !t.is_empty())
+            .collect();
+        let right_toks: Vec<Vec<String>> = cu2
+            .iter()
+            .filter(|u| as_group(u).is_some())
+            .map(|u| para_text_token_list(dom, u))
+            .filter(|t| !t.is_empty())
+            .collect();
+        if (3..=8).contains(&left_toks.len()) && right_toks.len() == 1 && right_toks[0].len() >= 20
+        {
+            let b1 = para_text_tokens_from_units(dom, cu1);
+            let b2 = para_text_tokens_from_units(dom, cu2);
+            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.05 {
+                return Some(vec![
+                    CorrelatedSequence::inserted(cu2.to_vec()),
+                    CorrelatedSequence::deleted(cu1.to_vec()),
+                ]);
+            }
+        }
+    }
     // M412 (text_color_highlight × threaded_comment ~48.7): both sides short
     // (≤4 contentful groups), first significant tokens differ. Full LCS free-
     // meshes first next ("Text") into base (MIX), dropping pure-I title. Word

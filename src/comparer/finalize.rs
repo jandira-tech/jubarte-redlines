@@ -4726,6 +4726,16 @@ fn should_fold_multi_del_at_document_scale(
             return false;
         }
     }
+    // M416 (heading_font×hummingbird): sole long pure-I wrap (≥20 words) ×
+    // multi pure-D base. Multi-del fold MIX-es wrap into first base (DI).
+    // Word pure-I wrap then pure-D all base (I1 D4).
+    if content_inss.len() == 1
+        && content_dels.len() >= 3
+        && para_word_atom_count(dom, last_ins) >= 20
+        && !should_fold_ins_del_pair(dom, last_ins, first_del)
+    {
+        return false;
+    }
     // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
     if inss.len() < 3 || dels.len() < 3 {
         // M337: do **not** skip fold for single short pure-I + multi pure-D.
@@ -5244,6 +5254,17 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     if content_inss_n >= 4 {
                         continue;
                     }
+                }
+                // M416 (heading_font×hummingbird): sole long pure-I wrap (≥20
+                // words) × multi pure-D short base. sole_del always-fold MIX-es
+                // wrap into first base. Word pure-I wrap then pure-D all base.
+                if sole_del
+                    && inss.len() == 1
+                    && dels.len() >= 3
+                    && para_word_atom_count(dom, last_ins) >= 20
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
+                    continue;
                 }
                 // M322b (tiff×h_f after head-junction): long pure-I stream + sole
                 // empty pure-D (drawing shell / mark-only). Word keeps trailing
