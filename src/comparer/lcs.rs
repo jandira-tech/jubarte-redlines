@@ -911,6 +911,7 @@ fn stamp_confetti_then_replace(
     //     even when residual pairs already cover a body (file_140/125/84/129);
     //     file_163 min ~0.125 stays on residual pairs (was 100 under pairs)
     let pairs = stamp_residual_pairs(dom, &rest1, &rest2);
+    
     // M133: when residual pairs include an off-diagonal body match (e.g.
     // file_120 A body0 ↔ B body1 on trailing "style"), do not diagonal-zip —
     // that would force A body0↔B body0 ("This document" ordered-prefix thrash)
@@ -1219,6 +1220,65 @@ fn stamp_confetti_then_replace(
             let mut nested = lcs(dom, left, right, &residual_settings);
             stamp_seqs.append(&mut nested);
             return Some(stamp_seqs);
+        }
+        // M392 (file_36×file_37 residual ~66): short stamp residuals with one
+        // table each and **no** residual pairs. Insert-all/delete-all parks
+        // B's empty pure-I spacers after pure-D title (or drops them via fold)
+        // while Word pure-I's next leading (title+empties), pure-D's base
+        // leading (title+empties), then meshes tables. Peel leading non-table
+        // groups when body residual is near-disjoint.
+        {
+            let is_tbl = |u: &ComparisonUnit| -> bool {
+                as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table)
+            };
+            let peel_nontbl = |cu: &[ComparisonUnit]| -> usize {
+                let mut n = 0usize;
+                for u in cu {
+                    if is_tbl(u) {
+                        break;
+                    }
+                    n += 1;
+                }
+                n
+            };
+            let p1 = peel_nontbl(&rest1);
+            let p2 = peel_nontbl(&rest2);
+            let n_tbl1 = rest1.iter().filter(|u| is_tbl(u)).count();
+            let n_tbl2 = rest2.iter().filter(|u| is_tbl(u)).count();
+            let body_j = {
+                let s1 = significant_body_tokens(dom, &rest1);
+                let s2 = significant_body_tokens(dom, &rest2);
+                let inter = s1.intersection(&s2).count() as f64;
+                let union = s1.union(&s2).count() as f64;
+                if union == 0.0 {
+                    0.0
+                } else {
+                    inter / union
+                }
+            };
+            
+            if n_tbl1 == 1
+                && n_tbl2 == 1
+                && p1 >= 1
+                && p2 >= 1
+                && (2..=6).contains(&rest1.len())
+                && (2..=6).contains(&rest2.len())
+                && body_j + 1e-12 < 0.12
+            {
+                for u in &rest2[..p2] {
+                    stamp_seqs.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                }
+                for u in &rest1[..p1] {
+                    stamp_seqs.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                }
+                let left: Vec<ComparisonUnit> = rest1[p1..].to_vec();
+                let right: Vec<ComparisonUnit> = rest2[p2..].to_vec();
+                if !left.is_empty() || !right.is_empty() {
+                    let mut nested = lcs(dom, left, right, settings);
+                    stamp_seqs.append(&mut nested);
+                }
+                return Some(stamp_seqs);
+            }
         }
         // Word order: insert remaining next, then delete remaining base.
         if !rest2.is_empty() {
@@ -2383,6 +2443,37 @@ pub fn do_lcs_algorithm(
         })
     {
         len = 0;
+    }
+
+    // M392 (file_36×file_37 residual ~66): short unrelated demos false-anchor
+    // on empty paragraphs after tables peel into their own Equal window.
+    // Residual para-only windows then match B's leading empties to A's
+    // pre-table empty → E, wiping Word's pure-I spacers + pure-D empty
+    // (Word III… before pure-D "Contract Review"; engine jumps I→D). Void
+    // empty-only common runs in short windows when **significant body**
+    // tokens (excluding file_ stamps / tables' shared noise) are near-
+    // disjoint. Related short docs keep empty alignment.
+    if len > 0
+        && settings.merge_replaced_paragraphs
+        && cul1.len().max(cul2.len()) <= 16
+        && run_real_text_len(dom, &cul1[i1..i1 + len]) == 0
+    {
+        let s1 = significant_body_tokens(dom, &cul1);
+        let s2 = significant_body_tokens(dom, &cul2);
+        let j = if s1.is_empty() || s2.is_empty() {
+            0.0
+        } else {
+            let inter = s1.intersection(&s2).count() as f64;
+            let union = s1.union(&s2).count() as f64;
+            if union == 0.0 {
+                0.0
+            } else {
+                inter / union
+            }
+        };
+        if j + 1e-12 < 0.12 {
+            len = 0;
+        }
     }
 
     // M-ANCHOR attempt 3 (parity/_scratch/anchor_sensitivity.md): a SHORT,
@@ -6456,6 +6547,22 @@ pub fn find_common_at_beginning_and_end(
     if ccb != 0 && (ccb as f64) / (length_to_compare as f64) < settings.detail_threshold {
         ccb = 0;
     }
+    // M392: do not Equal-prefix on pure-empty runs when residual content is
+    // unrelated (file_36×37 B empties before pure-D title must stay pure-I).
+    if ccb != 0
+        && settings.merge_replaced_paragraphs
+        && n1.max(n2) <= 16
+        && run_real_text_len(dom, &cul1[..ccb]) == 0
+    {
+        let s1 = significant_body_tokens(dom, cul1);
+        let s2 = significant_body_tokens(dom, cul2);
+        let inter = s1.intersection(&s2).count() as f64;
+        let union = s1.union(&s2).count() as f64;
+        let j = if union == 0.0 { 0.0 } else { inter / union };
+        if j + 1e-12 < 0.12 {
+            ccb = 0;
+        }
+    }
     if ccb != 0 {
         let mut out = Vec::new();
         out.push(CorrelatedSequence::paired(
@@ -6556,6 +6663,23 @@ pub fn find_common_at_beginning_and_end(
     }
     if is_only_paragraph_mark {
         cce = 0; // WC010 guard (:5763)
+    }
+    // M392: do not Equal-suffix on pure-empty runs when residual content is
+    // unrelated. Trailing empty Equal collapsed A/B blanks into E and ate the
+    // pure-I spacers Word keeps before pure-D "Contract Review" (file_36×37).
+    if cce != 0
+        && settings.merge_replaced_paragraphs
+        && n1.max(n2) <= 16
+        && run_real_text_len(dom, &cul1[n1 - cce..]) == 0
+    {
+        let s1 = significant_body_tokens(dom, cul1);
+        let s2 = significant_body_tokens(dom, cul2);
+        let inter = s1.intersection(&s2).count() as f64;
+        let union = s1.union(&s2).count() as f64;
+        let j = if union == 0.0 { 0.0 } else { inter / union };
+        if j + 1e-12 < 0.12 {
+            cce = 0;
+        }
     }
     if cce == 0 {
         return None;

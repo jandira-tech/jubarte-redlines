@@ -657,6 +657,8 @@ pub fn compare_bodies_faithful_with_notes(
         // merge_replaced MIX-ed "something" into the del (~66 vs e3 ~97).
         // M86: whitespace pure-ins + following pure-del → mixed (file_88).
         finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        // M392: restore empty pure-I spacers before short pure-D title (file_36).
+        finalize::ensure_empty_pure_i_before_short_title_del(dom, root, settings, &mut id);
         // M85a: empty pure-ins before trailing pure-del residual (file_49).
         finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
         // M85b: last pure-del mark-only pPr → bare del (file_186/49).
@@ -724,6 +726,8 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::strip_trailing_empty_pure_ins(dom, root);
         // M341: fold before strip (see pre-merge order note above).
         finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        // M392: restore empty pure-I spacers before short pure-D title (file_36).
+        finalize::ensure_empty_pure_i_before_short_title_del(dom, root, settings, &mut id);
         finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
         // M105: pure-D short title + following MIX leading ins → Word subtitle
         // insert lands on title residual (file_7/5/130 document peel).

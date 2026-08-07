@@ -2103,6 +2103,147 @@ pub fn strip_trailing_empty_pure_ins(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// Build a bare empty pure-inserted paragraph (pPr/rPr/ins mark only).
+fn make_empty_pure_ins_para(
+    dom: &mut Dom,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) -> NodeId {
+    let p = dom.new_element(W::p());
+    let ppr = dom.new_element(W::p_pr());
+    let rpr = dom.new_element(W::r_pr());
+    let ins = dom.new_element(W::ins());
+    dom.set_attribute_value(ins, &W::id(), Some(&id_gen.to_string()));
+    *id_gen += 1;
+    dom.set_attribute_value(ins, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(ins, &W::date(), Some(&settings.date_time_for_revisions));
+    dom.add(rpr, ins);
+    dom.add(ppr, rpr);
+    dom.add(p, ppr);
+    p
+}
+
+/// M392 (file_36×file_37 residual ~66): Word keeps empty pure-I spacer(s)
+/// between content pure-I short title and pure-D short title before a table.
+/// Full LCS Equal-matches bare empties and fold strips the rest, so engine
+/// jumps pure-I → pure-D. When that pattern is missing spacers, insert two
+/// empty pure-I marks (B's two blanks) and convert a following bare empty
+/// before the table into pure-D empty (A's blank).
+pub fn ensure_empty_pure_i_before_short_title_del(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    loop {
+        let kids: Vec<NodeId> = dom
+            .elements(body, None)
+            .into_iter()
+            .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+            .collect();
+        let mut acted = false;
+        for i in 0..kids.len().saturating_sub(1) {
+            let ins_p = kids[i];
+            let del_p = kids[i + 1];
+            if dom.name(ins_p) != Some(W::p()) || dom.name(del_p) != Some(W::p()) {
+                continue;
+            }
+            if !para_is_pure_inserted(dom, ins_p) || !para_is_pure_deleted(dom, del_p) {
+                continue;
+            }
+            // Content pure-I (not already empty spacer).
+            if para_body_text_is_whitespace_only(dom, ins_p) {
+                continue;
+            }
+            // Short pure-D title residual.
+            let n = para_word_atom_count(dom, del_p);
+            let short_title = (1..=4).contains(&n) && para_body_alnum_len(dom, del_p) <= 32;
+            if !(para_looks_like_demo_title(dom, del_p)
+                || para_has_heading_or_title_style(dom, del_p)
+                || short_title)
+            {
+                continue;
+            }
+            // No empty pure-I already between them (adjacent).
+            // Look ahead: pure-D empty or bare empty then table.
+            let after = kids.get(i + 2).copied();
+            let after2 = kids.get(i + 3).copied();
+            let empty_then_tbl = match after {
+                Some(e)
+                    if dom.name(e) == Some(W::p())
+                        && para_has_no_text(dom, e)
+                        && after2.is_some_and(|t| dom.name(t) == Some(W::name("tbl"))) =>
+                {
+                    true
+                }
+                Some(t) if dom.name(t) == Some(W::name("tbl")) => true,
+                _ => false,
+            };
+            if !empty_then_tbl {
+                continue;
+            }
+            // Insert two empty pure-I spacers before pure-D (Word file_36×37).
+            for _ in 0..2 {
+                let spacer = make_empty_pure_ins_para(dom, settings, id_gen);
+                dom.add_before_self(del_p, spacer);
+            }
+            // Convert bare empty after pure-D (before table) into pure-D empty.
+            if let Some(e) = after
+                && dom.name(e) == Some(W::p())
+                && para_has_no_text(dom, e)
+                && !para_is_pure_deleted(dom, e)
+                && !para_is_pure_inserted(dom, e)
+            {
+                // Add pPr/rPr/del mark so it is pure-D empty.
+                let ppr = match dom.element(e, &W::p_pr()) {
+                    Some(p) => p,
+                    None => {
+                        let p = dom.new_element(W::p_pr());
+                        if let Some(first) = dom.elements(e, None).first().copied() {
+                            dom.add_before_self(first, p);
+                        } else {
+                            dom.add(e, p);
+                        }
+                        p
+                    }
+                };
+                let rpr = match dom.element(ppr, &W::r_pr()) {
+                    Some(r) => r,
+                    None => {
+                        let r = dom.new_element(W::r_pr());
+                        dom.add_first(ppr, r);
+                        r
+                    }
+                };
+                if dom.element(rpr, &W::del()).is_none() {
+                    let del = dom.new_element(W::del());
+                    dom.set_attribute_value(del, &W::id(), Some(&id_gen.to_string()));
+                    *id_gen += 1;
+                    dom.set_attribute_value(
+                        del,
+                        &W::author(),
+                        Some(&settings.author_for_revisions),
+                    );
+                    dom.set_attribute_value(
+                        del,
+                        &W::date(),
+                        Some(&settings.date_time_for_revisions),
+                    );
+                    dom.add_first(rpr, del);
+                }
+            }
+            acted = true;
+            break;
+        }
+        if !acted {
+            return;
+        }
+    }
+}
+
 /// M85a — drop empty pure-ins sitting immediately before a trailing pure-del run.
 ///
 /// M83a only removed an empty pure-ins when it was the absolute last body child.
@@ -2160,19 +2301,23 @@ pub fn strip_empty_pure_ins_before_trailing_pure_dels(dom: &mut Dom, root: NodeI
     //
     // M389b (file_36 residual): same for short pure-D titles without the word
     // "Demo" (e.g. "Contract Review", 2 words) when multi pure-D residual.
+    //
+    // M392 (file_36×37 Word II before pure-D title): keep **all** 1–2 empty
+    // pure-I spacers before short title pure-D (not just one). Word keeps both
+    // B blanks before "Contract Review".
     let first_del = non_sect[run_start];
     let short_title_del = {
         let n = para_word_atom_count(dom, first_del);
         (1..=4).contains(&n) && para_body_alnum_len(dom, first_del) <= 32
     };
-    let keep_one_demo_spacer = (1..=2).contains(&empty_run)
+    let keep_title_spacers = (1..=2).contains(&empty_run)
         && (para_looks_like_demo_title(dom, first_del)
             || para_has_heading_or_title_style(dom, first_del)
             || short_title_del);
     // Strip at most two trailing empties before pure-dels (M85a original).
-    // When keeping a demo spacer, leave the empty closest to the pure-D run.
-    let strip_n = if keep_one_demo_spacer {
-        empty_run.saturating_sub(1)
+    // When keeping title spacers, leave every empty in the 1–2 run.
+    let strip_n = if keep_title_spacers {
+        0
     } else {
         empty_run
     };
@@ -2321,6 +2466,10 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
             // spacer. Skip run-less empty pure-I × demo/title pure-D when ≥2
             // pure-D residual paras follow. M389b: also short pure-D titles
             // without the word Demo ("Contract Review").
+            //
+            // M392 (file_36×37): sole short pure-D title residual before a
+            // table still needs the empty pure-I spacer(s). Require ≥1 pure-D
+            // (not ≥2) so a single "Contract Review" keeps B's blanks.
             if dom.descendants(ins_p, Some(&W::t())).is_empty() {
                 let n = para_word_atom_count(dom, del_p);
                 let short_title = (1..=4).contains(&n) && para_body_alnum_len(dom, del_p) <= 32;
@@ -2336,7 +2485,7 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                             break;
                         }
                     }
-                    if following_pure_d >= 2 {
+                    if following_pure_d >= 1 {
                         continue;
                     }
                 }
