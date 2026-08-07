@@ -5016,6 +5016,9 @@ pub fn detect_unrelated_sources_word_mode(
             let left_c = contentful(cu1);
             let right_c = contentful(cu2);
             if left_c.len() >= 2 && right_c.len() >= 2 {
+                // First significant token (≥3 chars). bold_vals×color: "This"
+                // vs "OOXML" → peel. italic×rFonts both start "OOXML" → keep
+                // flat free-mesh (Word MIX titles; peel thrased pagefair).
                 let first_tok = |u: &ComparisonUnit| -> Option<String> {
                     para_text_token_list(dom, u)
                         .into_iter()
