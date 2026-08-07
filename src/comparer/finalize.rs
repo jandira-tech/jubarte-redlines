@@ -3131,6 +3131,9 @@ pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
 /// line=276 + ind from B); (2) if pure-I is followed by an empty pure-I spacer,
 /// move that spacer after the MIX carrier (Word interleaves empty pure-I
 /// between MIX a/b).
+///
+/// M375: free-mesh shared trailing label as EQ — Word is
+/// `del "Lvl 1 – " + EQ "a" + ins " "` not `ins "a " + del "Lvl 1 – a"`.
 fn fold_short_label_ins_into_del(dom: &mut Dom, ip: NodeId, dp: NodeId) {
     // Capture empty pure-I sibling after the short label (B: a, empty, b, empty, 3).
     let empty_after = dom.parent(ip).and_then(|parent| {
@@ -3207,6 +3210,11 @@ fn fold_short_label_ins_into_del(dom: &mut Dom, ip: NodeId, dp: NodeId) {
         dom.remove(ip);
     }
 
+    // M375: Word free-meshes shared trailing label as EQ (del prefix + live
+    // label + ins remainder). Must run after body merge so both streams sit
+    // on `dp`. reorder_replacements already ran earlier — del/eq/ins sticks.
+    mesh_short_label_shared_eq(dom, dp);
+
     // Move empty pure-I spacer to immediately after MIX carrier (Word shape).
     if let Some(emp) = empty_after
         && dom.parent(emp).is_some()
@@ -3239,6 +3247,286 @@ fn fold_short_label_ins_into_del(dom: &mut Dom, ip: NodeId, dp: NodeId) {
             dom.add(parent, emp);
         }
     }
+}
+
+/// M375 — residual short-label MIX free-meshes the shared trailing label as
+/// unrevised EQ. Word ordered×sublist: `del "Lvl 1 – " + EQ "a" + ins " "`
+/// (not `ins "a " + del "Lvl 1 – a"`). Skips when last del token ≠ ins label
+/// (e.g. pure-I "3" × pure-D "Lvl 2 – i" keeps full ins+del zip).
+fn mesh_short_label_shared_eq(dom: &mut Dom, p: NodeId) {
+    // Collect ins / del body text (revision-aware).
+    let mut ins_text = String::new();
+    for ins in dom.descendants(p, Some(&W::ins())) {
+        for t in dom.descendants(ins, Some(&W::t())) {
+            ins_text.push_str(&dom.value_str(t));
+        }
+    }
+    let mut del_text = String::new();
+    for del in dom.descendants(p, Some(&W::del())) {
+        for t in dom.descendants(del, Some(&W::name("delText"))) {
+            del_text.push_str(&dom.value_str(t));
+        }
+    }
+    if ins_text.is_empty() || del_text.is_empty() {
+        return;
+    }
+    let label: String = ins_text
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if label.is_empty() || label.len() > 2 {
+        return;
+    }
+    let del_toks: Vec<String> = del_text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_ascii_lowercase())
+        .collect();
+    // Same ≥3-token gate as residual zip ("Lvl 1 a"); last token must match.
+    if del_toks.len() < 3 || del_toks.last().is_none_or(|t| t != &label) {
+        return;
+    }
+
+    // Preserve original-cased label from the del tail for EQ.
+    let Some(eq_label) = trailing_alnum_token(&del_text) else {
+        return;
+    };
+    if !eq_label.eq_ignore_ascii_case(&label) {
+        return;
+    }
+
+    // 1) Strip trailing label from delText leaves (from the end).
+    // Prefer single-leaf path: whole delText ends with the label token.
+    let del_texts: Vec<NodeId> = dom
+        .descendants(p, Some(&W::name("delText")))
+        .into_iter()
+        .collect();
+    let mut last_del_anchor: Option<NodeId> = None;
+    let mut stripped = false;
+    if let Some(&dt) = del_texts.last() {
+        let t = dom.value_str(dt).into_owned();
+        if let Some(prefix) = strip_trailing_alnum_token(&t, &eq_label) {
+            dom.set_value(dt, &prefix);
+            if prefix.starts_with(' ') || prefix.ends_with(' ') {
+                dom.set_attribute_value(dt, &XNamespace::xml().name("space"), Some("preserve"));
+            }
+            last_del_anchor = Some(dt);
+            stripped = true;
+        }
+    }
+    if !stripped {
+        // Multi-leaf: consume label chars from the end across leaves.
+        let mut remain = eq_label.len();
+        for &dt in del_texts.iter().rev() {
+            if remain == 0 {
+                break;
+            }
+            let t = dom.value_str(dt).into_owned();
+            if t.len() <= remain {
+                remain -= t.len();
+                dom.set_value(dt, "");
+                last_del_anchor = Some(dt);
+            } else {
+                let keep = t.len() - remain;
+                let tail = &t[keep..];
+                if !tail.eq_ignore_ascii_case(&eq_label) {
+                    return;
+                }
+                let new_t = t[..keep].to_string();
+                dom.set_value(dt, &new_t);
+                if new_t.starts_with(' ') || new_t.ends_with(' ') {
+                    dom.set_attribute_value(dt, &XNamespace::xml().name("space"), Some("preserve"));
+                }
+                remain = 0;
+                last_del_anchor = Some(dt);
+            }
+        }
+        if remain != 0 {
+            return;
+        }
+    }
+
+    // 2) Strip leading alnum label from ins `w:t` leaves (document order).
+    let mut strip_ins = label.len();
+    for ins in dom.descendants(p, Some(&W::ins())) {
+        for t in dom.descendants(ins, Some(&W::t())) {
+            if strip_ins == 0 {
+                break;
+            }
+            let v = dom.value_str(t).into_owned();
+            let mut chars: Vec<char> = v.chars().collect();
+            let mut i = 0usize;
+            while i < chars.len() && strip_ins > 0 {
+                if chars[i].is_alphanumeric() {
+                    chars.remove(i);
+                    strip_ins -= 1;
+                } else if chars[i].is_whitespace() {
+                    // keep whitespace; only strip alnum label chars
+                    i += 1;
+                } else {
+                    i += 1;
+                }
+            }
+            let new_v: String = chars.into_iter().collect();
+            dom.set_value(t, &new_v);
+            if new_v.starts_with(' ') || new_v.ends_with(' ') {
+                dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+            }
+        }
+        if strip_ins == 0 {
+            break;
+        }
+    }
+
+    // 3) Anchor EQ after the del wrapper that held the label.
+    let mut anchor = last_del_anchor.unwrap_or(p);
+    while let Some(par) = dom.parent(anchor) {
+        if dom.name(par) == Some(W::del()) {
+            anchor = par;
+            break;
+        }
+        anchor = par;
+        if dom.name(par) == Some(W::p()) {
+            break;
+        }
+    }
+    let eq_r = dom.new_element(W::r());
+    let eq_t = dom.new_element(W::t());
+    dom.add_text(eq_t, &eq_label);
+    dom.add(eq_r, eq_t);
+    if dom.name(anchor) == Some(W::del()) {
+        dom.add_after_self(anchor, eq_r);
+    } else {
+        // Fallback: before first remaining ins, else append.
+        if let Some(ins) = dom
+            .elements(p, None)
+            .into_iter()
+            .find(|&c| dom.name(c) == Some(W::ins()))
+        {
+            dom.add_before_self(ins, eq_r);
+        } else {
+            dom.add(p, eq_r);
+        }
+    }
+
+    // 4) Word order: del → EQ → ins. Body may still be ins-first from fold.
+    // Move every leading w:ins after the EQ run (preserving ins order).
+    let kids: Vec<NodeId> = dom.elements(p, None);
+    let mut leading_ins: Vec<NodeId> = Vec::new();
+    for &c in &kids {
+        if dom.name(c) == Some(W::p_pr()) {
+            continue;
+        }
+        if dom.name(c) == Some(W::ins()) {
+            leading_ins.push(c);
+        } else {
+            break; // stop at first non-ins body child
+        }
+    }
+    if !leading_ins.is_empty() && dom.parent(eq_r).is_some() {
+        // Find node after eq_r among siblings to insert before, else append.
+        let parent = dom.parent(eq_r).unwrap();
+        let sibs: Vec<NodeId> = dom.elements(parent, None);
+        let after_eq = sibs
+            .iter()
+            .position(|&s| s == eq_r)
+            .and_then(|i| sibs.get(i + 1).copied());
+        for ins in leading_ins {
+            if dom.parent(ins).is_none() {
+                continue;
+            }
+            // Skip if already after eq_r.
+            let sibs_now: Vec<NodeId> = dom.elements(parent, None);
+            let ipos = sibs_now.iter().position(|&s| s == ins);
+            let epos = sibs_now.iter().position(|&s| s == eq_r);
+            if let (Some(i), Some(e)) = (ipos, epos)
+                && i > e
+            {
+                continue;
+            }
+            dom.remove(ins);
+            if let Some(next) = after_eq.filter(|&n| dom.parent(n).is_some() && n != ins) {
+                dom.add_before_self(next, ins);
+            } else {
+                dom.add(parent, ins);
+            }
+        }
+    }
+
+    // Drop empty `w:t` leaves and emptied runs / ins wrappers after strip.
+    for t in dom.descendants(p, Some(&W::t())) {
+        if dom.parent(t).is_some() && dom.value_str(t).is_empty() {
+            dom.remove(t);
+        }
+    }
+    for r in dom.descendants(p, Some(&W::r())) {
+        if dom.parent(r).is_none() {
+            continue;
+        }
+        // Empty run under ins (no t/delText/br/tab… content props only).
+        let has_content = dom.elements(r, None).into_iter().any(|c| {
+            let n = dom.name(c);
+            n != Some(W::r_pr()) && n.is_some()
+        });
+        if !has_content {
+            dom.remove(r);
+        }
+    }
+    for ins in dom.descendants(p, Some(&W::ins())) {
+        if dom.parent(ins).is_none() {
+            continue;
+        }
+        let mut any = false;
+        for t in dom.descendants(ins, Some(&W::t())) {
+            if !dom.value_str(t).is_empty() {
+                any = true;
+                break;
+            }
+        }
+        if !any {
+            dom.remove(ins);
+        }
+    }
+}
+
+/// Last alphanumeric token of `text` with original casing (for EQ peel).
+fn trailing_alnum_token(text: &str) -> Option<String> {
+    let mut last = None;
+    let mut cur = String::new();
+    for c in text.chars() {
+        if c.is_alphanumeric() {
+            cur.push(c);
+        } else if !cur.is_empty() {
+            last = Some(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        last = Some(cur);
+    }
+    last
+}
+
+/// If `text` ends with alnum token matching `label` (case-insensitive), return
+/// the prefix with that token removed (separators before it kept).
+fn strip_trailing_alnum_token(text: &str, label: &str) -> Option<String> {
+    let tok = trailing_alnum_token(text)?;
+    if !tok.eq_ignore_ascii_case(label) {
+        return None;
+    }
+    // Byte start of the last alnum run.
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut i = chars.len();
+    while i > 0 && !chars[i - 1].1.is_alphanumeric() {
+        i -= 1;
+    }
+    while i > 0 && chars[i - 1].1.is_alphanumeric() {
+        i -= 1;
+    }
+    if i >= chars.len() {
+        return None;
+    }
+    Some(text[..chars[i].0].to_string())
 }
 
 /// True when `w:pPr/w:rPr` carries a paragraph-mark revision (`w:del`/`w:ins`).
