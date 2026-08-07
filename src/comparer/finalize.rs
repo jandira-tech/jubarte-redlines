@@ -1024,6 +1024,58 @@ pub fn sanitize_sdt_properties(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M390 (missing_sectpr×fields_test −16.3): Word Compare flattens content
+/// controls (`w:sdt`) to their `sdtContent` children — Word redline has **0**
+/// SDTs; we kept 9 and LO thrash pagefair (content-control chrome vs plain
+/// text). Unwrap in Word mode, deepest first, like
+/// [`unwrap_hyperlinks_to_styled_runs`].
+pub fn unwrap_content_controls(dom: &mut Dom, root: NodeId) {
+    loop {
+        let sdts: Vec<NodeId> = dom.descendants(root, Some(&W::sdt()));
+        if sdts.is_empty() {
+            break;
+        }
+        // Prefer leaf SDTs (no nested w:sdt) so nested controls unwrap safely.
+        let mut leaf: Vec<NodeId> = sdts
+            .iter()
+            .copied()
+            .filter(|&s| {
+                dom.descendants(s, Some(&W::sdt()))
+                    .into_iter()
+                    .all(|n| n == s)
+            })
+            .collect();
+        if leaf.is_empty() {
+            // Nested only — force outermost (descendants list is pre-order;
+            // take last = deepest-ish fallback).
+            leaf = sdts;
+        }
+        let mut progressed = false;
+        for sdt in leaf {
+            if dom.parent(sdt).is_none() {
+                continue;
+            }
+            let kids: Vec<NodeId> = if let Some(content) = dom.element(sdt, &W::sdt_content()) {
+                dom.nodes(content)
+            } else {
+                Vec::new()
+            };
+            // Reparent content children before the sdt, then drop the wrapper.
+            for k in kids {
+                if dom.parent(k).is_some() {
+                    dom.remove(k);
+                    dom.add_before_self(sdt, k);
+                }
+            }
+            dom.remove(sdt);
+            progressed = true;
+        }
+        if !progressed {
+            break;
+        }
+    }
+}
+
 /// True if every namespace prefix listed in a `mc:Choice`'s `@Requires` is bound by
 /// an in-scope `xmlns:*` declaration. An absent/empty `@Requires` is vacuously true
 /// (the schema requires it, but be lenient). The `@Requires` attribute is unprefixed
@@ -1282,13 +1334,21 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
         // LO PDF thrash vs Word-rendered oracle; pre-M353 (27c) stripped them.
         // M353 pStyle keep is superseded for pure demo-default (before empty
         // is required to enter this strip path anyway).
+        //
+        // M391 (missing_sectpr×fields_test −16.3 residual): Word keeps pure-I
+        // line=276 when the para also has non-default `w:ind` (Product line
+        // right=-30). Old M370 strip dropped it with multi-word body.
         let line_ok = line == "276";
         let after_ok = after.is_empty() || after == "200";
         let before_ok = before.is_empty();
         let rule_ok = rule.is_empty() || rule == "auto";
         let has_pstyle = dom.element(ppr, &W::name("pStyle")).is_some();
+        let has_ind = dom.element(ppr, &W::name("ind")).is_some();
         let pure_i = para_is_pure_inserted(dom, p);
-        let keep = pure_i && !has_pstyle && after.is_empty() && para_word_atom_count(dom, p) <= 1;
+        let keep = pure_i
+            && !has_pstyle
+            && after.is_empty()
+            && (para_word_atom_count(dom, p) <= 1 || has_ind);
         if line_ok && after_ok && before_ok && rule_ok && !keep {
             to_remove.push(sp);
             continue;
