@@ -4990,8 +4990,23 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // list label pure-D "First item" (2 words) as MIX. Skip only
                 // when pure-D list item has ≥3 word-atoms (soft-break multi-
                 // word list content); 1–2 word list labels still fold.
+                //
+                // M387 (broken_list×list_spacer −15.9): **list** pure-I
+                // ("14.11Survival of Terms p3", StandardL1+numPr) free-meshes
+                // multi-word list pure-D "Item 1. Text 1." in Word (MIX). Skip
+                // only non-list long pure-I prose × multi-word list pure-D.
                 {
                     let ins_long_prose = para_body_alnum_len(dom, last_ins) >= 20;
+                    let ins_list = para_has_live_numpr(dom, last_ins)
+                        || dom.element(last_ins, &W::p_pr()).is_some_and(|ip| {
+                            dom.element(ip, &W::name("pStyle")).is_some_and(|ps| {
+                                let v = dom
+                                    .attribute(ps, &W::val())
+                                    .unwrap_or("")
+                                    .to_ascii_lowercase();
+                                v.starts_with("list") || v.contains("standardl")
+                            })
+                        });
                     let del_list = para_has_live_numpr(dom, d)
                         || dom.element(d, &W::p_pr()).is_some_and(|dp| {
                             dom.element(dp, &W::name("pStyle")).is_some_and(|ps| {
@@ -5001,7 +5016,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                             })
                         });
                     let del_multi_word = para_word_atom_count(dom, d) >= 3;
-                    if ins_long_prose && del_list && del_multi_word {
+                    if ins_long_prose && del_list && del_multi_word && !ins_list {
                         continue;
                     }
                 }
