@@ -4932,6 +4932,11 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // ("Item" + soft-break "Sub paragraph"…). Word keeps pure-I
                 // then pure-D ListParagraph (no MIX). Short pure-D residuals
                 // ("a", file_55) still fold + adopt numPr (M88).
+                //
+                // M382 (file_45×file_46 −23): long pure-I body free-meshes short
+                // list label pure-D "First item" (2 words) as MIX. Skip only
+                // when pure-D list item has ≥3 word-atoms (soft-break multi-
+                // word list content); 1–2 word list labels still fold.
                 {
                     let ins_long_prose = para_body_alnum_len(dom, last_ins) >= 20;
                     let del_list = para_has_live_numpr(dom, d)
@@ -4942,7 +4947,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                                     .eq_ignore_ascii_case("ListParagraph")
                             })
                         });
-                    let del_multi_word = para_word_atom_count(dom, d) > 1;
+                    let del_multi_word = para_word_atom_count(dom, d) >= 3;
                     if ins_long_prose && del_list && del_multi_word {
                         continue;
                     }
