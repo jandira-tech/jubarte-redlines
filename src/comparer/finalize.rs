@@ -3866,6 +3866,26 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         continue;
                     }
                 }
+                // M363 (lists_sub×word_mixed −8.6): long pure-I prose ("Normal
+                // text, then bold italic…") × multi-word pure-D list item
+                // ("Item" + soft-break "Sub paragraph"…). Word keeps pure-I
+                // then pure-D ListParagraph (no MIX). Short pure-D residuals
+                // ("a", file_55) still fold + adopt numPr (M88).
+                {
+                    let ins_long_prose = para_body_alnum_len(dom, last_ins) >= 20;
+                    let del_list = para_has_live_numpr(dom, d)
+                        || dom.element(d, &W::p_pr()).is_some_and(|dp| {
+                            dom.element(dp, &W::name("pStyle")).is_some_and(|ps| {
+                                dom.attribute(ps, &W::val())
+                                    .unwrap_or("")
+                                    .eq_ignore_ascii_case("ListParagraph")
+                            })
+                        });
+                    let del_multi_word = para_word_atom_count(dom, d) > 1;
+                    if ins_long_prose && del_list && del_multi_word {
+                        continue;
+                    }
+                }
                 // Strip para-mark revision from the carrier (Word: bare mixed p)
                 // unless M88 adopts Deleted structural pPr (numPr) with del mark.
                 let del_structural = dom
@@ -3897,9 +3917,16 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     })
                 });
                 let del_heading = para_has_heading_or_title_style(dom, d);
-                let adopt_del_ppr = (del_structural && !ins_structural)
-                    || (ins_jc_only && del_has_spacing)
-                    || (del_heading && ins_list_style);
+                // Defense: if a long-prose×list fold still happens, never adopt
+                // ListParagraph onto the prose carrier (M363 skip-fold is primary).
+                let ins_long_prose = para_body_alnum_len(dom, last_ins) >= 20;
+                let del_list_multi = del_structural
+                    && para_has_live_numpr(dom, d)
+                    && para_word_atom_count(dom, d) > 1;
+                let adopt_del_ppr =
+                    (del_structural && !ins_structural && !(ins_long_prose && del_list_multi))
+                        || (ins_jc_only && del_has_spacing)
+                        || (del_heading && ins_list_style);
                 // M218: mark-only empty pure-D fold — Word parks the deleted
                 // pilcrow on the pure-I carrier (contract_review MIX + mark_del).
                 // Do not strip to a bare pure-I; adopt the empty del's pPr/rPr/del.
