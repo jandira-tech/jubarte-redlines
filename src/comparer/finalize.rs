@@ -3013,10 +3013,9 @@ pub fn merge_replaced_paragraphs(dom: &mut Dom, root: NodeId, comparer_author: &
 /// M369 (ordered_list×sublist −3.5): residual short-label pure-I ("a"/"b"/"3")
 /// × pure-D list item ending with the same token ("Lvl 1 – a"). Word free-
 /// meshes those pairs (MIX); wholesale pure-I/D leaves them separate.
-///
-/// M372: Word keeps **Inserted** live list pPr (numPr/spacing from pure-I "a")
-/// and parks Deleted ListParagraph under `pPrChange`. Old path kept pure-D
-/// pPr live (−2.2 residual thrash). Coarse whole-para fold — not free word-LCS.
+/// Greedy order-preserving zip: fold pure-I body (ins) into matching pure-D
+/// carrier (list pPr kept). Coarse whole-para fold — not free word-LCS.
+/// (M372 Inserted-live pPr adopt was tried and LO-regressed; body zip only.)
 pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -3123,78 +3122,12 @@ pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Fold pure-I short label into pure-D list residual. Prefer Inserted structural
-/// pPr live (numPr/spacing from pure-I) + Deleted pPr under `pPrChange` (Word
-/// ordered×sublist MIX). Fall back to pure-D pPr when pure-I has no structure.
+/// Fold pure-I short label into pure-D list residual. Keep pure-D list pPr
+/// (ListParagraph+numPr) — M372 Inserted-live pPr adopt regressed LO pagefair
+/// 52.7→51.2 (numId renumber drift vs Word). Body-only zip still recovers
+/// residual thrash vs pure-I/D wholesale.
 fn fold_short_label_ins_into_del(dom: &mut Dom, ip: NodeId, dp: NodeId) {
-    // Author/date from pure-I ins for pPrChange.
-    let (author, date) = {
-        let mut a = "Redline".to_string();
-        let mut d = "1970-01-01T00:00:00Z".to_string();
-        if let Some(ins) = dom.descendants(ip, Some(&W::ins())).first().copied() {
-            if let Some(v) = dom.attribute(ins, &W::author()) {
-                a = v.to_string();
-            }
-            if let Some(v) = dom.attribute(ins, &W::date()) {
-                d = v.to_string();
-            }
-        }
-        (a, d)
-    };
-    let ins_structural = dom
-        .element(ip, &W::p_pr())
-        .is_some_and(|ippr| ppr_has_structural_props(dom, ippr));
-    if ins_structural {
-        // Word: live Inserted pPr + pPrChange(Deleted old).
-        let old_ppr = dom.element(dp, &W::p_pr()).map(|p| dom.clone_subtree(p));
-        if let Some(dppr) = dom.element(dp, &W::p_pr()) {
-            dom.remove(dppr);
-        }
-        if let Some(ippr) = dom.element(ip, &W::p_pr()) {
-            let live = dom.clone_subtree(ippr);
-            // Strip mark-only ins/del under rPr on live shell.
-            if let Some(rpr) = dom.element(live, &W::r_pr()) {
-                for child in dom.elements(rpr, None) {
-                    let cn = dom.name(child).unwrap();
-                    if cn == W::ins() || cn == W::del() {
-                        dom.remove(child);
-                    }
-                }
-                if dom.elements(rpr, None).is_empty() {
-                    dom.remove(rpr);
-                }
-            }
-            if let Some(old) = old_ppr {
-                // Strip mark del under old rPr.
-                if let Some(rpr) = dom.element(old, &W::r_pr()) {
-                    for child in dom.elements(rpr, None) {
-                        let cn = dom.name(child).unwrap();
-                        if cn == W::ins() || cn == W::del() {
-                            dom.remove(child);
-                        }
-                    }
-                    if dom.elements(rpr, None).is_empty() {
-                        dom.remove(rpr);
-                    }
-                }
-                if dom.element(live, &W::name("pPrChange")).is_none() {
-                    let chg = dom.new_element(W::name("pPrChange"));
-                    dom.set_attribute_value(chg, &W::author(), Some(&author));
-                    dom.set_attribute_value(chg, &W::date(), Some(&date));
-                    dom.set_attribute_value(chg, &W::id(), Some("0"));
-                    dom.add(chg, old);
-                    dom.add(live, chg);
-                }
-            }
-            // Insert live pPr first on pure-D carrier.
-            if let Some(first) = dom.elements(dp, None).first().copied() {
-                dom.add_before_self(first, live);
-            } else {
-                dom.add(dp, live);
-            }
-        }
-    }
-    // Move pure-I body (ins) before pure-D body.
+    // Move pure-I body (ins) before pure-D body; pure-D keeps list pPr.
     let ins_kids: Vec<NodeId> = dom
         .elements(ip, None)
         .into_iter()

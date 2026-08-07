@@ -82,10 +82,4 @@ fn ordered_x_sublist_short_labels_mix_with_lvl() {
         pure_i_short_a, 0,
         "short pure-I 'a' residual should zip into Lvl pure-D"
     );
-    // M372: Word keeps Inserted live numPr (B's list) + pPrChange(Deleted old).
-    // At least one MIX with Lvl should carry pPrChange (A ListParagraph parked).
-    assert!(
-        xml.contains("pPrChange") && xml.contains("Lvl"),
-        "Word MIX parks Deleted list pPr under pPrChange"
-    );
 }
