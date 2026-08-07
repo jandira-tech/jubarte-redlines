@@ -96,7 +96,6 @@ fn file82_x_83_empty_pure_i_before_title_demo_del() {
     let (has_ins, has_del, text) = &paras[ti - 1];
     assert!(
         *has_ins && !*has_del && text.trim().is_empty(),
-        "Word keeps empty pure-I spacer before pure-D demo title; prev={has_ins}/{has_del}/{:?}",
-        text
+        "Word keeps empty pure-I spacer before pure-D demo title; prev={has_ins}/{has_del}/{text:?}"
     );
 }
