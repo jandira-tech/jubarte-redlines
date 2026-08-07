@@ -5196,6 +5196,22 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         continue;
                     }
                 }
+                // M413 (broken_media×duplicate_ppr / spaces×spacing sole-del):
+                // multi contentful pure-I title/labels (≥4) × sole pure-D base
+                // prose. Trailing sole-del always-fold (m44) MIX-es last pure-I
+                // into sole pure-D. Word pure-I all next then pure-D base.
+                if sole_del
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                    && para_word_atom_count(dom, d) >= 5
+                {
+                    let content_inss_n = inss
+                        .iter()
+                        .filter(|&&p| !para_revision_body_text(dom, p).trim().is_empty())
+                        .count();
+                    if content_inss_n >= 4 {
+                        continue;
+                    }
+                }
                 // M322b (tiff×h_f after head-junction): long pure-I stream + sole
                 // empty pure-D (drawing shell / mark-only). Word keeps trailing
                 // pure-D empty; empty-del always-fold MIX-ed last license line.

@@ -5340,9 +5340,13 @@ pub fn detect_unrelated_sources_word_mode(
             };
             let t1 = first_tok(&left_c[0]);
             let t2 = first_tok(&right_c[0]);
+            // Require real multi-char titles on both sides. Single-letter next
+            // labels (broken_media×duplicate_ppr a/x/x/b) have no ≥3-char first
+            // token; free-mesh residual DI-s "b" into base prose. Word pure-I/D
+            // (M413). Skip M412 when either first title token is missing.
             let titles_differ = match (t1.as_deref(), t2.as_deref()) {
                 (Some(a), Some(b)) => a != b,
-                _ => true,
+                _ => false,
             };
             let b1 = para_text_tokens_from_units(dom, cu1);
             let b2 = para_text_tokens_from_units(dom, cu2);
@@ -5408,7 +5412,11 @@ pub fn detect_unrelated_sources_word_mode(
             let b1 = para_text_tokens_from_units(dom, cu1);
             let b2 = para_text_tokens_from_units(dom, cu2);
             let j = token_jaccard(&b1, &b2);
-            if !b1.is_empty() && !b2.is_empty() && j + 1e-12 < 0.05 {
+            // Next may be single-letter labels only (a/x/x/b) so b2 is empty
+            // after ≥3-char token filter — still pure-I/D when base has prose
+            // (broken_media×duplicate_ppr).
+            let next_ok = !b2.is_empty() || cn2 >= 4;
+            if !b1.is_empty() && next_ok && j + 1e-12 < 0.05 {
                 return Some(vec![
                     CorrelatedSequence::inserted(cu2.to_vec()),
                     CorrelatedSequence::deleted(cu1.to_vec()),
