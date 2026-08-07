@@ -2,17 +2,12 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M354 (planned) — tiff×h_f first title MIX keeps next-side mark rPr.
+//! M354/M361 — tiff×h_f first title MIX.
 //!
-//! Word free-meshes "TIFF test document" × "This is a document with:" and
-//! keeps next Arial/sz=32 on the paragraph mark with `rPrChange(empty old)`.
-//! Wholesale pure-I/D drops the pPr (pagefair thrash 41→37).
-//!
-//! Safer than skipping M315 (that thrash-ed hummingbird): adopt next mark
-//! rPr onto the MIX title paragraph when pPr is missing.
-//!
-//! Status: RED against HEAD ec66729 until implement. Do not flip to green
-//! with a hard-coded skip — fix produce/finalize on the real path.
+//! Word keeps next Arial/sz=32 on the paragraph mark with `rPrChange(empty
+//! old)`. Live pPr fonts without empty-old thrash LO pagefair 41→37 vs 27c
+//! bare MIX (fonts still on ins runs). M361 restores bare MIX after fold
+//! when pPr/rPr only carried ins/del marks — run-level rPr retains fonts.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -55,10 +50,16 @@ fn tiff_x_h_f_first_mix_has_mark_rpr() {
         "first title is MIX (I next + D base); got {}",
         &first_p[..first_p.len().min(180)]
     );
-    // Word keeps next mark rPr (Arial/sz32) under pPr, not only on the ins run.
+    // M361: bare MIX after fold (no mark-only pPr). Fonts stay on ins runs.
+    // Live pPr fonts alone thrash LO pagefair 41→37 vs 27c.
     assert!(
-        first_p.contains("<w:pPr")
-            && (first_p.contains("w:val=\"32\"") || first_p.contains("Arial")),
-        "MIX title must have pPr with next mark rPr (Word rPrChange path); pure-I/D thrash drops pPr"
+        first_p.contains("Arial") || first_p.contains("w:val=\"32\""),
+        "ins run must keep next fonts/sz even if pPr mark stripped; got {}",
+        &first_p[..first_p.len().min(200)]
+    );
+    // pPr/rPr must not retain live fonts under mark-only path (27c bare).
+    assert!(
+        !first_p.contains("<w:pPr") || !first_p.contains("<w:pPr><w:rPr><w:rFonts"),
+        "pPr must not keep live fonts after mark strip (LO thrash); use run rPr"
     );
 }

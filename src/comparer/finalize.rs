@@ -3932,25 +3932,16 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         }
                     }
                 } else if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
-                    // M354 (tiff×h_f): Word keeps next mark rPr fonts/sz on the
-                    // folded MIX title (Arial/sz32). Do **not** drop the whole
-                    // rPr when stripping ins/del mark elements — that left bare
-                    // MIX with no pPr (pagefair thrash 41→37).
-                    if let Some(irpr) = dom.element(ippr, &W::r_pr()) {
-                        let mark_kids: Vec<_> = dom
-                            .elements(irpr, None)
-                            .into_iter()
-                            .filter(|&c| {
-                                let n = dom.name(c);
-                                n == Some(W::ins()) || n == Some(W::del())
-                            })
-                            .collect();
-                        for c in mark_kids {
-                            dom.remove(c);
-                        }
-                        if dom.elements(irpr, None).is_empty() {
-                            dom.remove(irpr);
-                        }
+                    // M361: strip whole mark rPr (ins/del on pPr/rPr) after fold.
+                    // M354 kept fonts/sz under pPr to mirror Word tiff title
+                    // (Arial/sz32 + rPrChange empty-old), but LO pagefair thrash
+                    // 41→37 vs 27c bare MIX. Run-level rPr on ins still carries
+                    // fonts; drop pPr mark shell like 27c.
+                    if let Some(irpr) = dom.element(ippr, &W::r_pr())
+                        && (dom.element(irpr, &W::ins()).is_some()
+                            || dom.element(irpr, &W::del()).is_some())
+                    {
+                        dom.remove(irpr);
                     }
                     if dom.elements(ippr, None).is_empty() {
                         dom.remove(ippr);
