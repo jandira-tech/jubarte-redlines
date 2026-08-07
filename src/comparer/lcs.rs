@@ -4903,10 +4903,17 @@ pub fn detect_unrelated_sources_word_mode(
                 return None;
             }
         }
-        return Some(vec![
-            CorrelatedSequence::inserted(cu2.to_vec()),
-            CorrelatedSequence::deleted(cu1.to_vec()),
-        ]);
+        // M348: long multi-table base × short table next (eigenpal×employee)
+        // must free-mesh, not pure-I/D. M312 short-next pure-I/D would fire
+        // first (n2 in 1..=8) and skip free-mesh below.
+        if long_multitable_x_short_table_free_mesh(dom, cu1, cu2, n1, n2) {
+            // Fall through to free_mesh_demos (same function later).
+        } else {
+            return Some(vec![
+                CorrelatedSequence::inserted(cu2.to_vec()),
+                CorrelatedSequence::deleted(cu1.to_vec()),
+            ]);
+        }
     }
     // M328: free word-LCS for OOXML property / parallel-section / last-sig title
     // demos **before** ok_counts / disjoint / common-run gates.
@@ -4943,6 +4950,7 @@ pub fn detect_unrelated_sources_word_mode(
         // M338: short cell-only table next × long report-with-table (report×
         // table_doc Word MIX≥10; pure-I/D MIX=0). Allow n up to 80 for the
         // long report side (clinical trial report ~39 contentful).
+        let long_mt = long_multitable_x_short_table_free_mesh(dom, cu1, cu2, n1, n2);
         let free_mesh_demos = !stamped_pair
             && (parallel_sectioned_demos(dom, cu1, cu2)
                 || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
@@ -4950,9 +4958,12 @@ pub fn detect_unrelated_sources_word_mode(
                 || ooxml_x_short_table_demo(dom, cu1, cu2)
                 || both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2)
                 || short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2)
-                || short_demos_share_first_title_token(dom, cu1, cu2, n1, n2))
+                || short_demos_share_first_title_token(dom, cu1, cu2, n1, n2)
+                || long_mt)
             && n1 != n2
-            && n1 <= 80
+            // M348: long multi-table × short table may exceed 80 groups on the
+            // long side (eigenpal ~108); still free-mesh when gated.
+            && n1 <= if long_mt { 300 } else { 80 }
             && n2 <= 80;
         // M331: short Demo list×prose — Word free-meshes positionally (MMMDD:
         // zip first min contentful as MIX, pure-I/D residual list items). Flat
@@ -5175,8 +5186,9 @@ pub fn detect_unrelated_sources_word_mode(
                 let ooxml_tbl = ooxml_x_short_table_demo(dom, cu1, cu2);
                 let both_tbl = both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2);
                 let cell_tbl = short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2);
+                let long_mt = long_multitable_x_short_table_free_mesh(dom, cu1, cu2, n1, n2);
                 residual_settings.detail_threshold =
-                    if short_prop || ooxml_tbl || both_tbl || cell_tbl {
+                    if short_prop || ooxml_tbl || both_tbl || cell_tbl || long_mt {
                         0.0
                     } else {
                         0.005
@@ -5682,6 +5694,61 @@ fn both_tables_unrelated_free_mesh(
         &para_text_tokens_from_units(dom, cu2),
     );
     body_j + 1e-12 < 0.08
+}
+
+/// M348: long multi-table base (eigenpal ~6 tbl / 100+ groups) × short single-
+/// table next (employee_directory). Word free-meshes table headers
+/// (IIDDDMMIIII… MIX≥2); pure-I/D wholesale under-meshes (MIX=0, ~47).
+/// `both_tables_unrelated_free_mesh` caps n≤40 and misses the long side.
+fn long_multitable_x_short_table_free_mesh(
+    dom: &Dom,
+    cu1: &[ComparisonUnit],
+    cu2: &[ComparisonUnit],
+    n1: usize,
+    n2: usize,
+) -> bool {
+    let (long_n, short_n, long_cu, short_cu) = if n1 >= n2 {
+        (n1, n2, cu1, cu2)
+    } else {
+        (n2, n1, cu2, cu1)
+    };
+    // employee_directory_table_2 is ~4 body groups (title+empty+table); table
+    // may expand to many cell groups. eigenpal ~50–150 units.
+    if !(30..=300).contains(&long_n) || !(2..=60).contains(&short_n) {
+        return false;
+    }
+    if !has_table_units(long_cu) || !has_table_units(short_cu) {
+        return false;
+    }
+    let n_tbl = |cu: &[ComparisonUnit]| -> usize {
+        cu.iter()
+            .filter(|u| as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table))
+            .count()
+    };
+    // Multi-table long side (eigenpal 6 tbl); short side at least one table.
+    if n_tbl(long_cu) < 4 || n_tbl(short_cu) < 1 {
+        return false;
+    }
+    let (Some(i1), Some(i2)) = (
+        first_contentful_group_index(dom, cu1),
+        first_contentful_group_index(dom, cu2),
+    ) else {
+        return false;
+    };
+    let a0 = para_text_token_list(dom, &cu1[i1]);
+    let b0 = para_text_token_list(dom, &cu2[i2]);
+    let first_same = a0
+        .first()
+        .zip(b0.first())
+        .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b));
+    if first_same {
+        return false;
+    }
+    let body_j = token_jaccard(
+        &para_text_tokens_from_units(dom, cu1),
+        &para_text_tokens_from_units(dom, cu2),
+    );
+    body_j + 1e-12 < 0.10
 }
 
 /// Short OOXML property-tester demos (bold_vals×color, highlight×italic): titles
