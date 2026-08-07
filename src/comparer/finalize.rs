@@ -3444,29 +3444,43 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // Multi-del clusters stay separate (green-underline: 2I+3D).
                 // Whole-doc trailing sole-del always folds (m44), even at
                 // Jaccard 0 — that is the single_paragraph GT shape.
+                //
+                // M364 (orphan_comment×yellow_highlight): multi pure-I (≥3) +
+                // sole pure-D with ≤1 alnum token ("Ouch") and Jaccard miss —
+                // Word keeps pure-I then pure-D (comment anchors land on pure-D
+                // later). m44 multi-word sole-del ("Walking on imported air")
+                // still folds. Comment anchors are not yet on the pure-D at
+                // this stage (carry_comments runs after merge_replaced).
                 if let (Some(d), Some(&last_ins)) = (sole_del, inss.last())
                     && dom.parent(d).is_some()
                     && dom.parent(last_ins).is_some()
                 {
-                    // Strip para-mark revision from the carrier (Word: bare mixed p).
-                    if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
-                        if let Some(irpr) = dom.element(ippr, &W::r_pr())
-                            && (dom.element(irpr, &W::ins()).is_some()
-                                || dom.element(irpr, &W::del()).is_some())
-                        {
-                            dom.remove(irpr);
+                    let del_toks = body_token_set(&para_revision_body_text(dom, d)).len();
+                    let skip_short_residual = inss.len() >= 3
+                        && para_body_alnum_len(dom, last_ins) >= 20
+                        && del_toks <= 1
+                        && !should_fold_ins_del_pair(dom, last_ins, d);
+                    if !skip_short_residual {
+                        // Strip para-mark revision from the carrier (Word: bare mixed p).
+                        if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
+                            if let Some(irpr) = dom.element(ippr, &W::r_pr())
+                                && (dom.element(irpr, &W::ins()).is_some()
+                                    || dom.element(irpr, &W::del()).is_some())
+                            {
+                                dom.remove(irpr);
+                            }
+                            // Drop empty pPr that only held the mark revision.
+                            if dom.elements(ippr, None).is_empty() {
+                                dom.remove(ippr);
+                            }
                         }
-                        // Drop empty pPr that only held the mark revision.
-                        if dom.elements(ippr, None).is_empty() {
-                            dom.remove(ippr);
+                        for c in dom.elements(d, None) {
+                            if dom.name(c) != Some(W::p_pr()) {
+                                dom.add(last_ins, c); // move body del/ins into last ins
+                            }
                         }
+                        dom.remove(d);
                     }
-                    for c in dom.elements(d, None) {
-                        if dom.name(c) != Some(W::p_pr()) {
-                            dom.add(last_ins, c); // move body del/ins into last ins
-                        }
-                    }
-                    dom.remove(d);
                 }
                 acted = true;
                 break; // children list is stale — rescan (required)
@@ -3885,6 +3899,18 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     if ins_long_prose && del_list && del_multi_word {
                         continue;
                     }
+                }
+                // M364 (orphan_comment×yellow_highlight −6.4): multi pure-I +
+                // sole short pure-D residual (≤1 alnum token, Jaccard miss).
+                // Word keeps pure-I then pure-D; comments are re-injected onto
+                // pure-D after merge. m44 multi-word sole-del still folds.
+                if sole_del
+                    && inss.len() >= 3
+                    && para_body_alnum_len(dom, last_ins) >= 20
+                    && body_token_set(&para_revision_body_text(dom, d)).len() <= 1
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
+                    continue;
                 }
                 // Strip para-mark revision from the carrier (Word: bare mixed p)
                 // unless M88 adopts Deleted structural pPr (numPr) with del mark.
