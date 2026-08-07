@@ -3006,6 +3006,122 @@ pub fn merge_replaced_paragraphs(dom: &mut Dom, root: NodeId, comparer_author: &
     }
 }
 
+/// M369 (ordered_list×sublist −3.5): residual short-label pure-I ("a"/"b"/"3")
+/// × pure-D list item ending with the same token ("Lvl 1 – a"). Word free-
+/// meshes those pairs (MIX); wholesale pure-I/D leaves them separate.
+/// Greedy order-preserving zip: fold pure-I body (ins) into matching pure-D
+/// carrier (list pPr kept). Coarse whole-para fold — not free word-LCS.
+pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    loop {
+        let kids: Vec<NodeId> = dom
+            .elements(body, None)
+            .into_iter()
+            .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+            .collect();
+        let pure_i: Vec<NodeId> = kids
+            .iter()
+            .copied()
+            .filter(|&p| dom.name(p) == Some(W::p()) && para_is_pure_inserted(dom, p))
+            .collect();
+        let pure_d: Vec<NodeId> = kids
+            .iter()
+            .copied()
+            .filter(|&p| dom.name(p) == Some(W::p()) && para_is_pure_deleted(dom, p))
+            .collect();
+        if pure_i.is_empty() || pure_d.is_empty() {
+            return;
+        }
+        // Short pure-I label: 1..=2 alnum chars, ≤2 word-atoms.
+        let mut acted = false;
+        let mut used_d: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        for &ip in &pure_i {
+            if !para_body_is_very_short(dom, ip) {
+                continue;
+            }
+            let it = para_revision_body_text(dom, ip);
+            let label = it
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+                .to_ascii_lowercase();
+            if label.is_empty() || label.len() > 2 {
+                continue;
+            }
+            // Pure-D must contain the label as a token and be longer (list item).
+            let mut best: Option<NodeId> = None;
+            for &dp in &pure_d {
+                if used_d.contains(&dp) || dom.parent(dp).is_none() {
+                    continue;
+                }
+                let dt = para_revision_body_text(dom, dp);
+                let toks: Vec<String> = dt
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|t| !t.is_empty())
+                    .map(|t| t.to_ascii_lowercase())
+                    .collect();
+                if toks.len() < 2 {
+                    continue; // not a multi-token list item
+                }
+                // Last-token only: "Lvl 1 – a" ends with "a"; do not match
+                // "Item 3" for pure-I "3" (would steal Lvl 2 – i pair).
+                if toks.last().is_some_and(|t| t == &label) {
+                    best = Some(dp);
+                    break;
+                }
+            }
+            let Some(dp) = best else { continue };
+            if dom.parent(ip).is_none() || dom.parent(dp).is_none() {
+                continue;
+            }
+            // Fold pure-I into pure-D: pure-D keeps list pPr; pure-I body (ins)
+            // runs first (Word replacement order: ins before del).
+            let ins_kids: Vec<NodeId> = dom
+                .elements(ip, None)
+                .into_iter()
+                .filter(|&c| dom.name(c) != Some(W::p_pr()))
+                .collect();
+            // Prepend pure-I body before pure-D's first non-pPr child.
+            // Collect first target once — do not move while iterating pure-D kids.
+            let first_body = dom
+                .elements(dp, None)
+                .into_iter()
+                .find(|&c| dom.name(c) != Some(W::p_pr()));
+            for c in ins_kids {
+                if dom.parent(c).is_none() {
+                    continue;
+                }
+                dom.remove(c);
+                if let Some(first) = first_body {
+                    if dom.parent(first).is_some() {
+                        dom.add_before_self(first, c);
+                    } else {
+                        dom.add(dp, c);
+                    }
+                } else {
+                    dom.add(dp, c);
+                }
+            }
+            // Strip mark-only pPr from pure-I before drop.
+            if let Some(ippr) = dom.element(ip, &W::p_pr()) {
+                dom.remove(ippr);
+            }
+            // Pure-D may have mark-only del on rPr — leave list structure.
+            if dom.parent(ip).is_some() {
+                dom.remove(ip);
+            }
+            used_d.insert(dp);
+            acted = true;
+            break; // rescan kids
+        }
+        if !acted {
+            return;
+        }
+    }
+}
+
 /// True when `w:pPr/w:rPr` carries a paragraph-mark revision (`w:del`/`w:ins`).
 /// Empty deleted/inserted paragraphs often have ONLY this mark (no body
 /// `w:del`/`w:ins` child). Without classifying them, del-blocks break and

@@ -726,6 +726,10 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::peel_trailing_ins_from_mix_into_following_pure_del(dom, root);
         // M154: trailing del on MIX + following pure-I (justified_underline×justify_2).
         finalize::peel_trailing_del_from_mix_into_following_pure_ins(dom, root);
+        // M369: residual short pure-I labels ("a"/"b") × pure-D list items ending
+        // with the same token (ordered_list×sublist Word MIX). After mix peels
+        // so fold_leading_ins does not steal the label onto a preceding Item.
+        finalize::residual_short_label_zip(dom, root);
     }
     // Final renumber after wrap_bare / stamped predeletes / row marks — any
     // w:id minted after the earlier fix_up_revision_ids pass would otherwise
