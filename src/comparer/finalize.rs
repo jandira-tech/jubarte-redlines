@@ -1757,7 +1757,19 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                         break;
                     }
                 }
-                if following_pure_d >= 3 {
+                // M366 (bookmark×broken_complex_list): trailing empty pure-I
+                // after content pure-I list, before a pure-D residual run —
+                // Word drops the empty (17 pure-I, no spacer). M345 path-2
+                // kept it as a spacer when ≥3 pure-D (two_column×vrect mid
+                // empty). Allow fold when a content pure-I precedes this
+                // empty in the pure-I run (true trailing residual).
+                let trailing_after_content_i = i > 0
+                    && kids[..i].iter().rev().any(|&k| {
+                        dom.name(k) == Some(W::p())
+                            && para_is_pure_inserted(dom, k)
+                            && !para_body_text_is_whitespace_only(dom, k)
+                    });
+                if following_pure_d >= 3 && !trailing_after_content_i {
                     continue;
                 }
             }
