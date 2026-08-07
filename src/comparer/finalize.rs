@@ -1270,17 +1270,21 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
         let before = dom.attribute(sp, &W::name("before")).unwrap_or("");
         let rule = dom.attribute(sp, &W::name("lineRule")).unwrap_or("");
         // Only the demo-default pattern (line 276 ± after 200 ± lineRule auto).
-        // M352: do **not** strip on pure-inserted paras — Word keeps line=276
-        // on pure-I next (line_break×line_space_table); strip was for live/
-        // MIX center demos only (center_alignment ~79→100).
-        // M353: also keep when pStyle is present (localized_heading pure-D
-        // Heading/Title carry line=276; Word keeps them — bare Normal demos
-        // still strip).
+        // M352: keep pure-I line=276 **without after** and without pStyle
+        // (line_break×line_space: `line=276 lineRule=auto` only → 49→100).
+        // M358: strip all other demo-default line=276 — pure-I+pStyle /
+        // pure-I after=200 (fields×localized −20 LO pagefair) and pure-D
+        // Heading line=276-only (loc×ul −14). Word keeps many of those, but
+        // LO PDF thrash vs Word-rendered oracle; pre-M353 (27c) stripped them.
+        // M353 pStyle keep is superseded for pure demo-default (before empty
+        // is required to enter this strip path anyway).
         let line_ok = line == "276";
         let after_ok = after.is_empty() || after == "200";
         let before_ok = before.is_empty();
         let rule_ok = rule.is_empty() || rule == "auto";
-        let keep = para_is_pure_inserted(dom, p) || dom.element(ppr, &W::name("pStyle")).is_some();
+        let has_pstyle = dom.element(ppr, &W::name("pStyle")).is_some();
+        let pure_i = para_is_pure_inserted(dom, p);
+        let keep = pure_i && !has_pstyle && after.is_empty();
         if line_ok && after_ok && before_ok && rule_ok && !keep {
             to_remove.push(sp);
             continue;
