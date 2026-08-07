@@ -4998,6 +4998,95 @@ pub fn detect_unrelated_sources_word_mode(
                 return Some(out);
             }
         }
+        // M346: short OOXML property demos — Word pure-I next titles then free-
+        // meshes sample lines (IIMMMMM… for bold_vals×color). Flat free-word
+        // LCS confetti-meshes the color title with bold residual (MIIII… MIX
+        // title, pagefair thrash). Peel leading contentful groups whose first
+        // significant token differs, emit pure-I/D titles, free-mesh residual.
+        if free_mesh_demos
+            && short_ooxml_property_demo(dom, cu1)
+            && short_ooxml_property_demo(dom, cu2)
+        {
+            let contentful = |cu: &[ComparisonUnit]| -> Vec<ComparisonUnit> {
+                cu.iter()
+                    .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                    .cloned()
+                    .collect()
+            };
+            let left_c = contentful(cu1);
+            let right_c = contentful(cu2);
+            if left_c.len() >= 2 && right_c.len() >= 2 {
+                let first_tok = |u: &ComparisonUnit| -> Option<String> {
+                    para_text_token_list(dom, u)
+                        .into_iter()
+                        .find(|t| t.chars().count() >= 3)
+                        .map(|t| t.to_ascii_lowercase())
+                };
+                let t1 = first_tok(&left_c[0]);
+                let t2 = first_tok(&right_c[0]);
+                let titles_differ = match (t1.as_deref(), t2.as_deref()) {
+                    (Some(a), Some(b)) => a != b,
+                    _ => true,
+                };
+                if titles_differ {
+                    // Peel leading pure-I next titles until a line that shares
+                    // sample vocabulary with residual base (or max 3 titles).
+                    let sampleish = |u: &ComparisonUnit| -> bool {
+                        let lower = para_text_token_list(dom, u)
+                            .into_iter()
+                            .map(|t| t.to_ascii_lowercase())
+                            .collect::<Vec<_>>();
+                        lower.iter().any(|t| {
+                            t == "sample" || t == "color" || t == "text" || t.contains("sample")
+                        }) && lower.len() >= 3
+                    };
+                    let mut peel_r = 0usize;
+                    while peel_r < right_c.len().min(3) && !sampleish(&right_c[peel_r]) {
+                        // Keep peeling pure titles / section headers (A) …).
+                        peel_r += 1;
+                        // Stop early if next residual would leave base empty.
+                        if peel_r >= right_c.len() {
+                            break;
+                        }
+                    }
+                    // Always peel at least the first next title when different.
+                    peel_r = peel_r.max(1).min(right_c.len().saturating_sub(1));
+                    // Peel first base title only (demo intro) as pure-D.
+                    let peel_l = 1usize.min(left_c.len().saturating_sub(1));
+                    let mut residual_settings = settings.clone();
+                    residual_settings.detail_threshold = 0.0;
+                    let mut out = Vec::new();
+                    for u in &right_c[..peel_r] {
+                        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                    }
+                    for u in &left_c[..peel_l] {
+                        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                    }
+                    let mut left: Vec<ComparisonUnit> =
+                        left_c[peel_l..].iter().flat_map(group_contents).collect();
+                    let mut right: Vec<ComparisonUnit> =
+                        right_c[peel_r..].iter().flat_map(group_contents).collect();
+                    if !left.is_empty()
+                        && !right.is_empty()
+                        && left.len().saturating_mul(right.len()) <= 600_000
+                    {
+                        rehash_words_by_text_content_opts(dom, &mut left, true);
+                        rehash_words_by_text_content_opts(dom, &mut right, true);
+                        out.extend(lcs(dom, left, right, &residual_settings));
+                        return Some(out);
+                    }
+                    for u in &right_c[peel_r..] {
+                        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                    }
+                    for u in &left_c[peel_l..] {
+                        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+                    }
+                    if !out.is_empty() {
+                        return Some(out);
+                    }
+                }
+            }
+        }
         // M329: free-mesh demos always free-mesh — do NOT gate on large_related.
         // highlight×bold has sig≥40 each and jaccard≈0.22 (shared sample/rstyle/
         // ooxml) so the old large_related guard skipped free-mesh and pure-I/D'd
