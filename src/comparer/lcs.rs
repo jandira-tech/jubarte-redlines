@@ -5590,6 +5590,62 @@ pub fn detect_unrelated_sources_word_mode(
             }
         }
     }
+    // M425 (diff_doc2 × numwords ~45.0): next is "Num words/chars/pages" stats
+    // + residual "test"/"page 3"; base is short prose with tables. Full LCS
+    // free-meshes first "Num words" into base (MIX). Word pure-I's all three
+    // Num* lines then free-meshes residual (III…D…MIX). Peel pure-I leading
+    // next contentful while body starts with "num ", free-mesh residual.
+    if settings.merge_replaced_paragraphs && has_table(cu1) && !has_table(cu2) {
+        let contentful_idxs: Vec<usize> = cu2
+            .iter()
+            .enumerate()
+            .filter(|(_, u)| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .map(|(i, _)| i)
+            .collect();
+        let is_num_stat = |u: &ComparisonUnit| -> bool {
+            let toks = para_text_token_list(dom, u);
+            !toks.is_empty()
+                && toks[0].eq_ignore_ascii_case("num")
+                && toks.len() >= 2
+                && (toks[1].eq_ignore_ascii_case("words")
+                    || toks[1].eq_ignore_ascii_case("chars")
+                    || toks[1].eq_ignore_ascii_case("pages")
+                    || toks[1].eq_ignore_ascii_case("characters")
+                    || toks[1].eq_ignore_ascii_case("paragraphs"))
+        };
+        let num_run = contentful_idxs
+            .iter()
+            .take_while(|&&i| is_num_stat(&cu2[i]))
+            .count();
+        if num_run >= 3 {
+            let peel_end = contentful_idxs[num_run - 1];
+            let mut out = Vec::new();
+            out.push(CorrelatedSequence::inserted(cu2[..=peel_end].to_vec()));
+            let residual: Vec<ComparisonUnit> = cu2[peel_end + 1..].to_vec();
+            if residual.is_empty() {
+                out.push(CorrelatedSequence::deleted(cu1.to_vec()));
+                return Some(out);
+            }
+            let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
+            let mut right: Vec<ComparisonUnit> = residual.iter().flat_map(group_contents).collect();
+            if !left.is_empty()
+                && !right.is_empty()
+                && left.len().saturating_mul(right.len()) <= 100_000
+            {
+                rehash_words_by_text_content_opts(dom, &mut left, true);
+                rehash_words_by_text_content_opts(dom, &mut right, true);
+                let mut residual_settings = settings.clone();
+                residual_settings.detail_threshold = 0.0;
+                out.extend(lcs(dom, left, right, &residual_settings));
+                return Some(out);
+            }
+            for u in residual {
+                out.push(CorrelatedSequence::inserted(vec![u]));
+            }
+            out.push(CorrelatedSequence::deleted(cu1.to_vec()));
+            return Some(out);
+        }
+    }
     // M412 (text_color_highlight × threaded_comment ~48.7): both sides short
     // (≤4 contentful groups), first significant tokens differ. Full LCS free-
     // meshes first next ("Text") into base (MIX), dropping pure-I title. Word
