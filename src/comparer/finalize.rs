@@ -2063,6 +2063,27 @@ fn para_has_omath(dom: &Dom, p: NodeId) -> bool {
         || !dom.descendants(p, Some(&M::name("oMathPara"))).is_empty()
 }
 
+/// True when body text repeats a ≥4-word phrase (hummingbird wrap fingerprint).
+///
+/// M416/M420: distinguish wrap pure-I from generic long titles (project_tasks
+/// TaskOwner line) so multi-del fold skip only hits real wraps.
+fn para_has_repeated_phrase(dom: &Dom, p: NodeId) -> bool {
+    let t = para_revision_body_text(dom, p).to_ascii_lowercase();
+    let words: Vec<&str> = t.split_whitespace().filter(|w| !w.is_empty()).collect();
+    if words.len() < 8 {
+        return false;
+    }
+    // Sliding window of 4 words; any window that appears twice is a wrap.
+    let mut seen = std::collections::HashSet::new();
+    for i in 0..=words.len().saturating_sub(4) {
+        let key = words[i..i + 4].join(" ");
+        if !seen.insert(key) {
+            return true;
+        }
+    }
+    false
+}
+
 /// True when `p` is an empty pure-inserted paragraph (no text, has ins, no del).
 fn para_is_empty_pure_ins(dom: &Dom, p: NodeId) -> bool {
     if dom.name(p) != Some(W::p()) {
@@ -4764,9 +4785,15 @@ fn should_fold_multi_del_at_document_scale(
     // M416 (heading_font×hummingbird): sole long pure-I wrap (≥20 words) ×
     // multi pure-D base. Multi-del fold MIX-es wrap into first base (DI).
     // Word pure-I wrap then pure-D all base (I1 D4).
+    //
+    // M420 thrash: project_proposal×project_tasks sole long pure-I TaskOwner
+    // line × multi pure-D body also hit this skip (MIDDD vs pin MMDD −17).
+    // Require wrap fingerprint: a ≥4-word phrase that repeats in the pure-I
+    // (hummingbird "Lets tightly wrap this one" × N) — not generic long titles.
     if content_inss.len() == 1
         && content_dels.len() >= 3
         && para_word_atom_count(dom, last_ins) >= 20
+        && para_has_repeated_phrase(dom, last_ins)
         && !should_fold_ins_del_pair(dom, last_ins, first_del)
     {
         return false;
@@ -5318,10 +5345,12 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // M416 (heading_font×hummingbird): sole long pure-I wrap (≥20
                 // words) × multi pure-D short base. sole_del always-fold MIX-es
                 // wrap into first base. Word pure-I wrap then pure-D all base.
+                // M420: wrap fingerprint only (see should_fold_multi_del).
                 if sole_del
                     && inss.len() == 1
                     && dels.len() >= 3
                     && para_word_atom_count(dom, last_ins) >= 20
+                    && para_has_repeated_phrase(dom, last_ins)
                     && !should_fold_ins_del_pair(dom, last_ins, d)
                 {
                     continue;
