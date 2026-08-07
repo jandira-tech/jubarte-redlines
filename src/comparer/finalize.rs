@@ -5710,6 +5710,17 @@ pub fn interleave_list_cluster_after_coalesce(dom: &mut Dom, root: NodeId) {
     if !has_nested_del {
         return;
     }
+    // M404 (basic_list×sd_1707): residual pure-I after the first pure-I must be
+    // short list labels (≤3 tokens: "a"/"TWO") for Word interleave. Multi-word
+    // heading prose ("Heading. Body copy for repro") must stay in the pure-I
+    // head stream (IIDDD…), not move mid-list (IDDDI…).
+    let rest_i_all_short_labels = kids[1..i_end].iter().all(|&p| {
+        let n = para_word_atom_count(dom, p);
+        n > 0 && n <= 3
+    });
+    if i_end >= 2 && !rest_i_all_short_labels {
+        return;
+    }
     // First pure-D cluster end within dels: through nested then stop before
     // next top-level after saw_sub.
     let dels = &kids[i_end..d_end];

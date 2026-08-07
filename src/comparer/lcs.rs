@@ -393,6 +393,7 @@ fn looks_like_short_annotation_doc(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
 
 
 
+
 /// ≥ half of contentful paragraphs (non-empty word stream) carry `numPr`.
 fn mostly_list_paras(dom: &Dom, paras: &[Vec<ComparisonUnit>]) -> bool {
     let contentful: Vec<&Vec<ComparisonUnit>> = paras
@@ -5252,6 +5253,8 @@ pub fn detect_unrelated_sources_word_mode(
             return Some(lcs(dom, left, right, &residual_settings));
         }
     }
+    // M404: LCS already pure-I/D via M308c for basic_list×sd_1707; interleave
+    // gate in finalize keeps IIDDD (see finalize::interleave_list_cluster).
     // M312 (two_column_two_page × sd_2672_nested_table ~33.8): short **next**
     // is title + empty + tables (contentful n≈2–6, has_table) vs long
     // table-free base (n≥12; also broken_complex_list×nested_table ~18). Classic
