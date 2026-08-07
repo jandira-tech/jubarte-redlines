@@ -5596,9 +5596,10 @@ fn short_demos_share_first_title_token(
     };
     let a0 = para_text_token_list(dom, &cu1[i1]);
     let b0 = para_text_token_list(dom, &cu2[i2]);
-    let first_same = a0.first().zip(b0.first()).is_some_and(|(a, b)| {
-        a.eq_ignore_ascii_case(b) && a.chars().count() >= 3
-    });
+    let first_same = a0
+        .first()
+        .zip(b0.first())
+        .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b) && a.chars().count() >= 3);
     if !first_same {
         return false;
     }
@@ -5607,8 +5608,7 @@ fn short_demos_share_first_title_token(
     // at free-word LCS (Font Family×Font Size MMMD vs Word MMDM, −26).
     let first = a0[0].to_ascii_lowercase();
     const GENERIC_STYLE: &[&str] = &[
-        "font", "track", "green", "right", "left", "center", "title", "project",
-        "one", "this",
+        "font", "track", "green", "right", "left", "center", "title", "project", "one", "this",
     ];
     if GENERIC_STYLE.contains(&first.as_str()) {
         return false;

@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! M337 — both-table short next with ≥2 tables (pirates×table_left): full LCS
-//! + multi-del fold recovers e3 pagefair ~70 (MDDD…IIII). Wholesale pure-I/D
-//! was ~41.
+//! + multi-del fold recovers e3 pagefair ~70 (MDDD…IIII). Wholesale pure-I/D was ~41.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -110,5 +109,8 @@ fn hyperlink_x_rtl_still_pure_id() {
     f.read_to_string(&mut xml).unwrap();
     let cls = body_para_classes(&xml);
     let n_m = cls.iter().filter(|&&c| c == 'M').count();
-    assert_eq!(n_m, 0, "single-table next stays pure-I/D MIX=0; got MIX={n_m}");
+    assert_eq!(
+        n_m, 0,
+        "single-table next stays pure-I/D MIX=0; got MIX={n_m}"
+    );
 }

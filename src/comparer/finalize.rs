@@ -1612,6 +1612,11 @@ fn para_is_pure_inserted(dom: &Dom, p: NodeId) -> bool {
 /// We left them separate (`I space` then `D title`), adding a blank line and
 /// wrong residual shape. Only folds when pure-I body is whitespace-only so
 /// content pure-I (file_33 "Summary") stays separate from unrelated pure-D.
+///
+/// M345: when pure-D is structural (list style), adopt its full pPr so the
+/// fold does not drop ListParagraph/numPr. When pure-D is bare and pure-I only
+/// carries spacing, skip fold if a long pure-D residual follows (keep Word's
+/// empty pure-I spacer — two_column×vrect).
 pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -1699,6 +1704,57 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
             // Need real deleted content (not empty mark-only del).
             if para_body_text_is_whitespace_only(dom, del_p) {
                 continue;
+            }
+            // M345: empty pure-I fold must not thrash pure-D layout.
+            //
+            // 1) Del has structural pPr (ListParagraph+numPr): adopt full del
+            //    pPr onto the carrier. Old path kept bare ins-mark pPr and
+            //    dropped list style (basic_list×sd_1707 first pure-D "List
+            //    item 1" lost bullets — pagefair 99→66; same for
+            //    pre_separated_list×diff_before7).
+            // 2) Del bare + ins has spacing-only structure: skip fold when a
+            //    long pure-D residual follows. Word keeps the empty pure-I
+            //    spacer (two_column×vrect); folding contaminated first pure-D
+            //    with vrect spacing (line=240) and thrased layout 79→34.
+            let del_structural = dom
+                .element(del_p, &W::p_pr())
+                .is_some_and(|dp| ppr_has_structural_props(dom, dp));
+            let ins_structural = dom
+                .element(ins_p, &W::p_pr())
+                .is_some_and(|ip| ppr_has_structural_props(dom, ip));
+            if !del_structural && ins_structural {
+                let mut following_pure_d = 0usize;
+                for &k in kids.iter().skip(i + 1) {
+                    if dom.name(k) == Some(W::p()) && para_is_pure_deleted(dom, k) {
+                        following_pure_d += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if following_pure_d >= 3 {
+                    continue;
+                }
+            }
+            if del_structural {
+                if let Some(ippr) = dom.element(ins_p, &W::p_pr()) {
+                    dom.remove(ippr);
+                }
+                if let Some(dppr) = dom.element(del_p, &W::p_pr()) {
+                    let cloned = dom.clone_subtree(dppr);
+                    if let Some(first) = dom.elements(ins_p, None).first().copied() {
+                        dom.add_before_self(first, cloned);
+                    } else {
+                        dom.add(ins_p, cloned);
+                    }
+                }
+                for c in dom.elements(del_p, None) {
+                    if dom.name(c) != Some(W::p_pr()) {
+                        dom.add(ins_p, c);
+                    }
+                }
+                dom.remove(del_p);
+                acted = true;
+                break;
             }
             // Replace pure-ins mark with pure-del mark on the carrier (Word:
             // mixed para keeps del mark from the deleted residual).
@@ -3762,7 +3818,10 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // (pagefair thrash). Word/e3 adopt Deleted Heading1 + del mark.
                 let ins_list_style = dom.element(last_ins, &W::p_pr()).is_some_and(|ip| {
                     dom.element(ip, &W::name("pStyle")).is_some_and(|ps| {
-                        let v = dom.attribute(ps, &W::val()).unwrap_or("").to_ascii_lowercase();
+                        let v = dom
+                            .attribute(ps, &W::val())
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
                         v.starts_with("list")
                     })
                 });
