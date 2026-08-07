@@ -5829,6 +5829,16 @@ pub fn detect_unrelated_sources_word_mode(
                 }
                 return Some(out);
             }
+            // M411 (lease×memo ~48.1): next is memo. Word pure-I all memo then
+            // pure-D all base (I…ID…D). legal_mid_splice_cut fires on memo's
+            // "1. Business Operations" / Heading2 and interleaves pure-D mid
+            // memo (I…ID…DI…I). Skip mid-splice when next is memo-doc.
+            if looks_like_memo_doc(dom, cu2) {
+                return Some(vec![
+                    CorrelatedSequence::inserted(cu2.to_vec()),
+                    CorrelatedSequence::deleted(cu1.to_vec()),
+                ]);
+            }
             if let Some(cut) = legal_mid_splice_cut(dom, cu2) {
                 // next = cu2 pure-I leading, base = cu1 pure-D mid, next rest pure-I
                 let mut out = Vec::new();
