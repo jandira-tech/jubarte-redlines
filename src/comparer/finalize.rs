@@ -1549,13 +1549,20 @@ pub fn free_mesh_shared_title_token_in_mix(dom: &mut Dom, root: NodeId) {
         if ins_toks.len() > 6 || del_toks.len() > 6 || ins_toks.len() < 2 || del_toks.len() < 2 {
             continue;
         }
-        // Shared significant tokens (len≥4).
+        // Shared significant tokens only (len≥5, not boilerplate).
+        // M383b: "with" (4 chars) free-meshed h_f title thrash — require
+        // document-like tokens ("document" on tiff title).
+        const BOILER: &[&str] = &[
+            "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than",
+            "then", "when", "what", "which", "into", "over", "only", "also", "just", "more",
+            "most", "some", "such", "other", "about", "text", "page", "simple",
+        ];
         let del_set: std::collections::HashSet<&str> =
             del_toks.iter().map(String::as_str).collect();
         let shared: Vec<&str> = ins_toks
             .iter()
             .map(String::as_str)
-            .filter(|t| t.len() >= 4 && del_set.contains(t))
+            .filter(|t| t.len() >= 5 && del_set.contains(t) && !BOILER.iter().any(|b| b == t))
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
