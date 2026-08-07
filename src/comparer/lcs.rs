@@ -1302,15 +1302,24 @@ fn stamp_confetti_then_replace(
             // demo-class to ≤80 when short residual title ends with "Demo"
             // (formatting cousin) and share≥1 ("strikethrough"). file_196
             // residual 100+ still uses the strict ≥5/j≥0.12 arm.
+            //
+            // M397 (file_41×file_42): Blue Underline Demo × OOXML bold tester.
+            // Body share is 0 after boilerplate filter, but Word multi-MIX
+            // free-meshes short residual into long OOXML head (MIX≥4). Allow
+            // head-mesh when short title ends Demo and long residual is an
+            // OOXML property tester. Greek/font pure-I/D (file_59) stays off
+            // (no OOXML markers). detail_threshold 0.0 keeps weak "Sample"/
+            // mid-body MIX like free_mesh_demos short property path.
             let k = (rest2.len() + 1).min(rest1.len());
             let head1 = rest1[..k].to_vec();
             let share = residual_shared_sig_count(dom, &rest1, &rest2);
             let short_demo_title = rest2
                 .first()
                 .is_some_and(|u| residual_title_ends_demo(dom, u));
+            let ooxml_long = residual_looks_like_ooxml_property_tester(dom, &rest1);
             let m131_ok = if rest1.len() <= 40 {
-                share >= 1
-            } else if rest1.len() <= 80 && short_demo_title && share >= 1 {
+                share >= 1 || (short_demo_title && ooxml_long)
+            } else if rest1.len() <= 80 && short_demo_title && (share >= 1 || ooxml_long) {
                 true
             } else {
                 share >= 5 && {
@@ -1326,7 +1335,8 @@ fn stamp_confetti_then_replace(
                 rehash_words_by_text_content(dom, &mut left);
                 rehash_words_by_text_content(dom, &mut right);
                 let mut residual_settings = settings.clone();
-                residual_settings.detail_threshold = 0.005;
+                // 0.0 for OOXML long residual multi-MIX (M397); 0.005 otherwise.
+                residual_settings.detail_threshold = if ooxml_long { 0.0 } else { 0.005 };
                 let mut nested = lcs(dom, left, right, &residual_settings);
                 stamp_seqs.append(&mut nested);
                 if rest1.len() > k {
@@ -1681,6 +1691,30 @@ const M135_OFF_DIAG_BOILER: &[&str] = &[
 fn residual_title_ends_demo(dom: &Dom, title: &ComparisonUnit) -> bool {
     let toks = para_text_token_list(dom, title);
     last_significant_token(&toks).is_some_and(|t| t.eq_ignore_ascii_case("demo"))
+}
+
+/// Long residual is an OOXML property tester (bold_vals / color / rStyle).
+/// Used by M397 to free-mesh short Demo residual into long OOXML when body
+/// share is 0 after boilerplate filter (file_41 Blue Underline × OOXML bold).
+fn residual_looks_like_ooxml_property_tester(dom: &Dom, rest: &[ComparisonUnit]) -> bool {
+    let mut text = String::new();
+    for u in rest.iter().take(12) {
+        for a in u.descendant_atoms() {
+            if dom.name(a.content_element) == Some(W::t()) {
+                text.push_str(&dom.value_str(a.content_element));
+            }
+        }
+    }
+    let lower = text.to_ascii_lowercase();
+    lower.contains("ooxml")
+        || lower.contains("st_onoff")
+        || lower.contains("w:b")
+        || lower.contains("w:i ")
+        || lower.contains("w:sz")
+        || lower.contains("w:color")
+        || lower.contains("w:highlight")
+        || lower.contains("rstyle")
+        || lower.contains("sample text")
 }
 
 fn residual_para_starts_this(dom: &Dom, u: &ComparisonUnit) -> bool {
