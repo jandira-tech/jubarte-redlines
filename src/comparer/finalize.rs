@@ -1360,6 +1360,116 @@ pub fn strip_redundant_normal_pstyle_and_bidi(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M376 (bookmark×broken_complex_list −0.6): mid pure-D residual after a pure-I
+/// list stream must not carry pure-I list layout (`after=0 line=240`, `jc=both`,
+/// mark fonts). Word keeps mid pure-D bare (mark-only `rPr/del`); eng polluted
+/// the first pure-D bookmark prose with the preceding list's spacing/jc/rFonts.
+///
+/// Gates: pure-D, not last body child, no list structure (numPr / ListParagraph),
+/// list-shaped spacing, and a pure-I with the same spacing earlier in the body.
+/// Does **not** touch the last pure-D (Word parks line=240 + pPrChange there).
+///
+/// Must run **after** merge/park peels — early finalize still has bare pure-D
+/// pPr; list layout is absorbed later.
+pub fn strip_list_layout_from_mid_pure_del(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    if kids.len() < 2 {
+        return;
+    }
+    let last = kids[kids.len() - 1];
+    // Any pure-I with list-shaped spacing earlier? Contamination donor.
+    let mut has_list_shaped_pure_i = false;
+    for &k in &kids {
+        if dom.name(k) != Some(W::p()) || !para_is_pure_inserted(dom, k) {
+            continue;
+        }
+        if let Some(ppr) = dom.element(k, &W::p_pr())
+            && spacing_is_list_single_line(dom, ppr)
+        {
+            has_list_shaped_pure_i = true;
+            break;
+        }
+    }
+    if !has_list_shaped_pure_i {
+        return;
+    }
+
+    let mut drop: Vec<NodeId> = Vec::new();
+    for &p in &kids {
+        if p == last || dom.name(p) != Some(W::p()) || !para_is_pure_deleted(dom, p) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        // Keep real list pure-D (numPr / ListParagraph).
+        if dom.element(ppr, &W::name("numPr")).is_some() {
+            continue;
+        }
+        if dom.element(ppr, &W::name("pStyle")).is_some_and(|ps| {
+            dom.attribute(ps, &W::val())
+                .unwrap_or("")
+                .eq_ignore_ascii_case("ListParagraph")
+        }) {
+            continue;
+        }
+        if !spacing_is_list_single_line(dom, ppr) {
+            continue;
+        }
+        // Strip list-shaped spacing.
+        if let Some(sp) = dom.element(ppr, &W::name("spacing")) {
+            drop.push(sp);
+        }
+        // Strip jc=both (list residual justify); leave center/right alone.
+        if let Some(jc) = dom.element(ppr, &W::name("jc")) {
+            let v = dom.attribute(jc, &W::val()).unwrap_or("");
+            if v == "both" || v == "distribute" {
+                drop.push(jc);
+            }
+        }
+        // Strip non-mark children of pPr/rPr (rFonts/sz) — Word mark-only del.
+        if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
+            for c in dom.elements(rpr, None) {
+                let Some(n) = dom.name(c) else {
+                    continue;
+                };
+                if n == W::ins() || n == W::del() {
+                    continue;
+                }
+                drop.push(c);
+            }
+        }
+    }
+    for n in drop {
+        if dom.parent(n).is_some() {
+            dom.remove(n);
+        }
+    }
+}
+
+/// `after=0` (or absent) + `line=240` + `lineRule=auto` — pure-I list residual
+/// single-line shape (broken_complex_list / Word list compare).
+fn spacing_is_list_single_line(dom: &Dom, ppr: NodeId) -> bool {
+    let Some(sp) = dom.element(ppr, &W::name("spacing")) else {
+        return false;
+    };
+    let line = dom.attribute(sp, &W::name("line")).unwrap_or("");
+    let after = dom.attribute(sp, &W::name("after")).unwrap_or("");
+    let before = dom.attribute(sp, &W::name("before")).unwrap_or("");
+    let rule = dom.attribute(sp, &W::name("lineRule")).unwrap_or("");
+    line == "240"
+        && rule == "auto"
+        && (after.is_empty() || after == "0")
+        && (before.is_empty() || before == "0")
+}
+
 /// True when a paragraph has deleted content, no live (non-del) `w:t` text,
 /// and no `w:ins` — pure deleted body paragraph.
 fn para_is_pure_deleted(dom: &Dom, p: NodeId) -> bool {

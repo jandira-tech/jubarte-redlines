@@ -730,6 +730,9 @@ pub fn compare_bodies_faithful_with_notes(
         // with the same token (ordered_list×sublist Word MIX). After mix peels
         // so fold_leading_ins does not steal the label onto a preceding Item.
         finalize::residual_short_label_zip(dom, root);
+        // M376: after merge/park peels — strip list line=240/jc that mid pure-D
+        // absorbed from pure-I list residual (bookmark×broken_complex −0.6).
+        finalize::strip_list_layout_from_mid_pure_del(dom, root);
     }
     // Final renumber after wrap_bare / stamped predeletes / row marks — any
     // w:id minted after the earlier fix_up_revision_ids pass would otherwise
