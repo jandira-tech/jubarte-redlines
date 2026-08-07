@@ -5600,7 +5600,11 @@ pub fn detect_unrelated_sources_word_mode(
     // M418 thrash harden: generic short demos (Heading 4 × Helvetica, both 3
     // multi-word titles) hit the count gate and lost exact_100 (−46). Require
     // long-prose base (≥8 tokens on first contentful) and short stub next
-    // (every contentful ≤3 tokens) — threaded "Text"/"Text 2" shape only.
+    // (every contentful ≤2 tokens) — threaded "Text"/"Text 2" shape only.
+    //
+    // M421 thrash: list_with_indents×lists_sub next "ItemSub paragraphsub
+    // paragraph" is 3 tokens — ≤3 stub gate still fired M412, free-mesh residual
+    // dropped base empty pure-D (IMDDD vs Word IMDDDD −11). Cap stubs at ≤2.
     if settings.merge_replaced_paragraphs
         && !has_table(cu1)
         && !has_table(cu2)
@@ -5621,7 +5625,7 @@ pub fn detect_unrelated_sources_word_mode(
         let next_stubs = !right_c.is_empty()
             && right_c
                 .iter()
-                .all(|u| para_text_token_list(dom, u).len() <= 3);
+                .all(|u| para_text_token_list(dom, u).len() <= 2);
         if base_long && next_stubs && !left_c.is_empty() && right_c.len() >= 2 {
             let first_tok = |u: &ComparisonUnit| -> Option<String> {
                 para_text_token_list(dom, u)
