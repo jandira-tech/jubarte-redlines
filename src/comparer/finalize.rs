@@ -2167,21 +2167,20 @@ pub fn ensure_empty_pure_i_before_short_title_del(
             {
                 continue;
             }
-            // No empty pure-I already between them (adjacent).
-            // Look ahead: pure-D empty or bare empty then table.
+            // Adjacent content pure-I × short pure-D only when pure-D is
+            // followed by bare/empty then a **table** (file_36×37). Do **not**
+            // fire on trailing pure-D demo residuals (file_82×83 wants a single
+            // empty pure-I spacer already kept by M389 — injecting two regressed
+            // pagefair).
             let after = kids.get(i + 2).copied();
             let after2 = kids.get(i + 3).copied();
-            let empty_then_tbl = match after {
-                Some(e)
+            let empty_then_tbl = matches!(
+                (after, after2),
+                (Some(e), Some(t))
                     if dom.name(e) == Some(W::p())
                         && para_has_no_text(dom, e)
-                        && after2.is_some_and(|t| dom.name(t) == Some(W::name("tbl"))) =>
-                {
-                    true
-                }
-                Some(t) if dom.name(t) == Some(W::name("tbl")) => true,
-                _ => false,
-            };
+                        && dom.name(t) == Some(W::name("tbl"))
+            );
             if !empty_then_tbl {
                 continue;
             }
