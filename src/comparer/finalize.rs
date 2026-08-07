@@ -3062,11 +3062,12 @@ pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
                     .filter(|t| !t.is_empty())
                     .map(|t| t.to_ascii_lowercase())
                     .collect();
-                if toks.len() < 2 {
-                    continue; // not a multi-token list item
+                // ≥3 tokens: "Lvl 1 – a" matches; "Item 3" (2 toks) does not
+                // steal pure-I "3" from "Lvl 2 – i" residual free-mesh.
+                if toks.len() < 3 {
+                    continue;
                 }
-                // Last-token only: "Lvl 1 – a" ends with "a"; do not match
-                // "Item 3" for pure-I "3" (would steal Lvl 2 – i pair).
+                // Last-token only: "Lvl 1 – a" ends with "a".
                 if toks.last().is_some_and(|t| t == &label) {
                     best = Some(dp);
                     break;
@@ -3115,6 +3116,68 @@ pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
             used_d.insert(dp);
             acted = true;
             break; // rescan kids
+        }
+        // Second pass: short pure-I residual labels still free (e.g. "3") zip
+        // positionally into remaining pure-D list items that look like Lvl*
+        // lines (Word free-meshes "3" with "Lvl 2 – i" — last token is "i").
+        if !acted {
+            let short_i: Vec<NodeId> = pure_i
+                .iter()
+                .copied()
+                .filter(|&p| {
+                    dom.parent(p).is_some()
+                        && para_body_is_very_short(dom, p)
+                        && para_body_alnum_len(dom, p) >= 1
+                })
+                .collect();
+            let lvl_d: Vec<NodeId> = pure_d
+                .iter()
+                .copied()
+                .filter(|&p| {
+                    if used_d.contains(&p) || dom.parent(p).is_none() {
+                        return false;
+                    }
+                    let t = para_revision_body_text(dom, p).to_ascii_lowercase();
+                    t.contains("lvl") || t.contains("level")
+                })
+                .collect();
+            let z = short_i.len().min(lvl_d.len());
+            if z > 0 {
+                // Fold first short_i into first lvl_d (one pair per rescan).
+                let ip = short_i[0];
+                let dp = lvl_d[0];
+                let ins_kids: Vec<NodeId> = dom
+                    .elements(ip, None)
+                    .into_iter()
+                    .filter(|&c| dom.name(c) != Some(W::p_pr()))
+                    .collect();
+                let first_body = dom
+                    .elements(dp, None)
+                    .into_iter()
+                    .find(|&c| dom.name(c) != Some(W::p_pr()));
+                for c in ins_kids {
+                    if dom.parent(c).is_none() {
+                        continue;
+                    }
+                    dom.remove(c);
+                    if let Some(first) = first_body {
+                        if dom.parent(first).is_some() {
+                            dom.add_before_self(first, c);
+                        } else {
+                            dom.add(dp, c);
+                        }
+                    } else {
+                        dom.add(dp, c);
+                    }
+                }
+                if let Some(ippr) = dom.element(ip, &W::p_pr()) {
+                    dom.remove(ippr);
+                }
+                if dom.parent(ip).is_some() {
+                    dom.remove(ip);
+                }
+                acted = true;
+            }
         }
         if !acted {
             return;

@@ -75,8 +75,8 @@ fn ordered_x_sublist_short_labels_mix_with_lvl() {
         }
     }
     assert!(
-        mix_lvl >= 2,
-        "expected ≥2 MIX paras with Lvl del + short-label ins, got {mix_lvl}"
+        mix_lvl >= 3,
+        "expected ≥3 MIX paras with Lvl del + short-label ins (a/b/3), got {mix_lvl}"
     );
     assert_eq!(
         pure_i_short_a, 0,
