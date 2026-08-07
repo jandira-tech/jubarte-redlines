@@ -3617,16 +3617,21 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // empty/drawing shell then pure-D long unrelated list prose.
                 // Word folds the **last** pure-I (drawing) with first pure-D
                 // (IIII…XDDDD). Preferring last content pure-I MIX-ed "My test
-                // with some shapes." into the list (−9.4 vs 27c). When the last
-                // pure-I is empty/whitespace and first pure-D is long unrelated
-                // content, keep the last pure-I as carrier.
+                // with some shapes." into the list (−9.4 vs 27c).
+                // M362 (file_173×174 stamp: TIFF title × Verdana Demo +
+                // drawing): same carrier bug with **short** pure-D title
+                // (≤8 words) — content×content title MIX thrash 100→67.
+                // When last pure-I is empty/whitespace and first pure-D is
+                // unrelated, keep trailing empty as carrier (long OR short).
                 let trailing = inss[inss.len() - 1];
-                if inss.len() >= 3
+                if inss.len() >= 2
                     && trailing != last_ins
                     && (para_has_no_text(dom, trailing)
                         || para_body_text_is_whitespace_only(dom, trailing))
-                    && para_word_atom_count(dom, d) > 12
                     && !should_fold_ins_del_pair(dom, last_ins, d)
+                    && (para_word_atom_count(dom, d) > 12
+                        || (para_word_atom_count(dom, last_ins) <= 6
+                            && para_word_atom_count(dom, d) <= 8))
                 {
                     last_ins = trailing;
                 }
