@@ -4773,6 +4773,18 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
             // separate). Pairwise-merging bigger runs invented mixed
             // paragraphs Word never produces.
             if dels.len() != 1 || inss.len() != 1 || !para_has_real_del(dom, dels[0]) {
+                // M393 (broken_list×broken Word IDDD…I…D): multi-del + multi-ins
+                // after a leading pure-I is Word list-cluster interleave.
+                // Moving all mid-stream ins before the first del collapses to
+                // pure-I-all then pure-D-all and free-meshes "a"×"Item 1".
+                if del_start > 0
+                    && classes[del_start - 1] == Some(true)
+                    && dels.len() >= 2
+                    && inss.len() >= 2
+                {
+                    i = ins_start; // advance past this del run; leave interleave
+                    continue;
+                }
                 // Move ALL ins blocks before the first del, then break.
                 // `children` is stale after the first remove/add_before_self —
                 // the outer rescan re-reads the container. Do not remove the
@@ -4998,6 +5010,33 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // Contiguous clusters before a table are often 3I+3D (file_14 /
                 // m53b). M68 Jaccard best-match fold tried for file_33; LO score
                 // −0.47 and still 3pp vs Word 2 — reverted.
+                //
+                // M393 (broken_list×broken Word IDDD…I…D): leading pure-I list
+                // item + multi pure-D cluster + **more pure-I after the dels**
+                // is Word interleave, not a residual free-mesh boundary.
+                // Folding ONE×Item1 invents MIX and thrashs the cluster peel.
+                if dels.len() >= 2
+                    && inss.len() == 1
+                    && j < children.len()
+                    && classes[j] == Some(true)
+                {
+                    continue;
+                }
+                // M393b: second pure-I block (short list labels a/b/TWO) before
+                // residual pure-D list items — Word keeps pure-I then pure-D
+                // (no free-mesh of "a"×"First shown").
+                if !dels.is_empty()
+                    && !inss.is_empty()
+                    && inss
+                        .iter()
+                        .filter(|&&p| !para_has_no_text(dom, p))
+                        .all(|&p| para_word_atom_count(dom, p) <= 3)
+                    && dels.iter().any(|&p| para_has_live_numpr(dom, p))
+                    && ins_start > 0
+                    && classes[ins_start - 1] == Some(false)
+                {
+                    continue;
+                }
                 let sole_del = dels.len() == 1;
                 // Word: last pure-ins merges with first pure-del at I…I D…D boundary.
                 let d = dels[0];
@@ -5516,6 +5555,168 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
             if !acted {
                 return;
             }
+        }
+    }
+}
+
+/// Word-alignment mode: at a multi-block replacement region — a run of
+/// fully-deleted block elements immediately followed by a run of fully-
+/// inserted ones, where either run contains a NON-paragraph block (table/
+/// sdt) — Word emits the INSERTED block first (ole-object_ooxml-style-link:
+/// Word page 1 is the new document's heading, ours was the old document's
+/// chart; every page misaligned, pixel-diff 0.59 corpus max). Pure-paragraph
+/// 1:1 replacements are left to [`merge_replaced_paragraphs`], which runs
+/// after this pass.
+/// M393 (broken_list_missing × broken_list): produce/coalesce collapses pure-I
+/// (B body Unid) and pure-D (A body Unid) into pure-I-all then pure-D-all even
+/// when LCS emitted Word interleave. Restore Word shape when body is pure-I
+/// short-list items then pure-D short-list items with a nested (ilvl≥1) pure-D
+/// cluster: pure-I first, pure-D first cluster, pure-I rest, pure-D rest.
+pub fn interleave_list_cluster_after_coalesce(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    if kids.len() < 6 {
+        return;
+    }
+    // Classify pure-I / pure-D only stream (no MIX/E content).
+    let mut kinds: Vec<char> = Vec::with_capacity(kids.len());
+    for &k in &kids {
+        if dom.name(k) != Some(W::p()) {
+            return; // tables spoil this peel
+        }
+        let pure_i = para_is_pure_inserted(dom, k);
+        let pure_d = para_is_pure_deleted(dom, k);
+        if pure_i && !pure_d {
+            kinds.push('I');
+        } else if pure_d && !pure_i {
+            kinds.push('D');
+        } else if para_has_no_text(dom, k) && !pure_i && !pure_d {
+            kinds.push('E');
+        } else {
+            return; // MIX or equal content
+        }
+    }
+    // Already Word interleave I + D+ + I+ + D* + E*? Leave alone.
+    {
+        let s: String = kinds.iter().collect();
+        // I D{2,} I{2,} D+ E*  (Word broken×broken)
+        let bytes = s.as_bytes();
+        if bytes.first() == Some(&b'I') {
+            let mut j = 1usize;
+            while j < bytes.len() && bytes[j] == b'D' {
+                j += 1;
+            }
+            let d1 = j - 1;
+            let i2s = j;
+            while j < bytes.len() && bytes[j] == b'I' {
+                j += 1;
+            }
+            let i2 = j - i2s;
+            let d2s = j;
+            while j < bytes.len() && bytes[j] == b'D' {
+                j += 1;
+            }
+            let d2 = j - d2s;
+            while j < bytes.len() && bytes[j] == b'E' {
+                j += 1;
+            }
+            if j == bytes.len() && d1 >= 2 && i2 >= 2 && d2 >= 1 {
+                return;
+            }
+        }
+    }
+    // Expect III…DDD… (coalesce shape) with optional trailing E.
+    let mut i_end = 0usize;
+    while i_end < kinds.len() && kinds[i_end] == 'I' {
+        i_end += 1;
+    }
+    let mut d_end = i_end;
+    while d_end < kinds.len() && kinds[d_end] == 'D' {
+        d_end += 1;
+    }
+    // trailing E only
+    if d_end < kinds.len() && kinds[d_end..].iter().any(|&c| c != 'E') {
+        return;
+    }
+    if i_end < 2 || d_end - i_end < 3 {
+        return;
+    }
+    // Nested pure-D: some pure-D has ilvl>=1 via pPr/numPr/ilvl.
+    let has_nested_del = kids[i_end..d_end].iter().any(|&p| {
+        dom.element(p, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::name("numPr")))
+            .and_then(|num| dom.element(num, &W::name("ilvl")))
+            .and_then(|il| dom.attribute(il, &W::val()))
+            .and_then(|v| v.parse::<u32>().ok())
+            .is_some_and(|v| v >= 1)
+    });
+    if !has_nested_del {
+        return;
+    }
+    // First pure-D cluster end within dels: through nested then stop before
+    // next top-level after saw_sub.
+    let dels = &kids[i_end..d_end];
+    let mut saw_sub = false;
+    let mut cut_rel = 0usize;
+    for (i, &p) in dels.iter().enumerate() {
+        let empty = para_has_no_text(dom, p);
+        if empty {
+            cut_rel = i + 1;
+            continue;
+        }
+        let ilvl = dom
+            .element(p, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::name("numPr")))
+            .and_then(|num| dom.element(num, &W::name("ilvl")))
+            .and_then(|il| dom.attribute(il, &W::val()))
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        if saw_sub && ilvl == 0 {
+            break;
+        }
+        if ilvl >= 1 {
+            saw_sub = true;
+        }
+        cut_rel = i + 1;
+    }
+    if !saw_sub || cut_rel < 2 || cut_rel >= dels.len() {
+        return;
+    }
+    // Rebuild: I[0], D[0..cut], I[1..], D[cut..]
+    let first_i = kids[0];
+    let rest_i: Vec<NodeId> = kids[1..i_end].to_vec();
+    let first_d: Vec<NodeId> = dels[..cut_rel].to_vec();
+    let rest_d: Vec<NodeId> = dels[cut_rel..].to_vec();
+    // Detach all and re-append in Word order before sectPr.
+    let sect = dom
+        .elements(body, None)
+        .into_iter()
+        .find(|&k| dom.name(k) == Some(W::name("sectPr")));
+    for &k in &kids {
+        dom.remove(k);
+    }
+    let mut order = Vec::new();
+    order.push(first_i);
+    order.extend(first_d);
+    order.extend(rest_i);
+    order.extend(rest_d);
+    // trailing E if any
+    for &k in &kids[d_end..] {
+        order.push(k);
+    }
+    if let Some(s) = sect {
+        for k in order {
+            dom.add_before_self(s, k);
+        }
+    } else {
+        for k in order {
+            dom.add(body, k);
         }
     }
 }

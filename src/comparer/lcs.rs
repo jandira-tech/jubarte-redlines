@@ -147,6 +147,54 @@ fn unit_para_has_numpr(dom: &Dom, u: &ComparisonUnit) -> bool {
     false
 }
 
+/// `w:ilvl` of this unit's enclosing paragraph, if any.
+fn unit_para_ilvl(dom: &Dom, u: &ComparisonUnit) -> Option<u32> {
+    let p_name = W::name("p");
+    let num_pr = W::name("numPr");
+    let ilvl_name = W::name("ilvl");
+    for atom in u.descendant_atoms() {
+        for &ae in atom.ancestor_elements.iter() {
+            if dom.name(ae) != Some(p_name.clone()) {
+                continue;
+            }
+            let ppr = dom.element(ae, &W::p_pr())?;
+            let num = dom.element(ppr, &num_pr)?;
+            let Some(il) = dom.element(num, &ilvl_name) else {
+                return Some(0);
+            };
+            return dom.attribute(il, &W::val()).and_then(|v| v.parse().ok());
+        }
+    }
+    None
+}
+
+/// Exclusive end index of the **first list cluster** on a short-item base list.
+///
+/// M393 (broken_list_missing × broken_list): Word pure-D's A's first chain
+/// through nested sub-items (ilvl≥1), then pure-I rest of B, then pure-D the
+/// remaining top-level A items. Cluster ends when a contentful ilvl=0 item
+/// appears **after** we have already seen a nested (ilvl≥1) item.
+fn first_list_cluster_end(dom: &Dom, cul: &[ComparisonUnit]) -> usize {
+    let mut saw_sub = false;
+    let mut end = 0usize;
+    for (i, u) in cul.iter().enumerate() {
+        let empty = para_text_token_list(dom, u).is_empty();
+        if empty {
+            end = i + 1;
+            continue;
+        }
+        let ilvl = unit_para_ilvl(dom, u).unwrap_or(0);
+        if saw_sub && ilvl == 0 {
+            return end;
+        }
+        if ilvl >= 1 {
+            saw_sub = true;
+        }
+        end = i + 1;
+    }
+    end
+}
+
 /// ≥ half of contentful paragraphs (non-empty word stream) carry `numPr`.
 fn mostly_list_paras(dom: &Dom, paras: &[Vec<ComparisonUnit>]) -> bool {
     let contentful: Vec<&Vec<ComparisonUnit>> = paras
@@ -1220,65 +1268,6 @@ fn stamp_confetti_then_replace(
             let mut nested = lcs(dom, left, right, &residual_settings);
             stamp_seqs.append(&mut nested);
             return Some(stamp_seqs);
-        }
-        // M392 (file_36×file_37 residual ~66): short stamp residuals with one
-        // table each and **no** residual pairs. Insert-all/delete-all parks
-        // B's empty pure-I spacers after pure-D title (or drops them via fold)
-        // while Word pure-I's next leading (title+empties), pure-D's base
-        // leading (title+empties), then meshes tables. Peel leading non-table
-        // groups when body residual is near-disjoint.
-        {
-            let is_tbl = |u: &ComparisonUnit| -> bool {
-                as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table)
-            };
-            let peel_nontbl = |cu: &[ComparisonUnit]| -> usize {
-                let mut n = 0usize;
-                for u in cu {
-                    if is_tbl(u) {
-                        break;
-                    }
-                    n += 1;
-                }
-                n
-            };
-            let p1 = peel_nontbl(&rest1);
-            let p2 = peel_nontbl(&rest2);
-            let n_tbl1 = rest1.iter().filter(|u| is_tbl(u)).count();
-            let n_tbl2 = rest2.iter().filter(|u| is_tbl(u)).count();
-            let body_j = {
-                let s1 = significant_body_tokens(dom, &rest1);
-                let s2 = significant_body_tokens(dom, &rest2);
-                let inter = s1.intersection(&s2).count() as f64;
-                let union = s1.union(&s2).count() as f64;
-                if union == 0.0 {
-                    0.0
-                } else {
-                    inter / union
-                }
-            };
-            
-            if n_tbl1 == 1
-                && n_tbl2 == 1
-                && p1 >= 1
-                && p2 >= 1
-                && (2..=6).contains(&rest1.len())
-                && (2..=6).contains(&rest2.len())
-                && body_j + 1e-12 < 0.12
-            {
-                for u in &rest2[..p2] {
-                    stamp_seqs.push(CorrelatedSequence::inserted(vec![u.clone()]));
-                }
-                for u in &rest1[..p1] {
-                    stamp_seqs.push(CorrelatedSequence::deleted(vec![u.clone()]));
-                }
-                let left: Vec<ComparisonUnit> = rest1[p1..].to_vec();
-                let right: Vec<ComparisonUnit> = rest2[p2..].to_vec();
-                if !left.is_empty() || !right.is_empty() {
-                    let mut nested = lcs(dom, left, right, settings);
-                    stamp_seqs.append(&mut nested);
-                }
-                return Some(stamp_seqs);
-            }
         }
         // Word order: insert remaining next, then delete remaining base.
         if !rest2.is_empty() {
@@ -2445,37 +2434,6 @@ pub fn do_lcs_algorithm(
         len = 0;
     }
 
-    // M392 (file_36×file_37 residual ~66): short unrelated demos false-anchor
-    // on empty paragraphs after tables peel into their own Equal window.
-    // Residual para-only windows then match B's leading empties to A's
-    // pre-table empty → E, wiping Word's pure-I spacers + pure-D empty
-    // (Word III… before pure-D "Contract Review"; engine jumps I→D). Void
-    // empty-only common runs in short windows when **significant body**
-    // tokens (excluding file_ stamps / tables' shared noise) are near-
-    // disjoint. Related short docs keep empty alignment.
-    if len > 0
-        && settings.merge_replaced_paragraphs
-        && cul1.len().max(cul2.len()) <= 16
-        && run_real_text_len(dom, &cul1[i1..i1 + len]) == 0
-    {
-        let s1 = significant_body_tokens(dom, &cul1);
-        let s2 = significant_body_tokens(dom, &cul2);
-        let j = if s1.is_empty() || s2.is_empty() {
-            0.0
-        } else {
-            let inter = s1.intersection(&s2).count() as f64;
-            let union = s1.union(&s2).count() as f64;
-            if union == 0.0 {
-                0.0
-            } else {
-                inter / union
-            }
-        };
-        if j + 1e-12 < 0.12 {
-            len = 0;
-        }
-    }
-
     // M-ANCHOR attempt 3 (parity/_scratch/anchor_sensitivity.md): a SHORT,
     // low-text common run inside a LARGE window of two UNRELATED sides is a
     // coincidence collision (empty paras, 'ipsum', '(dolore)'), not an
@@ -3147,6 +3105,65 @@ fn step_h(
     let left_only_ptt = left_len == left_tables + left_paras + left_textboxes;
     let right_only_ptt = right_len == right_tables + right_paras + right_textboxes;
     if left_only_ptt && right_only_ptt {
+        // M393 (broken_list_missing × broken_list Word IDDDDDDDIIII DDD):
+        // short-item list pair with a nested sublist on base. Word pure-I's
+        // first next item, pure-D's base first list cluster (through ilvl≥1
+        // subs), pure-I rest of next, pure-D rest of base. Full pure-I/D
+        // wholesale (M308) and free word-LCS both free-mesh "a"×"Item 1"
+        // into MIX (~53 pagefair). Require a true mid-cluster cut (saw nested
+        // then top-level) so flat short lists stay on M308.
+        if settings.merge_replaced_paragraphs
+            && left_tables == 0
+            && right_tables == 0
+            && left_paras >= 4
+            && right_paras >= 4
+            && left_paras != right_paras
+        {
+            let body_j = token_jaccard(
+                &para_text_tokens_from_units(dom, cul1),
+                &para_text_tokens_from_units(dom, cul2),
+            );
+            let list_left: Vec<&ComparisonUnit> = cul1
+                .iter()
+                .filter(|u| as_group(u).is_some_and(|g| g.group_type == Paragraph))
+                .filter(|u| !para_text_token_list(dom, u).is_empty())
+                .collect();
+            let list_right: Vec<&ComparisonUnit> = cul2
+                .iter()
+                .filter(|u| as_group(u).is_some_and(|g| g.group_type == Paragraph))
+                .filter(|u| !para_text_token_list(dom, u).is_empty())
+                .collect();
+            let mostly = |xs: &[&ComparisonUnit]| {
+                if xs.is_empty() {
+                    return false;
+                }
+                let n = xs.iter().filter(|u| unit_para_has_numpr(dom, u)).count();
+                n * 2 >= xs.len()
+            };
+            let cut = first_list_cluster_end(dom, cul1);
+            let has_nested = list_left.iter().any(|u| unit_para_ilvl(dom, u).unwrap_or(0) >= 1);
+            if body_j + 1e-12 < 0.25
+                && mostly(&list_left)
+                && mostly(&list_right)
+                && short_item_list_groups(dom, &list_left)
+                && short_item_list_groups(dom, &list_right)
+                && has_nested
+                && cut >= 2
+                && cut < cul1.len()
+                && !list_right.is_empty()
+            {
+                // pure-I first next, pure-D first cluster, pure-I rest, pure-D rest
+                out.push(CorrelatedSequence::inserted(vec![cul2[0].clone()]));
+                out.push(CorrelatedSequence::deleted(cul1[..cut].to_vec()));
+                if cul2.len() > 1 {
+                    out.push(CorrelatedSequence::inserted(cul2[1..].to_vec()));
+                }
+                if cut < cul1.len() {
+                    out.push(CorrelatedSequence::deleted(cul1[cut..].to_vec()));
+                }
+                return out;
+            }
+        }
         // M308 (broken_list × multiple_nodes): unequal pure-para lists with
         // near-zero text overlap and numPr on ≥ half of contentful paras on
         // BOTH sides. Word pure-I all next then pure-D all base; H4 flatten
@@ -4823,6 +4840,66 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::inserted(cu2.to_vec()),
             CorrelatedSequence::deleted(cu1.to_vec()),
         ]);
+    }
+    // M393 (broken_list_missing × broken_list): before M308c wholesale pure-I/D,
+    // peel first next item + base first list-cluster when base has nested
+    // sub-items. Word IDDDDDDDIIII DDD (~not pure-I all). See H4 M393.
+    if settings.merge_replaced_paragraphs
+        && short_n >= 4
+        && long_n > short_n
+        && !has_table(cu1)
+        && !has_table(cu2)
+        && n1 >= 4
+        && n2 >= 4
+    {
+        let body_j = token_jaccard(
+            &para_text_tokens_from_units(dom, cu1),
+            &para_text_tokens_from_units(dom, cu2),
+        );
+        let cl: Vec<&ComparisonUnit> = cu1
+            .iter()
+            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .collect();
+        let cr: Vec<&ComparisonUnit> = cu2
+            .iter()
+            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .collect();
+        let mostly_list = |xs: &[&ComparisonUnit]| -> bool {
+            if xs.is_empty() {
+                return false;
+            }
+            let with_num = xs.iter().filter(|u| unit_para_has_numpr(dom, u)).count();
+            with_num * 2 >= xs.len()
+        };
+        let cut = first_list_cluster_end(dom, cu1);
+        let has_nested = cl.iter().any(|u| unit_para_ilvl(dom, u).unwrap_or(0) >= 1);
+        // Shared short tokens ("a","text") inflate body_j ~0.17 without real
+        // list relatedness — allow up to 0.25 when nested cluster cut exists.
+        if body_j + 1e-12 < 0.25
+            && mostly_list(&cl)
+            && mostly_list(&cr)
+            && short_item_list_groups(dom, &cl)
+            && short_item_list_groups(dom, &cr)
+            && has_nested
+            && cut >= 2
+            && cut < cu1.len()
+            && !cu2.is_empty()
+        {
+            let mut out = Vec::new();
+            // Four sequences (not one-per-para): keeps Word interleave through
+            // produce/flatten; per-para sequences were collapsed to pure-I/D.
+            out.push(CorrelatedSequence::inserted(vec![cu2[0].clone()]));
+            out.push(CorrelatedSequence::deleted(cu1[..cut].to_vec()));
+            if cut < cu1.len() || cu2.len() > 1 {
+                if cu2.len() > 1 {
+                    out.push(CorrelatedSequence::inserted(cu2[1..].to_vec()));
+                }
+                if cut < cu1.len() {
+                    out.push(CorrelatedSequence::deleted(cu1[cut..].to_vec()));
+                }
+            }
+            return Some(out);
+        }
     }
     // M308c (broken_list × multiple_nodes): both sides list-heavy short
     // items, unequal contentful counts, near-zero body text jaccard.
@@ -6547,22 +6624,6 @@ pub fn find_common_at_beginning_and_end(
     if ccb != 0 && (ccb as f64) / (length_to_compare as f64) < settings.detail_threshold {
         ccb = 0;
     }
-    // M392: do not Equal-prefix on pure-empty runs when residual content is
-    // unrelated (file_36×37 B empties before pure-D title must stay pure-I).
-    if ccb != 0
-        && settings.merge_replaced_paragraphs
-        && n1.max(n2) <= 16
-        && run_real_text_len(dom, &cul1[..ccb]) == 0
-    {
-        let s1 = significant_body_tokens(dom, cul1);
-        let s2 = significant_body_tokens(dom, cul2);
-        let inter = s1.intersection(&s2).count() as f64;
-        let union = s1.union(&s2).count() as f64;
-        let j = if union == 0.0 { 0.0 } else { inter / union };
-        if j + 1e-12 < 0.12 {
-            ccb = 0;
-        }
-    }
     if ccb != 0 {
         let mut out = Vec::new();
         out.push(CorrelatedSequence::paired(
@@ -6663,23 +6724,6 @@ pub fn find_common_at_beginning_and_end(
     }
     if is_only_paragraph_mark {
         cce = 0; // WC010 guard (:5763)
-    }
-    // M392: do not Equal-suffix on pure-empty runs when residual content is
-    // unrelated. Trailing empty Equal collapsed A/B blanks into E and ate the
-    // pure-I spacers Word keeps before pure-D "Contract Review" (file_36×37).
-    if cce != 0
-        && settings.merge_replaced_paragraphs
-        && n1.max(n2) <= 16
-        && run_real_text_len(dom, &cul1[n1 - cce..]) == 0
-    {
-        let s1 = significant_body_tokens(dom, cul1);
-        let s2 = significant_body_tokens(dom, cul2);
-        let inter = s1.intersection(&s2).count() as f64;
-        let union = s1.union(&s2).count() as f64;
-        let j = if union == 0.0 { 0.0 } else { inter / union };
-        if j + 1e-12 < 0.12 {
-            cce = 0;
-        }
     }
     if cce == 0 {
         return None;

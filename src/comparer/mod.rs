@@ -686,6 +686,9 @@ pub fn compare_bodies_faithful_with_notes(
         // Short pure-D base trailing after insert-all-next → splice mid-stream
         // near TOC/tip (document_100×comments; Word nests original on page 2).
         finalize::splice_trailing_short_pure_dels_midstream(dom, root);
+        // M393: coalesce collapses pure-I-all then pure-D-all for list pairs;
+        // interleave Word cluster shape **before** merge free-meshes labels.
+        finalize::interleave_list_cluster_after_coalesce(dom, root);
         finalize::merge_replaced_paragraphs(dom, root, &settings.author_for_revisions);
         // M159: restore short pure-D before longer pure-I after merge reorder
         // (text_highlight×times Word MIX|DEL|INS|MIX).
@@ -744,6 +747,8 @@ pub fn compare_bodies_faithful_with_notes(
         // M377: short-title MIX free-mesh shared sig token as EQ (tiff×h_f
         // "document" −3.4 vs wholesale ins+del).
         finalize::free_mesh_shared_title_token_in_mix(dom, root);
+        // M393 late: re-apply after free-mesh peels thrash LCS interleave.
+        finalize::interleave_list_cluster_after_coalesce(dom, root);
         // M376: after merge/park peels — strip list line=240/jc that mid pure-D
         // absorbed from pure-I list residual (bookmark×broken_complex −0.6).
         finalize::strip_list_layout_from_mid_pure_del(dom, root);
