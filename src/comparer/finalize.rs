@@ -3912,6 +3912,20 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 {
                     continue;
                 }
+                // M365 (bookmark×broken_complex_list −5.0): multi pure-I list
+                // ending in a very short residual ("a") × multi pure-D long
+                // bookmark prose. Word keeps pure-I "a" then pure-D; folding
+                // invents MIX (−5 pagefair). Do **not** require Jaccard miss:
+                // pure-I "a" shares token "a" with "…a paragraph…" (0.125 ≥
+                // 0.12) and would still fold. M124 covers short pure-I runs
+                // (≤2); this covers long list streams. Short×short demos
+                // (file_54 "b"+Demo title ≤ few tokens) keep del_alnum < 20.
+                if dels.len() > 1
+                    && para_body_is_very_short(dom, last_ins)
+                    && para_body_alnum_len(dom, d) >= 20
+                {
+                    continue;
+                }
                 // Strip para-mark revision from the carrier (Word: bare mixed p)
                 // unless M88 adopts Deleted structural pPr (numPr) with del mark.
                 let del_structural = dom
