@@ -2714,6 +2714,131 @@ fn mark_adopted_hf_content_as_inserted(
     out.set_part(part, dom.serialize_element(root).into_bytes());
 }
 
+/// M383 — when the revised document has **no** headers/footers but the original
+/// does, Word marks all original HF content pure-D. Eng left A HF live (−45 on
+/// h_f_normal_odd_even_firstpg×basic_footnotes). Inverse of M378.
+fn mark_a_only_hf_content_as_deleted(
+    out: &mut PartFs,
+    pkg1: &PartFs,
+    pkg2: &PartFs,
+    settings: &WmlComparerSettings,
+) {
+    let b_refs = header_footer_refs(pkg2);
+    if !b_refs.is_empty() {
+        return; // B has HF — slot-level content diff owns the markup
+    }
+    let a_refs = header_footer_refs(pkg1);
+    if a_refs.is_empty() {
+        return;
+    }
+    let mut seen = std::collections::HashSet::new();
+    for (_, _, part) in a_refs {
+        if !seen.insert(part.clone()) {
+            continue;
+        }
+        // Part may be stored under the same name in out (A-based package).
+        mark_hf_part_content_as_deleted(out, &part, settings);
+    }
+}
+
+fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlComparerSettings) {
+    let Some(xml) = out.part_string(part) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return;
+    };
+    let mut next_id: u32 = 1;
+    let author = settings.author_for_revisions.as_str();
+    let date = settings.date_time_for_revisions.as_str();
+    let paras: Vec<NodeId> = dom.descendants(root, Some(&W::p()));
+    for p in paras {
+        if !dom.descendants(p, Some(&W::ins())).is_empty()
+            || !dom.descendants(p, Some(&W::del())).is_empty()
+        {
+            continue;
+        }
+        let kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| dom.name(c) != Some(W::p_pr()))
+            .collect();
+        if kids.is_empty() {
+            continue;
+        }
+        let has_content = kids.iter().any(|&c| {
+            let Some(n) = dom.name(c) else {
+                return false;
+            };
+            n == W::r()
+                || n == W::hyperlink()
+                || n == W::name("sdt")
+                || n == W::name("drawing")
+                || n.local_name() == "AlternateContent"
+        });
+        if !has_content {
+            continue;
+        }
+        let del = dom.new_element(W::del());
+        dom.set_attribute_value(del, &W::author(), Some(author));
+        dom.set_attribute_value(del, &W::date(), Some(date));
+        let id = next_id.to_string();
+        next_id += 1;
+        dom.set_attribute_value(del, &W::id(), Some(&id));
+        if let Some(&first) = kids.first() {
+            if dom.parent(first).is_some() {
+                dom.add_before_self(first, del);
+            } else {
+                dom.add(p, del);
+            }
+        } else {
+            dom.add(p, del);
+        }
+        for c in kids {
+            if dom.parent(c).is_none() {
+                continue;
+            }
+            dom.remove(c);
+            // Rename w:t → w:delText under this run tree for pure-D.
+            for t in dom.descendants(c, Some(&W::t())) {
+                dom.set_name(t, W::name("delText"));
+            }
+            dom.add(del, c);
+        }
+        // Mark del on pPr/rPr (Word PAGE + label shape).
+        if let Some(ppr) = dom.element(p, &W::p_pr()) {
+            let rpr = match dom.element(ppr, &W::r_pr()) {
+                Some(r) => r,
+                None => {
+                    let r = dom.new_element(W::r_pr());
+                    if let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) {
+                        dom.add_before_self(ppc, r);
+                    } else {
+                        dom.add(ppr, r);
+                    }
+                    r
+                }
+            };
+            if dom.element(rpr, &W::ins()).is_none() && dom.element(rpr, &W::del()).is_none() {
+                let mark = dom.new_element(W::del());
+                dom.set_attribute_value(mark, &W::author(), Some(author));
+                dom.set_attribute_value(mark, &W::date(), Some(date));
+                let mid = next_id.to_string();
+                next_id += 1;
+                dom.set_attribute_value(mark, &W::id(), Some(&mid));
+                if let Some(first) = dom.elements(rpr, None).first().copied() {
+                    dom.add_before_self(first, mark);
+                } else {
+                    dom.add(rpr, mark);
+                }
+            }
+        }
+    }
+    out.set_part(part, dom.serialize_element(root).into_bytes());
+}
+
 /// M379 — when the original has no real footnotes/endnotes separators but the
 /// revised document does, copy B's notes part into the package. Word carries
 /// separator + continuationSeparator (often with drawings) even when body has
@@ -3182,6 +3307,8 @@ fn compare_documents_impl(
         // Word inheritance: drop body-final HF slots already set on an earlier
         // mid-section break (dual chrome otherwise). Mid multi-section copies stay.
         strip_final_sectpr_inherited_header_footer(&mut dom, result_root);
+        // M383: A-only HF (B has no headers/footers) → pure-D (Word).
+        mark_a_only_hf_content_as_deleted(&mut out, &pkg1, &pkg2, settings);
     }
 
     // M35: comments carryover is a package-validity invariant, not a
