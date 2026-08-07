@@ -2071,10 +2071,18 @@ pub fn strip_empty_pure_ins_before_trailing_pure_dels(dom: &mut Dom, root: NodeI
     // spacer before trailing pure-D short demo title ("Title Style Centered
     // Demo"). B may end with 1–2 empties; M85a stripped all. Keep one spacer
     // when the first pure-D is a short demo/title residual.
+    //
+    // M389b (file_36 residual): same for short pure-D titles without the word
+    // "Demo" (e.g. "Contract Review", 2 words) when multi pure-D residual.
     let first_del = non_sect[run_start];
+    let short_title_del = {
+        let n = para_word_atom_count(dom, first_del);
+        (1..=4).contains(&n) && para_body_alnum_len(dom, first_del) <= 32
+    };
     let keep_one_demo_spacer = (1..=2).contains(&empty_run)
         && (para_looks_like_demo_title(dom, first_del)
-            || para_has_heading_or_title_style(dom, first_del));
+            || para_has_heading_or_title_style(dom, first_del)
+            || short_title_del);
     // Strip at most two trailing empties before pure-dels (M85a original).
     // When keeping a demo spacer, leave the empty closest to the pure-D run.
     let strip_n = if keep_one_demo_spacer {
@@ -2225,21 +2233,26 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
             // multi pure-D short demo titles ("Title Style Centered Demo"…).
             // Folding the empty into first pure-D invents MIX and drops the
             // spacer. Skip run-less empty pure-I × demo/title pure-D when ≥2
-            // pure-D residual paras follow.
-            if dom.descendants(ins_p, Some(&W::t())).is_empty()
-                && (para_looks_like_demo_title(dom, del_p)
-                    || para_has_heading_or_title_style(dom, del_p))
-            {
-                let mut following_pure_d = 0usize;
-                for &k in kids.iter().skip(i + 1) {
-                    if dom.name(k) == Some(W::p()) && para_is_pure_deleted(dom, k) {
-                        following_pure_d += 1;
-                    } else {
-                        break;
+            // pure-D residual paras follow. M389b: also short pure-D titles
+            // without the word Demo ("Contract Review").
+            if dom.descendants(ins_p, Some(&W::t())).is_empty() {
+                let n = para_word_atom_count(dom, del_p);
+                let short_title = (1..=4).contains(&n) && para_body_alnum_len(dom, del_p) <= 32;
+                if para_looks_like_demo_title(dom, del_p)
+                    || para_has_heading_or_title_style(dom, del_p)
+                    || short_title
+                {
+                    let mut following_pure_d = 0usize;
+                    for &k in kids.iter().skip(i + 1) {
+                        if dom.name(k) == Some(W::p()) && para_is_pure_deleted(dom, k) {
+                            following_pure_d += 1;
+                        } else {
+                            break;
+                        }
                     }
-                }
-                if following_pure_d >= 2 {
-                    continue;
+                    if following_pure_d >= 2 {
+                        continue;
+                    }
                 }
             }
             // M345: empty pure-I fold must not thrash pure-D layout.
