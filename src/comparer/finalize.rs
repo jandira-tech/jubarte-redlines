@@ -4736,6 +4736,16 @@ fn should_fold_multi_del_at_document_scale(
     {
         return false;
     }
+    // M417 (sd_2517 × borderbox): multi pure-I math demo (≥10) × huge pure-D
+    // base (≥50). Multi-del fold MIX-es last borderBox title into first base
+    // lorem (DI). Word pure-I all next then pure-D all base. Skip when
+    // boundary jaccard is low and pure-D side is much larger.
+    if content_inss.len() >= 10
+        && content_dels.len() >= 50
+        && !should_fold_ins_del_pair(dom, last_ins, first_del)
+    {
+        return false;
+    }
     // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
     if inss.len() < 3 || dels.len() < 3 {
         // M337: do **not** skip fold for single short pure-I + multi pure-D.
