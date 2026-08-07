@@ -5415,22 +5415,9 @@ pub fn detect_unrelated_sources_word_mode(
                 ]);
             }
         }
-        // Reverse M413: short title-page base × short section next.
-        if settings.merge_replaced_paragraphs
-            && !has_table(cu1)
-            && !has_table(cu2)
-            && (4..=12).contains(&cn1)
-            && (1..=3).contains(&cn2)
-        {
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.05 {
-                return Some(vec![
-                    CorrelatedSequence::inserted(cu2.to_vec()),
-                    CorrelatedSequence::deleted(cu1.to_vec()),
-                ]);
-            }
-        }
+        // Reverse M413 (medium base × short next pure-I/D): thrash dropcaps×
+        // exported_list_font −3.7 (Word free-meshes short next into dropcaps).
+        // Keep forward-only (short section base × title-page next).
     }
     // M404: LCS already pure-I/D via M308c for basic_list×sd_1707; interleave
     // gate in finalize keeps IIDDD (see finalize::interleave_list_cluster).
