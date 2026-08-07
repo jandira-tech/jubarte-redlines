@@ -5321,8 +5321,10 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // multi contentful pure-I title/labels (≥4) × sole pure-D base
                 // prose. Trailing sole-del always-fold (m44) MIX-es last pure-I
                 // into sole pure-D. Word pure-I all next then pure-D base.
-                // M418: only when last pure-I is short stub (≤2 tokens) or
-                // title-page tail — not long demo body × sole-del.
+                // M418: only when last pure-I is short stub or title-page tail.
+                // M422 thrash: last_n≤2 also matched "Acme Corporation" on
+                // hummingbird×employment (−5) and blocked Word MIX into wrap.
+                // Stubs must be ≤2 tokens AND ≤5 chars total (a/x/x/b labels).
                 if sole_del
                     && !should_fold_ins_del_pair(dom, last_ins, d)
                     && para_word_atom_count(dom, d) >= 5
@@ -5333,11 +5335,13 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         .count();
                     let last_n = para_word_atom_count(dom, last_ins);
                     let last_t = para_revision_body_text(dom, last_ins).to_ascii_lowercase();
+                    let short_stub =
+                        last_n <= 2 && last_t.chars().filter(|c| !c.is_whitespace()).count() <= 5;
                     let title_page_tail = last_t.contains("prepared")
                         || last_t.contains('@')
                         || last_t.contains("2040")
                         || last_t.contains("agreement")
-                        || last_n <= 2;
+                        || short_stub;
                     if content_inss_n >= 4 && title_page_tail {
                         continue;
                     }
