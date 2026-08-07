@@ -3013,8 +3013,10 @@ pub fn merge_replaced_paragraphs(dom: &mut Dom, root: NodeId, comparer_author: &
 /// M369 (ordered_list×sublist −3.5): residual short-label pure-I ("a"/"b"/"3")
 /// × pure-D list item ending with the same token ("Lvl 1 – a"). Word free-
 /// meshes those pairs (MIX); wholesale pure-I/D leaves them separate.
-/// Greedy order-preserving zip: fold pure-I body (ins) into matching pure-D
-/// carrier (list pPr kept). Coarse whole-para fold — not free word-LCS.
+///
+/// M372: Word keeps **Inserted** live list pPr (numPr/spacing from pure-I "a")
+/// and parks Deleted ListParagraph under `pPrChange`. Old path kept pure-D
+/// pPr live (−2.2 residual thrash). Coarse whole-para fold — not free word-LCS.
 pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -3081,42 +3083,7 @@ pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
             if dom.parent(ip).is_none() || dom.parent(dp).is_none() {
                 continue;
             }
-            // Fold pure-I into pure-D: pure-D keeps list pPr; pure-I body (ins)
-            // runs first (Word replacement order: ins before del).
-            let ins_kids: Vec<NodeId> = dom
-                .elements(ip, None)
-                .into_iter()
-                .filter(|&c| dom.name(c) != Some(W::p_pr()))
-                .collect();
-            // Prepend pure-I body before pure-D's first non-pPr child.
-            // Collect first target once — do not move while iterating pure-D kids.
-            let first_body = dom
-                .elements(dp, None)
-                .into_iter()
-                .find(|&c| dom.name(c) != Some(W::p_pr()));
-            for c in ins_kids {
-                if dom.parent(c).is_none() {
-                    continue;
-                }
-                dom.remove(c);
-                if let Some(first) = first_body {
-                    if dom.parent(first).is_some() {
-                        dom.add_before_self(first, c);
-                    } else {
-                        dom.add(dp, c);
-                    }
-                } else {
-                    dom.add(dp, c);
-                }
-            }
-            // Strip mark-only pPr from pure-I before drop.
-            if let Some(ippr) = dom.element(ip, &W::p_pr()) {
-                dom.remove(ippr);
-            }
-            // Pure-D may have mark-only del on rPr — leave list structure.
-            if dom.parent(ip).is_some() {
-                dom.remove(ip);
-            }
+            fold_short_label_ins_into_del(dom, ip, dp);
             used_d.insert(dp);
             acted = true;
             break; // rescan kids
@@ -3145,47 +3112,118 @@ pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
                     t.contains("lvl") || t.contains("level")
                 })
                 .collect();
-            let z = short_i.len().min(lvl_d.len());
-            if z > 0 {
-                // Fold first short_i into first lvl_d (one pair per rescan).
-                let ip = short_i[0];
-                let dp = lvl_d[0];
-                let ins_kids: Vec<NodeId> = dom
-                    .elements(ip, None)
-                    .into_iter()
-                    .filter(|&c| dom.name(c) != Some(W::p_pr()))
-                    .collect();
-                let first_body = dom
-                    .elements(dp, None)
-                    .into_iter()
-                    .find(|&c| dom.name(c) != Some(W::p_pr()));
-                for c in ins_kids {
-                    if dom.parent(c).is_none() {
-                        continue;
-                    }
-                    dom.remove(c);
-                    if let Some(first) = first_body {
-                        if dom.parent(first).is_some() {
-                            dom.add_before_self(first, c);
-                        } else {
-                            dom.add(dp, c);
-                        }
-                    } else {
-                        dom.add(dp, c);
-                    }
-                }
-                if let Some(ippr) = dom.element(ip, &W::p_pr()) {
-                    dom.remove(ippr);
-                }
-                if dom.parent(ip).is_some() {
-                    dom.remove(ip);
-                }
+            if !short_i.is_empty() && !lvl_d.is_empty() {
+                fold_short_label_ins_into_del(dom, short_i[0], lvl_d[0]);
                 acted = true;
             }
         }
         if !acted {
             return;
         }
+    }
+}
+
+/// Fold pure-I short label into pure-D list residual. Prefer Inserted structural
+/// pPr live (numPr/spacing from pure-I) + Deleted pPr under `pPrChange` (Word
+/// ordered×sublist MIX). Fall back to pure-D pPr when pure-I has no structure.
+fn fold_short_label_ins_into_del(dom: &mut Dom, ip: NodeId, dp: NodeId) {
+    // Author/date from pure-I ins for pPrChange.
+    let (author, date) = {
+        let mut a = "Redline".to_string();
+        let mut d = "1970-01-01T00:00:00Z".to_string();
+        if let Some(ins) = dom.descendants(ip, Some(&W::ins())).first().copied() {
+            if let Some(v) = dom.attribute(ins, &W::author()) {
+                a = v.to_string();
+            }
+            if let Some(v) = dom.attribute(ins, &W::date()) {
+                d = v.to_string();
+            }
+        }
+        (a, d)
+    };
+    let ins_structural = dom
+        .element(ip, &W::p_pr())
+        .is_some_and(|ippr| ppr_has_structural_props(dom, ippr));
+    if ins_structural {
+        // Word: live Inserted pPr + pPrChange(Deleted old).
+        let old_ppr = dom.element(dp, &W::p_pr()).map(|p| dom.clone_subtree(p));
+        if let Some(dppr) = dom.element(dp, &W::p_pr()) {
+            dom.remove(dppr);
+        }
+        if let Some(ippr) = dom.element(ip, &W::p_pr()) {
+            let live = dom.clone_subtree(ippr);
+            // Strip mark-only ins/del under rPr on live shell.
+            if let Some(rpr) = dom.element(live, &W::r_pr()) {
+                for child in dom.elements(rpr, None) {
+                    let cn = dom.name(child).unwrap();
+                    if cn == W::ins() || cn == W::del() {
+                        dom.remove(child);
+                    }
+                }
+                if dom.elements(rpr, None).is_empty() {
+                    dom.remove(rpr);
+                }
+            }
+            if let Some(old) = old_ppr {
+                // Strip mark del under old rPr.
+                if let Some(rpr) = dom.element(old, &W::r_pr()) {
+                    for child in dom.elements(rpr, None) {
+                        let cn = dom.name(child).unwrap();
+                        if cn == W::ins() || cn == W::del() {
+                            dom.remove(child);
+                        }
+                    }
+                    if dom.elements(rpr, None).is_empty() {
+                        dom.remove(rpr);
+                    }
+                }
+                if dom.element(live, &W::name("pPrChange")).is_none() {
+                    let chg = dom.new_element(W::name("pPrChange"));
+                    dom.set_attribute_value(chg, &W::author(), Some(&author));
+                    dom.set_attribute_value(chg, &W::date(), Some(&date));
+                    dom.set_attribute_value(chg, &W::id(), Some("0"));
+                    dom.add(chg, old);
+                    dom.add(live, chg);
+                }
+            }
+            // Insert live pPr first on pure-D carrier.
+            if let Some(first) = dom.elements(dp, None).first().copied() {
+                dom.add_before_self(first, live);
+            } else {
+                dom.add(dp, live);
+            }
+        }
+    }
+    // Move pure-I body (ins) before pure-D body.
+    let ins_kids: Vec<NodeId> = dom
+        .elements(ip, None)
+        .into_iter()
+        .filter(|&c| dom.name(c) != Some(W::p_pr()))
+        .collect();
+    let first_body = dom
+        .elements(dp, None)
+        .into_iter()
+        .find(|&c| dom.name(c) != Some(W::p_pr()));
+    for c in ins_kids {
+        if dom.parent(c).is_none() {
+            continue;
+        }
+        dom.remove(c);
+        if let Some(first) = first_body {
+            if dom.parent(first).is_some() {
+                dom.add_before_self(first, c);
+            } else {
+                dom.add(dp, c);
+            }
+        } else {
+            dom.add(dp, c);
+        }
+    }
+    if let Some(ippr) = dom.element(ip, &W::p_pr()) {
+        dom.remove(ippr);
+    }
+    if dom.parent(ip).is_some() {
+        dom.remove(ip);
     }
 }
 
