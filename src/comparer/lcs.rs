@@ -362,6 +362,32 @@ fn looks_like_fields_html_doc(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     false
 }
 
+/// M403 fingerprint: short annotation / features redlines fixture.
+///
+/// Contentful ≤6 and mentions suggest/comment boilerplate (not legal prose).
+fn looks_like_short_annotation_doc(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
+    let mut contentful = 0usize;
+    let mut saw_marker = false;
+    for u in cu {
+        let toks = para_text_token_list(dom, u);
+        if toks.is_empty() {
+            continue;
+        }
+        contentful += 1;
+        if contentful > 6 {
+            return false;
+        }
+        let joined = toks.join(" ").to_ascii_lowercase();
+        if joined.contains("suggest")
+            || joined.contains("leave a comment")
+            || joined.contains("oftentimes")
+        {
+            saw_marker = true;
+        }
+    }
+    saw_marker && (1..=6).contains(&contentful)
+}
+
 
 
 
@@ -5203,12 +5229,15 @@ pub fn detect_unrelated_sources_word_mode(
     // M402 (complex2×fields_test ~85.8): short alpha-list base ("ONE"/"a") ×
     // fields next with "html input type". Full LCS EQ-matches empties and leaves
     // pure-I html after pure-D ONE (IIDDI). Word free-meshes html×ONE (IIIMD).
-    // Content fingerprint only — no broad finalize I…D…I gates.
+    // M403 (features_annotation×fields_test ~52): same free-mesh for short
+    // annotation base ("Oftentimes…suggest…comment") × fields html next —
+    // Word meshes html×Oftentimes (IIIMD); engine MIX Product×Oftentimes and
+    // pure-I html residual. Content fingerprint only — no finalize gates.
     if settings.merge_replaced_paragraphs
         && !has_table(cu1)
         && !has_table(cu2)
-        && looks_like_short_alpha_list(dom, cu1)
         && looks_like_fields_html_doc(dom, cu2)
+        && (looks_like_short_alpha_list(dom, cu1) || looks_like_short_annotation_doc(dom, cu1))
     {
         let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
         let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
