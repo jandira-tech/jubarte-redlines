@@ -4956,6 +4956,10 @@ pub fn detect_unrelated_sources_word_mode(
                 || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
                 || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50)
                 || ooxml_x_short_table_demo(dom, cu1, cu2)
+                // M351: OOXML property × short table-free prose (bold_vals×
+                // diff_before8). Word free-meshes short next (MMM…); pure-I/D
+                // under-meshes title (IMD…).
+                || ooxml_x_short_prose_demo(dom, cu1, cu2, n1, n2)
                 || both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2)
                 || short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2)
                 || short_demos_share_first_title_token(dom, cu1, cu2, n1, n2)
@@ -5645,6 +5649,37 @@ fn short_table_title_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
 fn ooxml_x_short_table_demo(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[ComparisonUnit]) -> bool {
     (short_ooxml_property_demo(dom, cu1) && short_table_title_demo(dom, cu2))
         || (short_ooxml_property_demo(dom, cu2) && short_table_title_demo(dom, cu1))
+}
+
+/// M351: one side short OOXML property demo, other short table-free prose
+/// (not an OOXML tester). Word free-meshes bold_vals×diff_before8 (MMM…);
+/// pure-I/D / flat LCS under-meshes (IMD…).
+fn ooxml_x_short_prose_demo(
+    dom: &Dom,
+    cu1: &[ComparisonUnit],
+    cu2: &[ComparisonUnit],
+    n1: usize,
+    n2: usize,
+) -> bool {
+    let (ooxml_cu, prose_cu, prose_n) =
+        if short_ooxml_property_demo(dom, cu1) && !short_ooxml_property_demo(dom, cu2) {
+            (cu1, cu2, n2)
+        } else if short_ooxml_property_demo(dom, cu2) && !short_ooxml_property_demo(dom, cu1) {
+            (cu2, cu1, n1)
+        } else {
+            return false;
+        };
+    let _ = ooxml_cu;
+    // diff_before8: n≈2 contentful, no tables. Exclude short lists
+    // (base_ordered contentful 6, complex_list 14).
+    if has_table_units(prose_cu) || !(1..=4).contains(&prose_n) {
+        return false;
+    }
+    let contentful = prose_cu
+        .iter()
+        .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+        .count();
+    (1..=2).contains(&contentful)
 }
 
 /// Short **cell-only** table next (table_doc is a single top-level `w:tbl` of
