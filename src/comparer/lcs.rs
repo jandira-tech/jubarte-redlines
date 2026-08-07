@@ -5311,6 +5311,51 @@ pub fn detect_unrelated_sources_word_mode(
             ]);
         }
     }
+    // M414 (pageref_uppercase × restart_numbering_sub_list ~51.7): short
+    // alpha-list next (ONE/A/TWO/A/B/C) × long table-free base (≥8 contentful).
+    // Full LCS free-meshes last list label ("C") into first base TOC line (DI).
+    // Word pure-I all list then pure-D all base (I6 D21). Not reverse-M413
+    // (that thrash-ed dropcaps×exported_list_font) — fingerprint is alpha-list
+    // next only, not any short next.
+    if settings.merge_replaced_paragraphs
+        && !has_table(cu1)
+        && !has_table(cu2)
+        && n1 >= 8
+        && (looks_like_short_alpha_list(dom, cu2) || looks_like_short_alpha_list_cluster(dom, cu2))
+    {
+        let b1 = para_text_tokens_from_units(dom, cu1);
+        let b2 = para_text_tokens_from_units(dom, cu2);
+        // Alpha-list tokens are often ≤2 chars so b2 may be empty after ≥3-char
+        // filter; still pure-I/D when base has body and jaccard is ~0.
+        let next_ok = !b2.is_empty()
+            || looks_like_short_alpha_list(dom, cu2)
+            || looks_like_short_alpha_list_cluster(dom, cu2);
+        if !b1.is_empty() && next_ok && token_jaccard(&b1, &b2) + 1e-12 < 0.05 {
+            return Some(vec![
+                CorrelatedSequence::inserted(cu2.to_vec()),
+                CorrelatedSequence::deleted(cu1.to_vec()),
+            ]);
+        }
+    }
+    // Reverse M414: short alpha-list base × long table-free next.
+    if settings.merge_replaced_paragraphs
+        && !has_table(cu1)
+        && !has_table(cu2)
+        && n2 >= 8
+        && (looks_like_short_alpha_list(dom, cu1) || looks_like_short_alpha_list_cluster(dom, cu1))
+    {
+        let b1 = para_text_tokens_from_units(dom, cu1);
+        let b2 = para_text_tokens_from_units(dom, cu2);
+        let base_ok = !b1.is_empty()
+            || looks_like_short_alpha_list(dom, cu1)
+            || looks_like_short_alpha_list_cluster(dom, cu1);
+        if base_ok && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.05 {
+            return Some(vec![
+                CorrelatedSequence::inserted(cu2.to_vec()),
+                CorrelatedSequence::deleted(cu1.to_vec()),
+            ]);
+        }
+    }
     // M412 (text_color_highlight × threaded_comment ~48.7): both sides short
     // (≤4 contentful groups), first significant tokens differ. Full LCS free-
     // meshes first next ("Text") into base (MIX), dropping pure-I title. Word

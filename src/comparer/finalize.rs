@@ -4693,6 +4693,39 @@ fn should_fold_multi_del_at_document_scale(
             return false;
         }
     }
+    // M414 (pageref × restart alpha-list ~51.7): multi pure-I short labels
+    // (ONE/A/TWO/A/B/C, ≤2 tokens each) × multi pure-D long base. Document-
+    // scale multi-del fold still MIX-es last "C" into first TOC pure-D.
+    // Word pure-I all list then pure-D all base (I6 D21).
+    // Require first pure-D is a **short** label/TOC line (≤4 words), not a
+    // long OOXML/demo intro — skipping fold on bold_vals×complex_list thrash
+    // pagefair −2.7 even though structure was pure-I/D.
+    // Ignore any_content_related: "TWO"×"Two-phase" incidental token hit.
+    {
+        let all_short_labels = !content_inss.is_empty()
+            && content_inss.iter().all(|&p| {
+                let n = para_word_atom_count(dom, p);
+                (1..=2).contains(&n)
+            });
+        let short_singles = content_inss
+            .iter()
+            .filter(|&&p| {
+                let t = para_revision_body_text(dom, p);
+                let w = t.split_whitespace().next().unwrap_or("");
+                w.chars().count() <= 5 && para_word_atom_count(dom, p) == 1
+            })
+            .count();
+        let first_del_words = para_word_atom_count(dom, first_del);
+        if content_inss.len() >= 4
+            && content_dels.len() >= 4
+            && all_short_labels
+            && short_singles * 2 >= content_inss.len()
+            && (1..=4).contains(&first_del_words)
+            && !should_fold_ins_del_pair(dom, last_ins, first_del)
+        {
+            return false;
+        }
+    }
     // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
     if inss.len() < 3 || dels.len() < 3 {
         // M337: do **not** skip fold for single short pure-I + multi pure-D.
