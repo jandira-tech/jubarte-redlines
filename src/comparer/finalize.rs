@@ -2301,9 +2301,10 @@ pub fn strip_empty_pure_ins_before_trailing_pure_dels(dom: &mut Dom, root: NodeI
     // M389b (file_36 residual): same for short pure-D titles without the word
     // "Demo" (e.g. "Contract Review", 2 words) when multi pure-D residual.
     //
-    // M392 (file_36×37 Word II before pure-D title): keep **all** 1–2 empty
-    // pure-I spacers before short title pure-D (not just one). Word keeps both
-    // B blanks before "Contract Review".
+    // M389: keep one empty pure-I before trailing pure-D short demo title.
+    // M392: keep **both** empties only when a table follows the pure-D run
+    // (file_36×37 Word II before "Contract Review"+empty+tbl). Trailing
+    // pure-D demos without a table (file_82×83) still keep exactly one.
     let first_del = non_sect[run_start];
     let short_title_del = {
         let n = para_word_atom_count(dom, first_del);
@@ -2313,10 +2314,30 @@ pub fn strip_empty_pure_ins_before_trailing_pure_dels(dom: &mut Dom, root: NodeI
         && (para_looks_like_demo_title(dom, first_del)
             || para_has_heading_or_title_style(dom, first_del)
             || short_title_del);
+    let table_after_del_run = non_sect
+        .get(run_start + 1..)
+        .into_iter()
+        .flatten()
+        .any(|&k| dom.name(k) == Some(W::name("tbl")))
+        || {
+            // pure-D run may end before a table with an empty pure-D between.
+            let after_run = run_start
+                + non_sect[run_start..]
+                    .iter()
+                    .take_while(|&&k| dom.name(k) == Some(W::p()) && para_is_pure_deleted(dom, k))
+                    .count();
+            non_sect
+                .get(after_run)
+                .is_some_and(|&k| dom.name(k) == Some(W::name("tbl")))
+        };
     // Strip at most two trailing empties before pure-dels (M85a original).
-    // When keeping title spacers, leave every empty in the 1–2 run.
+    // Keep both only for empty-then-table title residuals; else keep one.
     let strip_n = if keep_title_spacers {
-        0
+        if table_after_del_run {
+            0
+        } else {
+            empty_run.saturating_sub(1)
+        }
     } else {
         empty_run
     };
