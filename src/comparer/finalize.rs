@@ -3690,6 +3690,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     .find(|&&p| !para_has_no_text(dom, p))
                     .copied()
                     .unwrap_or(inss[inss.len() - 1]);
+
                 // M359 (list_with_indents×shape_group): trailing pure-I is an
                 // empty/drawing shell then pure-D long unrelated list prose.
                 // Word folds the **last** pure-I (drawing) with first pure-D
@@ -3759,8 +3760,18 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // the preceding ins when body texts are unrelated and more
                 // content follows (file_33). Whole-doc trailing sole-del (m44)
                 // still always folds.
+                //
+                // M368 (sdts×shape): sole pure-D "Before…" is only the first
+                // body residual before a deleted table (nD==1 at the boundary);
+                // Word still MIX-es trailing empty/drawing pure-I with it. Allow
+                // empty-shell × short pure-D even with following table content.
                 if sole_del && following_content && !should_fold_ins_del_pair(dom, last_ins, d) {
-                    continue;
+                    let empty_shell = para_has_no_text(dom, last_ins)
+                        || para_body_text_is_whitespace_only(dom, last_ins);
+                    let short_del = (1..=6).contains(&para_word_atom_count(dom, d));
+                    if !(empty_shell && short_del) {
+                        continue;
+                    }
                 }
                 // M322b (tiff×h_f after head-junction): long pure-I stream + sole
                 // empty pure-D (drawing shell / mark-only). Word keeps trailing
@@ -3784,12 +3795,22 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // C1 / KNOWN ISSUE #2: multi-del boundary fold gated on
                 // document-scale relatedness (unrelated whole-doc replacement
                 // must not mix last pure-I with first pure-D).
+                //
+                // C1 / KNOWN ISSUE #2 continued: multi-del document-scale gate.
+                // M368 also allows empty-shell × short pure-D through M77 above
+                // when the residual looks sole-del only because a table breaks
+                // the pure-D run (sdts×shape "Before" before deleted table).
                 if !sole_del
                     && !should_fold_multi_del_at_document_scale(
                         dom, container, last_ins, d, inss, dels,
                     )
                 {
-                    continue;
+                    let empty_shell = para_has_no_text(dom, last_ins)
+                        || para_body_text_is_whitespace_only(dom, last_ins);
+                    let short_del = (1..=6).contains(&para_word_atom_count(dom, d));
+                    if !(empty_shell && short_del) {
+                        continue;
+                    }
                 }
                 // M101 (file_166; 1_5_line_spacing×24): last content pure-I that
                 // is **digits-only** ("24") + multi pure-D of an unrelated demo —
