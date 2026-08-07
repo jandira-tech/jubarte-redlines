@@ -1270,8 +1270,12 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
         let before = dom.attribute(sp, &W::name("before")).unwrap_or("");
         let rule = dom.attribute(sp, &W::name("lineRule")).unwrap_or("");
         // Only the demo-default pattern (line 276 ± after 200 ± lineRule auto).
-        // M352: keep pure-I line=276 **without after** and without pStyle
-        // (line_break×line_space: `line=276 lineRule=auto` only → 49→100).
+        // M352: keep pure-I line=276 **without after** and without pStyle when
+        // body is empty or a 1-word residual (line_break×line_space: empty +
+        // "PARTIES" → 49→100).
+        // M370 (orphan×yellow −2.6): multi-word pure-I titles ("Yellow Highlight
+        // Demo", 3 words) — Word omits line=276 on pure-I mark pPr; keep was
+        // retaining B's demo default and thrash LO. Strip when ≥2 word-atoms.
         // M358: strip all other demo-default line=276 — pure-I+pStyle /
         // pure-I after=200 (fields×localized −20 LO pagefair) and pure-D
         // Heading line=276-only (loc×ul −14). Word keeps many of those, but
@@ -1284,7 +1288,7 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
         let rule_ok = rule.is_empty() || rule == "auto";
         let has_pstyle = dom.element(ppr, &W::name("pStyle")).is_some();
         let pure_i = para_is_pure_inserted(dom, p);
-        let keep = pure_i && !has_pstyle && after.is_empty();
+        let keep = pure_i && !has_pstyle && after.is_empty() && para_word_atom_count(dom, p) <= 1;
         if line_ok && after_ok && before_ok && rule_ok && !keep {
             to_remove.push(sp);
             continue;
@@ -4171,6 +4175,21 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     && inss.len() >= 3
                     && para_body_alnum_len(dom, last_ins) >= 20
                     && body_token_set(&para_revision_body_text(dom, d)).len() <= 1
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
+                    continue;
+                }
+                // M371 (word_mixed×word_simple −2.2): multi pure-I long prose +
+                // multi pure-D starting with Heading/Title ("Mixed Formatting
+                // Test"). Word keeps pure-D heading separate (I… then D title);
+                // multi-del fold MIX-ed last pure-I body with Heading1 adopt
+                // (Heading1 on "A final paragraph…"). Skip when last pure-I is
+                // not heading and first pure-D is heading/title, Jaccard miss.
+                if dels.len() > 1
+                    && inss.len() >= 2
+                    && para_has_heading_or_title_style(dom, d)
+                    && !para_has_heading_or_title_style(dom, last_ins)
+                    && para_body_alnum_len(dom, last_ins) >= 20
                     && !should_fold_ins_del_pair(dom, last_ins, d)
                 {
                     continue;
