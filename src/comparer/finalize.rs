@@ -4171,11 +4171,14 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // invents MIX (−5 pagefair). Do **not** require Jaccard miss:
                 // pure-I "a" shares token "a" with "…a paragraph…" (0.125 ≥
                 // 0.12) and would still fold. M124 covers short pure-I runs
-                // (≤2); this covers long list streams. Short×short demos
-                // (file_54 "b"+Demo title ≤ few tokens) keep del_alnum < 20.
+                // (≤2); this covers long list streams.
+                // M373 (toc×broken_list −2.3): pure-D Heading "Generalities"
+                // is only 12 alnum — old ≥20 left short pure-I "a" folding into
+                // Heading1 MIX. Lower floor to ≥10; short Demo titles (≤9
+                // alnum) still M90-fold (file_54 "b"+Demo).
                 if dels.len() > 1
                     && para_body_is_very_short(dom, last_ins)
-                    && para_body_alnum_len(dom, d) >= 20
+                    && para_body_alnum_len(dom, d) >= 10
                 {
                     continue;
                 }
