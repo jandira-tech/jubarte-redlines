@@ -70,3 +70,57 @@ fn file197_x_198_images_heading_mixes_with_calibri_body() {
         "Word free-meshes Calibri pure-I body with pure-D Heading Images"
     );
 }
+
+#[test]
+fn file83_x_84_title_mixes_with_center_bold_body() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let a = src.join("file_83.docx");
+    let b = src.join("file_84.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: fixtures missing");
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &WmlComparerSettings {
+            author_for_revisions: "Redline".into(),
+            merge_replaced_paragraphs: true,
+            ..WmlComparerSettings::default()
+        },
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    assert!(
+        xml.contains("CONTRACT FOR CONTRACTS")
+            && xml.contains("Centered bold text")
+            && xml.contains("<w:ins")
+            && xml.contains("<w:del"),
+        "Word MIX Title CONTRACT with Centered bold pure-I"
+    );
+    // Coarse: same para has both
+    let mut rest = xml.as_str();
+    if let Some(i) = rest.find("<w:body") {
+        rest = &rest[i..];
+    }
+    let mut ok = false;
+    while let Some(start) = rest.find("<w:p") {
+        let after = &rest[start..];
+        let end_rel = after.find("</w:p>").map(|j| j + 6).unwrap_or(after.len());
+        let p = &after[..end_rel];
+        rest = &after[end_rel..];
+        if p.contains("CONTRACT FOR CONTRACTS")
+            && p.contains("Centered bold")
+            && p.contains("<w:ins")
+            && p.contains("<w:del")
+        {
+            ok = true;
+            break;
+        }
+    }
+    assert!(ok, "Title pure-D free-meshes with last pure-I body");
+}

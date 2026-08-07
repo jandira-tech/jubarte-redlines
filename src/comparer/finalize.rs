@@ -4173,6 +4173,18 @@ fn para_has_heading_or_title_style(dom: &Dom, p: NodeId) -> bool {
     v == "title" || v.starts_with("heading")
 }
 
+/// Live `w:pStyle` is Heading* only (not Title). M380b: Title pure-D free-meshes.
+fn para_has_heading_style(dom: &Dom, p: NodeId) -> bool {
+    let Some(ppr) = dom.element(p, &W::p_pr()) else {
+        return false;
+    };
+    let Some(ps) = dom.element(ppr, &W::name("pStyle")) else {
+        return false;
+    };
+    let val = dom.attribute(ps, &W::val()).unwrap_or("");
+    val.to_ascii_lowercase().starts_with("heading")
+}
+
 /// Shared significant token (len≥4) between short-title pure-D and first pure-I
 /// (M322 head-junction). Boilerplate "this"/"with"/"from" excluded.
 fn short_title_shares_sig_token(ins_text: &str, del_text: &str) -> bool {
@@ -4956,12 +4968,15 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 //
                 // M380 (file_197×file_198 −55): short single-token Heading pure-D
                 // ("Images") **does** free-mesh with last pure-I body in Word
-                // (MIX). Only multi-word/long headings (≥2 word-atoms **or**
-                // alnum ≥ 15) take the M371 skip — "Images" (1 word, 6 alnum)
-                // still folds.
+                // (MIX). Only multi-word/long **Heading*** titles take the skip
+                // — "Images" (1 word) still folds.
+                //
+                // M380b (file_83×file_84 −50): **Title** pure-D ("CONTRACT FOR
+                // CONTRACTS") also free-meshes with last pure-I body in Word.
+                // Restrict M371 to Heading* only (not Title).
                 if dels.len() > 1
                     && inss.len() >= 2
-                    && para_has_heading_or_title_style(dom, d)
+                    && para_has_heading_style(dom, d)
                     && !para_has_heading_or_title_style(dom, last_ins)
                     && para_body_alnum_len(dom, last_ins) >= 20
                     && (para_word_atom_count(dom, d) >= 2 || para_body_alnum_len(dom, d) >= 15)
