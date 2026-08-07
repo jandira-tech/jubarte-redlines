@@ -3126,7 +3126,55 @@ pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
 /// (ListParagraph+numPr) — M372 Inserted-live pPr adopt regressed LO pagefair
 /// 52.7→51.2 (numId renumber drift vs Word). Body-only zip still recovers
 /// residual thrash vs pure-I/D wholesale.
+///
+/// M374: (1) copy pure-I spacing/ind onto pure-D when missing (Word MIX carries
+/// line=276 + ind from B); (2) if pure-I is followed by an empty pure-I spacer,
+/// move that spacer after the MIX carrier (Word interleaves empty pure-I
+/// between MIX a/b).
 fn fold_short_label_ins_into_del(dom: &mut Dom, ip: NodeId, dp: NodeId) {
+    // Capture empty pure-I sibling after the short label (B: a, empty, b, empty, 3).
+    let empty_after = dom.parent(ip).and_then(|parent| {
+        let sibs: Vec<NodeId> = dom.elements(parent, None);
+        let pos = sibs.iter().position(|&s| s == ip)?;
+        let n = *sibs.get(pos + 1)?;
+        if dom.name(n) == Some(W::p())
+            && para_is_pure_inserted(dom, n)
+            && (para_has_no_text(dom, n) || para_body_text_is_whitespace_only(dom, n))
+        {
+            Some(n)
+        } else {
+            None
+        }
+    });
+
+    // M374: copy pure-I spacing/ind onto pure-D when pure-D lacks them.
+    if let Some(ippr) = dom.element(ip, &W::p_pr()) {
+        let dppr = match dom.element(dp, &W::p_pr()) {
+            Some(p) => p,
+            None => {
+                let p = dom.new_element(W::p_pr());
+                if let Some(first) = dom.elements(dp, None).first().copied() {
+                    dom.add_before_self(first, p);
+                } else {
+                    dom.add(dp, p);
+                }
+                p
+            }
+        };
+        if dom.element(dppr, &W::name("spacing")).is_none()
+            && let Some(sp) = dom.element(ippr, &W::name("spacing"))
+        {
+            let c = dom.clone_subtree(sp);
+            dom.add(dppr, c);
+        }
+        if dom.element(dppr, &W::name("ind")).is_none()
+            && let Some(ind) = dom.element(ippr, &W::name("ind"))
+        {
+            let c = dom.clone_subtree(ind);
+            dom.add(dppr, c);
+        }
+    }
+
     // Move pure-I body (ins) before pure-D body; pure-D keeps list pPr.
     let ins_kids: Vec<NodeId> = dom
         .elements(ip, None)
@@ -3157,6 +3205,39 @@ fn fold_short_label_ins_into_del(dom: &mut Dom, ip: NodeId, dp: NodeId) {
     }
     if dom.parent(ip).is_some() {
         dom.remove(ip);
+    }
+
+    // Move empty pure-I spacer to immediately after MIX carrier (Word shape).
+    if let Some(emp) = empty_after
+        && dom.parent(emp).is_some()
+        && dom.parent(dp).is_some()
+    {
+        // Insert empty after dp among siblings.
+        let Some(parent) = dom.parent(dp) else {
+            return;
+        };
+        let sibs: Vec<NodeId> = dom.elements(parent, None);
+        let after_dp = sibs
+            .iter()
+            .position(|&s| s == dp)
+            .and_then(|i| sibs.get(i + 1).copied());
+        dom.remove(emp);
+        if let Some(next) = after_dp {
+            if next != emp && dom.parent(next).is_some() {
+                dom.add_before_self(next, emp);
+            } else if let Some(n2) = dom
+                .elements(parent, None)
+                .into_iter()
+                .skip_while(|&s| s != dp)
+                .nth(1)
+            {
+                dom.add_before_self(n2, emp);
+            } else {
+                dom.add(parent, emp);
+            }
+        } else {
+            dom.add(parent, emp);
+        }
     }
 }
 
