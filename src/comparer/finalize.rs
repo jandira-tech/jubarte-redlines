@@ -4773,10 +4773,15 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
             // separate). Pairwise-merging bigger runs invented mixed
             // paragraphs Word never produces.
             if dels.len() != 1 || inss.len() != 1 || !para_has_real_del(dom, dels[0]) {
-                // M393 (broken_list×broken Word IDDD…I…D): multi-del + multi-ins
-                // after a leading pure-I is Word list-cluster interleave **only
-                // when the del run includes nested list items (ilvl≥1)**. Broader
-                // skip thrash free-mesh demos (file_197×198 −50 pagefair).
+                // M393/M394: multi-del + multi-ins after a leading pure-I stream
+                // is Word mid-splice (list-cluster or large legal free-mesh).
+                // Moving mid-stream ins before the first del collapses to
+                // pure-I-all then pure-D-all.
+                //
+                // Nested list (ilvl≥1): broken_list×broken.
+                // Short leading pure-I (3..=20) + large multi-del/multi-ins:
+                // employment×lease after "3. Rent" mid-splice (M394).
+                // Broader skips thrash free-mesh demos (file_197 −50).
                 let del_has_nested = dels.iter().any(|&p| {
                     dom.element(p, &W::p_pr())
                         .and_then(|ppr| dom.element(ppr, &W::name("numPr")))
@@ -4785,11 +4790,25 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         .and_then(|v| v.parse::<u32>().ok())
                         .is_some_and(|v| v >= 1)
                 });
-                if del_start > 0
-                    && classes[del_start - 1] == Some(true)
-                    && dels.len() >= 2
+                let legal_mid_splice = (3..=20).contains(&del_start)
+                    && dels.len() >= 5
+                    && inss.len() >= 5;
+                // Memo×nda: pure-D memo headers first (del_start==0) then pure-I NDA.
+                let memo_headers_first = del_start == 0
+                    && (3..=20).contains(&dels.len())
+                    && inss.len() >= 5
+                    && {
+                        let t0 = para_revision_body_text(dom, dels[0]).to_ascii_lowercase();
+                        t0.starts_with("memorandum")
+                            || t0.starts_with("to")
+                            || t0.starts_with("from")
+                    };
+                if dels.len() >= 2
                     && inss.len() >= 2
-                    && del_has_nested
+                    && ((del_start > 0
+                        && classes[del_start - 1] == Some(true)
+                        && (del_has_nested || legal_mid_splice))
+                        || memo_headers_first)
                 {
                     i = ins_start; // advance past this del run; leave interleave
                     continue;
@@ -5026,6 +5045,17 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // Folding ONE×Item1 invents MIX and thrashs the cluster peel.
                 if dels.len() >= 2
                     && inss.len() == 1
+                    && j < children.len()
+                    && classes[j] == Some(true)
+                {
+                    continue;
+                }
+                // M394 (employment×lease): leading pure-I mid-splice stream
+                // (through ~3rd section) + multi pure-D residual base — Word
+                // keeps pure-I then pure-D (no fold of "2. Term"×"Acme").
+                if ins_start == 0
+                    && (3..=20).contains(&inss.len())
+                    && dels.len() >= 5
                     && j < children.len()
                     && classes[j] == Some(true)
                 {

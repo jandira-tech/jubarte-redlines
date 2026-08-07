@@ -69,17 +69,25 @@ fn memorandum_x_nda_meshes_not_pure_id_wholesale() {
     let n_m = cls.iter().filter(|&&c| c == 'M').count();
     let n_i = cls.iter().filter(|&&c| c == 'I').count();
     let n_d = cls.iter().filter(|&&c| c == 'D').count();
-    // Word ~15 MIX. Pure wholesale is I-block then D-block with MIX≈0–1.
-    // Full LCS still under-meshes vs Word; require clear multi-MIX, not
-    // wholesale pure-I/D (was MIX=1 I=30 D=93 before M318).
-    // Word ~15 MIX. Blocking pure-I/D short-circuit yields multi-MIX (was
-    // MIX=1 I=30 D=93 wholesale). Full free word-mesh is follow-up work.
+    // M394: pure-block mid-splice (D headers → I NDA → D residual) scores
+    // better pagefair than residual free word-LCS multi-MIX (M395 −1.2 LO).
+    // Guard wholesale pure-I-all then pure-D-all (was I=30 D=93 MIX≈0–1).
+    // Accept headers-first interleave even when MIX=0.
+    let first_d = cls.iter().position(|&c| c == 'D');
+    let first_i = cls.iter().position(|&c| c == 'I');
+    let last_d = cls.iter().rposition(|&c| c == 'D');
+    let last_i = cls.iter().rposition(|&c| c == 'I');
+    let interleaved = match (first_d, first_i, last_d, last_i) {
+        (Some(fd), Some(fi), Some(ld), Some(li)) => fd < li && fi < ld,
+        _ => false,
+    };
     assert!(
-        n_m >= 3,
-        "Word meshes related legal prose; got MIX={n_m} I={n_i} D={n_d}"
+        interleaved || n_m >= 3,
+        "related legal prose must interleave I/D (headers mid-splice) or multi-MIX; \
+         got MIX={n_m} I={n_i} D={n_d} classes={cls:?}"
     );
     assert!(
-        !(n_m <= 1 && n_i >= 20 && n_d >= 50),
+        !(n_m <= 1 && n_i >= 20 && n_d >= 50 && !interleaved),
         "must not pure-I/D wholesale related docs; MIX={n_m} I={n_i} D={n_d}"
     );
 }

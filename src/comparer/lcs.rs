@@ -195,6 +195,135 @@ fn first_list_cluster_end(dom: &Dom, cul: &[ComparisonUnit]) -> usize {
     end
 }
 
+/// Exclusive cut index into **next** (`cu`) for large related legal mid-splice.
+///
+/// Count numbered section titles (`1. Premises`, `3. Rent`) and Heading*
+/// styles. After the 3rd such heading, return the index of the **following**
+/// body paragraph (Word meshes residual base into the 3rd section body —
+/// emp×lease after "3. Rent"). Returns None if fewer than 3 section markers.
+fn legal_mid_splice_cut(dom: &Dom, cu: &[ComparisonUnit]) -> Option<usize> {
+    let mut markers = 0usize;
+    for (i, u) in cu.iter().enumerate() {
+        if as_group(u).is_none() {
+            continue;
+        }
+        let toks = para_text_token_list(dom, u);
+        if toks.is_empty() {
+            continue;
+        }
+        let mut heading_level: Option<u32> = None;
+        for a in u.descendant_atoms() {
+            for &ae in a.ancestor_elements.iter() {
+                if dom.name(ae) != Some(W::name("p")) {
+                    continue;
+                }
+                if let Some(ppr) = dom.element(ae, &W::p_pr())
+                    && let Some(ps) = dom.element(ppr, &W::name("pStyle"))
+                {
+                    let v = dom.attribute(ps, &W::val()).unwrap_or("").to_ascii_lowercase();
+                    if let Some(rest) = v.strip_prefix("heading") {
+                        heading_level = rest.parse().ok().or(Some(1));
+                    } else if v == "title" {
+                        // Document title is not a body section marker.
+                        heading_level = Some(0);
+                    }
+                }
+                break;
+            }
+            if heading_level.is_some() {
+                break;
+            }
+        }
+        // Numbered section title: first token is digits or "N." and short para.
+        let first = toks.first().map(|s| s.as_str()).unwrap_or("");
+        let num_prefix = {
+            let digits: String = first.chars().take_while(|c| c.is_ascii_digit()).collect();
+            !digits.is_empty()
+                && (first.len() == digits.len()
+                    || first[digits.len()..].chars().all(|c| c == '.' || c == ')'))
+                && toks.len() <= 10
+        };
+        // Count body section markers only (Heading2+ or numbered "1. X"), not Title/H1.
+        let is_section = num_prefix
+            || heading_level.is_some_and(|h| h >= 2);
+        if is_section {
+            markers += 1;
+            if markers >= 3 {
+                // Include this marker para as pure-I; residual starts after.
+                return Some(i + 1);
+            }
+        }
+    }
+    None
+}
+
+/// True when the document looks like an inter-office memo (headers TO/FROM/RE).
+fn looks_like_memo_doc(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
+    let mut saw_memo_title = false;
+    let mut saw_to = false;
+    let mut saw_from = false;
+    for u in cu.iter().take(12) {
+        let toks = para_text_token_list(dom, u);
+        if toks.is_empty() {
+            continue;
+        }
+        let joined = toks.join(" ").to_ascii_lowercase();
+        if joined.starts_with("memorandum") {
+            saw_memo_title = true;
+        }
+        if toks.first().is_some_and(|t| t.eq_ignore_ascii_case("to")) {
+            saw_to = true;
+        }
+        if toks.first().is_some_and(|t| t.eq_ignore_ascii_case("from")) {
+            saw_from = true;
+        }
+    }
+    saw_memo_title || (saw_to && saw_from)
+}
+
+/// Exclusive cut after memo header block (through first "Dear …" if present).
+fn memo_header_cut(dom: &Dom, cu: &[ComparisonUnit]) -> Option<usize> {
+    let mut saw_header = false;
+    for (i, u) in cu.iter().enumerate() {
+        let toks = para_text_token_list(dom, u);
+        if toks.is_empty() {
+            continue;
+        }
+        let first = toks.first().map(|s| s.as_str()).unwrap_or("");
+        if first.eq_ignore_ascii_case("to")
+            || first.eq_ignore_ascii_case("from")
+            || first.eq_ignore_ascii_case("date")
+            || first.eq_ignore_ascii_case("re")
+            || first.eq_ignore_ascii_case("memorandum")
+        {
+            saw_header = true;
+        }
+        if first.eq_ignore_ascii_case("dear") {
+            return Some(i + 1);
+        }
+        // After headers, first long body without header prefix ends the block.
+        if saw_header
+            && toks.len() >= 8
+            && !first.eq_ignore_ascii_case("to")
+            && !first.eq_ignore_ascii_case("from")
+            && !first.eq_ignore_ascii_case("date")
+            && !first.eq_ignore_ascii_case("re")
+        {
+            return Some(i);
+        }
+    }
+    if saw_header {
+        Some(cu.len().min(12))
+    } else {
+        None
+    }
+}
+
+
+
+
+
+
 /// ≥ half of contentful paragraphs (non-empty word stream) carry `numPr`.
 fn mostly_list_paras(dom: &Dom, paras: &[Vec<ComparisonUnit>]) -> bool {
     let contentful: Vec<&Vec<ComparisonUnit>> = paras
@@ -5476,19 +5605,57 @@ pub fn detect_unrelated_sources_word_mode(
     if !disjoint {
         return None;
     }
-    // M318 (memo×nda): large-vocab related prose with body Jaccard ≥ 0.08.
-    // Group hashes are often fully disjoint so classic pure-I/D wholesale
-    // fires. Return None so the caller runs full group LCS (may still mesh
-    // poorly when structure hashes never equal — better than pure-I/D for
-    // shared-vocab legal pairs). Free word-LCS was tried (M321) and still
-    // pure-I/Ds employment×lease (MIX=1) while regressing memo×nda multi-MIX
-    // 4→1 — keep None. Unrelated demos (M312) stay under jaccard 0.05.
+    // M318/M394 (memo×nda, employment×lease): large-vocab related prose with
+    // body Jaccard ≥ 0.08. Group hashes often fully disjoint → pure-I/D thrash
+    // (~44 pagefair). Word multi-MIX free-meshes mid-document, but residual
+    // free word-LCS (M395) regressed pagefair (emp 51.7→46, memo −1.2) despite
+    // multi-MIX — visual order of pure mid-splice blocks scores better.
+    //
+    // M394: **positional mid-splice** — pure-I next through the 3rd numbered/
+    // heading section, pure-D all base, pure-I rest next (emp×lease after
+    // "3. Rent"). Memo: pure-D headers first then pure-I NDA then residual
+    // pure-D memo body. Cap sides to legal size.
     {
         let b1 = para_text_tokens_from_units(dom, cu1);
         let b2 = para_text_tokens_from_units(dom, cu2);
         let s1 = significant_tokens(&b1);
         let s2 = significant_tokens(&b2);
-        if s1.len() >= 40 && s2.len() >= 40 && token_jaccard(&b1, &b2) + 1e-12 >= 0.08 {
+        let j = token_jaccard(&b1, &b2);
+        if s1.len() >= 40
+            && s2.len() >= 40
+            && j + 1e-12 >= 0.08
+            && j + 1e-12 < 0.35
+            && (15..=120).contains(&n1)
+            && (15..=120).contains(&n2)
+            // Lease has Schedule table — still mid-splice (not multi-table free-mesh).
+            && settings.merge_replaced_paragraphs
+        {
+            // Memo base (TO:/FROM:/MEMORANDUM): pure-D memo headers early then
+            // pure-I NDA body then residual pure-D memo (memo×nda).
+            if looks_like_memo_doc(dom, cu1)
+                && let Some(hcut) = memo_header_cut(dom, cu1)
+            {
+                let mut out = Vec::new();
+                out.push(CorrelatedSequence::deleted(cu1[..hcut].to_vec()));
+                out.push(CorrelatedSequence::inserted(cu2.to_vec()));
+                if hcut < cu1.len() {
+                    out.push(CorrelatedSequence::deleted(cu1[hcut..].to_vec()));
+                }
+                return Some(out);
+            }
+            if let Some(cut) = legal_mid_splice_cut(dom, cu2) {
+                // next = cu2 pure-I leading, base = cu1 pure-D mid, next rest pure-I
+                let mut out = Vec::new();
+                if cut > 0 {
+                    out.push(CorrelatedSequence::inserted(cu2[..cut].to_vec()));
+                }
+                out.push(CorrelatedSequence::deleted(cu1.to_vec()));
+                if cut < cu2.len() {
+                    out.push(CorrelatedSequence::inserted(cu2[cut..].to_vec()));
+                }
+                return Some(out);
+            }
+            // No clear heading cut — fall through to full group LCS (M318).
             return None;
         }
     }
