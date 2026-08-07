@@ -1025,10 +1025,13 @@ pub fn sanitize_sdt_properties(dom: &mut Dom, root: NodeId) {
 }
 
 /// M390 (missing_sectpr×fields_test −16.3): Word Compare flattens content
-/// controls (`w:sdt`) to their `sdtContent` children — Word redline has **0**
-/// SDTs; we kept 9 and LO thrash pagefair (content-control chrome vs plain
-/// text). Unwrap in Word mode, deepest first, like
-/// [`unwrap_hyperlinks_to_styled_runs`].
+/// controls (`w:sdt`) inside pure-I/pure-D residual to their `sdtContent`
+/// children — Word redline has **0** SDTs on that pair; we kept 9 and LO thrash
+/// pagefair. Do **not** preprocess-unwrap all SDTs (fields_attrs1×sample Word
+/// keeps 4 equal content controls). Call
+/// [`unwrap_content_controls_in_pure_revisions`] after produce/merge.
+///
+/// Unwraps deepest first, like [`unwrap_hyperlinks_to_styled_runs`].
 pub fn unwrap_content_controls(dom: &mut Dom, root: NodeId) {
     loop {
         let sdts: Vec<NodeId> = dom.descendants(root, Some(&W::sdt()));
@@ -1073,6 +1076,29 @@ pub fn unwrap_content_controls(dom: &mut Dom, root: NodeId) {
         if !progressed {
             break;
         }
+    }
+}
+
+/// M390 — unwrap content controls only under pure-I / pure-D / MIX residual
+/// paragraphs (not under EQ form-field matches). See [`unwrap_content_controls`].
+pub fn unwrap_content_controls_in_pure_revisions(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let paras: Vec<NodeId> = dom.descendants(body, Some(&W::p()));
+    for p in paras {
+        let has_ins = !dom.descendants(p, Some(&W::ins())).is_empty()
+            || para_mark_revision(dom, p, &W::ins());
+        let has_del = !dom.descendants(p, Some(&W::del())).is_empty()
+            || para_mark_revision(dom, p, &W::del());
+        // Pure-I, pure-D, or MIX residual — not unmarked EQ.
+        if !has_ins && !has_del {
+            continue;
+        }
+        if dom.descendants(p, Some(&W::sdt())).is_empty() {
+            continue;
+        }
+        unwrap_content_controls(dom, p);
     }
 }
 

@@ -296,12 +296,10 @@ pub fn compare_bodies_faithful_with_notes(
     // recovers by dropping them; match so the output is Word-valid.
     finalize::sanitize_sdt_properties(dom, body1);
     finalize::sanitize_sdt_properties(dom, body2);
-    // M390: Word Compare flattens content controls to sdtContent children
-    // (fields_test: Word redline 0 SDTs; we kept 9 → LO −16.3). Word mode only.
-    if settings.merge_replaced_paragraphs {
-        finalize::unwrap_content_controls(dom, body1);
-        finalize::unwrap_content_controls(dom, body2);
-    }
+    // Note: do **not** preprocess-unwrap all SDTs. Word keeps content controls
+    // on equal form-field pairs (fields_attrs1×sample) but flattens pure-I/D
+    // residual SDTs (missing_sectpr×fields_test). M390 runs after produce on
+    // pure revision paragraphs only.
 
     // PreProcessMarkup (essence): coalesce adjacent identical-format runs in both
     // inputs so source run fragmentation (e.g. one inserted sentence split across
@@ -644,6 +642,9 @@ pub fn compare_bodies_faithful_with_notes(
         // file_33 residual pure-D spacing: M67 strips Heading residual only.
         // TOC/body hyperlinks → Hyperlink-styled runs (file_21 Word parity).
         finalize::unwrap_hyperlinks_to_styled_runs(dom, root);
+        // M390: flatten content controls inside pure-I/D/MIX residual only
+        // (fields_test pure-I SDTs → plain runs; keep EQ form-field SDTs).
+        finalize::unwrap_content_controls_in_pure_revisions(dom, root);
         // file_69: final empty pure-del → bare trailing empty (Word).
         finalize::strip_trailing_empty_pure_del_mark(dom, root);
         // M92: trailing empty live spacing → pPrChange (file_30).
