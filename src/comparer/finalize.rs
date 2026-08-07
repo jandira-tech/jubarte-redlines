@@ -1762,25 +1762,43 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                 }
             }
             if del_structural {
-                if let Some(ippr) = dom.element(ins_p, &W::p_pr()) {
-                    dom.remove(ippr);
-                }
-                if let Some(dppr) = dom.element(del_p, &W::p_pr()) {
-                    let cloned = dom.clone_subtree(dppr);
-                    if let Some(first) = dom.elements(ins_p, None).first().copied() {
-                        dom.add_before_self(first, cloned);
-                    } else {
-                        dom.add(ins_p, cloned);
+                // M360: do not adopt full del pPr when pure-I is a TOC/field
+                // residue (fldChar) and pure-D carries a Heading pStyle.
+                // table_border×toc: empty TOC field-end pure-I × SD-2343
+                // Heading1 pure-D got Heading1 on the MIX; Word leaves bare
+                // pPr (pagefair −11). List numPr adopt still runs (basic_list).
+                let ins_has_fld = !dom.descendants(ins_p, Some(&W::name("fldChar"))).is_empty();
+                let del_heading_style = dom.element(del_p, &W::p_pr()).is_some_and(|dp| {
+                    dom.element(dp, &W::name("pStyle")).is_some_and(|ps| {
+                        let v = dom
+                            .attribute(ps, &W::val())
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        v == "title" || v.starts_with("heading")
+                    })
+                });
+                if !(ins_has_fld && del_heading_style) {
+                    if let Some(ippr) = dom.element(ins_p, &W::p_pr()) {
+                        dom.remove(ippr);
                     }
-                }
-                for c in dom.elements(del_p, None) {
-                    if dom.name(c) != Some(W::p_pr()) {
-                        dom.add(ins_p, c);
+                    if let Some(dppr) = dom.element(del_p, &W::p_pr()) {
+                        let cloned = dom.clone_subtree(dppr);
+                        if let Some(first) = dom.elements(ins_p, None).first().copied() {
+                            dom.add_before_self(first, cloned);
+                        } else {
+                            dom.add(ins_p, cloned);
+                        }
                     }
+                    for c in dom.elements(del_p, None) {
+                        if dom.name(c) != Some(W::p_pr()) {
+                            dom.add(ins_p, c);
+                        }
+                    }
+                    dom.remove(del_p);
+                    acted = true;
+                    break;
                 }
-                dom.remove(del_p);
-                acted = true;
-                break;
+                // else fall through to mark-only fold without Heading pPr adopt
             }
             // Replace pure-ins mark with pure-del mark on the carrier (Word:
             // mixed para keeps del mark from the deleted residual).
