@@ -342,6 +342,32 @@ fn looks_like_math_borderbox_doc(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     saw
 }
 
+/// General math doc (any m:oMath) — broader than borderbox.
+fn looks_like_math_doc(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
+    for u in cu.iter().take(30) {
+        if para_text_token_list(dom, u).is_empty() {
+            continue;
+        }
+        for a in u.descendant_atoms() {
+            if dom
+                .name(a.content_element)
+                .is_some_and(|n| n.local_name() == "oMath" || n.local_name() == "oMathPara")
+            {
+                return true;
+            }
+            for ae in a.ancestor_elements.iter().copied() {
+                if dom
+                    .name(ae)
+                    .is_some_and(|n| n.local_name() == "oMath" || n.local_name() == "oMathPara")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Token is an alpha-list label (ONE/a/i/1…), not First/Second bullet words.
 ///
 /// M414 thrash: word_native_bullet First/Second/Third matched bare short-token
@@ -5544,7 +5570,7 @@ pub fn detect_unrelated_sources_word_mode(
     // full LCS free-meshes last next into first base (DI@boundary). Word
     // pure-I all next then pure-D all base (I40 D1038). Body jaccard ~0.
     if settings.merge_replaced_paragraphs && !has_table(cu2) {
-        let bb = looks_like_math_borderbox_doc(dom, cu2);
+        let bb = looks_like_math_borderbox_doc(dom, cu2) || looks_like_math_doc(dom, cu2);
         let cn1 = cu1
             .iter()
             .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
@@ -5555,10 +5581,10 @@ pub fn detect_unrelated_sources_word_mode(
             .count();
         // Shared short tokens (and, the, …) inflate jaccard ~0.05 on
         // unrelated long lorem × math demo — allow up to 0.10.
-        if bb && cn1 >= 50 && (10..=120).contains(&cn2) {
+        if bb && cn1 >= 30 && (5..=120).contains(&cn2) {
             let b1 = para_text_tokens_from_units(dom, cu1);
             let b2 = para_text_tokens_from_units(dom, cu2);
-            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.10 {
+            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.15 {
                 return Some(vec![
                     CorrelatedSequence::inserted(cu2.to_vec()),
                     CorrelatedSequence::deleted(cu1.to_vec()),
@@ -5569,7 +5595,7 @@ pub fn detect_unrelated_sources_word_mode(
     // Reverse M417: math borderBox base × long next.
     if settings.merge_replaced_paragraphs
         && !has_table(cu1)
-        && looks_like_math_borderbox_doc(dom, cu1)
+        && (looks_like_math_borderbox_doc(dom, cu1) || looks_like_math_doc(dom, cu1))
     {
         let cn1 = cu1
             .iter()
@@ -5579,10 +5605,10 @@ pub fn detect_unrelated_sources_word_mode(
             .iter()
             .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
             .count();
-        if cn2 >= 50 && (10..=120).contains(&cn1) {
+        if cn2 >= 30 && (5..=120).contains(&cn1) {
             let b1 = para_text_tokens_from_units(dom, cu1);
             let b2 = para_text_tokens_from_units(dom, cu2);
-            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.10 {
+            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.15 {
                 return Some(vec![
                     CorrelatedSequence::inserted(cu2.to_vec()),
                     CorrelatedSequence::deleted(cu1.to_vec()),
