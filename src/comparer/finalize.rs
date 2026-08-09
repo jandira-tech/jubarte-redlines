@@ -2049,9 +2049,19 @@ pub fn trailing_empty_spacing_to_pprchange(
 }
 
 /// True when a paragraph has no `w:t` / `w:delText` content.
+/// Page-break (`w:br`), drawings and picts are contentful even without `w:t`
+/// (Word keeps a page-break-only paragraph separate from a drawing-only
+/// deletion — diff_doc2×numwords page-break + image were merged into one `w:p`
+/// because both were considered empty).
 fn para_has_no_text(dom: &Dom, p: NodeId) -> bool {
     dom.descendants(p, Some(&W::t())).is_empty()
         && dom.descendants(p, Some(&W::name("delText"))).is_empty()
+        && dom.descendants(p, Some(&W::name("br"))).is_empty()
+        && dom.descendants(p, Some(&W::name("drawing"))).is_empty()
+        && dom.descendants(p, Some(&W::name("pict"))).is_empty()
+        && dom.descendants(p, Some(&W::name("object"))).is_empty()
+        && dom.descendants(p, Some(&M::name("oMath"))).is_empty()
+        && dom.descendants(p, Some(&M::name("oMathPara"))).is_empty()
 }
 
 /// True when a paragraph carries OMML math (`m:oMath` / `m:oMathPara`).
