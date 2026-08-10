@@ -2465,6 +2465,48 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
         if empty_pure_i >= 3 && content_pure_i == 0 {
             return;
         }
+        // M430 (doc_with_spaces × doc_with_spacing ~62.8 / docxodus 100):
+        // title-page pure-I has contentful pure-I then ≥3 trailing empty
+        // pure-I immediately before pure-D base. Word keeps those empties
+        // (I…date e×6 DD); M311c only skips when content_pure_i==0 so the
+        // fold ate trailing blanks into first pure-D. Skip the fold entirely
+        // when a trailing empty pure-I run of ≥3 sits at the pure-I→pure-D
+        // boundary with no pure-I after the pure-D residual.
+        {
+            let kids: Vec<NodeId> = dom
+                .elements(body, None)
+                .into_iter()
+                .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+                .collect();
+            // Find first pure-D with real text.
+            let first_del = kids.iter().position(|&k| {
+                dom.name(k) == Some(W::p())
+                    && para_is_pure_deleted(dom, k)
+                    && !para_body_text_is_whitespace_only(dom, k)
+            });
+            if let Some(di) = first_del {
+                let mut empty_run = 0usize;
+                let mut j = di;
+                while j > 0 {
+                    j -= 1;
+                    let k = kids[j];
+                    if dom.name(k) == Some(W::p())
+                        && para_is_pure_inserted(dom, k)
+                        && para_body_text_is_whitespace_only(dom, k)
+                    {
+                        empty_run += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let pure_i_after_del = kids[di + 1..].iter().any(|&k| {
+                    dom.name(k) == Some(W::p()) && para_is_pure_inserted(dom, k)
+                });
+                if empty_run >= 3 && !pure_i_after_del && content_pure_i >= 1 {
+                    return;
+                }
+            }
+        }
     }
     loop {
         let kids: Vec<NodeId> = dom
@@ -5420,6 +5462,29 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                             && !para_revision_body_text(dom, last_ins).trim().is_empty()))
                 {
                     continue;
+                }
+                // M430b (doc_with_spaces × doc_with_spacing ~62.8 / docxodus 100):
+                // title-page pure-I ends with ≥3 empty pure-I then multi pure-D
+                // base. fold_whitespace skip (M430) keeps them into merge, but
+                // multi-del empty-shell fold below ate empties one-by-one into
+                // first pure-D (empty_run→0 by second fold pass). Word keeps
+                // trailing blanks. Skip empty-shell multi-del fold when the
+                // pure-I stream ends with ≥3 consecutive empty pure-I.
+                if !sole_del
+                    && (para_has_no_text(dom, last_ins)
+                        || para_body_text_is_whitespace_only(dom, last_ins))
+                {
+                    let trailing_empty_i = inss
+                        .iter()
+                        .rev()
+                        .take_while(|&&p| {
+                            para_has_no_text(dom, p)
+                                || para_body_text_is_whitespace_only(dom, p)
+                        })
+                        .count();
+                    if trailing_empty_i >= 3 {
+                        continue;
+                    }
                 }
                 // C1 / KNOWN ISSUE #2: multi-del boundary fold gated on
                 // document-scale relatedness (unrelated whole-doc replacement
