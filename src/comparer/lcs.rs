@@ -5162,7 +5162,6 @@ pub fn detect_unrelated_sources_word_mode(
 ) -> Option<Vec<CorrelatedSequence>> {
     let groups1 = contentful_group_sha1s(dom, cu1);
     let groups2 = contentful_group_sha1s(dom, cu2);
-
     // C# used >3 groups on BOTH sides. Word also collapses short-vs-long
     // whole-doc *paragraph* replacements (batch_to_fix pair 06: 3-para Open
     // Sans demo vs 30-para bold tester → ins-all-next then del-all-base). The
@@ -5274,6 +5273,91 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::inserted(cu2.to_vec()),
             CorrelatedSequence::deleted(cu1.to_vec()),
         ]);
+    }
+    // M429 (simple_ordered × sublist_issue ~54 / docxodus 84): long list base
+    // × short label-stub next (One/Two/a/b/3). M393 mid-splices pure-D before
+    // pure-I One/Two. Word pure-I's multi-char labels first then free-meshes
+    // residual single-char/digit with nested Lvl. Must run BEFORE M393.
+    {
+        let contentful_n = |cu: &[ComparisonUnit]| -> usize {
+            cu.iter()
+                .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                .count()
+        };
+        let cn1 = contentful_n(cu1);
+        let cn2 = contentful_n(cu2);
+        if settings.merge_replaced_paragraphs
+            && !has_table(cu1)
+            && !has_table(cu2)
+            && cn1 >= 6
+            && (3..=10).contains(&cn2)
+            && looks_like_short_label_stubs(dom, cu2)
+        {
+            let b1 = para_text_tokens_from_units(dom, cu1);
+            let b2 = para_text_tokens_from_units(dom, cu2);
+            let j = token_jaccard(&b1, &b2);
+            let with_num = cu1
+                .iter()
+                .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                .filter(|u| unit_para_has_numpr(dom, u))
+                .count();
+            let base_list_frac = with_num as f64 / cn1 as f64;
+            if !b1.is_empty() && j + 1e-12 < 0.25 && base_list_frac + 1e-12 >= 0.5 {
+                let right_c: Vec<ComparisonUnit> = cu2
+                    .iter()
+                    .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                    .cloned()
+                    .collect();
+                let mut peel_n = 0usize;
+                for u in &right_c {
+                    let toks = para_text_token_list(dom, u);
+                    let first = toks.first().map(|t| t.as_str()).unwrap_or("");
+                    if first.chars().count() >= 3 {
+                        peel_n += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if peel_n >= 1 && peel_n < right_c.len() {
+                    let mut out = Vec::new();
+                    let mut consumed = 0usize;
+                    let mut contentful_seen = 0usize;
+                    for u in cu2 {
+                        let is_c = as_group(u).is_some()
+                            && !para_text_token_list(dom, u).is_empty();
+                        if is_c {
+                            if contentful_seen >= peel_n {
+                                break;
+                            }
+                            contentful_seen += 1;
+                        }
+                        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+                        consumed += 1;
+                    }
+                    let residual: Vec<ComparisonUnit> = cu2[consumed..].to_vec();
+                    let mut left: Vec<ComparisonUnit> =
+                        cu1.iter().flat_map(group_contents).collect();
+                    let mut right: Vec<ComparisonUnit> =
+                        residual.iter().flat_map(group_contents).collect();
+                    if !left.is_empty()
+                        && !right.is_empty()
+                        && left.len().saturating_mul(right.len()) <= 100_000
+                    {
+                        rehash_words_by_text_content_opts(dom, &mut left, true);
+                        rehash_words_by_text_content_opts(dom, &mut right, true);
+                        let mut residual_settings = settings.clone();
+                        residual_settings.detail_threshold = 0.0;
+                        out.extend(lcs(dom, left, right, &residual_settings));
+                        return Some(out);
+                    }
+                    for u in residual {
+                        out.push(CorrelatedSequence::inserted(vec![u]));
+                    }
+                    out.push(CorrelatedSequence::deleted(cu1.to_vec()));
+                    return Some(out);
+                }
+            }
+        }
     }
     // M393 (broken_list_missing × broken_list): before M308c wholesale pure-I/D,
     // peel first next item + base first list-cluster when base has nested
@@ -5866,7 +5950,7 @@ pub fn detect_unrelated_sources_word_mode(
         // exported_list_font −3.7 (Word free-meshes short next into dropcaps).
         // Keep forward-only (short section base × title-page next).
     }
-    // M404: LCS already pure-I/D via M308c for basic_list×sd_1707; interleave
+        // M404: LCS already pure-I/D via M308c for basic_list×sd_1707; interleave
     // gate in finalize keeps IIDDD (see finalize::interleave_list_cluster).
     // M312 (two_column_two_page × sd_2672_nested_table ~33.8): short **next**
     // is title + empty + tables (contentful n≈2–6, has_table) vs long
