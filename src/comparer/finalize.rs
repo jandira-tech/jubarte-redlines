@@ -1441,6 +1441,28 @@ fn body_looks_like_section_number(text: &str) -> bool {
     matches!(chars.peek(), Some(c) if c.is_ascii_digit())
 }
 
+/// Word-count of `w:t` under pure-I runs (`ins_side`) or `w:delText` under
+/// pure-D runs (`!ins_side`) inside a paragraph (MIX-aware).
+fn para_side_word_count(dom: &Dom, p: NodeId, ins_side: bool) -> usize {
+    let mut text = String::new();
+    let tag = if ins_side { W::ins() } else { W::del() };
+    for rev in dom.descendants(p, Some(&tag)) {
+        let child_tag = if ins_side { W::t() } else { W::name("delText") };
+        for t in dom.descendants(rev, Some(&child_tag)) {
+            text.push_str(&dom.value_str(t));
+            text.push(' ');
+        }
+        // Also plain w:t under del runs in some packages.
+        if !ins_side {
+            for t in dom.descendants(rev, Some(&W::t())) {
+                text.push_str(&dom.value_str(t));
+                text.push(' ');
+            }
+        }
+    }
+    text.split_whitespace().filter(|w| !w.is_empty()).count()
+}
+
 /// M439 (list_def_mix × list_numbering_reimport ~50.5 / docxodus 90):
 /// pure-I list items with live `numPr` and **no** spacing inherit bloated
 /// package `pPrDefault` (before=240 after=240 line=288) under LO. Word stamps
@@ -3442,6 +3464,17 @@ pub fn last_pure_del_spacing_to_pprchange(
     let is_mixed = para_is_mixed_revision(dom, last);
     if !para_is_pure_deleted(dom, last) && !is_mixed {
         return;
+    }
+    // M444 (title_style_centered × title_style_demo ~86.4): last MIX free-mesh
+    // of short pure-I title ("Document Title", ≤4 tokens) × longer pure-D
+    // cover prose. Word keeps live spacing line=240; M94 parking into
+    // pPrChange costs LO. Skip spacing park for that short-title free-mesh.
+    if is_mixed {
+        let ins_w = para_side_word_count(dom, last, true);
+        let del_w = para_side_word_count(dom, last, false);
+        if (1..=4).contains(&ins_w) && del_w >= 5 {
+            return;
+        }
     }
     let Some(ppr) = dom.element(last, &W::p_pr()) else {
         return;
