@@ -9424,15 +9424,15 @@ pub fn strip_leading_del_echoing_prev_pure_i(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// M459 (center_aligned_bold×center_alignment_2 ~82.8): wholesale body MIX is
-/// a single `ins` + single `del` of whole sentences with shared word anchors.
-/// Word free-meshes word-LCS EQ ("is"/"centered"). Short title wholesale
-/// (≤6 toks, 1 shared) is M377.
+/// M462 (center_aligned_bold body2 residual after M461): wholesale body MIX
+/// free-mesh with coverage-gated word-LCS. M459 thrash'd file_163 (−29) and
+/// ooxml (−12) on single-sig / low-overlap free-mesh; this revival requires
+/// significant-token coverage ≥ 0.35 and LCS only on non-boiler + short glue
+/// (`is`), so cab (`is`/`centered`) fires while thrash fixtures do not.
 ///
 /// Gates: one ins + one del (optional trailing bare punct), each side 5..=40
-/// alnum tokens, LCS ≥ 2, and **≥2 significant** (len≥4 non-boiler) LCS
-/// anchors. Single-sig free-mesh (file_163 "italic"+is, ooxml "bold"+a)
-/// thrash'd full ITT (−29 / −12); bookended single-sig is M460.
+/// alnum tokens, filtered LCS ≥ 2 with ≥1 sig LCS anchor, and
+/// `shared_sig / min(ins_sig, del_sig) ≥ 0.35`.
 pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -9505,25 +9505,39 @@ pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
             "most", "some", "such", "other", "about", "page", "text", "and", "the", "for", "are",
             "was", "you", "all", "can", "her", "his", "its", "our", "out",
         ];
+        let is_sig = |t: &str| t.len() >= 4 && !BOILER.contains(&t);
+        let ins_sig: std::collections::HashSet<&str> = ins_toks
+            .iter()
+            .map(String::as_str)
+            .filter(|t| is_sig(t))
+            .collect();
+        let del_sig: std::collections::HashSet<&str> = del_toks
+            .iter()
+            .map(String::as_str)
+            .filter(|t| is_sig(t))
+            .collect();
+        let shared_sig = ins_sig.intersection(&del_sig).count();
+        let min_sig = ins_sig.len().min(del_sig.len());
+        // Coverage gate: thrash fixtures share ~1/6–1/8 of significant tokens;
+        // cab shares centered among document/centered vs both/centered/bold (0.5).
+        if min_sig == 0 || (shared_sig as f64) / (min_sig as f64) < 0.35 {
+            continue;
+        }
         // Case-preserving word lists for rebuild.
         let ins_words = split_words_preserve(&ins_text);
         let del_words = split_words_preserve(&del_text);
         let ins_keys: Vec<String> = ins_words.iter().map(|w| w.to_ascii_lowercase()).collect();
         let del_keys: Vec<String> = del_words.iter().map(|w| w.to_ascii_lowercase()).collect();
-        let lcs = word_lcs_indices(&ins_keys, &del_keys);
+        // LCS only on non-boiler / short-glue tokens (Word: is/centered, not text).
+        let lcs = word_lcs_indices_eligible(&ins_keys, &del_keys, BOILER);
         if lcs.len() < 2 {
             continue;
         }
-        // ≥2 significant LCS anchors (len≥4 non-boiler). One sig + short glue
-        // thrash'd file_163 (−29) and ooxml_style_link (−12) on full ITT.
         let sig_lcs = lcs
             .iter()
-            .filter(|&&(i, _)| {
-                let t = ins_keys[i].as_str();
-                t.len() >= 4 && !BOILER.contains(&t)
-            })
+            .filter(|&&(i, _)| is_sig(ins_keys[i].as_str()))
             .count();
-        if sig_lcs < 2 {
+        if sig_lcs < 1 {
             continue;
         }
         let (author, date) = {
@@ -9596,6 +9610,30 @@ fn word_lcs_indices(a: &[String], b: &[String]) -> Vec<(usize, usize)> {
     }
     out.reverse();
     out
+}
+
+/// LCS only on significant (len≥4 non-boiler) or short glue words; map indices
+/// back to the full word lists.
+fn word_lcs_indices_eligible(a: &[String], b: &[String], boiler: &[&str]) -> Vec<(usize, usize)> {
+    const SHORT_OK: &[&str] = &["is", "of", "to", "be"];
+    let eligible = |t: &str| {
+        if t.len() >= 4 {
+            !boiler.contains(&t)
+        } else {
+            SHORT_OK.contains(&t)
+        }
+    };
+    let a_idx: Vec<usize> = (0..a.len()).filter(|&i| eligible(&a[i])).collect();
+    let b_idx: Vec<usize> = (0..b.len()).filter(|&j| eligible(&b[j])).collect();
+    if a_idx.is_empty() || b_idx.is_empty() {
+        return Vec::new();
+    }
+    let a_f: Vec<String> = a_idx.iter().map(|&i| a[i].clone()).collect();
+    let b_f: Vec<String> = b_idx.iter().map(|&j| b[j].clone()).collect();
+    word_lcs_indices(&a_f, &b_f)
+        .into_iter()
+        .map(|(i, j)| (a_idx[i], b_idx[j]))
+        .collect()
 }
 
 /// Rebuild free-mesh from word LCS. Emits: ins-runs, del-runs, EQ runs with
@@ -9716,26 +9754,8 @@ fn rebuild_body_free_mesh_lcs(
                 li += 1;
                 continue;
             }
-            // Advance lagging side(s) up to next EQ (del then ins — Word order).
-            if di < ed {
-                let mut batch = Vec::new();
-                while di < ed {
-                    batch.push(del_words[di].clone());
-                    di += 1;
-                }
-                push_run(
-                    dom,
-                    p,
-                    "del",
-                    &batch,
-                    author,
-                    date,
-                    &mut next_id,
-                    &sample_rpr,
-                    &mut first_content,
-                );
-                continue;
-            }
+            // Advance lagging side(s) up to next EQ (ins then del — Word body
+            // free-mesh often leads with the new sentence residual).
             if ii < ei {
                 let mut batch = Vec::new();
                 while ii < ei {
@@ -9746,6 +9766,25 @@ fn rebuild_body_free_mesh_lcs(
                     dom,
                     p,
                     "ins",
+                    &batch,
+                    author,
+                    date,
+                    &mut next_id,
+                    &sample_rpr,
+                    &mut first_content,
+                );
+                continue;
+            }
+            if di < ed {
+                let mut batch = Vec::new();
+                while di < ed {
+                    batch.push(del_words[di].clone());
+                    di += 1;
+                }
+                push_run(
+                    dom,
+                    p,
+                    "del",
                     &batch,
                     author,
                     date,

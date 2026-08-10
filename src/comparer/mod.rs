@@ -780,17 +780,16 @@ pub fn compare_bodies_faithful_with_notes(
         // M377: short-title MIX free-mesh shared sig token as EQ (tiff×h_f
         // "document" −3.4 vs wholesale ins+del).
         finalize::free_mesh_shared_title_token_in_mix(dom, root);
-        // M459 DISABLED after full ITT thrash: wholesale free-mesh with ≥2 LCS
-        // sig anchors still hit ooxml_style_link (−12, bold+style) and earlier
-        // single-sig form hit file_163 (−29). Function kept for a future
-        // coverage-gated revival. center_aligned_bold +0.97 sacrificed.
-        // finalize::free_mesh_wholesale_body_mix(dom, root);
         // M460: bookended MIX (EQ `This `…`.`) free-mesh mid shared sig token
         // inside the single ins+del pair (right_align_bold "right").
         finalize::free_mesh_bookended_ins_del(dom, root);
         // M461: pure-I "This … text …" free-mesh EQ bookends when following
         // pure-D/MIX del shares this+text (center_aligned_bold / right_align).
         finalize::free_mesh_pure_i_this_text(dom, root);
+        // M462: coverage-gated wholesale body MIX free-mesh (after M461 so
+        // residual A del still wholesale against B body2). M459 thrash guards
+        // via shared_sig/min_sig ≥ 0.35 + eligible-token LCS.
+        finalize::free_mesh_wholesale_body_mix(dom, root);
         // M393 late: re-apply after free-mesh peels thrash LCS interleave.
         finalize::interleave_list_cluster_after_coalesce(dom, root);
         // M376: after merge/park peels — strip list line=240/jc that mid pure-D
