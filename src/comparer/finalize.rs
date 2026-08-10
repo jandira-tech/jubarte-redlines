@@ -4241,6 +4241,78 @@ pub fn last_pure_del_inherit_prev_jc(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M449 (right_aligned_italic × right_alignment ~75.9 / docxodus 100):
+/// mid-body MIX free-mesh parks `jc` into `pPrChange` only; Word keeps
+/// **live** `jc` on the body MIX. Last residual stays park-only (center_bold
+/// thrash when last also promoted).
+///
+/// Gate: **non-last** MIX with `pPrChange` carrying `jc`, no live `jc`, and
+/// ins_side+del_side tokens ≥6. Promote live `jc`; if old pPr is jc-only,
+/// drop `pPrChange` (Word mid-body shape).
+pub fn promote_live_jc_from_pprchange_on_body_mix(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    if kids.len() < 2 {
+        return;
+    }
+    let last = kids[kids.len() - 1];
+    for &p in &kids {
+        if p == last || dom.name(p) != Some(W::p()) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        let ins_w = para_side_word_count(dom, p, true);
+        let del_w = para_side_word_count(dom, p, false);
+        if ins_w + del_w < 6 {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        // Already live jc — leave alone.
+        if dom.element(ppr, &W::name("jc")).is_some() {
+            continue;
+        }
+        let Some(chg) = dom.element(ppr, &W::name("pPrChange")) else {
+            continue;
+        };
+        let Some(old) = dom.element(chg, &W::p_pr()) else {
+            continue;
+        };
+        let Some(old_jc) = dom.element(old, &W::name("jc")) else {
+            continue;
+        };
+        let val = dom.attribute(old_jc, &W::val()).unwrap_or("").to_string();
+        if val.is_empty() {
+            continue;
+        }
+        // Live jc before pPrChange.
+        let jc = dom.new_element(W::name("jc"));
+        dom.set_attribute_value(jc, &W::val(), Some(&val));
+        dom.add_before_self(chg, jc);
+        // Drop pPrChange when old was jc-only (Word mid-body has live jc only).
+        let mut other_layout = false;
+        for c in dom.elements(old, None) {
+            let Some(n) = dom.name(c) else {
+                continue;
+            };
+            if n == W::name("jc") || n == W::r_pr() {
+                continue;
+            }
+            other_layout = true;
+            break;
+        }
+        if !other_layout {
+            dom.remove(chg);
+        }
+    }
+}
+
 /// M87b / M94 — last pure-del **or mixed** that already has `pPrChange`: drop
 /// mark-only `rPr/del` (Word keeps pPrChange only — file_55 "b", file_139 mixed).
 pub fn strip_last_pure_del_mark_when_pprchange(dom: &mut Dom, root: NodeId) {

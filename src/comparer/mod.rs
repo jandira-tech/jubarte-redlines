@@ -723,6 +723,8 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::park_mixed_numpr_onto_trailing_empty_pure_del(dom, root, settings, &mut id);
         // M102c: last pure-del inherits prev live jc (file_148 center+spacing).
         finalize::last_pure_del_inherit_prev_jc(dom, root);
+        // M449: body MIX parks jc in pPrChange; Word keeps live jc (right-align).
+        finalize::promote_live_jc_from_pprchange_on_body_mix(dom, root);
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
         // M87b: last pure-del with pPrChange drops mark-only del (file_55).
         finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
