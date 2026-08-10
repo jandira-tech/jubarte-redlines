@@ -770,6 +770,9 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::peel_trailing_ins_from_mix_into_following_pure_del(dom, root);
         // M154: trailing del on MIX + following pure-I (justified_underline×justify_2).
         finalize::peel_trailing_del_from_mix_into_following_pure_ins(dom, root);
+        // M458: M151 pure-I B1 + A1×B2 leaves leading del "This" on body MIX;
+        // Word free-meshes This as EQ on body1 — strip orphan leading del.
+        finalize::strip_leading_del_echoing_prev_pure_i(dom, root);
         // M369: residual short pure-I labels ("a"/"b") × pure-D list items ending
         // with the same token (ordered_list×sublist Word MIX). After mix peels
         // so fold_leading_ins does not steal the label onto a preceding Item.

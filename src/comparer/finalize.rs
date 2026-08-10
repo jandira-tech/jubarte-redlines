@@ -9333,3 +9333,93 @@ pub fn ensure_empty_pprchange_on_eq_with_live_jc(
         dom.add(ppr, chg);
     }
 }
+
+/// M458 (right_aligned_italic residual ~88 after M151 peel):
+/// M151 pure-I's B1 ("This document…") then free-meshes A1×B2, which leaves an
+/// **early del "This"** on the body MIX (often after a short leading ins
+/// "All") that Word does not show. Surgical: if previous para is pure-I
+/// starting with the same first alnum token, drop the first short del among
+/// the first three content children when it only echoes that token.
+pub fn strip_leading_del_echoing_prev_pure_i(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    for i in 1..kids.len() {
+        let prev = kids[i - 1];
+        let p = kids[i];
+        if dom.name(prev) != Some(W::p()) || dom.name(p) != Some(W::p()) {
+            continue;
+        }
+        if !para_is_pure_inserted(dom, prev) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        let prev_text = para_revision_body_text(dom, prev);
+        let prev_tok = prev_text
+            .split(|c: char| !c.is_alphanumeric())
+            .find(|t| !t.is_empty())
+            .map(|t| t.to_ascii_lowercase());
+        let Some(prev_tok) = prev_tok else {
+            continue;
+        };
+        let content: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| dom.name(c) != Some(W::p_pr()))
+            .collect();
+        if content.len() < 2 {
+            continue;
+        }
+        // Scan first 3 content children for a short del that echoes prev_tok.
+        let mut target: Option<NodeId> = None;
+        for &c in content.iter().take(3) {
+            if dom.name(c) != Some(W::del()) {
+                continue;
+            }
+            let mut n_tok = 0usize;
+            let mut first_tok: Option<String> = None;
+            for t in dom.descendants(c, Some(&W::name("delText"))) {
+                for part in dom.value_str(t).split(|ch: char| !ch.is_alphanumeric()) {
+                    if part.is_empty() {
+                        continue;
+                    }
+                    n_tok += 1;
+                    if first_tok.is_none() {
+                        first_tok = Some(part.to_ascii_lowercase());
+                    }
+                }
+            }
+            for t in dom.descendants(c, Some(&W::t())) {
+                for part in dom.value_str(t).split(|ch: char| !ch.is_alphanumeric()) {
+                    if part.is_empty() {
+                        continue;
+                    }
+                    n_tok += 1;
+                    if first_tok.is_none() {
+                        first_tok = Some(part.to_ascii_lowercase());
+                    }
+                }
+            }
+            let Some(ft) = first_tok else {
+                continue;
+            };
+            if ft == prev_tok && (1..=2).contains(&n_tok) {
+                target = Some(c);
+                break;
+            }
+        }
+        let Some(del_node) = target else {
+            continue;
+        };
+        // Leave other content.
+        let other = content.iter().any(|&c| c != del_node);
+        if !other {
+            continue;
+        }
+        dom.remove(del_node);
+    }
+}
