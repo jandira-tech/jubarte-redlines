@@ -728,6 +728,8 @@ pub fn compare_bodies_faithful_with_notes(
         // M450: last MIX parks Heading residual spacing; Word keeps live + empty
         // pPrChange (calibri×heading_2_right).
         finalize::promote_heading_spacing_from_pprchange_on_last_mix(dom, root);
+        // M451: strip empty pPrChange on mid MIX with live jc (center_alignment_2).
+        finalize::strip_empty_pprchange_on_mix_with_live_jc(dom, root);
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
         // M87b: last pure-del with pPrChange drops mark-only del (file_55).
         finalize::strip_last_pure_del_mark_when_pprchange(dom, root);

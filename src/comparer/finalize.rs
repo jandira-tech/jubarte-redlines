@@ -4241,6 +4241,61 @@ pub fn last_pure_del_inherit_prev_jc(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M451 (center_alignment_2 × center_alignment ~81.5 / docxodus 100):
+/// mid MIX free-mesh carries **empty** `pPrChange` alongside live `jc` while
+/// Word uses live `jc` + rPr/ins mark only (no empty pPrChange). Strip empty
+/// pPrChange shells on MIX when live jc is present and old pPr is empty.
+///
+/// Does not touch last residual (often needs pPrChange) or non-empty park.
+pub fn strip_empty_pprchange_on_mix_with_live_jc(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    if kids.len() < 2 {
+        return;
+    }
+    let last = kids[kids.len() - 1];
+    for &p in &kids {
+        if p == last || dom.name(p) != Some(W::p()) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        // Need live jc.
+        if dom.element(ppr, &W::name("jc")).is_none() {
+            continue;
+        }
+        let Some(chg) = dom.element(ppr, &W::name("pPrChange")) else {
+            continue;
+        };
+        let Some(old) = dom.element(chg, &W::p_pr()) else {
+            continue;
+        };
+        // Old pPr must be empty of layout children.
+        let mut has_layout = false;
+        for c in dom.elements(old, None) {
+            let Some(n) = dom.name(c) else {
+                continue;
+            };
+            if n == W::r_pr() {
+                continue;
+            }
+            has_layout = true;
+            break;
+        }
+        if has_layout {
+            continue;
+        }
+        dom.remove(chg);
+    }
+}
+
 /// M450 (calibri_font × calibri_heading_2_right ~82.5 / docxodus 100):
 /// last MIX free-mesh parks **Heading residual** spacing
 /// (`before≥200` + `line=240`) into `pPrChange` only; Word keeps it **live**
