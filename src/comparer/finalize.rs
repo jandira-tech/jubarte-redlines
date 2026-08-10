@@ -9172,3 +9172,59 @@ pub fn park_jc_on_first_short_title_mix_from_body(
     dom.add(chg, old_inner);
     dom.add(ppr, chg);
 }
+
+/// M453 (calibri_font × calibri_heading_2_right mid residual):
+/// Word keeps live Heading residual spacing **and** an empty `pPrChange`
+/// shell on mid MIX. Engine has live spacing only (last MIX already fixed
+/// by M450). Also covers EQ/pure-I with live heading residual (rare).
+///
+/// Does **not** touch MIX with live `jc` (M451 deliberately strips empty
+/// shells there — center_alignment_2 mid shape).
+pub fn ensure_empty_pprchange_on_live_heading_spacing(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    for &p in &kids {
+        if dom.name(p) != Some(W::p()) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        if dom.element(ppr, &W::name("pPrChange")).is_some() {
+            continue;
+        }
+        // Skip MIX with live jc — M451 Word shape is no empty shell.
+        if para_is_mixed_revision(dom, p) && dom.element(ppr, &W::name("jc")).is_some() {
+            continue;
+        }
+        let Some(sp) = dom.element(ppr, &W::name("spacing")) else {
+            continue;
+        };
+        let before = dom
+            .attribute(sp, &W::name("before"))
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        if before < 200 || dom.attribute(sp, &W::name("line")).is_none() {
+            continue;
+        }
+        let old_inner = dom.new_element(W::p_pr());
+        let chg = dom.new_element(W::name("pPrChange"));
+        dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+        *id_gen += 1;
+        dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+        dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+        dom.add(chg, old_inner);
+        dom.add(ppr, chg);
+    }
+}
