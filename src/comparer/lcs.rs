@@ -5445,8 +5445,13 @@ pub fn detect_unrelated_sources_word_mode(
     // Allow n2≥2 when next has a table; keep base table-free and near-zero
     // body jaccard so short-base catalog × related long table next that Word
     // nests stays off this path when vocab overlap is non-trivial.
+    //
+    // M427 (tab_test × diff_after7 ~54 / docxodus 99.7): same Word pure-I/D
+    // shape with **4** contentful base paras (Tab Tests / left / right / First
+    // Second End). Widen n1 to 1..=4 and sig1 cap to 24 so short multi-para
+    // demos pure-I/D wholesale; still refuse long multi-section bases.
     if settings.merge_replaced_paragraphs
-        && (1..=2).contains(&n1)
+        && (1..=4).contains(&n1)
         && n2 >= 2
         && !has_table(cu1)
         && has_table(cu2)
@@ -5454,9 +5459,8 @@ pub fn detect_unrelated_sources_word_mode(
             let b1 = para_text_tokens_from_units(dom, cu1);
             let b2 = para_text_tokens_from_units(dom, cu2);
             let sig1 = significant_tokens(&b1);
-            // Slightly wider sig cap than M315 (≤8): technicolor highlight line
-            // is ~9 significant tokens (≥4 chars).
-            !b1.is_empty() && sig1.len() <= 12 && token_jaccard(&b1, &b2) + 1e-12 < 0.05
+            // M426: technicolor ~9 sig tokens. M427: tab demo ~12–18.
+            !b1.is_empty() && sig1.len() <= 24 && token_jaccard(&b1, &b2) + 1e-12 < 0.05
         }
     {
         return Some(vec![
