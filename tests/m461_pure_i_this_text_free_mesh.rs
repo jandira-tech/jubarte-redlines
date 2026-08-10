@@ -69,7 +69,9 @@ fn regex_lite_find_texts(p: &str) -> Vec<String> {
         let after = &rest[i..];
         let Some(gt) = after.find('>') else { break };
         let start = gt + 1;
-        let Some(end) = after[start..].find("</w:t>") else { break };
+        let Some(end) = after[start..].find("</w:t>") else {
+            break;
+        };
         out.push(after[start..start + end].to_string());
         rest = &after[start + end + 6..];
     }
@@ -111,7 +113,10 @@ fn assert_this_text_free_mesh(xml: &str, label: &str) {
         found = true;
         break;
     }
-    assert!(found, "{label}: expected pure-I free-mesh para with This/text");
+    assert!(
+        found,
+        "{label}: expected pure-I free-mesh para with This/text"
+    );
 }
 
 #[test]

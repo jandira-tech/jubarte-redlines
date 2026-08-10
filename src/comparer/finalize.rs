@@ -10562,3 +10562,216 @@ pub fn fold_boiler_eq_between_ins(dom: &mut Dom, root: NodeId) {
         }
     }
 }
+
+/// M464 (center_bold ~83.6 residual): Word free-meshes trailing ` for <word>`
+/// from a mid-body MIX ins onto the following MIX as `EQ[ for ]|INS[<word> ]`,
+/// trimming the following del's trailing ` for`. Engine left
+/// `INS[perfect for document]` on p2 and `DEL[… great for]` on p3.
+///
+/// Gates: consecutive MIX paras; last body `w:ins` on p ends with ` for <word>`;
+/// first body `w:del` on next ends with ` for` (no trailing alnum after for).
+pub fn peel_trailing_for_word_onto_next_mix(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    for i in 0..kids.len().saturating_sub(1) {
+        let p = kids[i];
+        let nxt = kids[i + 1];
+        if dom.name(p) != Some(W::p())
+            || dom.name(nxt) != Some(W::p())
+            || !para_is_mixed_revision(dom, p)
+            || !para_is_mixed_revision(dom, nxt)
+        {
+            continue;
+        }
+        let p_body: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| dom.name(c) != Some(W::p_pr()))
+            .collect();
+        let n_body: Vec<NodeId> = dom
+            .elements(nxt, None)
+            .into_iter()
+            .filter(|&c| dom.name(c) != Some(W::p_pr()))
+            .collect();
+        // Last ins on p (may not be last child — trailing del is common).
+        let Some(&ins) = p_body
+            .iter()
+            .rev()
+            .find(|&&c| dom.name(c) == Some(W::ins()))
+        else {
+            continue;
+        };
+        // First del on next.
+        let Some(&del) = n_body.iter().find(|&&c| dom.name(c) == Some(W::del())) else {
+            continue;
+        };
+        // Must be first content on next (optional: only pPr before).
+        if n_body.first().copied() != Some(del) {
+            continue;
+        }
+
+        let mut ins_text = String::new();
+        for t in dom.descendants(ins, Some(&W::t())) {
+            ins_text.push_str(&dom.value_str(t));
+        }
+        let mut del_text = String::new();
+        for t in dom.descendants(del, Some(&W::name("delText"))) {
+            del_text.push_str(&dom.value_str(t));
+        }
+        let Some((ins_keep, for_word)) = split_trailing_for_word(&ins_text) else {
+            continue;
+        };
+        // del must end with " for" (case-insensitive), no extra alnum after.
+        let del_trim = del_text.trim_end();
+        let del_lower = del_trim.to_ascii_lowercase();
+        if !del_lower.ends_with(" for") {
+            continue;
+        }
+        // Ensure it's a whole word "for" at end.
+        let for_start = del_trim.len() - 4; // " for"
+        if for_start > 0 {
+            let before = del_trim.as_bytes()[for_start - 1];
+            // space already in " for"; check char before space is not weird
+            let _ = before;
+        }
+        let del_keep = del_trim[..del_trim.len() - 4].to_string(); // drop " for"
+        // Need some residual on both sides after peel.
+        if ins_keep.trim().is_empty() || del_keep.trim().is_empty() {
+            continue;
+        }
+
+        let (author, date) = {
+            let mut a = "Redline".to_string();
+            let mut d = "1970-01-01T00:00:00Z".to_string();
+            if let Some(v) = dom.attribute(ins, &W::author()) {
+                a = v.to_string();
+            }
+            if let Some(v) = dom.attribute(ins, &W::date()) {
+                d = v.to_string();
+            }
+            (a, d)
+        };
+        // Sample rPr from next bare EQ or from ins for bold continuity.
+        let sample_rpr = n_body
+            .iter()
+            .find(|&&c| dom.name(c) == Some(W::r()))
+            .and_then(|&r| dom.element(r, &W::r_pr()))
+            .or_else(|| {
+                dom.element(ins, &W::r())
+                    .and_then(|r| dom.element(r, &W::r_pr()))
+            })
+            .map(|rpr| dom.clone_subtree(rpr));
+        let ins_rpr = dom
+            .element(ins, &W::r())
+            .and_then(|r| dom.element(r, &W::r_pr()))
+            .map(|rpr| dom.clone_subtree(rpr));
+
+        // Rewrite ins text.
+        rewrite_rev_text(dom, ins, &ins_keep, false);
+        // Rewrite del text.
+        rewrite_rev_text(dom, del, &del_keep, true);
+
+        // Word order after leading del: EQ[ for ] | INS[word ].
+        let eq_text = " for ";
+        let r_eq = dom.new_element(W::r());
+        if let Some(rpr) = sample_rpr {
+            let rpr_c = dom.clone_subtree(rpr);
+            dom.add(r_eq, rpr_c);
+        }
+        let t_eq = dom.new_element(W::t());
+        dom.set_attribute_value(t_eq, &XNamespace::xml().name("space"), Some("preserve"));
+        dom.add_text(t_eq, eq_text);
+        dom.add(r_eq, t_eq);
+
+        let new_ins = dom.new_element(W::ins());
+        dom.set_attribute_value(new_ins, &W::id(), Some("1"));
+        dom.set_attribute_value(new_ins, &W::author(), Some(&author));
+        dom.set_attribute_value(new_ins, &W::date(), Some(&date));
+        let r_ins = dom.new_element(W::r());
+        if let Some(rpr) = ins_rpr {
+            let rpr_c = dom.clone_subtree(rpr);
+            dom.add(r_ins, rpr_c);
+        }
+        let t_ins = dom.new_element(W::t());
+        let word_sp = format!("{for_word} ");
+        dom.set_attribute_value(t_ins, &XNamespace::xml().name("space"), Some("preserve"));
+        dom.add_text(t_ins, &word_sp);
+        dom.add(r_ins, t_ins);
+        dom.add(new_ins, r_ins);
+
+        // Order: DEL (trimmed) | EQ for | INS word | rest…
+        dom.add_after_self(del, r_eq);
+        dom.add_after_self(r_eq, new_ins);
+    }
+}
+
+/// Split trailing ` for <word>` (case-insensitive). Returns (before, word).
+fn split_trailing_for_word(text: &str) -> Option<(String, String)> {
+    let trimmed = text.trim_end();
+    let lower = trimmed.to_ascii_lowercase();
+    // Find last " for " occurrence as whole phrase at end: ` for <word>`
+    let Some(idx) = lower.rfind(" for ") else {
+        // also allow ` for <word>` with single spaces
+        return None;
+    };
+    // " for " is 5 chars
+    let after = &trimmed[idx + 5..];
+    let word = after.trim();
+    if word.is_empty() || !word.chars().all(|c| c.is_alphanumeric()) {
+        return None;
+    }
+    // Only one trailing word after for.
+    if word.chars().any(|c| c.is_whitespace()) {
+        return None;
+    }
+    let before = trimmed[..idx].to_string();
+    if before.trim().is_empty() {
+        return None;
+    }
+    Some((before, word.to_string()))
+}
+
+/// Replace all text under an ins/del with `new_text` (single run).
+fn rewrite_rev_text(dom: &mut Dom, rev: NodeId, new_text: &str, is_del: bool) {
+    let runs: Vec<NodeId> = dom.elements(rev, Some(&W::r())).to_vec();
+    let r0 = if let Some(&r) = runs.first() {
+        // clear text children
+        let tags: Vec<NodeId> = if is_del {
+            dom.elements(r, Some(&W::name("delText"))).to_vec()
+        } else {
+            dom.elements(r, Some(&W::t())).to_vec()
+        };
+        for t in tags {
+            if dom.parent(t).is_some() {
+                dom.remove(t);
+            }
+        }
+        // remove extra runs
+        for r in runs.iter().skip(1) {
+            if dom.parent(*r).is_some() {
+                dom.remove(*r);
+            }
+        }
+        r
+    } else {
+        let r = dom.new_element(W::r());
+        dom.add(rev, r);
+        r
+    };
+    let t = if is_del {
+        dom.new_element(W::name("delText"))
+    } else {
+        dom.new_element(W::t())
+    };
+    if new_text.starts_with(' ') || new_text.ends_with(' ') || new_text.contains(' ') {
+        dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+    }
+    dom.add_text(t, new_text);
+    dom.add(r0, t);
+}
