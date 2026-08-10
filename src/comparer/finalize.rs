@@ -3564,13 +3564,12 @@ pub fn last_pure_del_spacing_to_pprchange(
     if !para_is_pure_deleted(dom, last) && !is_mixed {
         return;
     }
-    // M444/M446: last MIX free-mesh keeps Word live spacing (not pPrChange).
-    // History: M226 gated *all* MIX and thrash'd (red_heading −37). Keep
-    // surgical free-mesh shapes only:
+    // M444/M446a: last MIX free-mesh keeps Word live spacing (not pPrChange).
+    // History: M226 gated *all* MIX → red_heading −37. M446b short-doc gate
+    // (≤6 paras, multi-token both sides) thrash'd red_heading/file_139/etc.
+    // Keep surgical free-mesh shapes only:
     // - M444: short ins title (1..=4) × long del cover (≥5)
     // - M446a: long ins body (≥5) × short del residual (1..=4) — subtitle
-    // - M446b: short demo docs (≤6 body paras) with multi-token both sides
-    //   and live spacing — heading_3_center / style-demo cousins
     if is_mixed {
         let ins_w = para_side_word_count(dom, last, true);
         let del_w = para_side_word_count(dom, last, false);
@@ -3578,18 +3577,6 @@ pub fn last_pure_del_spacing_to_pprchange(
             return;
         }
         if (1..=4).contains(&del_w) && ins_w >= 5 {
-            return;
-        }
-        let n_p = kids
-            .iter()
-            .filter(|&&k| dom.name(k) == Some(W::p()))
-            .count();
-        if n_p <= 6
-            && ins_w >= 2
-            && del_w >= 2
-            && let Some(ppr0) = dom.element(last, &W::p_pr())
-            && dom.element(ppr0, &W::name("spacing")).is_some()
-        {
             return;
         }
     }
