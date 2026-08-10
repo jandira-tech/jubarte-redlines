@@ -2265,16 +2265,22 @@ fn unique_part_name(out: &PartFs, want: &str, bytes: &[u8]) -> String {
 
 /// Word Compare leaves the body-level final `sectPr` without
 /// headerReference/footerReference when an earlier mid-body section break
-/// already defines the same (kind, type) slot — later sections inherit.
+/// already defines the **same part** (same `r:id`) for that (kind, type)
+/// slot — true OOXML inheritance / dual-bind of one chrome part.
 /// Evidence (docx_lots_of_comments_*, verdana×strict01, word_clean_strict01×…):
 /// Word's redline has HF only on mid `pPr/sectPr`; the body final is empty.
-/// Our pipeline sometimes leaves A's (or adopted) refs on the final as well,
-/// which dual-binds chrome and diverges from Word. Strip only the **body
-/// direct-child** final; mid multi-section even/default/first copies stay.
+///
+/// M432 (file_22×file_23 residual ~44.9 / docxodus 94): multi-section bases
+/// carry a **unique footer per section** (distinct rIds). Word keeps the
+/// final-section footerReference; stripping any final slot that merely shared
+/// (kind, type) with a mid break deleted last-page chrome and tanked pixels.
+/// Strip only when the final ref reuses the **same r:id** as the last earlier
+/// section for that slot.
 fn strip_final_sectpr_inherited_header_footer(dom: &mut Dom, result_root: NodeId) {
     let href = W::name("headerReference");
     let fref = W::name("footerReference");
     let type_name = W::name("type");
+    let rid_name = R::name("id");
     let Some(body) = dom.element(result_root, &W::body()) else {
         return;
     };
@@ -2282,8 +2288,9 @@ fn strip_final_sectpr_inherited_header_footer(dom: &mut Dom, result_root: NodeId
     let Some(final_sect) = dom.element(body, &W::name("sectPr")) else {
         return;
     };
-    let mut earlier_slots: std::collections::HashSet<(bool, String)> =
-        std::collections::HashSet::new();
+    // Last-seen rId per (is_header, type) among mid-body / non-final sectPrs.
+    let mut earlier_rids: std::collections::HashMap<(bool, String), String> =
+        std::collections::HashMap::new();
     for sect in dom.descendants(body, Some(&W::name("sectPr"))) {
         if sect == final_sect {
             continue;
@@ -2301,10 +2308,13 @@ fn strip_final_sectpr_inherited_header_footer(dom: &mut Dom, result_root: NodeId
                 .attribute(e, &type_name)
                 .unwrap_or("default")
                 .to_string();
-            earlier_slots.insert((is_header, ty));
+            let Some(rid) = dom.attribute(e, &rid_name) else {
+                continue;
+            };
+            earlier_rids.insert((is_header, ty), rid.to_string());
         }
     }
-    if earlier_slots.is_empty() {
+    if earlier_rids.is_empty() {
         return;
     }
     let mut to_remove: Vec<NodeId> = Vec::new();
@@ -2321,7 +2331,15 @@ fn strip_final_sectpr_inherited_header_footer(dom: &mut Dom, result_root: NodeId
             .attribute(e, &type_name)
             .unwrap_or("default")
             .to_string();
-        if earlier_slots.contains(&(is_header, ty)) {
+        let Some(rid) = dom.attribute(e, &rid_name) else {
+            continue;
+        };
+        // Same (kind, type) AND same r:id → duplicate inherit; strip final.
+        // Distinct rId (multi-section unique footers) → keep final chrome.
+        if earlier_rids
+            .get(&(is_header, ty))
+            .is_some_and(|prev| prev == rid)
+        {
             to_remove.push(e);
         }
     }
