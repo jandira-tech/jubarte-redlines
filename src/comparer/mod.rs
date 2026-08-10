@@ -788,6 +788,9 @@ pub fn compare_bodies_faithful_with_notes(
         // M460: bookended MIX (EQ `This `…`.`) free-mesh mid shared sig token
         // inside the single ins+del pair (right_align_bold "right").
         finalize::free_mesh_bookended_ins_del(dom, root);
+        // M461: pure-I "This … text …" free-mesh EQ bookends when following
+        // pure-D/MIX del shares this+text (center_aligned_bold / right_align).
+        finalize::free_mesh_pure_i_this_text(dom, root);
         // M393 late: re-apply after free-mesh peels thrash LCS interleave.
         finalize::interleave_list_cluster_after_coalesce(dom, root);
         // M376: after merge/park peels — strip list line=240/jc that mid pure-D

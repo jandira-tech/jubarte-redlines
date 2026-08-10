@@ -10125,3 +10125,207 @@ fn m460_push_rev_text(
         _ => {}
     }
 }
+
+/// M461 (center_aligned_bold / right_align p1 ~82.8 / 88.95): pure-I intro
+/// "This document demonstrates … text alignment." is free-meshed by Word as
+/// `EQ[This ] | INS[…] | EQ[text ] | INS[alignment.]` with rPrChange on EQ.
+/// Engine left wholesale pure-I.
+///
+/// Gates: pure-I, 5..=20 alnum toks, starts with "This ", exactly one whole-word
+/// "text", and a following pure-D/MIX whose del side also contains "this"+"text"
+/// (Word free-meshes shared bookends against the residual A body).
+pub fn free_mesh_pure_i_this_text(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    for i in 0..kids.len() {
+        let p = kids[i];
+        if dom.name(p) != Some(W::p()) || !para_is_pure_inserted(dom, p) {
+            continue;
+        }
+        // Following 1..=2 content paras must carry deleted "text" (Word free-
+        // meshes pure-I This/text against residual A body). Prefer "this"+"text"
+        // when present (center_aligned_bold); allow "text" alone in pure-D
+        // residual (right_align p3 "…italic text creates…") after MIX already
+        // free-meshed mid-body "This"/"text".
+        let mut following_del = String::new();
+        let mut seen_p = 0usize;
+        for &k in kids.iter().skip(i + 1) {
+            if dom.name(k) != Some(W::p()) {
+                continue;
+            }
+            for t in dom.descendants(k, Some(&W::name("delText"))) {
+                following_del.push_str(&dom.value_str(t));
+                following_del.push(' ');
+            }
+            seen_p += 1;
+            if seen_p >= 2 {
+                break;
+            }
+        }
+        let following_del_l = following_del.to_ascii_lowercase();
+        if !following_del_l.contains("text") {
+            continue;
+        }
+
+        // Collect pure-I body text (all ins t nodes).
+        let mut ins_nodes = Vec::new();
+        let mut other = false;
+        for c in dom.elements(p, None) {
+            if dom.name(c) == Some(W::p_pr()) {
+                continue;
+            }
+            if dom.name(c) == Some(W::ins()) {
+                ins_nodes.push(c);
+            } else if dom.name(c) == Some(W::r()) {
+                // Bare runs only if empty/punct.
+                let mut t = String::new();
+                for tn in dom.descendants(c, Some(&W::t())) {
+                    t.push_str(&dom.value_str(tn));
+                }
+                if t.chars().any(|ch| ch.is_alphanumeric()) {
+                    other = true;
+                    break;
+                }
+            } else {
+                other = true;
+                break;
+            }
+        }
+        if other || ins_nodes.is_empty() {
+            continue;
+        }
+        let mut text = String::new();
+        for &ins in &ins_nodes {
+            for t in dom.descendants(ins, Some(&W::t())) {
+                text.push_str(&dom.value_str(t));
+            }
+        }
+        let toks = alnum_tokens(&text);
+        if !(5..=20).contains(&toks.len()) {
+            continue;
+        }
+        let lower = text.to_ascii_lowercase();
+        if !lower.starts_with("this ") && !lower.starts_with("this\t") {
+            // also allow "This" at start without trailing space if next is space
+            if !lower.starts_with("this") {
+                continue;
+            }
+            // require word boundary after this
+            if lower.len() > 4 && lower.as_bytes()[4].is_ascii_alphanumeric() {
+                continue;
+            }
+        }
+        // Exactly one whole-word "text".
+        let Some((before_text, after_text)) = split_around_whole_word(&text, "text") else {
+            continue;
+        };
+        // before_text should start with "This " (case-preserving).
+        let Some((this_tok, mid)) = split_leading_this(&before_text) else {
+            continue;
+        };
+        // Avoid free-mesh when "text" is the only content after This.
+        if mid.trim().is_empty() && after_text.trim().is_empty() {
+            continue;
+        }
+
+        let (author, date) = {
+            let mut a = "Redline".to_string();
+            let mut d = "1970-01-01T00:00:00Z".to_string();
+            if let Some(v) = dom.attribute(ins_nodes[0], &W::author()) {
+                a = v.to_string();
+            }
+            if let Some(v) = dom.attribute(ins_nodes[0], &W::date()) {
+                d = v.to_string();
+            }
+            (a, d)
+        };
+        // Prefer rPr from title EQ if present (Word rPrChange on free-mesh EQ).
+        let sample_rpr = kids
+            .iter()
+            .take(i)
+            .rev()
+            .find(|&&k| dom.name(k) == Some(W::p()))
+            .and_then(|&tp| {
+                dom.elements(tp, None)
+                    .into_iter()
+                    .find(|&c| dom.name(c) == Some(W::r()))
+                    .and_then(|r| dom.element(r, &W::r_pr()))
+            })
+            .map(|rpr| dom.clone_subtree(rpr));
+
+        // Clear body content (keep pPr).
+        let body_kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| dom.name(c) != Some(W::p_pr()))
+            .collect();
+        for c in body_kids {
+            if dom.parent(c).is_some() {
+                dom.remove(c);
+            }
+        }
+        let mut next_id = 1u32;
+        // EQ[This ] | INS[mid] | EQ[text ] | INS[after]
+        // Preserve trailing space after This/text as Word does.
+        let this_eq = if this_tok.ends_with(' ') {
+            this_tok
+        } else {
+            format!("{this_tok} ")
+        };
+        m460_push_eq_text(dom, p, &this_eq, &sample_rpr);
+        m460_push_rev_text(dom, p, "ins", &mid, &author, &date, &mut next_id, &None);
+        // "text" + space if mid/after shape had " text "
+        let text_eq =
+            if after_text.starts_with(' ') || (!after_text.is_empty() && !mid.ends_with(' ')) {
+                // Word: "text " with trailing space when more content follows.
+                if after_text.is_empty() {
+                    "text".to_string()
+                } else {
+                    "text ".to_string()
+                }
+            } else {
+                "text".to_string()
+            };
+        m460_push_eq_text(dom, p, &text_eq, &sample_rpr);
+        let after = after_text.trim_start();
+        m460_push_rev_text(dom, p, "ins", after, &author, &date, &mut next_id, &None);
+    }
+}
+
+/// Split leading whole-word "This" (any case); returns (This+space, rest).
+fn split_leading_this(text: &str) -> Option<(String, String)> {
+    let lower = text.to_ascii_lowercase();
+    if !lower.starts_with("this") {
+        return None;
+    }
+    let rest_start = 4usize;
+    if text.len() > rest_start {
+        let next = text[rest_start..].chars().next()?;
+        if next.is_alphanumeric() {
+            return None;
+        }
+    }
+    // Include following whitespace in the This token.
+    let mut end = rest_start;
+    for (i, c) in text[rest_start..].char_indices() {
+        if c.is_whitespace() {
+            end = rest_start + i + c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if end == rest_start {
+        // no space — still OK, mid starts immediately
+        return Some((
+            text[..rest_start].to_string(),
+            text[rest_start..].to_string(),
+        ));
+    }
+    Some((text[..end].to_string(), text[end..].to_string()))
+}
