@@ -9152,6 +9152,11 @@ pub fn park_jc_on_first_short_title_mix_from_body(
         if let Some(v) = dom.attribute(jc, &W::val())
             && !v.is_empty()
         {
+            // M452b: justify thrash (−10) when parking jc=both onto title MIX.
+            // Word title park-only shapes are right/center free-mesh demos.
+            if v != "right" && v != "center" {
+                continue;
+            }
             jc_val = Some(v.to_string());
             break;
         }
@@ -9194,8 +9199,44 @@ pub fn ensure_empty_pprchange_on_live_heading_spacing(
         .into_iter()
         .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
         .collect();
+    if kids.len() < 2 {
+        return;
+    }
+    let last = kids[kids.len() - 1];
+    // M453d: only fire when last residual already has empty pPrChange (M450
+    // calibri chain). heading_1/2 style free-mesh has live spacing on mid+last
+    // **without** empty shells (Word) — thrash −6 if we inject mid-only.
+    let last_has_empty_chg = (|| {
+        if dom.name(last) != Some(W::p()) {
+            return false;
+        }
+        let Some(lppr) = dom.element(last, &W::p_pr()) else {
+            return false;
+        };
+        let Some(chg) = dom.element(lppr, &W::name("pPrChange")) else {
+            return false;
+        };
+        let Some(old) = dom.element(chg, &W::p_pr()) else {
+            return false;
+        };
+        // Empty of layout children (ignore rPr).
+        for c in dom.elements(old, None) {
+            let Some(n) = dom.name(c) else {
+                continue;
+            };
+            if n == W::r_pr() {
+                continue;
+            }
+            return false;
+        }
+        true
+    })();
+    if !last_has_empty_chg {
+        return;
+    }
     for &p in &kids {
-        if dom.name(p) != Some(W::p()) {
+        // Only **non-last MIX**. Last already has empty shell via M450.
+        if p == last || dom.name(p) != Some(W::p()) || !para_is_mixed_revision(dom, p) {
             continue;
         }
         let Some(ppr) = dom.element(p, &W::p_pr()) else {
@@ -9205,7 +9246,11 @@ pub fn ensure_empty_pprchange_on_live_heading_spacing(
             continue;
         }
         // Skip MIX with live jc — M451 Word shape is no empty shell.
-        if para_is_mixed_revision(dom, p) && dom.element(ppr, &W::name("jc")).is_some() {
+        if dom.element(ppr, &W::name("jc")).is_some() {
+            continue;
+        }
+        // Word heading free-mesh keeps live spacing + rPr without empty shell.
+        if dom.element(ppr, &W::r_pr()).is_some() {
             continue;
         }
         let Some(sp) = dom.element(ppr, &W::name("spacing")) else {
