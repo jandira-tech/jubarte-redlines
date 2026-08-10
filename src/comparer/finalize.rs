@@ -1254,11 +1254,18 @@ pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
 /// explicit `before=0 after=0 line=240 lineRule=auto` on those pure-I. Pure-D
 /// ListParagraph items stay without live spacing (style only).
 ///
-/// Narrow gate (subset thrash on multipara×broken_list −19 when multi-word
-/// pure-I lists also got snug inject): pure-I only, live numPr, no live spacing,
-/// no ListParagraph pStyle, **and** a single short body token (uniform
-/// "test"×N list_def shape — not "Item 1. Text 1." prose lists).
+/// Gate history:
+/// - any pure-I numPr: thrash multipara×broken_list (−19)
+/// - single short token: thrash bullet_list_bold×bullet_list (−33) — fruits
+///   are single tokens but not uniform
+/// - **uniform** single short token (≥3 pure-I with the same body text):
+///   list_def "test"×N only
 pub fn ensure_pure_i_list_snug_spacing(dom: &mut Dom, root: NodeId) {
+    // Collect pure-I numPr single-token texts; only inject for tokens that
+    // appear ≥3 times (uniform short list insert).
+    let mut token_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut candidates: Vec<(NodeId, String)> = Vec::new();
     for p in dom.descendants(root, Some(&W::p())) {
         if !para_is_pure_inserted(dom, p) {
             continue;
@@ -1272,7 +1279,6 @@ pub fn ensure_pure_i_list_snug_spacing(dom: &mut Dom, root: NodeId) {
         if dom.element(ppr, &W::name("spacing")).is_some() {
             continue;
         }
-        // Pure-I list without ListParagraph (Word list_def pure-I shape).
         if dom.element(ppr, &W::name("pStyle")).is_some_and(|ps| {
             dom.attribute(ps, &W::val())
                 .unwrap_or("")
@@ -1280,13 +1286,24 @@ pub fn ensure_pure_i_list_snug_spacing(dom: &mut Dom, root: NodeId) {
         }) {
             continue;
         }
-        // Single short token only ("test"); multi-word pure-I list items thrash.
         if para_word_atom_count(dom, p) != 1 {
             continue;
         }
-        let body = para_revision_body_text(dom, p);
-        let tok = body.trim();
+        let tok = para_revision_body_text(dom, p).trim().to_string();
         if tok.is_empty() || tok.chars().count() > 12 {
+            continue;
+        }
+        *token_counts.entry(tok.clone()).or_insert(0) += 1;
+        candidates.push((p, tok));
+    }
+    for (p, tok) in candidates {
+        if token_counts.get(&tok).copied().unwrap_or(0) < 3 {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        if dom.element(ppr, &W::name("spacing")).is_some() {
             continue;
         }
         let sp = dom.new_element(W::name("spacing"));
@@ -1294,7 +1311,6 @@ pub fn ensure_pure_i_list_snug_spacing(dom: &mut Dom, root: NodeId) {
         dom.set_attribute_value(sp, &W::name("after"), Some("0"));
         dom.set_attribute_value(sp, &W::name("line"), Some("240"));
         dom.set_attribute_value(sp, &W::name("lineRule"), Some("auto"));
-        // CT_PPr: spacing after numPr / pStyle, before rPr / pPrChange.
         if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
             dom.add_before_self(rpr, sp);
         } else if let Some(chg) = dom.element(ppr, &W::name("pPrChange")) {
