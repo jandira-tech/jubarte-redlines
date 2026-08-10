@@ -725,6 +725,10 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::last_pure_del_inherit_prev_jc(dom, root);
         // M449: body MIX parks jc in pPrChange; Word keeps live jc (right-align).
         finalize::promote_live_jc_from_pprchange_on_body_mix(dom, root);
+        // M452: short title MIX has no pPr; Word parks body live jc into
+        // pPrChange only (right_aligned_italic×right_alignment_2 residual).
+        // Park-only — live title jc thrash'd (abandoned M451 title attempt).
+        finalize::park_jc_on_first_short_title_mix_from_body(dom, root, settings, &mut id);
         // M450: last MIX parks Heading residual spacing; Word keeps live + empty
         // pPrChange (calibri×heading_2_right).
         finalize::promote_heading_spacing_from_pprchange_on_last_mix(dom, root);

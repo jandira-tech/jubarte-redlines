@@ -9072,3 +9072,103 @@ fn mesh_trailing_demo_eq_in_para(dom: &mut Dom, p: NodeId) {
         dom.add(p, eq_r);
     }
 }
+
+/// M452 (right_aligned_italic × right_alignment_2 ~84.3 residual):
+/// short **title** MIX free-mesh has no pPr; Word parks original `jc` into
+/// `pPrChange` only (no live jc). Abandoned M451 tried **live** jc on title
+/// and thrash'd right_align/center_bold. Park-only matches Word.
+///
+/// Gate: first MIX, short tokens (ins+del side words ≤5), no live jc, no
+/// pPrChange, and a later body para has live `jc` (source value).
+pub fn park_jc_on_first_short_title_mix_from_body(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    if kids.len() < 2 {
+        return;
+    }
+    // First MIX only (title free-mesh).
+    let mut title: Option<NodeId> = None;
+    for &k in &kids {
+        if dom.name(k) != Some(W::p()) {
+            continue;
+        }
+        if para_is_mixed_revision(dom, k) {
+            title = Some(k);
+            break;
+        }
+    }
+    let Some(p) = title else {
+        return;
+    };
+    let ins_w = para_side_word_count(dom, p, true);
+    let del_w = para_side_word_count(dom, p, false);
+    if ins_w + del_w == 0 || ins_w + del_w > 5 {
+        return;
+    }
+    let ppr = match dom.element(p, &W::p_pr()) {
+        Some(ppr) => ppr,
+        None => {
+            let ppr = dom.new_element(W::p_pr());
+            // pPr must be first child of p for Word validity.
+            if let Some(first) = dom.elements(p, None).first().copied() {
+                dom.add_before_self(first, ppr);
+            } else {
+                dom.add(p, ppr);
+            }
+            ppr
+        }
+    };
+    // Already live jc or any pPrChange — leave alone (right_align_bold title
+    // has live jc; center_bold title already park-only after other peels).
+    if dom.element(ppr, &W::name("jc")).is_some() {
+        return;
+    }
+    if dom.element(ppr, &W::name("pPrChange")).is_some() {
+        return;
+    }
+    // Source live jc from a later body residual.
+    let mut jc_val: Option<String> = None;
+    for &k in &kids {
+        if k == p || dom.name(k) != Some(W::p()) {
+            continue;
+        }
+        let Some(kppr) = dom.element(k, &W::p_pr()) else {
+            continue;
+        };
+        let Some(jc) = dom.element(kppr, &W::name("jc")) else {
+            continue;
+        };
+        if let Some(v) = dom.attribute(jc, &W::val())
+            && !v.is_empty()
+        {
+            jc_val = Some(v.to_string());
+            break;
+        }
+    }
+    let Some(val) = jc_val else {
+        return;
+    };
+    // Park-only pPrChange(old jc).
+    let old_inner = dom.new_element(W::p_pr());
+    let old_jc = dom.new_element(W::name("jc"));
+    dom.set_attribute_value(old_jc, &W::val(), Some(&val));
+    dom.add(old_inner, old_jc);
+    let chg = dom.new_element(W::name("pPrChange"));
+    dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+    *id_gen += 1;
+    dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+    dom.add(chg, old_inner);
+    dom.add(ppr, chg);
+}
