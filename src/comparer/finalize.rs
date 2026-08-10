@@ -9430,9 +9430,9 @@ pub fn strip_leading_del_echoing_prev_pure_i(dom: &mut Dom, root: NodeId) {
 /// (≤6 toks, 1 shared) is M377.
 ///
 /// Gates: one ins + one del (optional trailing bare punct), each side 5..=40
-/// alnum tokens, LCS ≥ 2, ≥1 shared non-boiler anchor with len≥4 (short
-/// shared like "is" alone must not free-mesh; center residual needs
-/// "centered" + "is").
+/// alnum tokens, LCS ≥ 2, and **≥2 significant** (len≥4 non-boiler) LCS
+/// anchors. Single-sig free-mesh (file_163 "italic"+is, ooxml "bold"+a)
+/// thrash'd full ITT (−29 / −12); bookended single-sig is M460.
 pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -9514,13 +9514,16 @@ pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
         if lcs.len() < 2 {
             continue;
         }
-        // Need ≥1 significant (len≥4, non-boiler) LCS anchor so we do not
-        // free-mesh on short/boilerplate pairs alone ("is"+"the").
-        let has_sig_anchor = lcs.iter().any(|&(i, _)| {
-            let t = ins_keys[i].as_str();
-            t.len() >= 4 && !BOILER.contains(&t)
-        });
-        if !has_sig_anchor {
+        // ≥2 significant LCS anchors (len≥4 non-boiler). One sig + short glue
+        // thrash'd file_163 (−29) and ooxml_style_link (−12) on full ITT.
+        let sig_lcs = lcs
+            .iter()
+            .filter(|&&(i, _)| {
+                let t = ins_keys[i].as_str();
+                t.len() >= 4 && !BOILER.contains(&t)
+            })
+            .count();
+        if sig_lcs < 2 {
             continue;
         }
         let (author, date) = {

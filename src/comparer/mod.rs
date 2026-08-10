@@ -780,9 +780,11 @@ pub fn compare_bodies_faithful_with_notes(
         // M377: short-title MIX free-mesh shared sig token as EQ (tiff×h_f
         // "document" −3.4 vs wholesale ins+del).
         finalize::free_mesh_shared_title_token_in_mix(dom, root);
-        // M459: wholesale body MIX free-mesh word-LCS EQ anchors (≥2 shared
-        // sig tokens; center_aligned_bold residual).
-        finalize::free_mesh_wholesale_body_mix(dom, root);
+        // M459 DISABLED after full ITT thrash: wholesale free-mesh with ≥2 LCS
+        // sig anchors still hit ooxml_style_link (−12, bold+style) and earlier
+        // single-sig form hit file_163 (−29). Function kept for a future
+        // coverage-gated revival. center_aligned_bold +0.97 sacrificed.
+        // finalize::free_mesh_wholesale_body_mix(dom, root);
         // M460: bookended MIX (EQ `This `…`.`) free-mesh mid shared sig token
         // inside the single ins+del pair (right_align_bold "right").
         finalize::free_mesh_bookended_ins_del(dom, root);
