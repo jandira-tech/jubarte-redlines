@@ -780,6 +780,9 @@ pub fn compare_bodies_faithful_with_notes(
         // M377: short-title MIX free-mesh shared sig token as EQ (tiff×h_f
         // "document" −3.4 vs wholesale ins+del).
         finalize::free_mesh_shared_title_token_in_mix(dom, root);
+        // M459: wholesale body MIX free-mesh word-LCS EQ anchors (≥2 shared
+        // sig tokens; center_aligned_bold residual).
+        finalize::free_mesh_wholesale_body_mix(dom, root);
         // M393 late: re-apply after free-mesh peels thrash LCS interleave.
         finalize::interleave_list_cluster_after_coalesce(dom, root);
         // M376: after merge/park peels — strip list line=240/jc that mid pure-D

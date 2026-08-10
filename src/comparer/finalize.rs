@@ -9423,3 +9423,379 @@ pub fn strip_leading_del_echoing_prev_pure_i(dom: &mut Dom, root: NodeId) {
         dom.remove(del_node);
     }
 }
+
+/// M459 (center_aligned_bold×center_alignment_2 ~82.8): wholesale body MIX is
+/// a single `ins` + single `del` of whole sentences with shared word anchors.
+/// Word free-meshes word-LCS EQ ("is"/"centered"). Short title wholesale
+/// (≤6 toks, 1 shared) is M377.
+///
+/// Gates: one ins + one del (optional trailing bare punct), each side 5..=40
+/// alnum tokens, LCS ≥ 2, ≥1 shared non-boiler anchor with len≥4 (short
+/// shared like "is" alone must not free-mesh; center residual needs
+/// "centered" + "is").
+pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    for &p in &kids {
+        if dom.name(p) != Some(W::p()) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        let body_kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| dom.name(c) != Some(W::p_pr()))
+            .collect();
+        if body_kids.is_empty() {
+            continue;
+        }
+        let mut ins_nodes = Vec::new();
+        let mut del_nodes = Vec::new();
+        let mut other = false;
+        for &c in &body_kids {
+            let n = dom.name(c);
+            if n == Some(W::ins()) {
+                ins_nodes.push(c);
+            } else if n == Some(W::del()) {
+                del_nodes.push(c);
+            } else if n == Some(W::r()) {
+                // Trailing bare punctuation only.
+                let mut t = String::new();
+                for tn in dom.descendants(c, Some(&W::t())) {
+                    t.push_str(&dom.value_str(tn));
+                }
+                if !t.chars().all(|ch| !ch.is_alphanumeric()) {
+                    other = true;
+                    break;
+                }
+            } else {
+                other = true;
+                break;
+            }
+        }
+        if other || ins_nodes.len() != 1 || del_nodes.len() != 1 {
+            continue;
+        }
+        let ins = ins_nodes[0];
+        let del = del_nodes[0];
+        let mut ins_text = String::new();
+        for t in dom.descendants(ins, Some(&W::t())) {
+            ins_text.push_str(&dom.value_str(t));
+        }
+        let mut del_text = String::new();
+        for t in dom.descendants(del, Some(&W::name("delText"))) {
+            del_text.push_str(&dom.value_str(t));
+        }
+        // Capture trailing period intent before tokenizing.
+        let trailing_period =
+            ins_text.trim_end().ends_with('.') || del_text.trim_end().ends_with('.');
+        let ins_toks = alnum_tokens(&ins_text);
+        let del_toks = alnum_tokens(&del_text);
+        if !(5..=40).contains(&ins_toks.len()) || !(5..=40).contains(&del_toks.len()) {
+            continue;
+        }
+        const BOILER: &[&str] = &[
+            "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than",
+            "then", "when", "what", "which", "into", "over", "only", "also", "just", "more",
+            "most", "some", "such", "other", "about", "page", "text", "and", "the", "for", "are",
+            "was", "you", "all", "can", "her", "his", "its", "our", "out",
+        ];
+        // Case-preserving word lists for rebuild.
+        let ins_words = split_words_preserve(&ins_text);
+        let del_words = split_words_preserve(&del_text);
+        let ins_keys: Vec<String> = ins_words.iter().map(|w| w.to_ascii_lowercase()).collect();
+        let del_keys: Vec<String> = del_words.iter().map(|w| w.to_ascii_lowercase()).collect();
+        let lcs = word_lcs_indices(&ins_keys, &del_keys);
+        if lcs.len() < 2 {
+            continue;
+        }
+        // Need ≥1 significant (len≥4, non-boiler) LCS anchor so we do not
+        // free-mesh on short/boilerplate pairs alone ("is"+"the").
+        let has_sig_anchor = lcs.iter().any(|&(i, _)| {
+            let t = ins_keys[i].as_str();
+            t.len() >= 4 && !BOILER.contains(&t)
+        });
+        if !has_sig_anchor {
+            continue;
+        }
+        let (author, date) = {
+            let mut a = "Redline".to_string();
+            let mut d = "1970-01-01T00:00:00Z".to_string();
+            if let Some(v) = dom.attribute(ins, &W::author()) {
+                a = v.to_string();
+            }
+            if let Some(v) = dom.attribute(ins, &W::date()) {
+                d = v.to_string();
+            }
+            (a, d)
+        };
+        let sample_rpr = dom
+            .element(ins, &W::r())
+            .and_then(|r| dom.element(r, &W::r_pr()))
+            .map(|rpr| dom.clone_subtree(rpr));
+        for c in body_kids {
+            if dom.parent(c).is_some() {
+                dom.remove(c);
+            }
+        }
+        rebuild_body_free_mesh_lcs(
+            dom,
+            p,
+            &ins_words,
+            &del_words,
+            &lcs,
+            &author,
+            &date,
+            sample_rpr,
+            trailing_period,
+        );
+    }
+}
+
+fn split_words_preserve(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .collect()
+}
+
+fn word_lcs_indices(a: &[String], b: &[String]) -> Vec<(usize, usize)> {
+    let n = a.len();
+    let m = b.len();
+    let mut dp = vec![vec![0usize; m + 1]; n + 1];
+    for i in 0..n {
+        for j in 0..m {
+            if a[i] == b[j] {
+                dp[i + 1][j + 1] = dp[i][j] + 1;
+            } else {
+                dp[i + 1][j + 1] = dp[i + 1][j].max(dp[i][j + 1]);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut i = n;
+    let mut j = m;
+    while i > 0 && j > 0 {
+        if a[i - 1] == b[j - 1] {
+            out.push((i - 1, j - 1));
+            i -= 1;
+            j -= 1;
+        } else if dp[i - 1][j] >= dp[i][j - 1] {
+            i -= 1;
+        } else {
+            j -= 1;
+        }
+    }
+    out.reverse();
+    out
+}
+
+/// Rebuild free-mesh from word LCS. Emits: ins-runs, del-runs, EQ runs with
+/// single spaces. Order at each step: flush pending del then ins before EQ
+/// when both pending at an anchor (Word often shows del residual then ins).
+#[allow(clippy::too_many_arguments)]
+fn rebuild_body_free_mesh_lcs(
+    dom: &mut Dom,
+    p: NodeId,
+    ins_words: &[String],
+    del_words: &[String],
+    lcs: &[(usize, usize)],
+    author: &str,
+    date: &str,
+    sample_rpr: Option<NodeId>,
+    trailing_period: bool,
+) {
+    let mut next_id = 1u32;
+    let mut ii = 0usize;
+    let mut di = 0usize;
+    let mut li = 0usize;
+    let mut first_content = true;
+
+    let push_run = |dom: &mut Dom,
+                    p: NodeId,
+                    kind: &str,
+                    words: &[String],
+                    author: &str,
+                    date: &str,
+                    next_id: &mut u32,
+                    sample_rpr: &Option<NodeId>,
+                    first_content: &mut bool| {
+        if words.is_empty() {
+            return;
+        }
+        let mut text = words.join(" ");
+        if !*first_content {
+            text = format!(" {text}");
+        }
+        *first_content = false;
+        match kind {
+            "eq" => {
+                let r = dom.new_element(W::r());
+                if let Some(rpr) = sample_rpr {
+                    let rpr_c = dom.clone_subtree(*rpr);
+                    dom.add(r, rpr_c);
+                }
+                let t = dom.new_element(W::t());
+                if text.starts_with(' ') || text.ends_with(' ') {
+                    dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+                }
+                dom.add_text(t, &text);
+                dom.add(r, t);
+                dom.add(p, r);
+            }
+            "ins" => {
+                let ins = dom.new_element(W::ins());
+                dom.set_attribute_value(ins, &W::id(), Some(&next_id.to_string()));
+                *next_id += 1;
+                dom.set_attribute_value(ins, &W::author(), Some(author));
+                dom.set_attribute_value(ins, &W::date(), Some(date));
+                let r = dom.new_element(W::r());
+                if let Some(rpr) = sample_rpr {
+                    let rpr_c = dom.clone_subtree(*rpr);
+                    dom.add(r, rpr_c);
+                }
+                let t = dom.new_element(W::t());
+                if text.starts_with(' ') || text.contains(' ') {
+                    dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+                }
+                dom.add_text(t, &text);
+                dom.add(r, t);
+                dom.add(ins, r);
+                dom.add(p, ins);
+            }
+            "del" => {
+                let del = dom.new_element(W::del());
+                dom.set_attribute_value(del, &W::id(), Some(&next_id.to_string()));
+                *next_id += 1;
+                dom.set_attribute_value(del, &W::author(), Some(author));
+                dom.set_attribute_value(del, &W::date(), Some(date));
+                let r = dom.new_element(W::r());
+                if let Some(rpr) = sample_rpr {
+                    let rpr_c = dom.clone_subtree(*rpr);
+                    dom.add(r, rpr_c);
+                }
+                let t = dom.new_element(W::name("delText"));
+                if text.starts_with(' ') || text.contains(' ') {
+                    dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+                }
+                dom.add_text(t, &text);
+                dom.add(r, t);
+                dom.add(del, r);
+                dom.add(p, del);
+            }
+            _ => {}
+        }
+    };
+
+    while ii < ins_words.len() || di < del_words.len() {
+        if let Some(&(ei, ed)) = lcs.get(li) {
+            if ii == ei && di == ed {
+                // EQ anchor (pending del/ins already flushed by lag advances).
+                let label = del_words[ed].clone(); // prefer deleted side casing
+                push_run(
+                    dom,
+                    p,
+                    "eq",
+                    &[label],
+                    author,
+                    date,
+                    &mut next_id,
+                    &sample_rpr,
+                    &mut first_content,
+                );
+                ii = ei + 1;
+                di = ed + 1;
+                li += 1;
+                continue;
+            }
+            // Advance lagging side(s) up to next EQ (del then ins — Word order).
+            if di < ed {
+                let mut batch = Vec::new();
+                while di < ed {
+                    batch.push(del_words[di].clone());
+                    di += 1;
+                }
+                push_run(
+                    dom,
+                    p,
+                    "del",
+                    &batch,
+                    author,
+                    date,
+                    &mut next_id,
+                    &sample_rpr,
+                    &mut first_content,
+                );
+                continue;
+            }
+            if ii < ei {
+                let mut batch = Vec::new();
+                while ii < ei {
+                    batch.push(ins_words[ii].clone());
+                    ii += 1;
+                }
+                push_run(
+                    dom,
+                    p,
+                    "ins",
+                    &batch,
+                    author,
+                    date,
+                    &mut next_id,
+                    &sample_rpr,
+                    &mut first_content,
+                );
+                continue;
+            }
+            // Both at or past EQ but not matching — skip broken LCS entry.
+            li += 1;
+        } else {
+            // Tail
+            if di < del_words.len() {
+                let batch: Vec<String> = del_words[di..].to_vec();
+                push_run(
+                    dom,
+                    p,
+                    "del",
+                    &batch,
+                    author,
+                    date,
+                    &mut next_id,
+                    &sample_rpr,
+                    &mut first_content,
+                );
+            }
+            if ii < ins_words.len() {
+                let batch: Vec<String> = ins_words[ii..].to_vec();
+                push_run(
+                    dom,
+                    p,
+                    "ins",
+                    &batch,
+                    author,
+                    date,
+                    &mut next_id,
+                    &sample_rpr,
+                    &mut first_content,
+                );
+            }
+            break;
+        }
+    }
+    if trailing_period {
+        let r = dom.new_element(W::r());
+        if let Some(rpr) = sample_rpr {
+            let rpr_c = dom.clone_subtree(rpr);
+            dom.add(r, rpr_c);
+        }
+        let t = dom.new_element(W::t());
+        dom.add_text(t, ".");
+        dom.add(r, t);
+        dom.add(p, r);
+    }
+}
