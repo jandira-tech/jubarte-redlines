@@ -1337,20 +1337,39 @@ pub fn promote_live_numpr_on_pure_d_from_pprchange(dom: &mut Dom, root: NodeId) 
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
-    // First pure-I live numId (list residual source for Word live numId).
+    // Gate history (M442 thrash): bare promote on any pure-D with
+    // pPrChange(numPr) nuked basic_list×sd_1707 (−20.9) and pirates×table
+    // (−32.5). Restrict to list_spacer residual shape:
+    // - first pure-I is a short list label with live numPr (1..=2 tokens)
+    // - pure-D body looks like legal section number ("14.11…")
+    // - pPrChange parks numPr (base list chrome) and there is no live numPr
     let mut source_num_id: Option<String> = None;
+    let mut short_label_pure_i = false;
     for p in dom.elements(body, None) {
         if dom.name(p) != Some(W::p()) || !para_is_pure_inserted(dom, p) {
             continue;
         }
-        if let Some(ppr) = dom.element(p, &W::p_pr())
+        if !para_has_live_numpr(dom, p) {
+            continue;
+        }
+        let words = para_word_atom_count(dom, p);
+        if (1..=2).contains(&words) {
+            short_label_pure_i = true;
+        }
+        if source_num_id.is_none()
+            && let Some(ppr) = dom.element(p, &W::p_pr())
             && let Some(num) = dom.element(ppr, &W::name("numPr"))
             && let Some(nid) = dom.element(num, &W::name("numId"))
             && let Some(v) = dom.attribute(nid, &W::val())
         {
             source_num_id = Some(v.to_string());
+        }
+        if source_num_id.is_some() && short_label_pure_i {
             break;
         }
+    }
+    if !short_label_pure_i {
+        return;
     }
     let Some(src_id) = source_num_id else {
         return;
@@ -1360,6 +1379,11 @@ pub fn promote_live_numpr_on_pure_d_from_pprchange(dom: &mut Dom, root: NodeId) 
             continue;
         }
         if !para_is_pure_deleted(dom, p) || !para_has_real_del(dom, p) {
+            continue;
+        }
+        // Legal section residual: body starts with digit.digit (e.g. "14.11…").
+        let body_txt = para_revision_body_text(dom, p);
+        if !body_looks_like_section_number(&body_txt) {
             continue;
         }
         let Some(ppr) = dom.element(p, &W::p_pr()) else {
@@ -1394,6 +1418,27 @@ pub fn promote_live_numpr_on_pure_d_from_pprchange(dom: &mut Dom, root: NodeId) 
         // Live numPr first in pPr (before pPrChange).
         dom.add_first(ppr, num);
     }
+}
+
+/// True when body starts like a legal section id: one+ digits, a dot, one+ digits
+/// (e.g. "14.11Survival…", "3.01eiusmod…"). Rejects plain "1. Item" list labels
+/// when the second run is non-digit (handled by requiring digit after the dot).
+fn body_looks_like_section_number(text: &str) -> bool {
+    let s = text.trim_start();
+    let mut chars = s.chars().peekable();
+    let mut saw_digit = false;
+    while let Some(&c) = chars.peek() {
+        if c.is_ascii_digit() {
+            saw_digit = true;
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    if !saw_digit || chars.next() != Some('.') {
+        return false;
+    }
+    matches!(chars.peek(), Some(c) if c.is_ascii_digit())
 }
 
 /// M439 (list_def_mix × list_numbering_reimport ~50.5 / docxodus 90):
