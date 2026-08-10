@@ -2959,8 +2959,13 @@ fn para_is_mixed_revision(dom: &Dom, p: NodeId) -> bool {
 /// - M87: live `w:numPr` / `w:ind` → pPrChange (file_55 last pure-del "b").
 /// - M91: live `w:jc` → pPrChange (file_105 last pure-del right-align).
 /// - M93: live `w:pStyle` → pPrChange (file_59 last pure-del PreformattedText).
-/// - M94: same for **last mixed** I+D (file_139 last residual mixed keeps
-///   pPrChange(spacing), not live spacing + rPr/del).
+/// - M94: **last mixed** I+D residual parks **spacing only** (file_139).
+///
+/// M434 (image_doc × document ~59 / docxodus 100): last MIX is a list residual
+/// (live `numPr` + pure-I text + drawing del). Word keeps live pStyle/numPr/jc/
+/// spacing and only uses `rPrChange` under rPr. Parking numPr/pStyle into
+/// pPrChange cleared list chrome → LO page 2–3 thrash (page1 100, p2–3 ~57).
+/// For MIX, only park spacing; pure-D still parks the full layout set.
 ///
 /// Mid pure-dels keep live spacing/numPr/jc/pStyle.
 pub fn last_pure_del_spacing_to_pprchange(
@@ -2987,7 +2992,8 @@ pub fn last_pure_del_spacing_to_pprchange(
     // cousins, but full ledger showed catastrophic regs (red_heading −37,
     // heading chain −6..−12). Restore MIX parking; keep M228 mid pure-D
     // promote + strip_redundant for the spacing wins that don't need this gate.
-    if !para_is_pure_deleted(dom, last) && !para_is_mixed_revision(dom, last) {
+    let is_mixed = para_is_mixed_revision(dom, last);
+    if !para_is_pure_deleted(dom, last) && !is_mixed {
         return;
     }
     let Some(ppr) = dom.element(last, &W::p_pr()) else {
@@ -2997,13 +3003,18 @@ pub fn last_pure_del_spacing_to_pprchange(
         return;
     }
     // Layout props Word records under pPrChange on the last pure-del / mixed.
-    let movable = [
-        W::name("spacing"),
-        W::num_pr(),
-        W::name("ind"),
-        W::name("jc"),
-        W::name("pStyle"),
-    ];
+    // M434: MIX keeps live list/style/jc chrome; only spacing parks (M94).
+    let movable: Vec<_> = if is_mixed {
+        vec![W::name("spacing")]
+    } else {
+        vec![
+            W::name("spacing"),
+            W::num_pr(),
+            W::name("ind"),
+            W::name("jc"),
+            W::name("pStyle"),
+        ]
+    };
     let mut to_move: Vec<NodeId> = Vec::new();
     for name in &movable {
         if let Some(el) = dom.element(ppr, name) {
