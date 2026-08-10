@@ -117,24 +117,36 @@ pub fn get_comparison_unit_list(
                     key = next_index;
                     next_index += 1;
                 }
+                prev_t_char = Some(ch);
+            } else if word_mode && ch == '-' && prev_t_char.is_some_and(is_word_letter) {
+                // M437 (tab_alignment×tab_test ~48 / docxodus 86): keep hyphen
+                // with the preceding word ("Left-") so free-mesh peels Word's
+                // "Left-" unit instead of confetti ("Left"|"-"|"aligned").
+                key = next_index;
+                prev_t_char = Some('-');
             } else if is_cjk(ch) || settings.word_separators.contains(&ch) {
                 next_index += 1;
                 key = next_index;
                 next_index += 1;
+                prev_t_char = Some(ch);
             } else if word_mode {
                 // Letter↔digit boundary starts a new word (file_ | 137 | …).
-                let break_boundary = matches!(prev_t_char,
+                // M437: letter after hyphen-glued word also starts a new word.
+                let break_boundary = matches!(
+                    prev_t_char,
                     Some(p) if is_digit_char(p) != is_digit_char(ch)
                         && (is_digit_char(p) || is_word_letter(p))
-                        && (is_digit_char(ch) || is_word_letter(ch)));
+                        && (is_digit_char(ch) || is_word_letter(ch))
+                ) || matches!(prev_t_char, Some('-') if is_word_letter(ch));
                 if break_boundary {
                     next_index += 1;
                 }
                 key = next_index;
+                prev_t_char = Some(ch);
             } else {
                 key = next_index;
+                prev_t_char = Some(ch);
             }
-            prev_t_char = Some(ch);
         } else if is_word_break_element(&cname) {
             next_index += 1;
             key = next_index;
