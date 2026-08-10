@@ -5554,9 +5554,16 @@ pub fn detect_unrelated_sources_word_mode(
     // shape with **4** contentful base paras (Tab Tests / left / right / First
     // Second End). Widen n1 to 1..=4 and sig1 cap to 24 so short multi-para
     // demos pure-I/D wholesale; still refuse long multi-section bases.
+    //
+    // Next must itself be a short demo: Word wholesales tab×diff_after7
+    // (next 11 paras, n2≈11) but NESTS the base title into a long next —
+    // file_130×file_131 (next 211 paras, 12 tables) has Word's oracle del
+    // "Large Font Size Demo" on p2 under the main title (M104). The n1≤4
+    // widening pulled that pair onto this path and the deletion vanished
+    // from the output entirely.
     if settings.merge_replaced_paragraphs
         && (1..=4).contains(&n1)
-        && n2 >= 2
+        && (2..=30).contains(&n2)
         && !has_table(cu1)
         && has_table(cu2)
         && {
@@ -5571,6 +5578,35 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::inserted(cu2.to_vec()),
             CorrelatedSequence::deleted(cu1.to_vec()),
         ]);
+    }
+    // M150 / C5-content (hr_onboarding checklist × report): short base whose
+    // single table is unrelated (near-zero token jaccard) to a MULTI-table
+    // next — full LCS pairs the checklist table with a same-shaped next table
+    // and cell-merges "Sign NDA" into "Prepared for". Word pure-dels A's
+    // table and pure-ins B's tables. Single×single zero-jaccard still
+    // cell-merges like Word (project_tasks×q1) — require ≥3 tables on next.
+    if settings.merge_replaced_paragraphs && n1 <= 4 && n2 > n1 && has_table(cu1) {
+        let n_tbl = |cu: &[ComparisonUnit]| -> usize {
+            cu.iter()
+                .filter(|u| {
+                    as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table)
+                })
+                .count()
+        };
+        // Next must be table-DOMINATED (hr_onboarding report: 4 tbl of 6
+        // groups). Prose-heavy multi-table next (support_tickets ×
+        // table_bookmark_end, 8 tbl of ~80 groups) keeps Word's first-table
+        // cell mesh (M320).
+        if n_tbl(cu1) == 1 && n_tbl(cu2) >= 3 && n_tbl(cu2) * 2 >= n2 {
+            let b1 = para_text_tokens_from_units(dom, cu1);
+            let b2 = para_text_tokens_from_units(dom, cu2);
+            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.05 {
+                return Some(vec![
+                    CorrelatedSequence::inserted(cu2.to_vec()),
+                    CorrelatedSequence::deleted(cu1.to_vec()),
+                ]);
+            }
+        }
     }
     // M402 (complex2×fields_test ~85.8): short alpha-list base ("ONE"/"a") ×
     // fields next with "html input type". Full LCS EQ-matches empties and leaves

@@ -2001,6 +2001,17 @@ pub fn free_mesh_shared_title_token_in_mix(dom: &mut Dom, root: NodeId) {
         if ins_nodes.len() > 2 || del_nodes.len() > 2 {
             continue;
         }
+        // Never mesh across authors: a pre-existing pending deletion carried
+        // from doc B (convert_stamped_predeletes restores its ORIGINAL author)
+        // must survive intact — stealing its shared token as EQ splits another
+        // author's tracked revision (m32 w15 "pending removal sentence").
+        let author_of = |dom: &Dom, n: NodeId| dom.attribute(n, &W::author()).map(str::to_string);
+        let ins_author = ins_nodes.first().and_then(|&n| author_of(dom, n));
+        if ins_nodes.iter().any(|&n| author_of(dom, n) != ins_author)
+            || del_nodes.iter().any(|&n| author_of(dom, n) != ins_author)
+        {
+            continue;
+        }
 
         let mut ins_text = String::new();
         for &ins in &ins_nodes {
@@ -2459,6 +2470,23 @@ fn para_has_no_text(dom: &Dom, p: NodeId) -> bool {
 fn para_has_omath(dom: &Dom, p: NodeId) -> bool {
     !dom.descendants(p, Some(&M::name("oMath"))).is_empty()
         || !dom.descendants(p, Some(&M::name("oMathPara"))).is_empty()
+}
+
+/// True when a paragraph renders as a blank line: whitespace-only text and no
+/// non-text ink (math, drawings, pictures, objects, breaks).
+///
+/// M430's "trailing empty pure-I" runs must use this, not
+/// [`para_body_text_is_whitespace_only`] alone: textless OMML math shells
+/// (math_delimiter × math_eqarr) counted as "empty", which disabled the
+/// multi-del fold that MIXes the last math pure-I into the Delimiter title
+/// (M419 regression).
+fn para_is_visually_blank(dom: &Dom, p: NodeId) -> bool {
+    para_body_text_is_whitespace_only(dom, p)
+        && !para_has_omath(dom, p)
+        && dom.descendants(p, Some(&W::name("drawing"))).is_empty()
+        && dom.descendants(p, Some(&W::name("pict"))).is_empty()
+        && dom.descendants(p, Some(&W::name("object"))).is_empty()
+        && dom.descendants(p, Some(&W::name("br"))).is_empty()
 }
 
 /// True when body text repeats a ≥4-word phrase (hummingbird wrap fingerprint).
@@ -3060,7 +3088,7 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                     let k = kids[j];
                     if dom.name(k) == Some(W::p())
                         && para_is_pure_inserted(dom, k)
-                        && para_body_text_is_whitespace_only(dom, k)
+                        && para_is_visually_blank(dom, k)
                     {
                         empty_run += 1;
                     } else {
@@ -3297,10 +3325,29 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                 }
             } else if let Some(dppr) = dom.element(del_p, &W::p_pr()) {
                 // No pPr on pure-ins — clone del's pPr if it has a del mark.
+                // M360 applies on this branch too: a fldChar residue carrier
+                // folded with a Heading pure-D keeps a mark-only pPr, never
+                // the Heading pStyle (table_border×toc SD-2343 title).
                 if let Some(drpr) = dom.element(dppr, &W::r_pr())
                     && dom.element(drpr, &W::del()).is_some()
                 {
-                    let cloned = dom.clone_subtree(dppr);
+                    let ins_has_fld =
+                        !dom.descendants(ins_p, Some(&W::name("fldChar"))).is_empty();
+                    let del_heading_style = dom.element(dppr, &W::name("pStyle")).is_some_and(|ps| {
+                        let v = dom
+                            .attribute(ps, &W::val())
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        v == "title" || v.starts_with("heading")
+                    });
+                    let cloned = if ins_has_fld && del_heading_style {
+                        let ppr = dom.new_element(W::p_pr());
+                        let mark = dom.clone_subtree(drpr);
+                        dom.add(ppr, mark);
+                        ppr
+                    } else {
+                        dom.clone_subtree(dppr)
+                    };
                     // insert pPr as first child
                     if let Some(first) = dom.elements(ins_p, None).first().copied() {
                         dom.add_before_self(first, cloned);
@@ -4242,9 +4289,16 @@ pub fn last_pure_del_inherit_prev_jc(dom: &mut Dom, root: NodeId) {
 }
 
 /// M451 (center_alignment_2 × center_alignment ~81.5 / docxodus 100):
-/// mid MIX free-mesh carries **empty** `pPrChange` alongside live `jc` while
-/// Word uses live `jc` + rPr/ins mark only (no empty pPrChange). Strip empty
-/// pPrChange shells on MIX when live jc is present and old pPr is empty.
+/// mid MIX free-mesh carries **empty** `pPrChange` alongside live `jc` where
+/// Word uses live `jc` + rPr/ins mark only. Word's rule (both oracles): the
+/// paragraph holding the **inserted paragraph mark** records no `pPrChange`;
+/// every other changed paragraph keeps one, empty old included (center pair
+/// p1/p3 and file_148×file_149 stamp all keep `pPrChange(<w:pPr/>)`).
+///
+/// Our mesh places that inserted mark one paragraph after Word's (center p3
+/// vs Word p2), so the shell to strip is the MIX immediately **before** the
+/// mark-ins paragraph. An unconditional strip here ate the genuine
+/// jc-addition record on the file_148 stamp (M102 regression).
 ///
 /// Does not touch last residual (often needs pPrChange) or non-empty park.
 pub fn strip_empty_pprchange_on_mix_with_live_jc(dom: &mut Dom, root: NodeId) {
@@ -4260,8 +4314,21 @@ pub fn strip_empty_pprchange_on_mix_with_live_jc(dom: &mut Dom, root: NodeId) {
         return;
     }
     let last = kids[kids.len() - 1];
-    for &p in &kids {
+    for (i, &p) in kids.iter().enumerate() {
         if p == last || dom.name(p) != Some(W::p()) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        // Word drops the record only where the inserted paragraph mark lands;
+        // our mesh emits that mark on the following paragraph.
+        let next_has_inserted_mark = kids[i + 1..]
+            .iter()
+            .find(|&&k| dom.name(k) == Some(W::p()))
+            .is_some_and(|&n| {
+                dom.element(n, &W::p_pr())
+                    .and_then(|np| dom.element(np, &W::r_pr()))
+                    .is_some_and(|rpr| dom.element(rpr, &W::name("ins")).is_some())
+            });
+        if !next_has_inserted_mark {
             continue;
         }
         let Some(ppr) = dom.element(p, &W::p_pr()) else {
@@ -5891,7 +5958,14 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         // pPr (single_paragraph GT) and left empty pPr (LO ~53.9
                         // until Heading1 restored). Adopt Heading/Title pPr only
                         // — never invent styles on non-heading sole-dels.
-                        let adopt_heading = para_has_heading_or_title_style(dom, d);
+                        //
+                        // M360 guard applies here too: a TOC/field residue
+                        // pure-I (fldChar) folded with a Heading pure-D keeps
+                        // the bare pPr (table_border×toc SD-2343 title).
+                        let ins_has_fld =
+                            !dom.descendants(last_ins, Some(&W::name("fldChar"))).is_empty();
+                        let adopt_heading =
+                            para_has_heading_or_title_style(dom, d) && !ins_has_fld;
                         if adopt_heading {
                             if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
                                 dom.remove(ippr);
@@ -5955,12 +6029,27 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 let del_struct = dom
                     .element(d, &W::p_pr())
                     .is_some_and(|p| ppr_has_structural_props(dom, p));
+                // M360: a TOC/field residue pure-I (fldChar) merged with a
+                // Heading/Title pure-D keeps a bare pPr — never the Heading
+                // pStyle (table_border×toc SD-2343 title, pagefair −11).
+                let m360_fld_x_heading = !dom
+                    .descendants(ins_p, Some(&W::name("fldChar")))
+                    .is_empty()
+                    && dom.element(d, &W::p_pr()).is_some_and(|dp| {
+                        dom.element(dp, &W::name("pStyle")).is_some_and(|ps| {
+                            let v = dom
+                                .attribute(ps, &W::val())
+                                .unwrap_or("")
+                                .to_ascii_lowercase();
+                            v == "title" || v.starts_with("heading")
+                        })
+                    });
                 if ins_struct {
                     if let Some(ppr) = dom.element(ins_p, &W::p_pr()) {
                         let c = dom.clone_subtree(ppr);
                         dom.add(merged, c);
                     }
-                } else if del_struct {
+                } else if del_struct && !m360_fld_x_heading {
                     if let Some(ppr) = dom.element(d, &W::p_pr()) {
                         let c = dom.clone_subtree(ppr);
                         dom.add(merged, c);
@@ -6305,16 +6394,11 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // first pure-D (empty_run→0 by second fold pass). Word keeps
                 // trailing blanks. Skip empty-shell multi-del fold when the
                 // pure-I stream ends with ≥3 consecutive empty pure-I.
-                if !sole_del
-                    && (para_has_no_text(dom, last_ins)
-                        || para_body_text_is_whitespace_only(dom, last_ins))
-                {
+                if !sole_del && para_is_visually_blank(dom, last_ins) {
                     let trailing_empty_i = inss
                         .iter()
                         .rev()
-                        .take_while(|&&p| {
-                            para_has_no_text(dom, p) || para_body_text_is_whitespace_only(dom, p)
-                        })
+                        .take_while(|&&p| para_is_visually_blank(dom, p))
                         .count();
                     if trailing_empty_i >= 3 {
                         continue;
@@ -6343,6 +6427,19 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // Word MIX-es last math into "m:d Delimiter…" (IIIIMDD). Fold any
                 // empty/math shell pure-I into the pure-D boundary (not only when
                 // first pure-D is short).
+                // M417 vs M419 scale split: the empty/math-shell override below
+                // is for demo-scale replacements (math_delimiter × math_eqarr,
+                // dels ~51). A wholesale replacement of a **large** document
+                // (sd_2517 × borderbox, dels ~1038) keeps Word's clean I…D
+                // boundary — never fold a shell into it.
+                if !sole_del
+                    && dels.len() > 150
+                    && !should_fold_multi_del_at_document_scale(
+                        dom, container, last_ins, d, inss, dels,
+                    )
+                {
+                    continue;
+                }
                 if !sole_del
                     && !should_fold_multi_del_at_document_scale(
                         dom, container, last_ins, d, inss, dels,
@@ -6726,11 +6823,18 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     && del_list_paragraph
                     && para_word_atom_count(dom, last_ins) <= 3
                     && para_word_atom_count(dom, d) <= 4;
-                let adopt_del_ppr =
-                    (del_structural && !ins_structural && !(ins_long_prose && del_list_multi))
+                // M360: a TOC/field residue pure-I (fldChar) folded with a
+                // Heading/Title pure-D keeps a bare pPr — never the Heading
+                // pStyle (table_border×toc SD-2343 title, pagefair −11).
+                let m360_fld_x_heading = del_heading
+                    && !dom
+                        .descendants(last_ins, Some(&W::name("fldChar")))
+                        .is_empty();
+                let adopt_del_ppr = !m360_fld_x_heading
+                    && ((del_structural && !ins_structural && !(ins_long_prose && del_list_multi))
                         || (ins_jc_only && del_has_spacing)
                         || (del_heading && ins_list_style)
-                        || short_list_x_listparagraph;
+                        || short_list_x_listparagraph);
                 // M218: mark-only empty pure-D fold — Word parks the deleted
                 // pilcrow on the pure-I carrier (contract_review MIX + mark_del).
                 // Do not strip to a bare pure-I; adopt the empty del's pPr/rPr/del.
