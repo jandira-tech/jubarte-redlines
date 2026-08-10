@@ -9273,3 +9273,63 @@ pub fn ensure_empty_pprchange_on_live_heading_spacing(
         dom.add(ppr, chg);
     }
 }
+
+/// M454 (center_alignment_2 residual ~87 → 100):
+/// Word EQ title keeps live `jc` + empty `pPrChange`. Engine had live jc only.
+///
+/// Gate: **EQ only** (no ins/del content or marks) — pure-I empty shells
+/// thrash'd comments subset (−6). No MIX (M451). No rPr mark.
+pub fn ensure_empty_pprchange_on_eq_with_live_jc(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    for &p in &kids {
+        if dom.name(p) != Some(W::p()) {
+            continue;
+        }
+        if para_is_mixed_revision(dom, p)
+            || para_is_pure_inserted(dom, p)
+            || para_is_pure_deleted(dom, p)
+        {
+            continue;
+        }
+        // Strict EQ: no ins/del content or para-mark revision.
+        if !dom.descendants(p, Some(&W::ins())).is_empty()
+            || !dom.descendants(p, Some(&W::del())).is_empty()
+            || para_mark_revision(dom, p, &W::ins())
+            || para_mark_revision(dom, p, &W::del())
+        {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        if dom.element(ppr, &W::name("jc")).is_none() {
+            continue;
+        }
+        if dom.element(ppr, &W::name("pPrChange")).is_some() {
+            continue;
+        }
+        if dom.element(ppr, &W::r_pr()).is_some() {
+            continue;
+        }
+        let old_inner = dom.new_element(W::p_pr());
+        let chg = dom.new_element(W::name("pPrChange"));
+        dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+        *id_gen += 1;
+        dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+        dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+        dom.add(chg, old_inner);
+        dom.add(ppr, chg);
+    }
+}

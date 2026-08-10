@@ -735,6 +735,9 @@ pub fn compare_bodies_faithful_with_notes(
         // M453: mid MIX with live heading residual spacing missing empty
         // pPrChange shell (calibri mid residual). Skip MIX+live jc (M451).
         finalize::ensure_empty_pprchange_on_live_heading_spacing(dom, root, settings, &mut id);
+        // M454: EQ with live jc missing empty pPrChange (center2 title → 100).
+        // EQ only — pure-I empty shells thrash'd comments subset.
+        finalize::ensure_empty_pprchange_on_eq_with_live_jc(dom, root, settings, &mut id);
         // M451: strip empty pPrChange on mid MIX with live jc (center_alignment_2).
         finalize::strip_empty_pprchange_on_mix_with_live_jc(dom, root);
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
