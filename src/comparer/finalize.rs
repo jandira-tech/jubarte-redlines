@@ -1381,9 +1381,24 @@ pub fn promote_live_numpr_on_pure_d_from_pprchange(dom: &mut Dom, root: NodeId) 
         if !para_is_pure_deleted(dom, p) || !para_has_real_del(dom, p) {
             continue;
         }
-        // Legal section residual: body starts with digit.digit (e.g. "14.11…").
+        // Legal section residual ("14.11…") or list_def residual ("Num 4")
+        // without live ListParagraph style.
         let body_txt = para_revision_body_text(dom, p);
-        if !body_looks_like_section_number(&body_txt) {
+        if !body_looks_like_list_residual_label(&body_txt) {
+            continue;
+        }
+        // list_def "Num 4": no ListParagraph pStyle (Word parks style in
+        // pPrChange only). Skip when live ListParagraph already has numPr
+        // path (handled above) or would thrash basic_list wholesale.
+        let live_list_style = dom.element(p, &W::p_pr()).is_some_and(|ppr| {
+            dom.element(ppr, &W::name("pStyle")).is_some_and(|ps| {
+                dom.attribute(ps, &W::val())
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .starts_with("list")
+            })
+        });
+        if live_list_style {
             continue;
         }
         let Some(ppr) = dom.element(p, &W::p_pr()) else {
@@ -1439,6 +1454,28 @@ fn body_looks_like_section_number(text: &str) -> bool {
         return false;
     }
     matches!(chars.peek(), Some(c) if c.is_ascii_digit())
+}
+
+/// list_spacer section ids **or** list_def residual labels ("Num 4") without
+/// live ListParagraph style. Kept narrow to avoid basic_list thrash.
+fn body_looks_like_list_residual_label(text: &str) -> bool {
+    if body_looks_like_section_number(text) {
+        return true;
+    }
+    let t = text.trim().to_ascii_lowercase();
+    // "Num 4" / "Num 4." from list_numbering reimport residual (≤2 tokens).
+    if let Some(rest) = t.strip_prefix("num ") {
+        let rest = rest.trim();
+        if rest.is_empty() {
+            return false;
+        }
+        let first = rest.chars().next().unwrap();
+        if !first.is_ascii_digit() {
+            return false;
+        }
+        return rest.split_whitespace().count() <= 2;
+    }
+    false
 }
 
 /// Word-count of `w:t` under pure-I runs (`ins_side`) or `w:delText` under
