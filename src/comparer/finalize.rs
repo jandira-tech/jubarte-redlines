@@ -5918,10 +5918,27 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 let del_list_multi = del_structural
                     && para_has_live_numpr(dom, d)
                     && para_word_atom_count(dom, d) >= 3;
+                // M436 (list_def_mix×list_numbering_reimport ~52 / docxodus 90):
+                // pure-I short list "test" (numPr only) × pure-D ListParagraph
+                // "Num 1". Both structural → prior gate kept Inserted numId on
+                // MIX. Word adopts Deleted ListParagraph + numPr + del mark.
+                let del_list_paragraph = dom.element(d, &W::p_pr()).is_some_and(|dp| {
+                    dom.element(dp, &W::name("pStyle")).is_some_and(|ps| {
+                        dom.attribute(ps, &W::val())
+                            .unwrap_or("")
+                            .eq_ignore_ascii_case("ListParagraph")
+                    })
+                });
+                let short_list_x_listparagraph = para_has_live_numpr(dom, last_ins)
+                    && para_has_live_numpr(dom, d)
+                    && del_list_paragraph
+                    && para_word_atom_count(dom, last_ins) <= 3
+                    && para_word_atom_count(dom, d) <= 4;
                 let adopt_del_ppr =
                     (del_structural && !ins_structural && !(ins_long_prose && del_list_multi))
                         || (ins_jc_only && del_has_spacing)
-                        || (del_heading && ins_list_style);
+                        || (del_heading && ins_list_style)
+                        || short_list_x_listparagraph;
                 // M218: mark-only empty pure-D fold — Word parks the deleted
                 // pilcrow on the pure-I carrier (contract_review MIX + mark_del).
                 // Do not strip to a bare pure-I; adopt the empty del's pPr/rPr/del.
