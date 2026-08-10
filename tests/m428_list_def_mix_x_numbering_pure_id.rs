@@ -114,4 +114,12 @@ fn list_def_mix_x_numbering_reimport_pure_i_then_d() {
             || del_joined.to_ascii_lowercase().contains("letter"),
         "expected pure-D of base list labels; got {del_joined:?}"
     );
+    // Word junction: last pure-I "test" MIX-es with first pure-D "Num 1" (ID).
+    let has_id_junction = kinds.iter().any(|(k, t)| {
+        *k == 'M' && t.to_ascii_lowercase().contains("test") && t.to_ascii_lowercase().contains("num")
+    });
+    assert!(
+        has_id_junction,
+        "Word MIX-es last test into Num 1 (ID junction); kinds={kinds:?}"
+    );
 }

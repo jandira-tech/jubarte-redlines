@@ -4651,6 +4651,39 @@ fn should_fold_multi_del_at_document_scale(
         }
     }
 
+    // M428b (list_def_mix × list_numbering_reimport): multi pure-I uniform
+    // single-token items ("test"×4) + multi pure-D short list labels. Word
+    // MIX-es last pure-I into first pure-D (IIIIMDD… / ID on last test×Num1).
+    // Document-scale Jaccard is 0 so the gap below would skip fold → IIIIDDD
+    // (pixel −2 vs interleave). Force boundary fold when pure-I is uniform
+    // short tokens and first pure-D is a short list item with numPr.
+    {
+        let content_inss_pre: Vec<NodeId> = inss
+            .iter()
+            .copied()
+            .filter(|&i| !para_revision_body_text(dom, i).trim().is_empty())
+            .collect();
+        let first_del_toks = para_word_atom_count(dom, first_del);
+        let pure_i_uniform = content_inss_pre.len() >= 3
+            && content_inss_pre.iter().all(|&p| {
+                let n = para_word_atom_count(dom, p);
+                n == 1
+            })
+            && {
+                let t0 = para_revision_body_text(dom, content_inss_pre[0]).to_ascii_lowercase();
+                content_inss_pre.iter().all(|&p| {
+                    para_revision_body_text(dom, p).to_ascii_lowercase() == t0
+                })
+            };
+        if pure_i_uniform
+            && (1..=3).contains(&first_del_toks)
+            && para_has_live_numpr(dom, first_del)
+            && para_has_live_numpr(dom, last_ins)
+        {
+            return true;
+        }
+    }
+
     // M308d (tight): skip fold for *short-item list-wholesale* pure-I/D.
     // LCS/unrelated may already emit pure-I all next then pure-D all base
     // (basic_list×sd_1707, broken_list×multiple_nodes — unpacked Word pure-I/D
