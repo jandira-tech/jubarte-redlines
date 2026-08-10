@@ -87,20 +87,14 @@ fn list_def_mix_x_numbering_reimport_pure_i_then_d() {
     // Word: leading pure-I stream of next "test" items before any pure-D of
     // base labels (Num/Letter). Allow trailing ID on last test×Num1.
     let first_d = kinds.iter().position(|(k, _)| *k == 'D' || *k == 'M');
-    let pure_i_prefix = kinds
-        .iter()
-        .take_while(|(k, _)| *k == 'I')
-        .count();
+    let pure_i_prefix = kinds.iter().take_while(|(k, _)| *k == 'I').count();
     assert!(
         pure_i_prefix >= 3,
         "Word pure-I's ≥3 next 'test' items first; got pure_i_prefix={pure_i_prefix} kinds={kinds:?}"
     );
     // No pure-D of base before we've seen ≥3 pure-I next.
     if let Some(i) = first_d {
-        assert!(
-            i >= 3,
-            "pure-D/MIX too early at {i}; kinds={kinds:?}"
-        );
+        assert!(i >= 3, "pure-D/MIX too early at {i}; kinds={kinds:?}");
     }
     // Residual pure-D should include base labels.
     let del_joined: String = kinds
@@ -116,7 +110,9 @@ fn list_def_mix_x_numbering_reimport_pure_i_then_d() {
     );
     // Word junction: last pure-I "test" MIX-es with first pure-D "Num 1" (ID).
     let has_id_junction = kinds.iter().any(|(k, t)| {
-        *k == 'M' && t.to_ascii_lowercase().contains("test") && t.to_ascii_lowercase().contains("num")
+        *k == 'M'
+            && t.to_ascii_lowercase().contains("test")
+            && t.to_ascii_lowercase().contains("num")
     });
     assert!(
         has_id_junction,

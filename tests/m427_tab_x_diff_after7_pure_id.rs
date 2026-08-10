@@ -92,7 +92,8 @@ fn tab_test_x_diff_after7_pure_i_next_then_d_base() {
                     r = &after_t[end_t + end_tag.len()..];
                 }
             }
-            let contentful = !del_text.trim().is_empty() || !ins_text.trim().is_empty() || has_ins || has_del;
+            let contentful =
+                !del_text.trim().is_empty() || !ins_text.trim().is_empty() || has_ins || has_del;
             if contentful && first_contentful_kind.is_none() {
                 first_contentful_kind = Some(if has_ins && !has_del {
                     'I'

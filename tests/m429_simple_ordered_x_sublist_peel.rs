@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use std::io::Read;
-use std::path::PathBuf;
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::compare_documents_with_settings;
+use std::io::Read;
+use std::path::PathBuf;
 
 #[test]
 fn simple_ordered_x_sublist_pure_i_one_two_before_base_del() {
@@ -13,7 +13,9 @@ fn simple_ordered_x_sublist_pure_i_one_two_before_base_del() {
     let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__simple_ordered_list_8288421a.docx");
     let b = src.join("super_editor__sublist_issue_66a1800a.docx");
-    if !a.exists() || !b.exists() { return; }
+    if !a.exists() || !b.exists() {
+        return;
+    }
     let out = compare_documents_with_settings(
         &std::fs::read(&a).unwrap(),
         &std::fs::read(&b).unwrap(),
@@ -22,7 +24,8 @@ fn simple_ordered_x_sublist_pure_i_one_two_before_base_del() {
             merge_replaced_paragraphs: true,
             ..WmlComparerSettings::default()
         },
-    ).expect("compare");
+    )
+    .expect("compare");
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
     let mut f = zip.by_name("word/document.xml").unwrap();
     let mut xml = String::new();
@@ -30,5 +33,8 @@ fn simple_ordered_x_sublist_pure_i_one_two_before_base_del() {
     let one = xml.find(">One<").expect("One");
     let two = xml.find(">Two<").expect("Two");
     let base_del = xml.find("Simple ordered list").expect("base title");
-    assert!(one < base_del && two < base_del, "one={one} two={two} base={base_del}");
+    assert!(
+        one < base_del && two < base_del,
+        "one={one} two={two} base={base_del}"
+    );
 }

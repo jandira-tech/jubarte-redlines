@@ -1248,6 +1248,83 @@ pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M440 (list_spacer1 × list_with_break_exported_broken ~56 / docxodus 95):
+/// multi pure-I short list labels (`a`/`test`/`b`) + empty pure-D + content
+/// pure-D. Word free-meshes last label into empty pure-D → MIX del mark (no
+/// live numPr): `I I M D D`. Multi-del fold either skipped empty-D or mixed
+/// the label with content pure-D. Surgical peel: pure-I short numPr label
+/// immediately before mark-only empty pure-D → adopt empty del pPr (drop
+/// numPr), move body, remove empty.
+pub fn fold_short_list_label_into_empty_pure_del(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    loop {
+        let kids: Vec<NodeId> = dom
+            .elements(body, None)
+            .into_iter()
+            .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+            .collect();
+        let mut acted = false;
+        for i in 0..kids.len().saturating_sub(1) {
+            let ins_p = kids[i];
+            let del_p = kids[i + 1];
+            if dom.name(ins_p) != Some(W::p()) || dom.name(del_p) != Some(W::p()) {
+                continue;
+            }
+            if !para_is_pure_inserted(dom, ins_p) || !para_is_pure_deleted(dom, del_p) {
+                continue;
+            }
+            // Empty pure-D: mark del, no delText body.
+            if para_has_real_del(dom, del_p) || !para_has_no_text(dom, del_p) {
+                continue;
+            }
+            if !para_mark_revision(dom, del_p, &W::del()) {
+                continue;
+            }
+            // Short list label pure-I with live numPr.
+            if !para_has_live_numpr(dom, ins_p) {
+                continue;
+            }
+            if !(1..=2).contains(&para_word_atom_count(dom, ins_p)) {
+                continue;
+            }
+            // Need a content pure-D after the empty (list residual continues).
+            let has_content_del_after = kids[i + 2..].iter().any(|&k| {
+                dom.name(k) == Some(W::p())
+                    && para_is_pure_deleted(dom, k)
+                    && para_has_real_del(dom, k)
+            });
+            if !has_content_del_after {
+                continue;
+            }
+            // Adopt empty del pPr (del mark shell); drop pure-I numPr/ins mark pPr.
+            if let Some(ippr) = dom.element(ins_p, &W::p_pr()) {
+                dom.remove(ippr);
+            }
+            if let Some(dppr) = dom.element(del_p, &W::p_pr()) {
+                let cloned = dom.clone_subtree(dppr);
+                if let Some(first) = dom.elements(ins_p, None).first().copied() {
+                    dom.add_before_self(first, cloned);
+                } else {
+                    dom.add(ins_p, cloned);
+                }
+            }
+            for c in dom.elements(del_p, None) {
+                if dom.name(c) != Some(W::p_pr()) {
+                    dom.add(ins_p, c);
+                }
+            }
+            dom.remove(del_p);
+            acted = true;
+            break;
+        }
+        if !acted {
+            return;
+        }
+    }
+}
+
 /// M439 (list_def_mix × list_numbering_reimport ~50.5 / docxodus 90):
 /// pure-I list items with live `numPr` and **no** spacing inherit bloated
 /// package `pPrDefault` (before=240 after=240 line=288) under LO. Word stamps

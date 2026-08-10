@@ -737,6 +737,8 @@ pub fn compare_bodies_faithful_with_notes(
         // M438: title-page pure-I e×6 DD E — relocate last empty pure-I after
         // pure-D as bare trailing empty (doc_with_spaces×spacing Word shape).
         finalize::relocate_title_page_last_empty_after_pure_dels(dom, root);
+        // M440: short list pure-I label × empty pure-D → MIX del mark (list_spacer).
+        finalize::fold_short_list_label_into_empty_pure_del(dom, root);
         // M105: pure-D short title + following MIX leading ins → Word subtitle
         // insert lands on title residual (file_7/5/130 document peel).
         finalize::fold_leading_ins_from_mix_into_preceding_pure_del(dom, root);

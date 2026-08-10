@@ -49,10 +49,7 @@ fn spaces_x_spacing_keeps_trailing_empty_pure_i_before_base_del() {
         .find("ENGAGEMENT")
         .or_else(|| xml.find("Engagement"))
         .expect("expected base ENGAGEMENT del");
-    assert!(
-        date_pos < eng_pos,
-        "date should precede base del"
-    );
+    assert!(date_pos < eng_pos, "date should precede base del");
     let between = &xml[date_pos..eng_pos];
     // Count empty pure-I-ish paragraphs: w:p with w:ins and no w:t body text
     // (allow whitespace-only t). Crude but stable.
@@ -76,7 +73,9 @@ fn spaces_x_spacing_keeps_trailing_empty_pure_i_before_base_del() {
                 let r2 = &r[i..];
                 let Some(gt) = r2.find('>') else { break };
                 let after_t = &r2[gt + 1..];
-                let Some(e) = after_t.find("</w:t>") else { break };
+                let Some(e) = after_t.find("</w:t>") else {
+                    break;
+                };
                 t.push_str(&after_t[..e]);
                 r = &after_t[e + 6..];
             }
