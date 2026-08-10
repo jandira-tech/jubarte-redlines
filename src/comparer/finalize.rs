@@ -4241,6 +4241,87 @@ pub fn last_pure_del_inherit_prev_jc(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M450 (calibri_font × calibri_heading_2_right ~82.5 / docxodus 100):
+/// last MIX free-mesh parks **Heading residual** spacing
+/// (`before≥200` + `line=240`) into `pPrChange` only; Word keeps it **live**
+/// with an empty `pPrChange`. Mid MIX already has live spacing.
+///
+/// Thrash history: bare heading-residual promote also hit red_heading×strikethrough
+/// (−9.7) where Word keeps **park-only** on last. Gate requires an **earlier**
+/// body para with live heading residual spacing (calibri mid has live before=360;
+/// red_heading mid is park-only → skip).
+pub fn promote_heading_spacing_from_pprchange_on_last_mix(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    let Some(&last) = kids.last() else {
+        return;
+    };
+    if dom.name(last) != Some(W::p()) || !para_is_mixed_revision(dom, last) {
+        return;
+    }
+    let Some(ppr) = dom.element(last, &W::p_pr()) else {
+        return;
+    };
+    // Already live spacing — leave alone.
+    if dom.element(ppr, &W::name("spacing")).is_some() {
+        return;
+    }
+    let Some(chg) = dom.element(ppr, &W::name("pPrChange")) else {
+        return;
+    };
+    let Some(old) = dom.element(chg, &W::p_pr()) else {
+        return;
+    };
+    let Some(old_sp) = dom.element(old, &W::name("spacing")) else {
+        return;
+    };
+    // Heading residual: before≥200 and line present (Heading1/2 demo chrome).
+    let before = dom
+        .attribute(old_sp, &W::name("before"))
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    let has_line = dom.attribute(old_sp, &W::name("line")).is_some();
+    if before < 200 || !has_line {
+        return;
+    }
+    // Earlier body para must already show live heading residual spacing
+    // (Word calibri mid keeps live; red_heading mid parks → thrash guard).
+    let mut prior_live_heading = false;
+    for &k in &kids[..kids.len() - 1] {
+        if dom.name(k) != Some(W::p()) {
+            continue;
+        }
+        let Some(kppr) = dom.element(k, &W::p_pr()) else {
+            continue;
+        };
+        let Some(sp) = dom.element(kppr, &W::name("spacing")) else {
+            continue;
+        };
+        let b = dom
+            .attribute(sp, &W::name("before"))
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        if b >= 200 && dom.attribute(sp, &W::name("line")).is_some() {
+            prior_live_heading = true;
+            break;
+        }
+    }
+    if !prior_live_heading {
+        return;
+    }
+    // Promote live spacing (clone parked attrs).
+    let live = dom.clone_subtree(old_sp);
+    dom.add_before_self(chg, live);
+    // Empty parked spacing from old pPr → Word empty pPrChange shell.
+    dom.remove(old_sp);
+}
+
 /// M449 (right_aligned_italic × right_alignment ~75.9 / docxodus 100):
 /// mid-body MIX free-mesh parks `jc` into `pPrChange` only; Word keeps
 /// **live** `jc` on the body MIX. Last residual stays park-only (center_bold
