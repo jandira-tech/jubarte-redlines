@@ -739,6 +739,9 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::relocate_title_page_last_empty_after_pure_dels(dom, root);
         // M440: short list pure-I label × empty pure-D → MIX del mark (list_spacer).
         finalize::fold_short_list_label_into_empty_pure_del(dom, root);
+        // M442: pure-D with pPrChange(numPr) but no live numPr → promote live
+        // numPr from first pure-I (list_spacer residual 14.11).
+        finalize::promote_live_numpr_on_pure_d_from_pprchange(dom, root);
         // M105: pure-D short title + following MIX leading ins → Word subtitle
         // insert lands on title residual (file_7/5/130 document peel).
         finalize::fold_leading_ins_from_mix_into_preceding_pure_del(dom, root);

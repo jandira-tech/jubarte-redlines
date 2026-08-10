@@ -1325,6 +1325,77 @@ pub fn fold_short_list_label_into_empty_pure_del(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M442 (list_spacer1 × list_with_break_exported_broken residual ~80.8 /
+/// docxodus 94.6): last pure-D "14.11…" has Word live `numPr` (numId from the
+/// pure-I list residual) + `pPrChange` parking base StandardL1/numId=0. Engine
+/// left only pPrChange (no live numPr) → LO list chrome miss.
+///
+/// Surgical: pure-D with content + pPrChange carrying numPr but **no** live
+/// numPr → inject live numPr (ilvl from pPrChange, numId from first pure-I
+/// numPr in the body). Does not invent numPr when pPrChange lacks one.
+pub fn promote_live_numpr_on_pure_d_from_pprchange(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    // First pure-I live numId (list residual source for Word live numId).
+    let mut source_num_id: Option<String> = None;
+    for p in dom.elements(body, None) {
+        if dom.name(p) != Some(W::p()) || !para_is_pure_inserted(dom, p) {
+            continue;
+        }
+        if let Some(ppr) = dom.element(p, &W::p_pr())
+            && let Some(num) = dom.element(ppr, &W::name("numPr"))
+            && let Some(nid) = dom.element(num, &W::name("numId"))
+            && let Some(v) = dom.attribute(nid, &W::val())
+        {
+            source_num_id = Some(v.to_string());
+            break;
+        }
+    }
+    let Some(src_id) = source_num_id else {
+        return;
+    };
+    for p in dom.elements(body, None) {
+        if dom.name(p) != Some(W::p()) {
+            continue;
+        }
+        if !para_is_pure_deleted(dom, p) || !para_has_real_del(dom, p) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        // Already has live numPr — leave alone.
+        if dom.element(ppr, &W::name("numPr")).is_some() {
+            continue;
+        }
+        let Some(chg) = dom.element(ppr, &W::name("pPrChange")) else {
+            continue;
+        };
+        let Some(old) = dom.element(chg, &W::p_pr()) else {
+            continue;
+        };
+        let Some(old_num) = dom.element(old, &W::name("numPr")) else {
+            continue;
+        };
+        // ilvl from parked numPr (default 0).
+        let ilvl = dom
+            .element(old_num, &W::name("ilvl"))
+            .and_then(|il| dom.attribute(il, &W::val()))
+            .unwrap_or("0")
+            .to_string();
+        let num = dom.new_element(W::name("numPr"));
+        let il = dom.new_element(W::name("ilvl"));
+        dom.set_attribute_value(il, &W::val(), Some(&ilvl));
+        let nid = dom.new_element(W::name("numId"));
+        dom.set_attribute_value(nid, &W::val(), Some(&src_id));
+        dom.add(num, il);
+        dom.add(num, nid);
+        // Live numPr first in pPr (before pPrChange).
+        dom.add_first(ppr, num);
+    }
+}
+
 /// M439 (list_def_mix × list_numbering_reimport ~50.5 / docxodus 90):
 /// pure-I list items with live `numPr` and **no** spacing inherit bloated
 /// package `pPrDefault` (before=240 after=240 line=288) under LO. Word stamps
