@@ -9799,3 +9799,326 @@ fn rebuild_body_free_mesh_lcs(
         dom.add(p, r);
     }
 }
+
+/// M460 (right_align_bold×right_aligned_italic ~81.3): MIX with EQ bookends
+/// (`This ` … `.`) around a single wholesale ins+del that share one significant
+/// mid token (`right`). M459 requires no bare alnum runs so it skips bookends.
+/// Word free-meshes: INS before | DEL before | EQ token | INS after | DEL after.
+///
+/// Gates: MIX, ≥1 bare EQ with alnum, exactly one ins + one del, each side
+/// 4..=40 alnum toks, exactly one shared non-boiler len≥4 token that appears
+/// once on each side (whole-word; hyphen is a boundary so `right-aligned` →
+/// EQ `right` + INS `-aligned…`).
+pub fn free_mesh_bookended_ins_del(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    for &p in &kids {
+        if dom.name(p) != Some(W::p()) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        let body_kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| dom.name(c) != Some(W::p_pr()))
+            .collect();
+        if body_kids.is_empty() {
+            continue;
+        }
+        let mut ins_nodes = Vec::new();
+        let mut del_nodes = Vec::new();
+        let mut bare_alnum = false;
+        let mut other = false;
+        for &c in &body_kids {
+            let n = dom.name(c);
+            if n == Some(W::ins()) {
+                ins_nodes.push(c);
+            } else if n == Some(W::del()) {
+                del_nodes.push(c);
+            } else if n == Some(W::r()) {
+                let mut t = String::new();
+                for tn in dom.descendants(c, Some(&W::t())) {
+                    t.push_str(&dom.value_str(tn));
+                }
+                if t.chars().any(|ch| ch.is_alphanumeric()) {
+                    bare_alnum = true;
+                }
+            } else {
+                other = true;
+                break;
+            }
+        }
+        // Bookend required (else M459 wholesale path). One ins + one del.
+        if other || !bare_alnum || ins_nodes.len() != 1 || del_nodes.len() != 1 {
+            continue;
+        }
+        let ins = ins_nodes[0];
+        let del = del_nodes[0];
+        let mut ins_text = String::new();
+        for t in dom.descendants(ins, Some(&W::t())) {
+            ins_text.push_str(&dom.value_str(t));
+        }
+        let mut del_text = String::new();
+        for t in dom.descendants(del, Some(&W::name("delText"))) {
+            del_text.push_str(&dom.value_str(t));
+        }
+        let ins_toks = alnum_tokens(&ins_text);
+        let del_toks = alnum_tokens(&del_text);
+        if !(4..=40).contains(&ins_toks.len()) || !(4..=40).contains(&del_toks.len()) {
+            continue;
+        }
+        const BOILER: &[&str] = &[
+            "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than",
+            "then", "when", "what", "which", "into", "over", "only", "also", "just", "more",
+            "most", "some", "such", "other", "about", "page", "text", "and", "the", "for", "are",
+            "was", "you", "all", "can", "her", "his", "its", "our", "out",
+        ];
+        // Shared non-boiler len≥4 tokens that appear exactly once on each side.
+        let mut ins_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for t in &ins_toks {
+            *ins_counts.entry(t.as_str()).or_default() += 1;
+        }
+        let mut del_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for t in &del_toks {
+            *del_counts.entry(t.as_str()).or_default() += 1;
+        }
+        let mut shared: Vec<&str> = ins_counts
+            .keys()
+            .filter(|t| {
+                t.len() >= 4
+                    && !BOILER.contains(t)
+                    && ins_counts.get(*t) == Some(&1)
+                    && del_counts.get(*t) == Some(&1)
+            })
+            .copied()
+            .collect();
+        // Prefer longest (more specific) shared token.
+        shared.sort_by_key(|t| std::cmp::Reverse(t.len()));
+        let Some(&anchor) = shared.first() else {
+            continue;
+        };
+        // Exactly one shared sig token — multi-anchor bookended free-mesh left
+        // to future peels (avoid thrash from over-splitting).
+        if shared.len() != 1 {
+            continue;
+        }
+        let Some((ins_before, ins_after)) = split_around_whole_word(&ins_text, anchor) else {
+            continue;
+        };
+        let Some((del_before, del_after)) = split_around_whole_word(&del_text, anchor) else {
+            continue;
+        };
+        // Must actually split (not whole string == anchor).
+        if ins_before.is_empty() && ins_after.is_empty() {
+            continue;
+        }
+        if del_before.is_empty() && del_after.is_empty() {
+            continue;
+        }
+        let (author, date) = {
+            let mut a = "Redline".to_string();
+            let mut d = "1970-01-01T00:00:00Z".to_string();
+            if let Some(v) = dom.attribute(ins, &W::author()) {
+                a = v.to_string();
+            }
+            if let Some(v) = dom.attribute(ins, &W::date()) {
+                d = v.to_string();
+            }
+            (a, d)
+        };
+        // Prefer rPr from leading bare EQ (Word rPrChange on free-mesh EQ).
+        let eq_rpr = body_kids
+            .iter()
+            .find(|&&c| dom.name(c) == Some(W::r()))
+            .and_then(|&r| dom.element(r, &W::r_pr()))
+            .map(|rpr| dom.clone_subtree(rpr));
+        // Del keeps original bold rPr when present.
+        let del_rpr = dom
+            .element(del, &W::r())
+            .and_then(|r| dom.element(r, &W::r_pr()))
+            .map(|rpr| dom.clone_subtree(rpr));
+        // Rebuild: keep prefix bare runs, replace ins+del, keep suffix bare.
+        let mut prefix = Vec::new();
+        let mut suffix = Vec::new();
+        let mut seen_rev = false;
+        for &c in &body_kids {
+            let n = dom.name(c);
+            if n == Some(W::ins()) || n == Some(W::del()) {
+                seen_rev = true;
+            } else if n == Some(W::r()) {
+                if seen_rev {
+                    suffix.push(c);
+                } else {
+                    prefix.push(c);
+                }
+            }
+        }
+        // Clear all body content, re-add prefix clones, free-mesh, suffix clones.
+        let prefix_clones: Vec<NodeId> = prefix.iter().map(|&c| dom.clone_subtree(c)).collect();
+        let suffix_clones: Vec<NodeId> = suffix.iter().map(|&c| dom.clone_subtree(c)).collect();
+        for c in body_kids {
+            if dom.parent(c).is_some() {
+                dom.remove(c);
+            }
+        }
+        for c in prefix_clones {
+            dom.add(p, c);
+        }
+        let mut next_id = 1u32;
+        // Word order: INS before, DEL before, EQ, INS after, DEL after.
+        m460_push_rev_text(
+            dom,
+            p,
+            "ins",
+            &ins_before,
+            &author,
+            &date,
+            &mut next_id,
+            &None,
+        );
+        m460_push_rev_text(
+            dom,
+            p,
+            "del",
+            &del_before,
+            &author,
+            &date,
+            &mut next_id,
+            &del_rpr,
+        );
+        m460_push_eq_text(dom, p, anchor, &eq_rpr);
+        m460_push_rev_text(
+            dom,
+            p,
+            "ins",
+            &ins_after,
+            &author,
+            &date,
+            &mut next_id,
+            &None,
+        );
+        m460_push_rev_text(
+            dom,
+            p,
+            "del",
+            &del_after,
+            &author,
+            &date,
+            &mut next_id,
+            &del_rpr,
+        );
+        for c in suffix_clones {
+            dom.add(p, c);
+        }
+    }
+}
+
+/// Split `text` around the first whole-word match of `word` (case-insensitive).
+/// Hyphen/punct after the word stay in `after` (Word: EQ `right` + INS `-aligned`).
+fn split_around_whole_word(text: &str, word: &str) -> Option<(String, String)> {
+    let lower = text.to_ascii_lowercase();
+    let w = word.to_ascii_lowercase();
+    let mut start = 0usize;
+    while start < lower.len() {
+        let Some(rel) = lower[start..].find(&w) else {
+            break;
+        };
+        let i = start + rel;
+        let j = i + w.len();
+        let prev_ok = i == 0
+            || !text
+                .get(i - 1..i)
+                .and_then(|s| s.chars().next())
+                .is_some_and(|c| c.is_alphanumeric());
+        let next_ok = j >= text.len()
+            || !text
+                .get(j..j + 1)
+                .and_then(|s| s.chars().next())
+                .is_some_and(|c| c.is_alphanumeric());
+        if prev_ok && next_ok {
+            return Some((text[..i].to_string(), text[j..].to_string()));
+        }
+        start = i + 1;
+    }
+    None
+}
+
+fn m460_push_eq_text(dom: &mut Dom, p: NodeId, text: &str, sample_rpr: &Option<NodeId>) {
+    if text.is_empty() {
+        return;
+    }
+    let r = dom.new_element(W::r());
+    if let Some(rpr) = sample_rpr {
+        let rpr_c = dom.clone_subtree(*rpr);
+        dom.add(r, rpr_c);
+    }
+    let t = dom.new_element(W::t());
+    if text.starts_with(' ') || text.ends_with(' ') {
+        dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+    }
+    dom.add_text(t, text);
+    dom.add(r, t);
+    dom.add(p, r);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn m460_push_rev_text(
+    dom: &mut Dom,
+    p: NodeId,
+    kind: &str,
+    text: &str,
+    author: &str,
+    date: &str,
+    next_id: &mut u32,
+    sample_rpr: &Option<NodeId>,
+) {
+    if text.is_empty() {
+        return;
+    }
+    match kind {
+        "ins" => {
+            let ins = dom.new_element(W::ins());
+            dom.set_attribute_value(ins, &W::id(), Some(&next_id.to_string()));
+            *next_id += 1;
+            dom.set_attribute_value(ins, &W::author(), Some(author));
+            dom.set_attribute_value(ins, &W::date(), Some(date));
+            let r = dom.new_element(W::r());
+            let t = dom.new_element(W::t());
+            if text.starts_with(' ') || text.ends_with(' ') || text.contains(' ') {
+                dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+            }
+            dom.add_text(t, text);
+            dom.add(r, t);
+            dom.add(ins, r);
+            dom.add(p, ins);
+        }
+        "del" => {
+            let del = dom.new_element(W::del());
+            dom.set_attribute_value(del, &W::id(), Some(&next_id.to_string()));
+            *next_id += 1;
+            dom.set_attribute_value(del, &W::author(), Some(author));
+            dom.set_attribute_value(del, &W::date(), Some(date));
+            let r = dom.new_element(W::r());
+            if let Some(rpr) = sample_rpr {
+                let rpr_c = dom.clone_subtree(*rpr);
+                dom.add(r, rpr_c);
+            }
+            let t = dom.new_element(W::name("delText"));
+            if text.starts_with(' ') || text.ends_with(' ') || text.contains(' ') {
+                dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+            }
+            dom.add_text(t, text);
+            dom.add(r, t);
+            dom.add(del, r);
+            dom.add(p, del);
+        }
+        _ => {}
+    }
+}

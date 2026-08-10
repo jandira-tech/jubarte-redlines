@@ -1,0 +1,77 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! M460 — bookended MIX free-meshes a single shared mid token.
+//!
+//! right_align_bold × right_aligned_italic: body MIX has EQ `This ` / `.` around
+//! wholesale ins+del sharing `right`. Word free-meshes EQ `right` mid-sentence.
+
+use std::io::Read;
+use std::path::PathBuf;
+
+use jubarte::comparer::WmlComparerSettings;
+use jubarte::document_comparer::compare_documents_with_settings;
+
+#[test]
+fn right_align_bold_bookended_mix_free_meshes_right() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let a = src.join("right_align_bold_demo_id_paraid_overflow.docx");
+    let b = src.join("right_aligned_italic_demo_id_paraid_overflow.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: fixtures missing");
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &WmlComparerSettings {
+            author_for_revisions: "Redline".into(),
+            merge_replaced_paragraphs: true,
+            ..WmlComparerSettings::default()
+        },
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+
+    // Find MIX with "right" free-mesh and bookend "This".
+    let mut rest = xml.as_str();
+    let mut found = false;
+    while let Some(start) = rest.find("<w:p") {
+        let after = &rest[start..];
+        if !(after.starts_with("<w:p>") || after.starts_with("<w:p ")) {
+            rest = &after[4..];
+            continue;
+        }
+        let end = after.find("</w:p>").map(|j| j + 6).unwrap_or(after.len());
+        let p = &after[0..end];
+        rest = &after[end..];
+        if !(p.contains("This")
+            && p.contains("right")
+            && p.contains("<w:ins")
+            && p.contains("<w:del"))
+        {
+            continue;
+        }
+        // Must have bare EQ run carrying just "right" (not only inside ins/del).
+        // Heuristic: multiple ins wrappers after free-mesh split.
+        let ins_count = p.matches("<w:ins").count();
+        let del_count = p.matches("<w:del").count();
+        assert!(
+            ins_count >= 2 && del_count >= 2,
+            "Word free-meshes bookended ins+del around mid token; ins={ins_count} del={del_count} p={p}"
+        );
+        // Wholesale residual should not remain as single full-sentence del.
+        assert!(
+            !p.contains("document combines right alignment with bold formatting"),
+            "wholesale del of entire A residual remains; p={p}"
+        );
+        found = true;
+        break;
+    }
+    assert!(found, "expected bookended MIX free-mesh with right");
+}

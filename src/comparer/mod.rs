@@ -783,6 +783,9 @@ pub fn compare_bodies_faithful_with_notes(
         // M459: wholesale body MIX free-mesh word-LCS EQ anchors (≥2 shared
         // sig tokens; center_aligned_bold residual).
         finalize::free_mesh_wholesale_body_mix(dom, root);
+        // M460: bookended MIX (EQ `This `…`.`) free-mesh mid shared sig token
+        // inside the single ins+del pair (right_align_bold "right").
+        finalize::free_mesh_bookended_ins_del(dom, root);
         // M393 late: re-apply after free-mesh peels thrash LCS interleave.
         finalize::interleave_list_cluster_after_coalesce(dom, root);
         // M376: after merge/park peels — strip list line=240/jc that mid pure-D
