@@ -5323,8 +5323,8 @@ pub fn detect_unrelated_sources_word_mode(
                     let mut consumed = 0usize;
                     let mut contentful_seen = 0usize;
                     for u in cu2 {
-                        let is_c = as_group(u).is_some()
-                            && !para_text_token_list(dom, u).is_empty();
+                        let is_c =
+                            as_group(u).is_some() && !para_text_token_list(dom, u).is_empty();
                         if is_c {
                             if contentful_seen >= peel_n {
                                 break;
@@ -5792,8 +5792,42 @@ pub fn detect_unrelated_sources_word_mode(
                 out.push(CorrelatedSequence::deleted(cu1.to_vec()));
                 return Some(out);
             }
-            let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
-            let mut right: Vec<ComparisonUnit> = residual.iter().flat_map(group_contents).collect();
+            // M431 (diff_doc2 residual ~52 / docxodus 100): after pure-I Num*,
+            // residual free-mesh mid-spliced B's br-only page-break into A's
+            // drawing-only para (one MIX with ins br + del drawing). Word keeps
+            // pure-I br then pure-D drawing + empty, then free-meshes contentful
+            // residual. Peel leading text-empty residual as pure-I and leading
+            // text-empty base as pure-D before free-mesh.
+            let text_empty_group = |u: &ComparisonUnit| -> bool {
+                as_group(u).is_some() && para_text_token_list(dom, u).is_empty()
+            };
+            let mut res_i = 0usize;
+            while res_i < residual.len() && text_empty_group(&residual[res_i]) {
+                out.push(CorrelatedSequence::inserted(vec![residual[res_i].clone()]));
+                res_i += 1;
+            }
+            let mut base_i = 0usize;
+            while base_i < cu1.len() && text_empty_group(&cu1[base_i]) {
+                out.push(CorrelatedSequence::deleted(vec![cu1[base_i].clone()]));
+                base_i += 1;
+            }
+            let residual_rest = residual[res_i..].to_vec();
+            let base_rest = cu1[base_i..].to_vec();
+            if residual_rest.is_empty() {
+                if !base_rest.is_empty() {
+                    out.push(CorrelatedSequence::deleted(base_rest));
+                }
+                return Some(out);
+            }
+            if base_rest.is_empty() {
+                for u in residual_rest {
+                    out.push(CorrelatedSequence::inserted(vec![u]));
+                }
+                return Some(out);
+            }
+            let mut left: Vec<ComparisonUnit> = base_rest.iter().flat_map(group_contents).collect();
+            let mut right: Vec<ComparisonUnit> =
+                residual_rest.iter().flat_map(group_contents).collect();
             if !left.is_empty()
                 && !right.is_empty()
                 && left.len().saturating_mul(right.len()) <= 100_000
@@ -5805,10 +5839,10 @@ pub fn detect_unrelated_sources_word_mode(
                 out.extend(lcs(dom, left, right, &residual_settings));
                 return Some(out);
             }
-            for u in residual {
+            for u in residual_rest {
                 out.push(CorrelatedSequence::inserted(vec![u]));
             }
-            out.push(CorrelatedSequence::deleted(cu1.to_vec()));
+            out.push(CorrelatedSequence::deleted(base_rest));
             return Some(out);
         }
     }
@@ -5950,7 +5984,7 @@ pub fn detect_unrelated_sources_word_mode(
         // exported_list_font −3.7 (Word free-meshes short next into dropcaps).
         // Keep forward-only (short section base × title-page next).
     }
-        // M404: LCS already pure-I/D via M308c for basic_list×sd_1707; interleave
+    // M404: LCS already pure-I/D via M308c for basic_list×sd_1707; interleave
     // gate in finalize keeps IIDDD (see finalize::interleave_list_cluster).
     // M312 (two_column_two_page × sd_2672_nested_table ~33.8): short **next**
     // is title + empty + tables (contentful n≈2–6, has_table) vs long

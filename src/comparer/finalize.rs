@@ -2499,9 +2499,9 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                         break;
                     }
                 }
-                let pure_i_after_del = kids[di + 1..].iter().any(|&k| {
-                    dom.name(k) == Some(W::p()) && para_is_pure_inserted(dom, k)
-                });
+                let pure_i_after_del = kids[di + 1..]
+                    .iter()
+                    .any(|&k| dom.name(k) == Some(W::p()) && para_is_pure_inserted(dom, k));
                 if empty_run >= 3 && !pure_i_after_del && content_pure_i >= 1 {
                     return;
                 }
@@ -2531,6 +2531,17 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                 continue;
             }
             if !para_body_text_is_whitespace_only(dom, ins_p) {
+                continue;
+            }
+            // M431 (diff_doc2 × numwords residual): page-break (`w:br`) and
+            // drawing/pict pure-I are contentful for layout even with no `w:t`.
+            // Word keeps pure-I br separate from pure-D drawing; folding them
+            // as "whitespace" produced one MIX with ins br + del drawing.
+            if !dom.descendants(ins_p, Some(&W::name("br"))).is_empty()
+                || !dom.descendants(ins_p, Some(&W::name("drawing"))).is_empty()
+                || !dom.descendants(ins_p, Some(&W::name("pict"))).is_empty()
+                || !dom.descendants(ins_p, Some(&W::name("object"))).is_empty()
+            {
                 continue;
             }
             // A run-less bare empty inserted paragraph is B's STRUCTURE when
@@ -4713,9 +4724,9 @@ fn should_fold_multi_del_at_document_scale(
             })
             && {
                 let t0 = para_revision_body_text(dom, content_inss_pre[0]).to_ascii_lowercase();
-                content_inss_pre.iter().all(|&p| {
-                    para_revision_body_text(dom, p).to_ascii_lowercase() == t0
-                })
+                content_inss_pre
+                    .iter()
+                    .all(|&p| para_revision_body_text(dom, p).to_ascii_lowercase() == t0)
             };
         if pure_i_uniform
             && (1..=3).contains(&first_del_toks)
@@ -5478,13 +5489,23 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         .iter()
                         .rev()
                         .take_while(|&&p| {
-                            para_has_no_text(dom, p)
-                                || para_body_text_is_whitespace_only(dom, p)
+                            para_has_no_text(dom, p) || para_body_text_is_whitespace_only(dom, p)
                         })
                         .count();
                     if trailing_empty_i >= 3 {
                         continue;
                     }
+                }
+                // M431 (diff_doc2 × numwords residual ~52 / docxodus 100): pure-I
+                // page-break (`w:br`) must not fold into pure-D drawing even when
+                // multi-del gap force-fold (gap < 40 words) would. Word keeps
+                // pure-I br then pure-D drawing (+ empty) then free-meshes text.
+                if !dom.descendants(last_ins, Some(&W::name("br"))).is_empty()
+                    && (!dom.descendants(d, Some(&W::name("drawing"))).is_empty()
+                        || !dom.descendants(d, Some(&W::name("pict"))).is_empty()
+                        || !dom.descendants(d, Some(&W::name("object"))).is_empty())
+                {
+                    continue;
                 }
                 // C1 / KNOWN ISSUE #2: multi-del boundary fold gated on
                 // document-scale relatedness (unrelated whole-doc replacement
@@ -5503,8 +5524,20 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         dom, container, last_ins, d, inss, dels,
                     )
                 {
-                    let empty_shell = para_has_no_text(dom, last_ins)
-                        || para_body_text_is_whitespace_only(dom, last_ins);
+                    // Layout content (w:br / drawing / pict) is never an empty
+                    // shell: para_body_text_is_whitespace_only is true for
+                    // br-only (no w:t), which previously forced fold of pure-I
+                    // page-break into pure-D drawing (M431 diff_doc2×numwords).
+                    let empty_shell = (para_has_no_text(dom, last_ins)
+                        || para_body_text_is_whitespace_only(dom, last_ins))
+                        && dom.descendants(last_ins, Some(&W::name("br"))).is_empty()
+                        && dom
+                            .descendants(last_ins, Some(&W::name("drawing")))
+                            .is_empty()
+                        && dom.descendants(last_ins, Some(&W::name("pict"))).is_empty()
+                        && dom
+                            .descendants(last_ins, Some(&W::name("object")))
+                            .is_empty();
                     if !empty_shell {
                         continue;
                     }
