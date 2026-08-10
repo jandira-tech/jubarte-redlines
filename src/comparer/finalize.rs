@@ -5093,17 +5093,38 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         && del_toks <= 1
                         && !should_fold_ins_del_pair(dom, last_ins, d);
                     if !skip_short_residual {
-                        // Strip para-mark revision from the carrier (Word: bare mixed p).
-                        if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
-                            if let Some(irpr) = dom.element(ippr, &W::r_pr())
-                                && (dom.element(irpr, &W::ins()).is_some()
-                                    || dom.element(irpr, &W::del()).is_some())
-                            {
-                                dom.remove(irpr);
-                            }
-                            // Drop empty pPr that only held the mark revision.
-                            if dom.elements(ippr, None).is_empty() {
+                        // M435 (diff_before16×19): sole pure-D base Heading/Title
+                        // free-meshed into last pure-I. Word keeps live pStyle +
+                        // del mark on the MIX. The bare-MIX path below drops del
+                        // pPr (single_paragraph GT) and left empty pPr (LO ~53.9
+                        // until Heading1 restored). Adopt Heading/Title pPr only
+                        // — never invent styles on non-heading sole-dels.
+                        let adopt_heading = para_has_heading_or_title_style(dom, d);
+                        if adopt_heading {
+                            if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
                                 dom.remove(ippr);
+                            }
+                            if let Some(dppr) = dom.element(d, &W::p_pr()) {
+                                let cloned = dom.clone_subtree(dppr);
+                                if let Some(first) = dom.elements(last_ins, None).first().copied() {
+                                    dom.add_before_self(first, cloned);
+                                } else {
+                                    dom.add(last_ins, cloned);
+                                }
+                            }
+                        } else {
+                            // Strip para-mark revision from the carrier (Word: bare mixed p).
+                            if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
+                                if let Some(irpr) = dom.element(ippr, &W::r_pr())
+                                    && (dom.element(irpr, &W::ins()).is_some()
+                                        || dom.element(irpr, &W::del()).is_some())
+                                {
+                                    dom.remove(irpr);
+                                }
+                                // Drop empty pPr that only held the mark revision.
+                                if dom.elements(ippr, None).is_empty() {
+                                    dom.remove(ippr);
+                                }
                             }
                         }
                         for c in dom.elements(d, None) {
