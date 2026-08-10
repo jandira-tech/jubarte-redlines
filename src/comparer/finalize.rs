@@ -5494,20 +5494,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         && para_body_alnum_len(dom, last_ins) >= 20
                         && del_toks <= 1
                         && !should_fold_ins_del_pair(dom, last_ins, d);
-                    // M441 (broken_list_missing×broken): sole pure-D residual
-                    // "First shown item. Text" after short pure-I list labels
-                    // (TWO/a). m44 sole-del always-fold MIX-es "a" into it.
-                    // Word keeps pure-I then pure-D after the first list
-                    // cluster. Require mid-doc (del_start>0) so whole-doc
-                    // trailing sole-del (m44) still folds.
-                    let skip_list_label_sole_del = del_start > 0
-                        && para_body_is_very_short(dom, last_ins)
-                        && para_word_atom_count(dom, d) >= 3
-                        && inss
-                            .iter()
-                            .filter(|&&p| !para_has_no_text(dom, p))
-                            .all(|&p| para_word_atom_count(dom, p) <= 3);
-                    if !skip_short_residual && !skip_list_label_sole_del {
+                    if !skip_short_residual {
                         // M435 (diff_before16×19): sole pure-D base Heading/Title
                         // free-meshed into last pure-I. Word keeps live pStyle +
                         // del mark on the MIX. The bare-MIX path below drops del
@@ -5710,16 +5697,16 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // m53b). M68 Jaccard best-match fold tried for file_33; LO score
                 // −0.47 and still 3pp vs Word 2 — reverted.
                 //
-                // M393/M441: more pure-I later (not only immediately after dels).
-                if dels.len() >= 2 && inss.len() == 1 {
-                    let more_pure_i_later = (j..children.len()).any(|idx| {
-                        classes[idx] == Some(true)
-                            || (dom.name(children[idx]) == Some(W::p())
-                                && para_is_pure_inserted(dom, children[idx]))
-                    });
-                    if more_pure_i_later {
-                        continue;
-                    }
+                // M393 (broken_list×broken Word IDDD…I…D): leading pure-I list
+                // item + multi pure-D cluster + **more pure-I after the dels**
+                // is Word interleave, not a residual free-mesh boundary.
+                // Folding ONE×Item1 invents MIX and thrashs the cluster peel.
+                if dels.len() >= 2
+                    && inss.len() == 1
+                    && j < children.len()
+                    && classes[j] == Some(true)
+                {
+                    continue;
                 }
                 // M394 (employment×lease): leading pure-I mid-splice stream
                 // (through ~3rd section) + multi pure-D residual base — Word
