@@ -742,6 +742,9 @@ pub fn compare_bodies_faithful_with_notes(
         // M442: pure-D with pPrChange(numPr) but no live numPr → promote live
         // numPr from first pure-I (list_spacer residual 14.11).
         finalize::promote_live_numpr_on_pure_d_from_pprchange(dom, root);
+        // M448: pure-I-dominant body + pure-D residual → drop trailing bare
+        // empty EQ (diff_after8×doc_with_spacing Word ends IDD not IDDE).
+        finalize::strip_trailing_bare_empty_after_pure_i_dominant(dom, root);
         // M105: pure-D short title + following MIX leading ins → Word subtitle
         // insert lands on title residual (file_7/5/130 document peel).
         finalize::fold_leading_ins_from_mix_into_preceding_pure_del(dom, root);

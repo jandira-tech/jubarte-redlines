@@ -1325,6 +1325,68 @@ pub fn fold_short_list_label_into_empty_pure_del(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M448 (diff_after8 × doc_with_spacing ~75.6 / docxodus 100): Word ends
+/// pure-I-dominant body with pure-D residual only (`…IDD`). Engine leaves a
+/// trailing bare empty EQ with spacing after the pure-D (`…IDDE`) — LO page
+/// chrome miss. Opposite of wholesale pure-D tails (file_22) that keep a
+/// trailing E.
+///
+/// Gate: pure-I count ≥10, pure-D count 1..=4 among body paras; last is bare
+/// empty EQ (no text/ins/del); prev is pure-D. Then drop last.
+pub fn strip_trailing_bare_empty_after_pure_i_dominant(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    if kids.len() < 12 {
+        return;
+    }
+    let last = kids[kids.len() - 1];
+    if dom.name(last) != Some(W::p()) {
+        return;
+    }
+    if !para_has_no_text(dom, last) {
+        return;
+    }
+    if !dom.descendants(last, Some(&W::ins())).is_empty()
+        || !dom.descendants(last, Some(&W::del())).is_empty()
+    {
+        return;
+    }
+    // Keep truly bare `<w:p/>` shells (M438 title-page trailing E). Only strip
+    // empties that still carry layout pPr (diff_after8 residual spacing).
+    let Some(ppr) = dom.element(last, &W::p_pr()) else {
+        return;
+    };
+    if dom.element(ppr, &W::name("spacing")).is_none() {
+        return;
+    }
+    let prev = kids[kids.len() - 2];
+    if dom.name(prev) != Some(W::p()) || !para_is_pure_deleted(dom, prev) {
+        return;
+    }
+    let mut pure_i = 0usize;
+    let mut pure_d = 0usize;
+    for &k in &kids {
+        if dom.name(k) != Some(W::p()) {
+            continue;
+        }
+        if para_is_pure_inserted(dom, k) {
+            pure_i += 1;
+        } else if para_is_pure_deleted(dom, k) {
+            pure_d += 1;
+        }
+    }
+    if pure_i < 10 || !(1..=4).contains(&pure_d) {
+        return;
+    }
+    dom.remove(last);
+}
+
 /// M442 (list_spacer1 × list_with_break_exported_broken residual ~80.8 /
 /// docxodus 94.6): last pure-D "14.11…" has Word live `numPr` (numId from the
 /// pure-I list residual) + `pPrChange` parking base StandardL1/numId=0. Engine
