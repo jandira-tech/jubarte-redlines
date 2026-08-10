@@ -5432,6 +5432,38 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::deleted(cu1.to_vec()),
         ]);
     }
+    // M426 (text_color_highlight × nested_table ~52 / docxodus 100): short
+    // table-free base (1–2 contentful, short title vocab) × next that **carries
+    // tables**. M315 requires both sides table-free, so this pair fell through
+    // to full LCS which pure-I's next title, pure-D's base mid-stream, then
+    // pure-I's tables (I D T I…). Word pure-I's the entire next doc first
+    // (title + tables + cell notes) then pure-D's the base line at the end
+    // (I…T…I…D).
+    //
+    // Contentful count trap: a nested-table next packs most of its body into
+    // **one** table group (n2≈2: title + table), so M315's n2≥5 never fires.
+    // Allow n2≥2 when next has a table; keep base table-free and near-zero
+    // body jaccard so short-base catalog × related long table next that Word
+    // nests stays off this path when vocab overlap is non-trivial.
+    if settings.merge_replaced_paragraphs
+        && (1..=2).contains(&n1)
+        && n2 >= 2
+        && !has_table(cu1)
+        && has_table(cu2)
+        && {
+            let b1 = para_text_tokens_from_units(dom, cu1);
+            let b2 = para_text_tokens_from_units(dom, cu2);
+            let sig1 = significant_tokens(&b1);
+            // Slightly wider sig cap than M315 (≤8): technicolor highlight line
+            // is ~9 significant tokens (≥4 chars).
+            !b1.is_empty() && sig1.len() <= 12 && token_jaccard(&b1, &b2) + 1e-12 < 0.05
+        }
+    {
+        return Some(vec![
+            CorrelatedSequence::inserted(cu2.to_vec()),
+            CorrelatedSequence::deleted(cu1.to_vec()),
+        ]);
+    }
     // M402 (complex2×fields_test ~85.8): short alpha-list base ("ONE"/"a") ×
     // fields next with "html input type". Full LCS EQ-matches empties and leaves
     // pure-I html after pure-D ONE (IIDDI). Word free-meshes html×ONE (IIIMD).
