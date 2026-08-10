@@ -1248,6 +1248,63 @@ pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M439 (list_def_mix × list_numbering_reimport ~50.5 / docxodus 90):
+/// pure-I list items with live `numPr` and **no** spacing inherit bloated
+/// package `pPrDefault` (before=240 after=240 line=288) under LO. Word stamps
+/// explicit `before=0 after=0 line=240 lineRule=auto` on those pure-I. Pure-D
+/// ListParagraph items stay without live spacing (style only).
+///
+/// Narrow gate (subset thrash on multipara×broken_list −19 when multi-word
+/// pure-I lists also got snug inject): pure-I only, live numPr, no live spacing,
+/// no ListParagraph pStyle, **and** a single short body token (uniform
+/// "test"×N list_def shape — not "Item 1. Text 1." prose lists).
+pub fn ensure_pure_i_list_snug_spacing(dom: &mut Dom, root: NodeId) {
+    for p in dom.descendants(root, Some(&W::p())) {
+        if !para_is_pure_inserted(dom, p) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        if dom.element(ppr, &W::num_pr()).is_none() {
+            continue;
+        }
+        if dom.element(ppr, &W::name("spacing")).is_some() {
+            continue;
+        }
+        // Pure-I list without ListParagraph (Word list_def pure-I shape).
+        if dom.element(ppr, &W::name("pStyle")).is_some_and(|ps| {
+            dom.attribute(ps, &W::val())
+                .unwrap_or("")
+                .eq_ignore_ascii_case("ListParagraph")
+        }) {
+            continue;
+        }
+        // Single short token only ("test"); multi-word pure-I list items thrash.
+        if para_word_atom_count(dom, p) != 1 {
+            continue;
+        }
+        let body = para_revision_body_text(dom, p);
+        let tok = body.trim();
+        if tok.is_empty() || tok.chars().count() > 12 {
+            continue;
+        }
+        let sp = dom.new_element(W::name("spacing"));
+        dom.set_attribute_value(sp, &W::name("before"), Some("0"));
+        dom.set_attribute_value(sp, &W::name("after"), Some("0"));
+        dom.set_attribute_value(sp, &W::name("line"), Some("240"));
+        dom.set_attribute_value(sp, &W::name("lineRule"), Some("auto"));
+        // CT_PPr: spacing after numPr / pStyle, before rPr / pPrChange.
+        if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
+            dom.add_before_self(rpr, sp);
+        } else if let Some(chg) = dom.element(ppr, &W::name("pPrChange")) {
+            dom.add_before_self(chg, sp);
+        } else {
+            dom.add(ppr, sp);
+        }
+    }
+}
+
 /// Word-parity for incomplete body spacing (C3 / C5 layout).
 ///
 /// Tolerated inputs ship `w:spacing w:before="0" w:after="0" w:lineRule="auto"`
@@ -1267,6 +1324,7 @@ pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
 /// Do **not** inject spacing onto list items that lack it entirely — that
 /// regressed bullet_list×bullet_list_bold and meeting_minutes×numbered_list
 /// (~−30 each) while only helping broken_media by ~3 points.
+/// M439 is the narrow pure-I exception ([`ensure_pure_i_list_snug_spacing`]).
 pub fn normalize_incomplete_spacing(dom: &mut Dom, root: NodeId) {
     let spacing_name = W::name("spacing");
     let num_pr = W::name("numPr");

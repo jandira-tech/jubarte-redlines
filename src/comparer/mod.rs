@@ -637,6 +637,8 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::strip_redundant_normal_pstyle_and_bidi(dom, root);
         // C3/C5: incomplete lineRule=auto spacing → Word single-line or strip.
         finalize::normalize_incomplete_spacing(dom, root);
+        // M439: pure-I numPr list items get Word snug spacing 0/0/240 when bare.
+        finalize::ensure_pure_i_list_snug_spacing(dom, root);
         // NOTE: do not blanket-strip pure-del spacing — delete-heavy winners
         // (file_14/file_69) need source before/after for LO page parity.
         // file_33 residual pure-D spacing: M67 strips Heading residual only.
