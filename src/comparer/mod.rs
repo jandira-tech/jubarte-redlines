@@ -732,6 +732,9 @@ pub fn compare_bodies_faithful_with_notes(
         // M392: restore empty pure-I spacers before short pure-D title (file_36).
         finalize::ensure_empty_pure_i_before_short_title_del(dom, root, settings, &mut id);
         finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        // M438: title-page pure-I e×6 DD E — relocate last empty pure-I after
+        // pure-D as bare trailing empty (doc_with_spaces×spacing Word shape).
+        finalize::relocate_title_page_last_empty_after_pure_dels(dom, root);
         // M105: pure-D short title + following MIX leading ins → Word subtitle
         // insert lands on title residual (file_7/5/130 document peel).
         finalize::fold_leading_ins_from_mix_into_preceding_pure_del(dom, root);

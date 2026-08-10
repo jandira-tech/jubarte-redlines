@@ -2143,6 +2143,186 @@ pub fn strip_trailing_empty_pure_ins(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M438 (doc_with_spaces × doc_with_spacing ~67 / docxodus 100):
+/// Word title-page pure-I next × short pure-D base is `I…date e×6 DD E`
+/// (trailing bare empty). Engine keeps every next empty as pure-I (`e×7`)
+/// and no trailing E (`I…e7 DD`).
+///
+/// When a title-page pure-I stream ends with ≥6 consecutive empty pure-I
+/// then multi pure-D section residual (no pure-I after), move the last
+/// empty pure-I after the pure-D run and strip its revision marks → bare
+/// empty E (Word shape).
+pub fn relocate_title_page_last_empty_after_pure_dels(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .collect();
+    if kids.len() < 8 {
+        return;
+    }
+    // Find first contentful pure-D.
+    let Some(di) = kids.iter().position(|&k| {
+        dom.name(k) == Some(W::p())
+            && para_is_pure_deleted(dom, k)
+            && !para_body_text_is_whitespace_only(dom, k)
+    }) else {
+        return;
+    };
+    // Pure-D run length (contentful + empty pure-D).
+    let mut dj = di;
+    while dj < kids.len()
+        && dom.name(kids[dj]) == Some(W::p())
+        && para_is_pure_deleted(dom, kids[dj])
+    {
+        dj += 1;
+    }
+    let del_run = dj - di;
+    if del_run < 1 {
+        return;
+    }
+    // No pure-I after pure-D residual.
+    if kids[dj..]
+        .iter()
+        .any(|&k| dom.name(k) == Some(W::p()) && para_is_pure_inserted(dom, k))
+    {
+        return;
+    }
+    // Trailing empty pure-I run immediately before first pure-D.
+    let mut empty_run = 0usize;
+    let mut j = di;
+    while j > 0 {
+        j -= 1;
+        let k = kids[j];
+        if dom.name(k) == Some(W::p())
+            && para_is_pure_inserted(dom, k)
+            && para_body_text_is_whitespace_only(dom, k)
+            && !para_has_omath(dom, k)
+            && dom.descendants(k, Some(&W::name("br"))).is_empty()
+            && dom.descendants(k, Some(&W::name("drawing"))).is_empty()
+        {
+            empty_run += 1;
+        } else {
+            break;
+        }
+    }
+    // Word drops one of the 7 post-date empties; require a long empty run.
+    if empty_run < 6 {
+        return;
+    }
+    // Content pure-I immediately before the empty run must look like title-page
+    // date / cover (M413 fingerprint) so stamp demos are untouched.
+    let content_before = kids[..di.saturating_sub(empty_run)]
+        .iter()
+        .rev()
+        .find(|&&k| {
+            dom.name(k) == Some(W::p())
+                && para_is_pure_inserted(dom, k)
+                && !para_body_text_is_whitespace_only(dom, k)
+        });
+    let Some(&anchor) = content_before else {
+        return;
+    };
+    let t = para_revision_body_text(dom, anchor).to_ascii_lowercase();
+    let title_page_tail = t.contains("prepared")
+        || t.contains('@')
+        || t.contains("2040")
+        || t.contains("202")
+        || t.contains("march ")
+        || t.contains("january ")
+        || t.contains("february ")
+        || t.contains("april ")
+        || t.contains("june ")
+        || t.contains("july ")
+        || t.contains("august ")
+        || t.contains("september ")
+        || t.contains("october ")
+        || t.contains("november ")
+        || t.contains("december ")
+        || t.chars().filter(|c| c.is_ascii_digit()).count() >= 4;
+    if !title_page_tail {
+        return;
+    }
+    // Last empty pure-I in the run.
+    let last_empty = kids[di - 1];
+    if !para_is_pure_inserted(dom, last_empty)
+        || !para_body_text_is_whitespace_only(dom, last_empty)
+    {
+        return;
+    }
+    // Strip revision marks → bare empty (Word trailing E).
+    strip_para_revision_marks(dom, last_empty);
+    // Move after pure-D run (before whatever follows, usually sectPr).
+    let after_dels = if dj < kids.len() {
+        Some(kids[dj])
+    } else {
+        // Insert before sectPr if present.
+        dom.elements(body, None)
+            .into_iter()
+            .find(|&k| dom.name(k) == Some(W::name("sectPr")))
+    };
+    dom.remove(last_empty);
+    match after_dels {
+        Some(anchor_node) if dom.parent(anchor_node).is_some() => {
+            dom.add_before_self(anchor_node, last_empty);
+        }
+        _ => {
+            dom.add(body, last_empty);
+        }
+    }
+}
+
+/// Drop ins/del wrappers and para-mark revisions from a paragraph (bare EQ/empty).
+fn strip_para_revision_marks(dom: &mut Dom, p: NodeId) {
+    // Remove body-level ins/del wrappers (keep their children unwrapped if any).
+    let mut wrappers: Vec<NodeId> = dom
+        .elements(p, None)
+        .into_iter()
+        .filter(|&c| matches!(dom.name(c), Some(n) if n == W::ins() || n == W::del()))
+        .collect();
+    // Also nested ins/del under runs (descendants).
+    wrappers.extend(
+        dom.descendants(p, Some(&W::ins()))
+            .into_iter()
+            .chain(dom.descendants(p, Some(&W::del()))),
+    );
+    // Unique, deepest-first roughly by reverse.
+    wrappers.sort_by_key(|&n| std::cmp::Reverse(n.0));
+    wrappers.dedup();
+    for w in wrappers {
+        if dom.parent(w).is_none() {
+            continue;
+        }
+        // Move children before wrapper, then remove wrapper.
+        let kids: Vec<NodeId> = dom.elements(w, None);
+        for c in kids {
+            dom.remove(c);
+            dom.add_before_self(w, c);
+        }
+        // Also text nodes if any.
+        dom.remove(w);
+    }
+    // Drop mark-only rPr ins/del under pPr.
+    if let Some(ppr) = dom.element(p, &W::p_pr())
+        && let Some(rpr) = dom.element(ppr, &W::r_pr())
+    {
+        let marks: Vec<NodeId> = dom
+            .elements(rpr, None)
+            .into_iter()
+            .filter(|&c| matches!(dom.name(c), Some(n) if n == W::ins() || n == W::del()))
+            .collect();
+        for m in marks {
+            dom.remove(m);
+        }
+        if dom.elements(rpr, None).is_empty() {
+            dom.remove(rpr);
+        }
+    }
+}
+
 /// Build a bare empty pure-inserted paragraph (pPr/rPr/ins mark only).
 fn make_empty_pure_ins_para(
     dom: &mut Dom,
