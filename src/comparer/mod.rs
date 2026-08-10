@@ -790,6 +790,9 @@ pub fn compare_bodies_faithful_with_notes(
         // residual A del still wholesale against B body2). M459 thrash guards
         // via shared_sig/min_sig ≥ 0.35 + eligible-token LCS.
         finalize::free_mesh_wholesale_body_mix(dom, root);
+        // M463: fold bare boiler EQ (` text `) between consecutive ins and
+        // attach trailing bare `.` onto last ins/del (right_align p2 Word shape).
+        finalize::fold_boiler_eq_between_ins(dom, root);
         // M393 late: re-apply after free-mesh peels thrash LCS interleave.
         finalize::interleave_list_cluster_after_coalesce(dom, root);
         // M376: after merge/park peels — strip list line=240/jc that mid pure-D
