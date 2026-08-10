@@ -5938,6 +5938,37 @@ pub fn interleave_list_cluster_after_coalesce(dom: &mut Dom, root: NodeId) {
     if i_end >= 2 && !rest_i_all_short_labels {
         return;
     }
+    // M428 (list_def_mix × list_numbering_reimport): pure-I stream is uniform
+    // single-token items ("test"×4). M404 short-label gate is true for "test"
+    // (1 token) so interleave rewrote Word IIIIDDD… into I D-cluster I-rest D-rest
+    // (score ~52 vs docxodus 90). Word keeps wholesale pure-I then pure-D when
+    // every pure-I body is the same single token — skip interleave.
+    let pure_i_uniform_single_token = {
+        let mut first: Option<String> = None;
+        let mut ok = i_end >= 2;
+        for &p in &kids[..i_end] {
+            let t = para_revision_body_text(dom, p)
+                .split_whitespace()
+                .map(str::to_ascii_lowercase)
+                .collect::<Vec<_>>();
+            if t.len() != 1 {
+                ok = false;
+                break;
+            }
+            match &first {
+                None => first = Some(t[0].clone()),
+                Some(f) if f != &t[0] => {
+                    ok = false;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        ok && first.is_some()
+    };
+    if pure_i_uniform_single_token {
+        return;
+    }
     // First pure-D cluster end within dels: through nested then stop before
     // next top-level after saw_sub.
     let dels = &kids[i_end..d_end];

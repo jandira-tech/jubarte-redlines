@@ -5309,6 +5309,25 @@ pub fn detect_unrelated_sources_word_mode(
         let has_nested = cl.iter().any(|u| unit_para_ilvl(dom, u).unwrap_or(0) >= 1);
         // Shared short tokens ("a","text") inflate body_j ~0.17 without real
         // list relatedness — allow up to 0.25 when nested cluster cut exists.
+        //
+        // M428 (list_def_mix × list_numbering_reimport ~52.6 / docxodus 90):
+        // next is uniform single-token items ("test"×4) with near-zero body_j.
+        // M393 mid-splice (I + D-cluster + I-rest + D-rest) is wrong — Word
+        // pure-I's all next then pure-D base (IIIIDDD…). Skip nested peel when
+        // next is uniform short tokens and body_j is M308c-class; fall through
+        // to M308c wholesale pure-I/D.
+        let next_uniform_short = {
+            let first = cr
+                .first()
+                .map(|u| para_text_token_list(dom, u))
+                .unwrap_or_default();
+            !cr.is_empty()
+                && first.len() == 1
+                && cr.iter().all(|u| {
+                    let t = para_text_token_list(dom, u);
+                    t.len() == 1 && t[0].eq_ignore_ascii_case(&first[0])
+                })
+        };
         if body_j + 1e-12 < 0.25
             && mostly_list(&cl)
             && mostly_list(&cr)
@@ -5318,6 +5337,7 @@ pub fn detect_unrelated_sources_word_mode(
             && cut >= 2
             && cut < cu1.len()
             && !cu2.is_empty()
+            && !(next_uniform_short && body_j + 1e-12 < 0.12)
         {
             let mut out = Vec::new();
             // Four sequences (not one-per-para): keeps Word interleave through
