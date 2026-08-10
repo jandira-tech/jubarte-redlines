@@ -64,7 +64,7 @@ pub fn produce_document(
     // Split the stream into paragraphs: a pPr atom ends a paragraph.
     let mut para: Vec<TaggedAtom> = Vec::new();
     for t in tagged {
-        let is_ppr = dom.name(t.atom.content_element) == Some(W::p_pr());
+        let is_ppr = dom.name_is(t.atom.content_element, &W::p_pr());
         if is_ppr {
             let p = build_paragraph(dom, &para, t, settings);
             dom.add(body, p);
@@ -98,7 +98,7 @@ fn build_paragraph(
     let p = dom.new_element(W::p());
 
     // Carry the paragraph's pPr (clone the content element if it's a real pPr).
-    if dom.name(ppr_atom.atom.content_element) == Some(W::p_pr())
+    if dom.name_is(ppr_atom.atom.content_element, &W::p_pr())
         && dom.has_elements(ppr_atom.atom.content_element)
     {
         let ppr = dom.clone_subtree(ppr_atom.atom.content_element);
@@ -239,7 +239,7 @@ pub fn flatten_to_comparison_unit_atom_list(
                     let mut atom = a.clone();
                     atom.correlation_status = CorrelationStatus::Equal;
                     atom.content_element_before = Some(b.content_element);
-                    atom.comparison_unit_atom_before = Some(Box::new(b.clone()));
+                    atom.comparison_unit_atom_before = Some(std::sync::Arc::new(b.clone()));
                     out.push(atom);
                 }
             }
@@ -264,7 +264,7 @@ pub fn flatten_to_comparison_unit_atom_list(
 }
 
 fn is_ppr_atom(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
-    dom.name(atom.content_element) == Some(W::p_pr())
+    dom.name_is(atom.content_element, &W::p_pr())
 }
 fn atom_in_textbox(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
     let txbx = W::txbx_content();
@@ -339,9 +339,12 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
     };
 
     // ── Phase B (reverse) ──────────────────────────────────────────────────────
-    let mut current: Option<Vec<String>> = None;
+    let mut current: Option<std::sync::Arc<[String]>> = None;
     // PATH-01: track the shared Arc chain (not a cloned Vec).
     let mut current_elems: Option<std::sync::Arc<[NodeId]>> = None;
+    // PRODUCE-UNID-01: atoms of one run share an ancestor_elements Arc — reuse
+    // the chain built for the previous atom instead of rebuilding per atom.
+    let mut memo: Option<(std::sync::Arc<[NodeId]>, std::sync::Arc<[String]>)> = None;
     for atom in atoms.iter_mut().rev() {
         if is_ppr_atom(dom, atom) && !atom_in_textbox(dom, atom) {
             let mut cur: Vec<String> = atom
@@ -354,9 +357,11 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
             {
                 *first = d.clone();
             }
-            atom.ancestor_unids = Some(cur.clone());
+            let cur: std::sync::Arc<[String]> = cur.into();
+            atom.ancestor_unids = Some(std::sync::Arc::clone(&cur));
             current = Some(cur);
             current_elems = Some(std::sync::Arc::clone(&atom.ancestor_elements));
+            memo = None;
         } else {
             let prefix = current.clone().unwrap_or_default();
             // Borrow the following paragraph's Unid prefix to bridge MATCHED A/B
@@ -369,6 +374,12 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
             // content in a run (`w:p` inside `w:r`, Word "unreadable",
             // sd-2672-nested-table_sd-2672-sdt-table). Name-based (not NodeId
             // identity) so cross-tree matched paragraphs still share a Unid (m21).
+            if let Some((elems, unids)) = &memo
+                && std::sync::Arc::ptr_eq(elems, &atom.ancestor_elements)
+            {
+                atom.ancestor_unids = Some(std::sync::Arc::clone(unids));
+                continue;
+            }
             let prev_elems = current_elems.clone().unwrap_or_default();
             let mut share = 0usize;
             while share < prefix.len()
@@ -387,25 +398,33 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
             {
                 *first = d.clone();
             }
+            let full: std::sync::Arc<[String]> = full.into();
+            memo = Some((
+                std::sync::Arc::clone(&atom.ancestor_elements),
+                std::sync::Arc::clone(&full),
+            ));
             atom.ancestor_unids = Some(full);
         }
     }
 
     // ── Phase C (reverse, text-box fix) ─────────────────────────────────────────
-    let mut current: Option<Vec<String>> = None;
+    let mut current: Option<std::sync::Arc<[String]>> = None;
     let mut skip_until_ppr = false;
+    let mut memo: Option<(std::sync::Arc<[NodeId]>, std::sync::Arc<[String]>)> = None;
     for atom in atoms.iter_mut().rev() {
         if let Some(cur) = &current
             && atom.ancestor_elements.len() < cur.len()
         {
             skip_until_ppr = true;
             current = None;
+            memo = None;
             continue;
         }
         if is_ppr_atom(dom, atom) {
             if !atom_in_textbox(dom, atom) {
                 skip_until_ppr = true;
                 current = None;
+                memo = None;
                 continue;
             }
             // text-box pPr: rebuild prefix (must already have Unids — Phase B minted them)
@@ -418,25 +437,38 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
                         .expect("text-box pPr ancestor must have a Unid (Phase B)")
                 })
                 .collect();
-            atom.ancestor_unids = Some(cur.clone());
+            let cur: std::sync::Arc<[String]> = cur.into();
+            atom.ancestor_unids = Some(std::sync::Arc::clone(&cur));
             current = Some(cur);
             skip_until_ppr = false;
+            memo = None;
             continue;
         }
         if skip_until_ppr {
             continue;
         }
         if let Some(cur) = &current {
+            if let Some((elems, unids)) = &memo
+                && std::sync::Arc::ptr_eq(elems, &atom.ancestor_elements)
+            {
+                atom.ancestor_unids = Some(std::sync::Arc::clone(unids));
+                continue;
+            }
             let extra: Vec<NodeId> = atom
                 .ancestor_elements
                 .iter()
                 .skip(cur.len())
                 .copied()
                 .collect();
-            let mut full = cur.clone();
+            let mut full: Vec<String> = cur.as_ref().to_vec();
             for ae in extra {
                 full.push(unid_or_mint(dom, ae));
             }
+            let full: std::sync::Arc<[String]> = full.into();
+            memo = Some((
+                std::sync::Arc::clone(&atom.ancestor_elements),
+                std::sync::Arc::clone(&full),
+            ));
             atom.ancestor_unids = Some(full);
         }
     }
@@ -556,9 +588,11 @@ pub fn coalesce_recurse(
     // directly under <w:sdtContent>). Keying on element-name too keeps the divergent
     // structures separate. (sd-2672-nested-table_sd-2672-sdt-table.)
     let dref: &Dom = dom;
+    // Tuple key, not format!("{u}|{nm}") — the concat + re-split was a
+    // measurable slice of produce-phase hashing/allocation.
     let grouped = group_by_key_stable(atoms, |ca| {
         if level >= ca.ancestor_elements.len() {
-            return String::new();
+            return (String::new(), String::new());
         }
         let u = ca
             .ancestor_unids
@@ -566,15 +600,15 @@ pub fn coalesce_recurse(
             .and_then(|u| u.get(level).cloned())
             .unwrap_or_default();
         if u.is_empty() {
-            return String::new();
+            return (String::new(), String::new());
         }
         let nm = dref
             .name(ca.ancestor_elements[level])
             .map(|n| n.local_name().to_string())
             .unwrap_or_default();
-        format!("{u}|{nm}")
+        (u, nm)
     });
-    let grouped: Vec<_> = grouped.into_iter().filter(|(k, _)| !k.is_empty()).collect();
+    let grouped: Vec<_> = grouped.into_iter().filter(|(k, _)| !k.0.is_empty()).collect();
     if grouped.is_empty() {
         return Vec::new();
     }
@@ -586,7 +620,7 @@ pub fn coalesce_recurse(
 
         // Step 3 — group children by (next-level unid | status), txbx → Equal.
         let groupedchildren = group_adjacent(g.iter().cloned(), |gc| {
-            let mut key = if level < gc.ancestor_elements.len() - 1 {
+            let key = if level < gc.ancestor_elements.len() - 1 {
                 gc.ancestor_unids
                     .as_ref()
                     .and_then(|u| u.get(level + 1).cloned())
@@ -599,9 +633,7 @@ pub fn coalesce_recurse(
             } else {
                 status_str(gc.correlation_status)
             };
-            key.push('|');
-            key.push_str(st);
-            key
+            (key, st)
         });
 
         // w:p
@@ -612,12 +644,10 @@ pub fn coalesce_recurse(
                     dom.set_attribute_value(p, &an, Some(&av));
                 }
             }
-            // gkey is now "unid|elementName"; store only the Unid (scratch).
-            let unid = gkey.split('|').next().unwrap_or(&gkey);
-            dom.set_attribute_value(p, &PT::unid(), Some(unid));
+            // Tuple key: .0 is the Unid (scratch).
+            dom.set_attribute_value(p, &PT::unid(), Some(&gkey.0));
             for (key, gc) in &groupedchildren {
-                let spl: Vec<&str> = key.splitn(2, '|').collect();
-                if spl[0].is_empty() {
+                if key.0.is_empty() {
                     for gcc in gc {
                         let dup = dom.clone_subtree(gcc.content_element);
                         tag_status(dom, dup, gcc.correlation_status, gcc);
@@ -661,8 +691,7 @@ pub fn coalesce_recurse(
                 dom.add(r, rpr_clone);
             }
             for (key, gc) in &groupedchildren {
-                let spl: Vec<&str> = key.splitn(2, '|').collect();
-                if spl[0].is_empty() {
+                if key.0.is_empty() {
                     for gcc in gc {
                         let dup = dom.clone_subtree(gcc.content_element);
                         tag_status(dom, dup, gcc.correlation_status, gcc);

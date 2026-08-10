@@ -244,6 +244,7 @@ fn get_hierarchical_comparison_units(
                 sha1_hash: sha1,
                 correlated_sha1_hash: correlated,
                 structure_sha1_hash: structure,
+                atom_count_memo: std::cell::Cell::new(usize::MAX),
             }));
         }
     }

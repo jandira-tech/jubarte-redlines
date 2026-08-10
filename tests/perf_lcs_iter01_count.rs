@@ -30,6 +30,7 @@ fn group(gt: ComparisonUnitGroupType, contents: Vec<ComparisonUnit>) -> Comparis
         sha1_hash: String::new(),
         correlated_sha1_hash: None,
         structure_sha1_hash: None,
+        atom_count_memo: std::cell::Cell::new(usize::MAX),
     })
 }
 

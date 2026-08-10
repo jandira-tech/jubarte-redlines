@@ -21,7 +21,7 @@ pub fn get_run_properties_from_atom(dom: &Dom, atom: &ComparisonUnitAtom) -> Opt
         .ancestor_elements
         .iter()
         .copied()
-        .find(|&a| dom.name(a) == Some(W::r()))?;
+        .find(|&a| dom.name_is(a, &W::r()))?;
     dom.element(r, &W::r_pr())
 }
 
@@ -247,7 +247,7 @@ fn projected_ppr_is_jc_only(dom: &Dom, ppr: NodeId) -> bool {
         .into_iter()
         .filter(|&c| !is_para_comparison_noise(dom, c))
         .collect();
-    kids.len() == 1 && dom.name(kids[0]) == Some(W::name("jc"))
+    kids.len() == 1 && dom.name_is(kids[0], &W::name("jc"))
 }
 
 /// First non-default `w:jc` child of a projected pPr, if any.
@@ -256,7 +256,7 @@ fn projected_ppr_jc(dom: &Dom, ppr: NodeId) -> Option<NodeId> {
         if is_para_comparison_noise(dom, c) {
             continue;
         }
-        if dom.name(c) == Some(W::name("jc")) {
+        if dom.name_is(c, &W::name("jc")) {
             let val = dom.attribute(c, &W::val()).unwrap_or("");
             if val != "left" && val != "start" {
                 return Some(c);
@@ -282,7 +282,7 @@ fn normalize_para_properties_without_jc(dom: &mut Dom, ppr: NodeId) -> String {
         if is_para_comparison_noise(dom, c) {
             continue;
         }
-        if dom.name(c) == Some(W::name("jc")) {
+        if dom.name_is(c, &W::name("jc")) {
             continue;
         }
         parts.push(prop_signature(dom, c));
@@ -300,7 +300,7 @@ fn projected_ppr_is_spacing_only(dom: &Dom, ppr: NodeId) -> bool {
         .into_iter()
         .filter(|&c| !is_para_comparison_noise(dom, c))
         .collect();
-    kids.len() == 1 && dom.name(kids[0]) == Some(W::name("spacing"))
+    kids.len() == 1 && dom.name_is(kids[0], &W::name("spacing"))
 }
 
 /// Project old-side pPr children for `w:pPrChange` (CT_PPrBase noise-stripped).
@@ -311,7 +311,7 @@ fn project_para_properties_for_change(dom: &mut Dom, ppr: NodeId) -> NodeId {
             continue;
         }
         // Schema-implicit defaults: jc left/start restates the default.
-        if dom.name(c) == Some(W::name("jc")) {
+        if dom.name_is(c, &W::name("jc")) {
             let val = dom.attribute(c, &W::val()).unwrap_or("");
             if val == "left" || val == "start" {
                 continue;
@@ -330,7 +330,7 @@ fn normalize_para_properties(dom: &mut Dom, ppr: NodeId) -> String {
         if is_para_comparison_noise(dom, c) {
             continue;
         }
-        if dom.name(c) == Some(W::name("jc")) {
+        if dom.name_is(c, &W::name("jc")) {
             let val = dom.attribute(c, &W::val()).unwrap_or("");
             if val == "left" || val == "start" {
                 continue;
@@ -404,10 +404,10 @@ fn detect_format_changes_impl(
         // non-empty). Ungated equality fired ~99 pPrChange on file_8 (Word: 0)
         // and cost −2.8 score — Word emits pPrChange sparingly (file_69 stamp
         // after=20 → empty is the canonical case).
-        if dom.name(atom.content_element) == Some(W::p_pr()) {
+        if dom.name_is(atom.content_element, &W::p_pr()) {
             let old_ppr = before.content_element;
             let new_ppr = atom.content_element;
-            if dom.name(old_ppr) == Some(W::p_pr())
+            if dom.name_is(old_ppr, &W::p_pr())
                 && !are_para_properties_equal(dom, old_ppr, new_ppr)
             {
                 let projected_old = project_para_properties_for_change(dom, old_ppr);
@@ -476,13 +476,13 @@ fn detect_format_changes_impl(
         // differing mark `pPr/rPr` so finalize can nest `w:rPrChange` under
         // live mark rPr (Word: Aptos/b/sz20/u → sz32).
         let old_mark_rpr = atoms[i].comparison_unit_atom_before.as_ref().and_then(|b| {
-            if dom.name(b.content_element) == Some(W::p_pr()) {
+            if dom.name_is(b.content_element, &W::p_pr()) {
                 dom.element(b.content_element, &W::r_pr())
             } else {
                 None
             }
         });
-        let new_mark_rpr = if dom.name(atoms[i].content_element) == Some(W::p_pr()) {
+        let new_mark_rpr = if dom.name_is(atoms[i].content_element, &W::p_pr()) {
             dom.element(atoms[i].content_element, &W::r_pr())
         } else {
             None
@@ -627,7 +627,7 @@ mod format_change_cache_tests {
         for _ in 0..1500 {
             let mut a = run_atom(&mut dom, props);
             let before = run_atom(&mut dom, props);
-            a.comparison_unit_atom_before = Some(Box::new(before));
+            a.comparison_unit_atom_before = Some(std::sync::Arc::new(before));
             atoms.push(a);
         }
         // Pin the production arena at its exact fill (capacity == length). Any push
@@ -690,7 +690,7 @@ mod format_change_cache_tests {
         for (before_props, after_props) in specs {
             let mut a = run_atom(&mut dom, after_props);
             let before = run_atom(&mut dom, before_props);
-            a.comparison_unit_atom_before = Some(Box::new(before));
+            a.comparison_unit_atom_before = Some(std::sync::Arc::new(before));
             atoms.push(a);
         }
         let settings = WmlComparerSettings::default();

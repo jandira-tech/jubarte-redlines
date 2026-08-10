@@ -136,9 +136,14 @@ pub struct ComparisonUnitAtom {
     pub content_element_before: Option<NodeId>,
     /// The corresponding "before" atom on an Equal pair (carries its own ancestor
     /// chain — used by AssembleAncestorUnids Phase A and format-change detection).
-    pub comparison_unit_atom_before: Option<Box<ComparisonUnitAtom>>,
+    /// Arc, not Box: the before-atom is write-once and read-only; cloning an
+    /// atom must not deep-copy its whole before-chain.
+    pub comparison_unit_atom_before: Option<std::sync::Arc<ComparisonUnitAtom>>,
     /// Reconciled ancestor Unids, parallel to `ancestor_elements` (M4.E.2).
-    pub ancestor_unids: Option<Vec<String>>,
+    /// PRODUCE-UNID-01: shared, immutable — every atom of a run points at one
+    /// allocation, and atom clones are pointer bumps instead of Vec<String>
+    /// deep copies.
+    pub ancestor_unids: Option<std::sync::Arc<[String]>>,
     /// The `w:del`/`w:ins`/`w:moveFrom`/`w:moveTo` (or `pPr/rPr/{del|ins}`)
     /// element that gave this atom its initial status (`GetRevisionTracking…`).
     pub rev_track_element: Option<NodeId>,
@@ -229,6 +234,11 @@ pub struct ComparisonUnitGroup {
     pub correlated_sha1_hash: Option<String>,
     /// `pt:StructureSHA1Hash` — only stamped on `w:tbl`/`w:tr` (M4.0/M4.D).
     pub structure_sha1_hash: Option<String>,
+    /// Lazily memoized [`ComparisonUnit::descendant_content_atoms_count`] —
+    /// `usize::MAX` = not yet computed. `contents` never mutates after
+    /// construction, so the count is stable. ~19% of a pdense run was spent
+    /// recomputing this recursively in LCS threshold checks.
+    pub atom_count_memo: std::cell::Cell<usize>,
 }
 
 /// A comparison unit — a word or a group (atoms live inside words).
@@ -293,11 +303,19 @@ impl ComparisonUnit {
     pub fn descendant_content_atoms_count(&self) -> usize {
         match self {
             ComparisonUnit::Word(w) => w.contents.len(),
-            ComparisonUnit::Group(g) => g
-                .contents
-                .iter()
-                .map(ComparisonUnit::descendant_content_atoms_count)
-                .sum(),
+            ComparisonUnit::Group(g) => {
+                let memo = g.atom_count_memo.get();
+                if memo != usize::MAX {
+                    return memo;
+                }
+                let n = g
+                    .contents
+                    .iter()
+                    .map(ComparisonUnit::descendant_content_atoms_count)
+                    .sum();
+                g.atom_count_memo.set(n);
+                n
+            }
         }
     }
     fn collect_atoms<'a>(&'a self, out: &mut Vec<&'a ComparisonUnitAtom>) {
@@ -308,6 +326,46 @@ impl ComparisonUnit {
                     c.collect_atoms(out);
                 }
             }
+        }
+    }
+    /// LCS-ITER-01 — visit every atom in [`Self::descendant_atoms`] order
+    /// WITHOUT allocating the vector. `f` returns `false` to stop early;
+    /// the method returns `false` iff a visit stopped it.
+    pub fn try_for_each_atom<'a>(
+        &'a self,
+        f: &mut impl FnMut(&'a ComparisonUnitAtom) -> bool,
+    ) -> bool {
+        match self {
+            ComparisonUnit::Word(w) => {
+                for a in &w.contents {
+                    if !f(a) {
+                        return false;
+                    }
+                }
+                true
+            }
+            ComparisonUnit::Group(g) => {
+                for c in &g.contents {
+                    if !c.try_for_each_atom(f) {
+                        return false;
+                    }
+                }
+                true
+            }
+        }
+    }
+    /// First atom under this unit in document order, without allocating.
+    pub fn first_atom(&self) -> Option<&ComparisonUnitAtom> {
+        match self {
+            ComparisonUnit::Word(w) => w.contents.first(),
+            ComparisonUnit::Group(g) => g.contents.iter().find_map(ComparisonUnit::first_atom),
+        }
+    }
+    /// Last atom under this unit in document order, without allocating.
+    pub fn last_atom(&self) -> Option<&ComparisonUnitAtom> {
+        match self {
+            ComparisonUnit::Word(w) => w.contents.last(),
+            ComparisonUnit::Group(g) => g.contents.iter().rev().find_map(ComparisonUnit::last_atom),
         }
     }
 }

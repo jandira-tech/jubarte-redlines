@@ -227,7 +227,7 @@ fn m4_g5_detect_format() {
     before_atom.correlation_status = CorrelationStatus::Equal;
     let mut atom = ComparisonUnitAtom::new(after_t, vec![after_r, after_t], "h");
     atom.correlation_status = CorrelationStatus::Equal;
-    atom.comparison_unit_atom_before = Some(Box::new(before_atom));
+    atom.comparison_unit_atom_before = Some(std::sync::Arc::new(before_atom));
 
     let mut atoms = vec![atom];
     detect_format_changes_in_atom_list(&mut d, &mut atoms, &s);

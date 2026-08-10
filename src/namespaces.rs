@@ -130,6 +130,12 @@ impl W {
     cached_xname!(W::URI, move_to_range_end, "moveToRangeEnd");
     cached_xname!(W::URI, sdt, "sdt");
     cached_xname!(W::URI, sdt_content, "sdtContent");
+    // NAME-01d: hottest remaining finalize/lcs locals (sectPr/pPrChange/
+    // spacing/… were still interning per call — thread-local pool hash each).
+    cached_xname!(W::URI, spacing_el, "spacing");
+    cached_xname!(W::URI, p_style, "pStyle");
+    cached_xname!(W::URI, jc_el, "jc");
+
     cached_xname!(W::URI, sdt_pr, "sdtPr");
     cached_xname!(W::URI, fld_char, "fldChar");
     cached_xname!(W::URI, instr_text, "instrText");

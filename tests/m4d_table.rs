@@ -29,6 +29,7 @@ fn grp(
         sha1_hash: sha.to_string(),
         correlated_sha1_hash: corr.map(|s| s.to_string()),
         structure_sha1_hash: None,
+        atom_count_memo: std::cell::Cell::new(usize::MAX),
     })
 }
 fn row(sha: &str, corr: Option<&str>) -> ComparisonUnit {

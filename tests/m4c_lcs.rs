@@ -209,6 +209,7 @@ fn group(gt: ComparisonUnitGroupType, contents: Vec<ComparisonUnit>, sha: &str) 
         sha1_hash: sha.to_string(),
         correlated_sha1_hash: None,
         structure_sha1_hash: None,
+        atom_count_memo: std::cell::Cell::new(usize::MAX),
     })
 }
 fn unk(a: Vec<ComparisonUnit>, b: Vec<ComparisonUnit>) -> CorrelatedSequence {
@@ -296,6 +297,7 @@ fn group_corr(
         sha1_hash: sha.to_string(),
         correlated_sha1_hash: Some(corr.to_string()),
         structure_sha1_hash: None,
+        atom_count_memo: std::cell::Cell::new(usize::MAX),
     })
 }
 

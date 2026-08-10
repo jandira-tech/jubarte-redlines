@@ -122,7 +122,7 @@ use crate::xmllinq::Dom;
 
 // ── para-mark predicates (M4.C.4) ────────────────────────────────────────────
 fn atom_is_ppr(dom: &Dom, a: &ComparisonUnitAtom) -> bool {
-    dom.name(a.content_element) == Some(W::p_pr())
+    dom.name_is(a.content_element, &W::p_pr())
 }
 /// A `ComparisonUnitWord` of exactly one atom which is a `w:pPr` (a bare para mark).
 fn unit_is_single_atom_ppr(dom: &Dom, u: &ComparisonUnit) -> bool {
@@ -132,40 +132,47 @@ fn unit_is_single_atom_ppr(dom: &Dom, u: &ComparisonUnit) -> bool {
 /// True when this unit's enclosing `w:p` carries live `w:numPr` (list item).
 fn unit_para_has_numpr(dom: &Dom, u: &ComparisonUnit) -> bool {
     let p_name = W::name("p");
-    let num_pr = W::name("numPr");
-    for atom in u.descendant_atoms() {
+    let num_pr = W::num_pr();
+    let mut found = false;
+    u.try_for_each_atom(&mut |atom| {
         for &ae in atom.ancestor_elements.iter() {
-            if dom.name(ae) != Some(p_name.clone()) {
+            if !dom.name_is(ae, &p_name.clone()) {
                 continue;
             }
             if let Some(ppr) = dom.element(ae, &W::p_pr()) {
-                return dom.element(ppr, &num_pr).is_some();
+                found = dom.element(ppr, &num_pr).is_some();
             }
             return false;
         }
-    }
-    false
+        true
+    });
+    found
 }
 
 /// `w:ilvl` of this unit's enclosing paragraph, if any.
 fn unit_para_ilvl(dom: &Dom, u: &ComparisonUnit) -> Option<u32> {
     let p_name = W::name("p");
-    let num_pr = W::name("numPr");
+    let num_pr = W::num_pr();
     let ilvl_name = W::name("ilvl");
-    for atom in u.descendant_atoms() {
+    let mut out: Option<u32> = None;
+    u.try_for_each_atom(&mut |atom| {
         for &ae in atom.ancestor_elements.iter() {
-            if dom.name(ae) != Some(p_name.clone()) {
+            if !dom.name_is(ae, &p_name.clone()) {
                 continue;
             }
-            let ppr = dom.element(ae, &W::p_pr())?;
-            let num = dom.element(ppr, &num_pr)?;
-            let Some(il) = dom.element(num, &ilvl_name) else {
-                return Some(0);
-            };
-            return dom.attribute(il, &W::val()).and_then(|v| v.parse().ok());
+            out = (|| {
+                let ppr = dom.element(ae, &W::p_pr())?;
+                let num = dom.element(ppr, &num_pr)?;
+                let Some(il) = dom.element(num, &ilvl_name) else {
+                    return Some(0);
+                };
+                dom.attribute(il, &W::val()).and_then(|v| v.parse().ok())
+            })();
+            return false;
         }
-    }
-    None
+        true
+    });
+    out
 }
 
 /// Exclusive end index of the **first list cluster** on a short-item base list.
@@ -178,7 +185,7 @@ fn first_list_cluster_end(dom: &Dom, cul: &[ComparisonUnit]) -> usize {
     let mut saw_sub = false;
     let mut end = 0usize;
     for (i, u) in cul.iter().enumerate() {
-        let empty = para_text_token_list(dom, u).is_empty();
+        let empty = !unit_has_text_token(dom, u);
         if empty {
             end = i + 1;
             continue;
@@ -214,11 +221,11 @@ fn legal_mid_splice_cut(dom: &Dom, cu: &[ComparisonUnit]) -> Option<usize> {
         let mut heading_level: Option<u32> = None;
         for a in u.descendant_atoms() {
             for &ae in a.ancestor_elements.iter() {
-                if dom.name(ae) != Some(W::name("p")) {
+                if !dom.name_is(ae, &W::name("p")) {
                     continue;
                 }
                 if let Some(ppr) = dom.element(ae, &W::p_pr())
-                    && let Some(ps) = dom.element(ppr, &W::name("pStyle"))
+                    && let Some(ps) = dom.element(ppr, &W::p_style())
                 {
                     let v = dom
                         .attribute(ps, &W::val())
@@ -345,24 +352,23 @@ fn looks_like_math_borderbox_doc(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
 /// General math doc (any m:oMath) — broader than borderbox.
 fn looks_like_math_doc(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     for u in cu.iter().take(30) {
-        if para_text_token_list(dom, u).is_empty() {
+        if !unit_has_text_token(dom, u) {
             continue;
         }
-        for a in u.descendant_atoms() {
+        let clean = u.try_for_each_atom(&mut |a| {
             if dom
                 .name(a.content_element)
                 .is_some_and(|n| n.local_name() == "oMath" || n.local_name() == "oMathPara")
             {
-                return true;
+                return false;
             }
-            for ae in a.ancestor_elements.iter().copied() {
-                if dom
-                    .name(ae)
+            !a.ancestor_elements.iter().copied().any(|ae| {
+                dom.name(ae)
                     .is_some_and(|n| n.local_name() == "oMath" || n.local_name() == "oMathPara")
-                {
-                    return true;
-                }
-            }
+            })
+        });
+        if !clean {
+            return true;
         }
     }
     false
@@ -641,17 +647,13 @@ fn short_item_list_groups(dom: &Dom, xs: &[&ComparisonUnit]) -> bool {
         return false;
     }
     xs.iter()
-        .all(|u| para_text_token_list(dom, u).len() <= SHORT_LIST_ITEM_MAX_CONTENT_UNITS)
+        .all(|u| unit_text_token_count(dom, u) <= SHORT_LIST_ITEM_MAX_CONTENT_UNITS)
 }
 fn unit_first_atom_is_ppr(dom: &Dom, u: &ComparisonUnit) -> bool {
-    u.descendant_atoms()
-        .first()
-        .is_some_and(|a| atom_is_ppr(dom, a))
+    u.first_atom().is_some_and(|a| atom_is_ppr(dom, a))
 }
 fn unit_last_atom_is_ppr(dom: &Dom, u: &ComparisonUnit) -> bool {
-    u.descendant_atoms()
-        .last()
-        .is_some_and(|a| atom_is_ppr(dom, a))
+    u.last_atom().is_some_and(|a| atom_is_ppr(dom, a))
 }
 /// Predicate for the I.1 partial-paragraph scan: a Word whose first atom is NOT a
 /// pPr (a word with no atoms counts as true, matching the TS).
@@ -778,7 +780,7 @@ fn unit_non_separator_text_len(
     match unit {
         ComparisonUnit::Word(w) => {
             for a in &w.contents {
-                if dom.name(a.content_element) == Some(W::t()) {
+                if dom.name_is(a.content_element, &W::t()) {
                     // ATOM-TEXT-01: borrow single-text-child leaves.
                     score += dom
                         .value_str(a.content_element)
@@ -916,7 +918,7 @@ fn longest_common_run_indexed(
 fn run_real_text_len(dom: &Dom, run: &[ComparisonUnit]) -> usize {
     run.iter()
         .flat_map(|u| u.descendant_atoms())
-        .filter(|a| dom.name(a.content_element) == Some(W::t()))
+        .filter(|a| dom.name_is(a.content_element, &W::t()))
         .map(|a| dom.value_str(a.content_element).trim().chars().count())
         .sum()
 }
@@ -930,7 +932,7 @@ fn run_non_separator_text_len(
 ) -> usize {
     run.iter()
         .flat_map(|u| u.descendant_atoms())
-        .filter(|a| dom.name(a.content_element) == Some(W::t()))
+        .filter(|a| dom.name_is(a.content_element, &W::t()))
         .map(|a| {
             // ATOM-TEXT-01: borrow single-char / single-text-child atoms.
             dom.value_str(a.content_element)
@@ -999,7 +1001,7 @@ fn first_contentful_para_text(dom: &Dom, cu: &[ComparisonUnit]) -> Option<String
     first_contentful_group_index(dom, cu).map(|i| {
         let mut text = String::new();
         for a in cu[i].descendant_atoms() {
-            if dom.name(a.content_element) == Some(W::t()) {
+            if dom.name_is(a.content_element, &W::t()) {
                 text.push_str(&dom.value_str(a.content_element));
             }
         }
@@ -1088,11 +1090,53 @@ fn shared_connector_tokens(
         .count()
 }
 
+/// TOKEN-PROBE-01b: `unit_text_token_count(dom, u)` without building the
+/// String or the Vec — tokens are maximal alphanumeric runs over the
+/// concatenated `w:t` atom text, so count into-token transitions with the
+/// in-token state carried across atom boundaries.
+fn unit_text_token_count(dom: &Dom, u: &ComparisonUnit) -> usize {
+    let mut count = 0usize;
+    let mut in_token = false;
+    u.try_for_each_atom(&mut |a| {
+        if dom.name_is(a.content_element, &W::t()) {
+            for c in dom.value_str(a.content_element).chars() {
+                if c.is_alphanumeric() {
+                    if !in_token {
+                        count += 1;
+                        in_token = true;
+                    }
+                } else {
+                    in_token = false;
+                }
+            }
+        }
+        true
+    });
+    count
+}
+
+/// TOKEN-PROBE-01: `unit_has_text_token(dom, u)` without
+/// building the concatenated String or the token Vec — the list is non-empty
+/// iff any `w:t` atom carries an alphanumeric char.
+fn unit_has_text_token(dom: &Dom, u: &ComparisonUnit) -> bool {
+    !u.try_for_each_atom(&mut |a| {
+        if dom.name_is(a.content_element, &W::t())
+            && dom
+                .value_str(a.content_element)
+                .chars()
+                .any(|c| c.is_alphanumeric())
+        {
+            return false;
+        }
+        true
+    })
+}
+
 /// Ordered tokens (lowercase alphanumeric) for last-significant-token match.
 fn para_text_token_list(dom: &Dom, u: &ComparisonUnit) -> Vec<String> {
     let mut text = String::new();
     for a in u.descendant_atoms() {
-        if dom.name(a.content_element) == Some(W::t()) {
+        if dom.name_is(a.content_element, &W::t()) {
             text.push_str(&dom.value_str(a.content_element));
         }
     }
@@ -1837,7 +1881,7 @@ fn para_text_tokens_from_units(
     let mut text = String::new();
     for u in units {
         for a in u.descendant_atoms() {
-            if dom.name(a.content_element) == Some(W::t()) {
+            if dom.name_is(a.content_element, &W::t()) {
                 text.push_str(&dom.value_str(a.content_element));
             }
         }
@@ -1876,7 +1920,7 @@ fn rehash_words_by_text_content_opts(dom: &Dom, units: &mut [ComparisonUnit], ca
         if let ComparisonUnit::Word(w) = u {
             let mut text = String::new();
             for a in &w.contents {
-                if dom.name(a.content_element) == Some(W::t()) {
+                if dom.name_is(a.content_element, &W::t()) {
                     text.push_str(&dom.value_str(a.content_element));
                 }
             }
@@ -2087,7 +2131,7 @@ fn residual_looks_like_colon_list(dom: &Dom, rest: &[ComparisonUnit]) -> bool {
         .filter(|u| {
             let mut text = String::new();
             for a in u.descendant_atoms() {
-                if dom.name(a.content_element) == Some(W::t()) {
+                if dom.name_is(a.content_element, &W::t()) {
                     text.push_str(&dom.value_str(a.content_element));
                 }
             }
@@ -2360,7 +2404,7 @@ pub fn do_lcs_algorithm(
                             let text: String = cu
                                 .descendant_atoms()
                                 .iter()
-                                .filter(|dca| dom.name(dca.content_element) == Some(W::t()))
+                                .filter(|dca| dom.name_is(dca.content_element, &W::t()))
                                 .map(|dca| dom.value_str(dca.content_element))
                                 .collect();
                             let letters = text.chars().filter(|c| c.is_alphanumeric()).count();
@@ -2393,7 +2437,7 @@ pub fn do_lcs_algorithm(
                             let text: String = cu
                                 .descendant_atoms()
                                 .iter()
-                                .filter(|dca| dom.name(dca.content_element) == Some(W::t()))
+                                .filter(|dca| dom.name_is(dca.content_element, &W::t()))
                                 .map(|dca| dom.value_str(dca.content_element))
                                 .collect();
                             let t = text.trim().to_lowercase();
@@ -2431,7 +2475,7 @@ pub fn do_lcs_algorithm(
                 let starts_at_body_head = |cul: &[ComparisonUnit]| -> bool {
                     let body_name = W::name("body");
                     let p_name = W::name("p");
-                    let tbl_name = W::name("tbl");
+                    let tbl_name = W::tbl();
                     let Some(first_cu) = cul.first() else {
                         return false;
                     };
@@ -2441,9 +2485,9 @@ pub fn do_lcs_algorithm(
                     };
                     let mut body_para = None;
                     for &ae in first_atom.ancestor_elements.iter() {
-                        if dom.name(ae) == Some(p_name.clone())
+                        if dom.name_is(ae, &p_name.clone())
                             && let Some(par) = dom.parent(ae)
-                            && dom.name(par) == Some(body_name.clone())
+                            && dom.name_is(par, &body_name.clone())
                         {
                             body_para = Some((ae, par));
                             break;
@@ -2479,7 +2523,7 @@ pub fn do_lcs_algorithm(
                     let mut body_block = None;
                     for &ae in last_atom.ancestor_elements.iter() {
                         if let Some(par) = dom.parent(ae)
-                            && dom.name(par) == Some(body_name.clone())
+                            && dom.name_is(par, &body_name.clone())
                         {
                             body_block = Some((ae, par));
                             break;
@@ -2499,7 +2543,7 @@ pub fn do_lcs_algorithm(
                         }
                         let nm = dom.name(child);
                         if nm != Some(p_name.clone()) {
-                            if nm == Some(W::name("sectPr")) {
+                            if nm == Some(W::sect_pr()) {
                                 continue;
                             }
                             return false;
@@ -2644,7 +2688,7 @@ pub fn do_lcs_algorithm(
                 let atoms = cs.descendant_atoms();
                 let other_than_text = atoms
                     .iter()
-                    .any(|dca| dom.name(dca.content_element) != Some(W::t()));
+                    .any(|dca| !dom.name_is(dca.content_element, &W::t()));
                 if other_than_text {
                     return true;
                 }
@@ -2699,7 +2743,7 @@ pub fn do_lcs_algorithm(
                         // a shared Chinese run is real content that must count
                         // toward the ratio, not be voided as separator-only.
                         !cs.descendant_atoms().iter().all(|dca| {
-                            if dom.name(dca.content_element) != Some(W::t()) {
+                            if !dom.name_is(dca.content_element, &W::t()) {
                                 return false;
                             }
                             let v = dom.value_str(dca.content_element);
@@ -2780,7 +2824,7 @@ pub fn do_lcs_algorithm(
             let mut alpha = String::new();
             for u in &cul1[i1..i1 + len] {
                 for a in u.descendant_atoms() {
-                    if dom.name(a.content_element) == Some(W::t()) {
+                    if dom.name_is(a.content_element, &W::t()) {
                         for ch in dom.value_str(a.content_element).chars() {
                             if ch.is_ascii_alphabetic() {
                                 alpha.push(ch.to_ascii_lowercase());
@@ -2858,7 +2902,7 @@ pub fn do_lcs_algorithm(
             || count_gt(&cul2, ComparisonUnitGroupType::Row) > 0)
         && cul1[i1..i1 + len].iter().all(|u| {
             u.descendant_atoms().iter().all(|a| {
-                dom.name(a.content_element) != Some(W::t())
+                !dom.name_is(a.content_element, &W::t())
                     || dom.value_str(a.content_element).trim().is_empty()
             })
         })
@@ -3027,7 +3071,7 @@ fn containing_paragraph_is_duplicated(dom: &Dom, units: &[ComparisonUnit], pos: 
         let is_pmark = !atoms.is_empty()
             && atoms
                 .iter()
-                .all(|a| dom.name(a.content_element) == Some(W::p_pr()));
+                .all(|a| dom.name_is(a.content_element, &W::p_pr()));
         if is_pmark {
             texts.push(String::new());
             continue;
@@ -3037,11 +3081,11 @@ fn containing_paragraph_is_duplicated(dom: &Dom, units: &[ComparisonUnit], pos: 
         let is_group_para = matches!(u, ComparisonUnit::Group(_))
             && atoms
                 .iter()
-                .any(|a| dom.name(a.content_element) == Some(W::p_pr()));
+                .any(|a| dom.name_is(a.content_element, &W::p_pr()));
         if is_group_para {
             let text: String = atoms
                 .iter()
-                .filter(|a| dom.name(a.content_element) == Some(W::t()))
+                .filter(|a| dom.name_is(a.content_element, &W::t()))
                 .map(|a| dom.value_str(a.content_element))
                 .collect();
             texts.push(text);
@@ -3053,7 +3097,7 @@ fn containing_paragraph_is_duplicated(dom: &Dom, units: &[ComparisonUnit], pos: 
         }
         let last = texts.last_mut().expect("non-empty");
         for a in atoms {
-            if dom.name(a.content_element) == Some(W::t()) {
+            if dom.name_is(a.content_element, &W::t()) {
                 last.push_str(&dom.value_str(a.content_element));
             }
         }
@@ -3135,7 +3179,7 @@ fn step_h(
         let group_textless = |dom: &Dom, units: &[ComparisonUnit]| -> bool {
             units.iter().all(|u| {
                 u.descendant_atoms().iter().all(|a| {
-                    dom.name(a.content_element) != Some(W::t())
+                    !dom.name_is(a.content_element, &W::t())
                         || dom.value_str(a.content_element).trim().is_empty()
                 })
             })
@@ -3241,7 +3285,7 @@ fn step_h(
                 .iter()
                 .filter(|u| {
                     as_group(u).is_some_and(|g| g.group_type == Paragraph)
-                        && !para_text_token_list(dom, u).is_empty()
+                        && unit_has_text_token(dom, u)
                 })
                 .count()
         };
@@ -3251,7 +3295,7 @@ fn step_h(
                     .iter()
                     .find(|u| {
                         as_group(u).is_some_and(|g| g.group_type == Paragraph)
-                            && !para_text_token_list(dom, u).is_empty()
+                            && unit_has_text_token(dom, u)
                     })
                     .map(|u| para_text_tokens(dom, u))
                     .unwrap_or_default()
@@ -3285,12 +3329,12 @@ fn step_h(
                         .1
                         .iter()
                         .cloned()
-                        .partition(|u| !para_text_token_list(dom, u).is_empty());
+                        .partition(|u| unit_has_text_token(dom, u));
                     let (rt, re): (Vec<_>, Vec<_>) = rg[ir]
                         .1
                         .iter()
                         .cloned()
-                        .partition(|u| !para_text_token_list(dom, u).is_empty());
+                        .partition(|u| unit_has_text_token(dom, u));
                     if lg[il].1.len() == rg[ir].1.len() {
                         // M205: pure-I/D titles
                         if !rt.is_empty() {
@@ -3398,14 +3442,14 @@ fn step_h(
                 .iter()
                 .filter(|u| {
                     as_group(u).is_some_and(|g| g.group_type == Paragraph)
-                        && !para_text_token_list(dom, u).is_empty()
+                        && unit_has_text_token(dom, u)
                 })
                 .count()
         };
         let first_contentful_idx = |units: &[ComparisonUnit]| -> Option<usize> {
             units.iter().position(|u| {
                 as_group(u).is_some_and(|g| g.group_type == Paragraph)
-                    && !para_text_token_list(dom, u).is_empty()
+                    && unit_has_text_token(dom, u)
             })
         };
         let lc = contentful_paras(cul1);
@@ -3558,12 +3602,12 @@ fn step_h(
             let list_left: Vec<&ComparisonUnit> = cul1
                 .iter()
                 .filter(|u| as_group(u).is_some_and(|g| g.group_type == Paragraph))
-                .filter(|u| !para_text_token_list(dom, u).is_empty())
+                .filter(|u| unit_has_text_token(dom, u))
                 .collect();
             let list_right: Vec<&ComparisonUnit> = cul2
                 .iter()
                 .filter(|u| as_group(u).is_some_and(|g| g.group_type == Paragraph))
-                .filter(|u| !para_text_token_list(dom, u).is_empty())
+                .filter(|u| unit_has_text_token(dom, u))
                 .collect();
             let mostly = |xs: &[&ComparisonUnit]| {
                 if xs.is_empty() {
@@ -3616,12 +3660,12 @@ fn step_h(
             let list_left = cul1
                 .iter()
                 .filter(|u| as_group(u).is_some_and(|g| g.group_type == Paragraph))
-                .filter(|u| !para_text_token_list(dom, u).is_empty())
+                .filter(|u| unit_has_text_token(dom, u))
                 .collect::<Vec<_>>();
             let list_right = cul2
                 .iter()
                 .filter(|u| as_group(u).is_some_and(|g| g.group_type == Paragraph))
-                .filter(|u| !para_text_token_list(dom, u).is_empty())
+                .filter(|u| unit_has_text_token(dom, u))
                 .collect::<Vec<_>>();
             let mostly = |xs: &[&ComparisonUnit]| {
                 if xs.is_empty() {
@@ -4395,8 +4439,8 @@ fn step_h(
                     // both (track italic×title ≈0.47). Keep free-mesh first
                     // residual for j1≥0.50 (track calibri×center) and for
                     // asymmetric short lasts (heading_2 j1≈0.455).
-                    let both_long_res = para_text_token_list(dom, &rest1[1]).len() >= 6
-                        && para_text_token_list(dom, &rest2[1]).len() >= 6;
+                    let both_long_res = unit_text_token_count(dom, &rest1[1]) >= 6
+                        && unit_text_token_count(dom, &rest2[1]) >= 6;
                     let pure_both = first_j + 1e-12 < 0.15
                         || (both_long_res && first_j + 1e-12 >= 0.46 && first_j + 1e-12 < 0.50);
                     if m180 && pure_both {
@@ -4548,7 +4592,7 @@ fn step_h(
                                     .contents
                                     .iter()
                                     .filter_map(|a| {
-                                        if dom.name(a.content_element) == Some(W::t()) {
+                                        if dom.name_is(a.content_element, &W::t()) {
                                             Some(dom.value_str(a.content_element))
                                         } else {
                                             None
@@ -4684,7 +4728,7 @@ fn step_h(
                                 .contents
                                 .iter()
                                 .filter_map(|a| {
-                                    if dom.name(a.content_element) == Some(W::t()) {
+                                    if dom.name_is(a.content_element, &W::t()) {
                                         Some(dom.value_str(a.content_element))
                                     } else {
                                         None
@@ -4899,7 +4943,7 @@ fn step_h(
                                 .contents
                                 .iter()
                                 .filter_map(|a| {
-                                    if dom.name(a.content_element) == Some(W::t()) {
+                                    if dom.name_is(a.content_element, &W::t()) {
                                         Some(dom.value_str(a.content_element))
                                     } else {
                                         None
@@ -5108,8 +5152,8 @@ fn group_has_drawing_or_pict(dom: &Dom, u: &ComparisonUnit) -> bool {
         let Some(n) = dom.name(a.content_element) else {
             return false;
         };
-        n == W::name("drawing")
-            || n == W::name("pict")
+        n == W::drawing()
+            || n == W::pict()
             || n == W::name("object")
             || n.local_name() == "AlternateContent"
             || n.local_name() == "drawing"
@@ -5154,12 +5198,29 @@ fn contentful_group_sha1s<'a>(dom: &Dom, cu: &'a [ComparisonUnit]) -> Vec<&'a st
 ///
 /// Returns `Some([Inserted, Deleted])` in Word order, or `None` to fall through
 /// to full word-level LCS.
+/// TOKENS-ONCE-01: lazily computed full-side token set, shared by the gates
+/// of one `detect_unrelated_sources_word_mode` invocation.
+fn tokens_once<'a>(
+    cell: &'a std::cell::OnceCell<std::collections::HashSet<String>>,
+    dom: &Dom,
+    cu: &[ComparisonUnit],
+) -> &'a std::collections::HashSet<String> {
+    cell.get_or_init(|| para_text_tokens_from_units(dom, cu))
+}
+
 pub fn detect_unrelated_sources_word_mode(
     dom: &mut Dom,
     cu1: &[ComparisonUnit],
     cu2: &[ComparisonUnit],
     settings: &WmlComparerSettings,
 ) -> Option<Vec<CorrelatedSequence>> {
+    // TOKENS-ONCE-01: the gates below re-derive the same full-side token
+    // sets up to ~20x per invocation (39 call sites); compute each lazily
+    // once per call. Sub-slice token sets are NOT cached here.
+    let full_tokens_1: std::cell::OnceCell<std::collections::HashSet<String>> =
+        std::cell::OnceCell::new();
+    let full_tokens_2: std::cell::OnceCell<std::collections::HashSet<String>> =
+        std::cell::OnceCell::new();
     let groups1 = contentful_group_sha1s(dom, cu1);
     let groups2 = contentful_group_sha1s(dom, cu2);
     // C# used >3 groups on BOTH sides. Word also collapses short-vs-long
@@ -5281,7 +5342,7 @@ pub fn detect_unrelated_sources_word_mode(
     {
         let contentful_n = |cu: &[ComparisonUnit]| -> usize {
             cu.iter()
-                .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
                 .count()
         };
         let cn1 = contentful_n(cu1);
@@ -5293,19 +5354,19 @@ pub fn detect_unrelated_sources_word_mode(
             && (3..=10).contains(&cn2)
             && looks_like_short_label_stubs(dom, cu2)
         {
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            let j = token_jaccard(&b1, &b2);
+            let b1 = tokens_once(&full_tokens_1, dom, cu1);
+            let b2 = tokens_once(&full_tokens_2, dom, cu2);
+            let j = token_jaccard(b1, b2);
             let with_num = cu1
                 .iter()
-                .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
                 .filter(|u| unit_para_has_numpr(dom, u))
                 .count();
             let base_list_frac = with_num as f64 / cn1 as f64;
             if !b1.is_empty() && j + 1e-12 < 0.25 && base_list_frac + 1e-12 >= 0.5 {
                 let right_c: Vec<ComparisonUnit> = cu2
                     .iter()
-                    .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                    .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
                     .cloned()
                     .collect();
                 let mut peel_n = 0usize;
@@ -5324,7 +5385,7 @@ pub fn detect_unrelated_sources_word_mode(
                     let mut contentful_seen = 0usize;
                     for u in cu2 {
                         let is_c =
-                            as_group(u).is_some() && !para_text_token_list(dom, u).is_empty();
+                            as_group(u).is_some() && unit_has_text_token(dom, u);
                         if is_c {
                             if contentful_seen >= peel_n {
                                 break;
@@ -5371,16 +5432,16 @@ pub fn detect_unrelated_sources_word_mode(
         && n2 >= 4
     {
         let body_j = token_jaccard(
-            &para_text_tokens_from_units(dom, cu1),
-            &para_text_tokens_from_units(dom, cu2),
-        );
+        tokens_once(&full_tokens_1, dom, cu1),
+        tokens_once(&full_tokens_2, dom, cu2),
+    );
         let cl: Vec<&ComparisonUnit> = cu1
             .iter()
-            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
             .collect();
         let cr: Vec<&ComparisonUnit> = cu2
             .iter()
-            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
             .collect();
         let mostly_list = |xs: &[&ComparisonUnit]| -> bool {
             if xs.is_empty() {
@@ -5455,16 +5516,16 @@ pub fn detect_unrelated_sources_word_mode(
         && !has_table(cu2)
     {
         let body_j = token_jaccard(
-            &para_text_tokens_from_units(dom, cu1),
-            &para_text_tokens_from_units(dom, cu2),
-        );
+        tokens_once(&full_tokens_1, dom, cu1),
+        tokens_once(&full_tokens_2, dom, cu2),
+    );
         let cl: Vec<&ComparisonUnit> = cu1
             .iter()
-            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
             .collect();
         let cr: Vec<&ComparisonUnit> = cu2
             .iter()
-            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
             .collect();
         let mostly_list = |xs: &[&ComparisonUnit]| -> bool {
             if xs.is_empty() {
@@ -5492,7 +5553,7 @@ pub fn detect_unrelated_sources_word_mode(
     // pure-I/D on full unit lists. Trace: n_cu2=32 g2=0 g1=1.
     let unit_textless = |u: &ComparisonUnit| -> bool {
         u.descendant_atoms().iter().all(|a| {
-            dom.name(a.content_element) != Some(W::t())
+            !dom.name_is(a.content_element, &W::t())
                 || dom.value_str(a.content_element).trim().is_empty()
         }) && !group_has_drawing_or_pict(dom, u)
     };
@@ -5525,10 +5586,10 @@ pub fn detect_unrelated_sources_word_mode(
         && !has_table(cu1)
         && !has_table(cu2)
         && {
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            let sig1 = significant_tokens(&b1);
-            !b1.is_empty() && sig1.len() <= 8 && token_jaccard(&b1, &b2) + 1e-12 < 0.05
+            let b1 = tokens_once(&full_tokens_1, dom, cu1);
+            let b2 = tokens_once(&full_tokens_2, dom, cu2);
+            let sig1 = significant_tokens(b1);
+            !b1.is_empty() && sig1.len() <= 8 && token_jaccard(b1, b2) + 1e-12 < 0.05
         }
     {
         return Some(vec![
@@ -5567,11 +5628,11 @@ pub fn detect_unrelated_sources_word_mode(
         && !has_table(cu1)
         && has_table(cu2)
         && {
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            let sig1 = significant_tokens(&b1);
+            let b1 = tokens_once(&full_tokens_1, dom, cu1);
+            let b2 = tokens_once(&full_tokens_2, dom, cu2);
+            let sig1 = significant_tokens(b1);
             // M426: technicolor ~9 sig tokens. M427: tab demo ~12–18.
-            !b1.is_empty() && sig1.len() <= 24 && token_jaccard(&b1, &b2) + 1e-12 < 0.05
+            !b1.is_empty() && sig1.len() <= 24 && token_jaccard(b1, b2) + 1e-12 < 0.05
         }
     {
         return Some(vec![
@@ -5598,9 +5659,9 @@ pub fn detect_unrelated_sources_word_mode(
         // table_bookmark_end, 8 tbl of ~80 groups) keeps Word's first-table
         // cell mesh (M320).
         if n_tbl(cu1) == 1 && n_tbl(cu2) >= 3 && n_tbl(cu2) * 2 >= n2 {
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.05 {
+            let b1 = tokens_once(&full_tokens_1, dom, cu1);
+            let b2 = tokens_once(&full_tokens_2, dom, cu2);
+            if !b1.is_empty() && !b2.is_empty() && token_jaccard(b1, b2) + 1e-12 < 0.05 {
                 return Some(vec![
                     CorrelatedSequence::inserted(cu2.to_vec()),
                     CorrelatedSequence::deleted(cu1.to_vec()),
@@ -5642,9 +5703,9 @@ pub fn detect_unrelated_sources_word_mode(
         && !has_table(cu2)
         && (looks_like_short_alpha_list(dom, cu2) || looks_like_short_alpha_list_cluster(dom, cu2))
     {
-        let b1 = para_text_tokens_from_units(dom, cu1);
-        let b2 = para_text_tokens_from_units(dom, cu2);
-        if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.10 {
+        let b1 = tokens_once(&full_tokens_1, dom, cu1);
+        let b2 = tokens_once(&full_tokens_2, dom, cu2);
+        if !b1.is_empty() && !b2.is_empty() && token_jaccard(b1, b2) + 1e-12 < 0.10 {
             return Some(vec![
                 CorrelatedSequence::inserted(cu2.to_vec()),
                 CorrelatedSequence::deleted(cu1.to_vec()),
@@ -5656,9 +5717,9 @@ pub fn detect_unrelated_sources_word_mode(
         && (looks_like_short_alpha_list(dom, cu1) || looks_like_short_alpha_list_cluster(dom, cu1))
         && short_ooxml_property_demo(dom, cu2)
     {
-        let b1 = para_text_tokens_from_units(dom, cu1);
-        let b2 = para_text_tokens_from_units(dom, cu2);
-        if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.10 {
+        let b1 = tokens_once(&full_tokens_1, dom, cu1);
+        let b2 = tokens_once(&full_tokens_2, dom, cu2);
+        if !b1.is_empty() && !b2.is_empty() && token_jaccard(b1, b2) + 1e-12 < 0.10 {
             return Some(vec![
                 CorrelatedSequence::inserted(cu2.to_vec()),
                 CorrelatedSequence::deleted(cu1.to_vec()),
@@ -5677,14 +5738,14 @@ pub fn detect_unrelated_sources_word_mode(
         && n1 >= 8
         && (looks_like_short_alpha_list(dom, cu2) || looks_like_short_alpha_list_cluster(dom, cu2))
     {
-        let b1 = para_text_tokens_from_units(dom, cu1);
-        let b2 = para_text_tokens_from_units(dom, cu2);
+        let b1 = tokens_once(&full_tokens_1, dom, cu1);
+        let b2 = tokens_once(&full_tokens_2, dom, cu2);
         // Alpha-list tokens are often ≤2 chars so b2 may be empty after ≥3-char
         // filter; still pure-I/D when base has body and jaccard is ~0.
         let next_ok = !b2.is_empty()
             || looks_like_short_alpha_list(dom, cu2)
             || looks_like_short_alpha_list_cluster(dom, cu2);
-        if !b1.is_empty() && next_ok && token_jaccard(&b1, &b2) + 1e-12 < 0.05 {
+        if !b1.is_empty() && next_ok && token_jaccard(b1, b2) + 1e-12 < 0.05 {
             return Some(vec![
                 CorrelatedSequence::inserted(cu2.to_vec()),
                 CorrelatedSequence::deleted(cu1.to_vec()),
@@ -5698,12 +5759,12 @@ pub fn detect_unrelated_sources_word_mode(
         && n2 >= 8
         && (looks_like_short_alpha_list(dom, cu1) || looks_like_short_alpha_list_cluster(dom, cu1))
     {
-        let b1 = para_text_tokens_from_units(dom, cu1);
-        let b2 = para_text_tokens_from_units(dom, cu2);
+        let b1 = tokens_once(&full_tokens_1, dom, cu1);
+        let b2 = tokens_once(&full_tokens_2, dom, cu2);
         let base_ok = !b1.is_empty()
             || looks_like_short_alpha_list(dom, cu1)
             || looks_like_short_alpha_list_cluster(dom, cu1);
-        if base_ok && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.05 {
+        if base_ok && !b2.is_empty() && token_jaccard(b1, b2) + 1e-12 < 0.05 {
             return Some(vec![
                 CorrelatedSequence::inserted(cu2.to_vec()),
                 CorrelatedSequence::deleted(cu1.to_vec()),
@@ -5730,9 +5791,9 @@ pub fn detect_unrelated_sources_word_mode(
             .collect();
         if (3..=8).contains(&left_toks.len()) && right_toks.len() == 1 && right_toks[0].len() >= 20
         {
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.05 {
+            let b1 = tokens_once(&full_tokens_1, dom, cu1);
+            let b2 = tokens_once(&full_tokens_2, dom, cu2);
+            if !b1.is_empty() && !b2.is_empty() && token_jaccard(b1, b2) + 1e-12 < 0.05 {
                 return Some(vec![
                     CorrelatedSequence::inserted(cu2.to_vec()),
                     CorrelatedSequence::deleted(cu1.to_vec()),
@@ -5749,18 +5810,18 @@ pub fn detect_unrelated_sources_word_mode(
         let bb = looks_like_math_borderbox_doc(dom, cu2) || looks_like_math_doc(dom, cu2);
         let cn1 = cu1
             .iter()
-            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
             .count();
         let cn2 = cu2
             .iter()
-            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
             .count();
         // Shared short tokens (and, the, …) inflate jaccard ~0.05 on
         // unrelated long lorem × math demo — allow up to 0.10.
         if bb && cn1 >= 30 && (5..=120).contains(&cn2) {
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.15 {
+            let b1 = tokens_once(&full_tokens_1, dom, cu1);
+            let b2 = tokens_once(&full_tokens_2, dom, cu2);
+            if !b1.is_empty() && !b2.is_empty() && token_jaccard(b1, b2) + 1e-12 < 0.15 {
                 return Some(vec![
                     CorrelatedSequence::inserted(cu2.to_vec()),
                     CorrelatedSequence::deleted(cu1.to_vec()),
@@ -5775,16 +5836,16 @@ pub fn detect_unrelated_sources_word_mode(
     {
         let cn1 = cu1
             .iter()
-            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
             .count();
         let cn2 = cu2
             .iter()
-            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
             .count();
         if cn2 >= 30 && (5..=120).contains(&cn1) {
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            if !b1.is_empty() && !b2.is_empty() && token_jaccard(&b1, &b2) + 1e-12 < 0.15 {
+            let b1 = tokens_once(&full_tokens_1, dom, cu1);
+            let b2 = tokens_once(&full_tokens_2, dom, cu2);
+            if !b1.is_empty() && !b2.is_empty() && token_jaccard(b1, b2) + 1e-12 < 0.15 {
                 return Some(vec![
                     CorrelatedSequence::inserted(cu2.to_vec()),
                     CorrelatedSequence::deleted(cu1.to_vec()),
@@ -5801,7 +5862,7 @@ pub fn detect_unrelated_sources_word_mode(
         let contentful_idxs: Vec<usize> = cu2
             .iter()
             .enumerate()
-            .filter(|(_, u)| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .filter(|(_, u)| as_group(u).is_some() && unit_has_text_token(dom, u))
             .map(|(i, _)| i)
             .collect();
         let is_num_stat = |u: &ComparisonUnit| -> bool {
@@ -5835,7 +5896,7 @@ pub fn detect_unrelated_sources_word_mode(
             // residual. Peel leading text-empty residual as pure-I and leading
             // text-empty base as pure-D before free-mesh.
             let text_empty_group = |u: &ComparisonUnit| -> bool {
-                as_group(u).is_some() && para_text_token_list(dom, u).is_empty()
+                as_group(u).is_some() && !unit_has_text_token(dom, u)
             };
             let mut res_i = 0usize;
             while res_i < residual.len() && text_empty_group(&residual[res_i]) {
@@ -5905,7 +5966,7 @@ pub fn detect_unrelated_sources_word_mode(
     {
         let contentful = |cu: &[ComparisonUnit]| -> Vec<ComparisonUnit> {
             cu.iter()
-                .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
                 .cloned()
                 .collect()
         };
@@ -5913,11 +5974,11 @@ pub fn detect_unrelated_sources_word_mode(
         let right_c = contentful(cu2);
         let base_long = left_c
             .first()
-            .is_some_and(|u| para_text_token_list(dom, u).len() >= 8);
+            .is_some_and(|u| unit_text_token_count(dom, u) >= 8);
         let next_stubs = !right_c.is_empty()
             && right_c
                 .iter()
-                .all(|u| para_text_token_list(dom, u).len() <= 2);
+                .all(|u| unit_text_token_count(dom, u) <= 2);
         if base_long && next_stubs && !left_c.is_empty() && right_c.len() >= 2 {
             let first_tok = |u: &ComparisonUnit| -> Option<String> {
                 para_text_token_list(dom, u)
@@ -5935,9 +5996,9 @@ pub fn detect_unrelated_sources_word_mode(
                 (Some(a), Some(b)) => a != b,
                 _ => false,
             };
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            if titles_differ && token_jaccard(&b1, &b2) + 1e-12 < 0.25 {
+            let b1 = tokens_once(&full_tokens_1, dom, cu1);
+            let b2 = tokens_once(&full_tokens_2, dom, cu2);
+            if titles_differ && token_jaccard(b1, b2) + 1e-12 < 0.25 {
                 // Peel first next contentful as pure-I (Word pure-I "Text").
                 let peel_r = 1usize.min(right_c.len().saturating_sub(1));
                 let mut out = Vec::new();
@@ -5988,7 +6049,7 @@ pub fn detect_unrelated_sources_word_mode(
     {
         let contentful_n = |cu: &[ComparisonUnit]| -> usize {
             cu.iter()
-                .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
                 .count()
         };
         let cn1 = contentful_n(cu1);
@@ -6002,9 +6063,9 @@ pub fn detect_unrelated_sources_word_mode(
             && (4..=12).contains(&cn2)
             && next_shape
         {
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            let j = token_jaccard(&b1, &b2);
+            let b1 = tokens_once(&full_tokens_1, dom, cu1);
+            let b2 = tokens_once(&full_tokens_2, dom, cu2);
+            let j = token_jaccard(b1, b2);
             // Next may be single-letter labels only (a/x/x/b) so b2 is empty
             // after ≥3-char token filter — still pure-I/D when base has prose
             // (broken_media×duplicate_ppr).
@@ -6041,16 +6102,16 @@ pub fn detect_unrelated_sources_word_mode(
         && !both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2)
         && !short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2)
         && {
-            let b1 = para_text_tokens_from_units(dom, cu1);
-            let b2 = para_text_tokens_from_units(dom, cu2);
-            let next_sig = significant_tokens(&b2);
+            let b1 = tokens_once(&full_tokens_1, dom, cu1);
+            let b2 = tokens_once(&full_tokens_2, dom, cu2);
+            let next_sig = significant_tokens(b2);
             // Next must carry a short title-class vocabulary (SD-2672 / "plain
             // 3x3" / "RTL"). Digit-only table shells (merged_cells) have empty
             // significant sets — Word keeps EQ, not pure-I/D.
             if next_sig.is_empty() || next_sig.len() > 24 || b1.is_empty() {
                 false
             } else {
-                token_jaccard(&b1, &b2) + 1e-12 < 0.05
+                token_jaccard(b1, b2) + 1e-12 < 0.05
             }
         }
         && {
@@ -6121,7 +6182,7 @@ pub fn detect_unrelated_sources_word_mode(
                 .count();
             let first_c = cu2
                 .iter()
-                .position(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty());
+                .position(|u| as_group(u).is_some() && unit_has_text_token(dom, u));
             if n_tbl_base >= 2
                 && n_tbl_next == 1
                 && long_n >= 20
@@ -6204,7 +6265,7 @@ pub fn detect_unrelated_sources_word_mode(
         if short_demo_list_x_prose(dom, cu1, cu2, n1, n2) {
             let contentful = |cu: &[ComparisonUnit]| -> Vec<ComparisonUnit> {
                 cu.iter()
-                    .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                    .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
                     .cloned()
                     .collect()
             };
@@ -6251,7 +6312,7 @@ pub fn detect_unrelated_sources_word_mode(
         {
             let contentful = |cu: &[ComparisonUnit]| -> Vec<ComparisonUnit> {
                 cu.iter()
-                    .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+                    .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
                     .cloned()
                     .collect()
             };
@@ -6546,11 +6607,11 @@ pub fn detect_unrelated_sources_word_mode(
     // "3. Rent"). Memo: pure-D headers first then pure-I NDA then residual
     // pure-D memo body. Cap sides to legal size.
     {
-        let b1 = para_text_tokens_from_units(dom, cu1);
-        let b2 = para_text_tokens_from_units(dom, cu2);
-        let s1 = significant_tokens(&b1);
-        let s2 = significant_tokens(&b2);
-        let j = token_jaccard(&b1, &b2);
+        let b1 = tokens_once(&full_tokens_1, dom, cu1);
+        let b2 = tokens_once(&full_tokens_2, dom, cu2);
+        let s1 = significant_tokens(b1);
+        let s2 = significant_tokens(b2);
+        let j = token_jaccard(b1, b2);
         if s1.len() >= 40
             && s2.len() >= 40
             && j + 1e-12 >= 0.08
@@ -6634,7 +6695,7 @@ pub fn detect_unrelated_sources_word_mode(
                 .iter()
                 .filter(|cs| {
                     !cs.descendant_atoms().iter().all(|dca| {
-                        if dom.name(dca.content_element) != Some(W::t()) {
+                        if !dom.name_is(dca.content_element, &W::t()) {
                             return false;
                         }
                         let v = dom.value_str(dca.content_element);
@@ -6648,7 +6709,7 @@ pub fn detect_unrelated_sources_word_mode(
                 let mut text = String::new();
                 for u in common {
                     for a in u.descendant_atoms() {
-                        if dom.name(a.content_element) == Some(W::t()) {
+                        if dom.name_is(a.content_element, &W::t()) {
                             text.push_str(&dom.value_str(a.content_element));
                         }
                     }
@@ -6784,7 +6845,7 @@ pub fn detect_unrelated_sources_word_mode(
         let has_text = |v: &[ComparisonUnit]| {
             v.iter().any(|cu| {
                 cu.descendant_atoms().iter().any(|dca| {
-                    dom.name(dca.content_element) == Some(W::t())
+                    dom.name_is(dca.content_element, &W::t())
                         && !dom.value_str(dca.content_element).trim().is_empty()
                 })
             })
@@ -6894,12 +6955,12 @@ fn section_letter_labels(dom: &Dom, cu: &[ComparisonUnit]) -> std::collections::
         if as_group(u).is_none() {
             continue;
         }
-        if para_text_token_list(dom, u).is_empty() {
+        if !unit_has_text_token(dom, u) {
             continue;
         }
         let mut lead = String::new();
         for a in u.descendant_atoms() {
-            if dom.name(a.content_element) == Some(W::t()) {
+            if dom.name_is(a.content_element, &W::t()) {
                 lead.push_str(&dom.value_str(a.content_element));
                 if lead.len() >= 8 {
                     break;
@@ -6933,7 +6994,7 @@ fn short_table_title_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     }
     let contentful = cu
         .iter()
-        .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+        .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
         .count();
     if contentful == 0 || contentful > 8 {
         return false;
@@ -6943,7 +7004,7 @@ fn short_table_title_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     };
     let mut text = String::new();
     for a in cu[i].descendant_atoms() {
-        if dom.name(a.content_element) == Some(W::t()) {
+        if dom.name_is(a.content_element, &W::t()) {
             text.push_str(&dom.value_str(a.content_element));
         }
     }
@@ -6991,7 +7052,7 @@ fn ooxml_x_short_prose_demo(
     }
     let contentful: Vec<_> = prose_cu
         .iter()
-        .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+        .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
         .collect();
     if !(1..=2).contains(&contentful.len()) {
         return false;
@@ -7195,7 +7256,7 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     // Join raw w:t text (not re-tokenized) so "ST_OnOff" / "w:b" survive.
     let mut text = String::new();
     for a in cu[i].descendant_atoms() {
-        if dom.name(a.content_element) == Some(W::t()) {
+        if dom.name_is(a.content_element, &W::t()) {
             text.push_str(&dom.value_str(a.content_element));
         }
     }
@@ -7303,7 +7364,7 @@ fn short_demo_list_x_prose(
     let listish = |cu: &[ComparisonUnit]| -> bool {
         let xs: Vec<&ComparisonUnit> = cu
             .iter()
-            .filter(|u| as_group(u).is_some() && !para_text_token_list(dom, u).is_empty())
+            .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
             .collect();
         if xs.len() < 2 {
             return false;
@@ -7391,7 +7452,7 @@ pub fn set_after_unids(dom: &mut Dom, unknown: &CorrelatedSequence) {
     }
     let take_thru = match g1.group_type {
         ComparisonUnitGroupType::Paragraph => W::p(),
-        ComparisonUnitGroupType::Table => W::name("tbl"),
+        ComparisonUnitGroupType::Table => W::tbl(),
         ComparisonUnitGroupType::Row => W::name("tr"),
         ComparisonUnitGroupType::Cell => W::name("tc"),
         ComparisonUnitGroupType::Textbox => W::name("txbxContent"),
@@ -7404,7 +7465,7 @@ pub fn set_after_unids(dom: &mut Dom, unknown: &CorrelatedSequence) {
     let mut relevant = Vec::new();
     for &ae in first1.ancestor_elements.iter() {
         relevant.push(ae);
-        if dom.name(ae) == Some(take_thru.clone()) {
+        if dom.name_is(ae, &take_thru.clone()) {
             break;
         }
     }
@@ -7942,6 +8003,7 @@ mod correlated_hash_owned_tests {
             sha1_hash: hash.to_string(),
             correlated_sha1_hash: Some(correlated.to_string()),
             structure_sha1_hash: None,
+            atom_count_memo: std::cell::Cell::new(usize::MAX),
         })
     }
 
@@ -8062,6 +8124,7 @@ mod correlated_hash_idx_tests {
             sha1_hash: hash.to_string(),
             correlated_sha1_hash: correlated.map(|s| s.to_string()),
             structure_sha1_hash: None,
+            atom_count_memo: std::cell::Cell::new(usize::MAX),
         })
     }
 
