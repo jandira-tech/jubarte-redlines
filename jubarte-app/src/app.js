@@ -232,7 +232,7 @@ function showResult(r) {
   $("outname").textContent = r.output_name;
   const secs = (r.elapsed_ms / 1000).toFixed(r.elapsed_ms < 9500 ? 1 : 0);
   const who = authorInput.value.trim();
-  $("outmeta").textContent = `Saved next to the original · ${secs}s${who ? ` · ${who}` : ""}`;
+  $("outmeta").textContent = `Ready in ${secs}s${who ? ` · ${who}` : ""} — “Save a copy” to choose where it goes`;
 
   const chip = (id, n, label) => {
     const el = $(id);

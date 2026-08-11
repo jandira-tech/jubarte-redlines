@@ -1098,6 +1098,62 @@ fn merge_revised_style_definitions(
         let a_fonts = a_dd.and_then(|d| dom.element(d, &W::name("rFonts")));
         let b_fonts = b_dd.and_then(|d| dom.element(d, &W::name("rFonts")));
         let fonts_differ = attr_map(dom, a_fonts) != attr_map(dom, b_fonts);
+        // M464 — pPr spacing deltas between the two docDefaults (implicit
+        // defaults before/after 0, line 240). A B-only style resolving a
+        // spacing attr through B's dd renders wrong under A's dd (file_13 ×
+        // file_14 oracle bakes after=0 line=240 on every copied style).
+        let dd_ppr_spacing = |dom: &Dom, root: NodeId| -> Option<NodeId> {
+            let dd = dom.element(root, &W::name("docDefaults"))?;
+            let pd = dom.element(dd, &W::name("pPrDefault"))?;
+            let pp = dom.element(pd, &W::p_pr())?;
+            dom.element(pp, &W::name("spacing"))
+        };
+        let a_sp = dd_ppr_spacing(dom, out_root);
+        let b_sp = dd_ppr_spacing(dom, b_root);
+        let sp_val = |dom: &Dom, sp: Option<NodeId>, attr: &str, default: &str| -> String {
+            sp.and_then(|s| dom.attribute(s, &W::name(attr)).map(str::to_string))
+                .unwrap_or_else(|| default.to_string())
+        };
+        let mut sp_deltas: Vec<(&str, String)> = Vec::new();
+        for (attr, default) in [("before", "0"), ("after", "0"), ("line", "240")] {
+            let av = sp_val(dom, a_sp, attr, default);
+            let bv = sp_val(dom, b_sp, attr, default);
+            if av != bv {
+                sp_deltas.push((attr, bv));
+            }
+        }
+        let b_line_rule = b_sp.and_then(|s| dom.attribute(s, &W::name("lineRule")).map(str::to_string));
+        // Output-stylesheet basedOn chains, for "does the declared chain
+        // already provide this attr" checks.
+        let out_by_id: std::collections::HashMap<String, NodeId> = dom
+            .elements(out_root, Some(&style_nm))
+            .into_iter()
+            .filter_map(|s| dom.attribute(s, &style_id).map(|i| (i.to_string(), s)))
+            .collect();
+        let chain_has_sp_attr = |dom: &Dom, start: NodeId, attr: &str| -> bool {
+            let mut s = start;
+            for _ in 0..12 {
+                if dom
+                    .element(s, &W::p_pr())
+                    .and_then(|p| dom.element(p, &W::name("spacing")))
+                    .and_then(|sp| dom.attribute(sp, &W::name(attr)))
+                    .is_some()
+                {
+                    return true;
+                }
+                let Some(based) = dom
+                    .element(s, &W::name("basedOn"))
+                    .and_then(|b| dom.attribute(b, &W::val()))
+                else {
+                    return false;
+                };
+                match out_by_id.get(based) {
+                    Some(&n) => s = n,
+                    None => return false,
+                }
+            }
+            false
+        };
         // (local, B-effective value) for whitelist props whose A/B effective
         // values differ; implicit defaults sz/szCs 20, kern 0.
         let mut deltas: Vec<(&str, String)> = Vec::new();
@@ -1110,7 +1166,7 @@ fn merge_revised_style_definitions(
         }
         let ligs = (lig_or(dom, a_dd), lig_or(dom, b_dd));
         let b_lang = b_dd.or(a_dd).and_then(|d| dom.element(d, &W::name("lang")));
-        if fonts_differ || !deltas.is_empty() || ligs.0 != ligs.1 {
+        if fonts_differ || !deltas.is_empty() || ligs.0 != ligs.1 || !sp_deltas.is_empty() {
             for style in dom.elements(out_root, Some(&style_nm)) {
                 let Some(id) = dom.attribute(style, &style_id).map(str::to_string) else {
                     continue;
@@ -1180,7 +1236,9 @@ fn merge_revised_style_definitions(
                     dom.add(live, e);
                 }
                 append_style_change_record(dom, out_root, live, old, "rPrChange", settings);
-                // pPr (paragraph styles): live declared unchanged; old = its clone.
+                // pPr (paragraph styles): bake B-effective spacing deltas
+                // (M464), then record; old = post-bake clone (Word old==live,
+                // tiff BodyText oracle).
                 if stype == "paragraph" {
                     let ppr = match dom.element(style, &W::p_pr()) {
                         Some(p) => p,
@@ -1190,6 +1248,28 @@ fn merge_revised_style_definitions(
                             p
                         }
                     };
+                    for (attr, bv) in &sp_deltas {
+                        if chain_has_sp_attr(dom, style, attr) {
+                            continue;
+                        }
+                        let sp = match dom.element(ppr, &W::name("spacing")) {
+                            Some(s) => s,
+                            None => {
+                                let s = dom.new_element(W::name("spacing"));
+                                insert_child_by_rank(dom, ppr, s, "spacing", &ppr_child_rank);
+                                s
+                            }
+                        };
+                        if dom.attribute(sp, &W::name(attr)).is_none() {
+                            dom.set_attribute_value(sp, &W::name(attr), Some(bv));
+                            if *attr == "line"
+                                && dom.attribute(sp, &W::name("lineRule")).is_none()
+                            {
+                                let rule = b_line_rule.as_deref().unwrap_or("auto");
+                                dom.set_attribute_value(sp, &W::name("lineRule"), Some(rule));
+                            }
+                        }
+                    }
                     let old_p = dom.clone_subtree(ppr);
                     for c in dom.descendants(old_p, Some(&W::name("pPrChange"))) {
                         dom.remove(c);
@@ -1199,6 +1279,353 @@ fn merge_revised_style_definitions(
                 changed = true;
             }
         }
+    }
+    changed
+}
+
+/// M462 — Word's factory docDefaults (current blank-document scaffold).
+/// Used when A has no styles part: the output keeps FACTORY defaults (not
+/// B's) and every copied B style bakes its B-effective metrics so it still
+/// renders as it did in B (tiff_image × two_column oracle).
+const FACTORY_DD_RPR: &str = r#"<w:rPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:rFonts w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorEastAsia" w:hAnsiTheme="minorHAnsi" w:cstheme="minorBidi"/><w:kern w:val="2"/><w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="ar-SA"/><w14:ligatures w14:val="standardContextual"/></w:rPr>"#;
+const FACTORY_DD_PPR: &str = r#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:spacing w:after="160" w:line="278" w:lineRule="auto"/></w:pPr>"#;
+/// Office 2024 factory theme fonts + palette (oracle: Word writes its own
+/// theme when A has none, not B's).
+const FACTORY_THEME_APTOS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme">
+  <a:themeElements>
+    <a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="0E2841"/></a:dk2><a:lt2><a:srgbClr val="E8E8E8"/></a:lt2><a:accent1><a:srgbClr val="156082"/></a:accent1><a:accent2><a:srgbClr val="E97132"/></a:accent2><a:accent3><a:srgbClr val="196B24"/></a:accent3><a:accent4><a:srgbClr val="0F9ED5"/></a:accent4><a:accent5><a:srgbClr val="A02B93"/></a:accent5><a:accent6><a:srgbClr val="4EA72E"/></a:accent6><a:hlink><a:srgbClr val="467886"/></a:hlink><a:folHlink><a:srgbClr val="96607D"/></a:folHlink></a:clrScheme>
+    <a:fontScheme name="Office">
+      <a:majorFont><a:latin typeface="Aptos Display"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
+      <a:minorFont><a:latin typeface="Aptos"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
+    </a:fontScheme>
+    <a:fmtScheme name="Office">
+      <a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>
+      <a:lnStyleLst><a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="19050"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>
+      <a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>
+      <a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>
+    </a:fmtScheme>
+  </a:themeElements>
+</a:theme>"#;
+
+/// M462 — A has no styles part: rewrite the adopted B stylesheet so its
+/// docDefaults become Word's FACTORY defaults, baking each style's
+/// B-effective metrics into the style itself. Word renders A's bare
+/// paragraphs at factory metrics (sz=24 after=160 line=278) while B-styled
+/// content keeps B's look via the per-style bake; adopting B's docDefaults
+/// wholesale instead rendered A's content 15% tighter (17 pages vs the
+/// oracle's 20 on tiff_image × two_column).
+fn factory_scaffold_bake_b_styles(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+) -> bool {
+    let style_nm = W::name("style");
+    let style_id_nm = W::name("styleId");
+    // --- capture B's docDefaults values ---
+    let dd = dom.element(root, &W::name("docDefaults"));
+    let b_ppr_spacing = dd
+        .and_then(|d| dom.element(d, &W::name("pPrDefault")))
+        .and_then(|p| dom.element(p, &W::p_pr()))
+        .and_then(|p| dom.element(p, &W::name("spacing")));
+    let b_sp = |dom: &Dom, attr: &str| -> Option<String> {
+        b_ppr_spacing.and_then(|s| dom.attribute(s, &W::name(attr)).map(str::to_string))
+    };
+    let b_before = b_sp(dom, "before");
+    let b_after = b_sp(dom, "after");
+    let b_line = b_sp(dom, "line");
+    let b_line_rule = b_sp(dom, "lineRule");
+    let b_dd_rpr = dd
+        .and_then(|d| dom.element(d, &W::name("rPrDefault")))
+        .and_then(|r| dom.element(r, &W::r_pr()));
+    let b_rv = |dom: &Dom, local: &str| -> Option<String> {
+        b_dd_rpr
+            .and_then(|r| dom.element(r, &W::name(local)))
+            .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string))
+    };
+    let b_kern = b_rv(dom, "kern");
+    let b_sz = b_rv(dom, "sz");
+    let b_sz_cs = b_rv(dom, "szCs");
+    let lig_name = W14::name("ligatures");
+    let lig_val = W14::name("val");
+    let b_lig = b_dd_rpr
+        .and_then(|r| dom.element(r, &lig_name))
+        .and_then(|e| dom.attribute(e, &lig_val).map(str::to_string));
+    let b_fonts_attrs: std::collections::BTreeMap<String, String> = b_dd_rpr
+        .and_then(|r| dom.element(r, &W::name("rFonts")))
+        .map(|f| {
+            dom.attributes(f)
+                .into_iter()
+                .map(|(n, v)| (format!("{n:?}"), v))
+                .collect()
+        })
+        .unwrap_or_default();
+    let b_fonts_node = b_dd_rpr.and_then(|r| dom.element(r, &W::name("rFonts")));
+    let b_fonts_clone = b_fonts_node.map(|f| dom.clone_subtree(f));
+
+    // --- replace docDefaults content with factory ---
+    if let Some(dd) = dd {
+        let rd = dom.element(dd, &W::name("rPrDefault"));
+        let pd = dom.element(dd, &W::name("pPrDefault"));
+        for e in [rd, pd].into_iter().flatten() {
+            dom.remove(e);
+        }
+        let rp_doc = dom.parse_xdocument(FACTORY_DD_RPR);
+        let pp_doc = dom.parse_xdocument(FACTORY_DD_PPR);
+        let rd_new = dom.new_element(W::name("rPrDefault"));
+        if let Some(r) = dom.root(rp_doc) {
+            dom.add(rd_new, r);
+        }
+        let pd_new = dom.new_element(W::name("pPrDefault"));
+        if let Some(p) = dom.root(pp_doc) {
+            dom.add(pd_new, p);
+        }
+        dom.add_first(dd, pd_new);
+        dom.add_first(dd, rd_new);
+    }
+    let factory_fonts: std::collections::BTreeMap<String, String> = [
+        ("asciiTheme", "minorHAnsi"),
+        ("eastAsiaTheme", "minorEastAsia"),
+        ("hAnsiTheme", "minorHAnsi"),
+        ("cstheme", "minorBidi"),
+    ]
+    .iter()
+    .map(|(k, v)| (format!("{:?}", W::name(k)), v.to_string()))
+    .collect();
+
+    // --- per-style bake ---
+    let styles: Vec<NodeId> = dom.elements(root, Some(&style_nm));
+    let by_id: std::collections::HashMap<String, NodeId> = styles
+        .iter()
+        .filter_map(|&s| dom.attribute(s, &style_id_nm).map(|i| (i.to_string(), s)))
+        .collect();
+    // Value of a declared spacing attr / rPr child anywhere in the basedOn
+    // chain (self first). Cycles guarded by a depth cap.
+    let chain_spacing = |dom: &Dom, mut s: NodeId, attr: &str| -> Option<String> {
+        for _ in 0..12 {
+            if let Some(v) = dom
+                .element(s, &W::p_pr())
+                .and_then(|p| dom.element(p, &W::name("spacing")))
+                .and_then(|sp| dom.attribute(sp, &W::name(attr)))
+            {
+                return Some(v.to_string());
+            }
+            let based = dom
+                .element(s, &W::name("basedOn"))
+                .and_then(|b| dom.attribute(b, &W::val()))?;
+            s = *by_id.get(based)?;
+        }
+        None
+    };
+    let chain_rpr = |dom: &Dom, mut s: NodeId, local: &str| -> Option<String> {
+        for _ in 0..12 {
+            if let Some(v) = dom
+                .element(s, &W::r_pr())
+                .and_then(|r| dom.element(r, &W::name(local)))
+                .and_then(|e| dom.attribute(e, &W::val()))
+            {
+                return Some(v.to_string());
+            }
+            let based = dom
+                .element(s, &W::name("basedOn"))
+                .and_then(|b| dom.attribute(b, &W::val()))?;
+            s = *by_id.get(based)?;
+        }
+        None
+    };
+    let chain_has_rfonts = |dom: &Dom, mut s: NodeId| -> bool {
+        for _ in 0..12 {
+            if dom
+                .element(s, &W::r_pr())
+                .and_then(|r| dom.element(r, &W::name("rFonts")))
+                .is_some()
+            {
+                return true;
+            }
+            let Some(based) = dom
+                .element(s, &W::name("basedOn"))
+                .and_then(|b| dom.attribute(b, &W::val()))
+            else {
+                return false;
+            };
+            match by_id.get(based) {
+                Some(&n) => s = n,
+                None => return false,
+            }
+        }
+        false
+    };
+    let chain_lig = |dom: &Dom, mut s: NodeId| -> Option<String> {
+        for _ in 0..12 {
+            if let Some(v) = dom
+                .element(s, &W::r_pr())
+                .and_then(|r| dom.element(r, &lig_name))
+                .and_then(|e| dom.attribute(e, &lig_val))
+            {
+                return Some(v.to_string());
+            }
+            let based = dom
+                .element(s, &W::name("basedOn"))
+                .and_then(|b| dom.attribute(b, &W::val()))?;
+            s = *by_id.get(based)?;
+        }
+        None
+    };
+
+    let mut changed = false;
+    for style in styles {
+        let sid = dom.attribute(style, &style_id_nm).unwrap_or("").to_string();
+        let stype = dom.attribute(style, &W::name("type")).unwrap_or("");
+        let is_para = stype == "paragraph";
+        let is_char = stype == "character";
+        if (!is_para && !is_char) || sid == "Normal" {
+            continue;
+        }
+        let q_format = dom.element(style, &W::name("qFormat")).is_some();
+        let old_ppr = dom.element(style, &W::p_pr()).map(|p| {
+            let c = dom.clone_subtree(p);
+            for ch in dom.descendants(c, Some(&W::name("pPrChange"))) {
+                dom.remove(ch);
+            }
+            c
+        });
+        let old_rpr = dom.element(style, &W::r_pr()).map(|r| {
+            let c = dom.clone_subtree(r);
+            for ch in dom.descendants(c, Some(&W::name("rPrChange"))) {
+                dom.remove(ch);
+            }
+            c
+        });
+        let mut touched_ppr = false;
+        let mut touched_rpr = false;
+
+        if is_para {
+            // spacing: before/after default "0", line default "240".
+            let deltas: Vec<(&str, String)> = [
+                ("before", &b_before, "0"),
+                ("after", &b_after, "160"),
+                ("line", &b_line, "278"),
+            ]
+            .into_iter()
+            .filter_map(|(attr, b_dd_v, factory)| {
+                if chain_spacing(dom, style, attr).is_some() {
+                    return None; // declared chain wins in both contexts
+                }
+                let default = if attr == "line" { "240" } else { "0" };
+                let eff_b = b_dd_v.clone().unwrap_or_else(|| default.to_string());
+                let eff_out = factory.to_string();
+                (eff_b != eff_out).then_some((attr, eff_b))
+            })
+            .collect();
+            if !deltas.is_empty() {
+                let ppr = match dom.element(style, &W::p_pr()) {
+                    Some(p) => p,
+                    None => {
+                        let p = dom.new_element(W::p_pr());
+                        insert_child_by_rank(dom, style, p, "pPr", &style_child_rank);
+                        p
+                    }
+                };
+                let sp = match dom.element(ppr, &W::name("spacing")) {
+                    Some(s) => s,
+                    None => {
+                        let s = dom.new_element(W::name("spacing"));
+                        insert_child_by_rank(dom, ppr, s, "spacing", &ppr_child_rank);
+                        s
+                    }
+                };
+                for (attr, v) in &deltas {
+                    dom.set_attribute_value(sp, &W::name(attr), Some(v));
+                    if *attr == "line" && dom.attribute(sp, &W::name("lineRule")).is_none() {
+                        let rule = b_line_rule.clone().unwrap_or_else(|| "auto".to_string());
+                        dom.set_attribute_value(sp, &W::name("lineRule"), Some(&rule));
+                    }
+                }
+                touched_ppr = true;
+            }
+        }
+
+        // rPr metric bake (paragraph AND character styles).
+        let mut rpr_deltas: Vec<(&str, String)> = Vec::new();
+        for (local, b_dd_v, factory, default) in [
+            ("kern", &b_kern, "2", "0"),
+            ("sz", &b_sz, "24", "20"),
+            ("szCs", &b_sz_cs, "24", "20"),
+        ] {
+            if chain_rpr(dom, style, local).is_some() {
+                continue;
+            }
+            let eff_b = b_dd_v.clone().unwrap_or_else(|| default.to_string());
+            if eff_b != factory {
+                rpr_deltas.push((local, eff_b));
+            }
+        }
+        let want_fonts = !chain_has_rfonts(dom, style)
+            && !b_fonts_attrs.is_empty()
+            && b_fonts_attrs != factory_fonts;
+        let want_lig = q_format
+            && chain_lig(dom, style).is_none()
+            && b_lig.clone().unwrap_or_else(|| "none".to_string()) != "standardContextual";
+        if !rpr_deltas.is_empty() || want_fonts || want_lig {
+            let rpr = match dom.element(style, &W::r_pr()) {
+                Some(r) => r,
+                None => {
+                    let r = dom.new_element(W::r_pr());
+                    insert_child_by_rank(dom, style, r, "rPr", &style_child_rank);
+                    r
+                }
+            };
+            if want_fonts
+                && dom.element(rpr, &W::name("rFonts")).is_none()
+                && let Some(fc) = b_fonts_clone
+            {
+                let clone = dom.clone_subtree(fc);
+                dom.add_first(rpr, clone);
+            }
+            for (local, v) in &rpr_deltas {
+                let e = dom.new_element(W::name(local));
+                dom.set_attribute_value(e, &W::val(), Some(v));
+                add_rpr_child_in_order(dom, rpr, e, local);
+            }
+            if want_lig && dom.element(rpr, &lig_name).is_none() {
+                let e = dom.new_element(lig_name.clone());
+                let v = b_lig.clone().unwrap_or_else(|| "none".to_string());
+                dom.set_attribute_value(e, &lig_val, Some(&v));
+                dom.add(rpr, e);
+            }
+            touched_rpr = true;
+        }
+
+        // Word marks touched PARAGRAPH styles with both change records; the
+        // linked *Char styles stay unmarked (S2 rule).
+        if is_para && (touched_ppr || touched_rpr) {
+            let already = ["rPrChange", "pPrChange"]
+                .iter()
+                .any(|c| !dom.descendants(style, Some(&W::name(c))).is_empty());
+            if !already {
+                let ppr = match dom.element(style, &W::p_pr()) {
+                    Some(p) => p,
+                    None => {
+                        let p = dom.new_element(W::p_pr());
+                        insert_child_by_rank(dom, style, p, "pPr", &style_child_rank);
+                        p
+                    }
+                };
+                let old_p = old_ppr.unwrap_or_else(|| dom.new_element(W::p_pr()));
+                append_style_change_record(dom, root, ppr, old_p, "pPrChange", settings);
+                let rpr = match dom.element(style, &W::r_pr()) {
+                    Some(r) => r,
+                    None => {
+                        let r = dom.new_element(W::r_pr());
+                        insert_child_by_rank(dom, style, r, "rPr", &style_child_rank);
+                        r
+                    }
+                };
+                let old_r = old_rpr.unwrap_or_else(|| dom.new_element(W::r_pr()));
+                append_style_change_record(dom, root, rpr, old_r, "rPrChange", settings);
+            }
+        }
+        changed |= touched_ppr || touched_rpr;
     }
     changed
 }
@@ -1231,7 +1658,10 @@ fn normalize_word_paragraph_style_line(dom: &mut Dom, styles_root: NodeId) -> bo
     else {
         return false;
     };
-    if dom.attribute(normal_sp, &W::name("line")).is_none() {
+    // M460: only Word's own single-line normalization (line=240) propagates to
+    // headings; a Normal carrying B's non-240 line (e.g. 276, basic_comment ×
+    // cli_legacy) leaves Heading/Title/ListParagraph line-less in the oracle.
+    if dom.attribute(normal_sp, &W::name("line")) != Some("240") {
         return false;
     }
     if let Some(before) = dom.attribute(normal_sp, &W::name("before"))
@@ -2002,6 +2432,81 @@ fn adopt_missing_styles_structure(dom: &mut Dom, out_root: NodeId, b_root: NodeI
 ///
 /// GT evidence (sample-document × sd-2517-localized-heading-styles): GT Normal
 /// rPr = Times New Roman sz/szCs 24 + rPrChange(old = Inter sz 22).
+/// M467 — prune the merged Normal's live rPr of metric attrs whose value the
+/// output docDefaults already supply (Word writes only the delta):
+/// `kern` (dd absent = "0"), `sz`/`szCs`, `w14:ligatures` (dd absent =
+/// "none"), and per-slot `rFonts` attrs (both concrete and `*Theme` names).
+/// Oracle tab_test × table_autofit: B's Normal stores Arial kern=0 sz=20
+/// szCs=22 eastAsiaTheme ligatures-none; A-dd has no kern, szCs=22, the same
+/// eastAsiaTheme, no ligatures — Word's output Normal is Arial + sz=20 only.
+/// basic_comment keeps kern=0 because A-dd kern=2 differs (m461).
+fn prune_normal_rpr_context_equal_attrs(dom: &mut Dom, out_root: NodeId) -> bool {
+    let Some(normal) = find_normal_style(dom, out_root) else {
+        return false;
+    };
+    let Some(rpr) = dom.element(normal, &W::name("rPr")) else {
+        return false;
+    };
+    let dd = rpr_default(dom, out_root);
+    let dd_val = |dom: &Dom, local: &str, default: &str| -> String {
+        dd.and_then(|d| dom.element(d, &W::name(local)))
+            .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string))
+            .unwrap_or_else(|| default.to_string())
+    };
+    let mut changed = false;
+    for (local, default) in [("kern", "0"), ("sz", ""), ("szCs", "")] {
+        let Some(e) = dom.element(rpr, &W::name(local)) else {
+            continue;
+        };
+        let v = dom.attribute(e, &W::val()).unwrap_or("").to_string();
+        let ddv = dd_val(dom, local, default);
+        if !v.is_empty() && v == ddv {
+            dom.remove(e);
+            changed = true;
+        }
+    }
+    let lig_name = W14::name("ligatures");
+    let lig_val_name = W14::name("val");
+    if let Some(e) = dom.element(rpr, &lig_name) {
+        let v = dom.attribute(e, &lig_val_name).unwrap_or("").to_string();
+        let ddv = dd
+            .and_then(|d| dom.element(d, &lig_name))
+            .and_then(|x| dom.attribute(x, &lig_val_name).map(str::to_string))
+            .unwrap_or_else(|| "none".to_string());
+        if v == ddv {
+            dom.remove(e);
+            changed = true;
+        }
+    }
+    if let Some(fonts) = dom.element(rpr, &W::name("rFonts")) {
+        let dd_fonts = dd.and_then(|d| dom.element(d, &W::name("rFonts")));
+        for attr in [
+            "ascii",
+            "hAnsi",
+            "eastAsia",
+            "cs",
+            "asciiTheme",
+            "hAnsiTheme",
+            "eastAsiaTheme",
+            "cstheme",
+        ] {
+            let Some(v) = dom.attribute(fonts, &W::name(attr)).map(str::to_string) else {
+                continue;
+            };
+            let ddv = dd_fonts.and_then(|f| dom.attribute(f, &W::name(attr)).map(str::to_string));
+            if ddv.as_deref() == Some(v.as_str()) {
+                dom.set_attribute_value(fonts, &W::name(attr), None);
+                changed = true;
+            }
+        }
+        if dom.attributes(fonts).is_empty() {
+            dom.remove(fonts);
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn merge_normal_style_rpr(
     dom: &mut Dom,
     out_root: NodeId,
@@ -2086,6 +2591,24 @@ fn merge_normal_style_rpr(
             }
         };
         dom.set_attribute_value(e, &W::val(), v.as_deref());
+    }
+    // M461 — B's stored kern / w14:ligatures survive into the live rPr (Word
+    // copies B's stored Normal rPr; dropping kern=0 leaves A-docDefaults
+    // kerning ON and every long paragraph renders a line short).
+    if let Some(b_rpr) = b_style.and_then(|s| dom.element(s, &W::name("rPr"))) {
+        if dom.element(rpr, &W::name("kern")).is_none()
+            && let Some(bk) = dom.element(b_rpr, &W::name("kern"))
+        {
+            let clone = dom.clone_subtree(bk);
+            add_rpr_child_in_order(dom, rpr, clone, "kern");
+        }
+        let lig_name = W14::name("ligatures");
+        if dom.element(rpr, &lig_name).is_none()
+            && let Some(bl) = dom.element(b_rpr, &lig_name)
+        {
+            let clone = dom.clone_subtree(bl);
+            dom.add(rpr, clone); // w14 extension: last, before rPrChange lands
+        }
     }
     let chg = dom.new_element(W::name("rPrChange"));
     // Next free id (see merge_normal_style_spacing): the pPr pass, when it
@@ -3517,6 +4040,11 @@ fn compare_documents_impl(
         crate::comparer::finalize::fix_up_revision_ids(&mut dom, &[result_root]);
     }
 
+    // M463 — rewrite outer-wrapped math revisions into Word's internal form.
+    // Must run after every mesh/finalize pass (they reason about the outer
+    // wrap) and before serialize.
+    crate::comparer::produce::convert_outer_math_wraps_to_internal(&mut dom, result_root, settings);
+
     // Final drawing/shape id renumber immediately before serialize — package
     // post-steps (reconcile, header/footer adopt, comments) can clone/graft
     // drawings after the mid-produce FixUpDocPrIds pass (S-dup-docpr-id).
@@ -3572,12 +4100,24 @@ fn compare_documents_impl(
                     );
                 }
             }
-            // A has no styles part, B does: copy B wholesale then canonicalize.
+            // A has no styles part, B does: copy B, canonicalize, then M462 —
+            // swap in Word's FACTORY docDefaults/theme and bake B-effective
+            // metrics into each style (Word scaffolds from its blank document,
+            // not from B: tiff_image × two_column oracle).
             (None, Some(from_xml)) if is_styles && settings.merge_replaced_paragraphs => {
                 let mut sd = Dom::new();
                 let fd = sd.parse_xdocument(&from_xml);
                 if let Some(fr) = sd.root(fd) {
                     style_renames = canonicalize_style_ids(&mut sd, fr);
+                    factory_scaffold_bake_b_styles(&mut sd, fr, settings);
+                    let theme_parts: Vec<String> = out
+                        .parts()
+                        .into_iter()
+                        .filter(|p| p.starts_with("word/theme/") && p.ends_with(".xml"))
+                        .collect();
+                    for tp in theme_parts {
+                        out.set_part(&tp, FACTORY_THEME_APTOS.as_bytes().to_vec());
+                    }
                     out.set_part(part, sd.serialize_element(fr).into_bytes());
                     out.add_content_type_override(
                         "/word/styles.xml",
@@ -3739,6 +4279,10 @@ fn compare_documents_impl(
             // B's Calibri dd onto Normal + rPrChange(A Ubuntu); we kept A.
             // M65 still skips both-bare (file_170). HF-linked cases unchanged.
             changed |= merge_normal_style_rpr(&mut sd, or, br, settings);
+            // M467: Word keeps only per-attr DELTAS vs the output docDefaults
+            // on the merged Normal (tab_test × table_autofit: kern/szCs/
+            // eastAsiaTheme/ligatures dropped as redundant, Arial+sz=20 kept).
+            changed |= prune_normal_rpr_context_equal_attrs(&mut sd, or);
             // M111: cascade Normal pPrChange/rPrChange onto basedOn=Normal styles
             // (ListParagraph/BodyText/Header/… — file_130 Word has ~30).
             changed |= cascade_normal_change_to_based_styles(&mut sd, or, settings);

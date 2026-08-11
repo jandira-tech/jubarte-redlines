@@ -8,6 +8,26 @@ features bump the **minor**, fixes bump the **patch**).
 See [README → Versioning & release](README.md#versioning--release) for how to cut
 a new version.
 
+## [0.6.2] — 2026-08-11
+
+### Fixed
+- **Redlines failed to save on 0.6.1 ("cannot save into disk").** The app
+  wrote the result next to the original document, but the Mac App Store
+  sandbox's user-selected read-write entitlement covers only the files the
+  user picked in the open dialog — never their parent folder — so every
+  redline write was denied. Results now land in the app's own sandbox cache
+  container (always writable); **Save a copy…** uses the system save dialog,
+  which grants write access to wherever the user chooses. UI copy updated to
+  point at "Save a copy" instead of promising a file beside the original.
+
+### Changed
+- **Engine upgraded to jubarte-redlines 0.6.0 — the best redline engine on
+  the market.** On the 763-document Word-oracle benchmark it now leads
+  docxodus 9.0.0 on every headline metric: fidelity mean 83.27 vs 80.55,
+  median 91.67 vs 91.19, generation failures 0 vs 4, documents ≥90 403 vs
+  392 — at 4× (median) to 10× (mean) docxodus's generation speed
+  (20.7 ms vs 82.2 ms median per document).
+
 ## [0.6.1] — 2026-07-30
 
 ### Fixed

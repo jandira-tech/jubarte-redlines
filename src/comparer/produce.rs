@@ -575,6 +575,145 @@ fn is_txbx_from_level(dom: &Dom, atom: &ComparisonUnitAtom, level: usize) -> boo
         .any(|&a| dom.name(a).as_ref() == Some(&txbx))
 }
 
+/// M463 — final-serialization pass: every `w:ins`/`w:del` whose element
+/// content is exactly OMML math (`m:oMath`/`m:oMathPara`) is unwrapped, and
+/// the revision state is rewritten INSIDE the math the way Word Compare
+/// writes it. Runs AFTER all mesh/finalize passes, which reason about the
+/// outer-wrapped shape.
+///
+/// LibreOffice renders Word's internal-marked math as placeholder boxes; the
+/// outer wrap rendered the live formula instead — every formula's ink
+/// diverged from the oracle (math family n=28, mean ≈58; math_func ×
+/// math_groupchr 54.6).
+pub fn convert_outer_math_wraps_to_internal(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+) {
+    let math_names = [
+        crate::namespaces::M::name("oMath"),
+        crate::namespaces::M::name("oMathPara"),
+    ];
+    // Next free revision id — internal marks need fresh ones.
+    let mut max_id: u32 = 0;
+    for e in dom.descendants(root, None) {
+        if let Some(v) = dom.attribute(e, &W::id())
+            && let Ok(n) = v.parse::<u32>()
+        {
+            max_id = max_id.max(n);
+        }
+    }
+    let mut id_gen = max_id + 1;
+    for rev_name in [W::ins(), W::del()] {
+        let wrappers: Vec<NodeId> = dom
+            .descendants(root, Some(&rev_name))
+            .into_iter()
+            .filter(|&w| {
+                let kids = dom.elements(w, None);
+                !kids.is_empty()
+                    && kids
+                        .iter()
+                        .all(|&k| dom.name(k).is_some_and(|n| math_names.contains(&n)))
+            })
+            .collect();
+        for w in wrappers {
+            let maths: Vec<NodeId> = dom.elements(w, None);
+            for m in &maths {
+                mark_math_revisions_internally(dom, *m, &rev_name, settings, &mut id_gen);
+            }
+            for m in maths {
+                dom.remove(m);
+                dom.add_before_self(w, m);
+            }
+            dom.remove(w);
+        }
+    }
+}
+
+/// Rewrite a `m:oMath(Para)` subtree so its revision state lives INSIDE the
+/// math, the way Word Compare writes it:
+/// - every `m:r` moves its children (m:rPr?, w:rPr?, m:t…) into a
+///   `w:ins`/`w:del` child; a `w:rPr` with Cambria Math rFonts is
+///   materialized when the run stores none (Word always writes it);
+/// - every `m:ctrlPr` moves its `w:rPr` (materialized likewise) into the
+///   same mark.
+///
+/// `m:t` stays `m:t` under `w:del` — math content never becomes delText.
+fn mark_math_revisions_internally(
+    dom: &mut Dom,
+    math_root: NodeId,
+    rev_name: &crate::xmllinq::XName,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let m_r = crate::namespaces::M::name("r");
+    let m_ctrl_pr = crate::namespaces::M::name("ctrlPr");
+    let w_rpr = W::r_pr();
+    let cambria = |dom: &mut Dom| -> NodeId {
+        let rpr = dom.new_element(W::r_pr());
+        let fonts = dom.new_element(W::name("rFonts"));
+        dom.set_attribute_value(fonts, &W::name("ascii"), Some("Cambria Math"));
+        dom.set_attribute_value(fonts, &W::name("hAnsi"), Some("Cambria Math"));
+        dom.add(rpr, fonts);
+        rpr
+    };
+    let mut new_mark = |dom: &mut Dom| -> NodeId {
+        let w = dom.new_element(rev_name.clone());
+        dom.set_attribute_value(w, &W::id(), Some(&id_gen.to_string()));
+        *id_gen += 1;
+        dom.set_attribute_value(w, &W::author(), Some(&settings.author_for_revisions));
+        dom.set_attribute_value(w, &W::date(), Some(&settings.date_time_for_revisions));
+        w
+    };
+    let targets: Vec<(NodeId, bool)> = dom
+        .descendants(math_root, Some(&m_r))
+        .into_iter()
+        .map(|n| (n, false))
+        .chain(
+            dom.descendants(math_root, Some(&m_ctrl_pr))
+                .into_iter()
+                .map(|n| (n, true)),
+        )
+        .collect();
+    for (node, is_ctrl_pr) in targets {
+        // Skip runs that already carry a revision mark (defensive).
+        if dom.elements(node, None).iter().any(|&c| {
+            dom.name(c)
+                .is_some_and(|n| n == W::ins() || n == W::del())
+        }) {
+            continue;
+        }
+        let children: Vec<NodeId> = dom.elements(node, None);
+        let mark = new_mark(dom);
+        let mut saw_wrpr = false;
+        for c in children {
+            let is_m_rpr = dom.name(c) == Some(crate::namespaces::M::name("rPr"));
+            saw_wrpr |= dom.name(c).as_ref() == Some(&w_rpr);
+            dom.remove(c);
+            dom.add(mark, c);
+            // Materialize the math w:rPr right after m:rPr, before m:t.
+            let _ = is_m_rpr;
+        }
+        if !saw_wrpr {
+            let rpr = cambria(dom);
+            // After m:rPr when present, else first.
+            let anchor = dom
+                .elements(mark, None)
+                .into_iter()
+                .find(|&c| dom.name(c) == Some(crate::namespaces::M::name("rPr")));
+            match anchor {
+                Some(a) => dom.add_after_self(a, rpr),
+                None => match dom.elements(mark, None).first().copied() {
+                    Some(first) => dom.add_before_self(first, rpr),
+                    None => dom.add(mark, rpr),
+                },
+            }
+        }
+        let _ = is_ctrl_pr;
+        dom.add(node, mark);
+    }
+}
+
 /// M4.E.3-E.7 — `CoalesceRecurse` (:6024). Returns the constructed nodes for this
 /// level. `id_gen` is the `s_MaxId` analog (oMath revision ids).
 pub fn coalesce_recurse(
@@ -779,6 +918,10 @@ pub fn coalesce_recurse(
         }
 
         // m:oMath / m:oMathPara — wrap in real w:del/w:ins/w:moveFrom/w:moveTo.
+        // The outer wrap is the shape every mesh/finalize pass reasons about;
+        // the final Word serialization (revision marks INSIDE the math, M463)
+        // is produced by `convert_outer_math_wraps_to_internal` at the very
+        // end of the pipeline.
         if aname == crate::namespaces::M::name("oMath")
             || aname == crate::namespaces::M::name("oMathPara")
         {

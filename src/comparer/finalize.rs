@@ -8971,6 +8971,29 @@ pub fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: Node
     if kids.len() < 8 {
         return;
     }
+    // M465 — anchored documents don't fold. When the first body paragraph is
+    // a MIX (matched leading title, "file_13.docx" ↔ "file_14.docx" merged),
+    // Word treats the rest as one clean replace block and keeps A's deleted
+    // demo doc intact at the END (file_13 × file_14 oracle). Only unanchored
+    // pairs (double_spacing × eigenpal) take the mid-stream title fold.
+    if let Some(&first) = kids.iter().find(|&&k| dom.name_is(k, &W::p())) {
+        let has_ins_text = !dom.descendants(first, Some(&W::ins())).is_empty()
+            && dom
+                .descendants(first, Some(&W::t()))
+                .iter()
+                .any(|&t| !dom.value_str(t).trim().is_empty());
+        let has_del_text = !dom.descendants(first, Some(&W::del_text())).is_empty();
+        let has_live_text = dom.descendants(first, Some(&W::t())).iter().any(|&t| {
+            !dom.value_str(t).trim().is_empty()
+                && !dom
+                    .ancestors_and_self(t, None)
+                    .iter()
+                    .any(|&a| dom.name_is(a, &W::ins()))
+        });
+        if has_ins_text && has_del_text && has_live_text {
+            return;
+        }
+    }
     // Find pure-D demo titles that have pure-I (or any) content after them.
     let mut targets: Vec<usize> = Vec::new();
     for (i, &k) in kids.iter().enumerate() {
@@ -10583,6 +10606,13 @@ pub fn fold_boiler_eq_between_ins(dom: &mut Dom, root: NodeId) {
             last_t.push_str(&dom.value_str(tn));
         }
         if last_t.trim() != "." {
+            continue;
+        }
+        // M466 (file_168 × file_169, 100 → 89.7): a period run carrying a
+        // tracked format change (rPrChange, e.g. strike+bold heading residual)
+        // is NOT a bare EQ — Word keeps it live; merging it into the del text
+        // would drop the format-change record.
+        if !dom.descendants(last, Some(&W::name("rPrChange"))).is_empty() {
             continue;
         }
         let prev = body_kids[body_kids.len() - 2];
