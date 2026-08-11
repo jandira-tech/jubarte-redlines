@@ -6224,6 +6224,24 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 {
                     last_ins = trailing;
                 }
+                // M468 (h_f_normal_odd_even_unchecked × sd_1495): trailing
+                // EMPTY pure-I separates a LONG content pure-I (>6 tokens)
+                // from a short unrelated pure-D title (≤8 tokens) — Word
+                // folds NOTHING (icon para stays pure-I, title keeps its own
+                // MARK-DEL paragraph and pPr). Reaching backward across the
+                // empties merged them and lost the oracle's vertical gap
+                // (79.6 → 46.1 once the wrong heading stamps stopped
+                // compensating).
+                if inss.len() >= 2
+                    && trailing != last_ins
+                    && (para_has_no_text(dom, trailing)
+                        || para_body_text_is_whitespace_only(dom, trailing))
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                    && para_word_atom_count(dom, last_ins) > 6
+                    && para_word_atom_count(dom, d) <= 8
+                {
+                    continue;
+                }
                 // M322 (tiff×h_f_normal): short pure-D title ("TIFF test document")
                 // after a long pure-I stream. Word head-junctions the **first**
                 // content pure-I with the title (MIX at start); last-I fold
