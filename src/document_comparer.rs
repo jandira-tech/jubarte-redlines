@@ -1098,6 +1098,62 @@ fn merge_revised_style_definitions(
         let a_fonts = a_dd.and_then(|d| dom.element(d, &W::name("rFonts")));
         let b_fonts = b_dd.and_then(|d| dom.element(d, &W::name("rFonts")));
         let fonts_differ = attr_map(dom, a_fonts) != attr_map(dom, b_fonts);
+        // M464 — pPr spacing deltas between the two docDefaults (implicit
+        // defaults before/after 0, line 240). A B-only style resolving a
+        // spacing attr through B's dd renders wrong under A's dd (file_13 ×
+        // file_14 oracle bakes after=0 line=240 on every copied style).
+        let dd_ppr_spacing = |dom: &Dom, root: NodeId| -> Option<NodeId> {
+            let dd = dom.element(root, &W::name("docDefaults"))?;
+            let pd = dom.element(dd, &W::name("pPrDefault"))?;
+            let pp = dom.element(pd, &W::p_pr())?;
+            dom.element(pp, &W::name("spacing"))
+        };
+        let a_sp = dd_ppr_spacing(dom, out_root);
+        let b_sp = dd_ppr_spacing(dom, b_root);
+        let sp_val = |dom: &Dom, sp: Option<NodeId>, attr: &str, default: &str| -> String {
+            sp.and_then(|s| dom.attribute(s, &W::name(attr)).map(str::to_string))
+                .unwrap_or_else(|| default.to_string())
+        };
+        let mut sp_deltas: Vec<(&str, String)> = Vec::new();
+        for (attr, default) in [("before", "0"), ("after", "0"), ("line", "240")] {
+            let av = sp_val(dom, a_sp, attr, default);
+            let bv = sp_val(dom, b_sp, attr, default);
+            if av != bv {
+                sp_deltas.push((attr, bv));
+            }
+        }
+        let b_line_rule = b_sp.and_then(|s| dom.attribute(s, &W::name("lineRule")).map(str::to_string));
+        // Output-stylesheet basedOn chains, for "does the declared chain
+        // already provide this attr" checks.
+        let out_by_id: std::collections::HashMap<String, NodeId> = dom
+            .elements(out_root, Some(&style_nm))
+            .into_iter()
+            .filter_map(|s| dom.attribute(s, &style_id).map(|i| (i.to_string(), s)))
+            .collect();
+        let chain_has_sp_attr = |dom: &Dom, start: NodeId, attr: &str| -> bool {
+            let mut s = start;
+            for _ in 0..12 {
+                if dom
+                    .element(s, &W::p_pr())
+                    .and_then(|p| dom.element(p, &W::name("spacing")))
+                    .and_then(|sp| dom.attribute(sp, &W::name(attr)))
+                    .is_some()
+                {
+                    return true;
+                }
+                let Some(based) = dom
+                    .element(s, &W::name("basedOn"))
+                    .and_then(|b| dom.attribute(b, &W::val()))
+                else {
+                    return false;
+                };
+                match out_by_id.get(based) {
+                    Some(&n) => s = n,
+                    None => return false,
+                }
+            }
+            false
+        };
         // (local, B-effective value) for whitelist props whose A/B effective
         // values differ; implicit defaults sz/szCs 20, kern 0.
         let mut deltas: Vec<(&str, String)> = Vec::new();
@@ -1110,7 +1166,7 @@ fn merge_revised_style_definitions(
         }
         let ligs = (lig_or(dom, a_dd), lig_or(dom, b_dd));
         let b_lang = b_dd.or(a_dd).and_then(|d| dom.element(d, &W::name("lang")));
-        if fonts_differ || !deltas.is_empty() || ligs.0 != ligs.1 {
+        if fonts_differ || !deltas.is_empty() || ligs.0 != ligs.1 || !sp_deltas.is_empty() {
             for style in dom.elements(out_root, Some(&style_nm)) {
                 let Some(id) = dom.attribute(style, &style_id).map(str::to_string) else {
                     continue;
@@ -1180,7 +1236,9 @@ fn merge_revised_style_definitions(
                     dom.add(live, e);
                 }
                 append_style_change_record(dom, out_root, live, old, "rPrChange", settings);
-                // pPr (paragraph styles): live declared unchanged; old = its clone.
+                // pPr (paragraph styles): bake B-effective spacing deltas
+                // (M464), then record; old = post-bake clone (Word old==live,
+                // tiff BodyText oracle).
                 if stype == "paragraph" {
                     let ppr = match dom.element(style, &W::p_pr()) {
                         Some(p) => p,
@@ -1190,6 +1248,28 @@ fn merge_revised_style_definitions(
                             p
                         }
                     };
+                    for (attr, bv) in &sp_deltas {
+                        if chain_has_sp_attr(dom, style, attr) {
+                            continue;
+                        }
+                        let sp = match dom.element(ppr, &W::name("spacing")) {
+                            Some(s) => s,
+                            None => {
+                                let s = dom.new_element(W::name("spacing"));
+                                insert_child_by_rank(dom, ppr, s, "spacing", &ppr_child_rank);
+                                s
+                            }
+                        };
+                        if dom.attribute(sp, &W::name(attr)).is_none() {
+                            dom.set_attribute_value(sp, &W::name(attr), Some(bv));
+                            if *attr == "line"
+                                && dom.attribute(sp, &W::name("lineRule")).is_none()
+                            {
+                                let rule = b_line_rule.as_deref().unwrap_or("auto");
+                                dom.set_attribute_value(sp, &W::name("lineRule"), Some(rule));
+                            }
+                        }
+                    }
                     let old_p = dom.clone_subtree(ppr);
                     for c in dom.descendants(old_p, Some(&W::name("pPrChange"))) {
                         dom.remove(c);
