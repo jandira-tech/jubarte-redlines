@@ -3885,6 +3885,11 @@ fn compare_documents_impl(
         crate::comparer::finalize::fix_up_revision_ids(&mut dom, &[result_root]);
     }
 
+    // M463 — rewrite outer-wrapped math revisions into Word's internal form.
+    // Must run after every mesh/finalize pass (they reason about the outer
+    // wrap) and before serialize.
+    crate::comparer::produce::convert_outer_math_wraps_to_internal(&mut dom, result_root, settings);
+
     // Final drawing/shape id renumber immediately before serialize — package
     // post-steps (reconcile, header/footer adopt, comments) can clone/graft
     // drawings after the mid-produce FixUpDocPrIds pass (S-dup-docpr-id).
