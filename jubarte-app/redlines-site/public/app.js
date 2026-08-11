@@ -153,8 +153,13 @@ async function accept(slotName, file) {
   }
 
   const slot = slots[slotName];
+  // Reading a large file takes long enough for the user to drop a replacement;
+  // only the newest accept() for this slot may commit its bytes.
+  const seq = (slot.seq = (slot.seq || 0) + 1);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (slot.seq !== seq) return;
   slot.file = file;
-  slot.bytes = new Uint8Array(await file.arrayBuffer());
+  slot.bytes = bytes;
   slot.zone.classList.add("loaded");
   slot.zone.querySelector(".filename").textContent = file.name;
   slot.zone.querySelector(".filemeta").textContent = humanSize(file.size);

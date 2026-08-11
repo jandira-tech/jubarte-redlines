@@ -10,12 +10,21 @@ import init, { compareDocuments, getRevisions, initPanicHook } from "/vendor/jub
 
 let ready;
 
-/** Instantiate once per worker; concurrent calls share the same promise. */
+/**
+ * Instantiate once per worker; concurrent calls share the same promise.
+ * A rejected init is not cached: the next call starts over, so a transient
+ * fetch/compile failure doesn't poison every comparison until page reload.
+ */
 function ensureReady() {
   if (!ready) {
-    ready = init({ module_or_path: "/vendor/jubarte_wasm_bg.wasm" }).then(() => {
-      initPanicHook();
-    });
+    ready = init({ module_or_path: "/vendor/jubarte_wasm_bg.wasm" })
+      .then(() => {
+        initPanicHook();
+      })
+      .catch((err) => {
+        ready = undefined;
+        throw err;
+      });
   }
   return ready;
 }

@@ -70,22 +70,27 @@ pub fn status_from_used(used: u32) -> QuotaStatus {
 
 /// Atomically try to reserve one free-tier slot under `counter`.
 ///
-/// Returns `true` and increments when `used < FREE_LIMIT`; otherwise `false`.
-/// Used by [`try_reserve_free_use`] and by concurrent unit tests
+/// Returns the new count when `used < FREE_LIMIT`; otherwise `None`. The value
+/// comes from the same lock acquisition that incremented, so callers persist
+/// exactly what they reserved — a separate re-lock-and-read could be overtaken
+/// by a concurrent writer (CodeRabbit #3686728192). Used by
+/// [`try_reserve_free_use`] and by concurrent unit tests
 /// (CodeRabbit #3623452481 / #3623452484).
-pub fn try_reserve_counter(counter: &Mutex<u32>) -> bool {
+pub fn try_reserve_counter(counter: &Mutex<u32>) -> Option<u32> {
     let mut used = counter.lock().unwrap();
     if *used >= FREE_LIMIT {
-        return false;
+        return None;
     }
     *used = used.saturating_add(1);
-    true
+    Some(*used)
 }
 
-/// Roll back one free-tier reservation under `counter`.
-pub fn release_counter(counter: &Mutex<u32>) {
+/// Roll back one free-tier reservation under `counter`, returning the new
+/// count from the same lock acquisition (see [`try_reserve_counter`]).
+pub fn release_counter(counter: &Mutex<u32>) -> u32 {
     let mut used = counter.lock().unwrap();
     *used = used.saturating_sub(1);
+    *used
 }
 
 /// Bump the free-tier counter by one (analytics path for entitled users).
@@ -109,10 +114,9 @@ pub fn used(app: &tauri::AppHandle) -> u32 {
 /// Atomically reserve one free-tier redline under the mutex + persist.
 pub fn try_reserve_free_use(app: &tauri::AppHandle) -> bool {
     let quota = app.state::<Quota>();
-    if !try_reserve_counter(&quota.0) {
+    let Some(n) = try_reserve_counter(&quota.0) else {
         return false;
-    }
-    let n = *quota.0.lock().unwrap();
+    };
     if let Some(path) = store_path(app) {
         write_used(&path, n);
     }
@@ -122,8 +126,7 @@ pub fn try_reserve_free_use(app: &tauri::AppHandle) -> bool {
 /// Roll back a reservation when the comparison fails after a successful reserve.
 pub fn release_free_use(app: &tauri::AppHandle) {
     let quota = app.state::<Quota>();
-    release_counter(&quota.0);
-    let n = *quota.0.lock().unwrap();
+    let n = release_counter(&quota.0);
     if let Some(path) = store_path(app) {
         write_used(&path, n);
     }
@@ -228,33 +231,32 @@ mod tests {
     #[test]
     fn try_reserve_never_exceeds_free_limit() {
         let counter = Mutex::new(0u32);
-        let mut ok = 0u32;
+        let mut values = Vec::new();
         for _ in 0..(FREE_LIMIT + 10) {
-            if try_reserve_counter(&counter) {
-                ok += 1;
+            if let Some(n) = try_reserve_counter(&counter) {
+                values.push(n);
             }
         }
-        assert_eq!(ok, FREE_LIMIT);
+        // The returned value is the count from the same lock acquisition, so a
+        // sequential caller must see exactly 1..=FREE_LIMIT with no repeats.
+        assert_eq!(values, (1..=FREE_LIMIT).collect::<Vec<_>>());
         assert_eq!(*counter.lock().unwrap(), FREE_LIMIT);
-        assert!(!try_reserve_counter(&counter));
+        assert!(try_reserve_counter(&counter).is_none());
     }
 
     #[test]
     fn release_after_failed_compare_restores_slot() {
         let counter = Mutex::new(FREE_LIMIT - 1);
-        assert!(try_reserve_counter(&counter));
-        assert_eq!(*counter.lock().unwrap(), FREE_LIMIT);
-        assert!(!try_reserve_counter(&counter));
-        release_counter(&counter);
-        assert_eq!(*counter.lock().unwrap(), FREE_LIMIT - 1);
-        assert!(try_reserve_counter(&counter));
+        assert_eq!(try_reserve_counter(&counter), Some(FREE_LIMIT));
+        assert!(try_reserve_counter(&counter).is_none());
+        assert_eq!(release_counter(&counter), FREE_LIMIT - 1);
+        assert_eq!(try_reserve_counter(&counter), Some(FREE_LIMIT));
     }
 
     #[test]
     fn release_at_zero_saturates() {
         let counter = Mutex::new(0u32);
-        release_counter(&counter);
-        assert_eq!(*counter.lock().unwrap(), 0);
+        assert_eq!(release_counter(&counter), 0);
     }
 
     #[test]
@@ -273,7 +275,7 @@ mod tests {
             let c = Arc::clone(&counter);
             let w = Arc::clone(&wins);
             handles.push(thread::spawn(move || {
-                if try_reserve_counter(&c) {
+                if try_reserve_counter(&c).is_some() {
                     w.fetch_add(1, Ordering::SeqCst);
                 }
             }));
@@ -283,6 +285,33 @@ mod tests {
         }
         assert_eq!(wins.load(Ordering::SeqCst), 1);
         assert_eq!(*counter.lock().unwrap(), FREE_LIMIT);
+    }
+
+    /// CodeRabbit #3686728192: the value persisted after a reserve/release must
+    /// come from the same lock acquisition that mutated the counter — a
+    /// re-lock-and-read can be overtaken by a concurrent writer. Uniqueness of
+    /// the returned values across racing threads proves the same-acquisition
+    /// contract: a stale re-read would produce duplicates.
+    #[test]
+    fn concurrent_reserved_values_are_unique_and_complete() {
+        let counter = Arc::new(Mutex::new(0u32));
+        let values = Arc::new(Mutex::new(Vec::new()));
+        let mut handles = Vec::new();
+        for _ in 0..32 {
+            let c = Arc::clone(&counter);
+            let v = Arc::clone(&values);
+            handles.push(thread::spawn(move || {
+                if let Some(n) = try_reserve_counter(&c) {
+                    v.lock().unwrap().push(n);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        let mut got = values.lock().unwrap().clone();
+        got.sort_unstable();
+        assert_eq!(got, (1..=FREE_LIMIT).collect::<Vec<_>>());
     }
 
     #[test]
@@ -303,7 +332,7 @@ mod tests {
             let c = Arc::clone(&counter);
             let w = Arc::clone(&wins);
             handles.push(thread::spawn(move || {
-                if try_reserve_counter(&c) {
+                if try_reserve_counter(&c).is_some() {
                     w.fetch_add(1, Ordering::SeqCst);
                 }
             }));

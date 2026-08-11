@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "bun run sync-wasm && wrangler deploy",
+    "deploy": "bun run sync-wasm && bun run db:migrate:remote && wrangler deploy",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
