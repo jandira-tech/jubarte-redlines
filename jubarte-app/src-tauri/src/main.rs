@@ -10,7 +10,7 @@
 mod quota;
 mod storekit;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 use jubarte::comparer::{WmlComparerRevisionType, WmlComparerSettings};
