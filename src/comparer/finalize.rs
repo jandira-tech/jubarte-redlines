@@ -1238,6 +1238,13 @@ pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
                 dom.add_first(rpr, rs);
             }
         }
+        // M470 — a WHOLLY deleted/inserted anchor hyperlink keeps Word's
+        // FIELD form: [fldChar begin][(del)InstrText HYPERLINK \l "<anchor>"]
+        // [fldChar separate] …content… [fldChar end] inside the revision.
+        // Plain unwrapping left the inner PAGEREF field chars unbalanced and
+        // LO mis-rendered TOC leaders/page numbers (file_22 × file_23 oracle,
+        // 115pp vs 116pp). Live hyperlinks keep the file_21 styled-run unwrap.
+        wrap_revised_hyperlink_as_field(dom, hl);
         // Hoist children before the hyperlink, then drop the wrapper.
         let kids: Vec<NodeId> = dom.nodes(hl);
         for k in kids {
@@ -1245,6 +1252,96 @@ pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
             dom.add_before_self(hl, k);
         }
         dom.remove(hl);
+    }
+}
+
+/// M470 helper — when `hl`'s text content is wholly deleted (or wholly
+/// inserted), synthesize the HYPERLINK field wrapper runs inside the same
+/// revision context. No-op for live or mixed hyperlinks.
+fn wrap_revised_hyperlink_as_field(dom: &mut Dom, hl: NodeId) {
+    let Some(anchor) = dom.attribute(hl, &W::name("anchor")).map(str::to_string) else {
+        return;
+    };
+    let has_live_t = dom.descendants(hl, Some(&W::t())).iter().any(|&t| {
+        !dom.value_str(t).trim().is_empty()
+            && !dom
+                .ancestors_and_self(t, None)
+                .iter()
+                .any(|&a| dom.name_is(a, &W::ins()))
+    });
+    let has_del_text = !dom.descendants(hl, Some(&W::del_text())).is_empty();
+    let has_ins = !dom.descendants(hl, Some(&W::ins())).is_empty();
+    let parent_rev = dom.parent(hl).filter(|&p| {
+        dom.name_is(p, &W::del()) || dom.name_is(p, &W::ins())
+    });
+    // Classify: deleted (delText, no live text), inserted (all under ins),
+    // or the hyperlink itself sits inside a revision wrapper.
+    let (is_del, is_ins) = if let Some(p) = parent_rev {
+        (dom.name_is(p, &W::del()), dom.name_is(p, &W::ins()))
+    } else if has_del_text && !has_live_t {
+        (true, false)
+    } else if has_ins && !has_live_t && !has_del_text {
+        (false, true)
+    } else {
+        return; // live or mixed — plain unwrap
+    };
+    if !is_del && !is_ins {
+        return;
+    }
+    let instr_name = if is_del {
+        W::name("delInstrText")
+    } else {
+        W::name("instrText")
+    };
+    let mk_fld = |dom: &mut Dom, ty: &str| -> NodeId {
+        let r = dom.new_element(W::r());
+        let f = dom.new_element(W::name("fldChar"));
+        dom.set_attribute_value(f, &W::name("fldCharType"), Some(ty));
+        dom.add(r, f);
+        r
+    };
+    let begin = mk_fld(dom, "begin");
+    let instr_r = dom.new_element(W::r());
+    let instr = dom.new_element(instr_name);
+    dom.add_text(instr, &format!("HYPERLINK \\l \"{anchor}\""));
+    dom.add(instr_r, instr);
+    let sep = mk_fld(dom, "separate");
+    let end = mk_fld(dom, "end");
+
+    if parent_rev.is_some() {
+        // del(hl(runs)) — field runs become hl-siblings inside the wrapper;
+        // the caller's unwrap then flattens hl between them.
+        dom.add_before_self(hl, begin);
+        dom.add_before_self(hl, instr_r);
+        dom.add_before_self(hl, sep);
+        dom.add_after_self(hl, end);
+        return;
+    }
+    // hl(rev(runs)…) — prepend the trio into the first revision child and
+    // append the end into the last one, keeping the field inside w:del/w:ins.
+    let rev_name = if is_del { W::del() } else { W::ins() };
+    let revs: Vec<NodeId> = dom.elements(hl, Some(&rev_name));
+    if let (Some(&first), Some(&last)) = (revs.first(), revs.last()) {
+        dom.add_first(first, sep);
+        dom.add_first(first, instr_r);
+        dom.add_first(first, begin);
+        dom.add(last, end);
+    } else {
+        // delText runs directly under hl (no rev wrapper): field runs join
+        // them bare; the enclosing paragraph mark carries the revision.
+        match dom.elements(hl, None).first().copied() {
+            Some(firstc) => {
+                dom.add_before_self(firstc, sep);
+                dom.add_before_self(firstc, instr_r);
+                dom.add_before_self(firstc, begin);
+            }
+            None => {
+                dom.add(hl, begin);
+                dom.add(hl, instr_r);
+                dom.add(hl, sep);
+            }
+        }
+        dom.add(hl, end);
     }
 }
 
