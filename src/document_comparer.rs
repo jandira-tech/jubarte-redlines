@@ -2090,6 +2090,24 @@ fn merge_normal_style_rpr(
         };
         dom.set_attribute_value(e, &W::val(), v.as_deref());
     }
+    // M461 — B's stored kern / w14:ligatures survive into the live rPr (Word
+    // copies B's stored Normal rPr; dropping kern=0 leaves A-docDefaults
+    // kerning ON and every long paragraph renders a line short).
+    if let Some(b_rpr) = b_style.and_then(|s| dom.element(s, &W::name("rPr"))) {
+        if dom.element(rpr, &W::name("kern")).is_none()
+            && let Some(bk) = dom.element(b_rpr, &W::name("kern"))
+        {
+            let clone = dom.clone_subtree(bk);
+            add_rpr_child_in_order(dom, rpr, clone, "kern");
+        }
+        let lig_name = W14::name("ligatures");
+        if dom.element(rpr, &lig_name).is_none()
+            && let Some(bl) = dom.element(b_rpr, &lig_name)
+        {
+            let clone = dom.clone_subtree(bl);
+            dom.add(rpr, clone); // w14 extension: last, before rPrChange lands
+        }
+    }
     let chg = dom.new_element(W::name("rPrChange"));
     // Next free id (see merge_normal_style_spacing): the pPr pass, when it
     // fired, reserved `next_free_revision_id` and Word now records that id,
