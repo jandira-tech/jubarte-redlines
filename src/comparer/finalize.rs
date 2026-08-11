@@ -6231,7 +6231,10 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // MARK-DEL paragraph and pPr). Reaching backward across the
                 // empties merged them and lost the oracle's vertical gap
                 // (79.6 → 46.1 once the wrong heading stamps stopped
-                // compensating).
+                // compensating). Yields to the M322 head-junction below:
+                // when the title shares a significant token with the FIRST
+                // content pure-I (tiff × h_f_normal "TIFF"), Word does MIX
+                // at head and this skip must not fire.
                 if inss.len() >= 2
                     && trailing != last_ins
                     && (para_has_no_text(dom, trailing)
@@ -6240,7 +6243,18 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     && para_word_atom_count(dom, last_ins) > 6
                     && para_word_atom_count(dom, d) <= 8
                 {
-                    continue;
+                    let head_junction = inss
+                        .iter()
+                        .copied()
+                        .find(|&p| !para_has_no_text(dom, p))
+                        .is_some_and(|first_ins| {
+                            let it = para_revision_body_text(dom, first_ins);
+                            let dt = para_revision_body_text(dom, d);
+                            short_title_shares_sig_token(&it, &dt)
+                        });
+                    if !head_junction {
+                        continue;
+                    }
                 }
                 // M322 (tiff×h_f_normal): short pure-D title ("TIFF test document")
                 // after a long pure-I stream. Word head-junctions the **first**
