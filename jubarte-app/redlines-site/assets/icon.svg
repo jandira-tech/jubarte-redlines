@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Favicon / touch icon: the highlighter band struck through a J.
+       Sized for legibility at 32px — the glyph fills most of the canvas and
+       the band is thick enough to survive downsampling. Same three tokens as
+       the rest of the system. -->
+  <rect width="512" height="512" fill="#FAFAF8"/>
+  <rect x="0" y="252" width="512" height="132" fill="#FFD400"/>
+  <text x="256" y="404" text-anchor="middle" font-family="Departure Mono"
+        font-size="440" fill="#0A0A0A">J</text>
+</svg>

@@ -77,9 +77,12 @@ fn nonstandard_sdtpr_children_are_stripped() {
         !x.contains("<w:fieldMultipleImage"),
         "non-standard <w:fieldMultipleImage> must be stripped"
     );
-    // Valid CT_SdtPr children survive.
-    assert!(x.contains("<w:alias"), "valid <w:alias> must survive: {x}");
-    assert!(x.contains("<w:tag"), "valid <w:tag> must survive");
+    // Word mode also unwraps content controls (M390) so sdtPr/alias/tag are
+    // gone; the sdtContent text must still be present as plain runs.
+    assert!(
+        x.contains("content"),
+        "sdtContent text must survive sanitize/unwrap: {x}"
+    );
     // And the output is ooxmlsdk-loadable (was UnexpectedTag SdtProperties/fieldType).
     ooxmlsdk::parts::wordprocessing_document::WordprocessingDocument::new(Cursor::new(out))
         .expect("output must be ooxmlsdk-loadable after sdtPr sanitization");

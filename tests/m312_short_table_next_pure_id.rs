@@ -1,0 +1,306 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! M312 — short table-bearing next vs long table-free base, zero text overlap.
+//!
+//! Word (two_column_two_page × sd_2672_nested_table): pure-I next title
+//! ("SD-2672 plain 3x3") then pure-D all base body (seq I + 150×D). Engine
+//! without M312 MIX-merges the title into the first base paragraph.
+//!
+//! Gate lives in `detect_unrelated_sources_word_mode`: short next may carry
+//! tables when body token Jaccard is ~0 and base is long table-free prose.
+
+use std::io::Read;
+use std::path::PathBuf;
+
+use jubarte::comparer::WmlComparerSettings;
+use jubarte::document_comparer::compare_documents_with_settings;
+
+fn word_settings() -> WmlComparerSettings {
+    WmlComparerSettings {
+        author_for_revisions: "Redline".into(),
+        merge_replaced_paragraphs: true,
+        ..WmlComparerSettings::default()
+    }
+}
+
+/// Body paragraph class: I / D / MIX / EQ from real OOXML (ins/del presence).
+fn body_para_classes(xml: &str) -> Vec<(char, String)> {
+    // Cheap scan: split on <w:p …>…</w:p> without a full XML walker.
+    let mut out = Vec::new();
+    let mut rest = xml;
+    // Prefer body region only.
+    if let Some(i) = rest.find("<w:body") {
+        rest = &rest[i..];
+    }
+    if let Some(i) = rest.find("</w:body>") {
+        rest = &rest[..i];
+    }
+    while let Some(start) = rest.find("<w:p") {
+        let after = &rest[start..];
+        // self-closing or open
+        let end_rel = after
+            .find("</w:p>")
+            .map(|j| j + "</w:p>".len())
+            .or_else(|| after.find("/>").map(|j| j + 2));
+        let Some(end_rel) = end_rel else { break };
+        let p = &after[..end_rel];
+        rest = &after[end_rel..];
+        // skip pPr-only inside table cells? keep all body-level; tables nest p
+        // so we still see title para before tables.
+        let has_ins = p.contains("<w:ins") || p.contains(":ins ");
+        let has_del = p.contains("<w:del") || p.contains(":del ");
+        // text from w:t and w:delText
+        let mut text = String::new();
+        for tag in ["<w:t", "<w:delText"] {
+            let mut s = p;
+            while let Some(ti) = s.find(tag) {
+                let after_t = &s[ti..];
+                if let Some(gt) = after_t.find('>') {
+                    let content = &after_t[gt + 1..];
+                    if let Some(close) = content.find('<') {
+                        text.push_str(&content[..close]);
+                        s = &content[close..];
+                        continue;
+                    }
+                }
+                break;
+            }
+        }
+        let cls = match (has_ins, has_del) {
+            (true, true) => 'M',
+            (true, false) => 'I',
+            (false, true) => 'D',
+            (false, false) => 'E',
+        };
+        out.push((cls, text));
+    }
+    out
+}
+
+#[test]
+fn two_column_x_nested_table_title_pure_i_then_pure_d() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__two_column_two_page_0b8a37c5.docx");
+    let b = src.join("behavior__sd_2672_nested_table_dfac08bb.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: corpus not available at {}", src.display());
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &word_settings(),
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    let paras = body_para_classes(&xml);
+    assert!(
+        !paras.is_empty(),
+        "expected body paragraphs in redline document.xml"
+    );
+
+    // Word: first contentful is pure-I title "SD-2672 plain 3x3" — never MIX
+    // with two-column body text.
+    let first_content = paras
+        .iter()
+        .find(|(_, t)| !t.trim().is_empty())
+        .expect("contentful para");
+    assert_eq!(
+        first_content.0,
+        'I',
+        "Word pure-I next title; got {:?} text={:?}",
+        first_content.0,
+        &first_content.1[..first_content.1.len().min(80)]
+    );
+    assert!(
+        first_content.1.contains("SD-2672") || first_content.1.contains("plain 3x3"),
+        "expected nested-table title in pure-I, got {:?}",
+        &first_content.1[..first_content.1.len().min(100)]
+    );
+    assert!(
+        !first_content.1.contains("two-column"),
+        "title must not merge base two-column body (MIX regression): {:?}",
+        &first_content.1[..first_content.1.len().min(120)]
+    );
+
+    let n_i = paras.iter().filter(|(c, _)| *c == 'I').count();
+    let n_d = paras.iter().filter(|(c, _)| *c == 'D').count();
+    let n_m = paras.iter().filter(|(c, _)| *c == 'M').count();
+    // Word: ~1 I + ~150 D, zero MIX on the main stream. Allow a few MIX from
+    // table cell noise; title merge (n_m high + n_i==0) is the failure mode.
+    assert!(
+        n_i >= 1 && n_d >= 100 && n_m == 0,
+        "Word shape ~I+150D MIX=0; got I={n_i} D={n_d} MIX={n_m}"
+    );
+}
+
+#[test]
+fn broken_list_x_nested_table_title_pure_i_then_pure_d() {
+    // Same M312 gate; base is medium list (contentful ~18 < old n≥20 floor).
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__broken_complex_list_293fda86.docx");
+    let b = src.join("behavior__sd_2672_nested_table_dfac08bb.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: corpus not available at {}", src.display());
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &word_settings(),
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    let paras = body_para_classes(&xml);
+    let first_content = paras
+        .iter()
+        .find(|(_, t)| !t.trim().is_empty())
+        .expect("contentful para");
+    assert_eq!(
+        first_content.0,
+        'I',
+        "Word pure-I next title; got {:?} text={:?}",
+        first_content.0,
+        &first_content.1[..first_content.1.len().min(80)]
+    );
+    assert!(
+        !first_content.1.contains("ONE") && first_content.0 != 'M',
+        "must not MIX nested-table title with list item: {:?}",
+        &first_content.1[..first_content.1.len().min(100)]
+    );
+    let n_m = paras.iter().filter(|(c, _)| *c == 'M').count();
+    let n_i = paras.iter().filter(|(c, _)| *c == 'I').count();
+    let n_d = paras.iter().filter(|(c, _)| *c == 'D').count();
+    assert!(
+        n_i >= 1 && n_d >= 10 && n_m == 0,
+        "Word IDDD… MIX=0; got I={n_i} D={n_d} MIX={n_m}"
+    );
+}
+
+#[test]
+fn hyperlink_x_rtl_table_title_pure_i_then_pure_d() {
+    // M313: base may have a table; next short rtl_table title; jaccard 0.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__superdoc_hyperlink_cases_1dde9cd3.docx");
+    let b = src.join("behavior__sd_2672_rtl_table_63bd9d10.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: corpus not available at {}", src.display());
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &word_settings(),
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    let paras = body_para_classes(&xml);
+    let first_content = paras
+        .iter()
+        .find(|(_, t)| !t.trim().is_empty())
+        .expect("contentful para");
+    assert_eq!(
+        first_content.0,
+        'I',
+        "Word pure-I next title; got {:?} text={:?}",
+        first_content.0,
+        &first_content.1[..first_content.1.len().min(80)]
+    );
+    assert!(
+        !first_content.1.to_ascii_lowercase().contains("hyperlink")
+            && !first_content.1.contains("SuperDoc"),
+        "must not MIX rtl title with hyperlink base: {:?}",
+        &first_content.1[..first_content.1.len().min(100)]
+    );
+    let n_m = paras.iter().filter(|(c, _)| *c == 'M').count();
+    assert_eq!(n_m, 0, "Word IDDD… MIX=0; got MIX={n_m}");
+}
+
+#[test]
+fn list_with_table_break_x_plain_3x3_title_pure_i() {
+    // Medium list+table base (contentful ~4–6) × short plain_3x3 next.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__list_with_table_break_ff0c4c1f.docx");
+    let b = src.join("behavior__sd_2672_plain_3x3_87943d5d.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: corpus not available at {}", src.display());
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &word_settings(),
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    let paras = body_para_classes(&xml);
+    let first_content = paras
+        .iter()
+        .find(|(_, t)| !t.trim().is_empty())
+        .expect("contentful");
+    assert_eq!(first_content.0, 'I', "got {first_content:?}");
+    assert!(
+        !first_content.1.contains("ONE"),
+        "must not MIX list item into title: {:?}",
+        first_content.1
+    );
+    let n_m = paras.iter().filter(|(c, _)| *c == 'M').count();
+    assert_eq!(n_m, 0, "Word IDDD… MIX=0; MIX={n_m}");
+}
+
+#[test]
+fn table_autofit_x_merged_cells_keeps_table_not_body_pure_id_stream() {
+    // Anti-regression for M313: Word body is a single EQ table (seq E).
+    // Wholesale pure-I/D would emit many top-level pure-I then pure-D paras
+    // instead of keeping a `w:tbl` shell. Nested cell markup still has ins/del.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__table_autofit_colspan_1fd7723c.docx");
+    let b = src.join("super_editor__table_merged_cells_9c349334.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: corpus not available at {}", src.display());
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &word_settings(),
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    assert!(
+        xml.contains("<w:tbl"),
+        "EQ table pair must retain a table shell, not dissolve into pure-I/D paras"
+    );
+    // Top-level body children: if wholesale pure-I/D, body starts with many
+    // consecutive pure-I paragraphs and no table. Require a table near the body
+    // start (within first content units).
+    let body = xml.find("<w:body").map(|i| &xml[i..]).unwrap_or(&xml);
+    let tbl_at = body.find("<w:tbl").unwrap_or(usize::MAX);
+    let pure_i_stream = body.matches("<w:p").take(5).count() >= 5 && tbl_at > 2000;
+    assert!(
+        !pure_i_stream || tbl_at < 1500,
+        "must not wholesale pure-I stream before table; tbl_at={tbl_at}"
+    );
+}

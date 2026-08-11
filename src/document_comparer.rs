@@ -14,7 +14,7 @@
 //! parts (the M4.5–M4.6 refinements) for exact golden parity on complex docs.
 
 use crate::comparer::{WmlComparerSettings, compare_bodies_faithful};
-use crate::namespaces::{R, W};
+use crate::namespaces::{R, W, W14};
 use crate::opc::{OpcError, PartFs};
 use crate::xmllinq::{Dom, NodeId};
 
@@ -110,15 +110,6 @@ fn docdefaults_ppr_spacing(dom: &Dom, styles_root: NodeId) -> Option<(String, St
     Some((get("after"), get("line"), get("lineRule")))
 }
 
-/// Word's factory-default Normal spacing when B is empty and A had *stored*
-/// Normal spacing to rewrite (GT sd-2517_sectpr-headerref / m37).
-const FACTORY_NORMAL_SPACING: (&str, &str, &str) = ("160", "278", "auto");
-
-/// When both Normals store no spacing but A still has an effective cascade
-/// (docDefaults and/or a non-spacing Normal pPr), Word rewrites Normal to
-/// single-line after=0 line=240 (file_77_file_78, file_33_file_34). Distinct
-/// from [`FACTORY_NORMAL_SPACING`] — using 160/278 here leaves LO at +2 pages.
-const EMPTY_B_SINGLE_LINE_NORMAL: (&str, &str, &str) = ("0", "240", "auto");
 /// Revision record element local names that carry a `w:id` identifying the
 /// change. Word treats a colliding id on any of these as the same revision
 /// record and drops the later one, so a newly synthesized `w:*Change` must not
@@ -198,21 +189,6 @@ fn merge_normal_style_spacing(
             Some((a, l, r))
         }
     };
-    // Full cascade for B: stored → docDefaults → `fallback` factory.
-    let b_cascade =
-        |dom: &Dom, styles_root: NodeId, style: Option<NodeId>, fallback: (&str, &str, &str)| {
-            if let Some(s) = stored(dom, style) {
-                return s;
-            }
-            if let Some(s) = dd_val(dom, styles_root) {
-                return s;
-            }
-            (
-                fallback.0.to_string(),
-                fallback.1.to_string(),
-                fallback.2.to_string(),
-            )
-        };
     let a_stored = stored(dom, Some(a_style));
     let b_style = find_normal_style(dom, b_root);
     let b_stored = stored(dom, b_style);
@@ -243,45 +219,81 @@ fn merge_normal_style_spacing(
     ) && b_structured
         && !a_structured;
 
-    let b_target: Option<(String, String, String)> = match (&a_stored, &b_stored) {
-        (None, None) => match (&a_dd, &b_dd) {
-            // file_8: identical dd both sides → leave Normal empty — unless
-            // M106 (B structured rPr, A bare) needs Word's empty+pPrChange.
-            (Some(a), Some(b)) if a == b && !m106_same_dd_clear => return false,
-            (Some(_), Some(_)) if m106_same_dd_clear => None,
-            // file_46 / 76 / 198: B Normal has non-spacing pPr (+ differing dd)
-            // → Word writes B's dd. file_19 both bare → leave empty.
-            (Some(_), Some(b)) if b_structured => Some(b.clone()),
-            (Some(_), Some(_)) => return false,
-            // file_34 A-rPr / file_104 A-pPr: promote B dd. file_69 bare → empty.
-            (None, Some(b)) if a_structured => Some(b.clone()),
-            (None, Some(_)) => return false,
-            // file_77 A-pPr / file_33 B-rPr / file_103 B-pPr → 0/240.
-            // file_145 both bare → leave empty (not 0/240).
-            (Some(_), None) if a_structured || b_structured => {
-                let (a, l, r) = EMPTY_B_SINGLE_LINE_NORMAL;
-                Some((a.to_string(), l.to_string(), r.to_string()))
-            }
-            (Some(_), None) => return false,
-            (None, None) => return false,
-        },
-        // A empty, B stored: target B's stored values only.
-        (None, Some(b)) => Some(b.clone()),
-        // A stored, B empty: cascade B. If that cascade equals the package
-        // docDefaults already on the A-based stylesheet, Word CLEARS A's
-        // stored spacing without materializing cascade onto Normal (file_22:
-        // A 0/240 + shared dd 200/276 → empty Normal + pPrChange).
-        (Some(_), None) => {
-            let casc = b_cascade(dom, b_root, b_style, FACTORY_NORMAL_SPACING);
-            if a_dd.as_ref() == Some(&casc) {
-                None // clear explicit spacing
-            } else {
-                Some(casc)
-            }
-        }
-        // Both stored: B's stored wins when different.
-        (Some(_), Some(b)) => Some(b.clone()),
+    // ── Word's Normal-spacing target (derived 2026-08-04) ────────────────────
+    // The previous case cascade here (stored/dd/factory arms) was fit pair-by-
+    // pair and both over- and under-fired: 44 of 760 corpus pairs carried the
+    // wrong LIVE Normal spacing (e.g. basic_table_shading×basic_tracked_change:
+    // Word live = none, ours = factory 160/278 → global vertical drift).
+    // Rebuilding the truth table from every corpus Word oracle (zero ambiguous
+    // input groups) gives one closed form, verified 751/752:
+    //
+    //   Word rewrites Normal so B's EFFECTIVE spacing survives under the
+    //   OUTPUT stylesheet's (= A's) docDefaults:
+    //     ctx(attr)   = A.docDefaults spacing attr, else app default
+    //                   (after=0, line=240, lineRule=auto)
+    //     b_eff(attr) = B Normal stored attr, else B.docDefaults attr,
+    //                   else app default   — cascade is PER ATTRIBUTE
+    //     target      = { attr where b_eff(attr) != ctx(attr) } over
+    //                   {after, line}; when line is written, lineRule =
+    //                   b_eff(lineRule) rides along; empty target ⇒ clear.
+    //
+    //   The bare+bare gate stays: Word never materializes dd into an
+    //   untouched Normal even when docDefaults differ (file_19/145).
+    //
+    // The per-attribute cascade is what the old arms could not express: Word
+    // mixes sources within one spacing element (B stored line=259 + B dd
+    // after=160 → live after=160 line=259) and OMITS attrs already provided
+    // by A's docDefaults (A dd line=276 == B line → live a0/l- only).
+    // The old FACTORY_NORMAL_SPACING / EMPTY_B_SINGLE_LINE_NORMAL constants
+    // fall out: 0/240 is just b_eff = app defaults under a non-default A dd,
+    // and 160/278 was B's own dd all along on the pairs that motivated it.
+    let raw_a_dd = docdefaults_ppr_spacing(dom, out_root);
+    let raw_b_dd = docdefaults_ppr_spacing(dom, b_root);
+    let raw_b_sp = b_style.and_then(|s| normal_spacing(dom, s));
+    let pick = |raw: &Option<(String, String, String)>, i: usize| -> Option<String> {
+        raw.as_ref().and_then(|t| {
+            let v = match i {
+                0 => &t.0,
+                1 => &t.1,
+                _ => &t.2,
+            };
+            (!v.is_empty()).then(|| v.clone())
+        })
     };
+    const APP_DEFAULT: [&str; 3] = ["0", "240", "auto"];
+    let ctx = |i: usize| pick(&raw_a_dd, i).unwrap_or_else(|| APP_DEFAULT[i].to_string());
+    let b_eff = |i: usize| {
+        pick(&raw_b_sp, i)
+            .or_else(|| pick(&raw_b_dd, i))
+            .unwrap_or_else(|| APP_DEFAULT[i].to_string())
+    };
+    let b_target: Option<(String, String, String)> =
+        if !a_structured && !b_structured && a_stored.is_none() && b_stored.is_none() {
+            // both Normals bare: Word leaves the style untouched (m106 requires a
+            // structured B, so it cannot land here)
+            return false;
+        } else {
+            let after = if b_eff(0) != ctx(0) {
+                b_eff(0)
+            } else {
+                String::new()
+            };
+            let line = if b_eff(1) != ctx(1) {
+                b_eff(1)
+            } else {
+                String::new()
+            };
+            let rule = if line.is_empty() {
+                String::new()
+            } else {
+                b_eff(2)
+            };
+            if after.is_empty() && line.is_empty() {
+                None
+            } else {
+                Some((after, line, rule))
+            }
+        };
     // Identity: A already has the same explicit spacing we would write.
     if let (Some(a), Some(b)) = (&a_stored, &b_target)
         && a == b
@@ -348,13 +360,11 @@ fn merge_normal_style_spacing(
                 s
             }
         };
-        // Word materializes missing `w:after` as "0" when a line metric is
-        // present (file_196: B stores line=276 only → after=0 line=276).
-        let after = if after.is_empty() && !line.is_empty() {
-            "0"
-        } else {
-            after.as_str()
-        };
+        // No after-materialization here: the delta rule already writes an
+        // explicit "0" when B's effective after must override A's docDefaults
+        // (file_196), and Word OMITS after when the context already supplies
+        // it (12 corpus oracles carry line=... with no after attribute).
+        let after = after.as_str();
         let set = |dom: &mut Dom, name: &str, v: &str| {
             dom.set_attribute_value(
                 spacing,
@@ -595,6 +605,604 @@ fn cascade_normal_change_to_based_styles(
     changed
 }
 
+// ---------------------------------------------------------------------------
+// Workstream S — style-chain resolution.
+// ---------------------------------------------------------------------------
+
+/// A `w:basedOn` chain longer than this is treated as malformed and truncated.
+/// Word's own limit on style inheritance depth is well below it; the cap only
+/// exists so a pathological stylesheet cannot make resolution quadratic.
+const MAX_STYLE_CHAIN_DEPTH: usize = 32;
+
+/// `w:style` child order (wml.xsd `CT_Style` sequence). A `w:pPr` or `w:rPr`
+/// materialized on a table style must land before `w:tblPr`/`w:trPr`/`w:tcPr`,
+/// not at the end — appending produced `TableGrid` with `tblPr` before `rPr`,
+/// which the OOXML validator rejects.
+const STYLE_CHILD_ORDER: &[&str] = &[
+    "name",
+    "aliases",
+    "basedOn",
+    "next",
+    "link",
+    "autoRedefine",
+    "hidden",
+    "uiPriority",
+    "semiHidden",
+    "unhideWhenUsed",
+    "qFormat",
+    "locked",
+    "personal",
+    "personalCompose",
+    "personalReply",
+    "rsid",
+    "pPr",
+    "rPr",
+    "tblPr",
+    "trPr",
+    "tcPr",
+    "tblStylePr",
+];
+
+/// Insert `child` under `parent` at the position `order` gives its `local`
+/// name: immediately before the first existing child that sorts after it, else
+/// appended. Unknown names sort last, so they never displace a known one.
+fn insert_child_by_rank(
+    dom: &mut Dom,
+    parent: NodeId,
+    child: NodeId,
+    local: &str,
+    rank_of: &dyn Fn(&str) -> usize,
+) {
+    let new_rank = rank_of(local);
+    let successor = dom.elements(parent, None).into_iter().find(|&e| {
+        dom.name(e)
+            .is_some_and(|n| rank_of(n.local_name()) > new_rank)
+    });
+    match successor {
+        Some(s) => dom.add_before_self(s, child),
+        None => dom.add(parent, child),
+    }
+}
+
+/// Rank of a `w:style` child in [`STYLE_CHILD_ORDER`].
+fn style_child_rank(local: &str) -> usize {
+    STYLE_CHILD_ORDER
+        .iter()
+        .position(|&n| n == local)
+        .unwrap_or(usize::MAX)
+}
+
+/// Rank of a `w:pPr` child in [`crate::comparer::order_tables::PPR_ORDER`].
+fn ppr_child_rank(local: &str) -> usize {
+    crate::comparer::order_tables::PPR_ORDER
+        .iter()
+        .find(|(n, _)| *n == local)
+        .map(|(_, r)| *r as usize)
+        .unwrap_or(usize::MAX)
+}
+
+/// Children of a style's `w:pPr`/`w:rPr` that are not formatting: revision
+/// records, section properties, and revision-save ids.
+fn is_style_prop_noise(name: &crate::xmllinq::XName) -> bool {
+    matches!(
+        name.local_name(),
+        "pPrChange" | "rPrChange" | "sectPr" | "sectPrChange" | "rsid"
+    )
+}
+
+/// Order-independent signature of one formatting element: expanded name, its
+/// non-`rsid` attributes sorted by name, then its children's signatures in
+/// document order (child order carries meaning inside `w:tabs`, `w:pBdr`, …).
+fn style_prop_signature(dom: &Dom, node: NodeId) -> String {
+    let Some(n) = dom.name(node) else {
+        return String::new();
+    };
+    let mut out = n.clark();
+    let mut attrs: Vec<(String, String)> = dom
+        .attributes(node)
+        .into_iter()
+        .filter(|(a, _)| {
+            !a.local_name().to_ascii_lowercase().starts_with("rsid")
+                && !dom.is_namespace_declaration(a)
+        })
+        .map(|(a, v)| (a.clark(), v))
+        .collect();
+    attrs.sort();
+    for (a, v) in attrs {
+        out.push('\u{1}');
+        out.push_str(&a);
+        out.push('=');
+        out.push_str(&v);
+    }
+    for c in dom.elements(node, None) {
+        out.push('\u{2}');
+        out.push_str(&style_prop_signature(dom, c));
+    }
+    out
+}
+
+/// Signature of a style's DECLARED `w:pPr`/`w:rPr` block: the formatting
+/// children it writes itself, ignoring everything it inherits. Empty string
+/// when the block is absent or holds only noise.
+fn declared_props_signature(dom: &Dom, style: NodeId, local: &str) -> String {
+    let Some(block) = dom.element(style, &W::name(local)) else {
+        return String::new();
+    };
+    let mut parts: Vec<String> = Vec::new();
+    for c in dom.elements(block, None) {
+        let Some(n) = dom.name(c) else { continue };
+        if is_style_prop_noise(&n) {
+            continue;
+        }
+        parts.push(style_prop_signature(dom, c));
+    }
+    parts.sort();
+    parts.join("\u{3}")
+}
+
+/// Property elements whose ATTRIBUTES are independent inherited values: a link
+/// in the chain that sets some of them leaves the rest inherited instead of
+/// replacing the element wholesale.
+///
+/// `w:rFonts` is the one that decides real documents. Oracle evidence
+/// (`Hello_docx_world × multi_image_types`): A's `Heading3Char` writes
+/// `asciiTheme="minorHAnsi" hAnsiTheme="minorHAnsi"` and B's omits both, and
+/// Word records **no change** on any of `Heading3Char`..`Heading9Char` —
+/// because omitting them inherits exactly `minorHAnsi` from `docDefaults`.
+/// Comparing the element whole marks all seven as changed. `w:lang` behaves the
+/// same way (`val` / `eastAsia` / `bidi` are separate slots).
+///
+/// The same per-attribute rule is already relied on by
+/// [`effective_normal_rpr_metrics`] for the footer-metric cascade.
+const ATTR_MERGED_PROPS: &[&str] = &["rFonts", "lang"];
+
+/// `w:rFonts` attribute pairs that are alternatives for one typeface slot:
+/// naming either clears the other, so a nearer link that switches a slot to an
+/// explicit face must not leave the farther link's theme reference standing.
+const RFONTS_ALTERNATIVE_SLOTS: [[&str; 2]; 4] = [
+    ["ascii", "asciiTheme"],
+    ["hAnsi", "hAnsiTheme"],
+    ["eastAsia", "eastAsiaTheme"],
+    ["cs", "cstheme"],
+];
+
+/// A style's EFFECTIVE `w:pPr`/`w:rPr`, resolved the way Word resolves a style
+/// chain: `w:docDefaults` first, then each `w:basedOn` ancestor from the root of
+/// the chain downwards, then the style's own declared properties. Keyed by
+/// element name so a nearer link overrides a farther one, except for
+/// [`ATTR_MERGED_PROPS`], which merge attribute-by-attribute.
+fn effective_style_props(
+    dom: &Dom,
+    styles_root: NodeId,
+    by_id: &std::collections::HashMap<String, NodeId>,
+    style: NodeId,
+    local: &str,
+    default_local: &str,
+) -> std::collections::BTreeMap<String, String> {
+    // Walk basedOn to the root of the chain, guarding against cycles.
+    let mut chain: Vec<NodeId> = Vec::new();
+    let mut seen: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+    let mut cur = Some(style);
+    while let Some(s) = cur {
+        if !seen.insert(s) || chain.len() >= MAX_STYLE_CHAIN_DEPTH {
+            break;
+        }
+        chain.push(s);
+        cur = dom
+            .element(s, &W::name("basedOn"))
+            .and_then(|b| dom.attribute(b, &W::val()))
+            .and_then(|v| by_id.get(v).copied());
+    }
+    chain.reverse();
+
+    type Props = std::collections::BTreeMap<String, String>;
+    type Slots = std::collections::BTreeMap<String, Props>;
+    let mut props: Props = Props::new();
+    let mut slots: Slots = Slots::new();
+
+    let absorb = |props: &mut Props, slots: &mut Slots, block: NodeId| {
+        for c in dom.elements(block, None) {
+            let Some(n) = dom.name(c) else { continue };
+            if is_style_prop_noise(&n) {
+                continue;
+            }
+            if !ATTR_MERGED_PROPS.contains(&n.local_name()) {
+                props.insert(n.clark(), style_prop_signature(dom, c));
+                continue;
+            }
+            let slot = slots.entry(n.clark()).or_default();
+            for (a, v) in dom.attributes(c) {
+                if a.local_name().to_ascii_lowercase().starts_with("rsid")
+                    || dom.is_namespace_declaration(&a)
+                {
+                    continue;
+                }
+                if n.local_name() == "rFonts" {
+                    for pair in RFONTS_ALTERNATIVE_SLOTS {
+                        if pair.contains(&a.local_name()) {
+                            // Slots are keyed by EXPANDED name; the alternative
+                            // shares this attribute's namespace.
+                            for other in pair {
+                                slot.remove(&a.namespace().name(other).clark());
+                            }
+                        }
+                    }
+                }
+                slot.insert(a.clark(), v);
+            }
+        }
+    };
+    if let Some(dd) = dom
+        .element(styles_root, &W::name("docDefaults"))
+        .and_then(|d| dom.element(d, &W::name(default_local)))
+        .and_then(|d| dom.element(d, &W::name(local)))
+    {
+        absorb(&mut props, &mut slots, dd);
+    }
+    for s in chain {
+        if let Some(block) = dom.element(s, &W::name(local)) {
+            absorb(&mut props, &mut slots, block);
+        }
+    }
+    for (name, attrs) in slots {
+        let sig = attrs
+            .into_iter()
+            .map(|(a, v)| format!("{a}={v}"))
+            .collect::<Vec<_>>()
+            .join("\u{1}");
+        props.insert(name, sig);
+    }
+    props
+}
+
+/// The key a style is matched across the two stylesheets by: `(type, name)`,
+/// falling back to the styleId when the style carries no `w:name`.
+///
+/// Matching on the NAME rather than the id is what makes this survive
+/// [`canonicalize_style_ids`], which has already rewritten the output's ids
+/// (`SD_StrikeChar` → `SDStrikeChar`) while the revised package still holds the
+/// originals. The canonical id is a pure function of the name, so equal names
+/// are exactly the styles that canonicalization would have unified.
+fn style_match_key(dom: &Dom, style: NodeId) -> Option<(String, String)> {
+    let ty = dom
+        .attribute(style, &W::name("type"))
+        .unwrap_or("paragraph")
+        .to_string();
+    let key = dom
+        .element(style, &W::name("name"))
+        .and_then(|n| dom.attribute(n, &W::val()))
+        .map(|v| v.to_ascii_lowercase())
+        .or_else(|| {
+            dom.attribute(style, &W::name("styleId"))
+                .map(|v| v.to_ascii_lowercase())
+        })?;
+    Some((ty, key))
+}
+
+/// Wrap `old` (a `w:pPr`/`w:rPr` clone) in a `w:pPrChange`/`w:rPrChange` record
+/// and append it to `block`, which is where CT_PPr / CT_RPr put it.
+fn append_style_change_record(
+    dom: &mut Dom,
+    styles_root: NodeId,
+    block: NodeId,
+    old: NodeId,
+    change_local: &str,
+    settings: &WmlComparerSettings,
+) {
+    let chg = dom.new_element(W::name(change_local));
+    let id = next_free_revision_id(dom, styles_root);
+    dom.set_attribute_value(chg, &W::name("id"), Some(&id.to_string()));
+    dom.set_attribute_value(
+        chg,
+        &W::name("author"),
+        Some(&settings.author_for_revisions),
+    );
+    dom.set_attribute_value(
+        chg,
+        &W::name("date"),
+        Some(&settings.date_time_for_revisions),
+    );
+    dom.add(chg, old);
+    dom.add(block, chg);
+}
+
+/// Workstream S — adopt the REVISED document's definition of every style both
+/// documents define, recording the ORIGINAL definition on the `w:style` itself.
+///
+/// Word's Compare stylesheet resolves the style chain on both sides and, where
+/// a style resolves differently, writes B's declared properties live with A's
+/// inside a `w:pPrChange` / `w:rPrChange` on the `w:style` element. Oracle
+/// evidence (`two_column_two_page × vrect_node`): 18 styles marked, `Title`
+/// live at B's `sz=56` with A's `sz=52 color=17365D` in `w:rPrChange` and A's
+/// `pBdr` + `after=300` in `w:pPrChange`. Over the 564 corpus pairs that have a
+/// Word oracle, 52.5% of the oracle stylesheets carry style-level change
+/// markup.
+///
+/// [`crate::comparer::footnotes::copy_missing_styles`] is keyed on
+/// `(type, styleId)` and skips an id already present whatever its body, so
+/// before this pass the output kept **A's** definition and recorded nothing:
+/// content on both sides rendered with the original's fonts, sizes and borders
+/// and the change was invisible. 136 of 597 corpus pairs carry at least one
+/// such live collision; they score a mean 59.7 against 79.4 for the pairs
+/// without one.
+///
+/// Two guards keep this from manufacturing empty change records:
+/// - the EFFECTIVE properties must differ (so a stylesheet reaching the same
+///   result through `basedOn` is not marked), and
+/// - the DECLARED properties must differ (so a difference that actually lives
+///   in an ancestor is recorded on that ancestor, once, and not restated on
+///   every style below it).
+///
+/// `Normal` is excluded — it is owned by [`merge_normal_style_spacing`] /
+/// [`merge_normal_style_rpr`], whose rules are calibrated against a separate
+/// body of oracle evidence. Styles already carrying change markup are left
+/// alone, which is also what lets [`cascade_normal_change_to_based_styles`]
+/// (M111) keep acting as the fallback for styles this pass does not touch.
+fn merge_revised_style_definitions(
+    dom: &mut Dom,
+    out_root: NodeId,
+    b_root: NodeId,
+    settings: &WmlComparerSettings,
+    a_declared_ids: &std::collections::HashSet<String>,
+) -> bool {
+    let style_nm = W::name("style");
+    let style_id = W::name("styleId");
+    let normal_out = find_normal_style(dom, out_root);
+    let normal_b = find_normal_style(dom, b_root);
+
+    let index_by_id = |dom: &Dom, root: NodeId| -> std::collections::HashMap<String, NodeId> {
+        dom.elements(root, Some(&style_nm))
+            .into_iter()
+            .filter_map(|s| Some((dom.attribute(s, &style_id)?.to_string(), s)))
+            .collect()
+    };
+    let out_by_id = index_by_id(dom, out_root);
+    let b_by_id = index_by_id(dom, b_root);
+
+    let mut b_by_key: std::collections::HashMap<(String, String), NodeId> =
+        std::collections::HashMap::new();
+    for s in dom.elements(b_root, Some(&style_nm)) {
+        if let Some(k) = style_match_key(dom, s) {
+            b_by_key.entry(k).or_insert(s);
+        }
+    }
+
+    let mut changed = false;
+    for style in dom.elements(out_root, Some(&style_nm)) {
+        if Some(style) == normal_out {
+            continue;
+        }
+        let Some(key) = style_match_key(dom, style) else {
+            continue;
+        };
+        let Some(&b_style) = b_by_key.get(&key) else {
+            continue;
+        };
+        if Some(b_style) == normal_b {
+            continue;
+        }
+        for (local, default_local, change_local) in [
+            ("pPr", "pPrDefault", "pPrChange"),
+            ("rPr", "rPrDefault", "rPrChange"),
+        ] {
+            let a_declared = declared_props_signature(dom, style, local);
+            let b_declared = declared_props_signature(dom, b_style, local);
+            if a_declared == b_declared {
+                continue;
+            }
+            let a_eff =
+                effective_style_props(dom, out_root, &out_by_id, style, local, default_local);
+            let b_eff = effective_style_props(dom, b_root, &b_by_id, b_style, local, default_local);
+            if a_eff == b_eff {
+                continue;
+            }
+            // Already tracked (an inbound stylesheet with pending redline, or an
+            // earlier pass) — do not stack a second record on the same block.
+            if dom
+                .element(style, &W::name(local))
+                .is_some_and(|blk| dom.element(blk, &W::name(change_local)).is_some())
+            {
+                continue;
+            }
+
+            // Old = A's declared block, change history stripped: the inner pPr
+            // of a pPrChange is CT_PPrBase and may not itself carry one.
+            let old = match dom.element(style, &W::name(local)) {
+                Some(blk) => {
+                    let clone = dom.clone_subtree(blk);
+                    for c in dom.descendants(clone, Some(&W::name(change_local))) {
+                        dom.remove(c);
+                    }
+                    clone
+                }
+                None => dom.new_element(W::name(local)),
+            };
+
+            // Live = B's declared block. Materialize A's when absent, keeping
+            // CT_Style order (pPr precedes rPr).
+            let block = match dom.element(style, &W::name(local)) {
+                Some(blk) => {
+                    let stale: Vec<NodeId> = dom
+                        .elements(blk, None)
+                        .into_iter()
+                        .filter(|&c| dom.name(c).is_none_or(|n| !is_style_prop_noise(&n)))
+                        .collect();
+                    for c in stale {
+                        dom.remove(c);
+                    }
+                    blk
+                }
+                None => {
+                    let blk = dom.new_element(W::name(local));
+                    insert_child_by_rank(dom, style, blk, local, &style_child_rank);
+                    blk
+                }
+            };
+            if let Some(b_block) = dom.element(b_style, &W::name(local)) {
+                for c in dom.elements(b_block, None) {
+                    let Some(n) = dom.name(c) else { continue };
+                    if is_style_prop_noise(&n) {
+                        continue;
+                    }
+                    let clone = dom.clone_subtree(c);
+                    dom.add(block, clone);
+                }
+            }
+            append_style_change_record(dom, out_root, block, old, change_local, settings);
+            changed = true;
+        }
+    }
+
+    // Phase 2 (S2) — styles COPIED from B (absent from A's stylesheet) bake
+    // B's docDefaults-level run metrics and carry style-level change records.
+    //
+    // Oracle (image_inline_and_block × rtl_page_numpages): A's stylesheet
+    // never declares Footer/FootnoteText/Strong1. The output stylesheet keeps
+    // A's docDefaults (theme fonts, sz 24, kern 2, ligatures
+    // standardContextual), so a verbatim copy of B's style renders with A's
+    // metrics — the R2 cluster's cumulative vertical drift. Word declares the
+    // neutralizing delta live on each copied style (rFonts TNR, sz 20, szCs
+    // 20, kern 0, w14:ligatures none — implicit defaults materialized: sz 20,
+    // kern 0, ligatures none) and marks it with `w:rPrChange` (old = declared
+    // + lang) and `w:pPrChange` (old = declared pPr).
+    {
+        let dd_rpr = |dom: &Dom, root: NodeId| -> Option<NodeId> {
+            let dd = dom.element(root, &W::name("docDefaults"))?;
+            let rd = dom.element(dd, &W::name("rPrDefault"))?;
+            dom.element(rd, &W::r_pr())
+        };
+        let a_dd = dd_rpr(dom, out_root);
+        let b_dd = dd_rpr(dom, b_root);
+        let attr_map =
+            |dom: &Dom, e: Option<NodeId>| -> std::collections::BTreeMap<String, String> {
+                e.map(|e| {
+                    dom.attributes(e)
+                        .into_iter()
+                        .map(|(n, v)| (format!("{n:?}"), v))
+                        .collect()
+                })
+                .unwrap_or_default()
+            };
+        let val_or = |dom: &Dom, dd: Option<NodeId>, local: &str, default: &str| -> String {
+            dd.and_then(|d| dom.element(d, &W::name(local)))
+                .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string))
+                .unwrap_or_else(|| default.to_string())
+        };
+        let lig_name = W14::name("ligatures");
+        let lig_val = W14::name("val");
+        let lig_or = |dom: &Dom, dd: Option<NodeId>| -> String {
+            dd.and_then(|d| dom.element(d, &lig_name))
+                .and_then(|e| dom.attribute(e, &lig_val).map(str::to_string))
+                .unwrap_or_else(|| "none".to_string())
+        };
+        let a_fonts = a_dd.and_then(|d| dom.element(d, &W::name("rFonts")));
+        let b_fonts = b_dd.and_then(|d| dom.element(d, &W::name("rFonts")));
+        let fonts_differ = attr_map(dom, a_fonts) != attr_map(dom, b_fonts);
+        // (local, B-effective value) for whitelist props whose A/B effective
+        // values differ; implicit defaults sz/szCs 20, kern 0.
+        let mut deltas: Vec<(&str, String)> = Vec::new();
+        for (local, default) in [("kern", "0"), ("sz", "20"), ("szCs", "20")] {
+            let av = val_or(dom, a_dd, local, default);
+            let bv = val_or(dom, b_dd, local, default);
+            if av != bv {
+                deltas.push((local, bv));
+            }
+        }
+        let ligs = (lig_or(dom, a_dd), lig_or(dom, b_dd));
+        let b_lang = b_dd.or(a_dd).and_then(|d| dom.element(d, &W::name("lang")));
+        if fonts_differ || !deltas.is_empty() || ligs.0 != ligs.1 {
+            for style in dom.elements(out_root, Some(&style_nm)) {
+                let Some(id) = dom.attribute(style, &style_id).map(str::to_string) else {
+                    continue;
+                };
+                if a_declared_ids.contains(&id) || !b_by_id.contains_key(&id) {
+                    continue;
+                }
+                if Some(style) == normal_out {
+                    continue;
+                }
+                // Paragraph styles only — Word leaves the linked *Char
+                // styles (FooterChar, Hyperlink, …) unmarked in the oracle.
+                let stype = dom
+                    .attribute(style, &W::name("type"))
+                    .unwrap_or("")
+                    .to_string();
+                if stype != "paragraph" {
+                    continue;
+                }
+                // Already tracked — leave alone (same rule as phase 1).
+                let already = ["rPrChange", "pPrChange"]
+                    .iter()
+                    .any(|c| !dom.descendants(style, Some(&W::name(c))).is_empty());
+                if already {
+                    continue;
+                }
+                // rPr: old = declared + lang; live = declared + delta.
+                let declared = dom.element(style, &W::r_pr());
+                let old = match declared {
+                    Some(r) => dom.clone_subtree(r),
+                    None => dom.new_element(W::r_pr()),
+                };
+                if dom.element(old, &W::name("lang")).is_none()
+                    && let Some(l) = b_lang
+                {
+                    let lc = dom.clone_subtree(l);
+                    dom.add(old, lc);
+                }
+                let live = match declared {
+                    Some(r) => r,
+                    None => {
+                        let r = dom.new_element(W::r_pr());
+                        insert_child_by_rank(dom, style, r, "rPr", &style_child_rank);
+                        r
+                    }
+                };
+                if fonts_differ
+                    && dom.element(live, &W::name("rFonts")).is_none()
+                    && let Some(bf) = b_fonts
+                {
+                    let fc = dom.clone_subtree(bf);
+                    match dom.elements(live, None).first().copied() {
+                        Some(first) => dom.add_before_self(first, fc),
+                        None => dom.add(live, fc),
+                    }
+                }
+                for (local, bv) in &deltas {
+                    if dom.element(live, &W::name(local)).is_none() {
+                        let e = dom.new_element(W::name(local));
+                        dom.set_attribute_value(e, &W::val(), Some(bv));
+                        dom.add(live, e);
+                    }
+                }
+                if ligs.0 != ligs.1 && dom.element(live, &lig_name).is_none() {
+                    let e = dom.new_element(lig_name.clone());
+                    dom.set_attribute_value(e, &lig_val, Some(&ligs.1));
+                    dom.add(live, e);
+                }
+                append_style_change_record(dom, out_root, live, old, "rPrChange", settings);
+                // pPr (paragraph styles): live declared unchanged; old = its clone.
+                if stype == "paragraph" {
+                    let ppr = match dom.element(style, &W::p_pr()) {
+                        Some(p) => p,
+                        None => {
+                            let p = dom.new_element(W::p_pr());
+                            insert_child_by_rank(dom, style, p, "pPr", &style_child_rank);
+                            p
+                        }
+                    };
+                    let old_p = dom.clone_subtree(ppr);
+                    for c in dom.descendants(old_p, Some(&W::name("pPrChange"))) {
+                        dom.remove(c);
+                    }
+                    append_style_change_record(dom, out_root, ppr, old_p, "pPrChange", settings);
+                }
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 /// M79 — Word-mode single-line normalization on paragraph styles.
 ///
 /// Word Compare writes `line=240 lineRule=auto` onto Heading/Title/ListParagraph
@@ -691,12 +1299,10 @@ fn normalize_word_paragraph_style_line(dom: &mut Dom, styles_root: NodeId) -> bo
             dom.set_attribute_value(sp, &W::name("after"), Some("0"));
             dom.set_attribute_value(sp, &W::name("line"), Some("240"));
             dom.set_attribute_value(sp, &W::name("lineRule"), Some("auto"));
-            // spacing first in pPr (before pPrChange if any)
-            if let Some(chg) = dom.element(ppr, &W::name("pPrChange")) {
-                dom.add_before_self(chg, sp);
-            } else {
-                dom.add_first(ppr, sp);
-            }
+            // CT_PPrBase order, not "first" and not "just before pPrChange":
+            // once workstream S puts B's declared `ind`/`contextualSpacing` on
+            // ListParagraph, both of those land spacing after its successors.
+            insert_child_by_rank(dom, ppr, sp, "spacing", &ppr_child_rank);
             changed = true;
         }
     }
@@ -1893,6 +2499,7 @@ fn adopt_revised_header_footer(
     pkg2: &PartFs,
     out: &mut PartFs,
     out_main: &str,
+    settings: &WmlComparerSettings,
 ) {
     let href = W::name("headerReference");
     let fref = W::name("footerReference");
@@ -2028,8 +2635,13 @@ fn adopt_revised_header_footer(
         // under a fresh name instead of dropping or clobbering it — byte-safe
         // existence check (part_string is None for binary parts)
         let part = unique_part_name(out, &src_part, &bytes);
-        if out.part_bytes(&part).is_none() {
+        let newly_adopted = out.part_bytes(&part).is_none();
+        if newly_adopted {
             out.set_part(&part, bytes);
+            // M378 (tiff×h_f −3.3): B-only header/footer content is pure-I in
+            // Word (base had no HF). Copying B live left page numbers + labels
+            // as Equal and thrash LO pagefair. Mark body content as inserted.
+            mark_adopted_hf_content_as_inserted(out, &part, settings);
         }
         let ct = if is_header {
             "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
@@ -2139,6 +2751,376 @@ fn adopt_revised_header_footer(
         dom.set_attribute_value(refel, &W::name("type"), Some(&ty));
         dom.set_attribute_value(refel, &R::name("id"), Some(&new_rid));
         dom.add_first(out_sect, refel);
+    }
+}
+
+/// M378 — wrap body content of a newly adopted B-only header/footer as pure-I.
+/// Word Compare marks PAGE fields + labels as inserts when the original had no
+/// HF; a live copy of B's part renders without revision chrome (−3 pagefair on
+/// tiff×h_f_normal).
+fn mark_adopted_hf_content_as_inserted(
+    out: &mut PartFs,
+    part: &str,
+    settings: &WmlComparerSettings,
+) {
+    let Some(xml) = out.part_string(part) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return;
+    };
+    // Root is w:hdr or w:ftr.
+    let mut next_id: u32 = 1;
+    let author = settings.author_for_revisions.as_str();
+    let date = settings.date_time_for_revisions.as_str();
+    let paras: Vec<NodeId> = dom.descendants(root, Some(&W::p()));
+    for p in paras {
+        // Skip if already has revision markup.
+        if !dom.descendants(p, Some(&W::ins())).is_empty()
+            || !dom.descendants(p, Some(&W::del())).is_empty()
+        {
+            continue;
+        }
+        let kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| dom.name(c) != Some(W::p_pr()))
+            .collect();
+        if kids.is_empty() {
+            continue;
+        }
+        // Any contentful child? (run / hyperlink / sdt / drawing container)
+        let has_content = kids.iter().any(|&c| {
+            let Some(n) = dom.name(c) else {
+                return false;
+            };
+            n == W::r()
+                || n == W::hyperlink()
+                || n == W::name("sdt")
+                || n == W::name("drawing")
+                || n.local_name() == "AlternateContent"
+        });
+        if !has_content {
+            continue;
+        }
+        // Single wrapper around all body kids (Word PAGE field shape).
+        let ins = dom.new_element(W::ins());
+        dom.set_attribute_value(ins, &W::author(), Some(author));
+        dom.set_attribute_value(ins, &W::date(), Some(date));
+        let id = next_id.to_string();
+        next_id += 1;
+        dom.set_attribute_value(ins, &W::id(), Some(&id));
+        // Insert wrapper before first body child, then move kids into it.
+        if let Some(&first) = kids.first() {
+            if dom.parent(first).is_some() {
+                dom.add_before_self(first, ins);
+            } else {
+                dom.add(p, ins);
+            }
+        } else {
+            dom.add(p, ins);
+        }
+        for c in kids {
+            if dom.parent(c).is_none() {
+                continue;
+            }
+            dom.remove(c);
+            dom.add(ins, c);
+        }
+        // Word also stamps mark ins on pPr/rPr for PAGE-number paras.
+        if let Some(ppr) = dom.element(p, &W::p_pr()) {
+            let rpr = match dom.element(ppr, &W::r_pr()) {
+                Some(r) => r,
+                None => {
+                    let r = dom.new_element(W::r_pr());
+                    // rPr last-ish before pPrChange if any; otherwise append.
+                    if let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) {
+                        dom.add_before_self(ppc, r);
+                    } else {
+                        dom.add(ppr, r);
+                    }
+                    r
+                }
+            };
+            if dom.element(rpr, &W::ins()).is_none() && dom.element(rpr, &W::del()).is_none() {
+                let mark = dom.new_element(W::ins());
+                dom.set_attribute_value(mark, &W::author(), Some(author));
+                dom.set_attribute_value(mark, &W::date(), Some(date));
+                let mid = next_id.to_string();
+                next_id += 1;
+                dom.set_attribute_value(mark, &W::id(), Some(&mid));
+                // Mark first under rPr (Word: ins then rStyle).
+                if let Some(first) = dom.elements(rpr, None).first().copied() {
+                    dom.add_before_self(first, mark);
+                } else {
+                    dom.add(rpr, mark);
+                }
+            }
+        }
+    }
+    out.set_part(part, dom.serialize_element(root).into_bytes());
+}
+
+/// M383 — when the revised document has **no** headers/footers but the original
+/// does, Word marks all original HF content pure-D. Eng left A HF live (−45 on
+/// h_f_normal_odd_even_firstpg×basic_footnotes). Inverse of M378.
+fn mark_a_only_hf_content_as_deleted(
+    out: &mut PartFs,
+    pkg1: &PartFs,
+    pkg2: &PartFs,
+    settings: &WmlComparerSettings,
+) {
+    let b_refs = header_footer_refs(pkg2);
+    if !b_refs.is_empty() {
+        return; // B has HF — slot-level content diff owns the markup
+    }
+    let a_refs = header_footer_refs(pkg1);
+    if a_refs.is_empty() {
+        return;
+    }
+    let mut seen = std::collections::HashSet::new();
+    for (_, _, part) in a_refs {
+        if !seen.insert(part.clone()) {
+            continue;
+        }
+        // Part may be stored under the same name in out (A-based package).
+        mark_hf_part_content_as_deleted(out, &part, settings);
+    }
+}
+
+fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlComparerSettings) {
+    let Some(xml) = out.part_string(part) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return;
+    };
+    let mut next_id: u32 = 1;
+    let author = settings.author_for_revisions.as_str();
+    let date = settings.date_time_for_revisions.as_str();
+    let paras: Vec<NodeId> = dom.descendants(root, Some(&W::p()));
+    for p in paras {
+        if !dom.descendants(p, Some(&W::ins())).is_empty()
+            || !dom.descendants(p, Some(&W::del())).is_empty()
+        {
+            continue;
+        }
+        let kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| dom.name(c) != Some(W::p_pr()))
+            .collect();
+        if kids.is_empty() {
+            continue;
+        }
+        let has_content = kids.iter().any(|&c| {
+            let Some(n) = dom.name(c) else {
+                return false;
+            };
+            n == W::r()
+                || n == W::hyperlink()
+                || n == W::name("sdt")
+                || n == W::name("drawing")
+                || n.local_name() == "AlternateContent"
+        });
+        if !has_content {
+            continue;
+        }
+        let del = dom.new_element(W::del());
+        dom.set_attribute_value(del, &W::author(), Some(author));
+        dom.set_attribute_value(del, &W::date(), Some(date));
+        let id = next_id.to_string();
+        next_id += 1;
+        dom.set_attribute_value(del, &W::id(), Some(&id));
+        if let Some(&first) = kids.first() {
+            if dom.parent(first).is_some() {
+                dom.add_before_self(first, del);
+            } else {
+                dom.add(p, del);
+            }
+        } else {
+            dom.add(p, del);
+        }
+        for c in kids {
+            if dom.parent(c).is_none() {
+                continue;
+            }
+            dom.remove(c);
+            // Rename w:t → w:delText under this run tree for pure-D.
+            for t in dom.descendants(c, Some(&W::t())) {
+                dom.set_name(t, W::name("delText"));
+            }
+            dom.add(del, c);
+        }
+        // Mark del on pPr/rPr (Word PAGE + label shape).
+        if let Some(ppr) = dom.element(p, &W::p_pr()) {
+            let rpr = match dom.element(ppr, &W::r_pr()) {
+                Some(r) => r,
+                None => {
+                    let r = dom.new_element(W::r_pr());
+                    if let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) {
+                        dom.add_before_self(ppc, r);
+                    } else {
+                        dom.add(ppr, r);
+                    }
+                    r
+                }
+            };
+            if dom.element(rpr, &W::ins()).is_none() && dom.element(rpr, &W::del()).is_none() {
+                let mark = dom.new_element(W::del());
+                dom.set_attribute_value(mark, &W::author(), Some(author));
+                dom.set_attribute_value(mark, &W::date(), Some(date));
+                let mid = next_id.to_string();
+                next_id += 1;
+                dom.set_attribute_value(mark, &W::id(), Some(&mid));
+                if let Some(first) = dom.elements(rpr, None).first().copied() {
+                    dom.add_before_self(first, mark);
+                } else {
+                    dom.add(rpr, mark);
+                }
+            }
+        }
+    }
+    out.set_part(part, dom.serialize_element(root).into_bytes());
+}
+
+/// M379 — when the original has no real footnotes/endnotes separators but the
+/// revised document does, copy B's notes part into the package. Word carries
+/// separator + continuationSeparator (often with drawings) even when body has
+/// zero footnote refs (tiff×h_f_normal). Empty shells thrash LO page geometry.
+fn adopt_b_notes_when_a_lacks_separators(
+    out: &mut PartFs,
+    pkg1: &PartFs,
+    pkg2: &PartFs,
+    out_main: &str,
+) {
+    for (part, rel_suffix, ct) in [
+        (
+            "word/footnotes.xml",
+            "footnotes",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+        ),
+        (
+            "word/endnotes.xml",
+            "endnotes",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml",
+        ),
+    ] {
+        let a_has_sep = pkg1.part_string(part).is_some_and(|x| {
+            x.contains("w:type=\"separator\"") || x.contains("w:type='separator'")
+        });
+        if a_has_sep {
+            continue;
+        }
+        let Some(b_xml) = pkg2.part_string(part) else {
+            continue;
+        };
+        if !(b_xml.contains("w:type=\"separator\"") || b_xml.contains("w:type='separator'")) {
+            continue;
+        }
+        // Also skip if out already has a real separator part (paired compare).
+        let out_has_sep = out.part_string(part).is_some_and(|x| {
+            x.contains("w:type=\"separator\"") || x.contains("w:type='separator'")
+        });
+        if out_has_sep {
+            continue;
+        }
+        // When B.3/B.4 already produced the part (rectified content defs,
+        // renumbered 1..n), a wholesale copy of B's part would clobber those
+        // defs with B's PRE-rectify ids (c2: ref 1 vs def 2001 dangling).
+        // Merge only B's STRUCTURAL notes (separator/continuationSeparator/
+        // continuationNotice) in front of the rectified defs instead.
+        if let Some(out_xml) = out.part_string(part) {
+            let mut sd = Dom::new();
+            let od = sd.parse_xdocument(&out_xml);
+            let bd = sd.parse_xdocument(&b_xml);
+            if let (Some(or), Some(br)) = (sd.root(od), sd.root(bd)) {
+                let def = if rel_suffix == "footnotes" {
+                    crate::namespaces::W::footnote()
+                } else {
+                    crate::namespaces::W::endnote()
+                };
+                let structural: Vec<_> = sd
+                    .elements(br, Some(&def))
+                    .into_iter()
+                    .filter(|&n| crate::comparer::footnotes::is_structural_note(&sd, n))
+                    .collect();
+                let first_out = sd.elements(or, Some(&def)).first().copied();
+                for s in structural {
+                    let cloned = sd.clone_subtree(s);
+                    match first_out {
+                        Some(f) => sd.add_before_self(f, cloned),
+                        None => sd.add(or, cloned),
+                    }
+                }
+                out.set_part(part, sd.serialize_element(or).into_bytes());
+            }
+            continue;
+        }
+        out.set_part(part, b_xml.into_bytes());
+        out.add_content_type_override(&format!("/{part}"), ct);
+        // Ensure main-document relationship.
+        let has_rel = out.read_rels_for(out_main).is_some_and(|r| {
+            r.items
+                .iter()
+                .any(|i| i.rel_type.ends_with(&format!("/{rel_suffix}")))
+        });
+        if !has_rel {
+            let target = part.strip_prefix("word/").unwrap_or(part);
+            out.add_document_relationship(
+                out_main,
+                &format!(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{rel_suffix}"
+                ),
+                target,
+            );
+        }
+        // Carry notes-part rels + media (separator drawings).
+        if let Some(nrels) = pkg2.read_rels_for(part) {
+            let mut rels_xml = String::from(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+                 <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+            );
+            for nr in &nrels.items {
+                let mode = nr
+                    .target_mode
+                    .as_deref()
+                    .map(|m| format!(" TargetMode=\"{m}\""))
+                    .unwrap_or_default();
+                let mut rel_target_out = nr.target.clone();
+                if nr.target_mode.as_deref() != Some("External") {
+                    let t = pkg2.resolve_rel_target(part, &nr.target);
+                    if let Some(tb) = pkg2.part_bytes(&t).map(<[u8]>::to_vec) {
+                        let t_out = unique_part_name(out, &t, &tb);
+                        if out.part_bytes(&t_out).is_none() {
+                            out.set_part(&t_out, tb);
+                        }
+                        if t_out != t {
+                            rel_target_out = t_out.rsplit('/').next().unwrap_or(&t_out).to_string();
+                        }
+                    }
+                }
+                let xe = |s: &str| {
+                    s.replace('&', "&amp;")
+                        .replace('<', "&lt;")
+                        .replace('"', "&quot;")
+                };
+                rels_xml.push_str(&format!(
+                    "<Relationship Id=\"{}\" Type=\"{}\" Target=\"{}\"{}/>",
+                    xe(&nr.id),
+                    xe(&nr.rel_type),
+                    xe(&rel_target_out),
+                    mode
+                ));
+            }
+            rels_xml.push_str("</Relationships>");
+            let base = part.rsplit('/').next().unwrap_or(part);
+            out.set_part(&format!("word/_rels/{base}.rels"), rels_xml.into_bytes());
+        }
     }
 }
 
@@ -2502,10 +3484,12 @@ fn compare_documents_impl(
     // the original supplied none (must run BEFORE the result serialization —
     // it adds references to the final sectPr).
     if settings.merge_replaced_paragraphs {
-        adopt_revised_header_footer(&mut dom, result_root, &pkg2, &mut out, &main1);
+        adopt_revised_header_footer(&mut dom, result_root, &pkg2, &mut out, &main1, settings);
         // Word inheritance: drop body-final HF slots already set on an earlier
         // mid-section break (dual chrome otherwise). Mid multi-section copies stay.
         strip_final_sectpr_inherited_header_footer(&mut dom, result_root);
+        // M383: A-only HF (B has no headers/footers) → pure-D (Word).
+        mark_a_only_hf_content_as_deleted(&mut out, &pkg1, &pkg2, settings);
     }
 
     // M35: comments carryover is a package-validity invariant, not a
@@ -2729,7 +3713,26 @@ fn compare_documents_impl(
         let od = sd.parse_xdocument(&out_xml);
         let bd = sd.parse_xdocument(&b_xml);
         if let (Some(or), Some(br)) = (sd.root(od), sd.root(bd)) {
-            let mut changed = merge_normal_style_spacing(&mut sd, or, br, settings);
+            // Workstream S runs FIRST, while the output stylesheet still holds
+            // A's definitions: `merge_normal_style_*` below rewrites Normal to
+            // B's values, and every style based on Normal would then resolve its
+            // "original" chain against the already-revised Normal.
+            // S2: ids A actually declared — styles in `or` beyond this set
+            // were copied from B and take the phase-2 docDefaults bake.
+            let a_declared_ids: std::collections::HashSet<String> = pkg1
+                .part_string("word/styles.xml")
+                .map(|xml| {
+                    xml.match_indices("w:styleId=\"")
+                        .filter_map(|(i, m)| {
+                            let rest = &xml[i + m.len()..];
+                            rest.find('"').map(|e| rest[..e].to_string())
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut changed =
+                merge_revised_style_definitions(&mut sd, or, br, settings, &a_declared_ids);
+            changed |= merge_normal_style_spacing(&mut sd, or, br, settings);
             // M-PAG mechanism 2b / M71: rewrite Normal rPr to B's effective
             // metrics when they differ. Formerly gated on header/footer→Normal
             // (footer knife-edge). That skipped file_197 (no HF): Word writes
@@ -2860,6 +3863,11 @@ fn compare_documents_impl(
             }
             out.set_part(part, dom.serialize_element(r).into_bytes());
         }
+    }
+    // M379: after B.4 notes writeback — if A had no separators, B.4 left empty
+    // shells or skipped; copy B's separator/continuationSeparator notes.
+    if settings.merge_replaced_paragraphs {
+        adopt_b_notes_when_a_lacks_separators(&mut out, &pkg1, &pkg2, &main1);
     }
     // settings.xml may still list special footnote/endnote ids (e.g. id=1
     // continuationNotice) that rectify dropped. Dangling settings refs make

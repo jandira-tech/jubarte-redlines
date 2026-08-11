@@ -296,6 +296,10 @@ pub fn compare_bodies_faithful_with_notes(
     // recovers by dropping them; match so the output is Word-valid.
     finalize::sanitize_sdt_properties(dom, body1);
     finalize::sanitize_sdt_properties(dom, body2);
+    // Note: do **not** preprocess-unwrap all SDTs. Word keeps content controls
+    // on equal form-field pairs (fields_attrs1×sample) but flattens pure-I/D
+    // residual SDTs (missing_sectpr×fields_test). M390 runs after produce on
+    // pure revision paragraphs only.
 
     // PreProcessMarkup (essence): coalesce adjacent identical-format runs in both
     // inputs so source run fragmentation (e.g. one inserted sentence split across
@@ -628,23 +632,37 @@ pub fn compare_bodies_faithful_with_notes(
     // Word-mode: drop body spacing that only restates demo pPrDefault (line=276).
     if settings.merge_replaced_paragraphs {
         finalize::strip_redundant_demo_default_spacing(dom, root);
+        // M367: pure-I pStyle=Normal + bidi=0 restates defaults (shape_group);
+        // Word omits them on pure-I mark pPr (sdts×shape −4.3 LO thrash).
+        finalize::strip_redundant_normal_pstyle_and_bidi(dom, root);
         // C3/C5: incomplete lineRule=auto spacing → Word single-line or strip.
         finalize::normalize_incomplete_spacing(dom, root);
+        // M439: pure-I numPr list items get Word snug spacing 0/0/240 when bare.
+        finalize::ensure_pure_i_list_snug_spacing(dom, root);
         // NOTE: do not blanket-strip pure-del spacing — delete-heavy winners
         // (file_14/file_69) need source before/after for LO page parity.
         // file_33 residual pure-D spacing: M67 strips Heading residual only.
         // TOC/body hyperlinks → Hyperlink-styled runs (file_21 Word parity).
         finalize::unwrap_hyperlinks_to_styled_runs(dom, root);
+        // M390: flatten content controls inside pure-I/D/MIX residual only
+        // (fields_test pure-I SDTs → plain runs; keep EQ form-field SDTs).
+        finalize::unwrap_content_controls_in_pure_revisions(dom, root);
         // file_69: final empty pure-del → bare trailing empty (Word).
         finalize::strip_trailing_empty_pure_del_mark(dom, root);
         // M92: trailing empty live spacing → pPrChange (file_30).
         finalize::trailing_empty_spacing_to_pprchange(dom, root, settings, &mut id);
         // M83a: drop B's trailing empty pure-ins before sectPr (file_23).
         finalize::strip_trailing_empty_pure_ins(dom, root);
-        // M85a: empty pure-ins before trailing pure-del residual (file_49).
-        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        // M341: fold whitespace pure-I into pure-D **before** M85a strip so
+        // missing_sectpr×separator keeps pure-I "something" + MIX empty+del
+        // base title (Word IIIIM). Strip-first removed the empty, then
+        // merge_replaced MIX-ed "something" into the del (~66 vs e3 ~97).
         // M86: whitespace pure-ins + following pure-del → mixed (file_88).
         finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        // M392: restore empty pure-I spacers before short pure-D title (file_36).
+        finalize::ensure_empty_pure_i_before_short_title_del(dom, root, settings, &mut id);
+        // M85a: empty pure-ins before trailing pure-del residual (file_49).
+        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
         // M85b: last pure-del mark-only pPr → bare del (file_186/49).
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
         finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
@@ -670,6 +688,9 @@ pub fn compare_bodies_faithful_with_notes(
         // Short pure-D base trailing after insert-all-next → splice mid-stream
         // near TOC/tip (document_100×comments; Word nests original on page 2).
         finalize::splice_trailing_short_pure_dels_midstream(dom, root);
+        // M393: coalesce collapses pure-I-all then pure-D-all for list pairs;
+        // interleave Word cluster shape **before** merge free-meshes labels.
+        finalize::interleave_list_cluster_after_coalesce(dom, root);
         finalize::merge_replaced_paragraphs(dom, root, &settings.author_for_revisions);
         // M159: restore short pure-D before longer pure-I after merge reorder
         // (text_highlight×times Word MIX|DEL|INS|MIX).
@@ -702,14 +723,45 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::park_mixed_numpr_onto_trailing_empty_pure_del(dom, root, settings, &mut id);
         // M102c: last pure-del inherits prev live jc (file_148 center+spacing).
         finalize::last_pure_del_inherit_prev_jc(dom, root);
+        // M449: body MIX parks jc in pPrChange; Word keeps live jc (right-align).
+        finalize::promote_live_jc_from_pprchange_on_body_mix(dom, root);
+        // M452: short title MIX has no pPr; Word parks body live jc into
+        // pPrChange only (right_aligned_italic×right_alignment_2 residual).
+        // Park-only — live title jc thrash'd (abandoned M451 title attempt).
+        finalize::park_jc_on_first_short_title_mix_from_body(dom, root, settings, &mut id);
+        // M450: last MIX parks Heading residual spacing; Word keeps live + empty
+        // pPrChange (calibri×heading_2_right).
+        finalize::promote_heading_spacing_from_pprchange_on_last_mix(dom, root);
+        // M453: mid MIX with live heading residual spacing missing empty
+        // pPrChange shell (calibri mid residual). Skip MIX+live jc (M451).
+        finalize::ensure_empty_pprchange_on_live_heading_spacing(dom, root, settings, &mut id);
+        // M454: EQ with live jc missing empty pPrChange (center2 title → 100).
+        // EQ only — pure-I empty shells thrash'd comments subset.
+        finalize::ensure_empty_pprchange_on_eq_with_live_jc(dom, root, settings, &mut id);
+        // M451: strip empty pPrChange on mid MIX with live jc (center_alignment_2).
+        finalize::strip_empty_pprchange_on_mix_with_live_jc(dom, root);
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
         // M87b: last pure-del with pPrChange drops mark-only del (file_55).
         finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
         finalize::end_para_classification_cache();
         // Structure-mutating peels (invalidate pure-del/mixed classification).
         finalize::strip_trailing_empty_pure_ins(dom, root);
-        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        // M341: fold before strip (see pre-merge order note above).
         finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        // M392: restore empty pure-I spacers before short pure-D title (file_36).
+        finalize::ensure_empty_pure_i_before_short_title_del(dom, root, settings, &mut id);
+        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        // M438: title-page pure-I e×6 DD E — relocate last empty pure-I after
+        // pure-D as bare trailing empty (doc_with_spaces×spacing Word shape).
+        finalize::relocate_title_page_last_empty_after_pure_dels(dom, root);
+        // M440: short list pure-I label × empty pure-D → MIX del mark (list_spacer).
+        finalize::fold_short_list_label_into_empty_pure_del(dom, root);
+        // M442: pure-D with pPrChange(numPr) but no live numPr → promote live
+        // numPr from first pure-I (list_spacer residual 14.11).
+        finalize::promote_live_numpr_on_pure_d_from_pprchange(dom, root);
+        // M448: pure-I-dominant body + pure-D residual → drop trailing bare
+        // empty EQ (diff_after8×doc_with_spacing Word ends IDD not IDDE).
+        finalize::strip_trailing_bare_empty_after_pure_i_dominant(dom, root);
         // M105: pure-D short title + following MIX leading ins → Word subtitle
         // insert lands on title residual (file_7/5/130 document peel).
         finalize::fold_leading_ins_from_mix_into_preceding_pure_del(dom, root);
@@ -718,6 +770,37 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::peel_trailing_ins_from_mix_into_following_pure_del(dom, root);
         // M154: trailing del on MIX + following pure-I (justified_underline×justify_2).
         finalize::peel_trailing_del_from_mix_into_following_pure_ins(dom, root);
+        // M458: M151 pure-I B1 + A1×B2 leaves leading del "This" on body MIX;
+        // Word free-meshes This as EQ on body1 — strip orphan leading del.
+        finalize::strip_leading_del_echoing_prev_pure_i(dom, root);
+        // M369: residual short pure-I labels ("a"/"b") × pure-D list items ending
+        // with the same token (ordered_list×sublist Word MIX). After mix peels
+        // so fold_leading_ins does not steal the label onto a preceding Item.
+        finalize::residual_short_label_zip(dom, root);
+        // M377: short-title MIX free-mesh shared sig token as EQ (tiff×h_f
+        // "document" −3.4 vs wholesale ins+del).
+        finalize::free_mesh_shared_title_token_in_mix(dom, root);
+        // M460: bookended MIX (EQ `This `…`.`) free-mesh mid shared sig token
+        // inside the single ins+del pair (right_align_bold "right").
+        finalize::free_mesh_bookended_ins_del(dom, root);
+        // M461: pure-I "This … text …" free-mesh EQ bookends when following
+        // pure-D/MIX del shares this+text (center_aligned_bold / right_align).
+        finalize::free_mesh_pure_i_this_text(dom, root);
+        // M462: coverage-gated wholesale body MIX free-mesh (after M461 so
+        // residual A del still wholesale against B body2). M459 thrash guards
+        // via shared_sig/min_sig ≥ 0.35 + eligible-token LCS.
+        finalize::free_mesh_wholesale_body_mix(dom, root);
+        // M463: fold bare boiler EQ (` text `) between consecutive ins and
+        // attach trailing bare `.` onto last ins/del (right_align p2 Word shape).
+        finalize::fold_boiler_eq_between_ins(dom, root);
+        // M464: peel trailing ` for <word>` from MIX ins onto following MIX as
+        // EQ for + INS word (center_bold p2/p3 residual).
+        finalize::peel_trailing_for_word_onto_next_mix(dom, root);
+        // M393 late: re-apply after free-mesh peels thrash LCS interleave.
+        finalize::interleave_list_cluster_after_coalesce(dom, root);
+        // M376: after merge/park peels — strip list line=240/jc that mid pure-D
+        // absorbed from pure-I list residual (bookmark×broken_complex −0.6).
+        finalize::strip_list_layout_from_mid_pure_del(dom, root);
     }
     // Final renumber after wrap_bare / stamped predeletes / row marks — any
     // w:id minted after the earlier fix_up_revision_ids pass would otherwise
@@ -834,6 +917,10 @@ pub struct WmlComparerSettings {
     /// `powertools_faithful()` (all off); intermediate combinations are
     /// deliberately not expressible — they have no oracle.
     pub merge_replaced_paragraphs: bool,
+    /// True while resolving stamp-confetti RESIDUAL windows (nested calls
+    /// from `stamp_confetti_then_replace`): their glue-anchor physics are
+    /// corpus-tuned and the UNREL-GLUE void must not fire inside them.
+    pub in_stamp_residual: bool,
 }
 
 /// The word-visual default for [`WmlComparerSettings::detail_threshold`] —
@@ -894,6 +981,7 @@ impl Default for WmlComparerSettings {
             move_minimum_word_count: 6,
             merge_replaced_paragraphs: true,
             detect_format_changes: true,
+            in_stamp_residual: false,
         }
     }
 }

@@ -1731,27 +1731,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "jubarte"
-version = "0.1.0"
-dependencies = [
- "quick-xml 0.40.1",
- "rdocx-opc",
- "regex",
- "sha1 0.10.7",
- "zip",
-]
-
-[[package]]
 name = "jubarte-app"
-version = "0.2.0"
+version = "0.6.1"
 dependencies = [
- "jubarte",
+ "jubarte-redlines",
  "quick-xml 0.40.1",
  "serde",
  "serde_json",
+ "swift-rs",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+]
+
+[[package]]
+name = "jubarte-redlines"
+version = "0.5.1"
+dependencies = [
+ "rdocx-opc",
+ "sha1 0.10.7",
+ "zip",
 ]
 
 [[package]]

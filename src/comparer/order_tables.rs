@@ -49,6 +49,20 @@ pub const PPR_ORDER: &[(&str, i32)] = &[
     ("pPrChange", 370),
 ];
 
+/// `w:numPr` child ranks (`CT_NumPr` sequence).
+///
+/// Not a PowerTools table — `WmlOrderElementsPerStandard` has no `numPr`
+/// container, so a source writing `numId` before `ilvl` was copied through and
+/// the output failed schema validation. Word normalises the order when it
+/// writes a comparison (0 occurrences across 504 corpus oracles against 10 of
+/// ours), so matching Word means normalising.
+pub const NUMPR_ORDER: &[(&str, i32)] = &[
+    ("ilvl", 10),
+    ("numId", 20),
+    ("numberingChange", 30),
+    ("ins", 40),
+];
+
 /// `w:rPr` child ranks (PtOpenXmlUtil Order_rPr), including moveFrom/moveTo
 /// PowerTools divergences allowlisted in the schema oracle.
 pub const RPR_ORDER: &[(&str, i32)] = &[

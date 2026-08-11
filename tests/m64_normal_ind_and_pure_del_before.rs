@@ -56,7 +56,7 @@ fn m64_file_196_normal_copies_b_firstline_ind() {
     assert!(
         styles.contains("w:firstLine=\"432\"") || styles.contains("w:firstLine=\"432\""),
         "file_196 Normal must copy B firstLine=432: {}",
-        &styles[styles.find("styleId=\"Normal\"").unwrap_or(0)..]
+        styles[styles.find("styleId=\"Normal\"").unwrap_or(0)..]
             .chars()
             .take(400)
             .collect::<String>()

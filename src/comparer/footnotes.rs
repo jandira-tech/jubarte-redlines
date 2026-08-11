@@ -651,7 +651,7 @@ fn lookup_def(dom: &Dom, root: Option<NodeId>, def_name: &XName, old: &str) -> O
 /// listed from `w:settings`/`w:footnotePr` — dropping it while leaving the
 /// settings reference triggers Word "unreadable content" (OpenXmlValidator
 /// Semantic: settings references missing footnote/endnote id).
-fn is_structural_note(dom: &Dom, note: NodeId) -> bool {
+pub(crate) fn is_structural_note(dom: &Dom, note: NodeId) -> bool {
     match dom.attribute(note, &W::id()) {
         Some("-1") | Some("0") => return true,
         _ => {}

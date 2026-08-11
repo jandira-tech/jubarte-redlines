@@ -1144,8 +1144,8 @@ fn a10_rp_baseline_sweep() {
                     "{} [{}]\n  expected: {:?}\n  got:      {:?}",
                     input.file_name().unwrap().to_string_lossy(),
                     if reject { "reject" } else { "accept" },
-                    &expected.chars().take(120).collect::<String>(),
-                    &got.chars().take(120).collect::<String>(),
+                    expected.chars().take(120).collect::<String>(),
+                    got.chars().take(120).collect::<String>(),
                 )),
                 Err(_) => failures.push(format!(
                     "{} [{}] PANICKED",

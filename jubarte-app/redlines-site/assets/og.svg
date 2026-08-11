@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <!-- Open Graph card, 1200×630. Same tokens as the site: warm off-white
+       ground, one near-black ink, highlighter yellow used only as a mark.
+       Text is Departure Mono / Manrope-substitute — resvg loads both from
+       assets/, so no system-font drift between machines. -->
+
+  <rect width="1200" height="630" fill="#FAFAF8"/>
+
+  <!-- top hairline + accent tick, echoing the site's section labels -->
+  <rect x="0" y="0" width="1200" height="8" fill="#0A0A0A"/>
+  <rect x="72" y="0" width="120" height="8" fill="#FFD400"/>
+
+  <!-- faint whale watermark, bottom-right (same path as the app) -->
+  <g transform="translate(690 250) scale(0.92)" opacity="0.06">
+    <path d="M 76 192 C 82 172 112 156 150 146 C 196 132 258 112 310 110 C 356 108 402 118 448 148 C 458 152 464 150 470 144 C 478 128 494 106 520 92 C 512 112 508 126 502 134 C 514 140 526 148 540 160 C 520 164 498 160 480 162 C 470 164 460 166 452 166 C 420 190 382 228 328 252 C 270 278 194 286 148 268 C 114 254 88 230 81 208 C 76 198 74 194 76 192 Z" fill="#0A0A0A"/>
+    <path d="M 208 228 C 246 240 286 268 322 298 C 334 308 338 320 330 326 C 296 326 254 306 226 280 C 206 260 200 240 208 228 Z" fill="#0A0A0A"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="72" y="104" font-family="Departure Mono" font-size="22" fill="#0A0A0A" letter-spacing="3.2">JUBARTE.REDLINE.ENGINE</text>
+
+  <!-- headline -->
+  <text x="72" y="228" font-family="Manrope" font-size="72" font-weight="400" fill="#0A0A0A" letter-spacing="-1.8">Drop two Word documents.</text>
+
+  <!-- The highlighter sits behind the whole payoff line rather than a slice of
+       it: banding individual words means hand-tuning a rect to glyph advances,
+       which silently breaks the moment the font or the copy changes. -->
+  <rect x="64" y="258" width="782" height="62" fill="#FFD400"/>
+  <text x="72" y="308" font-family="Manrope" font-size="72" font-weight="400" fill="#0A0A0A" letter-spacing="-1.8">Get a perfect redline.</text>
+
+  <!-- supporting line -->
+  <text x="72" y="382" font-family="Manrope" font-size="27" font-weight="400" fill="#2A2A2A" letter-spacing="-0.3">Real Word tracked changes. Runs in your browser —</text>
+  <text x="72" y="420" font-family="Manrope" font-size="27" font-weight="400" fill="#2A2A2A" letter-spacing="-0.3">your documents never leave your machine.</text>
+
+  <!-- five pips: the free allowance, drawn the way the app draws it -->
+  <g transform="translate(72 484)">
+    <rect x="0"  y="0" width="19" height="19" fill="#FFD400" stroke="#0A0A0A" stroke-width="2"/>
+    <rect x="29" y="0" width="19" height="19" fill="#FFD400" stroke="#0A0A0A" stroke-width="2"/>
+    <rect x="58" y="0" width="19" height="19" fill="#FFD400" stroke="#0A0A0A" stroke-width="2"/>
+    <rect x="87" y="0" width="19" height="19" fill="#FFD400" stroke="#0A0A0A" stroke-width="2"/>
+    <rect x="116" y="0" width="19" height="19" fill="#FFD400" stroke="#0A0A0A" stroke-width="2"/>
+    <text x="152" y="15" font-family="Departure Mono" font-size="19" fill="#0A0A0A" letter-spacing="1.6">FIVE FREE REDLINES</text>
+  </g>
+
+  <!-- bottom bar -->
+  <rect x="0" y="558" width="1200" height="72" fill="#0A0A0A"/>
+  <text x="72" y="602" font-family="Departure Mono" font-size="23" fill="#FAFAF8" letter-spacing="2.6">REDLINES.FREE</text>
+  <text x="1128" y="602" text-anchor="end" font-family="Departure Mono" font-size="19" fill="#FFD400" letter-spacing="2.2">NOTHING IS UPLOADED</text>
+</svg>

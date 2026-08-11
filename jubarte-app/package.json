@@ -1,12 +1,15 @@
 {
   "name": "jubarte-app",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.6.1",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "build:all": "cargo-tauri build --target universal-apple-darwin --bundles app",
     "tauri": "tauri",
     "bump": "bun scripts/bump-version.mjs",
+    "publish:mac": "./scripts/publish-mac-app-store.sh",
+    "asc:status": "./scripts/asc-build-status.sh",
     "art": "bun scripts/render-art.mjs",
     "icons": "bun scripts/render-art.mjs && tauri icon assets/icon-1024.png"
   },

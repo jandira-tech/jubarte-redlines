@@ -222,6 +222,14 @@ fn hand_tables_agree_with_schema_particles() {
         assert_hand_agrees_with_schema("tblPr", order_tables::TBLPR_ORDER, &order, &allow);
     }
 
+    // numPr
+    if let Some(numpr) = find_type_particle(&schema, "w:CT_NumPr/w:numPr") {
+        let mut g = Vec::new();
+        flatten_particle(numpr, &mut g);
+        let order = ordered_names_from_groups(&g);
+        assert_hand_agrees_with_schema("numPr", order_tables::NUMPR_ORDER, &order, &allow);
+    }
+
     // rPr: full EG_RPrBase particle order in the schema does not match the
     // PowerTools hand table (shadow/highlight/… rank drift). The documented
     // divergence that the oracle must pin is only the revision-mark prefix

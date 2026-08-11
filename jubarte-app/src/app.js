@@ -184,6 +184,10 @@ $("swap").addEventListener("click", () => {
 
 async function run() {
   if (runBtn.disabled) return;
+  // Gate the redline engine behind an active subscription; the paywall overlay
+  // (paywall.js) also covers the UI, this guards the keyboard-Enter path.
+  // Fail closed if paywall.js has not initialized yet (script order / race).
+  if (!window.jubarte || !window.jubarte.requireAccess()) return;
   state.busy = true;
   updateCta();
   try {
@@ -195,8 +199,15 @@ async function run() {
     });
     state.result = r;
     showResult(r);
+    window.jubarte?.noteUse?.();
   } catch (err) {
-    toast(String(err), "error", 7000);
+    const msg = String(err);
+    // Rust-side free-quota gate: open the paywall instead of an error toast.
+    if (msg.includes("FREE_LIMIT_REACHED")) {
+      window.jubarte?.gate?.();
+    } else {
+      toast(msg, "error", 7000);
+    }
   } finally {
     state.busy = false;
     updateCta();

@@ -1,0 +1,4 @@
+# Match the engine crate style (jubarte-rs uses 4-space indent).
+edition = "2024"
+tab_spaces = 4
+reorder_imports = true

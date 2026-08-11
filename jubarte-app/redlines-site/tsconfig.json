@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "lib": ["es2022"],
+    "types": [],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  // vitest.config.ts is deliberately excluded: it is Node-side build config
+  // (node:path, import.meta.dirname) and pulling in @types/node to satisfy it
+  // would also hand src/ a set of Node globals that do not exist on workerd.
+  // Vitest type-checks it at load time; keeping it out preserves the guard that
+  // Worker code only sees Worker types.
+  "include": ["src", "test", "worker-configuration.d.ts"]
+}

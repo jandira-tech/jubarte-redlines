@@ -1,19 +1,34 @@
-# Jubarte desktop app — closed-source Tauri shell over the open-source
-# `jubarte` engine (AGPL core lives in github.com/arthrod/jubarte-rs).
+# Jubarte desktop app — proprietary Tauri shell over the open-source
+# `jubarte` engine (AGPL core: github.com/arthrod/jubarte-rs).
+#
+# Layout (required for the path dependency below):
+#   jubarte-rs/                 ← engine crate root
+#   jubarte-rs/jubarte-app/     ← this repo, git submodule
+#   jubarte-rs/jubarte-app/src-tauri/
+#
+# Develop via the engine monorepo + submodule (see README). Do not `cargo
+# publish` this package.
 
-# Standalone workspace: shields the crate from the enclosing ooxmlsdk
-# workspace while this checkout sits nested inside that repo.
+# Empty workspace so Cargo does not join an enclosing workspace.
 [workspace]
 
 [package]
 name = "jubarte-app"
-version = "0.2.0"
+version = "0.6.1"
 edition = "2024"
 rust-version = "1.88"
 publish = false
+license = "LicenseRef-Proprietary"
+description = "Proprietary Jubarte desktop shell (Tauri) over the jubarte redline engine"
+repository = "https://github.com/arthrod/jubarte-app"
+readme = "../README.md"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+# StoreKit bridge is macOS-only; swift-rs compiles/links the Swift static lib.
+[target.'cfg(target_os = "macos")'.build-dependencies]
+swift-rs = { version = "1.0.6", features = ["build"] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -21,10 +36,30 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 quick-xml = "0.40"
-# Local checkout during development; switch to the crates.io release once
-# `jubarte` is published.
-jubarte = { path = "../../jubarte-rs", default-features = false }
+# Path to the enclosing engine checkout when this repo is the `jubarte-app`
+# submodule of arthrod/jubarte-rs. Once `jubarte` is on crates.io, prefer:
+#   jubarte = { version = "0.x", default-features = false }
+jubarte = { package = "jubarte-redlines", path = "../..", default-features = false }
+
+# Runtime FFI glue to the Swift StoreKit 2 helper (Mac App Store builds only).
+[target.'cfg(target_os = "macos")'.dependencies]
+swift-rs = "1.0.6"
 
 [profile.release]
 lto = true
 codegen-units = 1
+strip = true
+
+# Group priorities must be unique (clippy::lint_groups_priority).
+# Start from a green baseline on the existing Tauri shell; tighten over time.
+[lints.rust]
+future-incompatible = { level = "warn", priority = 0 }
+nonstandard_style = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -2 }
+
+[lints.clippy]
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "warn", priority = -2 }
+style = { level = "warn", priority = -3 }
+complexity = { level = "warn", priority = -4 }
+perf = { level = "warn", priority = -5 }

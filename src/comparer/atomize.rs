@@ -90,7 +90,7 @@ fn revision_tracking_element_from_ancestors(
     content: NodeId,
     ancestors: &[NodeId],
 ) -> Option<NodeId> {
-    if dom.name(content) == Some(W::p_pr()) {
+    if dom.name_is(content, &W::p_pr()) {
         for rpr in dom.elements(content, Some(&W::r_pr())) {
             for e in dom.elements(rpr, None) {
                 let n = dom.name(e).unwrap();

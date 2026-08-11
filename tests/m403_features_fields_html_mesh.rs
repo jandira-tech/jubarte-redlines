@@ -1,0 +1,108 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! M403 — short annotation features × fields_test "html input type" free-mesh.
+//!
+//! Word free-meshes "html input type" with annotation body ("Oftentimes…").
+//! Engine previously MIX-meshed Product with Oftentimes and left pure-I html.
+
+use std::io::Read;
+use std::path::PathBuf;
+
+use jubarte::comparer::WmlComparerSettings;
+use jubarte::document_comparer::compare_documents_with_settings;
+
+fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
+    let mut rest = xml;
+    if let Some(i) = rest.find("<w:body") {
+        rest = &rest[i..];
+    }
+    if let Some(i) = rest.find("</w:body>") {
+        rest = &rest[..i];
+    }
+    let mut paras = Vec::new();
+    while let Some(start) = rest.find("<w:p") {
+        let after = &rest[start..];
+        let end_rel = after
+            .find("</w:p>")
+            .map(|j| j + "</w:p>".len())
+            .or_else(|| after.find("/>").map(|j| j + 2));
+        let Some(end_rel) = end_rel else { break };
+        let p = &after[..end_rel];
+        rest = &after[end_rel..];
+        let has_ins = p.contains("<w:ins");
+        let has_del = p.contains("<w:del") || p.contains("<w:delText");
+        let mut text = String::new();
+        let mut r = p;
+        while let Some(i) = r.find("<w:t") {
+            let r2 = &r[i..];
+            let Some(gt) = r2.find('>') else { break };
+            let after_t = &r2[gt + 1..];
+            let Some(end) = after_t.find("</w:t>") else {
+                break;
+            };
+            text.push_str(&after_t[..end]);
+            r = &after_t[end + 6..];
+        }
+        r = p;
+        while let Some(i) = r.find("<w:delText") {
+            let r2 = &r[i..];
+            let Some(gt) = r2.find('>') else { break };
+            let after_t = &r2[gt + 1..];
+            let Some(end) = after_t.find("</w:delText>") else {
+                break;
+            };
+            text.push_str(&after_t[..end]);
+            r = &after_t[end + 12..];
+        }
+        paras.push((has_ins, has_del, text));
+    }
+    paras
+}
+
+#[test]
+fn features_x_fields_meshes_html_with_annotation() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__features_redlines_comments_annotation_769ed131.docx");
+    let b = src.join("super_editor__fields_test_4a8ffd8c.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: fixtures missing");
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &WmlComparerSettings {
+            author_for_revisions: "Redline".into(),
+            merge_replaced_paragraphs: true,
+            ..WmlComparerSettings::default()
+        },
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut f = zip.by_name("word/document.xml").unwrap();
+    let mut xml = String::new();
+    f.read_to_string(&mut xml).unwrap();
+    let paras = body_paras(&xml);
+
+    // Word: MIX containing html input type + annotation body, not pure-I html
+    // after MIX Product×annotation.
+    let mix_html = paras
+        .iter()
+        .any(|(i, d, t)| *i && *d && t.to_ascii_lowercase().contains("html input type"));
+    assert!(
+        mix_html,
+        "expected MIX of html input type with annotation; paras={paras:?}"
+    );
+
+    // Product field should be pure-I (not MIX with Oftentimes).
+    let product_mix = paras.iter().any(|(i, d, t)| {
+        *i && *d && t.contains("Product") && t.to_ascii_lowercase().contains("oftentimes")
+    });
+    assert!(
+        !product_mix,
+        "Product should not free-mesh with Oftentimes when html meshes; paras={paras:?}"
+    );
+}

@@ -58,24 +58,12 @@ struct Attributing;
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 static PEAK: AtomicUsize = AtomicUsize::new(0);
 // Live bytes currently attributed to each power-of-two size bucket.
-static LIVE_BY_BUCKET: [AtomicUsize; NBUCKETS] = {
-    const Z: AtomicUsize = AtomicUsize::new(0);
-    [Z; NBUCKETS]
-};
+static LIVE_BY_BUCKET: [AtomicUsize; NBUCKETS] = [const { AtomicUsize::new(0) }; NBUCKETS];
 // Snapshot of LIVE_BY_BUCKET taken when a new peak (ratcheted +1%) is observed.
-static PEAK_BY_BUCKET: [AtomicUsize; NBUCKETS] = {
-    const Z: AtomicUsize = AtomicUsize::new(0);
-    [Z; NBUCKETS]
-};
+static PEAK_BY_BUCKET: [AtomicUsize; NBUCKETS] = [const { AtomicUsize::new(0) }; NBUCKETS];
 // Live block COUNT per bucket (to distinguish many-small from few-large).
-static LIVE_CNT_BY_BUCKET: [AtomicUsize; NBUCKETS] = {
-    const Z: AtomicUsize = AtomicUsize::new(0);
-    [Z; NBUCKETS]
-};
-static PEAK_CNT_BY_BUCKET: [AtomicUsize; NBUCKETS] = {
-    const Z: AtomicUsize = AtomicUsize::new(0);
-    [Z; NBUCKETS]
-};
+static LIVE_CNT_BY_BUCKET: [AtomicUsize; NBUCKETS] = [const { AtomicUsize::new(0) }; NBUCKETS];
+static PEAK_CNT_BY_BUCKET: [AtomicUsize; NBUCKETS] = [const { AtomicUsize::new(0) }; NBUCKETS];
 static SNAP_THRESHOLD: AtomicUsize = AtomicUsize::new(0);
 static COUNTING: AtomicUsize = AtomicUsize::new(0); // 0 = off, 1 = on
 
@@ -112,8 +100,10 @@ fn on_alloc(size: usize) {
         }
         for i in 0..NBUCKETS {
             PEAK_BY_BUCKET[i].store(LIVE_BY_BUCKET[i].load(Ordering::Relaxed), Ordering::Relaxed);
-            PEAK_CNT_BY_BUCKET[i]
-                .store(LIVE_CNT_BY_BUCKET[i].load(Ordering::Relaxed), Ordering::Relaxed);
+            PEAK_CNT_BY_BUCKET[i].store(
+                LIVE_CNT_BY_BUCKET[i].load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
         }
     }
 }
@@ -169,15 +159,19 @@ fn main() {
     println!("modified: {b_path} ({:.2} MiB)", mib(b.len()));
 
     COUNTING.store(1, Ordering::Relaxed);
-    let out = jubarte::document_comparer::compare_documents(&a, &b, "mem-attribute")
-        .expect("compare ok");
+    let out =
+        jubarte::document_comparer::compare_documents(&a, &b, "mem-attribute").expect("compare ok");
     COUNTING.store(0, Ordering::Relaxed);
 
     let peak = PEAK.load(Ordering::Relaxed);
-    println!("\ncompare_peak {:.1} MiB | out {:.2} MiB\n", mib(peak), mib(out.len()));
     println!(
-        "{:>8}  {:>14}  {:>12}  {:>7}   {}",
-        "sizecls", "live@peak(MiB)", "blocks", "share", "bar"
+        "\ncompare_peak {:.1} MiB | out {:.2} MiB\n",
+        mib(peak),
+        mib(out.len())
+    );
+    println!(
+        "{:>8}  {:>14}  {:>12}  {:>7}   bar",
+        "sizecls", "live@peak(MiB)", "blocks", "share"
     );
     // Collect and sort buckets by live bytes at peak, descending.
     let mut rows: Vec<(usize, usize, usize)> = (0..NBUCKETS)
@@ -190,7 +184,7 @@ fn main() {
         })
         .filter(|&(_, bytes, _)| bytes > 0)
         .collect();
-    rows.sort_by(|a, b| b.1.cmp(&a.1));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1));
     let total: usize = rows.iter().map(|r| r.1).sum();
     for (i, bytes, cnt) in rows {
         let lo = 1usize << i;
@@ -208,7 +202,7 @@ fn main() {
     // Name the multi-GB monoliths: the biggest single allocations and where they
     // came from. Dedup identical backtraces, keeping count + max size.
     let mut big = BIG.lock().map(|v| v.clone()).unwrap_or_default();
-    big.sort_by(|a, b| b.0.cmp(&a.0));
+    big.sort_by_key(|r| std::cmp::Reverse(r.0));
     println!("\n=== biggest single allocations (>= 256 MiB), top sites ===");
     let mut shown = 0;
     let mut seen_frames: Vec<String> = Vec::new();
@@ -227,10 +221,7 @@ fn main() {
         println!("\n--- {:.1} MiB single block ---", mib(*size));
         // Print the jubarte frames (skip std/alloc noise).
         for line in bt.lines() {
-            if line.contains("jubarte")
-                || line.contains("comparer")
-                || line.contains("xmllinq")
-            {
+            if line.contains("jubarte") || line.contains("comparer") || line.contains("xmllinq") {
                 println!("  {}", line.trim());
             }
         }

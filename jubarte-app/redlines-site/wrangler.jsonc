@@ -1,0 +1,57 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "jubarte-redlines-site",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "observability": { "enabled": true },
+
+  // Custom domains. Each zone must already be in this Cloudflare account —
+  // jubarte.pro, arthur.law and redlines.free all are. Wrangler creates the
+  // proxied DNS record and the cert on first deploy; nothing to add by hand.
+  //
+  // All four serve the same site. There is deliberately no www→apex redirect
+  // here: the asset server answers page requests before the Worker runs (see
+  // `run_worker_first`), so a Worker-side redirect would fire on some paths and
+  // not others. If you want one canonical host, add a zone-level Redirect Rule
+  // on redlines.free — see README.md ("Custom domains").
+  "routes": [
+    { "pattern": "redlines.jubarte.pro", "custom_domain": true },
+    { "pattern": "redlines.arthur.law", "custom_domain": true },
+    { "pattern": "redlines.free", "custom_domain": true },
+    { "pattern": "www.redlines.free", "custom_domain": true }
+  ],
+
+  // The redline itself runs as wasm *in the browser* — documents never reach
+  // this Worker. See README.md ("Why the compare is client-side"): the Workers
+  // Free plan caps CPU at 10 ms per request, which a DOCX compare cannot fit,
+  // and keeping the bytes on-device is the better privacy story for legal work.
+  // So `public/` is served as static assets and the Worker only counts quota.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Worker runs first so /about, /api/* and the quota cookie are ours; the
+    // asset server handles everything else (index.html, css, js, wasm).
+    "run_worker_first": ["/about", "/api/*"],
+    "not_found_handling": "single-page-application"
+  },
+
+  "vars": {
+    // Free redlines before the contact-us paywall.
+    "FREE_LIMIT": "5",
+    // ABOUT sends people to Arthur's practice site.
+    "ABOUT_URL": "https://arthur.law",
+    "CONTACT_EMAIL": "contact@arthur.law"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jubarte-redlines-quota",
+      // Deliberately a *separate* database from verify-worker's
+      // `jubarte-entitlements` — an anonymous marketing counter must never
+      // share a blast radius with paid entitlement state.
+      "database_id": "9cf615ec-66d7-4bf0-a6dc-94869da08394",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

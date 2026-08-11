@@ -5,6 +5,67 @@ drop two Word documents, get a tracked-changes redline that opens cleanly in
 Microsoft Word. This repository is **not** open source; the comparison engine
 it embeds (`jubarte`, AGPL-3.0) is.
 
+| | |
+|---|---|
+| **Visibility** | Private (`arthrod/jubarte-app`) |
+| **License** | Proprietary — see [LICENSE](LICENSE) |
+| **Engine** | AGPL-3.0 `jubarte` via path dep (git submodule of `jubarte-rs`) |
+| **MSRV** | 1.88 (edition 2024) |
+
+## Repository layout (submodule)
+
+This app is developed **as a git submodule** of the engine monorepo so the
+Cargo path dependency resolves:
+
+```text
+jubarte-rs/                      # github.com/arthrod/jubarte-rs
+├── Cargo.toml                   # engine crate root
+└── jubarte-app/                 # THIS repo (submodule)
+    ├── package.json
+    └── src-tauri/
+        └── Cargo.toml           # jubarte = { path = "../.." }
+```
+
+### Clone with the engine (preferred)
+
+```sh
+git clone --recurse-submodules https://github.com/arthrod/jubarte-rs.git
+cd jubarte-rs/jubarte-app
+bun install
+bun run dev
+```
+
+If you already cloned the engine without submodules:
+
+```sh
+cd jubarte-rs
+git submodule update --init --recursive
+```
+
+### Working only in this repo
+
+A bare clone of `jubarte-app` alone cannot build until the engine sits two
+directories above `src-tauri` (the path dependency). Either use the monorepo
+layout above, or temporarily point `jubarte` at a sibling checkout / crates.io
+release in `src-tauri/Cargo.toml`.
+
+### Updating the submodule pin in the engine
+
+From `jubarte-rs`, after landing commits here:
+
+```sh
+cd jubarte-app && git push origin HEAD
+cd ..
+git add jubarte-app
+git commit -m "chore(app): bump jubarte-app submodule"
+```
+
+To pull the branch tracked in `.gitmodules` (`main`):
+
+```sh
+git submodule update --remote jubarte-app
+```
+
 ## Features
 
 - Drag & drop (or click to browse) the original and modified `.docx`
@@ -23,14 +84,30 @@ it embeds (`jubarte`, AGPL-3.0) is.
 ## Stack
 
 Tauri 2 (Rust backend, static vanilla frontend — no bundler). The engine is a
-path dependency on `../jubarte-rs` during development; switch
-`src-tauri/Cargo.toml` to the crates.io `jubarte` release once published.
+path dependency on the enclosing `jubarte-rs` checkout (`path = "../.."` from
+`src-tauri`). Switch `src-tauri/Cargo.toml` to the crates.io `jubarte`
+release once published.
+
+Rust hygiene: `rustfmt.toml`, Clippy lints in `Cargo.toml`, `Cargo.lock`
+committed (binary), `publish = false`. CI lives in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Develop
+
+From `jubarte-rs/jubarte-app` (submodule layout):
 
 ```sh
 bun install
 bun run dev        # tauri dev
+```
+
+Before opening a PR:
+
+```sh
+cd src-tauri
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo check --all-targets
 ```
 
 ## Build (signed)

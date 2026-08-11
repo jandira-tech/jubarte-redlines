@@ -414,6 +414,11 @@ impl Dom {
             _ => None,
         }
     }
+    /// DOM-NAME-REF-01 — `self.name(id) == Some(*name)` without cloning the
+    /// `XName` (two `Arc` bumps per call in the hot comparer loops).
+    pub fn name_is(&self, id: NodeId, name: &XName) -> bool {
+        matches!(&self.data(id).kind, NodeKind::Element { name: n } if n == name)
+    }
     /// `element.Name = n`.
     pub fn set_name(&mut self, id: NodeId, new_name: XName) {
         if let NodeKind::Element { name } = &mut self.data_mut(id).kind {

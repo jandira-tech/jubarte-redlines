@@ -1904,8 +1904,22 @@ fn w22_merged_table_takes_new_props_with_tblprchange() {
     let gchange = dom
         .element(grid, &W::name("tblGridChange"))
         .unwrap_or_else(|| panic!("tblGridChange holds old grid: {gx}"));
-    // tblGridChange is the LAST child of tblGrid and carries the same revision
-    // metadata (id/author/date) as the paired tblPrChange — Word records both.
+    // tblGridChange is the LAST child of tblGrid and carries `w:id` ONLY.
+    //
+    // This assertion previously required author and date too, reasoning that
+    // tblGridChange "carries the same revision metadata as the paired
+    // tblPrChange — Word records both". That was an assumption, and both
+    // available oracles contradict it:
+    //
+    //   - `tests/data/wml_main_schema.json`: `w:CT_TblGridChange/w:tblGridChange
+    //     -> ['w:id']`. It is the one revision-history element that does not
+    //     extend CT_TrackChange, so author/date are undeclared on it.
+    //   - Word's own comparison output: across the 504-document benchmark probe
+    //     set, 45 `w:tblGridChange` elements in 34 documents, **all 45 carrying
+    //     `w:id` alone**.
+    //
+    // Emitting author/date produced 104 `Sch_UndeclaredAttribute` validator
+    // errors of each per probe sweep. See tests/m_tblgridchange_no_author_date.rs.
     assert_eq!(
         dom.elements(grid, None).last().copied(),
         Some(gchange),
@@ -1917,13 +1931,13 @@ fn w22_merged_table_takes_new_props_with_tblprchange() {
     );
     assert_eq!(
         dom.attribute(gchange, &W::author()),
-        Some(s.author_for_revisions.as_str()),
-        "tblGridChange has revision author: {gx}"
+        None,
+        "CT_TblGridChange does not declare w:author: {gx}"
     );
     assert_eq!(
         dom.attribute(gchange, &W::date()),
-        Some(s.date_time_for_revisions.as_str()),
-        "tblGridChange has revision date: {gx}"
+        None,
+        "CT_TblGridChange does not declare w:date: {gx}"
     );
     let old_grid = dom
         .element(gchange, &W::name("tblGrid"))

@@ -128,10 +128,9 @@ impl<'a> Scope<'a> {
             if let Some(uri) = scope.local_prefix_to_uri.get(prefix) {
                 return Some(uri);
             }
-            match scope.parent {
-                Some(parent) => scope = parent,
-                None => return None,
-            }
+            // Walk up to the enclosing scope; an unbound prefix/URI at the root
+            // is a miss, which `?` propagates as None.
+            scope = scope.parent?;
         }
     }
 
@@ -152,10 +151,9 @@ impl<'a> Scope<'a> {
             {
                 return Some(prefix);
             }
-            match scope.parent {
-                Some(parent) => scope = parent,
-                None => return None,
-            }
+            // Walk up to the enclosing scope; an unbound prefix/URI at the root
+            // is a miss, which `?` propagates as None.
+            scope = scope.parent?;
         }
     }
 

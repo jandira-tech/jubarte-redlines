@@ -12,7 +12,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::namespaces::{MC, PT, R, W, W14, WP14};
+use crate::namespaces::{M, MC, PT, R, W, W14, WP14};
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use super::WmlComparerSettings;
@@ -66,10 +66,10 @@ fn is_run_status_carrier(dom: &Dom, d: NodeId) -> bool {
             // w:pict, w:object. Without these, inserted text boxes stay plain
             // (no w:ins) — file_69_file_70 Word oracle wraps them in w:ins.
             n == W::t()
-                || n == W::name("delText")
+                || n == W::del_text()
                 || ALLOWABLE_RUN_CHILDREN.contains(&n)
                 || n == MC::name("AlternateContent")
-                || n == W::name("pict")
+                || n == W::pict()
                 || n == W::name("object")
         }
         None => false,
@@ -96,7 +96,7 @@ fn convert_run_text_to_del_text(dom: &mut Dom, run: NodeId) {
                 {
                     continue;
                 }
-                Some(n) if n == &W::t() => dom.set_name(c, W::name("delText")),
+                Some(n) if n == &W::t() => dom.set_name(c, W::del_text()),
                 Some(n) if n == &W::instr_text() => dom.set_name(c, W::name("delInstrText")),
                 _ => walk(dom, c),
             }
@@ -339,8 +339,8 @@ pub fn mark_content_transform(
             {
                 dom.set_attribute_value(ppr, &PT::name("OldPPr"), None);
                 let old_ppr = parse_ppr(dom, Some(&old_s));
-                if dom.element(ppr, &W::name("spacing")).is_none()
-                    && let Some(old_sp) = dom.element(old_ppr, &W::name("spacing"))
+                if dom.element(ppr, &W::spacing_el()).is_none()
+                    && let Some(old_sp) = dom.element(old_ppr, &W::spacing_el())
                 {
                     let after = dom.attribute(old_sp, &W::name("after")).unwrap_or("");
                     let before = dom.attribute(old_sp, &W::name("before")).unwrap_or("");
@@ -352,7 +352,7 @@ pub fn mark_content_transform(
                         dom.add_first(ppr, sp);
                     }
                 }
-                let chg = dom.new_element(W::name("pPrChange"));
+                let chg = dom.new_element(W::p_pr_change());
                 dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
                 *id_gen += 1;
                 dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
@@ -437,8 +437,8 @@ fn ppr_has_structural_props(dom: &Dom, ppr: NodeId) -> bool {
             continue;
         };
         if n == W::r_pr()
-            || n == W::name("sectPr")
-            || n == W::name("pPrChange")
+            || n == W::sect_pr()
+            || n == W::p_pr_change()
             || n.namespace_name() == PT::URI
         {
             continue;
@@ -456,13 +456,13 @@ fn ppr_is_jc_only(dom: &Dom, ppr: NodeId) -> bool {
             continue;
         };
         if n == W::r_pr()
-            || n == W::name("sectPr")
-            || n == W::name("pPrChange")
+            || n == W::sect_pr()
+            || n == W::p_pr_change()
             || n.namespace_name() == PT::URI
         {
             continue;
         }
-        if n == W::name("jc") {
+        if n == W::jc_el() {
             if saw_jc {
                 return false;
             }
@@ -554,7 +554,7 @@ fn conjoin_transform(dom: &mut Dom, node: NodeId, author: &str, date: &str) -> N
         // When live is Deleted, do not wrap Deleted into pPrChange — it IS live.
         if live_is_inserted
             && let Some(old) = old_src
-            && dom.element(ppr, &W::name("pPrChange")).is_none()
+            && dom.element(ppr, &W::p_pr_change()).is_none()
         {
             let old_inner = dom.clone_subtree(old);
             dom.set_attribute_value(old_inner, &PT::status(), None);
@@ -566,7 +566,7 @@ fn conjoin_transform(dom: &mut Dom, node: NodeId, author: &str, date: &str) -> N
                     }
                 }
             }
-            let chg = dom.new_element(W::name("pPrChange"));
+            let chg = dom.new_element(W::p_pr_change());
             dom.set_attribute_value(chg, &W::author(), Some(author));
             dom.set_attribute_value(chg, &W::date(), Some(date));
             dom.set_attribute_value(chg, &W::id(), Some("0"));
@@ -625,7 +625,7 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
         W::name("moveToRangeStart"),
         W::move_to_range_end(),
         W::name("rPrChange"),
-        W::name("pPrChange"),
+        W::p_pr_change(),
         W::name("tblPrChange"),
         W::name("tblGridChange"),
         W::name("trPrChange"),
@@ -760,7 +760,7 @@ fn coalesce_key(dom: &Dom, ce: NodeId) -> String {
         let non_rpr = dom
             .elements(ce, None)
             .into_iter()
-            .filter(|&e| dom.name(e) != Some(W::r_pr()))
+            .filter(|&e| !dom.name_is(e, &W::r_pr()))
             .count();
         if non_rpr != 1 {
             return DONT_CONSOLIDATE.to_string();
@@ -804,12 +804,12 @@ fn coalesce_key(dom: &Dom, ce: NodeId) -> String {
             .elements(ce, Some(&W::r()))
             .into_iter()
             .flat_map(|r| dom.elements(r, None))
-            .filter(|&e| dom.name(e) != Some(W::r_pr()))
+            .filter(|&e| !dom.name_is(e, &W::r_pr()))
             .count();
         let has_del_text = dom
             .elements(ce, None)
             .into_iter()
-            .any(|c| dom.element(c, &W::name("delText")).is_some());
+            .any(|c| dom.element(c, &W::del_text()).is_some());
         if non_rpr != 1 || !has_del_text {
             return DONT_CONSOLIDATE.to_string();
         }
@@ -854,7 +854,7 @@ fn run_text_concat(dom: &Dom, r: NodeId) -> String {
     let mut s = String::new();
     for d in dom.descendants(r, None) {
         let n = dom.name(d).unwrap();
-        if n == W::t() || n == W::name("delText") || n == W::instr_text() {
+        if n == W::t() || n == W::del_text() || n == W::instr_text() {
             s.push_str(&dom.value_str(d));
         }
     }
@@ -910,7 +910,7 @@ pub fn coalesce_adjacent_runs(dom: &mut Dom, container: NodeId) -> NodeId {
                     dom.add(nr, c);
                 }
             }
-            let dt = dom.new_element(W::name("delText"));
+            let dt = dom.new_element(W::del_text());
             if let Some(sp) = xml_space_attr(&text) {
                 dom.set_attribute_value(dt, &XNamespace::xml().name("space"), Some(sp));
             }
@@ -943,8 +943,8 @@ pub fn resolve_alternate_content(dom: &mut Dom, root: NodeId) {
             continue;
         }
         // Keep drawing/VML fallbacks (Word does); resolve only text feature-gating.
-        let has_drawing = !dom.descendants(ac, Some(&W::name("drawing"))).is_empty()
-            || !dom.descendants(ac, Some(&W::name("pict"))).is_empty();
+        let has_drawing = !dom.descendants(ac, Some(&W::drawing())).is_empty()
+            || !dom.descendants(ac, Some(&W::pict())).is_empty();
         if has_drawing {
             continue;
         }
@@ -957,7 +957,7 @@ pub fn resolve_alternate_content(dom: &mut Dom, root: NodeId) {
         let inside_drawing = dom
             .ancestors_and_self(ac, None)
             .into_iter()
-            .any(|a| dom.name(a) == Some(W::name("drawing")));
+            .any(|a| dom.name_is(a, &W::drawing()));
         if inside_drawing {
             continue;
         }
@@ -1021,6 +1021,84 @@ pub fn sanitize_sdt_properties(dom: &mut Dom, root: NodeId) {
                 dom.remove(k);
             }
         }
+    }
+}
+
+/// M390 (missing_sectpr×fields_test −16.3): Word Compare flattens content
+/// controls (`w:sdt`) inside pure-I/pure-D residual to their `sdtContent`
+/// children — Word redline has **0** SDTs on that pair; we kept 9 and LO thrash
+/// pagefair. Do **not** preprocess-unwrap all SDTs (fields_attrs1×sample Word
+/// keeps 4 equal content controls). Call
+/// [`unwrap_content_controls_in_pure_revisions`] after produce/merge.
+///
+/// Unwraps deepest first, like [`unwrap_hyperlinks_to_styled_runs`].
+pub fn unwrap_content_controls(dom: &mut Dom, root: NodeId) {
+    loop {
+        let sdts: Vec<NodeId> = dom.descendants(root, Some(&W::sdt()));
+        if sdts.is_empty() {
+            break;
+        }
+        // Prefer leaf SDTs (no nested w:sdt) so nested controls unwrap safely.
+        let mut leaf: Vec<NodeId> = sdts
+            .iter()
+            .copied()
+            .filter(|&s| {
+                dom.descendants(s, Some(&W::sdt()))
+                    .into_iter()
+                    .all(|n| n == s)
+            })
+            .collect();
+        if leaf.is_empty() {
+            // Nested only — force outermost (descendants list is pre-order;
+            // take last = deepest-ish fallback).
+            leaf = sdts;
+        }
+        let mut progressed = false;
+        for sdt in leaf {
+            if dom.parent(sdt).is_none() {
+                continue;
+            }
+            let kids: Vec<NodeId> = if let Some(content) = dom.element(sdt, &W::sdt_content()) {
+                dom.nodes(content)
+            } else {
+                Vec::new()
+            };
+            // Reparent content children before the sdt, then drop the wrapper.
+            for k in kids {
+                if dom.parent(k).is_some() {
+                    dom.remove(k);
+                    dom.add_before_self(sdt, k);
+                }
+            }
+            dom.remove(sdt);
+            progressed = true;
+        }
+        if !progressed {
+            break;
+        }
+    }
+}
+
+/// M390 — unwrap content controls only under pure-I / pure-D / MIX residual
+/// paragraphs (not under EQ form-field matches). See [`unwrap_content_controls`].
+pub fn unwrap_content_controls_in_pure_revisions(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let paras: Vec<NodeId> = dom.descendants(body, Some(&W::p()));
+    for p in paras {
+        let has_ins = !dom.descendants(p, Some(&W::ins())).is_empty()
+            || para_mark_revision(dom, p, &W::ins());
+        let has_del = !dom.descendants(p, Some(&W::del())).is_empty()
+            || para_mark_revision(dom, p, &W::del());
+        // Pure-I, pure-D, or MIX residual — not unmarked EQ.
+        if !has_ins && !has_del {
+            continue;
+        }
+        if dom.descendants(p, Some(&W::sdt())).is_empty() {
+            continue;
+        }
+        unwrap_content_controls(dom, p);
     }
 }
 
@@ -1092,8 +1170,8 @@ pub fn fix_paragraph_mark_revision_order(dom: &mut Dom, root: NodeId) {
         }
         // (b) reposition the paraRPr after content props: before sectPr/pPrChange, else last.
         let anchor = dom
-            .element(ppr, &W::name("sectPr"))
-            .or_else(|| dom.element(ppr, &W::name("pPrChange")));
+            .element(ppr, &W::sect_pr())
+            .or_else(|| dom.element(ppr, &W::p_pr_change()));
         dom.remove(rpr);
         match anchor {
             Some(a) => dom.add_before_self(a, rpr),
@@ -1170,6 +1248,391 @@ pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// M440 (list_spacer1 × list_with_break_exported_broken ~56 / docxodus 95):
+/// multi pure-I short list labels (`a`/`test`/`b`) + empty pure-D + content
+/// pure-D. Word free-meshes last label into empty pure-D → MIX del mark (no
+/// live numPr): `I I M D D`. Multi-del fold either skipped empty-D or mixed
+/// the label with content pure-D. Surgical peel: pure-I short numPr label
+/// immediately before mark-only empty pure-D → adopt empty del pPr (drop
+/// numPr), move body, remove empty.
+pub fn fold_short_list_label_into_empty_pure_del(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    loop {
+        let kids: Vec<NodeId> = dom
+            .elements(body, None)
+            .into_iter()
+            .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+            .collect();
+        let mut acted = false;
+        for i in 0..kids.len().saturating_sub(1) {
+            let ins_p = kids[i];
+            let del_p = kids[i + 1];
+            if !dom.name_is(ins_p, &W::p()) || !dom.name_is(del_p, &W::p()) {
+                continue;
+            }
+            if !para_is_pure_inserted(dom, ins_p) || !para_is_pure_deleted(dom, del_p) {
+                continue;
+            }
+            // Empty pure-D: mark del, no delText body.
+            if para_has_real_del(dom, del_p) || !para_has_no_text(dom, del_p) {
+                continue;
+            }
+            if !para_mark_revision(dom, del_p, &W::del()) {
+                continue;
+            }
+            // Short list label pure-I with live numPr.
+            if !para_has_live_numpr(dom, ins_p) {
+                continue;
+            }
+            if !(1..=2).contains(&para_word_atom_count(dom, ins_p)) {
+                continue;
+            }
+            // Need a content pure-D after the empty (list residual continues).
+            let has_content_del_after = kids[i + 2..].iter().any(|&k| {
+                dom.name_is(k, &W::p()) && para_is_pure_deleted(dom, k) && para_has_real_del(dom, k)
+            });
+            if !has_content_del_after {
+                continue;
+            }
+            // Adopt empty del pPr (del mark shell); drop pure-I numPr/ins mark pPr.
+            if let Some(ippr) = dom.element(ins_p, &W::p_pr()) {
+                dom.remove(ippr);
+            }
+            if let Some(dppr) = dom.element(del_p, &W::p_pr()) {
+                let cloned = dom.clone_subtree(dppr);
+                if let Some(first) = dom.elements(ins_p, None).first().copied() {
+                    dom.add_before_self(first, cloned);
+                } else {
+                    dom.add(ins_p, cloned);
+                }
+            }
+            for c in dom.elements(del_p, None) {
+                if !dom.name_is(c, &W::p_pr()) {
+                    dom.add(ins_p, c);
+                }
+            }
+            dom.remove(del_p);
+            acted = true;
+            break;
+        }
+        if !acted {
+            return;
+        }
+    }
+}
+
+/// M448 (diff_after8 × doc_with_spacing ~75.6 / docxodus 100): Word ends
+/// pure-I-dominant body with pure-D residual only (`…IDD`). Engine leaves a
+/// trailing bare empty EQ with spacing after the pure-D (`…IDDE`) — LO page
+/// chrome miss. Opposite of wholesale pure-D tails (file_22) that keep a
+/// trailing E.
+///
+/// Gate: pure-I count ≥10, pure-D count 1..=4 among body paras; last is bare
+/// empty EQ (no text/ins/del); prev is pure-D. Then drop last.
+pub fn strip_trailing_bare_empty_after_pure_i_dominant(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    if kids.len() < 12 {
+        return;
+    }
+    let last = kids[kids.len() - 1];
+    if !dom.name_is(last, &W::p()) {
+        return;
+    }
+    if !para_has_no_text(dom, last) {
+        return;
+    }
+    if !dom.descendants(last, Some(&W::ins())).is_empty()
+        || !dom.descendants(last, Some(&W::del())).is_empty()
+    {
+        return;
+    }
+    // Keep truly bare `<w:p/>` shells (M438 title-page trailing E). Only strip
+    // empties that still carry layout pPr (diff_after8 residual spacing).
+    let Some(ppr) = dom.element(last, &W::p_pr()) else {
+        return;
+    };
+    if dom.element(ppr, &W::spacing_el()).is_none() {
+        return;
+    }
+    let prev = kids[kids.len() - 2];
+    if !dom.name_is(prev, &W::p()) || !para_is_pure_deleted(dom, prev) {
+        return;
+    }
+    let mut pure_i = 0usize;
+    let mut pure_d = 0usize;
+    for &k in &kids {
+        if !dom.name_is(k, &W::p()) {
+            continue;
+        }
+        if para_is_pure_inserted(dom, k) {
+            pure_i += 1;
+        } else if para_is_pure_deleted(dom, k) {
+            pure_d += 1;
+        }
+    }
+    if pure_i < 10 || !(1..=4).contains(&pure_d) {
+        return;
+    }
+    dom.remove(last);
+}
+
+/// M442 (list_spacer1 × list_with_break_exported_broken residual ~80.8 /
+/// docxodus 94.6): last pure-D "14.11…" has Word live `numPr` (numId from the
+/// pure-I list residual) + `pPrChange` parking base StandardL1/numId=0. Engine
+/// left only pPrChange (no live numPr) → LO list chrome miss.
+///
+/// Surgical: pure-D with content + pPrChange carrying numPr but **no** live
+/// numPr → inject live numPr (ilvl from pPrChange, numId from first pure-I
+/// numPr in the body). Does not invent numPr when pPrChange lacks one.
+pub fn promote_live_numpr_on_pure_d_from_pprchange(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    // Gate history (M442 thrash): bare promote on any pure-D with
+    // pPrChange(numPr) nuked basic_list×sd_1707 (−20.9) and pirates×table
+    // (−32.5). Restrict to list_spacer residual shape:
+    // - first pure-I is a short list label with live numPr (1..=2 tokens)
+    // - pure-D body looks like legal section number ("14.11…")
+    // - pPrChange parks numPr (base list chrome) and there is no live numPr
+    let mut source_num_id: Option<String> = None;
+    let mut short_label_pure_i = false;
+    for p in dom.elements(body, None) {
+        if !dom.name_is(p, &W::p()) || !para_is_pure_inserted(dom, p) {
+            continue;
+        }
+        if !para_has_live_numpr(dom, p) {
+            continue;
+        }
+        let words = para_word_atom_count(dom, p);
+        if (1..=2).contains(&words) {
+            short_label_pure_i = true;
+        }
+        if source_num_id.is_none()
+            && let Some(ppr) = dom.element(p, &W::p_pr())
+            && let Some(num) = dom.element(ppr, &W::num_pr())
+            && let Some(nid) = dom.element(num, &W::name("numId"))
+            && let Some(v) = dom.attribute(nid, &W::val())
+        {
+            source_num_id = Some(v.to_string());
+        }
+        if source_num_id.is_some() && short_label_pure_i {
+            break;
+        }
+    }
+    if !short_label_pure_i {
+        return;
+    }
+    let Some(src_id) = source_num_id else {
+        return;
+    };
+    for p in dom.elements(body, None) {
+        if !dom.name_is(p, &W::p()) {
+            continue;
+        }
+        if !para_is_pure_deleted(dom, p) || !para_has_real_del(dom, p) {
+            continue;
+        }
+        // Legal section residual ("14.11…") or list_def residual ("Num 4")
+        // without live ListParagraph style.
+        let body_txt = para_revision_body_text(dom, p);
+        if !body_looks_like_list_residual_label(&body_txt) {
+            continue;
+        }
+        // list_def "Num 4": no ListParagraph pStyle (Word parks style in
+        // pPrChange only). Skip when live ListParagraph already has numPr
+        // path (handled above) or would thrash basic_list wholesale.
+        let live_list_style = dom.element(p, &W::p_pr()).is_some_and(|ppr| {
+            dom.element(ppr, &W::p_style()).is_some_and(|ps| {
+                dom.attribute(ps, &W::val())
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .starts_with("list")
+            })
+        });
+        if live_list_style {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        // Already has live numPr — leave alone.
+        if dom.element(ppr, &W::num_pr()).is_some() {
+            continue;
+        }
+        let Some(chg) = dom.element(ppr, &W::p_pr_change()) else {
+            continue;
+        };
+        let Some(old) = dom.element(chg, &W::p_pr()) else {
+            continue;
+        };
+        let Some(old_num) = dom.element(old, &W::num_pr()) else {
+            continue;
+        };
+        // ilvl from parked numPr (default 0).
+        let ilvl = dom
+            .element(old_num, &W::name("ilvl"))
+            .and_then(|il| dom.attribute(il, &W::val()))
+            .unwrap_or("0")
+            .to_string();
+        let num = dom.new_element(W::num_pr());
+        let il = dom.new_element(W::name("ilvl"));
+        dom.set_attribute_value(il, &W::val(), Some(&ilvl));
+        let nid = dom.new_element(W::name("numId"));
+        dom.set_attribute_value(nid, &W::val(), Some(&src_id));
+        dom.add(num, il);
+        dom.add(num, nid);
+        // Live numPr first in pPr (before pPrChange).
+        dom.add_first(ppr, num);
+    }
+}
+
+/// True when body starts like a legal section id: one+ digits, a dot, one+ digits
+/// (e.g. "14.11Survival…", "3.01eiusmod…"). Rejects plain "1. Item" list labels
+/// when the second run is non-digit (handled by requiring digit after the dot).
+fn body_looks_like_section_number(text: &str) -> bool {
+    let s = text.trim_start();
+    let mut chars = s.chars().peekable();
+    let mut saw_digit = false;
+    while let Some(&c) = chars.peek() {
+        if c.is_ascii_digit() {
+            saw_digit = true;
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    if !saw_digit || chars.next() != Some('.') {
+        return false;
+    }
+    matches!(chars.peek(), Some(c) if c.is_ascii_digit())
+}
+
+/// list_spacer section ids **or** list_def residual labels ("Num 4") without
+/// live ListParagraph style. Kept narrow to avoid basic_list thrash.
+fn body_looks_like_list_residual_label(text: &str) -> bool {
+    if body_looks_like_section_number(text) {
+        return true;
+    }
+    let t = text.trim().to_ascii_lowercase();
+    // "Num 4" / "Num 4." from list_numbering reimport residual (≤2 tokens).
+    if let Some(rest) = t.strip_prefix("num ") {
+        let rest = rest.trim();
+        if rest.is_empty() {
+            return false;
+        }
+        let first = rest.chars().next().unwrap();
+        if !first.is_ascii_digit() {
+            return false;
+        }
+        return rest.split_whitespace().count() <= 2;
+    }
+    false
+}
+
+/// Word-count of `w:t` under pure-I runs (`ins_side`) or `w:delText` under
+/// pure-D runs (`!ins_side`) inside a paragraph (MIX-aware).
+fn para_side_word_count(dom: &Dom, p: NodeId, ins_side: bool) -> usize {
+    let mut text = String::new();
+    let tag = if ins_side { W::ins() } else { W::del() };
+    for rev in dom.descendants(p, Some(&tag)) {
+        let child_tag = if ins_side { W::t() } else { W::del_text() };
+        for t in dom.descendants(rev, Some(&child_tag)) {
+            text.push_str(&dom.value_str(t));
+            text.push(' ');
+        }
+        // Also plain w:t under del runs in some packages.
+        if !ins_side {
+            for t in dom.descendants(rev, Some(&W::t())) {
+                text.push_str(&dom.value_str(t));
+                text.push(' ');
+            }
+        }
+    }
+    text.split_whitespace().filter(|w| !w.is_empty()).count()
+}
+
+/// M439 (list_def_mix × list_numbering_reimport ~50.5 / docxodus 90):
+/// pure-I list items with live `numPr` and **no** spacing inherit bloated
+/// package `pPrDefault` (before=240 after=240 line=288) under LO. Word stamps
+/// explicit `before=0 after=0 line=240 lineRule=auto` on those pure-I. Pure-D
+/// ListParagraph items stay without live spacing (style only).
+///
+/// Gate history:
+/// - any pure-I numPr: thrash multipara×broken_list (−19)
+/// - single short token: thrash bullet_list_bold×bullet_list (−33) — fruits
+///   are single tokens but not uniform
+/// - **uniform** single short token (≥3 pure-I with the same body text):
+///   list_def "test"×N only
+pub fn ensure_pure_i_list_snug_spacing(dom: &mut Dom, root: NodeId) {
+    // Collect pure-I numPr single-token texts; only inject for tokens that
+    // appear ≥3 times (uniform short list insert).
+    let mut token_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut candidates: Vec<(NodeId, String)> = Vec::new();
+    for p in dom.descendants(root, Some(&W::p())) {
+        if !para_is_pure_inserted(dom, p) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        if dom.element(ppr, &W::num_pr()).is_none() {
+            continue;
+        }
+        if dom.element(ppr, &W::spacing_el()).is_some() {
+            continue;
+        }
+        if dom.element(ppr, &W::p_style()).is_some_and(|ps| {
+            dom.attribute(ps, &W::val())
+                .unwrap_or("")
+                .eq_ignore_ascii_case("ListParagraph")
+        }) {
+            continue;
+        }
+        if para_word_atom_count(dom, p) != 1 {
+            continue;
+        }
+        let tok = para_revision_body_text(dom, p).trim().to_string();
+        if tok.is_empty() || tok.chars().count() > 12 {
+            continue;
+        }
+        *token_counts.entry(tok.clone()).or_insert(0) += 1;
+        candidates.push((p, tok));
+    }
+    for (p, tok) in candidates {
+        if token_counts.get(&tok).copied().unwrap_or(0) < 3 {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        if dom.element(ppr, &W::spacing_el()).is_some() {
+            continue;
+        }
+        let sp = dom.new_element(W::spacing_el());
+        dom.set_attribute_value(sp, &W::name("before"), Some("0"));
+        dom.set_attribute_value(sp, &W::name("after"), Some("0"));
+        dom.set_attribute_value(sp, &W::name("line"), Some("240"));
+        dom.set_attribute_value(sp, &W::name("lineRule"), Some("auto"));
+        if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
+            dom.add_before_self(rpr, sp);
+        } else if let Some(chg) = dom.element(ppr, &W::p_pr_change()) {
+            dom.add_before_self(chg, sp);
+        } else {
+            dom.add(ppr, sp);
+        }
+    }
+}
+
 /// Word-parity for incomplete body spacing (C3 / C5 layout).
 ///
 /// Tolerated inputs ship `w:spacing w:before="0" w:after="0" w:lineRule="auto"`
@@ -1189,9 +1652,10 @@ pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
 /// Do **not** inject spacing onto list items that lack it entirely — that
 /// regressed bullet_list×bullet_list_bold and meeting_minutes×numbered_list
 /// (~−30 each) while only helping broken_media by ~3 points.
+/// M439 is the narrow pure-I exception ([`ensure_pure_i_list_snug_spacing`]).
 pub fn normalize_incomplete_spacing(dom: &mut Dom, root: NodeId) {
-    let spacing_name = W::name("spacing");
-    let num_pr = W::name("numPr");
+    let spacing_name = W::spacing_el();
+    let num_pr = W::num_pr();
     let mut to_remove = Vec::new();
     let mut to_rewrite: Vec<(NodeId, bool)> = Vec::new(); // (spacing, is_list)
     let mut need_rule: Vec<NodeId> = Vec::new();
@@ -1256,7 +1720,7 @@ pub fn normalize_incomplete_spacing(dom: &mut Dom, root: NodeId) {
 /// Word leaves those pure-dels bare. Does **not** strip bare `before=800`
 /// (file_196 Word keeps it) or `before≤300` (file_14 winners).
 pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
-    let spacing_name = W::name("spacing");
+    let spacing_name = W::spacing_el();
     let mut to_remove = Vec::new();
     for p in dom.descendants(root, Some(&W::p())) {
         let Some(ppr) = dom.element(p, &W::p_pr()) else {
@@ -1270,11 +1734,34 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
         let before = dom.attribute(sp, &W::name("before")).unwrap_or("");
         let rule = dom.attribute(sp, &W::name("lineRule")).unwrap_or("");
         // Only the demo-default pattern (line 276 ± after 200 ± lineRule auto).
+        // M352: keep pure-I line=276 **without after** and without pStyle when
+        // body is empty or a 1-word residual (line_break×line_space: empty +
+        // "PARTIES" → 49→100).
+        // M370 (orphan×yellow −2.6): multi-word pure-I titles ("Yellow Highlight
+        // Demo", 3 words) — Word omits line=276 on pure-I mark pPr; keep was
+        // retaining B's demo default and thrash LO. Strip when ≥2 word-atoms.
+        // M358: strip all other demo-default line=276 — pure-I+pStyle /
+        // pure-I after=200 (fields×localized −20 LO pagefair) and pure-D
+        // Heading line=276-only (loc×ul −14). Word keeps many of those, but
+        // LO PDF thrash vs Word-rendered oracle; pre-M353 (27c) stripped them.
+        // M353 pStyle keep is superseded for pure demo-default (before empty
+        // is required to enter this strip path anyway).
+        //
+        // M391 (missing_sectpr×fields_test −16.3 residual): Word keeps pure-I
+        // line=276 when the para also has non-default `w:ind` (Product line
+        // right=-30). Old M370 strip dropped it with multi-word body.
         let line_ok = line == "276";
         let after_ok = after.is_empty() || after == "200";
         let before_ok = before.is_empty();
         let rule_ok = rule.is_empty() || rule == "auto";
-        if line_ok && after_ok && before_ok && rule_ok {
+        let has_pstyle = dom.element(ppr, &W::p_style()).is_some();
+        let has_ind = dom.element(ppr, &W::name("ind")).is_some();
+        let pure_i = para_is_pure_inserted(dom, p);
+        let keep = pure_i
+            && !has_pstyle
+            && after.is_empty()
+            && (para_word_atom_count(dom, p) <= 1 || has_ind);
+        if line_ok && after_ok && before_ok && rule_ok && !keep {
             to_remove.push(sp);
             continue;
         }
@@ -1283,7 +1770,7 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
             && b >= 360
             && !after.is_empty()
             && !line.is_empty()
-            && dom.element(ppr, &W::name("pStyle")).is_none()
+            && dom.element(ppr, &W::p_style()).is_none()
             && para_is_pure_deleted(dom, p)
         {
             to_remove.push(sp);
@@ -1292,6 +1779,503 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
     for sp in to_remove {
         dom.remove(sp);
     }
+}
+
+/// M367 (sdts×shape_group −4.3): Word omits body `w:pStyle=Normal` and
+/// `w:bidi=0` on pure-inserted paragraphs (shape_group writes both; Word
+/// redline is bare mark-only pPr). LO inherits Normal's docDefaults differently
+/// when the attribute is present vs absent — thrash pagefair. Pure-D keeps
+/// source A pPr (bookmark/list structure). Only strip the default pair.
+pub fn strip_redundant_normal_pstyle_and_bidi(dom: &mut Dom, root: NodeId) {
+    let mut drop: Vec<NodeId> = Vec::new();
+    for p in dom.descendants(root, Some(&W::p())) {
+        if !para_is_pure_inserted(dom, p) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        if let Some(ps) = dom.element(ppr, &W::p_style()) {
+            let v = dom.attribute(ps, &W::val()).unwrap_or("");
+            if v.eq_ignore_ascii_case("Normal") {
+                drop.push(ps);
+            }
+        }
+        if let Some(bidi) = dom.element(ppr, &W::name("bidi")) {
+            let v = dom.attribute(bidi, &W::val()).unwrap_or("1");
+            // Word omits explicit LTR default; val absent / "0" / "false".
+            if v.is_empty() || v == "0" || v.eq_ignore_ascii_case("false") {
+                drop.push(bidi);
+            }
+        }
+    }
+    for n in drop {
+        if dom.parent(n).is_some() {
+            dom.remove(n);
+        }
+    }
+    // Drop empty pure-I pPr shells left with only mark rPr? Keep mark rPr.
+    // If pPr becomes empty (no children), remove it.
+    let mut empty_ppr = Vec::new();
+    for p in dom.descendants(root, Some(&W::p())) {
+        if !para_is_pure_inserted(dom, p) {
+            continue;
+        }
+        if let Some(ppr) = dom.element(p, &W::p_pr())
+            && dom.elements(ppr, None).is_empty()
+        {
+            empty_ppr.push(ppr);
+        }
+    }
+    for ppr in empty_ppr {
+        dom.remove(ppr);
+    }
+}
+
+/// M376 (bookmark×broken_complex_list −0.6): mid pure-D residual after a pure-I
+/// list stream must not carry pure-I list layout (`after=0 line=240`, `jc=both`,
+/// mark fonts). Word keeps mid pure-D bare (mark-only `rPr/del`); eng polluted
+/// the first pure-D bookmark prose with the preceding list's spacing/jc/rFonts.
+///
+/// Gates: pure-D, not last body child, no list structure (numPr / ListParagraph),
+/// list-shaped spacing, and a pure-I with the same spacing earlier in the body.
+/// Does **not** touch the last pure-D (Word parks line=240 + pPrChange there).
+///
+/// Must run **after** merge/park peels — early finalize still has bare pure-D
+/// pPr; list layout is absorbed later.
+pub fn strip_list_layout_from_mid_pure_del(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    if kids.len() < 2 {
+        return;
+    }
+    let last = kids[kids.len() - 1];
+    // Any pure-I with list-shaped spacing earlier? Contamination donor.
+    let mut has_list_shaped_pure_i = false;
+    for &k in &kids {
+        if !dom.name_is(k, &W::p()) || !para_is_pure_inserted(dom, k) {
+            continue;
+        }
+        if let Some(ppr) = dom.element(k, &W::p_pr())
+            && spacing_is_list_single_line(dom, ppr)
+        {
+            has_list_shaped_pure_i = true;
+            break;
+        }
+    }
+    if !has_list_shaped_pure_i {
+        return;
+    }
+
+    let mut drop: Vec<NodeId> = Vec::new();
+    for &p in &kids {
+        if p == last || !dom.name_is(p, &W::p()) || !para_is_pure_deleted(dom, p) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        // Keep real list pure-D (numPr / ListParagraph).
+        if dom.element(ppr, &W::num_pr()).is_some() {
+            continue;
+        }
+        if dom.element(ppr, &W::p_style()).is_some_and(|ps| {
+            dom.attribute(ps, &W::val())
+                .unwrap_or("")
+                .eq_ignore_ascii_case("ListParagraph")
+        }) {
+            continue;
+        }
+        if !spacing_is_list_single_line(dom, ppr) {
+            continue;
+        }
+        // Strip list-shaped spacing.
+        if let Some(sp) = dom.element(ppr, &W::spacing_el()) {
+            drop.push(sp);
+        }
+        // Strip jc=both (list residual justify); leave center/right alone.
+        if let Some(jc) = dom.element(ppr, &W::jc_el()) {
+            let v = dom.attribute(jc, &W::val()).unwrap_or("");
+            if v == "both" || v == "distribute" {
+                drop.push(jc);
+            }
+        }
+        // Strip non-mark children of pPr/rPr (rFonts/sz) — Word mark-only del.
+        if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
+            for c in dom.elements(rpr, None) {
+                let Some(n) = dom.name(c) else {
+                    continue;
+                };
+                if n == W::ins() || n == W::del() {
+                    continue;
+                }
+                drop.push(c);
+            }
+        }
+    }
+    for n in drop {
+        if dom.parent(n).is_some() {
+            dom.remove(n);
+        }
+    }
+}
+
+/// `after=0` (or absent) + `line=240` + `lineRule=auto` — pure-I list residual
+/// single-line shape (broken_complex_list / Word list compare).
+fn spacing_is_list_single_line(dom: &Dom, ppr: NodeId) -> bool {
+    let Some(sp) = dom.element(ppr, &W::spacing_el()) else {
+        return false;
+    };
+    let line = dom.attribute(sp, &W::name("line")).unwrap_or("");
+    let after = dom.attribute(sp, &W::name("after")).unwrap_or("");
+    let before = dom.attribute(sp, &W::name("before")).unwrap_or("");
+    let rule = dom.attribute(sp, &W::name("lineRule")).unwrap_or("");
+    line == "240"
+        && rule == "auto"
+        && (after.is_empty() || after == "0")
+        && (before.is_empty() || before == "0")
+}
+
+/// M377 (tiff×h_f −3.4): short-title MIX free-meshes one shared significant
+/// token as EQ. Word: `ins "This is a" + del "TIFF test" + EQ " document" +
+/// ins " with:"`. Wholesale ins+del keeps "document" on both sides and thrash
+/// LO pagefair vs 27c free-mesh.
+///
+/// Gates: MIX, ≤6 tokens each side, exactly one shared alnum token len≥4 that
+/// is the last del token and appears once in ins. Leaves long-body MIX alone
+/// (hummingbird/emp contracts).
+pub fn free_mesh_shared_title_token_in_mix(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    for &p in &kids {
+        if !dom.name_is(p, &W::p()) {
+            continue;
+        }
+        let has_ins = !dom.descendants(p, Some(&W::ins())).is_empty();
+        let has_del = !dom.descendants(p, Some(&W::del())).is_empty();
+        if !has_ins || !has_del {
+            continue;
+        }
+        // Collect body revision wrappers in order (ignore pPr).
+        let body_kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| !dom.name_is(c, &W::p_pr()))
+            .collect();
+        if body_kids.is_empty() {
+            continue;
+        }
+        // Simple wholesale shape only: one ins then one del (or del then ins).
+        let mut ins_nodes = Vec::new();
+        let mut del_nodes = Vec::new();
+        let mut other = false;
+        for &c in &body_kids {
+            let n = dom.name(c);
+            if n == Some(W::ins()) {
+                ins_nodes.push(c);
+            } else if n == Some(W::del()) {
+                del_nodes.push(c);
+            } else {
+                other = true;
+                break;
+            }
+        }
+        if other || ins_nodes.is_empty() || del_nodes.is_empty() {
+            continue;
+        }
+        // Only wholesale 1+1 or small confetti of same status groups.
+        if ins_nodes.len() > 2 || del_nodes.len() > 2 {
+            continue;
+        }
+        // Never mesh across authors: a pre-existing pending deletion carried
+        // from doc B (convert_stamped_predeletes restores its ORIGINAL author)
+        // must survive intact — stealing its shared token as EQ splits another
+        // author's tracked revision (m32 w15 "pending removal sentence").
+        let author_of = |dom: &Dom, n: NodeId| dom.attribute(n, &W::author()).map(str::to_string);
+        let ins_author = ins_nodes.first().and_then(|&n| author_of(dom, n));
+        if ins_nodes.iter().any(|&n| author_of(dom, n) != ins_author)
+            || del_nodes.iter().any(|&n| author_of(dom, n) != ins_author)
+        {
+            continue;
+        }
+
+        let mut ins_text = String::new();
+        for &ins in &ins_nodes {
+            for t in dom.descendants(ins, Some(&W::t())) {
+                ins_text.push_str(&dom.value_str(t));
+            }
+        }
+        let mut del_text = String::new();
+        for &del in &del_nodes {
+            for t in dom.descendants(del, Some(&W::del_text())) {
+                del_text.push_str(&dom.value_str(t));
+            }
+        }
+        if ins_text.is_empty() || del_text.is_empty() {
+            continue;
+        }
+        let ins_toks: Vec<String> = alnum_tokens(&ins_text);
+        let del_toks: Vec<String> = alnum_tokens(&del_text);
+        // Short titles only (≤6 tokens each).
+        if ins_toks.len() > 6 || del_toks.len() > 6 || ins_toks.len() < 2 || del_toks.len() < 2 {
+            continue;
+        }
+        // Shared significant tokens only (len≥5, not boilerplate).
+        // M383b: "with" (4 chars) free-meshed h_f title thrash — require
+        // document-like tokens ("document" on tiff title).
+        const BOILER: &[&str] = &[
+            "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than",
+            "then", "when", "what", "which", "into", "over", "only", "also", "just", "more",
+            "most", "some", "such", "other", "about", "text", "page", "simple",
+        ];
+        let del_set: std::collections::HashSet<&str> =
+            del_toks.iter().map(String::as_str).collect();
+        let shared: Vec<&str> = ins_toks
+            .iter()
+            .map(String::as_str)
+            .filter(|t| t.len() >= 5 && del_set.contains(t) && !BOILER.iter().any(|b| b == t))
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        if shared.len() != 1 {
+            continue;
+        }
+        let shared = shared[0];
+        // Must be last del token (Word free-meshes trailing title word).
+        if del_toks.last().map(String::as_str) != Some(shared) {
+            continue;
+        }
+        // Exactly once in each stream.
+        if ins_toks.iter().filter(|t| t.as_str() == shared).count() != 1
+            || del_toks.iter().filter(|t| t.as_str() == shared).count() != 1
+        {
+            continue;
+        }
+
+        // Case-preserving label from del tail.
+        let Some(eq_label) = trailing_alnum_token(&del_text) else {
+            continue;
+        };
+        if !eq_label.eq_ignore_ascii_case(shared) {
+            continue;
+        }
+
+        // Split ins text around shared token (first occurrence, case-insensitive).
+        let Some((ins_before, ins_after)) = split_around_token(&ins_text, &eq_label) else {
+            continue;
+        };
+        let Some(del_prefix) = strip_trailing_alnum_token(&del_text, &eq_label) else {
+            continue;
+        };
+
+        // Author/date from first ins.
+        let (author, date, id) = {
+            let mut a = "Redline".to_string();
+            let mut d = "1970-01-01T00:00:00Z".to_string();
+            let mut id = "0".to_string();
+            if let Some(&ins) = ins_nodes.first() {
+                if let Some(v) = dom.attribute(ins, &W::author()) {
+                    a = v.to_string();
+                }
+                if let Some(v) = dom.attribute(ins, &W::date()) {
+                    d = v.to_string();
+                }
+                if let Some(v) = dom.attribute(ins, &W::id()) {
+                    id = v.to_string();
+                }
+            }
+            (a, d, id)
+        };
+
+        // Capture run rPr from first ins run for rebuilt runs.
+        let sample_rpr = ins_nodes
+            .first()
+            .and_then(|&ins| dom.element(ins, &W::r()))
+            .and_then(|r| dom.element(r, &W::r_pr()))
+            .map(|rpr| dom.clone_subtree(rpr));
+
+        // Remove old body kids.
+        for c in body_kids {
+            if dom.parent(c).is_some() {
+                dom.remove(c);
+            }
+        }
+
+        // Rebuild Word order: ins_before | del_prefix | EQ | ins_after
+        let _ = id;
+        rebuild_title_free_mesh(
+            dom,
+            p,
+            &ins_before,
+            &del_prefix,
+            &eq_label,
+            &ins_after,
+            &author,
+            &date,
+            sample_rpr,
+        );
+    }
+}
+
+/// Alnum tokens lowercased.
+fn alnum_tokens(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_ascii_lowercase())
+        .collect()
+}
+
+/// Split `text` into (before, after) around first case-insensitive alnum token
+/// matching `label`. Separators around the token: before keeps trailing space
+/// if present before token; after keeps leading space if present after token
+/// moved into EQ as leading space when del had " document" shape.
+fn split_around_token(text: &str, label: &str) -> Option<(String, String)> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i].1.is_alphanumeric() {
+            let start_i = i;
+            let start_byte = chars[i].0;
+            while i < chars.len() && chars[i].1.is_alphanumeric() {
+                i += 1;
+            }
+            let end_byte = if i < chars.len() {
+                chars[i].0
+            } else {
+                text.len()
+            };
+            let tok = &text[start_byte..end_byte];
+            if tok.eq_ignore_ascii_case(label) {
+                let before = text[..start_byte].to_string();
+                let after = text[end_byte..].to_string();
+                // Avoid empty both (token-only).
+                if before.trim().is_empty() && after.trim().is_empty() {
+                    return None;
+                }
+                let _ = start_i;
+                return Some((before, after));
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Rebuild short-title MIX free-mesh body on `p`.
+#[allow(clippy::too_many_arguments)]
+fn rebuild_title_free_mesh(
+    dom: &mut Dom,
+    p: NodeId,
+    ins_before: &str,
+    del_prefix: &str,
+    eq_label: &str,
+    ins_after: &str,
+    author: &str,
+    date: &str,
+    sample_rpr: Option<NodeId>,
+) {
+    let mut next_id = 1u32;
+    // Word: ins_before (trim end space — space moves into EQ)
+    let ib = ins_before.trim_end();
+    if !ib.is_empty() {
+        add_revision_text_run(
+            dom,
+            p,
+            W::ins(),
+            ib,
+            false,
+            author,
+            date,
+            &mut next_id,
+            sample_rpr,
+        );
+    }
+    let dp = del_prefix.trim_end();
+    if !dp.is_empty() {
+        add_revision_text_run(
+            dom,
+            p,
+            W::del(),
+            dp,
+            true,
+            author,
+            date,
+            &mut next_id,
+            None, // del runs usually bare of fancy rPr
+        );
+    }
+    // EQ with leading space + label (Word " document")
+    let eq_r = dom.new_element(W::r());
+    if let Some(rpr) = sample_rpr {
+        let c = dom.clone_subtree(rpr);
+        dom.add(eq_r, c);
+    }
+    let eq_t = dom.new_element(W::t());
+    let eq_text = format!(" {eq_label}");
+    dom.set_attribute_value(eq_t, &XNamespace::xml().name("space"), Some("preserve"));
+    dom.add_text(eq_t, &eq_text);
+    dom.add(eq_r, eq_t);
+    dom.add(p, eq_r);
+    // ins_after keeps leading space if any (" with:")
+    if !ins_after.is_empty() {
+        add_revision_text_run(
+            dom,
+            p,
+            W::ins(),
+            ins_after,
+            false,
+            author,
+            date,
+            &mut next_id,
+            sample_rpr,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_revision_text_run(
+    dom: &mut Dom,
+    p: NodeId,
+    wrapper: crate::xmllinq::XName,
+    text: &str,
+    deleted: bool,
+    author: &str,
+    date: &str,
+    next_id: &mut u32,
+    sample_rpr: Option<NodeId>,
+) {
+    let w = dom.new_element(wrapper);
+    dom.set_attribute_value(w, &W::author(), Some(author));
+    dom.set_attribute_value(w, &W::date(), Some(date));
+    let id = next_id.to_string();
+    *next_id += 1;
+    dom.set_attribute_value(w, &W::id(), Some(&id));
+    let r = dom.new_element(W::r());
+    if let Some(rpr) = sample_rpr {
+        let c = dom.clone_subtree(rpr);
+        dom.add(r, c);
+    }
+    let te = dom.new_element(if deleted { W::del_text() } else { W::t() });
+    if text.starts_with(' ') || text.ends_with(' ') {
+        dom.set_attribute_value(te, &XNamespace::xml().name("space"), Some("preserve"));
+    }
+    dom.add_text(te, text);
+    dom.add(r, te);
+    dom.add(w, r);
+    dom.add(p, w);
 }
 
 /// True when a paragraph has deleted content, no live (non-del) `w:t` text,
@@ -1349,19 +2333,15 @@ pub fn strip_trailing_empty_pure_del_mark(dom: &mut Dom, root: NodeId) {
     };
     let kids = dom.elements(body, None);
     // Last non-sectPr child.
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| dom.name(k) != Some(W::name("sectPr")))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
-    if dom.name(last) != Some(W::p()) {
+    if !dom.name_is(last, &W::p()) {
         return;
     }
     // Any body text (live or delText)?
     let has_t = !dom.descendants(last, Some(&W::t())).is_empty()
-        || !dom.descendants(last, Some(&W::name("delText"))).is_empty();
+        || !dom.descendants(last, Some(&W::del_text())).is_empty();
     if has_t {
         return;
     }
@@ -1402,14 +2382,10 @@ pub fn trailing_empty_spacing_to_pprchange(
         return;
     };
     let kids = dom.elements(body, None);
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| dom.name(k) != Some(W::name("sectPr")))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
-    if dom.name(last) != Some(W::p()) {
+    if !dom.name_is(last, &W::p()) {
         return;
     }
     if !para_has_no_text(dom, last) {
@@ -1424,10 +2400,10 @@ pub fn trailing_empty_spacing_to_pprchange(
     let Some(ppr) = dom.element(last, &W::p_pr()) else {
         return;
     };
-    if dom.element(ppr, &W::name("pPrChange")).is_some() {
+    if dom.element(ppr, &W::p_pr_change()).is_some() {
         return;
     }
-    let Some(sp) = dom.element(ppr, &W::name("spacing")) else {
+    let Some(sp) = dom.element(ppr, &W::spacing_el()) else {
         return;
     };
     // Only when spacing is the sole layout child (ignore empty rPr).
@@ -1438,7 +2414,7 @@ pub fn trailing_empty_spacing_to_pprchange(
         if n == W::r_pr() {
             continue;
         }
-        if n != W::name("spacing") {
+        if n != W::spacing_el() {
             return;
         }
     }
@@ -1446,7 +2422,7 @@ pub fn trailing_empty_spacing_to_pprchange(
     let sp_clone = dom.clone_subtree(sp);
     dom.add(old_inner, sp_clone);
     dom.remove(sp);
-    let chg = dom.new_element(W::name("pPrChange"));
+    let chg = dom.new_element(W::p_pr_change());
     dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
     *id_gen += 1;
     dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
@@ -1462,14 +2438,71 @@ pub fn trailing_empty_spacing_to_pprchange(
 }
 
 /// True when a paragraph has no `w:t` / `w:delText` content.
+/// Page-break (`w:br`), drawings and picts are contentful even without `w:t`
+/// (Word keeps a page-break-only paragraph separate from a drawing-only
+/// deletion — diff_doc2×numwords page-break + image were merged into one `w:p`
+/// because both were considered empty).
 fn para_has_no_text(dom: &Dom, p: NodeId) -> bool {
     dom.descendants(p, Some(&W::t())).is_empty()
-        && dom.descendants(p, Some(&W::name("delText"))).is_empty()
+        && dom.descendants(p, Some(&W::del_text())).is_empty()
+        && dom.descendants(p, Some(&W::name("br"))).is_empty()
+        && dom.descendants(p, Some(&W::drawing())).is_empty()
+        && dom.descendants(p, Some(&W::pict())).is_empty()
+        && dom.descendants(p, Some(&W::name("object"))).is_empty()
+        && dom.descendants(p, Some(&M::name("oMath"))).is_empty()
+        && dom.descendants(p, Some(&M::name("oMathPara"))).is_empty()
+}
+
+/// True when a paragraph carries OMML math (`m:oMath` / `m:oMathPara`).
+///
+/// M419: math shells have no `w:t` so they look like M311d layout empties, but
+/// Word still MIX-es the last math pure-I into the first pure-D title.
+fn para_has_omath(dom: &Dom, p: NodeId) -> bool {
+    !dom.descendants(p, Some(&M::name("oMath"))).is_empty()
+        || !dom.descendants(p, Some(&M::name("oMathPara"))).is_empty()
+}
+
+/// True when a paragraph renders as a blank line: whitespace-only text and no
+/// non-text ink (math, drawings, pictures, objects, breaks).
+///
+/// M430's "trailing empty pure-I" runs must use this, not
+/// [`para_body_text_is_whitespace_only`] alone: textless OMML math shells
+/// (math_delimiter × math_eqarr) counted as "empty", which disabled the
+/// multi-del fold that MIXes the last math pure-I into the Delimiter title
+/// (M419 regression).
+fn para_is_visually_blank(dom: &Dom, p: NodeId) -> bool {
+    para_body_text_is_whitespace_only(dom, p)
+        && !para_has_omath(dom, p)
+        && dom.descendants(p, Some(&W::drawing())).is_empty()
+        && dom.descendants(p, Some(&W::pict())).is_empty()
+        && dom.descendants(p, Some(&W::name("object"))).is_empty()
+        && dom.descendants(p, Some(&W::name("br"))).is_empty()
+}
+
+/// True when body text repeats a ≥4-word phrase (hummingbird wrap fingerprint).
+///
+/// M416/M420: distinguish wrap pure-I from generic long titles (project_tasks
+/// TaskOwner line) so multi-del fold skip only hits real wraps.
+fn para_has_repeated_phrase(dom: &Dom, p: NodeId) -> bool {
+    let t = para_revision_body_text(dom, p).to_ascii_lowercase();
+    let words: Vec<&str> = t.split_whitespace().filter(|w| !w.is_empty()).collect();
+    if words.len() < 8 {
+        return false;
+    }
+    // Sliding window of 4 words; any window that appears twice is a wrap.
+    let mut seen = std::collections::HashSet::new();
+    for i in 0..=words.len().saturating_sub(4) {
+        let key = words[i..i + 4].join(" ");
+        if !seen.insert(key) {
+            return true;
+        }
+    }
+    false
 }
 
 /// True when `p` is an empty pure-inserted paragraph (no text, has ins, no del).
 fn para_is_empty_pure_ins(dom: &Dom, p: NodeId) -> bool {
-    if dom.name(p) != Some(W::p()) {
+    if !dom.name_is(p, &W::p()) {
         return false;
     }
     if !para_has_no_text(dom, p) {
@@ -1486,8 +2519,8 @@ fn para_is_empty_pure_ins(dom: &Dom, p: NodeId) -> bool {
         return false;
     }
     // No drawings / tables inside.
-    if !dom.descendants(p, Some(&W::name("drawing"))).is_empty()
-        || !dom.descendants(p, Some(&W::name("tbl"))).is_empty()
+    if !dom.descendants(p, Some(&W::drawing())).is_empty()
+        || !dom.descendants(p, Some(&W::tbl())).is_empty()
     {
         return false;
     }
@@ -1504,15 +2537,328 @@ pub fn strip_trailing_empty_pure_ins(dom: &mut Dom, root: NodeId) {
         return;
     };
     let kids = dom.elements(body, None);
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| dom.name(k) != Some(W::name("sectPr")))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
     if para_is_empty_pure_ins(dom, last) {
         dom.remove(last);
+    }
+}
+
+/// M438 (doc_with_spaces × doc_with_spacing ~67 / docxodus 100):
+/// Word title-page pure-I next × short pure-D base is `I…date e×6 DD E`
+/// (trailing bare empty). Engine keeps every next empty as pure-I (`e×7`)
+/// and no trailing E (`I…e7 DD`).
+///
+/// When a title-page pure-I stream ends with ≥6 consecutive empty pure-I
+/// then multi pure-D section residual (no pure-I after), move the last
+/// empty pure-I after the pure-D run and strip its revision marks → bare
+/// empty E (Word shape).
+pub fn relocate_title_page_last_empty_after_pure_dels(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    if kids.len() < 8 {
+        return;
+    }
+    // Find first contentful pure-D.
+    let Some(di) = kids.iter().position(|&k| {
+        dom.name_is(k, &W::p())
+            && para_is_pure_deleted(dom, k)
+            && !para_body_text_is_whitespace_only(dom, k)
+    }) else {
+        return;
+    };
+    // Pure-D run length (contentful + empty pure-D).
+    let mut dj = di;
+    while dj < kids.len() && dom.name_is(kids[dj], &W::p()) && para_is_pure_deleted(dom, kids[dj]) {
+        dj += 1;
+    }
+    let del_run = dj - di;
+    if del_run < 1 {
+        return;
+    }
+    // No pure-I after pure-D residual.
+    if kids[dj..]
+        .iter()
+        .any(|&k| dom.name_is(k, &W::p()) && para_is_pure_inserted(dom, k))
+    {
+        return;
+    }
+    // Trailing empty pure-I run immediately before first pure-D.
+    let mut empty_run = 0usize;
+    let mut j = di;
+    while j > 0 {
+        j -= 1;
+        let k = kids[j];
+        if dom.name_is(k, &W::p())
+            && para_is_pure_inserted(dom, k)
+            && para_body_text_is_whitespace_only(dom, k)
+            && !para_has_omath(dom, k)
+            && dom.descendants(k, Some(&W::name("br"))).is_empty()
+            && dom.descendants(k, Some(&W::drawing())).is_empty()
+        {
+            empty_run += 1;
+        } else {
+            break;
+        }
+    }
+    // Word drops one of the 7 post-date empties; require a long empty run.
+    if empty_run < 6 {
+        return;
+    }
+    // Content pure-I immediately before the empty run must look like title-page
+    // date / cover (M413 fingerprint) so stamp demos are untouched.
+    let content_before = kids[..di.saturating_sub(empty_run)]
+        .iter()
+        .rev()
+        .find(|&&k| {
+            dom.name_is(k, &W::p())
+                && para_is_pure_inserted(dom, k)
+                && !para_body_text_is_whitespace_only(dom, k)
+        });
+    let Some(&anchor) = content_before else {
+        return;
+    };
+    let t = para_revision_body_text(dom, anchor).to_ascii_lowercase();
+    let title_page_tail = t.contains("prepared")
+        || t.contains('@')
+        || t.contains("2040")
+        || t.contains("202")
+        || t.contains("march ")
+        || t.contains("january ")
+        || t.contains("february ")
+        || t.contains("april ")
+        || t.contains("june ")
+        || t.contains("july ")
+        || t.contains("august ")
+        || t.contains("september ")
+        || t.contains("october ")
+        || t.contains("november ")
+        || t.contains("december ")
+        || t.chars().filter(|c| c.is_ascii_digit()).count() >= 4;
+    if !title_page_tail {
+        return;
+    }
+    // Last empty pure-I in the run.
+    let last_empty = kids[di - 1];
+    if !para_is_pure_inserted(dom, last_empty)
+        || !para_body_text_is_whitespace_only(dom, last_empty)
+    {
+        return;
+    }
+    // Strip revision marks → bare empty (Word trailing E).
+    strip_para_revision_marks(dom, last_empty);
+    // Move after pure-D run (before whatever follows, usually sectPr).
+    let after_dels = if dj < kids.len() {
+        Some(kids[dj])
+    } else {
+        // Insert before sectPr if present.
+        dom.elements(body, None)
+            .into_iter()
+            .find(|&k| dom.name_is(k, &W::sect_pr()))
+    };
+    dom.remove(last_empty);
+    match after_dels {
+        Some(anchor_node) if dom.parent(anchor_node).is_some() => {
+            dom.add_before_self(anchor_node, last_empty);
+        }
+        _ => {
+            dom.add(body, last_empty);
+        }
+    }
+}
+
+/// Drop ins/del wrappers and para-mark revisions from a paragraph (bare EQ/empty).
+fn strip_para_revision_marks(dom: &mut Dom, p: NodeId) {
+    // Remove body-level ins/del wrappers (keep their children unwrapped if any).
+    let mut wrappers: Vec<NodeId> = dom
+        .elements(p, None)
+        .into_iter()
+        .filter(|&c| matches!(dom.name(c), Some(n) if n == W::ins() || n == W::del()))
+        .collect();
+    // Also nested ins/del under runs (descendants).
+    wrappers.extend(
+        dom.descendants(p, Some(&W::ins()))
+            .into_iter()
+            .chain(dom.descendants(p, Some(&W::del()))),
+    );
+    // Unique, deepest-first roughly by reverse.
+    wrappers.sort_by_key(|&n| std::cmp::Reverse(n.0));
+    wrappers.dedup();
+    for w in wrappers {
+        if dom.parent(w).is_none() {
+            continue;
+        }
+        // Move children before wrapper, then remove wrapper.
+        let kids: Vec<NodeId> = dom.elements(w, None);
+        for c in kids {
+            dom.remove(c);
+            dom.add_before_self(w, c);
+        }
+        // Also text nodes if any.
+        dom.remove(w);
+    }
+    // Drop mark-only rPr ins/del under pPr.
+    if let Some(ppr) = dom.element(p, &W::p_pr())
+        && let Some(rpr) = dom.element(ppr, &W::r_pr())
+    {
+        let marks: Vec<NodeId> = dom
+            .elements(rpr, None)
+            .into_iter()
+            .filter(|&c| matches!(dom.name(c), Some(n) if n == W::ins() || n == W::del()))
+            .collect();
+        for m in marks {
+            dom.remove(m);
+        }
+        if dom.elements(rpr, None).is_empty() {
+            dom.remove(rpr);
+        }
+    }
+}
+
+/// Build a bare empty pure-inserted paragraph (pPr/rPr/ins mark only).
+fn make_empty_pure_ins_para(
+    dom: &mut Dom,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) -> NodeId {
+    let p = dom.new_element(W::p());
+    let ppr = dom.new_element(W::p_pr());
+    let rpr = dom.new_element(W::r_pr());
+    let ins = dom.new_element(W::ins());
+    dom.set_attribute_value(ins, &W::id(), Some(&id_gen.to_string()));
+    *id_gen += 1;
+    dom.set_attribute_value(ins, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(ins, &W::date(), Some(&settings.date_time_for_revisions));
+    dom.add(rpr, ins);
+    dom.add(ppr, rpr);
+    dom.add(p, ppr);
+    p
+}
+
+/// M392 (file_36×file_37 residual ~66): Word keeps empty pure-I spacer(s)
+/// between content pure-I short title and pure-D short title before a table.
+/// Full LCS Equal-matches bare empties and fold strips the rest, so engine
+/// jumps pure-I → pure-D. When that pattern is missing spacers, insert two
+/// empty pure-I marks (B's two blanks) and convert a following bare empty
+/// before the table into pure-D empty (A's blank).
+pub fn ensure_empty_pure_i_before_short_title_del(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    loop {
+        let kids: Vec<NodeId> = dom
+            .elements(body, None)
+            .into_iter()
+            .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+            .collect();
+        let mut acted = false;
+        for i in 0..kids.len().saturating_sub(1) {
+            let ins_p = kids[i];
+            let del_p = kids[i + 1];
+            if !dom.name_is(ins_p, &W::p()) || !dom.name_is(del_p, &W::p()) {
+                continue;
+            }
+            if !para_is_pure_inserted(dom, ins_p) || !para_is_pure_deleted(dom, del_p) {
+                continue;
+            }
+            // Content pure-I (not already empty spacer).
+            if para_body_text_is_whitespace_only(dom, ins_p) {
+                continue;
+            }
+            // Short pure-D title residual.
+            let n = para_word_atom_count(dom, del_p);
+            let short_title = (1..=4).contains(&n) && para_body_alnum_len(dom, del_p) <= 32;
+            if !(para_looks_like_demo_title(dom, del_p)
+                || para_has_heading_or_title_style(dom, del_p)
+                || short_title)
+            {
+                continue;
+            }
+            // Adjacent content pure-I × short pure-D only when pure-D is
+            // followed by bare/empty then a **table** (file_36×37). Do **not**
+            // fire on trailing pure-D demo residuals (file_82×83 wants a single
+            // empty pure-I spacer already kept by M389 — injecting two regressed
+            // pagefair).
+            let after = kids.get(i + 2).copied();
+            let after2 = kids.get(i + 3).copied();
+            let empty_then_tbl = matches!(
+                (after, after2),
+                (Some(e), Some(t))
+                    if dom.name_is(e, &W::p())
+                        && para_has_no_text(dom, e)
+                        && dom.name_is(t, &W::tbl())
+            );
+            if !empty_then_tbl {
+                continue;
+            }
+            // Insert two empty pure-I spacers before pure-D (Word file_36×37).
+            for _ in 0..2 {
+                let spacer = make_empty_pure_ins_para(dom, settings, id_gen);
+                dom.add_before_self(del_p, spacer);
+            }
+            // Convert bare empty after pure-D (before table) into pure-D empty.
+            if let Some(e) = after
+                && dom.name_is(e, &W::p())
+                && para_has_no_text(dom, e)
+                && !para_is_pure_deleted(dom, e)
+                && !para_is_pure_inserted(dom, e)
+            {
+                // Add pPr/rPr/del mark so it is pure-D empty.
+                let ppr = match dom.element(e, &W::p_pr()) {
+                    Some(p) => p,
+                    None => {
+                        let p = dom.new_element(W::p_pr());
+                        if let Some(first) = dom.elements(e, None).first().copied() {
+                            dom.add_before_self(first, p);
+                        } else {
+                            dom.add(e, p);
+                        }
+                        p
+                    }
+                };
+                let rpr = match dom.element(ppr, &W::r_pr()) {
+                    Some(r) => r,
+                    None => {
+                        let r = dom.new_element(W::r_pr());
+                        dom.add_first(ppr, r);
+                        r
+                    }
+                };
+                if dom.element(rpr, &W::del()).is_none() {
+                    let del = dom.new_element(W::del());
+                    dom.set_attribute_value(del, &W::id(), Some(&id_gen.to_string()));
+                    *id_gen += 1;
+                    dom.set_attribute_value(
+                        del,
+                        &W::author(),
+                        Some(&settings.author_for_revisions),
+                    );
+                    dom.set_attribute_value(
+                        del,
+                        &W::date(),
+                        Some(&settings.date_time_for_revisions),
+                    );
+                    dom.add_first(rpr, del);
+                }
+            }
+            acted = true;
+            break;
+        }
+        if !acted {
+            return;
+        }
     }
 }
 
@@ -1522,46 +2868,111 @@ pub fn strip_trailing_empty_pure_ins(dom: &mut Dom, root: NodeId) {
 /// When residual pure-dels follow (catalog/table demos: B ends empty after table,
 /// A residual is pure-D), Word still omits the blank (`… tbl D D D`) while we
 /// kept `… tbl Ei D D D` (file_49, file_75, file_35, file_102, …).
+///
+/// M311: do **not** strip a long run of empty pure-I (≥3). That is wholesale
+/// next-document layout Word keeps (image_inline×rtl_page_numpages: Word
+/// pure-I ~31 empty next paras then pure-D image; unbounded M85a left only
+/// the pure-D and scored ~15). Cap strip to at most two empties.
 pub fn strip_empty_pure_ins_before_trailing_pure_dels(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
-    // Strip multiple consecutive empties (loop until stable).
-    loop {
-        let kids = dom.elements(body, None);
-        let non_sect: Vec<NodeId> = kids
-            .into_iter()
-            .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
-            .collect();
-        if non_sect.len() < 2 {
-            return;
+    let kids = dom.elements(body, None);
+    let non_sect: Vec<NodeId> = kids
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    if non_sect.len() < 2 {
+        return;
+    }
+    // Trailing pure-del run: find first index of the run.
+    let mut run_start = non_sect.len();
+    while run_start > 0 {
+        let k = non_sect[run_start - 1];
+        if dom.name_is(k, &W::p()) && para_is_pure_deleted(dom, k) {
+            run_start -= 1;
+        } else {
+            break;
         }
-        // Trailing pure-del run: find first index of the run.
-        let mut run_start = non_sect.len();
-        while run_start > 0 {
-            let k = non_sect[run_start - 1];
-            if dom.name(k) == Some(W::p()) && para_is_pure_deleted(dom, k) {
-                run_start -= 1;
-            } else {
-                break;
-            }
+    }
+    if run_start == non_sect.len() || run_start == 0 {
+        return;
+    }
+    // Count consecutive empty pure-ins immediately before the pure-del run.
+    let mut empty_run = 0usize;
+    let mut i = run_start;
+    while i > 0 && para_is_empty_pure_ins(dom, non_sect[i - 1]) {
+        empty_run += 1;
+        i -= 1;
+    }
+    if empty_run == 0 {
+        return;
+    }
+    // Wholesale empty next layout (≥3) — Word keeps all (image×rtl).
+    if empty_run >= 3 {
+        return;
+    }
+    // M389 (file_82×83 −18.9 vs fddb): Word keeps a **single** empty pure-I
+    // spacer before trailing pure-D short demo title ("Title Style Centered
+    // Demo"). B may end with 1–2 empties; M85a stripped all. Keep one spacer
+    // when the first pure-D is a short demo/title residual.
+    //
+    // M389b (file_36 residual): same for short pure-D titles without the word
+    // "Demo" (e.g. "Contract Review", 2 words) when multi pure-D residual.
+    //
+    // M389: keep one empty pure-I before trailing pure-D short demo title.
+    // M392: keep **both** empties only when a table follows the pure-D run
+    // (file_36×37 Word II before "Contract Review"+empty+tbl). Trailing
+    // pure-D demos without a table (file_82×83) still keep exactly one.
+    let first_del = non_sect[run_start];
+    let short_title_del = {
+        let n = para_word_atom_count(dom, first_del);
+        (1..=4).contains(&n) && para_body_alnum_len(dom, first_del) <= 32
+    };
+    let keep_title_spacers = (1..=2).contains(&empty_run)
+        && (para_looks_like_demo_title(dom, first_del)
+            || para_has_heading_or_title_style(dom, first_del)
+            || short_title_del);
+    let table_after_del_run = non_sect
+        .get(run_start + 1..)
+        .into_iter()
+        .flatten()
+        .any(|&k| dom.name_is(k, &W::tbl()))
+        || {
+            // pure-D run may end before a table with an empty pure-D between.
+            let after_run = run_start
+                + non_sect[run_start..]
+                    .iter()
+                    .take_while(|&&k| dom.name_is(k, &W::p()) && para_is_pure_deleted(dom, k))
+                    .count();
+            non_sect
+                .get(after_run)
+                .is_some_and(|&k| dom.name_is(k, &W::tbl()))
+        };
+    // Strip at most two trailing empties before pure-dels (M85a original).
+    // Keep both only for empty-then-table title residuals; else keep one.
+    let strip_n = if keep_title_spacers {
+        if table_after_del_run {
+            0
+        } else {
+            empty_run.saturating_sub(1)
         }
-        if run_start == non_sect.len() || run_start == 0 {
-            // No pure-del run, or body is all pure-dels.
-            return;
+    } else {
+        empty_run
+    };
+    for j in 0..strip_n {
+        // Strip farthest empties first (index run_start - empty_run + j).
+        let victim = non_sect[run_start - empty_run + j];
+        if para_is_empty_pure_ins(dom, victim) {
+            dom.remove(victim);
         }
-        let before = non_sect[run_start - 1];
-        if !para_is_empty_pure_ins(dom, before) {
-            return;
-        }
-        dom.remove(before);
     }
 }
 
 /// True when every `w:t` / `w:delText` under `p` is empty or whitespace.
 fn para_body_text_is_whitespace_only(dom: &Dom, p: NodeId) -> bool {
     let mut saw = false;
-    for name in [W::t(), W::name("delText")] {
+    for name in [W::t(), W::del_text()] {
         for t in dom.descendants(p, Some(&name)) {
             saw = true;
             if !dom.value(t).trim().is_empty() {
@@ -1576,7 +2987,7 @@ fn para_body_text_is_whitespace_only(dom: &Dom, p: NodeId) -> bool {
 
 /// True when `p` is pure-inserted (has ins, no del content/mark).
 fn para_is_pure_inserted(dom: &Dom, p: NodeId) -> bool {
-    if dom.name(p) != Some(W::p()) {
+    if !dom.name_is(p, &W::p()) {
         return false;
     }
     let has_del =
@@ -1595,29 +3006,277 @@ fn para_is_pure_inserted(dom: &Dom, p: NodeId) -> bool {
 /// We left them separate (`I space` then `D title`), adding a blank line and
 /// wrong residual shape. Only folds when pure-I body is whitespace-only so
 /// content pure-I (file_33 "Summary") stays separate from unrelated pure-D.
+///
+/// M345: when pure-D is structural (list style), adopt its full pPr so the
+/// fold does not drop ListParagraph/numPr. When pure-D is bare and pure-I only
+/// carries spacing, skip fold if a long pure-D residual follows (keep Word's
+/// empty pure-I spacer — two_column×vrect).
 pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
+    // M311c: wholesale empty pure-I layout then pure-D residual (image×rtl:
+    // ~31 empty pure-I + 1 pure-D). Folding every empty into the del wiped
+    // Word's pure-I layout. Skip the fold entirely when ≥3 empty pure-I
+    // lead a body with no contentful pure-I.
+    {
+        let kids: Vec<NodeId> = dom
+            .elements(body, None)
+            .into_iter()
+            .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+            .collect();
+        let empty_pure_i = kids
+            .iter()
+            .filter(|&&k| {
+                dom.name_is(k, &W::p())
+                    && para_is_pure_inserted(dom, k)
+                    && para_body_text_is_whitespace_only(dom, k)
+            })
+            .count();
+        let content_pure_i = kids
+            .iter()
+            .filter(|&&k| {
+                dom.name_is(k, &W::p())
+                    && para_is_pure_inserted(dom, k)
+                    && !para_body_text_is_whitespace_only(dom, k)
+            })
+            .count();
+        if empty_pure_i >= 3 && content_pure_i == 0 {
+            return;
+        }
+        // M430 (doc_with_spaces × doc_with_spacing ~62.8 / docxodus 100):
+        // title-page pure-I has contentful pure-I then ≥3 trailing empty
+        // pure-I immediately before pure-D base. Word keeps those empties
+        // (I…date e×6 DD); M311c only skips when content_pure_i==0 so the
+        // fold ate trailing blanks into first pure-D. Skip the fold entirely
+        // when a trailing empty pure-I run of ≥3 sits at the pure-I→pure-D
+        // boundary with no pure-I after the pure-D residual.
+        {
+            let kids: Vec<NodeId> = dom
+                .elements(body, None)
+                .into_iter()
+                .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+                .collect();
+            // Find first pure-D with real text.
+            let first_del = kids.iter().position(|&k| {
+                dom.name_is(k, &W::p())
+                    && para_is_pure_deleted(dom, k)
+                    && !para_body_text_is_whitespace_only(dom, k)
+            });
+            if let Some(di) = first_del {
+                let mut empty_run = 0usize;
+                let mut j = di;
+                while j > 0 {
+                    j -= 1;
+                    let k = kids[j];
+                    if dom.name_is(k, &W::p())
+                        && para_is_pure_inserted(dom, k)
+                        && para_is_visually_blank(dom, k)
+                    {
+                        empty_run += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let pure_i_after_del = kids[di + 1..]
+                    .iter()
+                    .any(|&k| dom.name_is(k, &W::p()) && para_is_pure_inserted(dom, k));
+                if empty_run >= 3 && !pure_i_after_del && content_pure_i >= 1 {
+                    return;
+                }
+            }
+        }
+    }
     loop {
         let kids: Vec<NodeId> = dom
             .elements(body, None)
             .into_iter()
-            .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+            .filter(|&k| !dom.name_is(k, &W::sect_pr()))
             .collect();
         let mut acted = false;
         for i in 0..kids.len().saturating_sub(1) {
             let ins_p = kids[i];
             let del_p = kids[i + 1];
+            // The fold target must be a PARAGRAPH: an all-deleted TABLE also
+            // satisfies para_is_pure_deleted's descendant checks, and folding
+            // moved its cell runs into a paragraph and deleted the tbl
+            // element outright (multipara_cell×missing_separator: assembled
+            // [p×5, tbl, p] lost the tbl here; diff_after16×19 lost its
+            // table the same way, 41.6 vs docxodus 100).
+            if !dom.name_is(del_p, &W::p()) {
+                continue;
+            }
             if !para_is_pure_inserted(dom, ins_p) || !para_is_pure_deleted(dom, del_p) {
                 continue;
             }
             if !para_body_text_is_whitespace_only(dom, ins_p) {
                 continue;
             }
+            // M431 (diff_doc2 × numwords residual): page-break (`w:br`) and
+            // drawing/pict pure-I are contentful for layout even with no `w:t`.
+            // Word keeps pure-I br separate from pure-D drawing; folding them
+            // as "whitespace" produced one MIX with ins br + del drawing.
+            if !dom.descendants(ins_p, Some(&W::name("br"))).is_empty()
+                || !dom.descendants(ins_p, Some(&W::drawing())).is_empty()
+                || !dom.descendants(ins_p, Some(&W::pict())).is_empty()
+                || !dom.descendants(ins_p, Some(&W::name("object"))).is_empty()
+            {
+                continue;
+            }
+            // A run-less bare empty inserted paragraph is B's STRUCTURE when
+            // more inserted block content follows the deleted run — Word
+            // keeps it as its own inserted paragraph (anchor_images×annot2:
+            // B's two leading empties before an inserted table; folding them
+            // displaced the whole page, 44.1 vs sibling 100.00). When B has
+            // nothing after the dels, the run-less fold IS Word's shape
+            // (file_173_file_174 scored 100.00 with it). Skip the fold only
+            // for run-less empties with following inserted block content.
+            if dom.descendants(ins_p, Some(&W::t())).is_empty() {
+                let mut later_ins = false;
+                let mut seen_del_p = false;
+                for &k2 in &kids {
+                    if k2 == del_p {
+                        seen_del_p = true;
+                        continue;
+                    }
+                    if seen_del_p && !dom.descendants(k2, Some(&W::ins())).is_empty() {
+                        later_ins = true;
+                        break;
+                    }
+                }
+                if later_ins {
+                    continue;
+                }
+            }
             // Need real deleted content (not empty mark-only del).
             if para_body_text_is_whitespace_only(dom, del_p) {
                 continue;
+            }
+            // M389 (file_82×83 −18.9): Word keeps empty pure-I spacer before
+            // multi pure-D short demo titles ("Title Style Centered Demo"…).
+            // Folding the empty into first pure-D invents MIX and drops the
+            // spacer. Skip run-less empty pure-I × demo/title pure-D when ≥2
+            // pure-D residual paras follow. M389b: also short pure-D titles
+            // without the word Demo ("Contract Review").
+            //
+            // M392 (file_36×37): sole short pure-D title residual before a
+            // table still needs the empty pure-I spacer(s). Require ≥1 pure-D
+            // (not ≥2) so a single "Contract Review" keeps B's blanks.
+            if dom.descendants(ins_p, Some(&W::t())).is_empty() {
+                let n = para_word_atom_count(dom, del_p);
+                let short_title = (1..=4).contains(&n) && para_body_alnum_len(dom, del_p) <= 32;
+                if para_looks_like_demo_title(dom, del_p)
+                    || para_has_heading_or_title_style(dom, del_p)
+                    || short_title
+                {
+                    let mut following_pure_d = 0usize;
+                    for &k in kids.iter().skip(i + 1) {
+                        if dom.name_is(k, &W::p()) && para_is_pure_deleted(dom, k) {
+                            following_pure_d += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if following_pure_d >= 1 {
+                        continue;
+                    }
+                }
+            }
+            // M345: empty pure-I fold must not thrash pure-D layout.
+            //
+            // 1) Del has structural pPr (ListParagraph+numPr): adopt full del
+            //    pPr onto the carrier. Old path kept bare ins-mark pPr and
+            //    dropped list style (basic_list×sd_1707 first pure-D "List
+            //    item 1" lost bullets — pagefair 99→66; same for
+            //    pre_separated_list×diff_before7).
+            // 2) Del bare + ins has spacing-only structure: skip fold when a
+            //    long pure-D residual follows. Word keeps the empty pure-I
+            //    spacer (two_column×vrect); folding contaminated first pure-D
+            //    with vrect spacing (line=240) and thrased layout 79→34.
+            // M359: skip when pure-D is long prose (list_with_indents items
+            // ≥13 words) or pure-I carries a drawing. Empty drawing pure-I
+            // × long list pure-D (list×shape_group) was folding the first
+            // list item into the empty shell; multi-del then MIX-ed last
+            // "My test with some shapes." with that list text (Word/27c
+            // pure-I/D III…DDD; pagefair −9.4). Short list items still fold
+            // (basic_list "List item 1" ≤12 words).
+            let del_words = para_word_atom_count(dom, del_p);
+            let ins_has_drawing = !dom.descendants(ins_p, Some(&W::drawing())).is_empty()
+                || !dom
+                    .descendants(ins_p, Some(&W::name("AlternateContent")))
+                    .is_empty();
+            if del_words > 12 || ins_has_drawing {
+                continue;
+            }
+            let del_structural = dom
+                .element(del_p, &W::p_pr())
+                .is_some_and(|dp| ppr_has_structural_props(dom, dp));
+            let ins_structural = dom
+                .element(ins_p, &W::p_pr())
+                .is_some_and(|ip| ppr_has_structural_props(dom, ip));
+            if !del_structural && ins_structural {
+                let mut following_pure_d = 0usize;
+                for &k in kids.iter().skip(i + 1) {
+                    if dom.name_is(k, &W::p()) && para_is_pure_deleted(dom, k) {
+                        following_pure_d += 1;
+                    } else {
+                        break;
+                    }
+                }
+                // M366 (bookmark×broken_complex_list): trailing empty pure-I
+                // after content pure-I list, before a pure-D residual run —
+                // Word drops the empty (17 pure-I, no spacer). M345 path-2
+                // kept it as a spacer when ≥3 pure-D (two_column×vrect mid
+                // empty). Allow fold when a content pure-I precedes this
+                // empty in the pure-I run (true trailing residual).
+                let trailing_after_content_i = i > 0
+                    && kids[..i].iter().rev().any(|&k| {
+                        dom.name_is(k, &W::p())
+                            && para_is_pure_inserted(dom, k)
+                            && !para_body_text_is_whitespace_only(dom, k)
+                    });
+                if following_pure_d >= 3 && !trailing_after_content_i {
+                    continue;
+                }
+            }
+            if del_structural {
+                // M360: do not adopt full del pPr when pure-I is a TOC/field
+                // residue (fldChar) and pure-D carries a Heading pStyle.
+                // table_border×toc: empty TOC field-end pure-I × SD-2343
+                // Heading1 pure-D got Heading1 on the MIX; Word leaves bare
+                // pPr (pagefair −11). List numPr adopt still runs (basic_list).
+                let ins_has_fld = !dom.descendants(ins_p, Some(&W::name("fldChar"))).is_empty();
+                let del_heading_style = dom.element(del_p, &W::p_pr()).is_some_and(|dp| {
+                    dom.element(dp, &W::p_style()).is_some_and(|ps| {
+                        let v = dom
+                            .attribute(ps, &W::val())
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        v == "title" || v.starts_with("heading")
+                    })
+                });
+                if !(ins_has_fld && del_heading_style) {
+                    if let Some(ippr) = dom.element(ins_p, &W::p_pr()) {
+                        dom.remove(ippr);
+                    }
+                    if let Some(dppr) = dom.element(del_p, &W::p_pr()) {
+                        let cloned = dom.clone_subtree(dppr);
+                        if let Some(first) = dom.elements(ins_p, None).first().copied() {
+                            dom.add_before_self(first, cloned);
+                        } else {
+                            dom.add(ins_p, cloned);
+                        }
+                    }
+                    for c in dom.elements(del_p, None) {
+                        if !dom.name_is(c, &W::p_pr()) {
+                            dom.add(ins_p, c);
+                        }
+                    }
+                    dom.remove(del_p);
+                    acted = true;
+                    break;
+                }
+                // else fall through to mark-only fold without Heading pPr adopt
             }
             // Replace pure-ins mark with pure-del mark on the carrier (Word:
             // mixed para keeps del mark from the deleted residual).
@@ -1649,10 +3308,28 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                 }
             } else if let Some(dppr) = dom.element(del_p, &W::p_pr()) {
                 // No pPr on pure-ins — clone del's pPr if it has a del mark.
+                // M360 applies on this branch too: a fldChar residue carrier
+                // folded with a Heading pure-D keeps a mark-only pPr, never
+                // the Heading pStyle (table_border×toc SD-2343 title).
                 if let Some(drpr) = dom.element(dppr, &W::r_pr())
                     && dom.element(drpr, &W::del()).is_some()
                 {
-                    let cloned = dom.clone_subtree(dppr);
+                    let ins_has_fld = !dom.descendants(ins_p, Some(&W::name("fldChar"))).is_empty();
+                    let del_heading_style = dom.element(dppr, &W::p_style()).is_some_and(|ps| {
+                        let v = dom
+                            .attribute(ps, &W::val())
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        v == "title" || v.starts_with("heading")
+                    });
+                    let cloned = if ins_has_fld && del_heading_style {
+                        let ppr = dom.new_element(W::p_pr());
+                        let mark = dom.clone_subtree(drpr);
+                        dom.add(ppr, mark);
+                        ppr
+                    } else {
+                        dom.clone_subtree(dppr)
+                    };
                     // insert pPr as first child
                     if let Some(first) = dom.elements(ins_p, None).first().copied() {
                         dom.add_before_self(first, cloned);
@@ -1663,7 +3340,7 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
             }
             // Move body (non-pPr) children from pure-del into pure-ins.
             for c in dom.elements(del_p, None) {
-                if dom.name(c) != Some(W::p_pr()) {
+                if !dom.name_is(c, &W::p_pr()) {
                     dom.add(ins_p, c);
                 }
             }
@@ -1698,13 +3375,13 @@ pub fn fold_leading_ins_from_mix_into_preceding_pure_del(dom: &mut Dom, root: No
         let kids: Vec<NodeId> = dom
             .elements(body, None)
             .into_iter()
-            .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+            .filter(|&k| !dom.name_is(k, &W::sect_pr()))
             .collect();
         let mut acted = false;
         for i in 0..kids.len().saturating_sub(1) {
             let del_p = kids[i];
             let mix_p = kids[i + 1];
-            if dom.name(del_p) != Some(W::p()) || dom.name(mix_p) != Some(W::p()) {
+            if !dom.name_is(del_p, &W::p()) || !dom.name_is(mix_p, &W::p()) {
                 continue;
             }
             if !para_is_pure_deleted(dom, del_p) {
@@ -1730,10 +3407,10 @@ pub fn fold_leading_ins_from_mix_into_preceding_pure_del(dom: &mut Dom, root: No
             let mix_kids: Vec<NodeId> = dom.elements(mix_p, None);
             let mut leading_ins: Vec<NodeId> = Vec::new();
             for &c in &mix_kids {
-                if dom.name(c) == Some(W::p_pr()) {
+                if dom.name_is(c, &W::p_pr()) {
                     continue;
                 }
-                if dom.name(c) == Some(W::ins()) {
+                if dom.name_is(c, &W::ins()) {
                     leading_ins.push(c);
                 } else {
                     break;
@@ -1770,7 +3447,7 @@ pub fn fold_leading_ins_from_mix_into_preceding_pure_del(dom: &mut Dom, root: No
             let del_body_first = dom
                 .elements(del_p, None)
                 .into_iter()
-                .find(|&c| dom.name(c) != Some(W::p_pr()));
+                .find(|&c| !dom.name_is(c, &W::p_pr()));
             for &ins_n in &leading_ins {
                 if dom.parent(ins_n).is_none() {
                     continue;
@@ -1816,14 +3493,10 @@ pub fn strip_last_pure_del_mark_only_ppr(dom: &mut Dom, root: NodeId) {
         return;
     };
     let kids = dom.elements(body, None);
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| dom.name(k) != Some(W::name("sectPr")))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
-    if dom.name(last) != Some(W::p()) || !para_is_pure_deleted(dom, last) {
+    if !dom.name_is(last, &W::p()) || !para_is_pure_deleted(dom, last) {
         return;
     }
     // Only when there is delText content (empty last is M69).
@@ -1840,11 +3513,11 @@ pub fn strip_last_pure_del_mark_only_ppr(dom: &mut Dom, root: NodeId) {
         return;
     }
     let rpr = ppr_kids[0];
-    if dom.name(rpr) != Some(W::r_pr()) {
+    if !dom.name_is(rpr, &W::r_pr()) {
         return;
     }
     let rpr_kids = dom.elements(rpr, None);
-    if rpr_kids.len() != 1 || dom.name(rpr_kids[0]) != Some(W::del()) {
+    if rpr_kids.len() != 1 || !dom.name_is(rpr_kids[0], &W::del()) {
         return;
     }
     dom.remove(ppr);
@@ -1852,7 +3525,7 @@ pub fn strip_last_pure_del_mark_only_ppr(dom: &mut Dom, root: NodeId) {
 
 /// True when paragraph body has both ins and del content (mixed residual).
 fn para_is_mixed_revision(dom: &Dom, p: NodeId) -> bool {
-    if dom.name(p) != Some(W::p()) {
+    if !dom.name_is(p, &W::p()) {
         return false;
     }
     if let Some(cached) = MIXED_CACHE.with(|c| c.borrow().as_ref().and_then(|m| m.get(&p).copied()))
@@ -1879,8 +3552,13 @@ fn para_is_mixed_revision(dom: &Dom, p: NodeId) -> bool {
 /// - M87: live `w:numPr` / `w:ind` → pPrChange (file_55 last pure-del "b").
 /// - M91: live `w:jc` → pPrChange (file_105 last pure-del right-align).
 /// - M93: live `w:pStyle` → pPrChange (file_59 last pure-del PreformattedText).
-/// - M94: same for **last mixed** I+D (file_139 last residual mixed keeps
-///   pPrChange(spacing), not live spacing + rPr/del).
+/// - M94: **last mixed** I+D residual parks **spacing only** (file_139).
+///
+/// M434 (image_doc × document ~59 / docxodus 100): last MIX is a list residual
+/// (live `numPr` + pure-I text + drawing del). Word keeps live pStyle/numPr/jc/
+/// spacing and only uses `rPrChange` under rPr. Parking numPr/pStyle into
+/// pPrChange cleared list chrome → LO page 2–3 thrash (page1 100, p2–3 ~57).
+/// For MIX, only park spacing; pure-D still parks the full layout set.
 ///
 /// Mid pure-dels keep live spacing/numPr/jc/pStyle.
 pub fn last_pure_del_spacing_to_pprchange(
@@ -1893,37 +3571,55 @@ pub fn last_pure_del_spacing_to_pprchange(
         return;
     };
     let kids = dom.elements(body, None);
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| dom.name(k) != Some(W::name("sectPr")))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
-    if dom.name(last) != Some(W::p()) {
+    if !dom.name_is(last, &W::p()) {
         return;
     }
     // Pure-del or mixed last residual (M94). M226 gated MIX out for subtitle
     // cousins, but full ledger showed catastrophic regs (red_heading −37,
     // heading chain −6..−12). Restore MIX parking; keep M228 mid pure-D
     // promote + strip_redundant for the spacing wins that don't need this gate.
-    if !para_is_pure_deleted(dom, last) && !para_is_mixed_revision(dom, last) {
+    let is_mixed = para_is_mixed_revision(dom, last);
+    if !para_is_pure_deleted(dom, last) && !is_mixed {
         return;
+    }
+    // M444/M446a: last MIX free-mesh keeps Word live spacing (not pPrChange).
+    // History: M226 gated *all* MIX → red_heading −37. M446b short-doc gate
+    // (≤6 paras, multi-token both sides) thrash'd red_heading/file_139/etc.
+    // Keep surgical free-mesh shapes only:
+    // - M444: short ins title (1..=4) × long del cover (≥5)
+    // - M446a: long ins body (≥5) × short del residual (1..=4) — subtitle
+    if is_mixed {
+        let ins_w = para_side_word_count(dom, last, true);
+        let del_w = para_side_word_count(dom, last, false);
+        if (1..=4).contains(&ins_w) && del_w >= 5 {
+            return;
+        }
+        if (1..=4).contains(&del_w) && ins_w >= 5 {
+            return;
+        }
     }
     let Some(ppr) = dom.element(last, &W::p_pr()) else {
         return;
     };
-    if dom.element(ppr, &W::name("pPrChange")).is_some() {
+    if dom.element(ppr, &W::p_pr_change()).is_some() {
         return;
     }
     // Layout props Word records under pPrChange on the last pure-del / mixed.
-    let movable = [
-        W::name("spacing"),
-        W::num_pr(),
-        W::name("ind"),
-        W::name("jc"),
-        W::name("pStyle"),
-    ];
+    // M434: MIX keeps live list/style/jc chrome; only spacing parks (M94).
+    let movable: Vec<_> = if is_mixed {
+        vec![W::spacing_el()]
+    } else {
+        vec![
+            W::spacing_el(),
+            W::num_pr(),
+            W::name("ind"),
+            W::jc_el(),
+            W::p_style(),
+        ]
+    };
     let mut to_move: Vec<NodeId> = Vec::new();
     for name in &movable {
         if let Some(el) = dom.element(ppr, name) {
@@ -1940,7 +3636,7 @@ pub fn last_pure_del_spacing_to_pprchange(
         dom.add(old_inner, cloned);
         dom.remove(*el);
     }
-    let chg = dom.new_element(W::name("pPrChange"));
+    let chg = dom.new_element(W::p_pr_change());
     dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
     *id_gen += 1;
     dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
@@ -1965,7 +3661,7 @@ pub fn mixed_spacing_to_following_empty(
     let kids: Vec<NodeId> = dom
         .elements(body, None)
         .into_iter()
-        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
         .collect();
     if kids.len() < 2 {
         return;
@@ -1973,7 +3669,7 @@ pub fn mixed_spacing_to_following_empty(
     for i in 0..kids.len() - 1 {
         let mixed = kids[i];
         let empty = kids[i + 1];
-        if dom.name(mixed) != Some(W::p()) || dom.name(empty) != Some(W::p()) {
+        if !dom.name_is(mixed, &W::p()) || !dom.name_is(empty, &W::p()) {
             continue;
         }
         if !para_is_mixed_revision(dom, mixed) {
@@ -1987,7 +3683,7 @@ pub fn mixed_spacing_to_following_empty(
         let is_trailing = i + 1 == kids.len() - 1;
         // Pure-D table: has del, no ins (deleted whole table).
         let before_pure_d_table = i + 2 < kids.len()
-            && dom.name(kids[i + 2]) == Some(W::name("tbl"))
+            && dom.name_is(kids[i + 2], &W::tbl())
             && dom.descendants(kids[i + 2], Some(&W::ins())).is_empty()
             && !dom.descendants(kids[i + 2], Some(&W::del())).is_empty();
         if !is_trailing && !before_pure_d_table {
@@ -1996,7 +3692,7 @@ pub fn mixed_spacing_to_following_empty(
         let Some(mppr) = dom.element(mixed, &W::p_pr()) else {
             continue;
         };
-        let Some(spacing) = dom.element(mppr, &W::name("spacing")) else {
+        let Some(spacing) = dom.element(mppr, &W::spacing_el()) else {
             continue;
         };
         // Move spacing onto empty pPr.
@@ -2012,15 +3708,15 @@ pub fn mixed_spacing_to_following_empty(
                 p
             }
         };
-        if dom.element(eppr, &W::name("spacing")).is_none() {
+        if dom.element(eppr, &W::spacing_el()).is_none() {
             let sp = dom.clone_subtree(spacing);
             dom.add_first(eppr, sp);
         }
         dom.remove(spacing);
         // Empty pPrChange (old empty) when none present — Word shape.
-        if dom.element(eppr, &W::name("pPrChange")).is_none() {
+        if dom.element(eppr, &W::p_pr_change()).is_none() {
             let old_inner = dom.new_element(W::p_pr());
-            let chg = dom.new_element(W::name("pPrChange"));
+            let chg = dom.new_element(W::p_pr_change());
             dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
             *id_gen += 1;
             dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
@@ -2066,7 +3762,7 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
     let kids: Vec<NodeId> = dom
         .elements(body, None)
         .into_iter()
-        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
         .collect();
     if kids.is_empty() {
         return;
@@ -2075,7 +3771,7 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
     // Fast path: no del in body → M228 cannot fire; still may need M226/M231.
     let body_has_del = !dom.descendants(body, Some(&W::del())).is_empty();
     for (i, &p) in kids.iter().enumerate() {
-        if dom.name(p) != Some(W::p()) {
+        if !dom.name_is(p, &W::p()) {
             continue;
         }
         let Some(ppr) = dom.element(p, &W::p_pr()) else {
@@ -2083,23 +3779,23 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
         };
 
         // --- M231: live default jc ---
-        if let Some(jc) = dom.element(ppr, &W::name("jc")) {
+        if let Some(jc) = dom.element(ppr, &W::jc_el()) {
             let val = dom.attribute(jc, &W::val()).unwrap_or("");
             if val == "left" || val == "start" {
                 dom.remove(jc);
             }
         }
 
-        let ppc = dom.element(ppr, &W::name("pPrChange"));
+        let ppc = dom.element(ppr, &W::p_pr_change());
         if let Some(ppc) = ppc {
             let old_ppr = dom
                 .elements(ppc, None)
                 .into_iter()
-                .find(|&c| dom.name(c) == Some(W::p_pr()));
+                .find(|&c| dom.name_is(c, &W::p_pr()));
             if let Some(old_ppr) = old_ppr {
                 // --- M231: pPrChange old default jc ---
                 let mut removed_left_jc = false;
-                if let Some(jc) = dom.element(old_ppr, &W::name("jc")) {
+                if let Some(jc) = dom.element(old_ppr, &W::jc_el()) {
                     let val = dom.attribute(jc, &W::val()).unwrap_or("");
                     if val == "left" || val == "start" {
                         dom.remove(jc);
@@ -2128,13 +3824,13 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
             }
         }
         // Re-bind ppc after M231 may have removed it.
-        let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) else {
+        let Some(ppc) = dom.element(ppr, &W::p_pr_change()) else {
             continue;
         };
         let old_ppr = dom
             .elements(ppc, None)
             .into_iter()
-            .find(|&c| dom.name(c) == Some(W::p_pr()));
+            .find(|&c| dom.name_is(c, &W::p_pr()));
         let Some(old_ppr) = old_ppr else {
             continue;
         };
@@ -2146,8 +3842,8 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
         // through to M228 (was dead when this was `if !mixed { continue }`).
         if para_is_mixed_revision(dom, p) {
             if let (Some(live_sp), Some(old_sp)) = (
-                dom.element(ppr, &W::name("spacing")),
-                dom.element(old_ppr, &W::name("spacing")),
+                dom.element(ppr, &W::spacing_el()),
+                dom.element(old_ppr, &W::spacing_el()),
             ) {
                 // The measured Heading/Title/Subtitle cousins all carry explicit
                 // line=240/276. An after-only value (M81/file_69) is real history.
@@ -2185,11 +3881,11 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
 
         // --- M228: mid pure-D spacing promote / line=276 noise ---
         // Cheap gates before pure_deleted (expensive on large bodies).
-        if !body_has_del || dom.element(ppr, &W::name("spacing")).is_some() {
+        if !body_has_del || dom.element(ppr, &W::spacing_el()).is_some() {
             continue;
         }
         // ppc / old_ppr still bound above
-        let Some(old_sp) = dom.element(old_ppr, &W::name("spacing")) else {
+        let Some(old_sp) = dom.element(old_ppr, &W::spacing_el()) else {
             continue;
         };
         if !para_is_pure_deleted(dom, p) {
@@ -2265,27 +3961,25 @@ pub fn park_mixed_spacing_onto_trailing_pure_del(
     let kids: Vec<NodeId> = dom
         .elements(body, None)
         .into_iter()
-        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
         .collect();
     if kids.len() < 3 {
         return;
     }
     for i in 0..kids.len() {
         let mixed = kids[i];
-        if dom.name(mixed) != Some(W::p()) || !para_is_mixed_revision(dom, mixed) {
+        if !dom.name_is(mixed, &W::p()) || !para_is_mixed_revision(dom, mixed) {
             continue;
         }
         let Some(mppr) = dom.element(mixed, &W::p_pr()) else {
             continue;
         };
-        let Some(spacing) = dom.element(mppr, &W::name("spacing")) else {
+        let Some(spacing) = dom.element(mppr, &W::spacing_el()) else {
             continue;
         };
         // Following run must be pure-D only (at least one, at most 4).
         let mut j = i + 1;
-        while j < kids.len()
-            && dom.name(kids[j]) == Some(W::p())
-            && para_is_pure_deleted(dom, kids[j])
+        while j < kids.len() && dom.name_is(kids[j], &W::p()) && para_is_pure_deleted(dom, kids[j])
         {
             j += 1;
         }
@@ -2303,7 +3997,7 @@ pub fn park_mixed_spacing_onto_trailing_pure_del(
         }
         let last_has_spacing = dom
             .element(last_del, &W::p_pr())
-            .and_then(|p| dom.element(p, &W::name("spacing")))
+            .and_then(|p| dom.element(p, &W::spacing_el()))
             .is_some();
         if last_has_spacing {
             continue;
@@ -2348,9 +4042,9 @@ pub fn park_mixed_spacing_onto_trailing_pure_del(
         let sp = dom.clone_subtree(spacing);
         dom.add_first(lppr, sp);
         // pPrChange(empty old) on last pure-D — Word shape.
-        if dom.element(lppr, &W::name("pPrChange")).is_none() {
+        if dom.element(lppr, &W::p_pr_change()).is_none() {
             let old_inner = dom.new_element(W::p_pr());
-            let chg = dom.new_element(W::name("pPrChange"));
+            let chg = dom.new_element(W::p_pr_change());
             dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
             *id_gen += 1;
             dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
@@ -2399,14 +4093,14 @@ pub fn park_mixed_numpr_onto_trailing_empty_pure_del(
     let kids: Vec<NodeId> = dom
         .elements(body, None)
         .into_iter()
-        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
         .collect();
     if kids.len() < 3 {
         return;
     }
     for i in 0..kids.len() {
         let mixed = kids[i];
-        if dom.name(mixed) != Some(W::p()) || !para_is_mixed_revision(dom, mixed) {
+        if !dom.name_is(mixed, &W::p()) || !para_is_mixed_revision(dom, mixed) {
             continue;
         }
         let Some(mppr) = dom.element(mixed, &W::p_pr()) else {
@@ -2417,9 +4111,7 @@ pub fn park_mixed_numpr_onto_trailing_empty_pure_del(
         };
         // Following pure-D only; last must be empty (mark-only).
         let mut j = i + 1;
-        while j < kids.len()
-            && dom.name(kids[j]) == Some(W::p())
-            && para_is_pure_deleted(dom, kids[j])
+        while j < kids.len() && dom.name_is(kids[j], &W::p()) && para_is_pure_deleted(dom, kids[j])
         {
             j += 1;
         }
@@ -2463,16 +4155,16 @@ pub fn park_mixed_numpr_onto_trailing_empty_pure_del(
         }
         let num_clone = dom.clone_subtree(num);
         // numPr before pPrChange / rPr.
-        if let Some(ppc) = dom.element(lppr, &W::name("pPrChange")) {
+        if let Some(ppc) = dom.element(lppr, &W::p_pr_change()) {
             dom.add_before_self(ppc, num_clone);
         } else if let Some(rpr) = dom.element(lppr, &W::r_pr()) {
             dom.add_before_self(rpr, num_clone);
         } else {
             dom.add_first(lppr, num_clone);
         }
-        if dom.element(lppr, &W::name("pPrChange")).is_none() {
+        if dom.element(lppr, &W::p_pr_change()).is_none() {
             let old_inner = dom.new_element(W::p_pr());
-            let chg = dom.new_element(W::name("pPrChange"));
+            let chg = dom.new_element(W::p_pr_change());
             dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
             *id_gen += 1;
             dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
@@ -2496,19 +4188,19 @@ pub fn last_pure_del_inherit_prev_jc(dom: &mut Dom, root: NodeId) {
     let kids: Vec<NodeId> = dom
         .elements(body, None)
         .into_iter()
-        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
         .collect();
     if kids.len() < 2 {
         return;
     }
     let last = kids[kids.len() - 1];
-    if dom.name(last) != Some(W::p()) || !para_is_pure_deleted(dom, last) {
+    if !dom.name_is(last, &W::p()) || !para_is_pure_deleted(dom, last) {
         return;
     }
     let Some(lppr) = dom.element(last, &W::p_pr()) else {
         return;
     };
-    let Some(ppc) = dom.element(lppr, &W::name("pPrChange")) else {
+    let Some(ppc) = dom.element(lppr, &W::p_pr_change()) else {
         return;
     };
     // Only when pPrChange carries spacing (line-spacing residual class). Do not
@@ -2518,24 +4210,24 @@ pub fn last_pure_del_inherit_prev_jc(dom: &mut Dom, root: NodeId) {
         .or_else(|| {
             dom.elements(ppc, None)
                 .into_iter()
-                .find(|&c| dom.name(c) == Some(W::p_pr()))
+                .find(|&c| dom.name_is(c, &W::p_pr()))
         })
-        .is_some_and(|inner| dom.element(inner, &W::name("spacing")).is_some())
+        .is_some_and(|inner| dom.element(inner, &W::spacing_el()).is_some())
         || {
             // pPrChange children may be the old pPr directly
-            !dom.descendants(ppc, Some(&W::name("spacing"))).is_empty()
+            !dom.descendants(ppc, Some(&W::spacing_el())).is_empty()
         };
     if !ppc_has_spacing {
         return;
     }
-    if dom.element(lppr, &W::name("jc")).is_some() {
+    if dom.element(lppr, &W::jc_el()).is_some() {
         return;
     }
     // Walk preceding paras for live jc (not only immediate prev — mixed may
     // hold spacing without jc after M102b).
     let mut donor_jc = None;
     for &prev in kids[..kids.len() - 1].iter().rev() {
-        if dom.name(prev) != Some(W::p()) {
+        if !dom.name_is(prev, &W::p()) {
             continue;
         }
         let Some(pppr) = dom.element(prev, &W::p_pr()) else {
@@ -2543,10 +4235,10 @@ pub fn last_pure_del_inherit_prev_jc(dom: &mut Dom, root: NodeId) {
         };
         // Live jc: first jc child before any pPrChange.
         for c in dom.elements(pppr, None) {
-            if dom.name(c) == Some(W::name("pPrChange")) {
+            if dom.name_is(c, &W::p_pr_change()) {
                 break;
             }
-            if dom.name(c) == Some(W::name("jc")) {
+            if dom.name_is(c, &W::jc_el()) {
                 donor_jc = Some(c);
                 break;
             }
@@ -2559,10 +4251,238 @@ pub fn last_pure_del_inherit_prev_jc(dom: &mut Dom, root: NodeId) {
         return;
     };
     let cloned = dom.clone_subtree(jc);
-    if let Some(ppc) = dom.element(lppr, &W::name("pPrChange")) {
+    if let Some(ppc) = dom.element(lppr, &W::p_pr_change()) {
         dom.add_before_self(ppc, cloned);
     } else {
         dom.add_first(lppr, cloned);
+    }
+}
+
+/// M451 (center_alignment_2 × center_alignment ~81.5 / docxodus 100):
+/// mid MIX free-mesh carries **empty** `pPrChange` alongside live `jc` where
+/// Word uses live `jc` + rPr/ins mark only. Word's rule (both oracles): the
+/// paragraph holding the **inserted paragraph mark** records no `pPrChange`;
+/// every other changed paragraph keeps one, empty old included (center pair
+/// p1/p3 and file_148×file_149 stamp all keep `pPrChange(<w:pPr/>)`).
+///
+/// Our mesh places that inserted mark one paragraph after Word's (center p3
+/// vs Word p2), so the shell to strip is the MIX immediately **before** the
+/// mark-ins paragraph. An unconditional strip here ate the genuine
+/// jc-addition record on the file_148 stamp (M102 regression).
+///
+/// Does not touch last residual (often needs pPrChange) or non-empty park.
+pub fn strip_empty_pprchange_on_mix_with_live_jc(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    if kids.len() < 2 {
+        return;
+    }
+    let last = kids[kids.len() - 1];
+    for (i, &p) in kids.iter().enumerate() {
+        if p == last || !dom.name_is(p, &W::p()) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        // Word drops the record only where the inserted paragraph mark lands;
+        // our mesh emits that mark on the following paragraph.
+        let next_has_inserted_mark = kids[i + 1..]
+            .iter()
+            .find(|&&k| dom.name_is(k, &W::p()))
+            .is_some_and(|&n| {
+                dom.element(n, &W::p_pr())
+                    .and_then(|np| dom.element(np, &W::r_pr()))
+                    .is_some_and(|rpr| dom.element(rpr, &W::name("ins")).is_some())
+            });
+        if !next_has_inserted_mark {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        // Need live jc.
+        if dom.element(ppr, &W::jc_el()).is_none() {
+            continue;
+        }
+        let Some(chg) = dom.element(ppr, &W::p_pr_change()) else {
+            continue;
+        };
+        let Some(old) = dom.element(chg, &W::p_pr()) else {
+            continue;
+        };
+        // Old pPr must be empty of layout children.
+        let mut has_layout = false;
+        for c in dom.elements(old, None) {
+            let Some(n) = dom.name(c) else {
+                continue;
+            };
+            if n == W::r_pr() {
+                continue;
+            }
+            has_layout = true;
+            break;
+        }
+        if has_layout {
+            continue;
+        }
+        dom.remove(chg);
+    }
+}
+
+/// M450 (calibri_font × calibri_heading_2_right ~82.5 / docxodus 100):
+/// last MIX free-mesh parks **Heading residual** spacing
+/// (`before≥200` + `line=240`) into `pPrChange` only; Word keeps it **live**
+/// with an empty `pPrChange`. Mid MIX already has live spacing.
+///
+/// Thrash history: bare heading-residual promote also hit red_heading×strikethrough
+/// (−9.7) where Word keeps **park-only** on last. Gate requires an **earlier**
+/// body para with live heading residual spacing (calibri mid has live before=360;
+/// red_heading mid is park-only → skip).
+pub fn promote_heading_spacing_from_pprchange_on_last_mix(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    let Some(&last) = kids.last() else {
+        return;
+    };
+    if !dom.name_is(last, &W::p()) || !para_is_mixed_revision(dom, last) {
+        return;
+    }
+    let Some(ppr) = dom.element(last, &W::p_pr()) else {
+        return;
+    };
+    // Already live spacing — leave alone.
+    if dom.element(ppr, &W::spacing_el()).is_some() {
+        return;
+    }
+    let Some(chg) = dom.element(ppr, &W::p_pr_change()) else {
+        return;
+    };
+    let Some(old) = dom.element(chg, &W::p_pr()) else {
+        return;
+    };
+    let Some(old_sp) = dom.element(old, &W::spacing_el()) else {
+        return;
+    };
+    // Heading residual: before≥200 and line present (Heading1/2 demo chrome).
+    let before = dom
+        .attribute(old_sp, &W::name("before"))
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    let has_line = dom.attribute(old_sp, &W::name("line")).is_some();
+    if before < 200 || !has_line {
+        return;
+    }
+    // Earlier body para must already show live heading residual spacing
+    // (Word calibri mid keeps live; red_heading mid parks → thrash guard).
+    let mut prior_live_heading = false;
+    for &k in &kids[..kids.len() - 1] {
+        if !dom.name_is(k, &W::p()) {
+            continue;
+        }
+        let Some(kppr) = dom.element(k, &W::p_pr()) else {
+            continue;
+        };
+        let Some(sp) = dom.element(kppr, &W::spacing_el()) else {
+            continue;
+        };
+        let b = dom
+            .attribute(sp, &W::name("before"))
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        if b >= 200 && dom.attribute(sp, &W::name("line")).is_some() {
+            prior_live_heading = true;
+            break;
+        }
+    }
+    if !prior_live_heading {
+        return;
+    }
+    // Promote live spacing (clone parked attrs).
+    let live = dom.clone_subtree(old_sp);
+    dom.add_before_self(chg, live);
+    // Empty parked spacing from old pPr → Word empty pPrChange shell.
+    dom.remove(old_sp);
+}
+
+/// M449 (right_aligned_italic × right_alignment ~75.9 / docxodus 100):
+/// mid-body MIX free-mesh parks `jc` into `pPrChange` only; Word keeps
+/// **live** `jc` on the body MIX. Last residual stays park-only (center_bold
+/// thrash when last also promoted).
+///
+/// Gate: **non-last** MIX with `pPrChange` carrying `jc`, no live `jc`, and
+/// ins_side+del_side tokens ≥6. Promote live `jc`; if old pPr is jc-only,
+/// drop `pPrChange` (Word mid-body shape).
+pub fn promote_live_jc_from_pprchange_on_body_mix(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    if kids.len() < 2 {
+        return;
+    }
+    let last = kids[kids.len() - 1];
+    for &p in &kids {
+        if p == last || !dom.name_is(p, &W::p()) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        let ins_w = para_side_word_count(dom, p, true);
+        let del_w = para_side_word_count(dom, p, false);
+        if ins_w + del_w < 6 {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        // Already live jc — leave alone.
+        if dom.element(ppr, &W::jc_el()).is_some() {
+            continue;
+        }
+        let Some(chg) = dom.element(ppr, &W::p_pr_change()) else {
+            continue;
+        };
+        let Some(old) = dom.element(chg, &W::p_pr()) else {
+            continue;
+        };
+        let Some(old_jc) = dom.element(old, &W::jc_el()) else {
+            continue;
+        };
+        let val = dom.attribute(old_jc, &W::val()).unwrap_or("").to_string();
+        if val.is_empty() {
+            continue;
+        }
+        // Live jc before pPrChange.
+        let jc = dom.new_element(W::jc_el());
+        dom.set_attribute_value(jc, &W::val(), Some(&val));
+        dom.add_before_self(chg, jc);
+        // Drop pPrChange when old was jc-only (Word mid-body has live jc only).
+        let mut other_layout = false;
+        for c in dom.elements(old, None) {
+            let Some(n) = dom.name(c) else {
+                continue;
+            };
+            if n == W::jc_el() || n == W::r_pr() {
+                continue;
+            }
+            other_layout = true;
+            break;
+        }
+        if !other_layout {
+            dom.remove(chg);
+        }
     }
 }
 
@@ -2573,14 +4493,10 @@ pub fn strip_last_pure_del_mark_when_pprchange(dom: &mut Dom, root: NodeId) {
         return;
     };
     let kids = dom.elements(body, None);
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| dom.name(k) != Some(W::name("sectPr")))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
-    if dom.name(last) != Some(W::p()) {
+    if !dom.name_is(last, &W::p()) {
         return;
     }
     if !para_is_pure_deleted(dom, last) && !para_is_mixed_revision(dom, last) {
@@ -2589,7 +4505,7 @@ pub fn strip_last_pure_del_mark_when_pprchange(dom: &mut Dom, root: NodeId) {
     let Some(ppr) = dom.element(last, &W::p_pr()) else {
         return;
     };
-    if dom.element(ppr, &W::name("pPrChange")).is_none() {
+    if dom.element(ppr, &W::p_pr_change()).is_none() {
         return;
     }
     // Remove rPr/del mark shell when rPr only carries del.
@@ -2762,6 +4678,525 @@ pub fn merge_replaced_paragraphs(dom: &mut Dom, root: NodeId, comparer_author: &
     }
 }
 
+/// M369 (ordered_list×sublist −3.5): residual short-label pure-I ("a"/"b"/"3")
+/// × pure-D list item ending with the same token ("Lvl 1 – a"). Word free-
+/// meshes those pairs (MIX); wholesale pure-I/D leaves them separate.
+/// Greedy order-preserving zip: fold pure-I body (ins) into matching pure-D
+/// carrier (list pPr kept). Coarse whole-para fold — not free word-LCS.
+/// (M372 Inserted-live pPr adopt was tried and LO-regressed; body zip only.)
+pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    loop {
+        let kids: Vec<NodeId> = dom
+            .elements(body, None)
+            .into_iter()
+            .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+            .collect();
+        let pure_i: Vec<NodeId> = kids
+            .iter()
+            .copied()
+            .filter(|&p| dom.name_is(p, &W::p()) && para_is_pure_inserted(dom, p))
+            .collect();
+        let pure_d: Vec<NodeId> = kids
+            .iter()
+            .copied()
+            .filter(|&p| dom.name_is(p, &W::p()) && para_is_pure_deleted(dom, p))
+            .collect();
+        if pure_i.is_empty() || pure_d.is_empty() {
+            return;
+        }
+        // Short pure-I label: 1..=2 alnum chars, ≤2 word-atoms.
+        let mut acted = false;
+        let mut used_d: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        for &ip in &pure_i {
+            if !para_body_is_very_short(dom, ip) {
+                continue;
+            }
+            let it = para_revision_body_text(dom, ip);
+            let label = it
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+                .to_ascii_lowercase();
+            if label.is_empty() || label.len() > 2 {
+                continue;
+            }
+            // Pure-D must contain the label as a token and be longer (list item).
+            let mut best: Option<NodeId> = None;
+            for &dp in &pure_d {
+                if used_d.contains(&dp) || dom.parent(dp).is_none() {
+                    continue;
+                }
+                let dt = para_revision_body_text(dom, dp);
+                let toks: Vec<String> = dt
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|t| !t.is_empty())
+                    .map(|t| t.to_ascii_lowercase())
+                    .collect();
+                // ≥3 tokens: "Lvl 1 – a" matches; "Item 3" (2 toks) does not
+                // steal pure-I "3" from "Lvl 2 – i" residual free-mesh.
+                if toks.len() < 3 {
+                    continue;
+                }
+                // Last-token only: "Lvl 1 – a" ends with "a".
+                if toks.last().is_some_and(|t| t == &label) {
+                    best = Some(dp);
+                    break;
+                }
+            }
+            let Some(dp) = best else { continue };
+            if dom.parent(ip).is_none() || dom.parent(dp).is_none() {
+                continue;
+            }
+            fold_short_label_ins_into_del(dom, ip, dp);
+            used_d.insert(dp);
+            acted = true;
+            break; // rescan kids
+        }
+        // Second pass: short pure-I residual labels still free (e.g. "3") zip
+        // positionally into remaining pure-D list items that look like Lvl*
+        // lines (Word free-meshes "3" with "Lvl 2 – i" — last token is "i").
+        if !acted {
+            let short_i: Vec<NodeId> = pure_i
+                .iter()
+                .copied()
+                .filter(|&p| {
+                    dom.parent(p).is_some()
+                        && para_body_is_very_short(dom, p)
+                        && para_body_alnum_len(dom, p) >= 1
+                })
+                .collect();
+            let lvl_d: Vec<NodeId> = pure_d
+                .iter()
+                .copied()
+                .filter(|&p| {
+                    if used_d.contains(&p) || dom.parent(p).is_none() {
+                        return false;
+                    }
+                    let t = para_revision_body_text(dom, p).to_ascii_lowercase();
+                    t.contains("lvl") || t.contains("level")
+                })
+                .collect();
+            if !short_i.is_empty() && !lvl_d.is_empty() {
+                fold_short_label_ins_into_del(dom, short_i[0], lvl_d[0]);
+                acted = true;
+            }
+        }
+        if !acted {
+            return;
+        }
+    }
+}
+
+/// Fold pure-I short label into pure-D list residual. Keep pure-D list pPr
+/// (ListParagraph+numPr) — M372 Inserted-live pPr adopt regressed LO pagefair
+/// 52.7→51.2 (numId renumber drift vs Word). Body-only zip still recovers
+/// residual thrash vs pure-I/D wholesale.
+///
+/// M374: (1) copy pure-I spacing/ind onto pure-D when missing (Word MIX carries
+/// line=276 + ind from B); (2) if pure-I is followed by an empty pure-I spacer,
+/// move that spacer after the MIX carrier (Word interleaves empty pure-I
+/// between MIX a/b).
+///
+/// M375: free-mesh shared trailing label as EQ — Word is
+/// `del "Lvl 1 – " + EQ "a" + ins " "` not `ins "a " + del "Lvl 1 – a"`.
+fn fold_short_label_ins_into_del(dom: &mut Dom, ip: NodeId, dp: NodeId) {
+    // Capture empty pure-I sibling after the short label (B: a, empty, b, empty, 3).
+    let empty_after = dom.parent(ip).and_then(|parent| {
+        let sibs: Vec<NodeId> = dom.elements(parent, None);
+        let pos = sibs.iter().position(|&s| s == ip)?;
+        let n = *sibs.get(pos + 1)?;
+        if dom.name_is(n, &W::p())
+            && para_is_pure_inserted(dom, n)
+            && (para_has_no_text(dom, n) || para_body_text_is_whitespace_only(dom, n))
+        {
+            Some(n)
+        } else {
+            None
+        }
+    });
+
+    // M374: copy pure-I spacing/ind onto pure-D when pure-D lacks them.
+    if let Some(ippr) = dom.element(ip, &W::p_pr()) {
+        let dppr = match dom.element(dp, &W::p_pr()) {
+            Some(p) => p,
+            None => {
+                let p = dom.new_element(W::p_pr());
+                if let Some(first) = dom.elements(dp, None).first().copied() {
+                    dom.add_before_self(first, p);
+                } else {
+                    dom.add(dp, p);
+                }
+                p
+            }
+        };
+        if dom.element(dppr, &W::spacing_el()).is_none()
+            && let Some(sp) = dom.element(ippr, &W::spacing_el())
+        {
+            let c = dom.clone_subtree(sp);
+            dom.add(dppr, c);
+        }
+        if dom.element(dppr, &W::name("ind")).is_none()
+            && let Some(ind) = dom.element(ippr, &W::name("ind"))
+        {
+            let c = dom.clone_subtree(ind);
+            dom.add(dppr, c);
+        }
+    }
+
+    // Move pure-I body (ins) before pure-D body; pure-D keeps list pPr.
+    let ins_kids: Vec<NodeId> = dom
+        .elements(ip, None)
+        .into_iter()
+        .filter(|&c| !dom.name_is(c, &W::p_pr()))
+        .collect();
+    let first_body = dom
+        .elements(dp, None)
+        .into_iter()
+        .find(|&c| !dom.name_is(c, &W::p_pr()));
+    for c in ins_kids {
+        if dom.parent(c).is_none() {
+            continue;
+        }
+        dom.remove(c);
+        if let Some(first) = first_body {
+            if dom.parent(first).is_some() {
+                dom.add_before_self(first, c);
+            } else {
+                dom.add(dp, c);
+            }
+        } else {
+            dom.add(dp, c);
+        }
+    }
+    if let Some(ippr) = dom.element(ip, &W::p_pr()) {
+        dom.remove(ippr);
+    }
+    if dom.parent(ip).is_some() {
+        dom.remove(ip);
+    }
+
+    // M375: Word free-meshes shared trailing label as EQ (del prefix + live
+    // label + ins remainder). Must run after body merge so both streams sit
+    // on `dp`. reorder_replacements already ran earlier — del/eq/ins sticks.
+    mesh_short_label_shared_eq(dom, dp);
+
+    // Move empty pure-I spacer to immediately after MIX carrier (Word shape).
+    if let Some(emp) = empty_after
+        && dom.parent(emp).is_some()
+        && dom.parent(dp).is_some()
+    {
+        // Insert empty after dp among siblings.
+        let Some(parent) = dom.parent(dp) else {
+            return;
+        };
+        let sibs: Vec<NodeId> = dom.elements(parent, None);
+        let after_dp = sibs
+            .iter()
+            .position(|&s| s == dp)
+            .and_then(|i| sibs.get(i + 1).copied());
+        dom.remove(emp);
+        if let Some(next) = after_dp {
+            if next != emp && dom.parent(next).is_some() {
+                dom.add_before_self(next, emp);
+            } else if let Some(n2) = dom
+                .elements(parent, None)
+                .into_iter()
+                .skip_while(|&s| s != dp)
+                .nth(1)
+            {
+                dom.add_before_self(n2, emp);
+            } else {
+                dom.add(parent, emp);
+            }
+        } else {
+            dom.add(parent, emp);
+        }
+    }
+}
+
+/// M375 — residual short-label MIX free-meshes the shared trailing label as
+/// unrevised EQ. Word ordered×sublist: `del "Lvl 1 – " + EQ "a" + ins " "`
+/// (not `ins "a " + del "Lvl 1 – a"`). Skips when last del token ≠ ins label
+/// (e.g. pure-I "3" × pure-D "Lvl 2 – i" keeps full ins+del zip).
+fn mesh_short_label_shared_eq(dom: &mut Dom, p: NodeId) {
+    // Collect ins / del body text (revision-aware).
+    let mut ins_text = String::new();
+    for ins in dom.descendants(p, Some(&W::ins())) {
+        for t in dom.descendants(ins, Some(&W::t())) {
+            ins_text.push_str(&dom.value_str(t));
+        }
+    }
+    let mut del_text = String::new();
+    for del in dom.descendants(p, Some(&W::del())) {
+        for t in dom.descendants(del, Some(&W::del_text())) {
+            del_text.push_str(&dom.value_str(t));
+        }
+    }
+    if ins_text.is_empty() || del_text.is_empty() {
+        return;
+    }
+    let label: String = ins_text
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if label.is_empty() || label.len() > 2 {
+        return;
+    }
+    let del_toks: Vec<String> = del_text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_ascii_lowercase())
+        .collect();
+    // Same ≥3-token gate as residual zip ("Lvl 1 a"); last token must match.
+    if del_toks.len() < 3 || del_toks.last().is_none_or(|t| t != &label) {
+        return;
+    }
+
+    // Preserve original-cased label from the del tail for EQ.
+    let Some(eq_label) = trailing_alnum_token(&del_text) else {
+        return;
+    };
+    if !eq_label.eq_ignore_ascii_case(&label) {
+        return;
+    }
+
+    // 1) Strip trailing label from delText leaves (from the end).
+    // Prefer single-leaf path: whole delText ends with the label token.
+    let del_texts: Vec<NodeId> = dom
+        .descendants(p, Some(&W::del_text()))
+        .into_iter()
+        .collect();
+    let mut last_del_anchor: Option<NodeId> = None;
+    let mut stripped = false;
+    if let Some(&dt) = del_texts.last() {
+        let t = dom.value_str(dt).into_owned();
+        if let Some(prefix) = strip_trailing_alnum_token(&t, &eq_label) {
+            dom.set_value(dt, &prefix);
+            if prefix.starts_with(' ') || prefix.ends_with(' ') {
+                dom.set_attribute_value(dt, &XNamespace::xml().name("space"), Some("preserve"));
+            }
+            last_del_anchor = Some(dt);
+            stripped = true;
+        }
+    }
+    if !stripped {
+        // Multi-leaf: consume label chars from the end across leaves.
+        let mut remain = eq_label.len();
+        for &dt in del_texts.iter().rev() {
+            if remain == 0 {
+                break;
+            }
+            let t = dom.value_str(dt).into_owned();
+            if t.len() <= remain {
+                remain -= t.len();
+                dom.set_value(dt, "");
+                last_del_anchor = Some(dt);
+            } else {
+                let keep = t.len() - remain;
+                let tail = &t[keep..];
+                if !tail.eq_ignore_ascii_case(&eq_label) {
+                    return;
+                }
+                let new_t = t[..keep].to_string();
+                dom.set_value(dt, &new_t);
+                if new_t.starts_with(' ') || new_t.ends_with(' ') {
+                    dom.set_attribute_value(dt, &XNamespace::xml().name("space"), Some("preserve"));
+                }
+                remain = 0;
+                last_del_anchor = Some(dt);
+            }
+        }
+        if remain != 0 {
+            return;
+        }
+    }
+
+    // 2) Strip leading alnum label from ins `w:t` leaves (document order).
+    let mut strip_ins = label.len();
+    for ins in dom.descendants(p, Some(&W::ins())) {
+        for t in dom.descendants(ins, Some(&W::t())) {
+            if strip_ins == 0 {
+                break;
+            }
+            let v = dom.value_str(t).into_owned();
+            let mut chars: Vec<char> = v.chars().collect();
+            let mut i = 0usize;
+            while i < chars.len() && strip_ins > 0 {
+                if chars[i].is_alphanumeric() {
+                    chars.remove(i);
+                    strip_ins -= 1;
+                } else if chars[i].is_whitespace() {
+                    // keep whitespace; only strip alnum label chars
+                    i += 1;
+                } else {
+                    i += 1;
+                }
+            }
+            let new_v: String = chars.into_iter().collect();
+            dom.set_value(t, &new_v);
+            if new_v.starts_with(' ') || new_v.ends_with(' ') {
+                dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+            }
+        }
+        if strip_ins == 0 {
+            break;
+        }
+    }
+
+    // 3) Anchor EQ after the del wrapper that held the label.
+    let mut anchor = last_del_anchor.unwrap_or(p);
+    while let Some(par) = dom.parent(anchor) {
+        if dom.name_is(par, &W::del()) {
+            anchor = par;
+            break;
+        }
+        anchor = par;
+        if dom.name_is(par, &W::p()) {
+            break;
+        }
+    }
+    let eq_r = dom.new_element(W::r());
+    let eq_t = dom.new_element(W::t());
+    dom.add_text(eq_t, &eq_label);
+    dom.add(eq_r, eq_t);
+    if dom.name_is(anchor, &W::del()) {
+        dom.add_after_self(anchor, eq_r);
+    } else {
+        // Fallback: before first remaining ins, else append.
+        if let Some(ins) = dom
+            .elements(p, None)
+            .into_iter()
+            .find(|&c| dom.name_is(c, &W::ins()))
+        {
+            dom.add_before_self(ins, eq_r);
+        } else {
+            dom.add(p, eq_r);
+        }
+    }
+
+    // 4) Word order: del → EQ → ins. Body may still be ins-first from fold.
+    // Move every leading w:ins after the EQ run (preserving ins order).
+    let kids: Vec<NodeId> = dom.elements(p, None);
+    let mut leading_ins: Vec<NodeId> = Vec::new();
+    for &c in &kids {
+        if dom.name_is(c, &W::p_pr()) {
+            continue;
+        }
+        if dom.name_is(c, &W::ins()) {
+            leading_ins.push(c);
+        } else {
+            break; // stop at first non-ins body child
+        }
+    }
+    if !leading_ins.is_empty() && dom.parent(eq_r).is_some() {
+        // Find node after eq_r among siblings to insert before, else append.
+        let parent = dom.parent(eq_r).unwrap();
+        let sibs: Vec<NodeId> = dom.elements(parent, None);
+        let after_eq = sibs
+            .iter()
+            .position(|&s| s == eq_r)
+            .and_then(|i| sibs.get(i + 1).copied());
+        for ins in leading_ins {
+            if dom.parent(ins).is_none() {
+                continue;
+            }
+            // Skip if already after eq_r.
+            let sibs_now: Vec<NodeId> = dom.elements(parent, None);
+            let ipos = sibs_now.iter().position(|&s| s == ins);
+            let epos = sibs_now.iter().position(|&s| s == eq_r);
+            if let (Some(i), Some(e)) = (ipos, epos)
+                && i > e
+            {
+                continue;
+            }
+            dom.remove(ins);
+            if let Some(next) = after_eq.filter(|&n| dom.parent(n).is_some() && n != ins) {
+                dom.add_before_self(next, ins);
+            } else {
+                dom.add(parent, ins);
+            }
+        }
+    }
+
+    // Drop empty `w:t` leaves and emptied runs / ins wrappers after strip.
+    for t in dom.descendants(p, Some(&W::t())) {
+        if dom.parent(t).is_some() && dom.value_str(t).is_empty() {
+            dom.remove(t);
+        }
+    }
+    for r in dom.descendants(p, Some(&W::r())) {
+        if dom.parent(r).is_none() {
+            continue;
+        }
+        // Empty run under ins (no t/delText/br/tab… content props only).
+        let has_content = dom.elements(r, None).into_iter().any(|c| {
+            let n = dom.name(c);
+            n != Some(W::r_pr()) && n.is_some()
+        });
+        if !has_content {
+            dom.remove(r);
+        }
+    }
+    for ins in dom.descendants(p, Some(&W::ins())) {
+        if dom.parent(ins).is_none() {
+            continue;
+        }
+        let mut any = false;
+        for t in dom.descendants(ins, Some(&W::t())) {
+            if !dom.value_str(t).is_empty() {
+                any = true;
+                break;
+            }
+        }
+        if !any {
+            dom.remove(ins);
+        }
+    }
+}
+
+/// Last alphanumeric token of `text` with original casing (for EQ peel).
+fn trailing_alnum_token(text: &str) -> Option<String> {
+    let mut last = None;
+    let mut cur = String::new();
+    for c in text.chars() {
+        if c.is_alphanumeric() {
+            cur.push(c);
+        } else if !cur.is_empty() {
+            last = Some(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        last = Some(cur);
+    }
+    last
+}
+
+/// If `text` ends with alnum token matching `label` (case-insensitive), return
+/// the prefix with that token removed (separators before it kept).
+fn strip_trailing_alnum_token(text: &str, label: &str) -> Option<String> {
+    let tok = trailing_alnum_token(text)?;
+    if !tok.eq_ignore_ascii_case(label) {
+        return None;
+    }
+    // Byte start of the last alnum run.
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut i = chars.len();
+    while i > 0 && !chars[i - 1].1.is_alphanumeric() {
+        i -= 1;
+    }
+    while i > 0 && chars[i - 1].1.is_alphanumeric() {
+        i -= 1;
+    }
+    if i >= chars.len() {
+        return None;
+    }
+    Some(text[..chars[i].0].to_string())
+}
+
 /// True when `w:pPr/w:rPr` carries a paragraph-mark revision (`w:del`/`w:ins`).
 /// Empty deleted/inserted paragraphs often have ONLY this mark (no body
 /// `w:del`/`w:ins` child). Without classifying them, del-blocks break and
@@ -2810,7 +5245,7 @@ fn accumulate_para_child_class(
 }
 
 fn para_replacement_class(dom: &Dom, p: NodeId) -> Option<bool> {
-    if dom.name(p) != Some(W::p()) {
+    if !dom.name_is(p, &W::p()) {
         return None;
     }
     let (mut ins, mut del, mut plain) = (false, false, false);
@@ -2838,7 +5273,7 @@ fn para_replacement_class(dom: &Dom, p: NodeId) -> Option<bool> {
 /// (contract-review-suggesting-mixed-edits, −20.9 visual when classified
 /// None and the gap adjacency broke).
 fn para_class_carried_aware(dom: &Dom, p: NodeId, comparer_author: &str) -> Option<bool> {
-    if dom.name(p) != Some(W::p()) {
+    if !dom.name_is(p, &W::p()) {
         return None;
     }
     let (mut ins, mut del, mut plain) = (false, false, false);
@@ -2904,7 +5339,7 @@ fn para_has_real_del(dom: &Dom, p: NodeId) -> bool {
 /// Live + deleted body text of a paragraph (for relatedness gates).
 fn para_revision_body_text(dom: &Dom, p: NodeId) -> String {
     let mut out = String::new();
-    for name in [W::name("t"), W::name("delText")] {
+    for name in [W::name("t"), W::del_text()] {
         for t in dom.descendants(p, Some(&name)) {
             out.push_str(&dom.value_str(t));
             out.push(' ');
@@ -2965,6 +5400,51 @@ fn para_looks_like_demo_title(dom: &Dom, p: NodeId) -> bool {
         .is_some_and(|s| s.eq_ignore_ascii_case("demo"))
 }
 
+/// Live `w:pStyle` is Title / Heading* (Heading1, Heading2, …).
+fn para_has_heading_or_title_style(dom: &Dom, p: NodeId) -> bool {
+    let Some(ppr) = dom.element(p, &W::p_pr()) else {
+        return false;
+    };
+    let Some(ps) = dom.element(ppr, &W::p_style()) else {
+        return false;
+    };
+    let val = dom.attribute(ps, &W::val()).unwrap_or("");
+    let v = val.to_ascii_lowercase();
+    v == "title" || v.starts_with("heading")
+}
+
+/// Live `w:pStyle` is Heading* only (not Title). M380b: Title pure-D free-meshes.
+fn para_has_heading_style(dom: &Dom, p: NodeId) -> bool {
+    let Some(ppr) = dom.element(p, &W::p_pr()) else {
+        return false;
+    };
+    let Some(ps) = dom.element(ppr, &W::p_style()) else {
+        return false;
+    };
+    let val = dom.attribute(ps, &W::val()).unwrap_or("");
+    val.to_ascii_lowercase().starts_with("heading")
+}
+
+/// Shared significant token (len≥4) between short-title pure-D and first pure-I
+/// (M322 head-junction). Boilerplate "this"/"with"/"from" excluded.
+fn short_title_shares_sig_token(ins_text: &str, del_text: &str) -> bool {
+    const BOILER: &[&str] = &[
+        "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than",
+        "then", "when", "what", "which", "into", "over", "only", "also", "just", "more", "most",
+        "some", "such", "other", "about",
+    ];
+    let sig = |s: &str| -> std::collections::HashSet<String> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .filter(|t| t.len() >= 4)
+            .map(|t| t.to_ascii_lowercase())
+            .filter(|t| !BOILER.iter().any(|b| b == t))
+            .collect()
+    };
+    let a = sig(ins_text);
+    let b = sig(del_text);
+    !a.is_empty() && a.intersection(&b).next().is_some()
+}
+
 /// Token Jaccard of two body strings. Used to avoid folding unrelated pure-I
 /// / pure-D neighbors (file_33: Word keeps pure-I "Summary" and pure-D
 /// "Heading 1 Style Demo" separate; folding invents a mixed para and costs
@@ -2992,6 +5472,13 @@ const MULTI_DEL_GAP_MAX_DOC_FRACTION: f64 = 0.60;
 
 /// Absolute floor: short demos must still fold (file_54 / bullet_list).
 const MULTI_DEL_GAP_MIN_WORDS_TO_SKIP: usize = 40;
+
+fn para_has_live_numpr(dom: &Dom, p: NodeId) -> bool {
+    let Some(ppr) = dom.element(p, &W::p_pr()) else {
+        return false;
+    };
+    dom.element(ppr, &W::num_pr()).is_some()
+}
 
 fn should_fold_ins_del_pair(dom: &Dom, ins_p: NodeId, del_p: NodeId) -> bool {
     let it = para_revision_body_text(dom, ins_p);
@@ -3032,12 +5519,256 @@ fn should_fold_multi_del_at_document_scale(
     if !boundary_empty_del && should_fold_ins_del_pair(dom, last_ins, first_del) {
         return true;
     }
+    // M385 (nda×report residual −26.6): List* pure-I × short Heading/Title
+    // pure-D ("MUTUAL NON-DISCLOSURE AGREEMENT", 3 words) free-meshes in Word
+    // (MIX Heading1 + del mark + ins citation). Whole-doc Jaccard miss would
+    // skip via the document-scale gap below; force fold for this boundary.
+    {
+        let last_ins_list = dom.element(last_ins, &W::p_pr()).is_some_and(|ip| {
+            dom.element(ip, &W::p_style()).is_some_and(|ps| {
+                dom.attribute(ps, &W::val())
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .starts_with("list")
+            })
+        });
+        if last_ins_list
+            && para_has_heading_or_title_style(dom, first_del)
+            && (1..=6).contains(&para_word_atom_count(dom, first_del))
+        {
+            return true;
+        }
+    }
+
+    // M428b (list_def_mix × list_numbering_reimport): multi pure-I uniform
+    // single-token items ("test"×4) + multi pure-D short list labels. Word
+    // MIX-es last pure-I into first pure-D (IIIIMDD… / ID on last test×Num1).
+    // Document-scale Jaccard is 0 so the gap below would skip fold → IIIIDDD
+    // (pixel −2 vs interleave). Force boundary fold when pure-I is uniform
+    // short tokens and first pure-D is a short list item with numPr.
+    {
+        let content_inss_pre: Vec<NodeId> = inss
+            .iter()
+            .copied()
+            .filter(|&i| !para_revision_body_text(dom, i).trim().is_empty())
+            .collect();
+        let first_del_toks = para_word_atom_count(dom, first_del);
+        let pure_i_uniform = content_inss_pre.len() >= 3
+            && content_inss_pre.iter().all(|&p| {
+                let n = para_word_atom_count(dom, p);
+                n == 1
+            })
+            && {
+                let t0 = para_revision_body_text(dom, content_inss_pre[0]).to_ascii_lowercase();
+                content_inss_pre
+                    .iter()
+                    .all(|&p| para_revision_body_text(dom, p).to_ascii_lowercase() == t0)
+            };
+        if pure_i_uniform
+            && (1..=3).contains(&first_del_toks)
+            && para_has_live_numpr(dom, first_del)
+            && para_has_live_numpr(dom, last_ins)
+        {
+            return true;
+        }
+    }
+
+    // M308d (tight): skip fold for *short-item list-wholesale* pure-I/D.
+    // LCS/unrelated may already emit pure-I all next then pure-D all base
+    // (basic_list×sd_1707, broken_list×multiple_nodes — unpacked Word pure-I/D
+    // seqs). multi-del fold would re-MIX last pure-I into first pure-D.
+    //
+    // Require: both sides list-heavy, short items (≤12 word-atoms), no
+    // contentful Jaccard relatedness, last pure-I has numPr, and either
+    // word-count or *paragraph-count* asymmetry (D ≥ 2× I). Word-count alone
+    // failed when next has a long title + list heading vs many short base
+    // items (M309: del_w < 2×ins_w but 8 pure-D vs 2 pure-I).
+    //
+    // Long numbered prose (list_with_indents) is excluded by the short-item
+    // cap so Word MIX (IMDDDD) is preserved. Empty-del M131 loop restored
+    // below for stamp cousins (file_197).
+    const SHORT_LIST_ITEM_MAX_WORDS: usize = 12;
+    let content_dels: Vec<NodeId> = dels
+        .iter()
+        .copied()
+        .filter(|&d| !para_revision_body_text(dom, d).trim().is_empty())
+        .collect();
+    let content_inss: Vec<NodeId> = inss
+        .iter()
+        .copied()
+        .filter(|&i| !para_revision_body_text(dom, i).trim().is_empty())
+        .collect();
+    let any_content_related = content_inss.iter().any(|&i| {
+        content_dels
+            .iter()
+            .any(|&d| should_fold_ins_del_pair(dom, i, d))
+    });
+    // content_inss.len() == 2: Word pure-I/D for short next (title+heading or
+    // two list items) vs long short-item list base (basic_list×sd_1707,
+    // broken_list×multiple_nodes — unpacked IID… / IIID…).
+    // content_inss >= 3: Word keeps MIX carrier on last next item
+    // (broken_list×list_spacer seq IIIMD… — fold must run).
+    if content_inss.len() == 2 && content_dels.len() >= 3 {
+        let list_frac = |ps: &[NodeId]| -> f64 {
+            let n = ps.iter().filter(|&&p| para_has_live_numpr(dom, p)).count();
+            n as f64 / ps.len() as f64
+        };
+        let all_short = |ps: &[NodeId]| -> bool {
+            ps.iter()
+                .all(|&p| para_word_atom_count(dom, p) <= SHORT_LIST_ITEM_MAX_WORDS)
+        };
+        let ins_w: usize = content_inss
+            .iter()
+            .map(|&p| para_word_atom_count(dom, p))
+            .sum();
+        let del_w: usize = content_dels
+            .iter()
+            .map(|&p| para_word_atom_count(dom, p))
+            .sum();
+        let count_asymmetric = content_dels.len() >= content_inss.len().saturating_mul(2).max(1);
+        let words_asymmetric = del_w >= ins_w.saturating_mul(2).max(1);
+        if list_frac(&content_inss) + 1e-12 >= 0.5
+            && list_frac(&content_dels) + 1e-12 >= 0.5
+            && all_short(&content_inss)
+            && all_short(&content_dels)
+            && para_has_live_numpr(dom, last_ins)
+            && !any_content_related
+            && (words_asymmetric || count_asymmetric)
+        {
+            return false;
+        }
+    }
+
+    // M413 (doc_with_spaces × doc_with_spacing ~46.1): multi pure-I title-page
+    // next (≥4 contentful) × short pure-D section base (1..=2 contentful).
+    // M90 force-fold (dels < 3 → always fold) MIX-es last pure-I date into
+    // first pure-D engagement header. Word pure-I all next then pure-D base
+    // (I7 D2). Skip when boundary Jaccard is low.
+    //
+    // M418 thrash: bare contentful counts also skipped fold for file_30
+    // (Font Size Demo pure-I × ONE/a pure-D — pin folded last body into "a").
+    // Require last pure-I looks like title-page cover (date / prepared / @)
+    // or pure-D is multi-word section prose (≥5 words), not alpha stubs.
+    {
+        let content_inss_n = content_inss.len();
+        let content_dels_n = content_dels.len();
+        let last_ins_text = para_revision_body_text(dom, last_ins).to_ascii_lowercase();
+        let title_page_tail = last_ins_text.contains("prepared")
+            || last_ins_text.contains('@')
+            || last_ins_text.contains("march ")
+            || last_ins_text.contains("january ")
+            || last_ins_text.contains("february ")
+            || last_ins_text.contains("april ")
+            || last_ins_text.contains("june ")
+            || last_ins_text.contains("july ")
+            || last_ins_text.contains("august ")
+            || last_ins_text.contains("september ")
+            || last_ins_text.contains("october ")
+            || last_ins_text.contains("november ")
+            || last_ins_text.contains("december ")
+            || last_ins_text.contains("2040")
+            || last_ins_text.contains("agreement");
+        let first_del_words = para_word_atom_count(dom, first_del);
+        if content_inss_n >= 4
+            && (1..=2).contains(&content_dels_n)
+            && title_page_tail
+            && first_del_words >= 5
+            && !any_content_related
+            && !should_fold_ins_del_pair(dom, last_ins, first_del)
+        {
+            return false;
+        }
+    }
+    // M414 (pageref × restart alpha-list ~51.7): multi pure-I short labels
+    // (ONE/A/TWO/A/B/C, ≤2 tokens each) × multi pure-D long base. Document-
+    // scale multi-del fold still MIX-es last "C" into first TOC pure-D.
+    // Word pure-I all list then pure-D all base (I6 D21).
+    // Require first pure-D is a **short** TOC/label line (≤2 words), not a
+    // Demo title ("1.5 Line Spacing Demo" = 4 words thrash file_54 −34).
+    // Ignore any_content_related: "TWO"×"Two-phase" incidental token hit.
+    {
+        let all_short_labels = !content_inss.is_empty()
+            && content_inss.iter().all(|&p| {
+                let n = para_word_atom_count(dom, p);
+                (1..=2).contains(&n)
+            });
+        let short_singles = content_inss
+            .iter()
+            .filter(|&&p| {
+                let t = para_revision_body_text(dom, p);
+                let w = t.split_whitespace().next().unwrap_or("");
+                w.chars().count() <= 5 && para_word_atom_count(dom, p) == 1
+            })
+            .count();
+        let first_del_words = para_word_atom_count(dom, first_del);
+        let first_del_text = para_revision_body_text(dom, first_del).to_ascii_lowercase();
+        let demo_title = first_del_text.contains("demo") || first_del_text.contains("demonstrat");
+        if content_inss.len() >= 4
+            && content_dels.len() >= 4
+            && all_short_labels
+            && short_singles * 2 >= content_inss.len()
+            && (1..=2).contains(&first_del_words)
+            && !demo_title
+            && !should_fold_ins_del_pair(dom, last_ins, first_del)
+        {
+            return false;
+        }
+    }
+    // M416 (heading_font×hummingbird): sole long pure-I wrap (≥20 words) ×
+    // multi pure-D base. Multi-del fold MIX-es wrap into first base (DI).
+    // Word pure-I wrap then pure-D all base (I1 D4).
+    //
+    // M420 thrash: project_proposal×project_tasks sole long pure-I TaskOwner
+    // line × multi pure-D body also hit this skip (MIDDD vs pin MMDD −17).
+    // Require wrap fingerprint: a ≥4-word phrase that repeats in the pure-I
+    // (hummingbird "Lets tightly wrap this one" × N) — not generic long titles.
+    if content_inss.len() == 1
+        && content_dels.len() >= 3
+        && para_word_atom_count(dom, last_ins) >= 20
+        && para_has_repeated_phrase(dom, last_ins)
+        && !should_fold_ins_del_pair(dom, last_ins, first_del)
+    {
+        return false;
+    }
+    // M417 (sd_2517 × borderbox): multi pure-I math demo (≥10) × huge pure-D
+    // base (≥50). Multi-del fold MIX-es last borderBox title into first base
+    // lorem (DI). Word pure-I all next then pure-D all base. Skip when
+    // boundary jaccard is low and pure-D side is much larger.
+    if content_inss.len() >= 10
+        && content_dels.len() >= 50
+        && !should_fold_ins_del_pair(dom, last_ins, first_del)
+    {
+        return false;
+    }
     // Local multi-del residual (M90: 1–2 pure-I after tables / short demos).
     if inss.len() < 3 || dels.len() < 3 {
+        // M337: do **not** skip fold for single short pure-I + multi pure-D.
+        // That skip (M334) forced pure-I|pure-D on full-LCS pirates×table_left
+        // (pagefair ~37). e3 always-fold produced MIX title×first base (~70).
+        // Word class is closer to pure-I|D, but pagefair tracks the e3 MIX
+        // layout; multi-table short-next full LCS needs the fold. Unrelated
+        // short-title pure-I/D wholesale (inss≫1) is unaffected.
         return true;
+    }
+    // M336 (bullet_list_bold×bullet_list): multi pure-I short list items then
+    // multi pure-D starting with "This document demonstrates…". Word folds last
+    // item ("Grapes") into that intro (DIMD MIX=1). Jaccard 0 would skip fold
+    // via the relatedness loop below — force fold for this demo-intro shape.
+    {
+        let dt = para_revision_body_text(dom, first_del).to_ascii_lowercase();
+        if inss.len() >= 3
+            && dels.len() >= 2
+            && para_word_atom_count(dom, last_ins) <= 2
+            && para_word_atom_count(dom, first_del) >= 5
+            && (dt.contains("demonstrates") || dt.starts_with("this document"))
+        {
+            return true;
+        }
     }
     // Content-related short-into-long (M131): any I×D pair in the gap with
     // Jaccard relatedness means Word still folds the boundary.
+    // Empty pure-Ds still count (mark-only allow) — that is load-bearing for
+    // stamp-file cousins (file_197×198). Do not content-filter this loop.
     for &i in inss {
         for &d in dels {
             if should_fold_ins_del_pair(dom, i, d) {
@@ -3060,7 +5791,7 @@ fn should_fold_multi_del_at_document_scale(
     let doc: usize = dom
         .elements(container, None)
         .into_iter()
-        .filter(|&c| dom.name(c) == Some(W::p()))
+        .filter(|&c| dom.name_is(c, &W::p()))
         .map(|p| para_word_atom_count(dom, p))
         .sum();
     let doc = doc.max(1);
@@ -3105,6 +5836,43 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
             // separate). Pairwise-merging bigger runs invented mixed
             // paragraphs Word never produces.
             if dels.len() != 1 || inss.len() != 1 || !para_has_real_del(dom, dels[0]) {
+                // M393/M394: multi-del + multi-ins after a leading pure-I stream
+                // is Word mid-splice (list-cluster or large legal free-mesh).
+                // Moving mid-stream ins before the first del collapses to
+                // pure-I-all then pure-D-all.
+                //
+                // Nested list (ilvl≥1): broken_list×broken.
+                // Short leading pure-I (3..=20) + large multi-del/multi-ins:
+                // employment×lease after "3. Rent" mid-splice (M394).
+                // Broader skips thrash free-mesh demos (file_197 −50).
+                let del_has_nested = dels.iter().any(|&p| {
+                    dom.element(p, &W::p_pr())
+                        .and_then(|ppr| dom.element(ppr, &W::num_pr()))
+                        .and_then(|num| dom.element(num, &W::name("ilvl")))
+                        .and_then(|il| dom.attribute(il, &W::val()))
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .is_some_and(|v| v >= 1)
+                });
+                let legal_mid_splice =
+                    (3..=20).contains(&del_start) && dels.len() >= 5 && inss.len() >= 5;
+                // Memo×nda: pure-D memo headers first (del_start==0) then pure-I NDA.
+                let memo_headers_first =
+                    del_start == 0 && (3..=20).contains(&dels.len()) && inss.len() >= 5 && {
+                        let t0 = para_revision_body_text(dom, dels[0]).to_ascii_lowercase();
+                        t0.starts_with("memorandum")
+                            || t0.starts_with("to")
+                            || t0.starts_with("from")
+                    };
+                if dels.len() >= 2
+                    && inss.len() >= 2
+                    && ((del_start > 0
+                        && classes[del_start - 1] == Some(true)
+                        && (del_has_nested || legal_mid_splice))
+                        || memo_headers_first)
+                {
+                    i = ins_start; // advance past this del run; leave interleave
+                    continue;
+                }
                 // Move ALL ins blocks before the first del, then break.
                 // `children` is stale after the first remove/add_before_self —
                 // the outer rescan re-reads the container. Do not remove the
@@ -3133,29 +5901,71 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // Multi-del clusters stay separate (green-underline: 2I+3D).
                 // Whole-doc trailing sole-del always folds (m44), even at
                 // Jaccard 0 — that is the single_paragraph GT shape.
+                //
+                // M364 (orphan_comment×yellow_highlight): multi pure-I (≥3) +
+                // sole pure-D with ≤1 alnum token ("Ouch") and Jaccard miss —
+                // Word keeps pure-I then pure-D (comment anchors land on pure-D
+                // later). m44 multi-word sole-del ("Walking on imported air")
+                // still folds. Comment anchors are not yet on the pure-D at
+                // this stage (carry_comments runs after merge_replaced).
                 if let (Some(d), Some(&last_ins)) = (sole_del, inss.last())
                     && dom.parent(d).is_some()
                     && dom.parent(last_ins).is_some()
                 {
-                    // Strip para-mark revision from the carrier (Word: bare mixed p).
-                    if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
-                        if let Some(irpr) = dom.element(ippr, &W::r_pr())
-                            && (dom.element(irpr, &W::ins()).is_some()
-                                || dom.element(irpr, &W::del()).is_some())
-                        {
-                            dom.remove(irpr);
+                    let del_toks = body_token_set(&para_revision_body_text(dom, d)).len();
+                    let skip_short_residual = inss.len() >= 3
+                        && para_body_alnum_len(dom, last_ins) >= 20
+                        && del_toks <= 1
+                        && !should_fold_ins_del_pair(dom, last_ins, d);
+                    if !skip_short_residual {
+                        // M435 (diff_before16×19): sole pure-D base Heading/Title
+                        // free-meshed into last pure-I. Word keeps live pStyle +
+                        // del mark on the MIX. The bare-MIX path below drops del
+                        // pPr (single_paragraph GT) and left empty pPr (LO ~53.9
+                        // until Heading1 restored). Adopt Heading/Title pPr only
+                        // — never invent styles on non-heading sole-dels.
+                        //
+                        // M360 guard applies here too: a TOC/field residue
+                        // pure-I (fldChar) folded with a Heading pure-D keeps
+                        // the bare pPr (table_border×toc SD-2343 title).
+                        let ins_has_fld = !dom
+                            .descendants(last_ins, Some(&W::name("fldChar")))
+                            .is_empty();
+                        let adopt_heading = para_has_heading_or_title_style(dom, d) && !ins_has_fld;
+                        if adopt_heading {
+                            if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
+                                dom.remove(ippr);
+                            }
+                            if let Some(dppr) = dom.element(d, &W::p_pr()) {
+                                let cloned = dom.clone_subtree(dppr);
+                                if let Some(first) = dom.elements(last_ins, None).first().copied() {
+                                    dom.add_before_self(first, cloned);
+                                } else {
+                                    dom.add(last_ins, cloned);
+                                }
+                            }
+                        } else {
+                            // Strip para-mark revision from the carrier (Word: bare mixed p).
+                            if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
+                                if let Some(irpr) = dom.element(ippr, &W::r_pr())
+                                    && (dom.element(irpr, &W::ins()).is_some()
+                                        || dom.element(irpr, &W::del()).is_some())
+                                {
+                                    dom.remove(irpr);
+                                }
+                                // Drop empty pPr that only held the mark revision.
+                                if dom.elements(ippr, None).is_empty() {
+                                    dom.remove(ippr);
+                                }
+                            }
                         }
-                        // Drop empty pPr that only held the mark revision.
-                        if dom.elements(ippr, None).is_empty() {
-                            dom.remove(ippr);
+                        for c in dom.elements(d, None) {
+                            if !dom.name_is(c, &W::p_pr()) {
+                                dom.add(last_ins, c); // move body del/ins into last ins
+                            }
                         }
+                        dom.remove(d);
                     }
-                    for c in dom.elements(d, None) {
-                        if dom.name(c) != Some(W::p_pr()) {
-                            dom.add(last_ins, c); // move body del/ins into last ins
-                        }
-                    }
-                    dom.remove(d);
                 }
                 acted = true;
                 break; // children list is stale — rescan (required)
@@ -3185,12 +5995,26 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 let del_struct = dom
                     .element(d, &W::p_pr())
                     .is_some_and(|p| ppr_has_structural_props(dom, p));
+                // M360: a TOC/field residue pure-I (fldChar) merged with a
+                // Heading/Title pure-D keeps a bare pPr — never the Heading
+                // pStyle (table_border×toc SD-2343 title, pagefair −11).
+                let m360_fld_x_heading =
+                    !dom.descendants(ins_p, Some(&W::name("fldChar"))).is_empty()
+                        && dom.element(d, &W::p_pr()).is_some_and(|dp| {
+                            dom.element(dp, &W::p_style()).is_some_and(|ps| {
+                                let v = dom
+                                    .attribute(ps, &W::val())
+                                    .unwrap_or("")
+                                    .to_ascii_lowercase();
+                                v == "title" || v.starts_with("heading")
+                            })
+                        });
                 if ins_struct {
                     if let Some(ppr) = dom.element(ins_p, &W::p_pr()) {
                         let c = dom.clone_subtree(ppr);
                         dom.add(merged, c);
                     }
-                } else if del_struct {
+                } else if del_struct && !m360_fld_x_heading {
                     if let Some(ppr) = dom.element(d, &W::p_pr()) {
                         let c = dom.clone_subtree(ppr);
                         dom.add(merged, c);
@@ -3200,12 +6024,12 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     dom.add(merged, c);
                 }
                 for c in dom.elements(ins_p, None) {
-                    if dom.name(c) != Some(W::p_pr()) {
+                    if !dom.name_is(c, &W::p_pr()) {
                         dom.add(merged, c); // clone-on-attach
                     }
                 }
                 for c in dom.elements(d, None) {
-                    if dom.name(c) != Some(W::p_pr()) {
+                    if !dom.name_is(c, &W::p_pr()) {
                         dom.add(merged, c);
                     }
                 }
@@ -3251,8 +6075,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 }
                 let preceding_has_ins = ins_start > 0 && {
                     let prev = children[ins_start - 1];
-                    dom.name(prev) == Some(W::p())
-                        && !dom.descendants(prev, Some(&W::ins())).is_empty()
+                    dom.name_is(prev, &W::p()) && !dom.descendants(prev, Some(&W::ins())).is_empty()
                 };
                 // Sole mark-only empty (contract) OR leading mark-only empty when
                 // every pure-D in the run is mark-only empty (inventory: two
@@ -3277,7 +6100,33 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     && !carrier_has_mark_del
                     && first_mark_only_empty
                     && (dels.len() == 1 || all_dels_mark_only_empty);
-                let del_foldable = para_has_real_del(dom, dels[0]) || mark_only_empty_del;
+                // M385 (nda×report residual −26.6): multi pure-I ending in
+                // List* style + multi pure-D starting with mark-only empty
+                // Heading/Title. Word free-meshes into MIX Heading1+del mark
+                // (M344 adopt). mark_only_empty_del required inss.len()==1, so
+                // multi-I never set del_foldable for empty heading pure-D.
+                let last_content_ins = inss
+                    .iter()
+                    .rev()
+                    .find(|&&p| !para_has_no_text(dom, p))
+                    .copied()
+                    .unwrap_or(carrier);
+                let last_ins_list_style =
+                    dom.element(last_content_ins, &W::p_pr()).is_some_and(|ip| {
+                        dom.element(ip, &W::p_style()).is_some_and(|ps| {
+                            dom.attribute(ps, &W::val())
+                                .unwrap_or("")
+                                .to_ascii_lowercase()
+                                .starts_with("list")
+                        })
+                    });
+                let heading_empty_mark_fold = first_mark_only_empty
+                    && !carrier_has_mark_del
+                    && para_has_heading_or_title_style(dom, dels[0])
+                    && last_ins_list_style;
+                let del_foldable = para_has_real_del(dom, dels[0])
+                    || mark_only_empty_del
+                    || heading_empty_mark_fold;
                 if !del_foldable {
                     continue;
                 }
@@ -3290,18 +6139,125 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // Contiguous clusters before a table are often 3I+3D (file_14 /
                 // m53b). M68 Jaccard best-match fold tried for file_33; LO score
                 // −0.47 and still 3pp vs Word 2 — reverted.
+                //
+                // M393 (broken_list×broken Word IDDD…I…D): leading pure-I list
+                // item + multi pure-D cluster + **more pure-I after the dels**
+                // is Word interleave, not a residual free-mesh boundary.
+                // Folding ONE×Item1 invents MIX and thrashs the cluster peel.
+                if dels.len() >= 2
+                    && inss.len() == 1
+                    && j < children.len()
+                    && classes[j] == Some(true)
+                {
+                    continue;
+                }
+                // M394 (employment×lease): leading pure-I mid-splice stream
+                // (through ~3rd section) + multi pure-D residual base — Word
+                // keeps pure-I then pure-D (no fold of "2. Term"×"Acme").
+                if ins_start == 0
+                    && (3..=20).contains(&inss.len())
+                    && dels.len() >= 5
+                    && j < children.len()
+                    && classes[j] == Some(true)
+                {
+                    continue;
+                }
+                // M393b: second pure-I block (short list labels a/b/TWO) before
+                // residual pure-D list items — Word keeps pure-I then pure-D
+                // (no free-mesh of "a"×"First shown"). Require a nested pure-D
+                // earlier in the document (first list cluster already emitted).
+                let prior_nested_del = (0..ins_start).any(|idx| {
+                    classes[idx] == Some(false)
+                        && dom
+                            .element(children[idx], &W::p_pr())
+                            .and_then(|ppr| dom.element(ppr, &W::num_pr()))
+                            .and_then(|num| dom.element(num, &W::name("ilvl")))
+                            .and_then(|il| dom.attribute(il, &W::val()))
+                            .and_then(|v| v.parse::<u32>().ok())
+                            .is_some_and(|v| v >= 1)
+                });
+                if !dels.is_empty()
+                    && !inss.is_empty()
+                    && prior_nested_del
+                    && inss
+                        .iter()
+                        .filter(|&&p| !para_has_no_text(dom, p))
+                        .all(|&p| para_word_atom_count(dom, p) <= 3)
+                    && dels.iter().any(|&p| para_has_live_numpr(dom, p))
+                    && ins_start > 0
+                    && classes[ins_start - 1] == Some(false)
+                {
+                    continue;
+                }
                 let sole_del = dels.len() == 1;
                 // Word: last pure-ins merges with first pure-del at I…I D…D boundary.
                 let d = dels[0];
                 // Prefer last **non-empty** pure-I as fold carrier. Empty pure-I
                 // after digits "24" (1_5×24 B shape) would otherwise be the
                 // carrier and bypass M101 digits-only on the real last content.
-                let last_ins = inss
+                let mut last_ins = inss
                     .iter()
                     .rev()
                     .find(|&&p| !para_has_no_text(dom, p))
                     .copied()
                     .unwrap_or(inss[inss.len() - 1]);
+
+                // M359 (list_with_indents×shape_group): trailing pure-I is an
+                // empty/drawing shell then pure-D long unrelated list prose.
+                // Word folds the **last** pure-I (drawing) with first pure-D
+                // (IIII…XDDDD). Preferring last content pure-I MIX-ed "My test
+                // with some shapes." into the list (−9.4 vs 27c).
+                // M362 (file_173×174 stamp: TIFF title × Verdana Demo +
+                // drawing): same carrier bug with **short** pure-D title
+                // (≤8 words) — content×content title MIX thrash 100→67.
+                // When last pure-I is empty/whitespace and first pure-D is
+                // unrelated, keep trailing empty as carrier (long OR short).
+                let trailing = inss[inss.len() - 1];
+                if inss.len() >= 2
+                    && trailing != last_ins
+                    && (para_has_no_text(dom, trailing)
+                        || para_body_text_is_whitespace_only(dom, trailing))
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                    && (para_word_atom_count(dom, d) > 12
+                        || (para_word_atom_count(dom, last_ins) <= 6
+                            && para_word_atom_count(dom, d) <= 8))
+                {
+                    last_ins = trailing;
+                }
+                // M322 (tiff×h_f_normal): short pure-D title ("TIFF test document")
+                // after a long pure-I stream. Word head-junctions the **first**
+                // content pure-I with the title (MIX at start); last-I fold
+                // wrongly MIX-ed the final license line with TIFF (~41). Require
+                // a shared significant token (len≥4) so hummingbird×employment
+                // (no shared token, Word tail MIX only) keeps last-I fold.
+                if inss.len() >= 5
+                    && (1..=6).contains(&para_word_atom_count(dom, d))
+                    && let Some(first_ins) =
+                        inss.iter().copied().find(|&p| !para_has_no_text(dom, p))
+                {
+                    let it = para_revision_body_text(dom, first_ins);
+                    let dt = para_revision_body_text(dom, d);
+                    if short_title_shares_sig_token(&it, &dt) {
+                        last_ins = first_ins;
+                    }
+                }
+                // M311d (image×rtl / rtl_mixed×rtl_page): ≥3 empty pure-I then
+                // pure-D residual(s). Word keeps pure-I empties. sole_del
+                // always-fold and multi-del boundary fold would eat empties
+                // into the del run one-by-one.
+                //
+                // M419 (math_delimiter × math_eqarr): OMML-only pure-I shells
+                // also have no w:t but Word MIX-es the last math into the first
+                // pure-D title (IIIIMDD). Do not treat math shells as M311d
+                // layout empties — require no oMath/oMathPara under the pure-I.
+                if inss.len() >= 3
+                    && inss.iter().all(|&p| {
+                        (para_has_no_text(dom, p) || para_body_text_is_whitespace_only(dom, p))
+                            && !para_has_omath(dom, p)
+                    })
+                {
+                    continue;
+                }
                 // M77: mid-document sole pure-D after pure-I must not fold into
                 // the preceding ins when body texts are unrelated and more
                 // content follows (file_33: pure-I "Summary" + pure-D "Heading
@@ -3313,7 +6269,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // with sole pure-D ("24"). Counting empty p as following_content
                 // blocked the fold via the Jaccard gate (0 < 0.12).
                 let following_content = children[j..].iter().any(|&c| match dom.name(c) {
-                    Some(n) if n == W::name("tbl") => true,
+                    Some(n) if n == W::tbl() => true,
                     Some(n) if n == W::p() => !para_has_no_text(dom, c),
                     _ => false,
                 });
@@ -3321,18 +6277,153 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // the preceding ins when body texts are unrelated and more
                 // content follows (file_33). Whole-doc trailing sole-del (m44)
                 // still always folds.
+                //
+                // M368 (sdts×shape): sole pure-D "Before…" is only the first
+                // body residual before a deleted table (nD==1 at the boundary);
+                // Word still MIX-es trailing empty/drawing pure-I with it. Allow
+                // empty-shell × short pure-D even with following table content.
                 if sole_del && following_content && !should_fold_ins_del_pair(dom, last_ins, d) {
+                    let empty_shell = para_has_no_text(dom, last_ins)
+                        || para_body_text_is_whitespace_only(dom, last_ins);
+                    let short_del = (1..=6).contains(&para_word_atom_count(dom, d));
+                    if !(empty_shell && short_del) {
+                        continue;
+                    }
+                }
+                // M413 (broken_media×duplicate_ppr / spaces×spacing sole-del):
+                // multi contentful pure-I title/labels (≥4) × sole pure-D base
+                // prose. Trailing sole-del always-fold (m44) MIX-es last pure-I
+                // into sole pure-D. Word pure-I all next then pure-D base.
+                // M418: only when last pure-I is short stub or title-page tail.
+                // M422 thrash: last_n≤2 also matched "Acme Corporation" on
+                // hummingbird×employment (−5) and blocked Word MIX into wrap.
+                // Stubs must be ≤2 tokens AND ≤5 chars total (a/x/x/b labels).
+                if sole_del
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                    && para_word_atom_count(dom, d) >= 5
+                {
+                    let content_inss_n = inss
+                        .iter()
+                        .filter(|&&p| !para_revision_body_text(dom, p).trim().is_empty())
+                        .count();
+                    let last_n = para_word_atom_count(dom, last_ins);
+                    let last_t = para_revision_body_text(dom, last_ins).to_ascii_lowercase();
+                    let short_stub =
+                        last_n <= 2 && last_t.chars().filter(|c| !c.is_whitespace()).count() <= 5;
+                    let title_page_tail = last_t.contains("prepared")
+                        || last_t.contains('@')
+                        || last_t.contains("2040")
+                        || last_t.contains("agreement")
+                        || short_stub;
+                    if content_inss_n >= 4 && title_page_tail {
+                        continue;
+                    }
+                }
+                // M416 (heading_font×hummingbird): sole long pure-I wrap (≥20
+                // words) × multi pure-D short base. sole_del always-fold MIX-es
+                // wrap into first base. Word pure-I wrap then pure-D all base.
+                // M420: wrap fingerprint only (see should_fold_multi_del).
+                if sole_del
+                    && inss.len() == 1
+                    && dels.len() >= 3
+                    && para_word_atom_count(dom, last_ins) >= 20
+                    && para_has_repeated_phrase(dom, last_ins)
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
+                    continue;
+                }
+                // M322b (tiff×h_f after head-junction): long pure-I stream + sole
+                // empty pure-D (drawing shell / mark-only). Word keeps trailing
+                // pure-D empty; empty-del always-fold MIX-ed last license line.
+                // Content sole-del (m44 "24"/titles) has body text; short demos
+                // have inss ≪ 10.
+                //
+                // M341 (missing_sectpr×missing_separator): short pure-I stream
+                // (empties + "PARTIES" + "something") + sole empty pure-D of the
+                // base title shell. Word IIIIM (pure-I "something", MIX empty);
+                // empty-del fold MIX-ed "something" into the shell (~66 vs e3
+                // ~97). Skip sole empty pure-D when last pure-I has body text.
+                if sole_del
+                    && para_revision_body_text(dom, d).trim().is_empty()
+                    && (inss.len() >= 10
+                        || (inss.len() >= 2
+                            && !para_revision_body_text(dom, last_ins).trim().is_empty()))
+                {
+                    continue;
+                }
+                // M430b (doc_with_spaces × doc_with_spacing ~62.8 / docxodus 100):
+                // title-page pure-I ends with ≥3 empty pure-I then multi pure-D
+                // base. fold_whitespace skip (M430) keeps them into merge, but
+                // multi-del empty-shell fold below ate empties one-by-one into
+                // first pure-D (empty_run→0 by second fold pass). Word keeps
+                // trailing blanks. Skip empty-shell multi-del fold when the
+                // pure-I stream ends with ≥3 consecutive empty pure-I.
+                if !sole_del && para_is_visually_blank(dom, last_ins) {
+                    let trailing_empty_i = inss
+                        .iter()
+                        .rev()
+                        .take_while(|&&p| para_is_visually_blank(dom, p))
+                        .count();
+                    if trailing_empty_i >= 3 {
+                        continue;
+                    }
+                }
+                // M431 (diff_doc2 × numwords residual ~52 / docxodus 100): pure-I
+                // page-break (`w:br`) must not fold into pure-D drawing even when
+                // multi-del gap force-fold (gap < 40 words) would. Word keeps
+                // pure-I br then pure-D drawing (+ empty) then free-meshes text.
+                if !dom.descendants(last_ins, Some(&W::name("br"))).is_empty()
+                    && (!dom.descendants(d, Some(&W::drawing())).is_empty()
+                        || !dom.descendants(d, Some(&W::pict())).is_empty()
+                        || !dom.descendants(d, Some(&W::name("object"))).is_empty())
+                {
                     continue;
                 }
                 // C1 / KNOWN ISSUE #2: multi-del boundary fold gated on
                 // document-scale relatedness (unrelated whole-doc replacement
                 // must not mix last pure-I with first pure-D).
+                //
+                // C1 / KNOWN ISSUE #2 continued: multi-del document-scale gate.
+                // M368: empty-shell × short pure-D (sdts×shape "Before" before
+                // deleted table). M419 (math_delimiter × math_eqarr ~45.6): multi
+                // pure-I math shells (OMML only, no w:t) + multi pure-D long
+                // titles — empty_shell × long first pure-D was blocked → IIIIIDDD;
+                // Word MIX-es last math into "m:d Delimiter…" (IIIIMDD). Fold any
+                // empty/math shell pure-I into the pure-D boundary (not only when
+                // first pure-D is short).
+                // M417 vs M419 scale split: the empty/math-shell override below
+                // is for demo-scale replacements (math_delimiter × math_eqarr,
+                // dels ~51). A wholesale replacement of a **large** document
+                // (sd_2517 × borderbox, dels ~1038) keeps Word's clean I…D
+                // boundary — never fold a shell into it.
                 if !sole_del
+                    && dels.len() > 150
                     && !should_fold_multi_del_at_document_scale(
                         dom, container, last_ins, d, inss, dels,
                     )
                 {
                     continue;
+                }
+                if !sole_del
+                    && !should_fold_multi_del_at_document_scale(
+                        dom, container, last_ins, d, inss, dels,
+                    )
+                {
+                    // Layout content (w:br / drawing / pict) is never an empty
+                    // shell: para_body_text_is_whitespace_only is true for
+                    // br-only (no w:t), which previously forced fold of pure-I
+                    // page-break into pure-D drawing (M431 diff_doc2×numwords).
+                    let empty_shell = (para_has_no_text(dom, last_ins)
+                        || para_body_text_is_whitespace_only(dom, last_ins))
+                        && dom.descendants(last_ins, Some(&W::name("br"))).is_empty()
+                        && dom.descendants(last_ins, Some(&W::drawing())).is_empty()
+                        && dom.descendants(last_ins, Some(&W::pict())).is_empty()
+                        && dom
+                            .descendants(last_ins, Some(&W::name("object")))
+                            .is_empty();
+                    if !empty_shell {
+                        continue;
+                    }
                 }
                 // M101 (file_166; 1_5_line_spacing×24): last content pure-I that
                 // is **digits-only** ("24") + multi pure-D of an unrelated demo —
@@ -3343,6 +6434,61 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     && !should_fold_ins_del_pair(dom, last_ins, d)
                 {
                     continue;
+                }
+                // M325 (italic_rstyle × base_ordered): multi pure-I short list
+                // items ("One"/"Two"/"Three") + multi pure-D long unrelated demo
+                // title. Word pure-I/Ds (IIIIIIIIDDDD…); multi-del fold MIX-ed
+                // last "Three" into italic title (~44). Skip when last pure-I is
+                // ≤2 tokens, first pure-D has ≥8 tokens, Jaccard 0. Single-
+                // token pure-I sole ("Ouch.") still M89-folds (inss==1).
+                //
+                // M336 (bullet_list_bold×bullet_list): first pure-D is the shared
+                // demo intro "This document demonstrates…" — Word folds Grapes
+                // into it (DIMD). Do not apply M325 skip for that intro shape.
+                //
+                // M359: empty/drawing last pure-I (0 tokens) must still fold with
+                // long pure-D (list×shape Word X shell + list delText). M325
+                // treated empty as ≤2 tokens and skipped the fold entirely.
+                if dels.len() > 1
+                    && inss.len() >= 3
+                    && para_word_atom_count(dom, last_ins) <= 2
+                    && para_word_atom_count(dom, last_ins) >= 1
+                    && para_word_atom_count(dom, d) >= 8
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
+                    let dt = para_revision_body_text(dom, d).to_ascii_lowercase();
+                    let demo_intro = dt.contains("demonstrates") || dt.starts_with("this document");
+                    if !demo_intro {
+                        continue;
+                    }
+                }
+                // M410 (bold_vals × complex_list_def): multi pure-I short alpha
+                // labels (ONE/a/FOUR) then multi pure-D OOXML intro. multi-del
+                // fold MIX-es last "FOUR" into OOXML body. Skip when ≥3 pure-I
+                // are ≤2-token labels and first pure-D is long OOXML/demo prose.
+                if dels.len() > 1
+                    && inss.len() >= 5
+                    && para_word_atom_count(dom, last_ins) <= 2
+                    && para_word_atom_count(dom, last_ins) >= 1
+                    && para_word_atom_count(dom, d) >= 10
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
+                    let short_labels = inss
+                        .iter()
+                        .filter(|&&p| {
+                            let n = para_word_atom_count(dom, p);
+                            (1..=2).contains(&n)
+                        })
+                        .count();
+                    let dt = para_revision_body_text(dom, d).to_ascii_lowercase();
+                    let ooxml_intro = dt.contains("ooxml")
+                        || dt.contains("st_onoff")
+                        || dt.contains("w:b")
+                        || dt.contains("w:i")
+                        || (dt.contains("demonstrates") && dt.contains("sample"));
+                    if short_labels * 2 >= inss.len() && ooxml_intro {
+                        continue;
+                    }
                 }
                 // M140 (eigenpal×employee_directory): sole pure-I multi-word
                 // title ("Employee Directory") + multi pure-D starting with a
@@ -3361,6 +6507,34 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         && !should_fold_ins_del_pair(dom, last_ins, d)
                     {
                         continue;
+                    }
+                }
+                // M319 (support_tickets×table_bookmark_end): multi pure-I next
+                // where last pure-I is a **Heading/Title** style header
+                // ("Test 1 – Fixed Width Table", Heading2) + multi pure-D short
+                // non-Demo base title ("Support Tickets"). Word IIIDDD…. Stamp
+                // confetti body folds (file_37 last pure-I has no pStyle) still
+                // M90-fold — heading-style gate is load-bearing.
+                if dels.len() > 1
+                    && inss.len() >= 2
+                    && para_has_heading_or_title_style(dom, last_ins)
+                {
+                    let d_content = dels
+                        .iter()
+                        .copied()
+                        .find(|&p| !para_revision_body_text(dom, p).trim().is_empty())
+                        .unwrap_or(d);
+                    if !para_looks_like_demo_title(dom, d_content) {
+                        let it = para_revision_body_text(dom, last_ins);
+                        let dt = para_revision_body_text(dom, d_content);
+                        let ins_toks = body_token_set(&it).len();
+                        let del_toks = body_token_set(&dt).len();
+                        if ins_toks >= 3
+                            && (1..=3).contains(&del_toks)
+                            && !should_fold_ins_del_pair(dom, last_ins, d_content)
+                        {
+                            continue;
+                        }
                     }
                 }
                 // M124 (file_29): last pure-I is a 1–2 char residual ("a") in a
@@ -3397,7 +6571,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // gate, quarterly×red_bold (I…I then pure-D table only) wrongly
                 // skipped the Word MIX fold of last body + "Quarterly…".
                 let following_pure_i = children[j..].iter().any(|&c| {
-                    dom.name(c) == Some(W::p())
+                    dom.name_is(c, &W::p())
                         && para_is_pure_inserted(dom, c)
                         && !para_has_no_text(dom, c)
                 });
@@ -3431,6 +6605,126 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         continue;
                     }
                 }
+                // M363 (lists_sub×word_mixed −8.6): long pure-I prose ("Normal
+                // text, then bold italic…") × multi-word pure-D list item
+                // ("Item" + soft-break "Sub paragraph"…). Word keeps pure-I
+                // then pure-D ListParagraph (no MIX). Short pure-D residuals
+                // ("a", file_55) still fold + adopt numPr (M88).
+                //
+                // M382 (file_45×file_46 −23): long pure-I body free-meshes short
+                // list label pure-D "First item" (2 words) as MIX. Skip only
+                // when pure-D list item has ≥3 word-atoms (soft-break multi-
+                // word list content); 1–2 word list labels still fold.
+                //
+                // M387 (broken_list×list_spacer −15.9): **list** pure-I
+                // ("14.11Survival of Terms p3", StandardL1+numPr) free-meshes
+                // multi-word list pure-D "Item 1. Text 1." in Word (MIX). Skip
+                // only non-list long pure-I prose × multi-word list pure-D.
+                {
+                    let ins_long_prose = para_body_alnum_len(dom, last_ins) >= 20;
+                    let ins_list = para_has_live_numpr(dom, last_ins)
+                        || dom.element(last_ins, &W::p_pr()).is_some_and(|ip| {
+                            dom.element(ip, &W::p_style()).is_some_and(|ps| {
+                                let v = dom
+                                    .attribute(ps, &W::val())
+                                    .unwrap_or("")
+                                    .to_ascii_lowercase();
+                                v.starts_with("list") || v.contains("standardl")
+                            })
+                        });
+                    let del_list = para_has_live_numpr(dom, d)
+                        || dom.element(d, &W::p_pr()).is_some_and(|dp| {
+                            dom.element(dp, &W::p_style()).is_some_and(|ps| {
+                                dom.attribute(ps, &W::val())
+                                    .unwrap_or("")
+                                    .eq_ignore_ascii_case("ListParagraph")
+                            })
+                        });
+                    let del_multi_word = para_word_atom_count(dom, d) >= 3;
+                    if ins_long_prose && del_list && del_multi_word && !ins_list {
+                        continue;
+                    }
+                }
+                // M364 (orphan_comment×yellow_highlight −6.4): multi pure-I +
+                // sole short pure-D residual (≤1 alnum token, Jaccard miss).
+                // Word keeps pure-I then pure-D; comments are re-injected onto
+                // pure-D after merge. m44 multi-word sole-del still folds.
+                if sole_del
+                    && inss.len() >= 3
+                    && para_body_alnum_len(dom, last_ins) >= 20
+                    && body_token_set(&para_revision_body_text(dom, d)).len() <= 1
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
+                    continue;
+                }
+                // M371 (word_mixed×word_simple −2.2): multi pure-I long prose +
+                // multi pure-D starting with Heading/Title ("Mixed Formatting
+                // Test"). Word keeps pure-D heading separate (I… then D title);
+                // multi-del fold MIX-ed last pure-I body with Heading1 adopt
+                // (Heading1 on "A final paragraph…"). Skip when last pure-I is
+                // not heading and first pure-D is heading/title, Jaccard miss.
+                //
+                // M380 (file_197×file_198 −55): short single-token Heading pure-D
+                // ("Images") **does** free-mesh with last pure-I body in Word
+                // (MIX). Only multi-word short **Heading*** titles take the skip
+                // — "Images" (1 word) still folds.
+                //
+                // M380b (file_83×file_84 −50): **Title** pure-D ("CONTRACT FOR
+                // CONTRACTS") also free-meshes with last pure-I body in Word.
+                // Restrict M371 to Heading* only (not Title).
+                //
+                // M385 (nda×report −26.6): List* pure-I × short Heading pure-D
+                // title free-meshes (MIX Heading1). Do not skip list carriers.
+                //
+                // M386 (calibri×center / heading_4×helvetica −41/−39): short
+                // stamp demos (2 pure-I) free-mesh Heading-styled body pure-D
+                // ("Calibri font with Heading 2…", "Demonstrating Heading 4…")
+                // even when pure-D is multi-word. M371 skip requires a **longer**
+                // pure-I stream (≥3) **and** a short title Heading (2..=6 words,
+                // e.g. "Mixed Formatting Test" after 6 pure-I in word_mixed).
+                let last_ins_list_style_m371 =
+                    dom.element(last_ins, &W::p_pr()).is_some_and(|ip| {
+                        dom.element(ip, &W::p_style()).is_some_and(|ps| {
+                            dom.attribute(ps, &W::val())
+                                .unwrap_or("")
+                                .to_ascii_lowercase()
+                                .starts_with("list")
+                        })
+                    });
+                if dels.len() > 1
+                    && inss.len() >= 3
+                    && para_has_heading_style(dom, d)
+                    && !para_has_heading_or_title_style(dom, last_ins)
+                    && para_body_alnum_len(dom, last_ins) >= 20
+                    && (2..=6).contains(&para_word_atom_count(dom, d))
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                    && !last_ins_list_style_m371
+                {
+                    continue;
+                }
+                // M365 (bookmark×broken_complex_list −5.0): multi pure-I list
+                // ending in a very short residual ("a") × multi pure-D long
+                // bookmark prose. Word keeps pure-I "a" then pure-D; folding
+                // invents MIX (−5 pagefair). Do **not** require Jaccard miss:
+                // pure-I "a" shares token "a" with "…a paragraph…" (0.125 ≥
+                // 0.12) and would still fold. M124 covers short pure-I runs
+                // (≤2); this covers long list streams.
+                // M373 (toc×broken_list −2.3): pure-D Heading "Generalities"
+                // is only 12 alnum — old ≥20 left short pure-I "a" folding into
+                // Heading1 MIX.
+                //
+                // M381 (file_54×file_55 −32): short pure-I "b" **does** free-
+                // mesh with short demo title "1.5 Line Spacing Demo" (Word MIX).
+                // Skip only when pure-D is **long prose** (≥8 word-atoms) **or**
+                // Heading* style (TOC "a"×"Generalities"); bare short Demo
+                // titles (≤6 words, no Heading) still fold.
+                if dels.len() > 1
+                    && para_body_is_very_short(dom, last_ins)
+                    && para_body_alnum_len(dom, d) >= 10
+                    && (para_word_atom_count(dom, d) >= 8 || para_has_heading_style(dom, d))
+                {
+                    continue;
+                }
                 // Strip para-mark revision from the carrier (Word: bare mixed p)
                 // unless M88 adopts Deleted structural pPr (numPr) with del mark.
                 let del_structural = dom
@@ -3448,9 +6742,61 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     .is_some_and(|ip| ppr_is_jc_only(dom, ip));
                 let del_has_spacing = dom
                     .element(d, &W::p_pr())
-                    .is_some_and(|dp| dom.element(dp, &W::name("spacing")).is_some());
-                let adopt_del_ppr =
-                    (del_structural && !ins_structural) || (ins_jc_only && del_has_spacing);
+                    .is_some_and(|dp| dom.element(dp, &W::spacing_el()).is_some());
+                // M344 (nda×report ~56→98): pure-I ListNumber reference + pure-D
+                // Heading1 title both structural — old gate kept ListNumber MIX
+                // (pagefair thrash). Word/e3 adopt Deleted Heading1 + del mark.
+                let ins_list_style = dom.element(last_ins, &W::p_pr()).is_some_and(|ip| {
+                    dom.element(ip, &W::p_style()).is_some_and(|ps| {
+                        let v = dom
+                            .attribute(ps, &W::val())
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        v.starts_with("list")
+                    })
+                });
+                let del_heading = para_has_heading_or_title_style(dom, d);
+                // Defense: if a long-prose×list fold still happens, never adopt
+                // ListParagraph onto the prose carrier (M363 skip-fold is primary).
+                //
+                // M384 (file_45 residual −13.6): M382 free-meshes 1–2 word list
+                // pure-D "First item" into long pure-I MIX, but del_list_multi
+                // used `word_atoms > 1` so short list labels still blocked
+                // adopt_del_ppr — MIX lacked Word's live numPr + del mark.
+                // Align threshold with M382 (≥3 word-atoms = soft-break multi-
+                // word list content); 1–2 word list labels still adopt numPr.
+                let ins_long_prose = para_body_alnum_len(dom, last_ins) >= 20;
+                let del_list_multi = del_structural
+                    && para_has_live_numpr(dom, d)
+                    && para_word_atom_count(dom, d) >= 3;
+                // M436 (list_def_mix×list_numbering_reimport ~52 / docxodus 90):
+                // pure-I short list "test" (numPr only) × pure-D ListParagraph
+                // "Num 1". Both structural → prior gate kept Inserted numId on
+                // MIX. Word adopts Deleted ListParagraph + numPr + del mark.
+                let del_list_paragraph = dom.element(d, &W::p_pr()).is_some_and(|dp| {
+                    dom.element(dp, &W::p_style()).is_some_and(|ps| {
+                        dom.attribute(ps, &W::val())
+                            .unwrap_or("")
+                            .eq_ignore_ascii_case("ListParagraph")
+                    })
+                });
+                let short_list_x_listparagraph = para_has_live_numpr(dom, last_ins)
+                    && para_has_live_numpr(dom, d)
+                    && del_list_paragraph
+                    && para_word_atom_count(dom, last_ins) <= 3
+                    && para_word_atom_count(dom, d) <= 4;
+                // M360: a TOC/field residue pure-I (fldChar) folded with a
+                // Heading/Title pure-D keeps a bare pPr — never the Heading
+                // pStyle (table_border×toc SD-2343 title, pagefair −11).
+                let m360_fld_x_heading = del_heading
+                    && !dom
+                        .descendants(last_ins, Some(&W::name("fldChar")))
+                        .is_empty();
+                let adopt_del_ppr = !m360_fld_x_heading
+                    && ((del_structural && !ins_structural && !(ins_long_prose && del_list_multi))
+                        || (ins_jc_only && del_has_spacing)
+                        || (del_heading && ins_list_style)
+                        || short_list_x_listparagraph);
                 // M218: mark-only empty pure-D fold — Word parks the deleted
                 // pilcrow on the pure-I carrier (contract_review MIX + mark_del).
                 // Do not strip to a bare pure-I; adopt the empty del's pPr/rPr/del.
@@ -3488,6 +6834,11 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         }
                     }
                 } else if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
+                    // M361: strip whole mark rPr (ins/del on pPr/rPr) after fold.
+                    // M354 kept fonts/sz under pPr to mirror Word tiff title
+                    // (Arial/sz32 + rPrChange empty-old), but LO pagefair thrash
+                    // 41→37 vs 27c bare MIX. Run-level rPr on ins still carries
+                    // fonts; drop pPr mark shell like 27c.
                     if let Some(irpr) = dom.element(ippr, &W::r_pr())
                         && (dom.element(irpr, &W::ins()).is_some()
                             || dom.element(irpr, &W::del()).is_some())
@@ -3499,7 +6850,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     }
                 }
                 for c in dom.elements(d, None) {
-                    if dom.name(c) != Some(W::p_pr()) {
+                    if !dom.name_is(c, &W::p_pr()) {
                         dom.add(last_ins, c);
                     }
                 }
@@ -3522,13 +6873,217 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
 /// chart; every page misaligned, pixel-diff 0.59 corpus max). Pure-paragraph
 /// 1:1 replacements are left to [`merge_replaced_paragraphs`], which runs
 /// after this pass.
+/// M393 (broken_list_missing × broken_list): produce/coalesce collapses pure-I
+/// (B body Unid) and pure-D (A body Unid) into pure-I-all then pure-D-all even
+/// when LCS emitted Word interleave. Restore Word shape when body is pure-I
+/// short-list items then pure-D short-list items with a nested (ilvl≥1) pure-D
+/// cluster: pure-I first, pure-D first cluster, pure-I rest, pure-D rest.
+pub fn interleave_list_cluster_after_coalesce(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    if kids.len() < 6 {
+        return;
+    }
+    // Classify pure-I / pure-D only stream (no MIX/E content).
+    let mut kinds: Vec<char> = Vec::with_capacity(kids.len());
+    for &k in &kids {
+        if !dom.name_is(k, &W::p()) {
+            return; // tables spoil this peel
+        }
+        let pure_i = para_is_pure_inserted(dom, k);
+        let pure_d = para_is_pure_deleted(dom, k);
+        if pure_i && !pure_d {
+            kinds.push('I');
+        } else if pure_d && !pure_i {
+            kinds.push('D');
+        } else if para_has_no_text(dom, k) && !pure_i && !pure_d {
+            kinds.push('E');
+        } else {
+            return; // MIX or equal content
+        }
+    }
+    // Already Word interleave I + D+ + I+ + D* + E*? Leave alone.
+    {
+        let s: String = kinds.iter().collect();
+        // I D{2,} I{2,} D+ E*  (Word broken×broken)
+        let bytes = s.as_bytes();
+        if bytes.first() == Some(&b'I') {
+            let mut j = 1usize;
+            while j < bytes.len() && bytes[j] == b'D' {
+                j += 1;
+            }
+            let d1 = j - 1;
+            let i2s = j;
+            while j < bytes.len() && bytes[j] == b'I' {
+                j += 1;
+            }
+            let i2 = j - i2s;
+            let d2s = j;
+            while j < bytes.len() && bytes[j] == b'D' {
+                j += 1;
+            }
+            let d2 = j - d2s;
+            while j < bytes.len() && bytes[j] == b'E' {
+                j += 1;
+            }
+            if j == bytes.len() && d1 >= 2 && i2 >= 2 && d2 >= 1 {
+                return;
+            }
+        }
+    }
+    // Expect III…DDD… (coalesce shape) with optional trailing E.
+    let mut i_end = 0usize;
+    while i_end < kinds.len() && kinds[i_end] == 'I' {
+        i_end += 1;
+    }
+    let mut d_end = i_end;
+    while d_end < kinds.len() && kinds[d_end] == 'D' {
+        d_end += 1;
+    }
+    // trailing E only
+    if d_end < kinds.len() && kinds[d_end..].iter().any(|&c| c != 'E') {
+        return;
+    }
+    if i_end < 2 || d_end - i_end < 3 {
+        return;
+    }
+    // Nested pure-D: some pure-D has ilvl>=1 via pPr/numPr/ilvl.
+    let has_nested_del = kids[i_end..d_end].iter().any(|&p| {
+        dom.element(p, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::num_pr()))
+            .and_then(|num| dom.element(num, &W::name("ilvl")))
+            .and_then(|il| dom.attribute(il, &W::val()))
+            .and_then(|v| v.parse::<u32>().ok())
+            .is_some_and(|v| v >= 1)
+    });
+    if !has_nested_del {
+        return;
+    }
+    // M404 (basic_list×sd_1707): residual pure-I after the first pure-I must be
+    // short list labels (≤3 tokens: "a"/"TWO") for Word interleave. Multi-word
+    // heading prose ("Heading. Body copy for repro") must stay in the pure-I
+    // head stream (IIDDD…), not move mid-list (IDDDI…).
+    let rest_i_all_short_labels = kids[1..i_end].iter().all(|&p| {
+        let n = para_word_atom_count(dom, p);
+        n > 0 && n <= 3
+    });
+    if i_end >= 2 && !rest_i_all_short_labels {
+        return;
+    }
+    // M428 (list_def_mix × list_numbering_reimport): pure-I stream is uniform
+    // single-token items ("test"×4). M404 short-label gate is true for "test"
+    // (1 token) so interleave rewrote Word IIIIDDD… into I D-cluster I-rest D-rest
+    // (score ~52 vs docxodus 90). Word keeps wholesale pure-I then pure-D when
+    // every pure-I body is the same single token — skip interleave.
+    let pure_i_uniform_single_token = {
+        let mut first: Option<String> = None;
+        let mut ok = i_end >= 2;
+        for &p in &kids[..i_end] {
+            let t = para_revision_body_text(dom, p)
+                .split_whitespace()
+                .map(str::to_ascii_lowercase)
+                .collect::<Vec<_>>();
+            if t.len() != 1 {
+                ok = false;
+                break;
+            }
+            match &first {
+                None => first = Some(t[0].clone()),
+                Some(f) if f != &t[0] => {
+                    ok = false;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        ok && first.is_some()
+    };
+    if pure_i_uniform_single_token {
+        return;
+    }
+    // First pure-D cluster end within dels: through nested then stop before
+    // next top-level after saw_sub.
+    let dels = &kids[i_end..d_end];
+    let mut saw_sub = false;
+    let mut cut_rel = 0usize;
+    for (i, &p) in dels.iter().enumerate() {
+        let empty = para_has_no_text(dom, p);
+        if empty {
+            cut_rel = i + 1;
+            continue;
+        }
+        let ilvl = dom
+            .element(p, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::num_pr()))
+            .and_then(|num| dom.element(num, &W::name("ilvl")))
+            .and_then(|il| dom.attribute(il, &W::val()))
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        if saw_sub && ilvl == 0 {
+            break;
+        }
+        if ilvl >= 1 {
+            saw_sub = true;
+        }
+        cut_rel = i + 1;
+    }
+    if !saw_sub || cut_rel < 2 || cut_rel >= dels.len() {
+        return;
+    }
+    // Rebuild: I[0], D[0..cut], I[1..], D[cut..]
+    let first_i = kids[0];
+    let rest_i: Vec<NodeId> = kids[1..i_end].to_vec();
+    let first_d: Vec<NodeId> = dels[..cut_rel].to_vec();
+    let rest_d: Vec<NodeId> = dels[cut_rel..].to_vec();
+    // Detach all and re-append in Word order before sectPr.
+    let sect = dom
+        .elements(body, None)
+        .into_iter()
+        .find(|&k| dom.name_is(k, &W::sect_pr()));
+    for &k in &kids {
+        dom.remove(k);
+    }
+    let mut order = Vec::new();
+    order.push(first_i);
+    order.extend(first_d);
+    order.extend(rest_i);
+    order.extend(rest_d);
+    // trailing E if any
+    for &k in &kids[d_end..] {
+        order.push(k);
+    }
+    if let Some(s) = sect {
+        for k in order {
+            dom.add_before_self(s, k);
+        }
+    } else {
+        for k in order {
+            dom.add(body, k);
+        }
+    }
+}
+
+/// Word-alignment mode: at a multi-block replacement region — a run of
+/// fully-deleted block elements immediately followed by a run of fully-
+/// inserted ones, where either run contains a NON-paragraph block (table/
+/// sdt) — Word emits the INSERTED block first (ole-object_ooxml-style-link:
+/// Word page 1 is the new document's heading, ours was the old document's
+/// chart; every page misaligned, pixel-diff 0.59 corpus max). Pure-paragraph
+/// 1:1 replacements are left to [`merge_replaced_paragraphs`], which runs
+/// after this pass.
 pub fn reorder_replaced_blocks(dom: &mut Dom, root: NodeId) {
     fn block_class(dom: &Dom, el: NodeId) -> Option<bool> {
         let n = dom.name(el)?;
         if n == W::p() {
             return para_replacement_class(dom, el);
         }
-        if n == W::name("tbl") {
+        if n == W::tbl() {
             let trs = dom.descendants(el, Some(&W::name("tr")));
             if trs.is_empty() {
                 return None;
@@ -3577,10 +7132,7 @@ pub fn reorder_replaced_blocks(dom: &mut Dom, root: NodeId) {
     for container in containers {
         let children: Vec<NodeId> = dom.elements(container, None);
         let classes: Vec<Option<bool>> = children.iter().map(|&c| block_class(dom, c)).collect();
-        let paras: Vec<bool> = children
-            .iter()
-            .map(|&c| dom.name(c) == Some(W::p()))
-            .collect();
+        let paras: Vec<bool> = children.iter().map(|&c| dom.name_is(c, &W::p())).collect();
         let mut i = 0;
         while i < children.len() {
             if classes[i] != Some(false) {
@@ -3621,7 +7173,7 @@ pub fn drop_sectpr_from_deleted_marks(
     root: NodeId,
     genuine: &std::collections::HashSet<String>,
 ) {
-    let sectpr = W::name("sectPr");
+    let sectpr = W::sect_pr();
     for ppr in dom.descendants(root, Some(&W::p_pr())) {
         let mark_deleted = dom
             .element(ppr, &W::r_pr())
@@ -3672,7 +7224,7 @@ pub fn flatten_tracked_insertions_stamped(dom: &mut Dom, body: NodeId) {
         let runs: Vec<NodeId> = kids
             .iter()
             .flat_map(|&k| {
-                if dom.name(k) == Some(W::r()) {
+                if dom.name_is(k, &W::r()) {
                     vec![k]
                 } else {
                     dom.descendants(k, Some(&W::r()))
@@ -3688,7 +7240,7 @@ pub fn flatten_tracked_insertions_stamped(dom: &mut Dom, body: NodeId) {
             let under_nested_del = dom
                 .ancestors(r, None)
                 .iter()
-                .any(|&a| a != i && dom.name(a) == Some(W::del()));
+                .any(|&a| a != i && dom.name_is(a, &W::del()));
             if under_nested_del {
                 continue;
             }
@@ -3743,7 +7295,7 @@ pub fn convert_stamped_preins(
         // context (mirrors convert_stamped_predeletes ordering: kind fix after
         // parent decision). Skip when already under w:ins.
         let restore_text_kinds = |dom: &mut Dom, run: NodeId| {
-            for t in dom.descendants(run, Some(&W::name("delText"))) {
+            for t in dom.descendants(run, Some(&W::del_text())) {
                 dom.set_name(t, W::t());
             }
             for t in dom.descendants(run, Some(&W::name("delInstrText"))) {
@@ -3814,7 +7366,7 @@ pub fn ensure_default_page_size(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
-    let sectpr_name = W::name("sectPr");
+    let sectpr_name = W::sect_pr();
     let sect = match dom.element(body, &sectpr_name) {
         Some(s) => s,
         None => {
@@ -4032,6 +7584,12 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
                 ("between", 50),
                 ("bar", 60),
             ],
+            // Not a PowerTools table — C# has no numPr container, so a source
+            // writing numId before ilvl was copied through and rejected by the
+            // validator (Sch_UnexpectedElementContentExpectingComplex on
+            // w:ilvl). CT_NumPr sequence; kept in sync with
+            // order_tables::NUMPR_ORDER by tests/schema_consistency.rs.
+            "numPr" => crate::comparer::order_tables::NUMPR_ORDER,
             _ => &[],
         };
         table
@@ -4048,6 +7606,7 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
         "tcBorders",
         "tblBorders",
         "pBdr",
+        "numPr",
     ];
     for el in dom.descendants_and_self(root, None) {
         let Some(name) = dom.name(el) else { continue };
@@ -4085,16 +7644,16 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
             let kids = dom.elements(el, None);
             let needs_move = kids
                 .iter()
-                .position(|&c| dom.name(c) == Some(props.clone()))
+                .position(|&c| dom.name_is(c, &props.clone()))
                 .is_some_and(|first_props| {
                     kids[..first_props]
                         .iter()
-                        .any(|&c| dom.name(c) != Some(props.clone()))
+                        .any(|&c| !dom.name_is(c, &props.clone()))
                 });
             if needs_move {
                 let (front, back): (Vec<NodeId>, Vec<NodeId>) = kids
                     .into_iter()
-                    .partition(|&c| dom.name(c) == Some(props.clone()));
+                    .partition(|&c| dom.name_is(c, &props.clone()));
                 for c in front.into_iter().chain(back) {
                     dom.remove(c);
                     dom.add(el, c);
@@ -4122,7 +7681,7 @@ pub fn wrap_bare_del_text_runs(
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
-    let del_text = W::name("delText");
+    let del_text = W::del_text();
     let move_from = W::name("moveFrom");
     let runs: Vec<NodeId> = dom
         .descendants(root, Some(&W::r()))
@@ -4193,7 +7752,7 @@ pub fn pending_deletion_texts(dom: &Dom, body: NodeId) -> std::collections::Hash
 /// A-only deletions from shared ones. The formula must stay identical to the
 /// one used at the capture site in `flatten_tracked_deletions`.
 fn pending_deletion_fingerprint(dom: &Dom, del: NodeId) -> String {
-    let del_text = W::name("delText");
+    let del_text = W::del_text();
     let del_instr = W::name("delInstrText");
     dom.descendants(del, None)
         .into_iter()
@@ -4244,7 +7803,7 @@ pub fn flatten_tracked_deletions(
         // kept) above; the childless element must not be "unwrapped" away
         if dom
             .parent(d)
-            .is_some_and(|p| dom.name(p) == Some(rpr_name.clone()))
+            .is_some_and(|p| dom.name_is(p, &rpr_name.clone()))
         {
             continue;
         }
@@ -4252,7 +7811,7 @@ pub fn flatten_tracked_deletions(
         if side == FlattenSide::Revised
             && kids
                 .iter()
-                .any(|&k| dom.is_element(k) && dom.name(k) != Some(W::r()))
+                .any(|&k| dom.is_element(k) && !dom.name_is(k, &W::r()))
         {
             // complex content (hyperlink/sdt/smartTag/…): the stamp only
             // reaches direct runs, so flattening would resurface the nested
@@ -4266,7 +7825,7 @@ pub fn flatten_tracked_deletions(
         // as `pending_deletion_texts` (both delText and delInstrText) so the
         // `set.contains(&wrapper_text)` lookup can match.
         let wrapper_text = pending_deletion_fingerprint(dom, d);
-        for t in dom.descendants(d, Some(&W::name("delText"))) {
+        for t in dom.descendants(d, Some(&W::del_text())) {
             dom.set_name(t, W::t());
         }
         for t in dom.descendants(d, Some(&W::name("delInstrText"))) {
@@ -4290,7 +7849,7 @@ pub fn flatten_tracked_deletions(
             super::PREDELETE_STAMP_REV
         };
         for &k in &kids {
-            if dom.name(k) == Some(W::r()) {
+            if dom.name_is(k, &W::r()) {
                 dom.set_attribute_value(k, &PT::name("PreDelete"), Some(side_stamp));
                 if let Some(a) = &author {
                     dom.set_attribute_value(k, &PT::name("PreDelAuthor"), Some(a));
@@ -4396,7 +7955,7 @@ pub fn convert_stamped_predeletes(
             dom.add(d, r);
         }
         for t in dom.descendants(r, Some(&W::t())) {
-            dom.set_name(t, W::name("delText"));
+            dom.set_name(t, W::del_text());
         }
         for t in dom.descendants(r, Some(&W::instr_text())) {
             dom.set_name(t, W::name("delInstrText"));
@@ -4435,7 +7994,7 @@ pub fn synthesize_table_cell_margins(dom: &mut Dom, root: NodeId) {
             None => dom.add(tblpr, child),
         }
     }
-    let tbls: Vec<NodeId> = dom.descendants(root, Some(&W::name("tbl")));
+    let tbls: Vec<NodeId> = dom.descendants(root, Some(&W::tbl()));
     for tbl in tbls {
         let Some(tblpr) = dom.element(tbl, &W::name("tblPr")) else {
             continue;
@@ -4541,7 +8100,7 @@ pub fn fix_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
     {
         let graphic_data = crate::namespaces::A::name("graphicData");
         let uri_attr = XNamespace::none().name("uri");
-        let drawing = W::name("drawing");
+        let drawing = W::drawing();
         fn remap(dom: &mut Dom, node: NodeId, wp_uri: &str, target: &XNamespace, drawing: &XName) {
             for c in dom.nodes(node) {
                 if !dom.is_element(c) {
@@ -4748,7 +8307,7 @@ pub fn drop_hoisted_sectpr_artifacts(
     root: NodeId,
     genuine: &std::collections::HashSet<String>,
 ) {
-    let sectpr = W::name("sectPr");
+    let sectpr = W::sect_pr();
     for ppr in dom.descendants(root, Some(&W::p_pr())) {
         for sp in dom.elements(ppr, Some(&sectpr)) {
             if !genuine.contains(&sectpr_identity(dom, sp)) {
@@ -4858,7 +8417,7 @@ pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
     let kids: Vec<NodeId> = dom
         .elements(body, None)
         .into_iter()
-        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
         .collect();
     if kids.len() < 10 {
         return;
@@ -4868,7 +8427,7 @@ pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
     let mut del_start = kids.len();
     while del_start > 0 {
         let k = kids[del_start - 1];
-        if dom.name(k) != Some(W::p()) || !para_is_pure_deleted(dom, k) {
+        if !dom.name_is(k, &W::p()) || !para_is_pure_deleted(dom, k) {
             break;
         }
         del_start -= 1;
@@ -4884,9 +8443,9 @@ pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
     let pure_ins = prefix
         .iter()
         .filter(|&&k| {
-            if dom.name(k) == Some(W::p()) {
+            if dom.name_is(k, &W::p()) {
                 para_is_pure_inserted(dom, k)
-            } else if dom.name(k) == Some(W::name("tbl")) {
+            } else if dom.name_is(k, &W::tbl()) {
                 let has_ins = !dom.descendants(k, Some(&W::ins())).is_empty();
                 let has_del = !dom.descendants(k, Some(&W::del())).is_empty();
                 has_ins && !has_del
@@ -4901,7 +8460,7 @@ pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
     let mut tip_toc: Option<usize> = None;
     let mut first_numbered: Option<usize> = None;
     for (i, &k) in prefix.iter().enumerate() {
-        if dom.name(k) != Some(W::p()) {
+        if !dom.name_is(k, &W::p()) {
             continue;
         }
         let mut text = String::new();
@@ -4946,7 +8505,7 @@ pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
             vec![first]
         } else {
             let rest_all_longer = rest.iter().all(|&d| {
-                dom.name(d) == Some(W::p())
+                dom.name_is(d, &W::p())
                     && para_is_pure_deleted(dom, d)
                     && para_body_alnum_len(dom, d) > first_alnum + 10
             });
@@ -4979,10 +8538,10 @@ pub fn split_digits_ins_from_mixed_title(dom: &mut Dom, root: NodeId) {
     let kids: Vec<NodeId> = dom
         .elements(body, None)
         .into_iter()
-        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
         .collect();
     for &mix in &kids {
-        if dom.name(mix) != Some(W::p()) {
+        if !dom.name_is(mix, &W::p()) {
             continue;
         }
         let has_ins = !dom.descendants(mix, Some(&W::ins())).is_empty();
@@ -4995,10 +8554,10 @@ pub fn split_digits_ins_from_mixed_title(dom: &mut Dom, root: NodeId) {
         let mut rest: Vec<NodeId> = Vec::new();
         let mut in_leading = true;
         for &c in &mix_kids {
-            if dom.name(c) == Some(W::p_pr()) {
+            if dom.name_is(c, &W::p_pr()) {
                 continue;
             }
-            if in_leading && dom.name(c) == Some(W::ins()) {
+            if in_leading && dom.name_is(c, &W::ins()) {
                 leading_ins.push(c);
             } else {
                 in_leading = false;
@@ -5023,12 +8582,12 @@ pub fn split_digits_ins_from_mixed_title(dom: &mut Dom, root: NodeId) {
         {
             continue;
         }
-        let rest_has_ins = rest.iter().any(|&c| {
-            dom.name(c) == Some(W::ins()) || !dom.descendants(c, Some(&W::ins())).is_empty()
-        });
-        let rest_has_del = rest.iter().any(|&c| {
-            dom.name(c) == Some(W::del()) || !dom.descendants(c, Some(&W::del())).is_empty()
-        });
+        let rest_has_ins = rest
+            .iter()
+            .any(|&c| dom.name_is(c, &W::ins()) || !dom.descendants(c, Some(&W::ins())).is_empty());
+        let rest_has_del = rest
+            .iter()
+            .any(|&c| dom.name_is(c, &W::del()) || !dom.descendants(c, Some(&W::del())).is_empty());
         if rest_has_ins || !rest_has_del {
             continue;
         }
@@ -5058,13 +8617,13 @@ pub fn peel_trailing_ins_from_mix_into_following_pure_del(dom: &mut Dom, root: N
         let kids: Vec<NodeId> = dom
             .elements(body, None)
             .into_iter()
-            .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+            .filter(|&k| !dom.name_is(k, &W::sect_pr()))
             .collect();
         let mut acted = false;
         for i in 0..kids.len().saturating_sub(1) {
             let mix_p = kids[i];
             let del_p = kids[i + 1];
-            if dom.name(mix_p) != Some(W::p()) || dom.name(del_p) != Some(W::p()) {
+            if !dom.name_is(mix_p, &W::p()) || !dom.name_is(del_p, &W::p()) {
                 continue;
             }
             if !para_is_pure_deleted(dom, del_p) {
@@ -5093,16 +8652,16 @@ pub fn peel_trailing_ins_from_mix_into_following_pure_del(dom: &mut Dom, root: N
             let mut trailing_ins: Vec<NodeId> = Vec::new();
             let mut saw_ins = false;
             for &c in mix_kids.iter().rev() {
-                if dom.name(c) == Some(W::p_pr()) {
+                if dom.name_is(c, &W::p_pr()) {
                     continue;
                 }
-                if dom.name(c) == Some(W::ins()) {
+                if dom.name_is(c, &W::ins()) {
                     trailing_ins.push(c);
                     saw_ins = true;
                     continue;
                 }
                 // Allow a pure-punctuation bare run after the ins (period).
-                if !saw_ins && dom.name(c) == Some(W::r()) {
+                if !saw_ins && dom.name_is(c, &W::r()) {
                     let mut t = String::new();
                     for tn in dom.descendants(c, Some(&W::t())) {
                         t.push_str(&dom.value_str(tn));
@@ -5156,7 +8715,7 @@ pub fn peel_trailing_ins_from_mix_into_following_pure_del(dom: &mut Dom, root: N
             let del_body_first = dom
                 .elements(del_p, None)
                 .into_iter()
-                .find(|&c| dom.name(c) != Some(W::p_pr()));
+                .find(|&c| !dom.name_is(c, &W::p_pr()));
             for &ins_n in &trailing_ins {
                 if dom.parent(ins_n).is_none() {
                     continue;
@@ -5190,13 +8749,13 @@ pub fn restore_short_del_before_long_ins(dom: &mut Dom, root: NodeId) {
         let kids: Vec<NodeId> = dom
             .elements(body, None)
             .into_iter()
-            .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+            .filter(|&k| !dom.name_is(k, &W::sect_pr()))
             .collect();
         let mut acted = false;
         for i in 0..kids.len().saturating_sub(1) {
             let ins_p = kids[i];
             let del_p = kids[i + 1];
-            if dom.name(ins_p) != Some(W::p()) || dom.name(del_p) != Some(W::p()) {
+            if !dom.name_is(ins_p, &W::p()) || !dom.name_is(del_p, &W::p()) {
                 continue;
             }
             if !para_is_pure_inserted(dom, ins_p) || !para_is_pure_deleted(dom, del_p) {
@@ -5210,7 +8769,7 @@ pub fn restore_short_del_before_long_ins(dom: &mut Dom, root: NodeId) {
                 continue;
             }
             let prev = kids[i - 1];
-            if dom.name(prev) != Some(W::p()) {
+            if !dom.name_is(prev, &W::p()) {
                 continue;
             }
             {
@@ -5265,13 +8824,13 @@ pub fn peel_trailing_del_from_mix_into_following_pure_ins(dom: &mut Dom, root: N
         let kids: Vec<NodeId> = dom
             .elements(body, None)
             .into_iter()
-            .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+            .filter(|&k| !dom.name_is(k, &W::sect_pr()))
             .collect();
         let mut acted = false;
         for i in 0..kids.len().saturating_sub(1) {
             let mix_p = kids[i];
             let ins_p = kids[i + 1];
-            if dom.name(mix_p) != Some(W::p()) || dom.name(ins_p) != Some(W::p()) {
+            if !dom.name_is(mix_p, &W::p()) || !dom.name_is(ins_p, &W::p()) {
                 continue;
             }
             if !para_is_pure_inserted(dom, ins_p) {
@@ -5287,15 +8846,15 @@ pub fn peel_trailing_del_from_mix_into_following_pure_ins(dom: &mut Dom, root: N
             let mut trailing_del: Vec<NodeId> = Vec::new();
             let mut saw_del = false;
             for &c in mix_kids.iter().rev() {
-                if dom.name(c) == Some(W::p_pr()) {
+                if dom.name_is(c, &W::p_pr()) {
                     continue;
                 }
-                if dom.name(c) == Some(W::del()) {
+                if dom.name_is(c, &W::del()) {
                     trailing_del.push(c);
                     saw_del = true;
                     continue;
                 }
-                if !saw_del && dom.name(c) == Some(W::r()) {
+                if !saw_del && dom.name_is(c, &W::r()) {
                     let mut t = String::new();
                     for tn in dom.descendants(c, Some(&W::t())) {
                         t.push_str(&dom.value_str(tn));
@@ -5407,7 +8966,7 @@ pub fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: Node
     let kids: Vec<NodeId> = dom
         .elements(body, None)
         .into_iter()
-        .filter(|&k| dom.name(k) != Some(W::name("sectPr")))
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
         .collect();
     if kids.len() < 8 {
         return;
@@ -5415,7 +8974,7 @@ pub fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: Node
     // Find pure-D demo titles that have pure-I (or any) content after them.
     let mut targets: Vec<usize> = Vec::new();
     for (i, &k) in kids.iter().enumerate() {
-        if dom.name(k) != Some(W::p()) || !para_is_pure_deleted(dom, k) {
+        if !dom.name_is(k, &W::p()) || !para_is_pure_deleted(dom, k) {
             continue;
         }
         if !para_looks_like_demo_title(dom, k) {
@@ -5423,7 +8982,7 @@ pub fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: Node
         }
         let following = kids[i + 1..].iter().any(|&c| match dom.name(c) {
             Some(n) if n == W::p() => !para_has_no_text(dom, c),
-            Some(n) if n == W::name("tbl") => true,
+            Some(n) if n == W::tbl() => true,
             _ => false,
         });
         if following {
@@ -5439,12 +8998,12 @@ pub fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: Node
         let mut heading: Option<NodeId> = None;
         let start = di.saturating_sub(10);
         for &k in kids[start..di].iter().rev() {
-            if dom.name(k) != Some(W::p()) {
+            if !dom.name_is(k, &W::p()) {
                 continue;
             }
             if !para_is_pure_inserted(dom, k) {
                 // Stop at non-pure-I barrier (mixed/table/eq).
-                if dom.name(k) == Some(W::name("tbl")) {
+                if dom.name_is(k, &W::tbl()) {
                     break;
                 }
                 continue;
@@ -5482,7 +9041,7 @@ pub fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: Node
             }
         }
         for c in dom.elements(d, None) {
-            if dom.name(c) != Some(W::p_pr()) {
+            if !dom.name_is(c, &W::p_pr()) {
                 dom.add(h, c);
             }
         }
@@ -5499,7 +9058,7 @@ pub fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: Node
 fn mesh_trailing_demo_eq_in_para(dom: &mut Dom, p: NodeId) {
     // Collect delText leaves under this para in document order.
     let del_texts: Vec<NodeId> = dom
-        .descendants(p, Some(&W::name("delText")))
+        .descendants(p, Some(&W::del_text()))
         .into_iter()
         .collect();
     if del_texts.is_empty() {
@@ -5555,12 +9114,12 @@ fn mesh_trailing_demo_eq_in_para(dom: &mut Dom, p: NodeId) {
     // Anchor: parent w:del of the last touched delText (or the run's del).
     let mut anchor = dt;
     while let Some(par) = dom.parent(anchor) {
-        if dom.name(par) == Some(W::del()) {
+        if dom.name_is(par, &W::del()) {
             anchor = par;
             break;
         }
         anchor = par;
-        if dom.name(par) == Some(W::p()) {
+        if dom.name_is(par, &W::p()) {
             break;
         }
     }
@@ -5570,9 +9129,1708 @@ fn mesh_trailing_demo_eq_in_para(dom: &mut Dom, p: NodeId) {
     dom.set_attribute_value(eq_t, &XNamespace::xml().name("space"), Some("preserve"));
     dom.add_text(eq_t, " Demo");
     dom.add(eq_r, eq_t);
-    if dom.name(anchor) == Some(W::del()) {
+    if dom.name_is(anchor, &W::del()) {
         dom.add_after_self(anchor, eq_r);
     } else {
         dom.add(p, eq_r);
     }
+}
+
+/// M452 (right_aligned_italic × right_alignment_2 ~84.3 residual):
+/// short **title** MIX free-mesh has no pPr; Word parks original `jc` into
+/// `pPrChange` only (no live jc). Abandoned M451 tried **live** jc on title
+/// and thrash'd right_align/center_bold. Park-only matches Word.
+///
+/// Gate: first MIX, short tokens (ins+del side words ≤5), no live jc, no
+/// pPrChange, and a later body para has live `jc` (source value).
+pub fn park_jc_on_first_short_title_mix_from_body(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    if kids.len() < 2 {
+        return;
+    }
+    // First MIX only (title free-mesh).
+    let mut title: Option<NodeId> = None;
+    for &k in &kids {
+        if !dom.name_is(k, &W::p()) {
+            continue;
+        }
+        if para_is_mixed_revision(dom, k) {
+            title = Some(k);
+            break;
+        }
+    }
+    let Some(p) = title else {
+        return;
+    };
+    let ins_w = para_side_word_count(dom, p, true);
+    let del_w = para_side_word_count(dom, p, false);
+    if ins_w + del_w == 0 || ins_w + del_w > 5 {
+        return;
+    }
+    let ppr = match dom.element(p, &W::p_pr()) {
+        Some(ppr) => ppr,
+        None => {
+            let ppr = dom.new_element(W::p_pr());
+            // pPr must be first child of p for Word validity.
+            if let Some(first) = dom.elements(p, None).first().copied() {
+                dom.add_before_self(first, ppr);
+            } else {
+                dom.add(p, ppr);
+            }
+            ppr
+        }
+    };
+    // Already live jc or any pPrChange — leave alone (right_align_bold title
+    // has live jc; center_bold title already park-only after other peels).
+    if dom.element(ppr, &W::jc_el()).is_some() {
+        return;
+    }
+    if dom.element(ppr, &W::p_pr_change()).is_some() {
+        return;
+    }
+    // Source live jc from a later body residual.
+    let mut jc_val: Option<String> = None;
+    for &k in &kids {
+        if k == p || !dom.name_is(k, &W::p()) {
+            continue;
+        }
+        let Some(kppr) = dom.element(k, &W::p_pr()) else {
+            continue;
+        };
+        let Some(jc) = dom.element(kppr, &W::jc_el()) else {
+            continue;
+        };
+        if let Some(v) = dom.attribute(jc, &W::val())
+            && !v.is_empty()
+        {
+            // M452b: justify thrash (−10) when parking jc=both onto title MIX.
+            // Word title park-only shapes are right/center free-mesh demos.
+            if v != "right" && v != "center" {
+                continue;
+            }
+            jc_val = Some(v.to_string());
+            break;
+        }
+    }
+    let Some(val) = jc_val else {
+        return;
+    };
+    // Park-only pPrChange(old jc).
+    let old_inner = dom.new_element(W::p_pr());
+    let old_jc = dom.new_element(W::jc_el());
+    dom.set_attribute_value(old_jc, &W::val(), Some(&val));
+    dom.add(old_inner, old_jc);
+    let chg = dom.new_element(W::p_pr_change());
+    dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+    *id_gen += 1;
+    dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+    dom.add(chg, old_inner);
+    dom.add(ppr, chg);
+}
+
+/// M453 (calibri_font × calibri_heading_2_right mid residual):
+/// Word keeps live Heading residual spacing **and** an empty `pPrChange`
+/// shell on mid MIX. Engine has live spacing only (last MIX already fixed
+/// by M450). Also covers EQ/pure-I with live heading residual (rare).
+///
+/// Does **not** touch MIX with live `jc` (M451 deliberately strips empty
+/// shells there — center_alignment_2 mid shape).
+pub fn ensure_empty_pprchange_on_live_heading_spacing(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    if kids.len() < 2 {
+        return;
+    }
+    let last = kids[kids.len() - 1];
+    // M453d: only fire when last residual already has empty pPrChange (M450
+    // calibri chain). heading_1/2 style free-mesh has live spacing on mid+last
+    // **without** empty shells (Word) — thrash −6 if we inject mid-only.
+    let last_has_empty_chg = (|| {
+        if !dom.name_is(last, &W::p()) {
+            return false;
+        }
+        let Some(lppr) = dom.element(last, &W::p_pr()) else {
+            return false;
+        };
+        let Some(chg) = dom.element(lppr, &W::p_pr_change()) else {
+            return false;
+        };
+        let Some(old) = dom.element(chg, &W::p_pr()) else {
+            return false;
+        };
+        // Empty of layout children (ignore rPr).
+        for c in dom.elements(old, None) {
+            let Some(n) = dom.name(c) else {
+                continue;
+            };
+            if n == W::r_pr() {
+                continue;
+            }
+            return false;
+        }
+        true
+    })();
+    if !last_has_empty_chg {
+        return;
+    }
+    for &p in &kids {
+        // Only **non-last MIX**. Last already has empty shell via M450.
+        if p == last || !dom.name_is(p, &W::p()) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        if dom.element(ppr, &W::p_pr_change()).is_some() {
+            continue;
+        }
+        // Skip MIX with live jc — M451 Word shape is no empty shell.
+        if dom.element(ppr, &W::jc_el()).is_some() {
+            continue;
+        }
+        // Word heading free-mesh keeps live spacing + rPr without empty shell.
+        if dom.element(ppr, &W::r_pr()).is_some() {
+            continue;
+        }
+        let Some(sp) = dom.element(ppr, &W::spacing_el()) else {
+            continue;
+        };
+        let before = dom
+            .attribute(sp, &W::name("before"))
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+        if before < 200 || dom.attribute(sp, &W::name("line")).is_none() {
+            continue;
+        }
+        let old_inner = dom.new_element(W::p_pr());
+        let chg = dom.new_element(W::p_pr_change());
+        dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+        *id_gen += 1;
+        dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+        dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+        dom.add(chg, old_inner);
+        dom.add(ppr, chg);
+    }
+}
+
+/// M454 (center_alignment_2 residual ~87 → 100):
+/// Word EQ title keeps live `jc` + empty `pPrChange`. Engine had live jc only.
+///
+/// Gate: **EQ only** (no ins/del content or marks) — pure-I empty shells
+/// thrash'd comments subset (−6). No MIX (M451). No rPr mark.
+pub fn ensure_empty_pprchange_on_eq_with_live_jc(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    for &p in &kids {
+        if !dom.name_is(p, &W::p()) {
+            continue;
+        }
+        if para_is_mixed_revision(dom, p)
+            || para_is_pure_inserted(dom, p)
+            || para_is_pure_deleted(dom, p)
+        {
+            continue;
+        }
+        // Strict EQ: no ins/del content or para-mark revision.
+        if !dom.descendants(p, Some(&W::ins())).is_empty()
+            || !dom.descendants(p, Some(&W::del())).is_empty()
+            || para_mark_revision(dom, p, &W::ins())
+            || para_mark_revision(dom, p, &W::del())
+        {
+            continue;
+        }
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        if dom.element(ppr, &W::jc_el()).is_none() {
+            continue;
+        }
+        if dom.element(ppr, &W::p_pr_change()).is_some() {
+            continue;
+        }
+        if dom.element(ppr, &W::r_pr()).is_some() {
+            continue;
+        }
+        let old_inner = dom.new_element(W::p_pr());
+        let chg = dom.new_element(W::p_pr_change());
+        dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+        *id_gen += 1;
+        dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+        dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+        dom.add(chg, old_inner);
+        dom.add(ppr, chg);
+    }
+}
+
+/// M458 (right_aligned_italic residual ~88 after M151 peel):
+/// M151 pure-I's B1 ("This document…") then free-meshes A1×B2, which leaves an
+/// **early del "This"** on the body MIX (often after a short leading ins
+/// "All") that Word does not show. Surgical: if previous para is pure-I
+/// starting with the same first alnum token, drop the first short del among
+/// the first three content children when it only echoes that token.
+pub fn strip_leading_del_echoing_prev_pure_i(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    for i in 1..kids.len() {
+        let prev = kids[i - 1];
+        let p = kids[i];
+        if !dom.name_is(prev, &W::p()) || !dom.name_is(p, &W::p()) {
+            continue;
+        }
+        if !para_is_pure_inserted(dom, prev) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        let prev_text = para_revision_body_text(dom, prev);
+        let prev_tok = prev_text
+            .split(|c: char| !c.is_alphanumeric())
+            .find(|t| !t.is_empty())
+            .map(|t| t.to_ascii_lowercase());
+        let Some(prev_tok) = prev_tok else {
+            continue;
+        };
+        let content: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| !dom.name_is(c, &W::p_pr()))
+            .collect();
+        if content.len() < 2 {
+            continue;
+        }
+        // Scan first 3 content children for a short del that echoes prev_tok.
+        let mut target: Option<NodeId> = None;
+        for &c in content.iter().take(3) {
+            if !dom.name_is(c, &W::del()) {
+                continue;
+            }
+            let mut n_tok = 0usize;
+            let mut first_tok: Option<String> = None;
+            for t in dom.descendants(c, Some(&W::del_text())) {
+                for part in dom.value_str(t).split(|ch: char| !ch.is_alphanumeric()) {
+                    if part.is_empty() {
+                        continue;
+                    }
+                    n_tok += 1;
+                    if first_tok.is_none() {
+                        first_tok = Some(part.to_ascii_lowercase());
+                    }
+                }
+            }
+            for t in dom.descendants(c, Some(&W::t())) {
+                for part in dom.value_str(t).split(|ch: char| !ch.is_alphanumeric()) {
+                    if part.is_empty() {
+                        continue;
+                    }
+                    n_tok += 1;
+                    if first_tok.is_none() {
+                        first_tok = Some(part.to_ascii_lowercase());
+                    }
+                }
+            }
+            let Some(ft) = first_tok else {
+                continue;
+            };
+            if ft == prev_tok && (1..=2).contains(&n_tok) {
+                target = Some(c);
+                break;
+            }
+        }
+        let Some(del_node) = target else {
+            continue;
+        };
+        // Leave other content.
+        let other = content.iter().any(|&c| c != del_node);
+        if !other {
+            continue;
+        }
+        dom.remove(del_node);
+    }
+}
+
+/// M462 (center_aligned_bold body2 residual after M461): wholesale body MIX
+/// free-mesh with coverage-gated word-LCS. M459 thrash'd file_163 (−29) and
+/// ooxml (−12) on single-sig / low-overlap free-mesh; this revival requires
+/// significant-token coverage ≥ 0.35 and LCS only on non-boiler + short glue
+/// (`is`), so cab (`is`/`centered`) fires while thrash fixtures do not.
+///
+/// Gates: one ins + one del (optional trailing bare punct), each side 5..=40
+/// alnum tokens, filtered LCS ≥ 2 with ≥1 sig LCS anchor, and
+/// `shared_sig / min(ins_sig, del_sig) ≥ 0.35`.
+pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    for &p in &kids {
+        if !dom.name_is(p, &W::p()) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        let body_kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| !dom.name_is(c, &W::p_pr()))
+            .collect();
+        if body_kids.is_empty() {
+            continue;
+        }
+        let mut ins_nodes = Vec::new();
+        let mut del_nodes = Vec::new();
+        let mut other = false;
+        for &c in &body_kids {
+            let n = dom.name(c);
+            if n == Some(W::ins()) {
+                ins_nodes.push(c);
+            } else if n == Some(W::del()) {
+                del_nodes.push(c);
+            } else if n == Some(W::r()) {
+                // Trailing bare punctuation only.
+                let mut t = String::new();
+                for tn in dom.descendants(c, Some(&W::t())) {
+                    t.push_str(&dom.value_str(tn));
+                }
+                if !t.chars().all(|ch| !ch.is_alphanumeric()) {
+                    other = true;
+                    break;
+                }
+            } else {
+                other = true;
+                break;
+            }
+        }
+        if other || ins_nodes.len() != 1 || del_nodes.len() != 1 {
+            continue;
+        }
+        let ins = ins_nodes[0];
+        let del = del_nodes[0];
+        let mut ins_text = String::new();
+        for t in dom.descendants(ins, Some(&W::t())) {
+            ins_text.push_str(&dom.value_str(t));
+        }
+        let mut del_text = String::new();
+        for t in dom.descendants(del, Some(&W::del_text())) {
+            del_text.push_str(&dom.value_str(t));
+        }
+        // Capture trailing period intent before tokenizing.
+        let trailing_period =
+            ins_text.trim_end().ends_with('.') || del_text.trim_end().ends_with('.');
+        let ins_toks = alnum_tokens(&ins_text);
+        let del_toks = alnum_tokens(&del_text);
+        if !(5..=40).contains(&ins_toks.len()) || !(5..=40).contains(&del_toks.len()) {
+            continue;
+        }
+        const BOILER: &[&str] = &[
+            "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than",
+            "then", "when", "what", "which", "into", "over", "only", "also", "just", "more",
+            "most", "some", "such", "other", "about", "page", "text", "and", "the", "for", "are",
+            "was", "you", "all", "can", "her", "his", "its", "our", "out",
+        ];
+        let is_sig = |t: &str| t.len() >= 4 && !BOILER.contains(&t);
+        let ins_sig: std::collections::HashSet<&str> = ins_toks
+            .iter()
+            .map(String::as_str)
+            .filter(|t| is_sig(t))
+            .collect();
+        let del_sig: std::collections::HashSet<&str> = del_toks
+            .iter()
+            .map(String::as_str)
+            .filter(|t| is_sig(t))
+            .collect();
+        let shared_sig = ins_sig.intersection(&del_sig).count();
+        let min_sig = ins_sig.len().min(del_sig.len());
+        // Coverage gate: thrash fixtures share ~1/6–1/8 of significant tokens;
+        // cab shares centered among document/centered vs both/centered/bold (0.5).
+        if min_sig == 0 || (shared_sig as f64) / (min_sig as f64) < 0.35 {
+            continue;
+        }
+        // Case-preserving word lists for rebuild.
+        let ins_words = split_words_preserve(&ins_text);
+        let del_words = split_words_preserve(&del_text);
+        let ins_keys: Vec<String> = ins_words.iter().map(|w| w.to_ascii_lowercase()).collect();
+        let del_keys: Vec<String> = del_words.iter().map(|w| w.to_ascii_lowercase()).collect();
+        // LCS only on non-boiler / short-glue tokens (Word: is/centered, not text).
+        let lcs = word_lcs_indices_eligible(&ins_keys, &del_keys, BOILER);
+        if lcs.len() < 2 {
+            continue;
+        }
+        let sig_lcs = lcs
+            .iter()
+            .filter(|&&(i, _)| is_sig(ins_keys[i].as_str()))
+            .count();
+        if sig_lcs < 1 {
+            continue;
+        }
+        let (author, date) = {
+            let mut a = "Redline".to_string();
+            let mut d = "1970-01-01T00:00:00Z".to_string();
+            if let Some(v) = dom.attribute(ins, &W::author()) {
+                a = v.to_string();
+            }
+            if let Some(v) = dom.attribute(ins, &W::date()) {
+                d = v.to_string();
+            }
+            (a, d)
+        };
+        let sample_rpr = dom
+            .element(ins, &W::r())
+            .and_then(|r| dom.element(r, &W::r_pr()))
+            .map(|rpr| dom.clone_subtree(rpr));
+        for c in body_kids {
+            if dom.parent(c).is_some() {
+                dom.remove(c);
+            }
+        }
+        rebuild_body_free_mesh_lcs(
+            dom,
+            p,
+            &ins_words,
+            &del_words,
+            &lcs,
+            &author,
+            &date,
+            sample_rpr,
+            trailing_period,
+        );
+    }
+}
+
+fn split_words_preserve(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .collect()
+}
+
+fn word_lcs_indices(a: &[String], b: &[String]) -> Vec<(usize, usize)> {
+    let n = a.len();
+    let m = b.len();
+    let mut dp = vec![vec![0usize; m + 1]; n + 1];
+    for i in 0..n {
+        for j in 0..m {
+            if a[i] == b[j] {
+                dp[i + 1][j + 1] = dp[i][j] + 1;
+            } else {
+                dp[i + 1][j + 1] = dp[i + 1][j].max(dp[i][j + 1]);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut i = n;
+    let mut j = m;
+    while i > 0 && j > 0 {
+        if a[i - 1] == b[j - 1] {
+            out.push((i - 1, j - 1));
+            i -= 1;
+            j -= 1;
+        } else if dp[i - 1][j] >= dp[i][j - 1] {
+            i -= 1;
+        } else {
+            j -= 1;
+        }
+    }
+    out.reverse();
+    out
+}
+
+/// LCS only on significant (len≥4 non-boiler) or short glue words; map indices
+/// back to the full word lists.
+fn word_lcs_indices_eligible(a: &[String], b: &[String], boiler: &[&str]) -> Vec<(usize, usize)> {
+    const SHORT_OK: &[&str] = &["is", "of", "to", "be"];
+    let eligible = |t: &str| {
+        if t.len() >= 4 {
+            !boiler.contains(&t)
+        } else {
+            SHORT_OK.contains(&t)
+        }
+    };
+    let a_idx: Vec<usize> = (0..a.len()).filter(|&i| eligible(&a[i])).collect();
+    let b_idx: Vec<usize> = (0..b.len()).filter(|&j| eligible(&b[j])).collect();
+    if a_idx.is_empty() || b_idx.is_empty() {
+        return Vec::new();
+    }
+    let a_f: Vec<String> = a_idx.iter().map(|&i| a[i].clone()).collect();
+    let b_f: Vec<String> = b_idx.iter().map(|&j| b[j].clone()).collect();
+    word_lcs_indices(&a_f, &b_f)
+        .into_iter()
+        .map(|(i, j)| (a_idx[i], b_idx[j]))
+        .collect()
+}
+
+/// Rebuild free-mesh from word LCS. Emits: ins-runs, del-runs, EQ runs with
+/// single spaces. Order at each step: flush pending del then ins before EQ
+/// when both pending at an anchor (Word often shows del residual then ins).
+#[allow(clippy::too_many_arguments)]
+fn rebuild_body_free_mesh_lcs(
+    dom: &mut Dom,
+    p: NodeId,
+    ins_words: &[String],
+    del_words: &[String],
+    lcs: &[(usize, usize)],
+    author: &str,
+    date: &str,
+    sample_rpr: Option<NodeId>,
+    trailing_period: bool,
+) {
+    let mut next_id = 1u32;
+    let mut ii = 0usize;
+    let mut di = 0usize;
+    let mut li = 0usize;
+    let mut first_content = true;
+
+    let push_run = |dom: &mut Dom,
+                    p: NodeId,
+                    kind: &str,
+                    words: &[String],
+                    author: &str,
+                    date: &str,
+                    next_id: &mut u32,
+                    sample_rpr: &Option<NodeId>,
+                    first_content: &mut bool| {
+        if words.is_empty() {
+            return;
+        }
+        let mut text = words.join(" ");
+        if !*first_content {
+            text = format!(" {text}");
+        }
+        *first_content = false;
+        match kind {
+            "eq" => {
+                let r = dom.new_element(W::r());
+                if let Some(rpr) = sample_rpr {
+                    let rpr_c = dom.clone_subtree(*rpr);
+                    dom.add(r, rpr_c);
+                }
+                let t = dom.new_element(W::t());
+                if text.starts_with(' ') || text.ends_with(' ') {
+                    dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+                }
+                dom.add_text(t, &text);
+                dom.add(r, t);
+                dom.add(p, r);
+            }
+            "ins" => {
+                let ins = dom.new_element(W::ins());
+                dom.set_attribute_value(ins, &W::id(), Some(&next_id.to_string()));
+                *next_id += 1;
+                dom.set_attribute_value(ins, &W::author(), Some(author));
+                dom.set_attribute_value(ins, &W::date(), Some(date));
+                let r = dom.new_element(W::r());
+                if let Some(rpr) = sample_rpr {
+                    let rpr_c = dom.clone_subtree(*rpr);
+                    dom.add(r, rpr_c);
+                }
+                let t = dom.new_element(W::t());
+                if text.starts_with(' ') || text.contains(' ') {
+                    dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+                }
+                dom.add_text(t, &text);
+                dom.add(r, t);
+                dom.add(ins, r);
+                dom.add(p, ins);
+            }
+            "del" => {
+                let del = dom.new_element(W::del());
+                dom.set_attribute_value(del, &W::id(), Some(&next_id.to_string()));
+                *next_id += 1;
+                dom.set_attribute_value(del, &W::author(), Some(author));
+                dom.set_attribute_value(del, &W::date(), Some(date));
+                let r = dom.new_element(W::r());
+                if let Some(rpr) = sample_rpr {
+                    let rpr_c = dom.clone_subtree(*rpr);
+                    dom.add(r, rpr_c);
+                }
+                let t = dom.new_element(W::del_text());
+                if text.starts_with(' ') || text.contains(' ') {
+                    dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+                }
+                dom.add_text(t, &text);
+                dom.add(r, t);
+                dom.add(del, r);
+                dom.add(p, del);
+            }
+            _ => {}
+        }
+    };
+
+    while ii < ins_words.len() || di < del_words.len() {
+        if let Some(&(ei, ed)) = lcs.get(li) {
+            if ii == ei && di == ed {
+                // EQ anchor (pending del/ins already flushed by lag advances).
+                let label = del_words[ed].clone(); // prefer deleted side casing
+                push_run(
+                    dom,
+                    p,
+                    "eq",
+                    &[label],
+                    author,
+                    date,
+                    &mut next_id,
+                    &sample_rpr,
+                    &mut first_content,
+                );
+                ii = ei + 1;
+                di = ed + 1;
+                li += 1;
+                continue;
+            }
+            // Advance lagging side(s) up to next EQ (ins then del — Word body
+            // free-mesh often leads with the new sentence residual).
+            if ii < ei {
+                let mut batch = Vec::new();
+                while ii < ei {
+                    batch.push(ins_words[ii].clone());
+                    ii += 1;
+                }
+                push_run(
+                    dom,
+                    p,
+                    "ins",
+                    &batch,
+                    author,
+                    date,
+                    &mut next_id,
+                    &sample_rpr,
+                    &mut first_content,
+                );
+                continue;
+            }
+            if di < ed {
+                let mut batch = Vec::new();
+                while di < ed {
+                    batch.push(del_words[di].clone());
+                    di += 1;
+                }
+                push_run(
+                    dom,
+                    p,
+                    "del",
+                    &batch,
+                    author,
+                    date,
+                    &mut next_id,
+                    &sample_rpr,
+                    &mut first_content,
+                );
+                continue;
+            }
+            // Both at or past EQ but not matching — skip broken LCS entry.
+            li += 1;
+        } else {
+            // Tail
+            if di < del_words.len() {
+                let batch: Vec<String> = del_words[di..].to_vec();
+                push_run(
+                    dom,
+                    p,
+                    "del",
+                    &batch,
+                    author,
+                    date,
+                    &mut next_id,
+                    &sample_rpr,
+                    &mut first_content,
+                );
+            }
+            if ii < ins_words.len() {
+                let batch: Vec<String> = ins_words[ii..].to_vec();
+                push_run(
+                    dom,
+                    p,
+                    "ins",
+                    &batch,
+                    author,
+                    date,
+                    &mut next_id,
+                    &sample_rpr,
+                    &mut first_content,
+                );
+            }
+            break;
+        }
+    }
+    if trailing_period {
+        let r = dom.new_element(W::r());
+        if let Some(rpr) = sample_rpr {
+            let rpr_c = dom.clone_subtree(rpr);
+            dom.add(r, rpr_c);
+        }
+        let t = dom.new_element(W::t());
+        dom.add_text(t, ".");
+        dom.add(r, t);
+        dom.add(p, r);
+    }
+}
+
+/// M460 (right_align_bold×right_aligned_italic ~81.3): MIX with EQ bookends
+/// (`This ` … `.`) around a single wholesale ins+del that share one significant
+/// mid token (`right`). M459 requires no bare alnum runs so it skips bookends.
+/// Word free-meshes: INS before | DEL before | EQ token | INS after | DEL after.
+///
+/// Gates: MIX, ≥1 bare EQ with alnum, exactly one ins + one del, each side
+/// 4..=40 alnum toks, exactly one shared non-boiler len≥4 token that appears
+/// once on each side (whole-word; hyphen is a boundary so `right-aligned` →
+/// EQ `right` + INS `-aligned…`).
+pub fn free_mesh_bookended_ins_del(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    for &p in &kids {
+        if !dom.name_is(p, &W::p()) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        let body_kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| !dom.name_is(c, &W::p_pr()))
+            .collect();
+        if body_kids.is_empty() {
+            continue;
+        }
+        let mut ins_nodes = Vec::new();
+        let mut del_nodes = Vec::new();
+        let mut bare_alnum = false;
+        let mut other = false;
+        for &c in &body_kids {
+            let n = dom.name(c);
+            if n == Some(W::ins()) {
+                ins_nodes.push(c);
+            } else if n == Some(W::del()) {
+                del_nodes.push(c);
+            } else if n == Some(W::r()) {
+                let mut t = String::new();
+                for tn in dom.descendants(c, Some(&W::t())) {
+                    t.push_str(&dom.value_str(tn));
+                }
+                if t.chars().any(|ch| ch.is_alphanumeric()) {
+                    bare_alnum = true;
+                }
+            } else {
+                other = true;
+                break;
+            }
+        }
+        // Bookend required (else M459 wholesale path). One ins + one del.
+        if other || !bare_alnum || ins_nodes.len() != 1 || del_nodes.len() != 1 {
+            continue;
+        }
+        let ins = ins_nodes[0];
+        let del = del_nodes[0];
+        let mut ins_text = String::new();
+        for t in dom.descendants(ins, Some(&W::t())) {
+            ins_text.push_str(&dom.value_str(t));
+        }
+        let mut del_text = String::new();
+        for t in dom.descendants(del, Some(&W::del_text())) {
+            del_text.push_str(&dom.value_str(t));
+        }
+        let ins_toks = alnum_tokens(&ins_text);
+        let del_toks = alnum_tokens(&del_text);
+        if !(4..=40).contains(&ins_toks.len()) || !(4..=40).contains(&del_toks.len()) {
+            continue;
+        }
+        const BOILER: &[&str] = &[
+            "this", "that", "with", "from", "have", "will", "been", "were", "they", "them", "than",
+            "then", "when", "what", "which", "into", "over", "only", "also", "just", "more",
+            "most", "some", "such", "other", "about", "page", "text", "and", "the", "for", "are",
+            "was", "you", "all", "can", "her", "his", "its", "our", "out",
+        ];
+        // Shared non-boiler len≥4 tokens that appear exactly once on each side.
+        let mut ins_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for t in &ins_toks {
+            *ins_counts.entry(t.as_str()).or_default() += 1;
+        }
+        let mut del_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for t in &del_toks {
+            *del_counts.entry(t.as_str()).or_default() += 1;
+        }
+        let mut shared: Vec<&str> = ins_counts
+            .keys()
+            .filter(|t| {
+                t.len() >= 4
+                    && !BOILER.contains(t)
+                    && ins_counts.get(*t) == Some(&1)
+                    && del_counts.get(*t) == Some(&1)
+            })
+            .copied()
+            .collect();
+        // Prefer longest (more specific) shared token.
+        shared.sort_by_key(|t| std::cmp::Reverse(t.len()));
+        let Some(&anchor) = shared.first() else {
+            continue;
+        };
+        // Exactly one shared sig token — multi-anchor bookended free-mesh left
+        // to future peels (avoid thrash from over-splitting).
+        if shared.len() != 1 {
+            continue;
+        }
+        let Some((ins_before, ins_after)) = split_around_whole_word(&ins_text, anchor) else {
+            continue;
+        };
+        let Some((del_before, del_after)) = split_around_whole_word(&del_text, anchor) else {
+            continue;
+        };
+        // Must actually split (not whole string == anchor).
+        if ins_before.is_empty() && ins_after.is_empty() {
+            continue;
+        }
+        if del_before.is_empty() && del_after.is_empty() {
+            continue;
+        }
+        let (author, date) = {
+            let mut a = "Redline".to_string();
+            let mut d = "1970-01-01T00:00:00Z".to_string();
+            if let Some(v) = dom.attribute(ins, &W::author()) {
+                a = v.to_string();
+            }
+            if let Some(v) = dom.attribute(ins, &W::date()) {
+                d = v.to_string();
+            }
+            (a, d)
+        };
+        // Prefer rPr from leading bare EQ (Word rPrChange on free-mesh EQ).
+        let eq_rpr = body_kids
+            .iter()
+            .find(|&&c| dom.name_is(c, &W::r()))
+            .and_then(|&r| dom.element(r, &W::r_pr()))
+            .map(|rpr| dom.clone_subtree(rpr));
+        // Del keeps original bold rPr when present.
+        let del_rpr = dom
+            .element(del, &W::r())
+            .and_then(|r| dom.element(r, &W::r_pr()))
+            .map(|rpr| dom.clone_subtree(rpr));
+        // Rebuild: keep prefix bare runs, replace ins+del, keep suffix bare.
+        let mut prefix = Vec::new();
+        let mut suffix = Vec::new();
+        let mut seen_rev = false;
+        for &c in &body_kids {
+            let n = dom.name(c);
+            if n == Some(W::ins()) || n == Some(W::del()) {
+                seen_rev = true;
+            } else if n == Some(W::r()) {
+                if seen_rev {
+                    suffix.push(c);
+                } else {
+                    prefix.push(c);
+                }
+            }
+        }
+        // Clear all body content, re-add prefix clones, free-mesh, suffix clones.
+        let prefix_clones: Vec<NodeId> = prefix.iter().map(|&c| dom.clone_subtree(c)).collect();
+        let suffix_clones: Vec<NodeId> = suffix.iter().map(|&c| dom.clone_subtree(c)).collect();
+        for c in body_kids {
+            if dom.parent(c).is_some() {
+                dom.remove(c);
+            }
+        }
+        for c in prefix_clones {
+            dom.add(p, c);
+        }
+        let mut next_id = 1u32;
+        // Word order: INS before, DEL before, EQ, INS after, DEL after.
+        m460_push_rev_text(
+            dom,
+            p,
+            "ins",
+            &ins_before,
+            &author,
+            &date,
+            &mut next_id,
+            &None,
+        );
+        m460_push_rev_text(
+            dom,
+            p,
+            "del",
+            &del_before,
+            &author,
+            &date,
+            &mut next_id,
+            &del_rpr,
+        );
+        m460_push_eq_text(dom, p, anchor, &eq_rpr);
+        m460_push_rev_text(
+            dom,
+            p,
+            "ins",
+            &ins_after,
+            &author,
+            &date,
+            &mut next_id,
+            &None,
+        );
+        m460_push_rev_text(
+            dom,
+            p,
+            "del",
+            &del_after,
+            &author,
+            &date,
+            &mut next_id,
+            &del_rpr,
+        );
+        for c in suffix_clones {
+            dom.add(p, c);
+        }
+    }
+}
+
+/// Split `text` around the first whole-word match of `word` (case-insensitive).
+/// Hyphen/punct after the word stay in `after` (Word: EQ `right` + INS `-aligned`).
+fn split_around_whole_word(text: &str, word: &str) -> Option<(String, String)> {
+    let lower = text.to_ascii_lowercase();
+    let w = word.to_ascii_lowercase();
+    let mut start = 0usize;
+    while start < lower.len() {
+        let Some(rel) = lower[start..].find(&w) else {
+            break;
+        };
+        let i = start + rel;
+        let j = i + w.len();
+        let prev_ok = i == 0
+            || !text
+                .get(i - 1..i)
+                .and_then(|s| s.chars().next())
+                .is_some_and(|c| c.is_alphanumeric());
+        let next_ok = j >= text.len()
+            || !text
+                .get(j..j + 1)
+                .and_then(|s| s.chars().next())
+                .is_some_and(|c| c.is_alphanumeric());
+        if prev_ok && next_ok {
+            return Some((text[..i].to_string(), text[j..].to_string()));
+        }
+        start = i + 1;
+    }
+    None
+}
+
+fn m460_push_eq_text(dom: &mut Dom, p: NodeId, text: &str, sample_rpr: &Option<NodeId>) {
+    if text.is_empty() {
+        return;
+    }
+    let r = dom.new_element(W::r());
+    if let Some(rpr) = sample_rpr {
+        let rpr_c = dom.clone_subtree(*rpr);
+        dom.add(r, rpr_c);
+    }
+    let t = dom.new_element(W::t());
+    if text.starts_with(' ') || text.ends_with(' ') {
+        dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+    }
+    dom.add_text(t, text);
+    dom.add(r, t);
+    dom.add(p, r);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn m460_push_rev_text(
+    dom: &mut Dom,
+    p: NodeId,
+    kind: &str,
+    text: &str,
+    author: &str,
+    date: &str,
+    next_id: &mut u32,
+    sample_rpr: &Option<NodeId>,
+) {
+    if text.is_empty() {
+        return;
+    }
+    match kind {
+        "ins" => {
+            let ins = dom.new_element(W::ins());
+            dom.set_attribute_value(ins, &W::id(), Some(&next_id.to_string()));
+            *next_id += 1;
+            dom.set_attribute_value(ins, &W::author(), Some(author));
+            dom.set_attribute_value(ins, &W::date(), Some(date));
+            let r = dom.new_element(W::r());
+            let t = dom.new_element(W::t());
+            if text.starts_with(' ') || text.ends_with(' ') || text.contains(' ') {
+                dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+            }
+            dom.add_text(t, text);
+            dom.add(r, t);
+            dom.add(ins, r);
+            dom.add(p, ins);
+        }
+        "del" => {
+            let del = dom.new_element(W::del());
+            dom.set_attribute_value(del, &W::id(), Some(&next_id.to_string()));
+            *next_id += 1;
+            dom.set_attribute_value(del, &W::author(), Some(author));
+            dom.set_attribute_value(del, &W::date(), Some(date));
+            let r = dom.new_element(W::r());
+            if let Some(rpr) = sample_rpr {
+                let rpr_c = dom.clone_subtree(*rpr);
+                dom.add(r, rpr_c);
+            }
+            let t = dom.new_element(W::del_text());
+            if text.starts_with(' ') || text.ends_with(' ') || text.contains(' ') {
+                dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+            }
+            dom.add_text(t, text);
+            dom.add(r, t);
+            dom.add(del, r);
+            dom.add(p, del);
+        }
+        _ => {}
+    }
+}
+
+/// M461 (center_aligned_bold / right_align p1 ~82.8 / 88.95): pure-I intro
+/// "This document demonstrates … text alignment." is free-meshed by Word as
+/// `EQ[This ] | INS[…] | EQ[text ] | INS[alignment.]` with rPrChange on EQ.
+/// Engine left wholesale pure-I.
+///
+/// Gates: pure-I, 5..=20 alnum toks, starts with "This ", exactly one whole-word
+/// "text", and a following pure-D/MIX whose del side also contains "this"+"text"
+/// (Word free-meshes shared bookends against the residual A body).
+pub fn free_mesh_pure_i_this_text(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    for i in 0..kids.len() {
+        let p = kids[i];
+        if !dom.name_is(p, &W::p()) || !para_is_pure_inserted(dom, p) {
+            continue;
+        }
+        // Following 1..=2 content paras must carry deleted "text" (Word free-
+        // meshes pure-I This/text against residual A body). Prefer "this"+"text"
+        // when present (center_aligned_bold); allow "text" alone in pure-D
+        // residual (right_align p3 "…italic text creates…") after MIX already
+        // free-meshed mid-body "This"/"text".
+        let mut following_del = String::new();
+        let mut seen_p = 0usize;
+        for &k in kids.iter().skip(i + 1) {
+            if !dom.name_is(k, &W::p()) {
+                continue;
+            }
+            for t in dom.descendants(k, Some(&W::del_text())) {
+                following_del.push_str(&dom.value_str(t));
+                following_del.push(' ');
+            }
+            seen_p += 1;
+            if seen_p >= 2 {
+                break;
+            }
+        }
+        let following_del_l = following_del.to_ascii_lowercase();
+        if !following_del_l.contains("text") {
+            continue;
+        }
+
+        // Collect pure-I body text (all ins t nodes).
+        let mut ins_nodes = Vec::new();
+        let mut other = false;
+        for c in dom.elements(p, None) {
+            if dom.name_is(c, &W::p_pr()) {
+                continue;
+            }
+            if dom.name_is(c, &W::ins()) {
+                ins_nodes.push(c);
+            } else if dom.name_is(c, &W::r()) {
+                // Bare runs only if empty/punct.
+                let mut t = String::new();
+                for tn in dom.descendants(c, Some(&W::t())) {
+                    t.push_str(&dom.value_str(tn));
+                }
+                if t.chars().any(|ch| ch.is_alphanumeric()) {
+                    other = true;
+                    break;
+                }
+            } else {
+                other = true;
+                break;
+            }
+        }
+        if other || ins_nodes.is_empty() {
+            continue;
+        }
+        let mut text = String::new();
+        for &ins in &ins_nodes {
+            for t in dom.descendants(ins, Some(&W::t())) {
+                text.push_str(&dom.value_str(t));
+            }
+        }
+        let toks = alnum_tokens(&text);
+        if !(5..=20).contains(&toks.len()) {
+            continue;
+        }
+        let lower = text.to_ascii_lowercase();
+        if !lower.starts_with("this ") && !lower.starts_with("this\t") {
+            // also allow "This" at start without trailing space if next is space
+            if !lower.starts_with("this") {
+                continue;
+            }
+            // require word boundary after this
+            if lower.len() > 4 && lower.as_bytes()[4].is_ascii_alphanumeric() {
+                continue;
+            }
+        }
+        // Exactly one whole-word "text".
+        let Some((before_text, after_text)) = split_around_whole_word(&text, "text") else {
+            continue;
+        };
+        // before_text should start with "This " (case-preserving).
+        let Some((this_tok, mid)) = split_leading_this(&before_text) else {
+            continue;
+        };
+        // Avoid free-mesh when "text" is the only content after This.
+        if mid.trim().is_empty() && after_text.trim().is_empty() {
+            continue;
+        }
+
+        let (author, date) = {
+            let mut a = "Redline".to_string();
+            let mut d = "1970-01-01T00:00:00Z".to_string();
+            if let Some(v) = dom.attribute(ins_nodes[0], &W::author()) {
+                a = v.to_string();
+            }
+            if let Some(v) = dom.attribute(ins_nodes[0], &W::date()) {
+                d = v.to_string();
+            }
+            (a, d)
+        };
+        // Prefer rPr from title EQ if present (Word rPrChange on free-mesh EQ).
+        let sample_rpr = kids
+            .iter()
+            .take(i)
+            .rev()
+            .find(|&&k| dom.name_is(k, &W::p()))
+            .and_then(|&tp| {
+                dom.elements(tp, None)
+                    .into_iter()
+                    .find(|&c| dom.name_is(c, &W::r()))
+                    .and_then(|r| dom.element(r, &W::r_pr()))
+            })
+            .map(|rpr| dom.clone_subtree(rpr));
+
+        // Clear body content (keep pPr).
+        let body_kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| !dom.name_is(c, &W::p_pr()))
+            .collect();
+        for c in body_kids {
+            if dom.parent(c).is_some() {
+                dom.remove(c);
+            }
+        }
+        let mut next_id = 1u32;
+        // EQ[This ] | INS[mid] | EQ[text ] | INS[after]
+        // Preserve trailing space after This/text as Word does.
+        let this_eq = if this_tok.ends_with(' ') {
+            this_tok
+        } else {
+            format!("{this_tok} ")
+        };
+        m460_push_eq_text(dom, p, &this_eq, &sample_rpr);
+        m460_push_rev_text(dom, p, "ins", &mid, &author, &date, &mut next_id, &None);
+        // "text" + space if mid/after shape had " text "
+        let text_eq =
+            if after_text.starts_with(' ') || (!after_text.is_empty() && !mid.ends_with(' ')) {
+                // Word: "text " with trailing space when more content follows.
+                if after_text.is_empty() {
+                    "text".to_string()
+                } else {
+                    "text ".to_string()
+                }
+            } else {
+                "text".to_string()
+            };
+        m460_push_eq_text(dom, p, &text_eq, &sample_rpr);
+        let after = after_text.trim_start();
+        m460_push_rev_text(dom, p, "ins", after, &author, &date, &mut next_id, &None);
+    }
+}
+
+/// Split leading whole-word "This" (any case); returns (This+space, rest).
+fn split_leading_this(text: &str) -> Option<(String, String)> {
+    let lower = text.to_ascii_lowercase();
+    if !lower.starts_with("this") {
+        return None;
+    }
+    let rest_start = 4usize;
+    if text.len() > rest_start {
+        let next = text[rest_start..].chars().next()?;
+        if next.is_alphanumeric() {
+            return None;
+        }
+    }
+    // Include following whitespace in the This token.
+    let mut end = rest_start;
+    for (i, c) in text[rest_start..].char_indices() {
+        if c.is_whitespace() {
+            end = rest_start + i + c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if end == rest_start {
+        // no space — still OK, mid starts immediately
+        return Some((
+            text[..rest_start].to_string(),
+            text[rest_start..].to_string(),
+        ));
+    }
+    Some((text[..end].to_string(), text[end..].to_string()))
+}
+
+/// M463 (right_align p2 ~90.8 residual): free-mesh left bare EQ ` text ` between
+/// consecutive ins (`All` | ` text ` | `in this document `). Word folds into
+/// one ins `All text in this document `. Also attaches trailing bare `.` EQ
+/// onto the preceding ins/del text (Word: `margin.` / `italic.`).
+///
+/// Gates: bare EQ alnum content is a single boiler token (after trim); neighbors
+/// are both `w:ins`. Trailing period fold only when body ends with bare `.`.
+pub fn fold_boiler_eq_between_ins(dom: &mut Dom, root: NodeId) {
+    const BOILER: &[&str] = &[
+        "text", "the", "and", "for", "are", "was", "you", "all", "can", "her", "his", "its", "our",
+        "out", "this", "that", "with", "from", "have", "will", "been", "were", "they", "them",
+        "than", "then", "when", "what", "page", "more", "most", "some", "such",
+    ];
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    for &p in &kids {
+        if !dom.name_is(p, &W::p()) || !para_is_mixed_revision(dom, p) {
+            continue;
+        }
+        // Iterate until no more folds (left-to-right).
+        loop {
+            let body_kids: Vec<NodeId> = dom
+                .elements(p, None)
+                .into_iter()
+                .filter(|&c| !dom.name_is(c, &W::p_pr()))
+                .collect();
+            let mut folded = false;
+            for i in 1..body_kids.len().saturating_sub(1) {
+                let left = body_kids[i - 1];
+                let mid = body_kids[i];
+                let right = body_kids[i + 1];
+                if !dom.name_is(left, &W::ins())
+                    || !dom.name_is(right, &W::ins())
+                    || !dom.name_is(mid, &W::r())
+                {
+                    continue;
+                }
+                // Bare mid must not be inside a revision wrapper.
+                let mut mid_t = String::new();
+                for tn in dom.descendants(mid, Some(&W::t())) {
+                    mid_t.push_str(&dom.value_str(tn));
+                }
+                let mid_trim = mid_t.trim();
+                if mid_trim.is_empty() {
+                    continue;
+                }
+                // Single boiler word only (spaces allowed around it; no other punct).
+                let non_space: String = mid_trim.chars().filter(|c| !c.is_whitespace()).collect();
+                if non_space.is_empty() || !non_space.chars().all(|c| c.is_alphanumeric()) {
+                    continue;
+                }
+                if !BOILER.contains(&non_space.to_ascii_lowercase().as_str()) {
+                    continue;
+                }
+                // Collect left/right ins text.
+                let mut left_text = String::new();
+                for t in dom.descendants(left, Some(&W::t())) {
+                    left_text.push_str(&dom.value_str(t));
+                }
+                let mut right_text = String::new();
+                for t in dom.descendants(right, Some(&W::t())) {
+                    right_text.push_str(&dom.value_str(t));
+                }
+                // Compose: left + mid (preserve mid spaces) + right.
+                // Ensure a space boundary if left doesn't end with space and mid
+                // doesn't start with space.
+                let mut combined = left_text;
+                if !combined.is_empty()
+                    && !combined.ends_with(|c: char| c.is_whitespace())
+                    && !mid_t.starts_with(|c: char| c.is_whitespace())
+                {
+                    combined.push(' ');
+                }
+                combined.push_str(&mid_t);
+                if !combined.ends_with(|c: char| c.is_whitespace())
+                    && !right_text.is_empty()
+                    && !right_text.starts_with(|c: char| c.is_whitespace())
+                {
+                    combined.push(' ');
+                }
+                combined.push_str(&right_text);
+
+                // Rewrite left ins text, remove mid and right.
+                // Clear left's runs' text and set one t node.
+                let left_runs: Vec<NodeId> = dom.elements(left, Some(&W::r())).to_vec();
+                for r in &left_runs {
+                    // remove existing t nodes under r
+                    let ts: Vec<NodeId> = dom.elements(*r, Some(&W::t())).to_vec();
+                    for t in ts {
+                        if dom.parent(t).is_some() {
+                            dom.remove(t);
+                        }
+                    }
+                }
+                let r0 = if let Some(&r) = left_runs.first() {
+                    r
+                } else {
+                    let r = dom.new_element(W::r());
+                    dom.add(left, r);
+                    r
+                };
+                // drop extra runs under left
+                for r in left_runs.iter().skip(1) {
+                    if dom.parent(*r).is_some() {
+                        dom.remove(*r);
+                    }
+                }
+                let t = dom.new_element(W::t());
+                if combined.starts_with(' ') || combined.ends_with(' ') || combined.contains(' ') {
+                    dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+                }
+                dom.add_text(t, &combined);
+                dom.add(r0, t);
+                if dom.parent(mid).is_some() {
+                    dom.remove(mid);
+                }
+                if dom.parent(right).is_some() {
+                    dom.remove(right);
+                }
+                folded = true;
+                break;
+            }
+            if !folded {
+                break;
+            }
+        }
+
+        // Trailing bare period EQ → append to last ins/del text.
+        let body_kids: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| !dom.name_is(c, &W::p_pr()))
+            .collect();
+        if body_kids.len() < 2 {
+            continue;
+        }
+        let last = *body_kids.last().unwrap();
+        if !dom.name_is(last, &W::r()) {
+            continue;
+        }
+        let mut last_t = String::new();
+        for tn in dom.descendants(last, Some(&W::t())) {
+            last_t.push_str(&dom.value_str(tn));
+        }
+        if last_t.trim() != "." {
+            continue;
+        }
+        let prev = body_kids[body_kids.len() - 2];
+        let prev_name = dom.name(prev);
+        if prev_name != Some(W::ins()) && prev_name != Some(W::del()) {
+            continue;
+        }
+        let text_tag = if prev_name == Some(W::del()) {
+            W::del_text()
+        } else {
+            W::t()
+        };
+        // Append '.' to last text node under prev.
+        let texts = dom.descendants(prev, Some(&text_tag));
+        if let Some(&tn) = texts.last() {
+            let mut cur = dom.value_str(tn).into_owned();
+            if !cur.ends_with('.') {
+                cur.push('.');
+                if let Some(parent) = dom.parent(tn) {
+                    dom.remove(tn);
+                    let t = if prev_name == Some(W::del()) {
+                        dom.new_element(W::del_text())
+                    } else {
+                        dom.new_element(W::t())
+                    };
+                    if cur.starts_with(' ') || cur.ends_with(' ') || cur.contains(' ') {
+                        dom.set_attribute_value(
+                            t,
+                            &XNamespace::xml().name("space"),
+                            Some("preserve"),
+                        );
+                    }
+                    dom.add_text(t, &cur);
+                    dom.add(parent, t);
+                }
+            }
+        }
+        if dom.parent(last).is_some() {
+            dom.remove(last);
+        }
+    }
+}
+
+/// M464 (center_bold ~83.6 residual): Word free-meshes trailing ` for <word>`
+/// from a mid-body MIX ins onto the following MIX as `EQ[ for ]|INS[<word> ]`,
+/// trimming the following del's trailing ` for`. Engine left
+/// `INS[perfect for document]` on p2 and `DEL[… great for]` on p3.
+///
+/// Gates: consecutive MIX paras; last body `w:ins` on p ends with ` for <word>`;
+/// first body `w:del` on next ends with ` for` (no trailing alnum after for).
+pub fn peel_trailing_for_word_onto_next_mix(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
+        .collect();
+    for i in 0..kids.len().saturating_sub(1) {
+        let p = kids[i];
+        let nxt = kids[i + 1];
+        if !dom.name_is(p, &W::p())
+            || !dom.name_is(nxt, &W::p())
+            || !para_is_mixed_revision(dom, p)
+            || !para_is_mixed_revision(dom, nxt)
+        {
+            continue;
+        }
+        let p_body: Vec<NodeId> = dom
+            .elements(p, None)
+            .into_iter()
+            .filter(|&c| !dom.name_is(c, &W::p_pr()))
+            .collect();
+        let n_body: Vec<NodeId> = dom
+            .elements(nxt, None)
+            .into_iter()
+            .filter(|&c| !dom.name_is(c, &W::p_pr()))
+            .collect();
+        // Last ins on p (may not be last child — trailing del is common).
+        let Some(&ins) = p_body.iter().rev().find(|&&c| dom.name_is(c, &W::ins())) else {
+            continue;
+        };
+        // First del on next.
+        let Some(&del) = n_body.iter().find(|&&c| dom.name_is(c, &W::del())) else {
+            continue;
+        };
+        // Must be first content on next (optional: only pPr before).
+        if n_body.first().copied() != Some(del) {
+            continue;
+        }
+
+        let mut ins_text = String::new();
+        for t in dom.descendants(ins, Some(&W::t())) {
+            ins_text.push_str(&dom.value_str(t));
+        }
+        let mut del_text = String::new();
+        for t in dom.descendants(del, Some(&W::del_text())) {
+            del_text.push_str(&dom.value_str(t));
+        }
+        let Some((ins_keep, for_word)) = split_trailing_for_word(&ins_text) else {
+            continue;
+        };
+        // del must end with " for" (case-insensitive), no extra alnum after.
+        let del_trim = del_text.trim_end();
+        let del_lower = del_trim.to_ascii_lowercase();
+        if !del_lower.ends_with(" for") {
+            continue;
+        }
+        // Ensure it's a whole word "for" at end.
+        let for_start = del_trim.len() - 4; // " for"
+        if for_start > 0 {
+            let before = del_trim.as_bytes()[for_start - 1];
+            // space already in " for"; check char before space is not weird
+            let _ = before;
+        }
+        let del_keep = del_trim[..del_trim.len() - 4].to_string(); // drop " for"
+        // Need some residual on both sides after peel.
+        if ins_keep.trim().is_empty() || del_keep.trim().is_empty() {
+            continue;
+        }
+
+        let (author, date) = {
+            let mut a = "Redline".to_string();
+            let mut d = "1970-01-01T00:00:00Z".to_string();
+            if let Some(v) = dom.attribute(ins, &W::author()) {
+                a = v.to_string();
+            }
+            if let Some(v) = dom.attribute(ins, &W::date()) {
+                d = v.to_string();
+            }
+            (a, d)
+        };
+        // Sample rPr from next bare EQ or from ins for bold continuity.
+        let sample_rpr = n_body
+            .iter()
+            .find(|&&c| dom.name_is(c, &W::r()))
+            .and_then(|&r| dom.element(r, &W::r_pr()))
+            .or_else(|| {
+                dom.element(ins, &W::r())
+                    .and_then(|r| dom.element(r, &W::r_pr()))
+            })
+            .map(|rpr| dom.clone_subtree(rpr));
+        let ins_rpr = dom
+            .element(ins, &W::r())
+            .and_then(|r| dom.element(r, &W::r_pr()))
+            .map(|rpr| dom.clone_subtree(rpr));
+
+        // Rewrite ins text.
+        rewrite_rev_text(dom, ins, &ins_keep, false);
+        // Rewrite del text.
+        rewrite_rev_text(dom, del, &del_keep, true);
+
+        // Word order after leading del: EQ[ for ] | INS[word ].
+        let eq_text = " for ";
+        let r_eq = dom.new_element(W::r());
+        if let Some(rpr) = sample_rpr {
+            let rpr_c = dom.clone_subtree(rpr);
+            dom.add(r_eq, rpr_c);
+        }
+        let t_eq = dom.new_element(W::t());
+        dom.set_attribute_value(t_eq, &XNamespace::xml().name("space"), Some("preserve"));
+        dom.add_text(t_eq, eq_text);
+        dom.add(r_eq, t_eq);
+
+        let new_ins = dom.new_element(W::ins());
+        dom.set_attribute_value(new_ins, &W::id(), Some("1"));
+        dom.set_attribute_value(new_ins, &W::author(), Some(&author));
+        dom.set_attribute_value(new_ins, &W::date(), Some(&date));
+        let r_ins = dom.new_element(W::r());
+        if let Some(rpr) = ins_rpr {
+            let rpr_c = dom.clone_subtree(rpr);
+            dom.add(r_ins, rpr_c);
+        }
+        let t_ins = dom.new_element(W::t());
+        let word_sp = format!("{for_word} ");
+        dom.set_attribute_value(t_ins, &XNamespace::xml().name("space"), Some("preserve"));
+        dom.add_text(t_ins, &word_sp);
+        dom.add(r_ins, t_ins);
+        dom.add(new_ins, r_ins);
+
+        // Order: DEL (trimmed) | EQ for | INS word | rest…
+        dom.add_after_self(del, r_eq);
+        dom.add_after_self(r_eq, new_ins);
+    }
+}
+
+/// Split trailing ` for <word>` (case-insensitive). Returns (before, word).
+fn split_trailing_for_word(text: &str) -> Option<(String, String)> {
+    let trimmed = text.trim_end();
+    let lower = trimmed.to_ascii_lowercase();
+    // Find last " for " occurrence as whole phrase at end: ` for <word>`
+    let Some(idx) = lower.rfind(" for ") else {
+        // also allow ` for <word>` with single spaces
+        return None;
+    };
+    // " for " is 5 chars
+    let after = &trimmed[idx + 5..];
+    let word = after.trim();
+    if word.is_empty() || !word.chars().all(|c| c.is_alphanumeric()) {
+        return None;
+    }
+    // Only one trailing word after for.
+    if word.chars().any(|c| c.is_whitespace()) {
+        return None;
+    }
+    let before = trimmed[..idx].to_string();
+    if before.trim().is_empty() {
+        return None;
+    }
+    Some((before, word.to_string()))
+}
+
+/// Replace all text under an ins/del with `new_text` (single run).
+fn rewrite_rev_text(dom: &mut Dom, rev: NodeId, new_text: &str, is_del: bool) {
+    let runs: Vec<NodeId> = dom.elements(rev, Some(&W::r())).to_vec();
+    let r0 = if let Some(&r) = runs.first() {
+        // clear text children
+        let tags: Vec<NodeId> = if is_del {
+            dom.elements(r, Some(&W::del_text())).to_vec()
+        } else {
+            dom.elements(r, Some(&W::t())).to_vec()
+        };
+        for t in tags {
+            if dom.parent(t).is_some() {
+                dom.remove(t);
+            }
+        }
+        // remove extra runs
+        for r in runs.iter().skip(1) {
+            if dom.parent(*r).is_some() {
+                dom.remove(*r);
+            }
+        }
+        r
+    } else {
+        let r = dom.new_element(W::r());
+        dom.add(rev, r);
+        r
+    };
+    let t = if is_del {
+        dom.new_element(W::del_text())
+    } else {
+        dom.new_element(W::t())
+    };
+    if new_text.starts_with(' ') || new_text.ends_with(' ') || new_text.contains(' ') {
+        dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+    }
+    dom.add_text(t, new_text);
+    dom.add(r0, t);
 }

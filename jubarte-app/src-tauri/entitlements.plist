@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Ties the signed app to its App Store record (team.bundleid). Required
+	     for a Mac App Store build; without it StoreKit can't resolve the app's
+	     products and altool warns 90886. -->
+	<key>com.apple.application-identifier</key>
+	<string>NW99N2W6TA.com.jandira.jubarte</string>
+	<key>com.apple.developer.team-identifier</key>
+	<string>NW99N2W6TA</string>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.files.bookmarks.app-scope</key>
+	<true/>
+	<!-- Outbound network so the webview / Rust can POST the signed StoreKit JWS
+	     to the verification backend. Without this the App Sandbox blocks all
+	     outbound TCP and the server-side entitlement check is impossible. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

@@ -1,0 +1,36 @@
+Copyright (c) 2025–2026 Jandira Technologies, LLC. All rights reserved.
+
+PROPRIETARY AND CONFIDENTIAL
+
+This software and associated documentation files (the "Software") are the
+proprietary and confidential property of Jandira Technologies, LLC
+("Company"). Unauthorized copying, modification, distribution, public
+display, or use of the Software, via any medium, is strictly prohibited
+without the prior written consent of the Company.
+
+The Software is provided solely for authorized use under a separate license
+or subscription agreement with the Company. Except as expressly permitted
+in writing, you may not reverse engineer, decompile, or disassemble the
+Software, except to the extent that such activity is expressly permitted
+by applicable law notwithstanding this limitation.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE COMPANY BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING
+FROM OR IN CONNECTION WITH THE SOFTWARE.
+
+---------------------------------------------------------------------------
+NOTICE REGARDING EMBEDDED OPEN-SOURCE COMPONENTS
+
+This application embeds the `jubarte` comparison engine, which is licensed
+under the GNU Affero General Public License v3.0 (AGPL-3.0-only) and is
+developed at https://github.com/arthrod/jubarte-rs. The AGPL terms apply
+to the engine and any corresponding source that AGPL requires to be made
+available; they do not license this proprietary application shell, UI,
+StoreKit integration, verification workers, branding, or other non-engine
+materials under AGPL.
+
+Third-party open-source dependencies (Rust crates, Swift packages, npm
+packages) remain under their respective licenses as recorded in their
+source trees and lockfiles.

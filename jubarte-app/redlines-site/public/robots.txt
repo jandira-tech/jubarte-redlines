@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+# The API is stateful (it mints a cookie and spends the free allowance) and has
+# nothing to index. Keeping crawlers out of it also keeps them out of the quota
+# table.
+Disallow: /api/
+
+Sitemap: https://redlines.free/sitemap.xml
