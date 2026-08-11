@@ -637,6 +637,7 @@ pub fn convert_outer_math_wraps_to_internal(
 ///   materialized when the run stores none (Word always writes it);
 /// - every `m:ctrlPr` moves its `w:rPr` (materialized likewise) into the
 ///   same mark.
+///
 /// `m:t` stays `m:t` under `w:del` — math content never becomes delText.
 fn mark_math_revisions_internally(
     dom: &mut Dom,

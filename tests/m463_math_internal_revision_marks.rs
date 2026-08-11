@@ -24,7 +24,7 @@ fn last_tag_before(hay: &str, i: usize) -> &str {
     let start = hay[..i].rfind('<').unwrap_or(0);
     let rest = &hay[start..i];
     let end = rest
-        .find(|c: char| c == ' ' || c == '>' || c == '/')
+        .find([' ', '>', '/'])
         .unwrap_or(rest.len());
     &rest[..end]
 }
