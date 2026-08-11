@@ -1732,7 +1732,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-app"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "jubarte-redlines",
  "quick-xml 0.40.1",
@@ -1746,7 +1746,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "rdocx-opc",
  "sha1 0.10.7",
