@@ -10608,6 +10608,13 @@ pub fn fold_boiler_eq_between_ins(dom: &mut Dom, root: NodeId) {
         if last_t.trim() != "." {
             continue;
         }
+        // M466 (file_168 × file_169, 100 → 89.7): a period run carrying a
+        // tracked format change (rPrChange, e.g. strike+bold heading residual)
+        // is NOT a bare EQ — Word keeps it live; merging it into the del text
+        // would drop the format-change record.
+        if !dom.descendants(last, Some(&W::name("rPrChange"))).is_empty() {
+            continue;
+        }
         let prev = body_kids[body_kids.len() - 2];
         let prev_name = dom.name(prev);
         if prev_name != Some(W::ins()) && prev_name != Some(W::del()) {
