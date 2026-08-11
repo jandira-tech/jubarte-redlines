@@ -802,6 +802,10 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::peel_trailing_for_word_onto_next_mix(dom, root);
         // M393 late: re-apply after free-mesh peels thrash LCS interleave.
         finalize::interleave_list_cluster_after_coalesce(dom, root);
+        // M471 (late — the shape emerges from the folds above): rotate the
+        // impossible [MD ins+del][MI del-only][live ins…EQ] region one slot
+        // to Word's arrangement (diff_after19 × diff_after2).
+        finalize::rotate_ins_mark_del_only_paragraph(dom, root);
         // M376: after merge/park peels — strip list line=240/jc that mid pure-D
         // absorbed from pure-I list residual (bookmark×broken_complex −0.6).
         finalize::strip_list_layout_from_mid_pure_del(dom, root);

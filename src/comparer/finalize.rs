@@ -3451,6 +3451,153 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
     }
 }
 
+/// M471 — first slice of the mesh off-by-one rotation (diff_after19 ×
+/// diff_after2 oracle). Our produce can emit an INSERTED paragraph mark
+/// whose entire content is DELETED base text — impossible in Word's output
+/// (accept-all would stray an empty paragraph). Word's arrangement is the
+/// same region rotated one slot:
+///
+/// ```text
+///   ours:  Pi   MD [ins A…, del B…]     Word:  Pi   MI [ins A…]
+///          Pi+1 MI [del C…]                    Pi+1 MD [ins i…, del B…]
+///          Pi+2 --  [ins i…, EQ …]             Pi+2 --  [del C…, EQ …]
+/// ```
+///
+/// Strictly gated on that exact three-paragraph signature.
+pub fn rotate_ins_mark_del_only_paragraph(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    loop {
+        let kids: Vec<NodeId> = dom
+            .elements(body, None)
+            .into_iter()
+            .filter(|&k| dom.name_is(k, &W::p()))
+            .collect();
+        let mut acted = false;
+        for w in kids.windows(3) {
+            let (p0, p1, p2) = (w[0], w[1], w[2]);
+            // Pi: MARK-DEL, children = ins+ then del+, nothing else.
+            if !para_mark_revision(dom, p0, &W::del()) {
+                continue;
+            }
+            let c0: Vec<NodeId> = dom
+                .elements(p0, None)
+                .into_iter()
+                .filter(|&c| !dom.name_is(c, &W::p_pr()))
+                .collect();
+            let mut p0_ins = Vec::new();
+            let mut p0_del = Vec::new();
+            let mut bad = c0.is_empty();
+            for &c in &c0 {
+                if dom.name_is(c, &W::ins()) {
+                    if !p0_del.is_empty() {
+                        bad = true;
+                        break;
+                    }
+                    p0_ins.push(c);
+                } else if dom.name_is(c, &W::del()) {
+                    p0_del.push(c);
+                } else {
+                    bad = true;
+                    break;
+                }
+            }
+            if bad || p0_ins.is_empty() || p0_del.is_empty() {
+                continue;
+            }
+            // Pi+1: MARK-INS, children = del+ only.
+            if !para_mark_revision(dom, p1, &W::ins()) {
+                continue;
+            }
+            let c1: Vec<NodeId> = dom
+                .elements(p1, None)
+                .into_iter()
+                .filter(|&c| !dom.name_is(c, &W::p_pr()))
+                .collect();
+            if c1.is_empty() || c1.iter().any(|&c| !dom.name_is(c, &W::del())) {
+                continue;
+            }
+            // Pi+2: no mark revision; leading ins-block(s) then a non-rev child.
+            if para_mark_revision(dom, p2, &W::ins()) || para_mark_revision(dom, p2, &W::del()) {
+                continue;
+            }
+            let c2: Vec<NodeId> = dom
+                .elements(p2, None)
+                .into_iter()
+                .filter(|&c| !dom.name_is(c, &W::p_pr()))
+                .collect();
+            let mut p2_lead_ins = Vec::new();
+            for &c in &c2 {
+                if dom.name_is(c, &W::ins()) {
+                    p2_lead_ins.push(c);
+                } else {
+                    break;
+                }
+            }
+            if p2_lead_ins.is_empty() || p2_lead_ins.len() == c2.len() {
+                continue;
+            }
+            // --- rewrite ---
+            // Pi mark MD → MI (copy attrs).
+            let flip_mark = |dom: &mut Dom, p: NodeId, from: &crate::xmllinq::XName, to: crate::xmllinq::XName| {
+                let Some(ppr) = dom.element(p, &W::p_pr()) else { return };
+                let Some(rpr) = dom.element(ppr, &W::r_pr()) else { return };
+                let Some(old) = dom.element(rpr, from) else { return };
+                let attrs: Vec<_> = dom
+                    .attributes(old)
+                    .into_iter()
+                    .map(|(n, v)| (n, v))
+                    .collect();
+                dom.remove(old);
+                let neu = dom.new_element(to);
+                for (n, v) in attrs {
+                    dom.set_attribute_value(neu, &n, Some(&v));
+                }
+                dom.add_first(rpr, neu);
+            };
+            flip_mark(dom, p0, &W::del(), W::ins());
+            flip_mark(dom, p1, &W::ins(), W::del());
+            // p1's old del-blocks → front of p2 (in order).
+            for &d in c1.iter().rev() {
+                dom.remove(d);
+                match dom
+                    .elements(p2, None)
+                    .iter()
+                    .copied()
+                    .find(|&c| !dom.name_is(c, &W::p_pr()))
+                {
+                    Some(first) => dom.add_before_self(first, d),
+                    None => dom.add(p2, d),
+                }
+            }
+            // p2's leading ins-blocks → p1 (front, in order), then p0's
+            // del-blocks appended after them.
+            for &i in p2_lead_ins.iter().rev() {
+                dom.remove(i);
+                match dom
+                    .elements(p1, None)
+                    .iter()
+                    .copied()
+                    .find(|&c| !dom.name_is(c, &W::p_pr()))
+                {
+                    Some(first) => dom.add_before_self(first, i),
+                    None => dom.add(p1, i),
+                }
+            }
+            for &d in &p0_del {
+                dom.remove(d);
+                dom.add(p1, d);
+            }
+            acted = true;
+            break;
+        }
+        if !acted {
+            break;
+        }
+    }
+}
+
 /// M469 — split a head title MIX: B's SHORT inserted title (≤4 tokens)
 /// paired with A's LONG deleted opening (≥10 tokens, no shared significant
 /// token) is Word's [pure-INS title] + [style-less MARK-DEL paragraph]
