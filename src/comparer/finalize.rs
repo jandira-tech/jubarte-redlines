@@ -1291,9 +1291,7 @@ pub fn fold_short_list_label_into_empty_pure_del(dom: &mut Dom, root: NodeId) {
             }
             // Need a content pure-D after the empty (list residual continues).
             let has_content_del_after = kids[i + 2..].iter().any(|&k| {
-                dom.name_is(k, &W::p())
-                    && para_is_pure_deleted(dom, k)
-                    && para_has_real_del(dom, k)
+                dom.name_is(k, &W::p()) && para_is_pure_deleted(dom, k) && para_has_real_del(dom, k)
             });
             if !has_content_del_after {
                 continue;
@@ -2335,11 +2333,7 @@ pub fn strip_trailing_empty_pure_del_mark(dom: &mut Dom, root: NodeId) {
     };
     let kids = dom.elements(body, None);
     // Last non-sectPr child.
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| !dom.name_is(k, &W::sect_pr()))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
     if !dom.name_is(last, &W::p()) {
@@ -2388,11 +2382,7 @@ pub fn trailing_empty_spacing_to_pprchange(
         return;
     };
     let kids = dom.elements(body, None);
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| !dom.name_is(k, &W::sect_pr()))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
     if !dom.name_is(last, &W::p()) {
@@ -2547,11 +2537,7 @@ pub fn strip_trailing_empty_pure_ins(dom: &mut Dom, root: NodeId) {
         return;
     };
     let kids = dom.elements(body, None);
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| !dom.name_is(k, &W::sect_pr()))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
     if para_is_empty_pure_ins(dom, last) {
@@ -2590,10 +2576,7 @@ pub fn relocate_title_page_last_empty_after_pure_dels(dom: &mut Dom, root: NodeI
     };
     // Pure-D run length (contentful + empty pure-D).
     let mut dj = di;
-    while dj < kids.len()
-        && dom.name_is(kids[dj], &W::p())
-        && para_is_pure_deleted(dom, kids[dj])
-    {
+    while dj < kids.len() && dom.name_is(kids[dj], &W::p()) && para_is_pure_deleted(dom, kids[dj]) {
         dj += 1;
     }
     let del_run = dj - di;
@@ -3331,8 +3314,7 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                 if let Some(drpr) = dom.element(dppr, &W::r_pr())
                     && dom.element(drpr, &W::del()).is_some()
                 {
-                    let ins_has_fld =
-                        !dom.descendants(ins_p, Some(&W::name("fldChar"))).is_empty();
+                    let ins_has_fld = !dom.descendants(ins_p, Some(&W::name("fldChar"))).is_empty();
                     let del_heading_style = dom.element(dppr, &W::p_style()).is_some_and(|ps| {
                         let v = dom
                             .attribute(ps, &W::val())
@@ -3511,11 +3493,7 @@ pub fn strip_last_pure_del_mark_only_ppr(dom: &mut Dom, root: NodeId) {
         return;
     };
     let kids = dom.elements(body, None);
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| !dom.name_is(k, &W::sect_pr()))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
     if !dom.name_is(last, &W::p()) || !para_is_pure_deleted(dom, last) {
@@ -3593,11 +3571,7 @@ pub fn last_pure_del_spacing_to_pprchange(
         return;
     };
     let kids = dom.elements(body, None);
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| !dom.name_is(k, &W::sect_pr()))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
     if !dom.name_is(last, &W::p()) {
@@ -4005,9 +3979,7 @@ pub fn park_mixed_spacing_onto_trailing_pure_del(
         };
         // Following run must be pure-D only (at least one, at most 4).
         let mut j = i + 1;
-        while j < kids.len()
-            && dom.name_is(kids[j], &W::p())
-            && para_is_pure_deleted(dom, kids[j])
+        while j < kids.len() && dom.name_is(kids[j], &W::p()) && para_is_pure_deleted(dom, kids[j])
         {
             j += 1;
         }
@@ -4139,9 +4111,7 @@ pub fn park_mixed_numpr_onto_trailing_empty_pure_del(
         };
         // Following pure-D only; last must be empty (mark-only).
         let mut j = i + 1;
-        while j < kids.len()
-            && dom.name_is(kids[j], &W::p())
-            && para_is_pure_deleted(dom, kids[j])
+        while j < kids.len() && dom.name_is(kids[j], &W::p()) && para_is_pure_deleted(dom, kids[j])
         {
             j += 1;
         }
@@ -4523,11 +4493,7 @@ pub fn strip_last_pure_del_mark_when_pprchange(dom: &mut Dom, root: NodeId) {
         return;
     };
     let kids = dom.elements(body, None);
-    let Some(&last) = kids
-        .iter()
-        .rev()
-        .find(|&&k| !dom.name_is(k, &W::sect_pr()))
-    else {
+    let Some(&last) = kids.iter().rev().find(|&&k| !dom.name_is(k, &W::sect_pr())) else {
         return;
     };
     if !dom.name_is(last, &W::p()) {
@@ -5962,10 +5928,10 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         // M360 guard applies here too: a TOC/field residue
                         // pure-I (fldChar) folded with a Heading pure-D keeps
                         // the bare pPr (table_border×toc SD-2343 title).
-                        let ins_has_fld =
-                            !dom.descendants(last_ins, Some(&W::name("fldChar"))).is_empty();
-                        let adopt_heading =
-                            para_has_heading_or_title_style(dom, d) && !ins_has_fld;
+                        let ins_has_fld = !dom
+                            .descendants(last_ins, Some(&W::name("fldChar")))
+                            .is_empty();
+                        let adopt_heading = para_has_heading_or_title_style(dom, d) && !ins_has_fld;
                         if adopt_heading {
                             if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
                                 dom.remove(ippr);
@@ -6032,18 +5998,17 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // M360: a TOC/field residue pure-I (fldChar) merged with a
                 // Heading/Title pure-D keeps a bare pPr — never the Heading
                 // pStyle (table_border×toc SD-2343 title, pagefair −11).
-                let m360_fld_x_heading = !dom
-                    .descendants(ins_p, Some(&W::name("fldChar")))
-                    .is_empty()
-                    && dom.element(d, &W::p_pr()).is_some_and(|dp| {
-                        dom.element(dp, &W::p_style()).is_some_and(|ps| {
-                            let v = dom
-                                .attribute(ps, &W::val())
-                                .unwrap_or("")
-                                .to_ascii_lowercase();
-                            v == "title" || v.starts_with("heading")
-                        })
-                    });
+                let m360_fld_x_heading =
+                    !dom.descendants(ins_p, Some(&W::name("fldChar"))).is_empty()
+                        && dom.element(d, &W::p_pr()).is_some_and(|dp| {
+                            dom.element(dp, &W::p_style()).is_some_and(|ps| {
+                                let v = dom
+                                    .attribute(ps, &W::val())
+                                    .unwrap_or("")
+                                    .to_ascii_lowercase();
+                                v == "title" || v.starts_with("heading")
+                            })
+                        });
                 if ins_struct {
                     if let Some(ppr) = dom.element(ins_p, &W::p_pr()) {
                         let c = dom.clone_subtree(ppr);
@@ -6110,8 +6075,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 }
                 let preceding_has_ins = ins_start > 0 && {
                     let prev = children[ins_start - 1];
-                    dom.name_is(prev, &W::p())
-                        && !dom.descendants(prev, Some(&W::ins())).is_empty()
+                    dom.name_is(prev, &W::p()) && !dom.descendants(prev, Some(&W::ins())).is_empty()
                 };
                 // Sole mark-only empty (contract) OR leading mark-only empty when
                 // every pure-D in the run is mark-only empty (inventory: two
@@ -6452,9 +6416,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     let empty_shell = (para_has_no_text(dom, last_ins)
                         || para_body_text_is_whitespace_only(dom, last_ins))
                         && dom.descendants(last_ins, Some(&W::name("br"))).is_empty()
-                        && dom
-                            .descendants(last_ins, Some(&W::drawing()))
-                            .is_empty()
+                        && dom.descendants(last_ins, Some(&W::drawing())).is_empty()
                         && dom.descendants(last_ins, Some(&W::pict())).is_empty()
                         && dom
                             .descendants(last_ins, Some(&W::name("object")))
@@ -7170,10 +7132,7 @@ pub fn reorder_replaced_blocks(dom: &mut Dom, root: NodeId) {
     for container in containers {
         let children: Vec<NodeId> = dom.elements(container, None);
         let classes: Vec<Option<bool>> = children.iter().map(|&c| block_class(dom, c)).collect();
-        let paras: Vec<bool> = children
-            .iter()
-            .map(|&c| dom.name_is(c, &W::p()))
-            .collect();
+        let paras: Vec<bool> = children.iter().map(|&c| dom.name_is(c, &W::p())).collect();
         let mut i = 0;
         while i < children.len() {
             if classes[i] != Some(false) {
@@ -8623,12 +8582,12 @@ pub fn split_digits_ins_from_mixed_title(dom: &mut Dom, root: NodeId) {
         {
             continue;
         }
-        let rest_has_ins = rest.iter().any(|&c| {
-            dom.name_is(c, &W::ins()) || !dom.descendants(c, Some(&W::ins())).is_empty()
-        });
-        let rest_has_del = rest.iter().any(|&c| {
-            dom.name_is(c, &W::del()) || !dom.descendants(c, Some(&W::del())).is_empty()
-        });
+        let rest_has_ins = rest
+            .iter()
+            .any(|&c| dom.name_is(c, &W::ins()) || !dom.descendants(c, Some(&W::ins())).is_empty());
+        let rest_has_del = rest
+            .iter()
+            .any(|&c| dom.name_is(c, &W::del()) || !dom.descendants(c, Some(&W::del())).is_empty());
         if rest_has_ins || !rest_has_del {
             continue;
         }
@@ -10704,11 +10663,7 @@ pub fn peel_trailing_for_word_onto_next_mix(dom: &mut Dom, root: NodeId) {
             .filter(|&c| !dom.name_is(c, &W::p_pr()))
             .collect();
         // Last ins on p (may not be last child — trailing del is common).
-        let Some(&ins) = p_body
-            .iter()
-            .rev()
-            .find(|&&c| dom.name_is(c, &W::ins()))
-        else {
+        let Some(&ins) = p_body.iter().rev().find(|&&c| dom.name_is(c, &W::ins())) else {
             continue;
         };
         // First del on next.

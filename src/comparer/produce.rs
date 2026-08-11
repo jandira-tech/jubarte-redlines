@@ -275,6 +275,9 @@ fn atom_in_textbox(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
 
 /// M4.E.2 — `AssembleAncestorUnidsInOrderToRebuildXmlTreeProperly` (:3974).
 /// Three phases (see WmlComparer.ts): A copy before→after pPr ancestor Unids;
+/// PRODUCE-UNID-01: (ancestor-elements chain, its minted unid chain) memo.
+type UnidChainMemo = Option<(std::sync::Arc<[NodeId]>, std::sync::Arc<[String]>)>;
+
 /// B seed ancestor_unids from the paragraph mark (reverse walk, minting missing);
 /// C fix text boxes in a second reverse pass.
 pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) {
@@ -344,7 +347,7 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
     let mut current_elems: Option<std::sync::Arc<[NodeId]>> = None;
     // PRODUCE-UNID-01: atoms of one run share an ancestor_elements Arc — reuse
     // the chain built for the previous atom instead of rebuilding per atom.
-    let mut memo: Option<(std::sync::Arc<[NodeId]>, std::sync::Arc<[String]>)> = None;
+    let mut memo: UnidChainMemo = None;
     for atom in atoms.iter_mut().rev() {
         if is_ppr_atom(dom, atom) && !atom_in_textbox(dom, atom) {
             let mut cur: Vec<String> = atom
@@ -410,7 +413,7 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
     // ── Phase C (reverse, text-box fix) ─────────────────────────────────────────
     let mut current: Option<std::sync::Arc<[String]>> = None;
     let mut skip_until_ppr = false;
-    let mut memo: Option<(std::sync::Arc<[NodeId]>, std::sync::Arc<[String]>)> = None;
+    let mut memo: UnidChainMemo = None;
     for atom in atoms.iter_mut().rev() {
         if let Some(cur) = &current
             && atom.ancestor_elements.len() < cur.len()
@@ -608,7 +611,10 @@ pub fn coalesce_recurse(
             .unwrap_or_default();
         (u, nm)
     });
-    let grouped: Vec<_> = grouped.into_iter().filter(|(k, _)| !k.0.is_empty()).collect();
+    let grouped: Vec<_> = grouped
+        .into_iter()
+        .filter(|(k, _)| !k.0.is_empty())
+        .collect();
     if grouped.is_empty() {
         return Vec::new();
     }

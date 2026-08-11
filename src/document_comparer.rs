@@ -1073,15 +1073,16 @@ fn merge_revised_style_definitions(
         };
         let a_dd = dd_rpr(dom, out_root);
         let b_dd = dd_rpr(dom, b_root);
-        let attr_map = |dom: &Dom, e: Option<NodeId>| -> std::collections::BTreeMap<String, String> {
-            e.map(|e| {
-                dom.attributes(e)
-                    .into_iter()
-                    .map(|(n, v)| (format!("{n:?}"), v))
-                    .collect()
-            })
-            .unwrap_or_default()
-        };
+        let attr_map =
+            |dom: &Dom, e: Option<NodeId>| -> std::collections::BTreeMap<String, String> {
+                e.map(|e| {
+                    dom.attributes(e)
+                        .into_iter()
+                        .map(|(n, v)| (format!("{n:?}"), v))
+                        .collect()
+                })
+                .unwrap_or_default()
+            };
         let val_or = |dom: &Dom, dd: Option<NodeId>, local: &str, default: &str| -> String {
             dd.and_then(|d| dom.element(d, &W::name(local)))
                 .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string))
@@ -1108,9 +1109,7 @@ fn merge_revised_style_definitions(
             }
         }
         let ligs = (lig_or(dom, a_dd), lig_or(dom, b_dd));
-        let b_lang = b_dd
-            .or(a_dd)
-            .and_then(|d| dom.element(d, &W::name("lang")));
+        let b_lang = b_dd.or(a_dd).and_then(|d| dom.element(d, &W::name("lang")));
         if fonts_differ || !deltas.is_empty() || ligs.0 != ligs.1 {
             for style in dom.elements(out_root, Some(&style_nm)) {
                 let Some(id) = dom.attribute(style, &style_id).map(str::to_string) else {
@@ -1132,9 +1131,9 @@ fn merge_revised_style_definitions(
                     continue;
                 }
                 // Already tracked — leave alone (same rule as phase 1).
-                let already = ["rPrChange", "pPrChange"].iter().any(|c| {
-                    !dom.descendants(style, Some(&W::name(c))).is_empty()
-                });
+                let already = ["rPrChange", "pPrChange"]
+                    .iter()
+                    .any(|c| !dom.descendants(style, Some(&W::name(c))).is_empty());
                 if already {
                     continue;
                 }

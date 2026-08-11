@@ -407,8 +407,7 @@ fn detect_format_changes_impl(
         if dom.name_is(atom.content_element, &W::p_pr()) {
             let old_ppr = before.content_element;
             let new_ppr = atom.content_element;
-            if dom.name_is(old_ppr, &W::p_pr())
-                && !are_para_properties_equal(dom, old_ppr, new_ppr)
+            if dom.name_is(old_ppr, &W::p_pr()) && !are_para_properties_equal(dom, old_ppr, new_ppr)
             {
                 let projected_old = project_para_properties_for_change(dom, old_ppr);
                 let projected_new = project_para_properties_for_change(dom, new_ppr);

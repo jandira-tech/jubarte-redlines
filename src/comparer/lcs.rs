@@ -5196,8 +5196,6 @@ fn contentful_group_sha1s<'a>(dom: &Dom, cu: &'a [ComparisonUnit]) -> Vec<&'a st
 /// coincidence only), Word collapses to insert-all-next then delete-all-base
 /// (batch_to_fix pair 01; empty-para anchors otherwise shred the cluster).
 ///
-/// Returns `Some([Inserted, Deleted])` in Word order, or `None` to fall through
-/// to full word-level LCS.
 /// TOKENS-ONCE-01: lazily computed full-side token set, shared by the gates
 /// of one `detect_unrelated_sources_word_mode` invocation.
 fn tokens_once<'a>(
@@ -5208,6 +5206,8 @@ fn tokens_once<'a>(
     cell.get_or_init(|| para_text_tokens_from_units(dom, cu))
 }
 
+/// Returns `Some([Inserted, Deleted])` in Word order, or `None` to fall through
+/// to full word-level LCS.
 pub fn detect_unrelated_sources_word_mode(
     dom: &mut Dom,
     cu1: &[ComparisonUnit],
@@ -5384,8 +5384,7 @@ pub fn detect_unrelated_sources_word_mode(
                     let mut consumed = 0usize;
                     let mut contentful_seen = 0usize;
                     for u in cu2 {
-                        let is_c =
-                            as_group(u).is_some() && unit_has_text_token(dom, u);
+                        let is_c = as_group(u).is_some() && unit_has_text_token(dom, u);
                         if is_c {
                             if contentful_seen >= peel_n {
                                 break;
@@ -5432,9 +5431,9 @@ pub fn detect_unrelated_sources_word_mode(
         && n2 >= 4
     {
         let body_j = token_jaccard(
-        tokens_once(&full_tokens_1, dom, cu1),
-        tokens_once(&full_tokens_2, dom, cu2),
-    );
+            tokens_once(&full_tokens_1, dom, cu1),
+            tokens_once(&full_tokens_2, dom, cu2),
+        );
         let cl: Vec<&ComparisonUnit> = cu1
             .iter()
             .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
@@ -5516,9 +5515,9 @@ pub fn detect_unrelated_sources_word_mode(
         && !has_table(cu2)
     {
         let body_j = token_jaccard(
-        tokens_once(&full_tokens_1, dom, cu1),
-        tokens_once(&full_tokens_2, dom, cu2),
-    );
+            tokens_once(&full_tokens_1, dom, cu1),
+            tokens_once(&full_tokens_2, dom, cu2),
+        );
         let cl: Vec<&ComparisonUnit> = cu1
             .iter()
             .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
@@ -5975,10 +5974,8 @@ pub fn detect_unrelated_sources_word_mode(
         let base_long = left_c
             .first()
             .is_some_and(|u| unit_text_token_count(dom, u) >= 8);
-        let next_stubs = !right_c.is_empty()
-            && right_c
-                .iter()
-                .all(|u| unit_text_token_count(dom, u) <= 2);
+        let next_stubs =
+            !right_c.is_empty() && right_c.iter().all(|u| unit_text_token_count(dom, u) <= 2);
         if base_long && next_stubs && !left_c.is_empty() && right_c.len() >= 2 {
             let first_tok = |u: &ComparisonUnit| -> Option<String> {
                 para_text_token_list(dom, u)
