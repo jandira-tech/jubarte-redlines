@@ -8,7 +8,7 @@
 #   - Xcode + `cargo-tauri` (`cargo install tauri-cli` or via the repo).
 #   - Signing certs in the login keychain: "Apple Distribution: …" and
 #     "3rd Party Mac Developer Installer: …".
-#   - App Store Connect API key at ~/.appstoreconnect/private_keys/AuthKey_D6P299RB86.p8
+#   - App Store Connect API key at ~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8
 #   - src-tauri/embedded.provisionprofile present.
 #
 # Usage:
@@ -24,8 +24,19 @@ BUNDLE_ID="com.jandira.jubarte"
 APP_APPLE_ID="6790926615"
 SIGN_APP="Apple Distribution: Jandira Technologies, LLC (NW99N2W6TA)"
 SIGN_PKG="3rd Party Mac Developer Installer: Jandira Technologies, LLC (NW99N2W6TA)"
-ASC_KEY_ID="D6P299RB86"
-ASC_ISSUER="04eda013-ed0d-4a50-8bf8-d39149ce7aa6"
+# Credentials are never committed (SECURITY.md): env first, then the local
+# untracked ~/.appstoreconnect/jubarte.json ({"key_path","issuer_id","key_id"}).
+CRED_FILE="$HOME/.appstoreconnect/jubarte.json"
+ASC_KEY_ID="${ASC_KEY_ID:-}"
+ASC_ISSUER="${ASC_ISSUER_ID:-}"
+if { [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER" ]; } && [ -f "$CRED_FILE" ]; then
+  ASC_KEY_ID="${ASC_KEY_ID:-$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.appstoreconnect/jubarte.json")))["key_id"])')}"
+  ASC_ISSUER="${ASC_ISSUER:-$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.appstoreconnect/jubarte.json")))["issuer_id"])')}"
+fi
+if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER" ]; then
+  echo "ERROR: set ASC_KEY_ID/ASC_ISSUER_ID or create $CRED_FILE" >&2
+  exit 1
+fi
 TARGET="aarch64-apple-darwin"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

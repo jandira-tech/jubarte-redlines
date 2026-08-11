@@ -2,9 +2,21 @@
 # Generates an ES256 JWT for App Store Connect API auth using openssl + base64 only.
 set -euo pipefail
 
-KEY_PATH="/Users/arthrod/Downloads/AuthKey_D6P299RB86.p8"
-ISSUER_ID="04eda013-ed0d-4a50-8bf8-d39149ce7aa6"
-KEY_ID="D6P299RB86"
+# Credentials are never committed (SECURITY.md): env first, then the local
+# untracked ~/.appstoreconnect/jubarte.json ({"key_path","issuer_id","key_id"}).
+CRED_FILE="$HOME/.appstoreconnect/jubarte.json"
+KEY_PATH="${ASC_KEY_PATH:-}"
+ISSUER_ID="${ASC_ISSUER_ID:-}"
+KEY_ID="${ASC_KEY_ID:-}"
+if { [ -z "$KEY_PATH" ] || [ -z "$ISSUER_ID" ] || [ -z "$KEY_ID" ]; } && [ -f "$CRED_FILE" ]; then
+  KEY_PATH="${KEY_PATH:-$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.appstoreconnect/jubarte.json")))["key_path"])')}"
+  ISSUER_ID="${ISSUER_ID:-$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.appstoreconnect/jubarte.json")))["issuer_id"])')}"
+  KEY_ID="${KEY_ID:-$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.appstoreconnect/jubarte.json")))["key_id"])')}"
+fi
+if [ -z "$KEY_PATH" ] || [ -z "$ISSUER_ID" ] || [ -z "$KEY_ID" ]; then
+  echo "ERROR: set ASC_KEY_PATH/ASC_ISSUER_ID/ASC_KEY_ID or create $CRED_FILE" >&2
+  exit 1
+fi
 
 b64url() {
   openssl base64 -A | tr '+/' '-_' | tr -d '='

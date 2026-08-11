@@ -1,15 +1,36 @@
 #!/usr/bin/env python3
 """Minimal App Store Connect API client using ES256 JWT auth (manual signing,
-avoids relying on PyJWT's crypto backend registration)."""
-import base64, json, sys, time, urllib.request, urllib.error
+avoids relying on PyJWT's crypto backend registration).
+
+Credentials are never committed (SECURITY.md): they come from the environment
+(ASC_KEY_PATH / ASC_ISSUER_ID / ASC_KEY_ID) or, failing that, from the local
+untracked file ~/.appstoreconnect/jubarte.json with keys
+{"key_path": ..., "issuer_id": ..., "key_id": ...}.
+"""
+import base64, json, os, sys, time, urllib.request, urllib.error
+from pathlib import Path
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
-KEY_PATH = "/Users/arthrod/Downloads/AuthKey_D6P299RB86.p8"
-ISSUER_ID = "04eda013-ed0d-4a50-8bf8-d39149ce7aa6"
-KEY_ID = "D6P299RB86"
 BASE = "https://api.appstoreconnect.apple.com/v1"
+_CRED_FILE = Path.home() / ".appstoreconnect" / "jubarte.json"
+
+
+def _credentials():
+    env = (os.environ.get("ASC_KEY_PATH"), os.environ.get("ASC_ISSUER_ID"),
+           os.environ.get("ASC_KEY_ID"))
+    if all(env):
+        return env
+    if _CRED_FILE.exists():
+        c = json.loads(_CRED_FILE.read_text())
+        return c["key_path"], c["issuer_id"], c["key_id"]
+    raise SystemExit(
+        "ASC credentials not configured: set ASC_KEY_PATH/ASC_ISSUER_ID/ASC_KEY_ID "
+        f"or create {_CRED_FILE}")
+
+
+KEY_PATH, ISSUER_ID, KEY_ID = _credentials()
 
 def b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()

@@ -27,7 +27,7 @@ jobs:
         working-directory: engine/jubarte-app/src-tauri
     steps:
       - name: Checkout engine (jubarte-rs)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: arthrod/jubarte-rs
           path: engine
@@ -38,19 +38,19 @@ jobs:
           token: ${{ secrets.JUBARTE_RS_TOKEN || github.token }}
 
       - name: Checkout app into engine/jubarte-app
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: engine/jubarte-app
           persist-credentials: false
 
       - name: Rust toolchain (MSRV from Cargo.toml)
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master 2026-08 (toolchain pinned via `toolchain:` input)
         with:
           toolchain: "1.88"
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: engine/jubarte-app/src-tauri -> target
 
@@ -81,10 +81,10 @@ jobs:
     name: frontend lockfile
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.2.19"
       - name: Install (frozen lockfile)

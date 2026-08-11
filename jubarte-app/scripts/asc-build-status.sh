@@ -8,10 +8,21 @@
 #
 set -euo pipefail
 
-KEY_ID="D6P299RB86"
-ISSUER="04eda013-ed0d-4a50-8bf8-d39149ce7aa6"
+# Credentials are never committed (SECURITY.md): env first, then the local
+# untracked ~/.appstoreconnect/jubarte.json ({"key_path","issuer_id","key_id"}).
+CRED_FILE="$HOME/.appstoreconnect/jubarte.json"
+KEY_ID="${ASC_KEY_ID:-}"
+ISSUER="${ASC_ISSUER_ID:-}"
+if { [ -z "$KEY_ID" ] || [ -z "$ISSUER" ]; } && [ -f "$CRED_FILE" ]; then
+  KEY_ID="${KEY_ID:-$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.appstoreconnect/jubarte.json")))["key_id"])')}"
+  ISSUER="${ISSUER:-$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.appstoreconnect/jubarte.json")))["issuer_id"])')}"
+fi
+if [ -z "$KEY_ID" ] || [ -z "$ISSUER" ]; then
+  echo "ERROR: set ASC_KEY_ID/ASC_ISSUER_ID or create $CRED_FILE" >&2
+  exit 1
+fi
 APP_APPLE_ID="6790926615"
-KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8"
+KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8}"
 
 [ -f "$KEY_PATH" ] || { echo "ERROR: App Store Connect API key not found at $KEY_PATH"; exit 1; }
 

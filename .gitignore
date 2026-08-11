@@ -63,3 +63,7 @@ _scratch/
 lcov.info
 *.profraw
 *.profdata
+
+# .NET build outputs of the DOCX validator tool — build locally, never track
+tools/validate-docx/bin/
+tools/validate-docx/obj/
