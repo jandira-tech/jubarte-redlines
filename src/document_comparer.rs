@@ -1231,7 +1231,10 @@ fn normalize_word_paragraph_style_line(dom: &mut Dom, styles_root: NodeId) -> bo
     else {
         return false;
     };
-    if dom.attribute(normal_sp, &W::name("line")).is_none() {
+    // M460: only Word's own single-line normalization (line=240) propagates to
+    // headings; a Normal carrying B's non-240 line (e.g. 276, basic_comment ×
+    // cli_legacy) leaves Heading/Title/ListParagraph line-less in the oracle.
+    if dom.attribute(normal_sp, &W::name("line")) != Some("240") {
         return false;
     }
     if let Some(before) = dom.attribute(normal_sp, &W::name("before"))
