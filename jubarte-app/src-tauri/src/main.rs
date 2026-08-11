@@ -213,8 +213,19 @@ async fn create_redline(
     } else {
         return Err(quota::FREE_LIMIT_ERR.to_string());
     };
+    // Sandbox-writable output directory. The user-selected read-write
+    // entitlement only covers the picked input files, NOT their parent folder,
+    // so a redline written next to the original is blocked under the MAS
+    // sandbox ("cannot save into disk"). Write into the app's own cache
+    // container (always writable); "Save a copy" then powerbox-writes the real
+    // destination the user chooses.
+    let out_dir = app
+        .path()
+        .app_cache_dir()
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("redlines");
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        run_compare(&original, &modified, &author, filename.as_deref())
+        run_compare(&original, &modified, &author, filename.as_deref(), &out_dir)
     })
     .await
     .map_err(|_| {
@@ -301,6 +312,7 @@ fn run_compare(
     modified: &str,
     author: &str,
     filename: Option<&str>,
+    out_dir: &Path,
 ) -> Result<RedlineOutcome, String> {
     let t0 = std::time::Instant::now();
     let orig = std::fs::read(original).map_err(|e| format!("Could not read the original ({e})"))?;
@@ -317,12 +329,14 @@ fn run_compare(
 
     // Honour an explicit output name from the "File name" field; otherwise fall
     // back to the CLI's `<orig>_v_<mod>.docx` convention. Both dedupe with ` (n)`.
+    std::fs::create_dir_all(out_dir)
+        .map_err(|e| format!("Could not create the output folder ({e})"))?;
     let output_path = match filename.map(str::trim).filter(|f| !f.is_empty()) {
-        Some(name) => unique_named_output_path(original, name),
-        None => unique_output_path(original, modified),
+        Some(name) => unique_named_output_path(out_dir, name),
+        None => unique_output_path(out_dir, original, modified),
     };
     std::fs::write(&output_path, &redline)
-        .map_err(|e| format!("Could not write the redline next to the original ({e})"))?;
+        .map_err(|e| format!("Could not write the redline ({e})"))?;
 
     // Counting and preview are best-effort decoration on top of the already
     // written file — a panic in either must not turn success into failure.
@@ -369,20 +383,18 @@ fn run_compare(
     })
 }
 
-/// `<original-dir>/<orig-stem>_v_<mod-stem>.docx` (the CLI's convention),
+/// `<out_dir>/<orig-stem>_v_<mod-stem>.docx` (the CLI's naming convention,
+/// written into the sandbox-writable output dir — the MAS sandbox forbids
+/// creating files next to the user-picked originals),
 /// suffixed ` (2)`, ` (3)`, … instead of silently overwriting an earlier run.
-fn unique_output_path(original: &str, modified: &str) -> String {
+fn unique_output_path(out_dir: &Path, original: &str, modified: &str) -> String {
     let stem = |p: &str| {
         Path::new(p)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "document".into())
     };
-    let dir = Path::new(original)
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let dir = out_dir.to_path_buf();
     let base = format!("{}_v_{}", stem(original), stem(modified));
     let mut candidate = dir.join(format!("{base}.docx"));
     let mut n = 2;
@@ -393,16 +405,13 @@ fn unique_output_path(original: &str, modified: &str) -> String {
     candidate.to_string_lossy().into_owned()
 }
 
-/// A user-typed output name, written into the original's directory. Only the
-/// file-name component is honoured (any typed path segments are dropped, so the
-/// output can never escape that directory), the `.docx` extension is enforced,
-/// and existing files are preserved via the same ` (n)` dedupe.
-fn unique_named_output_path(original: &str, name: &str) -> String {
-    let dir = Path::new(original)
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+/// A user-typed output name, written into the sandbox-writable output dir.
+/// Only the file-name component is honoured (any typed path segments are
+/// dropped, so the output can never escape that directory), the `.docx`
+/// extension is enforced, and existing files are preserved via the same
+/// ` (n)` dedupe.
+fn unique_named_output_path(out_dir: &Path, name: &str) -> String {
+    let dir = out_dir.to_path_buf();
     let raw = Path::new(name)
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
