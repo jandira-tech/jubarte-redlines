@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Atomization + coalesce (M4.1). Port of `CreateComparisonUnitAtomList`,
 //! `CreateComparisonUnitAtomListRecurse`, `Coalesce`, `CoalesceRecurseSimple`.
 //!
@@ -13,10 +17,9 @@ use std::sync::Arc;
 use crate::namespaces::{MC, PT, W};
 use crate::unid::assign_to_all_elements;
 use crate::util::group_adjacent;
-use crate::util::sha1::sha1_hex;
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
-use super::atoms::ComparisonUnitAtom;
+use super::atoms::{AtomHash, ComparisonUnitAtom};
 use super::tables::{
     ALLOWABLE_RUN_CHILDREN, ELEMENTS_TO_THROW_AWAY, INVALID_ELEMENTS, recursion_info,
 };
@@ -87,7 +90,7 @@ fn revision_tracking_element_from_ancestors(
     content: NodeId,
     ancestors: &[NodeId],
 ) -> Option<NodeId> {
-    if dom.name(content) == Some(W::p_pr()) {
+    if dom.name_is(content, &W::p_pr()) {
         for rpr in dom.elements(content, Some(&W::r_pr())) {
             for e in dom.elements(rpr, None) {
                 let n = dom.name(e).unwrap();
@@ -127,7 +130,13 @@ fn status_from_rev_track_element(dom: &Dom, rte: Option<NodeId>) -> CorrelationS
 }
 
 /// `GetSha1HashStringForElement` + the atom hash (localName + normalized text).
-fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> String {
+///
+/// Returns the inline [`AtomHash`] digest. The precomputed-`pt:SHA1Hash` path
+/// DECODES the stamped 40-char hex (`from_hex`) so it lands on the exact digest a
+/// fresh `of_bytes(localName+text)` would produce for identical content — the two
+/// must correlate Equal (same content; PreProcess just precomputed the hash).
+/// Hashing the hex string instead would break that correlation.
+fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> AtomHash {
     let mut text = dom.value(content);
     if settings.case_insensitive {
         text = text.to_uppercase();
@@ -143,9 +152,9 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Stri
         .unwrap_or_default();
     // If a precomputed SHA1Hash attribute is present, prefer it (PreProcess path).
     if let Some(h) = dom.attribute(content, &PT::sha1_hash()) {
-        return h.to_string();
+        return AtomHash::from_hex(h);
     }
-    sha1_hex(&format!("{local}{text}"))
+    AtomHash::of_bytes(format!("{local}{text}").as_bytes())
 }
 
 /// `CreateComparisonUnitAtomList(contentParent)` — assign unids, then flatten.
@@ -190,7 +199,7 @@ fn annotate_element_with_props(
 fn push_atom(
     dom: &Dom,
     content: NodeId,
-    ancestors: Arc<[NodeId]>,
+    ancestors: &Arc<[NodeId]>,
     list: &mut Vec<ComparisonUnitAtom>,
     settings: &WmlComparerSettings,
 ) {
@@ -208,10 +217,13 @@ fn push_atom(
             .iter()
             .any(|&a| dom.attribute(a, &predel) == Some(super::PREDELETE_STAMP_ORIG))
     {
-        hash = sha1_hex(&format!("PREDEL|{hash}"));
+        // Salt over the inner digest's 40-char hex — byte-identical to the former
+        // `sha1_hex(format!("PREDEL|{hex}"))`, so a salted atom keeps the same
+        // (distinct-from-unsalted) value it always had.
+        hash = AtomHash::of_bytes(format!("PREDEL|{}", hash.to_hex_string()).as_bytes());
     }
     // PATH-01: store the shared Arc chain (no per-atom Vec clone).
-    let mut atom = ComparisonUnitAtom::new(content, Arc::clone(&ancestors), hash);
+    let mut atom = ComparisonUnitAtom::new(content, Arc::clone(ancestors), hash);
     atom.rev_track_element =
         revision_tracking_element_from_ancestors(dom, content, ancestors.as_ref());
     atom.correlation_status = status_from_rev_track_element(dom, atom.rev_track_element);
@@ -234,9 +246,8 @@ fn recurse(
     settings: &WmlComparerSettings,
     path: &mut Vec<NodeId>,
 ) {
-    let name = match dom.name(element) {
-        Some(n) => n,
-        None => return,
+    let Some(name) = dom.name(element) else {
+        return;
     };
 
     // Content-root containers: walk children only (do not emit the container
@@ -312,7 +323,7 @@ fn recurse(
             None => dom.new_element(W::p_pr()),
         };
         let chain = chain_with(path, element);
-        push_atom(dom, content, chain, list, settings);
+        push_atom(dom, content, &chain, list, settings);
         return;
     }
 
@@ -341,7 +352,7 @@ fn recurse(
             // content = fresh <w:t>ch</w:t> (or delText)
             let content = dom.new_element(name.clone());
             dom.add_text(content, &ch.to_string());
-            push_atom(dom, content, Arc::clone(&chain), list, settings);
+            push_atom(dom, content, &chain, list, settings);
         }
         return;
     }
@@ -349,7 +360,7 @@ fn recurse(
     // mc:AlternateContent → a single opaque atom (Choice+Fallback kept verbatim).
     if name == MC::name("AlternateContent") {
         let chain = chain_with(path, element);
-        push_atom(dom, element, chain, list, settings);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 
@@ -361,14 +372,14 @@ fn recurse(
     // rIds via S_ELEMENTS_WITH_RELATIONSHIP_IDS on imagedata when needed.
     if name == W::pict() {
         let chain = chain_with(path, element);
-        push_atom(dom, element, chain, list, settings);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 
     // AllowableRunChildren (or w:object) → a single verbatim leaf atom.
     if ALLOWABLE_RUN_CHILDREN.contains(&name) || name == W::object() {
         let chain = chain_with(path, element);
-        push_atom(dom, element, chain, list, settings);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 
@@ -380,7 +391,7 @@ fn recurse(
     // recurses (its result runs diff normally).
     if name == W::name("fldSimple") && dom.elements(element, None).is_empty() {
         let chain = chain_with(path, element);
-        push_atom(dom, element, chain, list, settings);
+        push_atom(dom, element, &chain, list, settings);
         return;
     }
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.B — preprocess + block-level hashing. Port of `RemoveExistingPowerToolsMarkup`
 //! (:5049), `TestForInvalidContent` (:5037), `CloneForStructureHash` (:5121),
 //! the block hash-string builder (inside `HashBlockLevelContent` :867), and
@@ -659,6 +663,13 @@ pub fn try_stream_hash_simple_paragraph(
     if dom.name(node) != Some(W::p()) {
         return None;
     }
+    // PreDelete salt changes clone attrs — stream only unsalted clean trees
+    // (same gate as try_stream_hash_simple_table_or_tr). Without this, A-only
+    // flattened pre-dels hash Equal to B's live copy and both history + B
+    // inserts vanish (m36 S1 / fresh-p4).
+    if element_or_desc_has_predelete_orig(dom, node) {
+        return None;
+    }
     let attr_xml = filtered_p_attr_xml(dom, node)?;
     let frags = collect_simple_p_fragments(dom, node, settings, correlated_ws)?;
     let mut xml = String::with_capacity(128);
@@ -847,15 +858,8 @@ fn emit_merged_run_fragments(frags: &[RunFrag], out: &mut String, structure_only
                         break;
                     }
                 }
-                if structure_only {
-                    if merged.is_empty() {
-                        // empty text fragment after merge is still a t leaf? clone
-                        // never emits empty-only text runs from empty t normally.
-                        out.push_str("<w:r><w:t /></w:r>");
-                    } else {
-                        out.push_str("<w:r><w:t /></w:r>");
-                    }
-                } else if merged.is_empty() {
+                // structure_only always drops text; empty merged also emits bare t.
+                if structure_only || merged.is_empty() {
                     out.push_str("<w:r><w:t /></w:r>");
                 } else {
                     out.push_str("<w:r><w:t>");
@@ -1151,6 +1155,10 @@ fn stream_simple_p_fragment(
 }
 
 fn escape_xml_attr(s: &str) -> String {
+    // Hot-path: most attr values need no escaping (CR #3642397970).
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>' | b'"')) {
+        return s.to_string();
+    }
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -1158,6 +1166,9 @@ fn escape_xml_attr(s: &str) -> String {
 }
 
 fn escape_xml_text(s: &str) -> String {
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>')) {
+        return s.to_string();
+    }
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -1309,4 +1320,21 @@ pub fn hash_block_level_content(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod escape_xml_tests {
+    use super::{escape_xml_attr, escape_xml_text};
+
+    #[test]
+    fn plain_text_roundtrips_without_entities() {
+        assert_eq!(escape_xml_text("hello world"), "hello world");
+        assert_eq!(escape_xml_attr("id-42"), "id-42");
+    }
+
+    #[test]
+    fn specials_are_escaped() {
+        assert_eq!(escape_xml_text("a&b<c>d"), "a&amp;b&lt;c&gt;d");
+        assert_eq!(escape_xml_attr(r#"say "hi""#), "say &quot;hi&quot;");
+    }
 }

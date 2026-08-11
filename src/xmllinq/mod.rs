@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Port of `lib/xml-linq.ts` — a LINQ-to-XML-style mutable XML tree.
 //!
 //! M1.1: `XName` / `XNamespace` (interned expanded names).
@@ -33,6 +37,12 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
+/// Cap the intern pool so a pathological host (adversarial inputs) cannot grow
+/// the thread-local set without bound (gemini #3584751169, CR #3584798246).
+/// OOXML name vocabulary is far smaller; beyond the cap we still return a
+/// correct `Arc<str>`, just without interning.
+const STR_POOL_MAX: usize = 16_384;
+
 /// Return a shared interned `Arc<str>` for `s`, allocating only on first sight.
 /// Equality/hash of the result are byte-for-byte identical to a fresh `Arc::from`;
 /// only storage is shared, so interning is behavior-preserving.
@@ -43,6 +53,9 @@ fn intern_str(s: &str) -> Arc<str> {
             let p = pool.borrow();
             if let Some(existing) = p.get(s) {
                 return existing.clone();
+            }
+            if p.len() >= STR_POOL_MAX {
+                return Arc::from(s);
             }
         }
         let arc: Arc<str> = Arc::from(s);
@@ -208,8 +221,11 @@ pub struct NodeId(pub u32);
 /// An XML declaration (`<?xml version encoding standalone?>`). Port of `XDeclaration`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct XDeclaration {
+    /// `version`.
     pub version: Option<String>,
+    /// `encoding`.
     pub encoding: Option<String>,
+    /// `standalone`.
     pub standalone: Option<String>,
 }
 
@@ -277,6 +293,7 @@ pub struct Dom {
 }
 
 impl Dom {
+    /// `new`.
     pub fn new() -> Self {
         Dom {
             nodes: Vec::new(),
@@ -290,6 +307,52 @@ impl Dom {
         id
     }
 
+    /// Number of nodes currently in the arena. Diagnostic + scratch-scope helper.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Capacity (allocated node slots) of the arena's backing `Vec`. Diagnostic:
+    /// [`with_scratch`](Self::with_scratch) reclaims LENGTH but not CAPACITY, so a
+    /// push against a full arena reallocs the whole buffer to the next doubling tier
+    /// and pins it. Scratch work that must not enlarge the persistent arena builds in
+    /// a dedicated `Dom`; this is how a test proves that (MEM-ATTRIBUTE-01).
+    pub fn node_capacity(&self) -> usize {
+        self.nodes.capacity()
+    }
+
+    /// Shrink the arena's backing `Vec` capacity to its current length. Lets a test
+    /// pin `capacity == length` so any subsequent internal push provably reallocs.
+    #[cfg(test)]
+    pub fn shrink_arena_to_fit(&mut self) {
+        self.nodes.shrink_to_fit();
+    }
+
+    /// Run `f`, then RECLAIM every node it allocated by truncating the arena back
+    /// to its pre-call length. For SCRATCH work whose output does not reference
+    /// the scratch nodes — e.g. building a normalized element only to serialize it
+    /// to a `String`. The nodes `f` creates are appended at the arena's end and
+    /// dropped on return (freeing their inline child/attr `Vec`s and names), so a
+    /// `NodeId` created inside `f` MUST NOT escape via `R` (it would dangle or, once
+    /// the slot is reused, alias a different node). Reading pre-existing nodes is
+    /// fine; those keep stable ids.
+    ///
+    /// This is what keeps per-atom format-change normalization (thousands of
+    /// distinct `w:rPr` on run-fragmented documents) from accumulating millions of
+    /// throwaway nodes in the persistent arena (MEM-ATTRIBUTE-01: the top single
+    /// allocation, a multi-GB arena `Vec`, came from exactly that leak).
+    pub fn with_scratch<R>(&mut self, f: impl FnOnce(&mut Dom) -> R) -> R {
+        let checkpoint = self.nodes.len();
+        let out = f(self);
+        self.nodes.truncate(checkpoint);
+        // A reused NodeId slot must not inherit a stale annotation. Production
+        // never annotates (the map is empty), so this is a no-op there.
+        if !self.annotations.is_empty() {
+            self.annotations.retain(|k, _| (k.0 as usize) < checkpoint);
+        }
+        out
+    }
+
     fn data(&self, id: NodeId) -> &NodeData {
         &self.nodes[id.0 as usize]
     }
@@ -298,18 +361,23 @@ impl Dom {
     }
 
     // ── constructors ────────────────────────────────────────────────────────
+    /// `new_document`.
     pub fn new_document(&mut self) -> NodeId {
         self.alloc(NodeKind::Document { declaration: None })
     }
+    /// `new_element`.
     pub fn new_element(&mut self, name: XName) -> NodeId {
         self.alloc(NodeKind::Element { name })
     }
+    /// `new_text`.
     pub fn new_text(&mut self, value: &str) -> NodeId {
         self.alloc(NodeKind::Text(value.to_string()))
     }
+    /// `new_comment`.
     pub fn new_comment(&mut self, value: &str) -> NodeId {
         self.alloc(NodeKind::Comment(value.to_string()))
     }
+    /// `new_pi`.
     pub fn new_pi(&mut self, target: &str, data: &str) -> NodeId {
         self.alloc(NodeKind::Pi(Box::new(PiData {
             target: target.to_string(),
@@ -318,18 +386,23 @@ impl Dom {
     }
 
     // ── kind predicates / accessors ───────────────────────────────────────────
+    /// `is_element`.
     pub fn is_element(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Element { .. })
     }
+    /// `is_text`.
     pub fn is_text(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Text(_))
     }
+    /// `is_document`.
     pub fn is_document(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Document { .. })
     }
+    /// `is_comment`.
     pub fn is_comment(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Comment(_))
     }
+    /// `is_pi`.
     pub fn is_pi(&self, id: NodeId) -> bool {
         matches!(self.data(id).kind, NodeKind::Pi(_))
     }
@@ -340,6 +413,11 @@ impl Dom {
             NodeKind::Element { name } => Some(name.clone()),
             _ => None,
         }
+    }
+    /// DOM-NAME-REF-01 — `self.name(id) == Some(*name)` without cloning the
+    /// `XName` (two `Arc` bumps per call in the hot comparer loops).
+    pub fn name_is(&self, id: NodeId, name: &XName) -> bool {
+        matches!(&self.data(id).kind, NodeKind::Element { name: n } if n == name)
     }
     /// `element.Name = n`.
     pub fn set_name(&mut self, id: NodeId, new_name: XName) {
@@ -355,6 +433,7 @@ impl Dom {
             _ => None,
         }
     }
+    /// `set_text_value`.
     pub fn set_text_value(&mut self, id: NodeId, value: &str) {
         match &mut self.data_mut(id).kind {
             NodeKind::Text(v) | NodeKind::Comment(v) => *v = value.to_string(),
@@ -362,12 +441,14 @@ impl Dom {
         }
     }
 
+    /// `pi_target`.
     pub fn pi_target(&self, id: NodeId) -> Option<&str> {
         match &self.data(id).kind {
             NodeKind::Pi(pi) => Some(&pi.target),
             _ => None,
         }
     }
+    /// `pi_data`.
     pub fn pi_data(&self, id: NodeId) -> Option<&str> {
         match &self.data(id).kind {
             NodeKind::Pi(pi) => Some(&pi.data),
@@ -375,12 +456,14 @@ impl Dom {
         }
     }
 
+    /// `declaration`.
     pub fn declaration(&self, id: NodeId) -> Option<&XDeclaration> {
         match &self.data(id).kind {
             NodeKind::Document { declaration } => declaration.as_deref(),
             _ => None,
         }
     }
+    /// `set_declaration`.
     pub fn set_declaration(&mut self, id: NodeId, decl: Option<XDeclaration>) {
         if let NodeKind::Document { declaration } = &mut self.data_mut(id).kind {
             *declaration = decl.map(Box::new);
@@ -388,6 +471,7 @@ impl Dom {
     }
 
     // ── tree navigation ───────────────────────────────────────────────────────
+    /// `parent`.
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
         self.data(id).parent
     }
@@ -422,6 +506,7 @@ impl Dom {
         self.data(id).content[i]
     }
 
+    /// `elements`.
     pub fn elements(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
         self.data(id)
             .content
@@ -607,9 +692,11 @@ impl Dom {
             .find(|&n| self.is_element(n))
     }
 
+    /// `has_elements`.
     pub fn has_elements(&self, id: NodeId) -> bool {
         self.data(id).content.iter().any(|&c| self.is_element(c))
     }
+    /// `has_attributes`.
     pub fn has_attributes(&self, id: NodeId) -> bool {
         !self.data(id).attrs.is_empty()
     }

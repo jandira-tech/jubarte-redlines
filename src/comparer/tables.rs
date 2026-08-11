@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.A.1 — the static element-name tables that drive atomization.
 //! Faithful to WmlComparer.ts: WordBreakElements (:8469), AllowableRunChildren
 //! (:8998), ElementsToThrowAway (:9023), ElementsToHaveSha1Hash (:9045),
@@ -135,7 +139,9 @@ pub static COMPARISON_GROUPING_ELEMENTS: LazyLock<HashSet<XName>> =
 /// One `RecursionElements` (:9074) entry: an element that recurses into children
 /// while skipping the named property children (rebuilt structurally in Coalesce).
 pub struct RecursionInfo {
+    /// `element_name`.
     pub element_name: XName,
+    /// `child_property_names`.
     pub child_property_names: Option<Vec<XName>>,
 }
 
@@ -164,10 +170,7 @@ pub static RECURSION_ELEMENTS: LazyLock<Vec<RecursionInfo>> = LazyLock::new(|| {
         mk(O::name("lock"), None),
         mk(W::txbx_content(), None),
         mk(W10::name("wrap"), None),
-        mk(
-            W::sdt(),
-            Some(vec![W::name("sdtPr"), W::name("sdtEndPr")]),
-        ),
+        mk(W::sdt(), Some(vec![W::name("sdtPr"), W::name("sdtEndPr")])),
         mk(W::sdt_content(), None),
         mk(W::hyperlink(), None),
         mk(W::name("fldSimple"), None),

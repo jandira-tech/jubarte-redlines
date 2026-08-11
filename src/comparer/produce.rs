@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Produce tracked-revision markup (M4.4). Core of
 //! `ProduceDocumentWithTrackedRevisions` for the paragraph-text case.
 //!
@@ -60,7 +64,7 @@ pub fn produce_document(
     // Split the stream into paragraphs: a pPr atom ends a paragraph.
     let mut para: Vec<TaggedAtom> = Vec::new();
     for t in tagged {
-        let is_ppr = dom.name(t.atom.content_element) == Some(W::p_pr());
+        let is_ppr = dom.name_is(t.atom.content_element, &W::p_pr());
         if is_ppr {
             let p = build_paragraph(dom, &para, t, settings);
             dom.add(body, p);
@@ -94,7 +98,7 @@ fn build_paragraph(
     let p = dom.new_element(W::p());
 
     // Carry the paragraph's pPr (clone the content element if it's a real pPr).
-    if dom.name(ppr_atom.atom.content_element) == Some(W::p_pr())
+    if dom.name_is(ppr_atom.atom.content_element, &W::p_pr())
         && dom.has_elements(ppr_atom.atom.content_element)
     {
         let ppr = dom.clone_subtree(ppr_atom.atom.content_element);
@@ -184,10 +188,28 @@ fn flatten_atoms(units: &[ComparisonUnit]) -> Vec<ComparisonUnitAtom> {
         .collect()
 }
 
+/// True when a before-side atom carries `pt:PreDelete="orig"` on itself or an
+/// ancestor (word-mode flattened A-only pre-existing deletion). Equal emit
+/// would drop the stamp (content comes from AFTER); force del+ins instead.
+fn atom_has_predelete_orig(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
+    let pre = PT::name("PreDelete");
+    if dom.attribute(atom.content_element, &pre) == Some(crate::comparer::PREDELETE_STAMP_ORIG) {
+        return true;
+    }
+    atom.ancestor_elements
+        .iter()
+        .any(|&a| dom.attribute(a, &pre) == Some(crate::comparer::PREDELETE_STAMP_ORIG))
+}
+
 /// M4.E.1 — `FlattenToComparisonUnitAtomList` (:4141): nested correlated tree →
 /// flat status-tagged atom list. Equal carries content/ancestors from the AFTER
 /// atom and a link to the BEFORE atom; zip truncates to the shorter side.
+///
+/// M-MOVE S1 exception: when the BEFORE atom is a PreDelete-orig span, emit
+/// Deleted(before)+Inserted(after) instead of Equal so history survives even
+/// if an upstream correlation path lost the salt (m36 / fresh-p4).
 pub fn flatten_to_comparison_unit_atom_list(
+    dom: &Dom,
     seqs: &[CorrelatedSequence],
 ) -> Vec<ComparisonUnitAtom> {
     let mut out = Vec::new();
@@ -196,11 +218,28 @@ pub fn flatten_to_comparison_unit_atom_list(
             CorrelationStatus::Equal => {
                 let before = flatten_atoms(cs.com_units_1.as_deref().unwrap_or(&[]));
                 let after = flatten_atoms(cs.com_units_2.as_deref().unwrap_or(&[]));
+                // M-MOVE S1: if any BEFORE atom is a PreDelete-orig span, emit
+                // the whole before run as Deleted and the whole after run as
+                // Inserted (paragraph/word granularity). Per-atom del+ins
+                // confetti fails convert_stamped coalescing and m36.
+                if before.iter().any(|b| atom_has_predelete_orig(dom, b)) {
+                    for b in &before {
+                        let mut del = b.clone();
+                        del.correlation_status = CorrelationStatus::Deleted;
+                        out.push(del);
+                    }
+                    for a in &after {
+                        let mut ins = a.clone();
+                        ins.correlation_status = CorrelationStatus::Inserted;
+                        out.push(ins);
+                    }
+                    continue;
+                }
                 for (b, a) in before.iter().zip(after.iter()) {
                     let mut atom = a.clone();
                     atom.correlation_status = CorrelationStatus::Equal;
                     atom.content_element_before = Some(b.content_element);
-                    atom.comparison_unit_atom_before = Some(Box::new(b.clone()));
+                    atom.comparison_unit_atom_before = Some(std::sync::Arc::new(b.clone()));
                     out.push(atom);
                 }
             }
@@ -225,7 +264,7 @@ pub fn flatten_to_comparison_unit_atom_list(
 }
 
 fn is_ppr_atom(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
-    dom.name(atom.content_element) == Some(W::p_pr())
+    dom.name_is(atom.content_element, &W::p_pr())
 }
 fn atom_in_textbox(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
     let txbx = W::txbx_content();
@@ -236,6 +275,9 @@ fn atom_in_textbox(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
 
 /// M4.E.2 — `AssembleAncestorUnidsInOrderToRebuildXmlTreeProperly` (:3974).
 /// Three phases (see WmlComparer.ts): A copy before→after pPr ancestor Unids;
+/// PRODUCE-UNID-01: (ancestor-elements chain, its minted unid chain) memo.
+type UnidChainMemo = Option<(std::sync::Arc<[NodeId]>, std::sync::Arc<[String]>)>;
+
 /// B seed ancestor_unids from the paragraph mark (reverse walk, minting missing);
 /// C fix text boxes in a second reverse pass.
 pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) {
@@ -300,9 +342,12 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
     };
 
     // ── Phase B (reverse) ──────────────────────────────────────────────────────
-    let mut current: Option<Vec<String>> = None;
+    let mut current: Option<std::sync::Arc<[String]>> = None;
     // PATH-01: track the shared Arc chain (not a cloned Vec).
     let mut current_elems: Option<std::sync::Arc<[NodeId]>> = None;
+    // PRODUCE-UNID-01: atoms of one run share an ancestor_elements Arc — reuse
+    // the chain built for the previous atom instead of rebuilding per atom.
+    let mut memo: UnidChainMemo = None;
     for atom in atoms.iter_mut().rev() {
         if is_ppr_atom(dom, atom) && !atom_in_textbox(dom, atom) {
             let mut cur: Vec<String> = atom
@@ -315,9 +360,11 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
             {
                 *first = d.clone();
             }
-            atom.ancestor_unids = Some(cur.clone());
+            let cur: std::sync::Arc<[String]> = cur.into();
+            atom.ancestor_unids = Some(std::sync::Arc::clone(&cur));
             current = Some(cur);
             current_elems = Some(std::sync::Arc::clone(&atom.ancestor_elements));
+            memo = None;
         } else {
             let prefix = current.clone().unwrap_or_default();
             // Borrow the following paragraph's Unid prefix to bridge MATCHED A/B
@@ -330,6 +377,12 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
             // content in a run (`w:p` inside `w:r`, Word "unreadable",
             // sd-2672-nested-table_sd-2672-sdt-table). Name-based (not NodeId
             // identity) so cross-tree matched paragraphs still share a Unid (m21).
+            if let Some((elems, unids)) = &memo
+                && std::sync::Arc::ptr_eq(elems, &atom.ancestor_elements)
+            {
+                atom.ancestor_unids = Some(std::sync::Arc::clone(unids));
+                continue;
+            }
             let prev_elems = current_elems.clone().unwrap_or_default();
             let mut share = 0usize;
             while share < prefix.len()
@@ -348,25 +401,33 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
             {
                 *first = d.clone();
             }
+            let full: std::sync::Arc<[String]> = full.into();
+            memo = Some((
+                std::sync::Arc::clone(&atom.ancestor_elements),
+                std::sync::Arc::clone(&full),
+            ));
             atom.ancestor_unids = Some(full);
         }
     }
 
     // ── Phase C (reverse, text-box fix) ─────────────────────────────────────────
-    let mut current: Option<Vec<String>> = None;
+    let mut current: Option<std::sync::Arc<[String]>> = None;
     let mut skip_until_ppr = false;
+    let mut memo: UnidChainMemo = None;
     for atom in atoms.iter_mut().rev() {
         if let Some(cur) = &current
             && atom.ancestor_elements.len() < cur.len()
         {
             skip_until_ppr = true;
             current = None;
+            memo = None;
             continue;
         }
         if is_ppr_atom(dom, atom) {
             if !atom_in_textbox(dom, atom) {
                 skip_until_ppr = true;
                 current = None;
+                memo = None;
                 continue;
             }
             // text-box pPr: rebuild prefix (must already have Unids — Phase B minted them)
@@ -379,25 +440,38 @@ pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) 
                         .expect("text-box pPr ancestor must have a Unid (Phase B)")
                 })
                 .collect();
-            atom.ancestor_unids = Some(cur.clone());
+            let cur: std::sync::Arc<[String]> = cur.into();
+            atom.ancestor_unids = Some(std::sync::Arc::clone(&cur));
             current = Some(cur);
             skip_until_ppr = false;
+            memo = None;
             continue;
         }
         if skip_until_ppr {
             continue;
         }
         if let Some(cur) = &current {
+            if let Some((elems, unids)) = &memo
+                && std::sync::Arc::ptr_eq(elems, &atom.ancestor_elements)
+            {
+                atom.ancestor_unids = Some(std::sync::Arc::clone(unids));
+                continue;
+            }
             let extra: Vec<NodeId> = atom
                 .ancestor_elements
                 .iter()
                 .skip(cur.len())
                 .copied()
                 .collect();
-            let mut full = cur.clone();
+            let mut full: Vec<String> = cur.as_ref().to_vec();
             for ae in extra {
                 full.push(unid_or_mint(dom, ae));
             }
+            let full: std::sync::Arc<[String]> = full.into();
+            memo = Some((
+                std::sync::Arc::clone(&atom.ancestor_elements),
+                std::sync::Arc::clone(&full),
+            ));
             atom.ancestor_unids = Some(full);
         }
     }
@@ -458,9 +532,11 @@ fn group_by_key_stable<'a, K: Eq + std::hash::Hash + Clone>(
 /// Add the `pt:Status` (+ move/format) attributes to a constructed node.
 fn tag_status(dom: &mut Dom, node: NodeId, status: CorrelationStatus, atom: &ComparisonUnitAtom) {
     match status {
-        CorrelationStatus::Deleted => dom.set_attribute_value(node, &PT::status(), Some("Deleted")),
+        CorrelationStatus::Deleted => {
+            dom.set_attribute_value(node, &PT::status(), Some("Deleted"));
+        }
         CorrelationStatus::Inserted => {
-            dom.set_attribute_value(node, &PT::status(), Some("Inserted"))
+            dom.set_attribute_value(node, &PT::status(), Some("Inserted"));
         }
         CorrelationStatus::MovedSource | CorrelationStatus::MovedDestination => {
             dom.set_attribute_value(node, &PT::status(), Some(status_str(status)));
@@ -499,6 +575,145 @@ fn is_txbx_from_level(dom: &Dom, atom: &ComparisonUnitAtom, level: usize) -> boo
         .any(|&a| dom.name(a).as_ref() == Some(&txbx))
 }
 
+/// M463 — final-serialization pass: every `w:ins`/`w:del` whose element
+/// content is exactly OMML math (`m:oMath`/`m:oMathPara`) is unwrapped, and
+/// the revision state is rewritten INSIDE the math the way Word Compare
+/// writes it. Runs AFTER all mesh/finalize passes, which reason about the
+/// outer-wrapped shape.
+///
+/// LibreOffice renders Word's internal-marked math as placeholder boxes; the
+/// outer wrap rendered the live formula instead — every formula's ink
+/// diverged from the oracle (math family n=28, mean ≈58; math_func ×
+/// math_groupchr 54.6).
+pub fn convert_outer_math_wraps_to_internal(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+) {
+    let math_names = [
+        crate::namespaces::M::name("oMath"),
+        crate::namespaces::M::name("oMathPara"),
+    ];
+    // Next free revision id — internal marks need fresh ones.
+    let mut max_id: u32 = 0;
+    for e in dom.descendants(root, None) {
+        if let Some(v) = dom.attribute(e, &W::id())
+            && let Ok(n) = v.parse::<u32>()
+        {
+            max_id = max_id.max(n);
+        }
+    }
+    let mut id_gen = max_id + 1;
+    for rev_name in [W::ins(), W::del()] {
+        let wrappers: Vec<NodeId> = dom
+            .descendants(root, Some(&rev_name))
+            .into_iter()
+            .filter(|&w| {
+                let kids = dom.elements(w, None);
+                !kids.is_empty()
+                    && kids
+                        .iter()
+                        .all(|&k| dom.name(k).is_some_and(|n| math_names.contains(&n)))
+            })
+            .collect();
+        for w in wrappers {
+            let maths: Vec<NodeId> = dom.elements(w, None);
+            for m in &maths {
+                mark_math_revisions_internally(dom, *m, &rev_name, settings, &mut id_gen);
+            }
+            for m in maths {
+                dom.remove(m);
+                dom.add_before_self(w, m);
+            }
+            dom.remove(w);
+        }
+    }
+}
+
+/// Rewrite a `m:oMath(Para)` subtree so its revision state lives INSIDE the
+/// math, the way Word Compare writes it:
+/// - every `m:r` moves its children (m:rPr?, w:rPr?, m:t…) into a
+///   `w:ins`/`w:del` child; a `w:rPr` with Cambria Math rFonts is
+///   materialized when the run stores none (Word always writes it);
+/// - every `m:ctrlPr` moves its `w:rPr` (materialized likewise) into the
+///   same mark.
+///
+/// `m:t` stays `m:t` under `w:del` — math content never becomes delText.
+fn mark_math_revisions_internally(
+    dom: &mut Dom,
+    math_root: NodeId,
+    rev_name: &crate::xmllinq::XName,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let m_r = crate::namespaces::M::name("r");
+    let m_ctrl_pr = crate::namespaces::M::name("ctrlPr");
+    let w_rpr = W::r_pr();
+    let cambria = |dom: &mut Dom| -> NodeId {
+        let rpr = dom.new_element(W::r_pr());
+        let fonts = dom.new_element(W::name("rFonts"));
+        dom.set_attribute_value(fonts, &W::name("ascii"), Some("Cambria Math"));
+        dom.set_attribute_value(fonts, &W::name("hAnsi"), Some("Cambria Math"));
+        dom.add(rpr, fonts);
+        rpr
+    };
+    let mut new_mark = |dom: &mut Dom| -> NodeId {
+        let w = dom.new_element(rev_name.clone());
+        dom.set_attribute_value(w, &W::id(), Some(&id_gen.to_string()));
+        *id_gen += 1;
+        dom.set_attribute_value(w, &W::author(), Some(&settings.author_for_revisions));
+        dom.set_attribute_value(w, &W::date(), Some(&settings.date_time_for_revisions));
+        w
+    };
+    let targets: Vec<(NodeId, bool)> = dom
+        .descendants(math_root, Some(&m_r))
+        .into_iter()
+        .map(|n| (n, false))
+        .chain(
+            dom.descendants(math_root, Some(&m_ctrl_pr))
+                .into_iter()
+                .map(|n| (n, true)),
+        )
+        .collect();
+    for (node, is_ctrl_pr) in targets {
+        // Skip runs that already carry a revision mark (defensive).
+        if dom.elements(node, None).iter().any(|&c| {
+            dom.name(c)
+                .is_some_and(|n| n == W::ins() || n == W::del())
+        }) {
+            continue;
+        }
+        let children: Vec<NodeId> = dom.elements(node, None);
+        let mark = new_mark(dom);
+        let mut saw_wrpr = false;
+        for c in children {
+            let is_m_rpr = dom.name(c) == Some(crate::namespaces::M::name("rPr"));
+            saw_wrpr |= dom.name(c).as_ref() == Some(&w_rpr);
+            dom.remove(c);
+            dom.add(mark, c);
+            // Materialize the math w:rPr right after m:rPr, before m:t.
+            let _ = is_m_rpr;
+        }
+        if !saw_wrpr {
+            let rpr = cambria(dom);
+            // After m:rPr when present, else first.
+            let anchor = dom
+                .elements(mark, None)
+                .into_iter()
+                .find(|&c| dom.name(c) == Some(crate::namespaces::M::name("rPr")));
+            match anchor {
+                Some(a) => dom.add_after_self(a, rpr),
+                None => match dom.elements(mark, None).first().copied() {
+                    Some(first) => dom.add_before_self(first, rpr),
+                    None => dom.add(mark, rpr),
+                },
+            }
+        }
+        let _ = is_ctrl_pr;
+        dom.add(node, mark);
+    }
+}
+
 /// M4.E.3-E.7 — `CoalesceRecurse` (:6024). Returns the constructed nodes for this
 /// level. `id_gen` is the `s_MaxId` analog (oMath revision ids).
 pub fn coalesce_recurse(
@@ -515,9 +730,11 @@ pub fn coalesce_recurse(
     // directly under <w:sdtContent>). Keying on element-name too keeps the divergent
     // structures separate. (sd-2672-nested-table_sd-2672-sdt-table.)
     let dref: &Dom = dom;
+    // Tuple key, not format!("{u}|{nm}") — the concat + re-split was a
+    // measurable slice of produce-phase hashing/allocation.
     let grouped = group_by_key_stable(atoms, |ca| {
         if level >= ca.ancestor_elements.len() {
-            return String::new();
+            return (String::new(), String::new());
         }
         let u = ca
             .ancestor_unids
@@ -525,15 +742,18 @@ pub fn coalesce_recurse(
             .and_then(|u| u.get(level).cloned())
             .unwrap_or_default();
         if u.is_empty() {
-            return String::new();
+            return (String::new(), String::new());
         }
         let nm = dref
             .name(ca.ancestor_elements[level])
             .map(|n| n.local_name().to_string())
             .unwrap_or_default();
-        format!("{u}|{nm}")
+        (u, nm)
     });
-    let grouped: Vec<_> = grouped.into_iter().filter(|(k, _)| !k.is_empty()).collect();
+    let grouped: Vec<_> = grouped
+        .into_iter()
+        .filter(|(k, _)| !k.0.is_empty())
+        .collect();
     if grouped.is_empty() {
         return Vec::new();
     }
@@ -545,7 +765,7 @@ pub fn coalesce_recurse(
 
         // Step 3 — group children by (next-level unid | status), txbx → Equal.
         let groupedchildren = group_adjacent(g.iter().cloned(), |gc| {
-            let mut key = if level < gc.ancestor_elements.len() - 1 {
+            let key = if level < gc.ancestor_elements.len() - 1 {
                 gc.ancestor_unids
                     .as_ref()
                     .and_then(|u| u.get(level + 1).cloned())
@@ -558,9 +778,7 @@ pub fn coalesce_recurse(
             } else {
                 status_str(gc.correlation_status)
             };
-            key.push('|');
-            key.push_str(st);
-            key
+            (key, st)
         });
 
         // w:p
@@ -571,12 +789,10 @@ pub fn coalesce_recurse(
                     dom.set_attribute_value(p, &an, Some(&av));
                 }
             }
-            // gkey is now "unid|elementName"; store only the Unid (scratch).
-            let unid = gkey.split('|').next().unwrap_or(&gkey);
-            dom.set_attribute_value(p, &PT::unid(), Some(unid));
+            // Tuple key: .0 is the Unid (scratch).
+            dom.set_attribute_value(p, &PT::unid(), Some(&gkey.0));
             for (key, gc) in &groupedchildren {
-                let spl: Vec<&str> = key.splitn(2, '|').collect();
-                if spl[0].is_empty() {
+                if key.0.is_empty() {
                     for gcc in gc {
                         let dup = dom.clone_subtree(gcc.content_element);
                         tag_status(dom, dup, gcc.correlation_status, gcc);
@@ -620,8 +836,7 @@ pub fn coalesce_recurse(
                 dom.add(r, rpr_clone);
             }
             for (key, gc) in &groupedchildren {
-                let spl: Vec<&str> = key.splitn(2, '|').collect();
-                if spl[0].is_empty() {
+                if key.0.is_empty() {
                     for gcc in gc {
                         let dup = dom.clone_subtree(gcc.content_element);
                         tag_status(dom, dup, gcc.correlation_status, gcc);
@@ -703,6 +918,10 @@ pub fn coalesce_recurse(
         }
 
         // m:oMath / m:oMathPara — wrap in real w:del/w:ins/w:moveFrom/w:moveTo.
+        // The outer wrap is the shape every mesh/finalize pass reasons about;
+        // the final Word serialization (revision marks INSIDE the math, M463)
+        // is produced by `convert_outer_math_wraps_to_internal` at the very
+        // end of the pipeline.
         if aname == crate::namespaces::M::name("oMath")
             || aname == crate::namespaces::M::name("oMathPara")
         {
@@ -927,18 +1146,14 @@ fn reconstruct_element(
                 strip_change(dom, old_clone, "tblGridChange");
                 if dom.serialize_element(old_clone) != dom.serialize_element(new_grid) {
                     let change = dom.new_element(W::name("tblGridChange"));
+                    // w:id ONLY. CT_TblGridChange is the one revision-history
+                    // element that does not extend CT_TrackChange, so it
+                    // declares neither w:author nor w:date — unlike the
+                    // tblPrChange directly above, which does. Copying that
+                    // block wholesale made the validator report
+                    // Sch_UndeclaredAttribute on both.
                     dom.set_attribute_value(change, &W::id(), Some(&id_gen.to_string()));
                     *id_gen += 1;
-                    dom.set_attribute_value(
-                        change,
-                        &W::author(),
-                        Some(&settings.author_for_revisions),
-                    );
-                    dom.set_attribute_value(
-                        change,
-                        &W::date(),
-                        Some(&settings.date_time_for_revisions),
-                    );
                     dom.add(change, old_clone);
                     dom.add(new_grid, change);
                 } else {

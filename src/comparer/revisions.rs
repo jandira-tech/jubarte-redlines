@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M-D — `WmlComparer.GetRevisions` (:3940): the consumer revision-list API.
 //! D.2 covers the main-part list; D.3 adds notes parts, D.4 format changes,
 //! D.5 move detection, D.6 the byte facade + CLI.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Namespace + name constants ported from `PtOpenXmlUtil.ts` (the subset the
 //! comparer references) — M1.7.
 //!
@@ -9,6 +13,7 @@ use crate::xmllinq::{XName, XNamespace};
 
 macro_rules! ns_struct {
     ($name:ident, $uri:literal) => {
+        /// Open XML namespace marker for `$uri`.
         pub struct $name;
         impl $name {
             /// The namespace.
@@ -76,6 +81,7 @@ ns_struct!(WNE, "http://schemas.microsoft.com/office/word/2006/wordml");
 // does not re-enter the interning table for the same syntactic names.
 macro_rules! cached_xname {
     ($ns_uri:expr, $method:ident, $local:literal) => {
+        /// Cached `XName` for the local name `$local`.
         pub fn $method() -> XName {
             static N: std::sync::OnceLock<XName> = std::sync::OnceLock::new();
             N.get_or_init(|| XName::get($local, $ns_uri)).clone()
@@ -124,6 +130,12 @@ impl W {
     cached_xname!(W::URI, move_to_range_end, "moveToRangeEnd");
     cached_xname!(W::URI, sdt, "sdt");
     cached_xname!(W::URI, sdt_content, "sdtContent");
+    // NAME-01d: hottest remaining finalize/lcs locals (sectPr/pPrChange/
+    // spacing/… were still interning per call — thread-local pool hash each).
+    cached_xname!(W::URI, spacing_el, "spacing");
+    cached_xname!(W::URI, p_style, "pStyle");
+    cached_xname!(W::URI, jc_el, "jc");
+
     cached_xname!(W::URI, sdt_pr, "sdtPr");
     cached_xname!(W::URI, fld_char, "fldChar");
     cached_xname!(W::URI, instr_text, "instrText");

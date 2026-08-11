@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M4.H.1 — relationship parsing helpers for footnotes/related-part relocation.
 //! Port of ParseRelationshipRows (:6945), DecodeXmlAttribute (:6967),
 //! RequiredRelTypeSuffix (:6914), IsExternalRelationship (:6678). The rel-name
@@ -7,9 +11,13 @@
 /// A parsed `<Relationship>` row from a `.rels` part.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelationshipRow {
+    /// `id`.
     pub id: String,
+    /// `rel_type`.
     pub rel_type: String,
+    /// `target`.
     pub target: String,
+    /// `external`.
     pub external: bool,
 }
 
@@ -235,7 +243,10 @@ pub fn reconcile_dangling_relationships(
                         id: r.id.clone(),
                         rel_type: r.rel_type.clone(),
                         target: r.target.clone(),
-                        external: r.target_mode.as_deref() == Some("External"),
+                        // Same rule as parse_relationship_rows: TargetMode OR
+                        // hyperlink/absolute-URI classification.
+                        external: r.target_mode.as_deref() == Some("External")
+                            || is_external_relationship(&r.rel_type, &r.target),
                     },
                     src_doc.clone(),
                 ));

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Port of `parseXDocument` from `lib/xml-linq.ts` — a small, non-validating,
 //! namespace-aware recursive-descent XML parser sufficient for OOXML parts.
 //!

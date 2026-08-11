@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+version = 1
+
+# The repository is AGPL-3.0-only. This annotation covers every tracked asset,
+# including DOCX/PDF fixtures that cannot carry an in-file comment header.
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 Jandira Technologies, LLC"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+# The root license is the canonical repository license text, not a source file.
+[[annotations]]
+path = "LICENSE"
+precedence = "override"
+SPDX-FileCopyrightText = "1989, 1991 Free Software Foundation, Inc."
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+# These are preserved upstream attribution records. They do not provide an
+# alternative license for Jubarte or Jandira Technologies, LLC contributions.
+[[annotations]]
+path = "LICENSES/LicenseRef-Microsoft-MIT.txt"
+precedence = "override"
+SPDX-FileCopyrightText = ".NET Foundation and Contributors"
+SPDX-License-Identifier = "LicenseRef-Microsoft-MIT"
+
+[[annotations]]
+path = "LICENSES/LicenseRef-Docxodus-MIT.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "Microsoft Corporation"
+SPDX-License-Identifier = "LicenseRef-Docxodus-MIT"
