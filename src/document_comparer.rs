@@ -2432,6 +2432,81 @@ fn adopt_missing_styles_structure(dom: &mut Dom, out_root: NodeId, b_root: NodeI
 ///
 /// GT evidence (sample-document × sd-2517-localized-heading-styles): GT Normal
 /// rPr = Times New Roman sz/szCs 24 + rPrChange(old = Inter sz 22).
+/// M467 — prune the merged Normal's live rPr of metric attrs whose value the
+/// output docDefaults already supply (Word writes only the delta):
+/// `kern` (dd absent = "0"), `sz`/`szCs`, `w14:ligatures` (dd absent =
+/// "none"), and per-slot `rFonts` attrs (both concrete and `*Theme` names).
+/// Oracle tab_test × table_autofit: B's Normal stores Arial kern=0 sz=20
+/// szCs=22 eastAsiaTheme ligatures-none; A-dd has no kern, szCs=22, the same
+/// eastAsiaTheme, no ligatures — Word's output Normal is Arial + sz=20 only.
+/// basic_comment keeps kern=0 because A-dd kern=2 differs (m461).
+fn prune_normal_rpr_context_equal_attrs(dom: &mut Dom, out_root: NodeId) -> bool {
+    let Some(normal) = find_normal_style(dom, out_root) else {
+        return false;
+    };
+    let Some(rpr) = dom.element(normal, &W::name("rPr")) else {
+        return false;
+    };
+    let dd = rpr_default(dom, out_root);
+    let dd_val = |dom: &Dom, local: &str, default: &str| -> String {
+        dd.and_then(|d| dom.element(d, &W::name(local)))
+            .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string))
+            .unwrap_or_else(|| default.to_string())
+    };
+    let mut changed = false;
+    for (local, default) in [("kern", "0"), ("sz", ""), ("szCs", "")] {
+        let Some(e) = dom.element(rpr, &W::name(local)) else {
+            continue;
+        };
+        let v = dom.attribute(e, &W::val()).unwrap_or("").to_string();
+        let ddv = dd_val(dom, local, default);
+        if !v.is_empty() && v == ddv {
+            dom.remove(e);
+            changed = true;
+        }
+    }
+    let lig_name = W14::name("ligatures");
+    let lig_val_name = W14::name("val");
+    if let Some(e) = dom.element(rpr, &lig_name) {
+        let v = dom.attribute(e, &lig_val_name).unwrap_or("").to_string();
+        let ddv = dd
+            .and_then(|d| dom.element(d, &lig_name))
+            .and_then(|x| dom.attribute(x, &lig_val_name).map(str::to_string))
+            .unwrap_or_else(|| "none".to_string());
+        if v == ddv {
+            dom.remove(e);
+            changed = true;
+        }
+    }
+    if let Some(fonts) = dom.element(rpr, &W::name("rFonts")) {
+        let dd_fonts = dd.and_then(|d| dom.element(d, &W::name("rFonts")));
+        for attr in [
+            "ascii",
+            "hAnsi",
+            "eastAsia",
+            "cs",
+            "asciiTheme",
+            "hAnsiTheme",
+            "eastAsiaTheme",
+            "cstheme",
+        ] {
+            let Some(v) = dom.attribute(fonts, &W::name(attr)).map(str::to_string) else {
+                continue;
+            };
+            let ddv = dd_fonts.and_then(|f| dom.attribute(f, &W::name(attr)).map(str::to_string));
+            if ddv.as_deref() == Some(v.as_str()) {
+                dom.set_attribute_value(fonts, &W::name(attr), None);
+                changed = true;
+            }
+        }
+        if dom.attributes(fonts).is_empty() {
+            dom.remove(fonts);
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn merge_normal_style_rpr(
     dom: &mut Dom,
     out_root: NodeId,
@@ -4204,6 +4279,10 @@ fn compare_documents_impl(
             // B's Calibri dd onto Normal + rPrChange(A Ubuntu); we kept A.
             // M65 still skips both-bare (file_170). HF-linked cases unchanged.
             changed |= merge_normal_style_rpr(&mut sd, or, br, settings);
+            // M467: Word keeps only per-attr DELTAS vs the output docDefaults
+            // on the merged Normal (tab_test × table_autofit: kern/szCs/
+            // eastAsiaTheme/ligatures dropped as redundant, Arial+sz=20 kept).
+            changed |= prune_normal_rpr_context_equal_attrs(&mut sd, or);
             // M111: cascade Normal pPrChange/rPrChange onto basedOn=Normal styles
             // (ListParagraph/BodyText/Header/… — file_130 Word has ~30).
             changed |= cascade_normal_change_to_based_styles(&mut sd, or, settings);
