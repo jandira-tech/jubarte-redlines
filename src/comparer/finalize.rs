@@ -3354,6 +3354,109 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
     }
 }
 
+/// M469 — split a head title MIX: B's SHORT inserted title (≤4 tokens)
+/// paired with A's LONG deleted opening (≥10 tokens, no shared significant
+/// token) is Word's [pure-INS title] + [style-less MARK-DEL paragraph]
+/// (ooxml_rfonts_rstyle × sd_2672_rtl_table oracle: bare pPr, no pStyle —
+/// the deleted text renders at body size, not title size).
+pub fn split_head_short_title_long_del_mix(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let Some(&first) = dom
+        .elements(body, None)
+        .iter()
+        .find(|&&k| dom.name_is(k, &W::p()))
+    else {
+        return;
+    };
+    // Exact shape: [pPr?] then one-or-more w:ins, then one-or-more w:del,
+    // nothing else (no EQ interleaving, no mark revision).
+    let kids: Vec<NodeId> = dom
+        .elements(first, None)
+        .into_iter()
+        .filter(|&c| !dom.name_is(c, &W::p_pr()))
+        .collect();
+    if kids.is_empty() || para_mark_revision(dom, first, &W::ins()) || para_mark_revision(dom, first, &W::del()) {
+        return;
+    }
+    let mut ins_run = Vec::new();
+    let mut del_run = Vec::new();
+    for &c in &kids {
+        if dom.name_is(c, &W::ins()) {
+            if !del_run.is_empty() {
+                return; // interleaved — not the wholesale title shape
+            }
+            ins_run.push(c);
+        } else if dom.name_is(c, &W::del()) {
+            del_run.push(c);
+        } else {
+            return; // EQ content present — Word meshed, leave alone
+        }
+    }
+    if ins_run.is_empty() || del_run.is_empty() {
+        return;
+    }
+    let text_of = |dom: &Dom, nodes: &[NodeId], del: bool| -> String {
+        let tag = if del { W::del_text() } else { W::t() };
+        let mut s = String::new();
+        for &n in nodes {
+            for t in dom.descendants(n, Some(&tag)) {
+                s.push_str(&dom.value_str(t));
+            }
+        }
+        s
+    };
+    let ins_text = text_of(dom, &ins_run, false);
+    let del_text = text_of(dom, &del_run, true);
+    let toks = |s: &str| -> Vec<String> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .filter(|t| !t.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let it = toks(&ins_text);
+    let dt = toks(&del_text);
+    if it.is_empty() || it.len() > 4 || dt.len() < 10 {
+        return;
+    }
+    // No shared significant token (len≥4) — unrelated titles only.
+    let dset: std::collections::HashSet<&str> =
+        dt.iter().map(String::as_str).filter(|t| t.len() >= 4).collect();
+    if it.iter().any(|t| t.len() >= 4 && dset.contains(t.as_str())) {
+        return;
+    }
+    // Split: new style-less paragraph with MARK-DEL after `first`,
+    // carrying the del blocks verbatim; mark copies the del's author/date.
+    let author = dom.attribute(del_run[0], &W::author()).map(str::to_string);
+    let date = dom.attribute(del_run[0], &W::date()).map(str::to_string);
+    let max_id: u32 = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter_map(|e| dom.attribute(e, &W::id()).and_then(|v| v.parse::<u32>().ok()))
+        .max()
+        .unwrap_or(0);
+    let np = dom.new_element(W::p());
+    let ppr = dom.new_element(W::p_pr());
+    let rpr = dom.new_element(W::r_pr());
+    let mark = dom.new_element(W::del());
+    dom.set_attribute_value(mark, &W::id(), Some(&(max_id + 1).to_string()));
+    if let Some(a) = &author {
+        dom.set_attribute_value(mark, &W::author(), Some(a));
+    }
+    if let Some(d) = &date {
+        dom.set_attribute_value(mark, &W::date(), Some(d));
+    }
+    dom.add(rpr, mark);
+    dom.add(ppr, rpr);
+    dom.add(np, ppr);
+    for &d in &del_run {
+        dom.remove(d);
+        dom.add(np, d);
+    }
+    dom.add_after_self(first, np);
+}
+
 /// M105 — pure-D short title + following MIX that starts with `w:ins`: move
 /// the leading insert runs onto the pure-D para (Word file_7/5/130).
 ///

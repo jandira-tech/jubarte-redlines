@@ -762,6 +762,10 @@ pub fn compare_bodies_faithful_with_notes(
         // M448: pure-I-dominant body + pure-D residual → drop trailing bare
         // empty EQ (diff_after8×doc_with_spacing Word ends IDD not IDDE).
         finalize::strip_trailing_bare_empty_after_pure_i_dominant(dom, root);
+        // M469: head title MIX with SHORT ins title + LONG unrelated del →
+        // split del into a style-less MARK-DEL paragraph (rfonts_rstyle ×
+        // sd_2672_rtl_table: Word renders the deleted opening at body size).
+        finalize::split_head_short_title_long_del_mix(dom, root);
         // M105: pure-D short title + following MIX leading ins → Word subtitle
         // insert lands on title residual (file_7/5/130 document peel).
         finalize::fold_leading_ins_from_mix_into_preceding_pure_del(dom, root);
