@@ -31,7 +31,7 @@ redlines-site/
     redline-worker.js   Web Worker that runs the wasm
     og.png favicon.*    generated — `bun run render-og`
     robots.txt sitemap.xml
-    vendor/             wasm bundle (gitignored — see "Building")
+    vendor/             wasm bundle (tracked; regenerate + commit — see "Building")
   assets/               SVG + font sources for the generated images
   migrations/           D1 schema
   test/                 vitest + @cloudflare/vitest-pool-workers

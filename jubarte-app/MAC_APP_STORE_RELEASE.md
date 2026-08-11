@@ -55,19 +55,23 @@ App Store Server Notifications → Production + Sandbox URLs both set to
 - **App Store Connect app record**: "Jubarte", Apple ID `6790926615`,
   bundle ID `com.jandira.jubarte`, SKU `jubarte-mac-2026`.
 - **Team**: Jandira Technologies, LLC — Team ID `NW99N2W6TA`.
-- **App Store Connect API key**: Key ID `D6P299RB86`, Issuer ID
-  `04eda013-ed0d-4a50-8bf8-d39149ce7aa6`, Role: Admin.
-  Key file lives at `~/Downloads/AuthKey_D6P299RB86.p8` — back this up
-  somewhere safe, Apple only lets you download it once.
+- **App Store Connect API key**: Key ID `$ASC_KEY_ID`, Issuer ID
+  `$ASC_ISSUER_ID`, Role: Admin — real values live only in the untracked
+  `~/.appstoreconnect/jubarte.json` (see `.asc_client.py`; SECURITY.md
+  forbids committing them). Key file lives at `$ASC_KEY_PATH` — back this
+  up somewhere safe, Apple only lets you download it once.
 - **Signing certificate**: "Apple Distribution: Jandira Technologies, LLC
   (NW99N2W6TA)" (unified cert covering Mac App Store + iOS), already in
   the login keychain, expires 2027-04-10.
 - **Installer certificate**: "3rd Party Mac Developer Installer: Jandira
   Technologies, LLC (NW99N2W6TA)", expires 2027-04-10.
 - **Provisioning profile**: "Jubarte Mac App Store Profile" for
-  `com.jandira.jubarte`, type "Mac App Store", stored at
-  `src-tauri/embedded.provisionprofile` in the repo and also installed at
-  `~/Library/MobileDevice/Provisioning Profiles/`. Expires 2027-04-10.
+  `com.jandira.jubarte`, type "Mac App Store" — a locally provisioned,
+  **untracked** release input at `src-tauri/embedded.provisionprofile`
+  (gitignored), also installed at
+  `~/Library/MobileDevice/Provisioning Profiles/`. Re-download from
+  developer.apple.com → Certificates, Identifiers & Profiles when missing
+  or expired. Expires 2027-04-10.
 - **Subscription**: Group "Jubarte Pro" (id 22237556), subscription
   "Jubarte Pro Yearly" (Apple ID 6791004310; the original "Jubarte Annual"
   6790927274 was deleted — deleted IAP product ids can never be reused), product ID
@@ -81,7 +85,8 @@ App Store Server Notifications → Production + Sandbox URLs both set to
   - `com.apple.security.files.user-selected.read-write`
   - `com.apple.security.files.bookmarks.app-scope`
 - `src-tauri/embedded.provisionprofile` — the Mac App Store provisioning
-  profile (re-download from developer.apple.com if it expires).
+  profile: local-only and gitignored, never committed (re-download from
+  developer.apple.com if it expires or is missing on a fresh clone).
 - `src-tauri/tauri.conf.json` — `bundle.macOS.signingIdentity` set to
   `"Apple Distribution: Jandira Technologies, LLC (NW99N2W6TA)"` and
   `bundle.macOS.entitlements` set to `"entitlements.plist"`. Bundle
@@ -168,7 +173,7 @@ Make sure the API key is where `altool` expects it:
 
 ```bash
 mkdir -p ~/.appstoreconnect/private_keys
-cp ~/Downloads/AuthKey_D6P299RB86.p8 ~/.appstoreconnect/private_keys/
+cp "$ASC_KEY_PATH" ~/.appstoreconnect/private_keys/
 ```
 
 Then upload:
@@ -177,8 +182,8 @@ Then upload:
 xcrun altool --upload-app \
   -f /tmp/jubarte-pkg-out/Jubarte.pkg \
   -t macos \
-  --apiKey D6P299RB86 \
-  --apiIssuer 04eda013-ed0d-4a50-8bf8-d39149ce7aa6
+  --apiKey "$ASC_KEY_ID" \
+  --apiIssuer "$ASC_ISSUER_ID"
 ```
 
 This can take a few minutes. `altool` is deprecated by Apple in favor of
@@ -312,7 +317,7 @@ Remaining before you actually charge (NOT done here — mostly backend/UI work):
 ## Upload errors hit on the v0.3.0 (subscription) build — and their fixes
 
 - **90255 — "installer package includes files only readable by the root user."**
-  `embedded.provisionprofile` is mode `600` in the repo, and `cp` preserves it
+  `embedded.provisionprofile` is mode `600` on disk, and `cp` preserves it
   into the `.app`, so the bundle ships an owner-only file and altool rejects it.
   Fix: after embedding, `chmod -R a+rX "<app>"` (or at least `chmod 644` the
   profile), THEN re-sign. Check with `find "<app>" -type f ! -perm -004`.
