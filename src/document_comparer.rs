@@ -4040,6 +4040,13 @@ fn compare_documents_impl(
         crate::comparer::finalize::fix_up_revision_ids(&mut dom, &[result_root]);
     }
 
+    // M472 — re-assert Word's ins-before-del replacement order after the
+    // comment-carry rebuilds run blocks (diff_before10 × diff_before11: the
+    // early reorder's work was undone by comment anchoring, leaving
+    // [ins][del][ins] where Word emits ins…ins del). Idempotent and
+    // text-preserving.
+    crate::comparer::finalize::reorder_replacements_ins_before_del(&mut dom, result_root);
+
     // M463 — rewrite outer-wrapped math revisions into Word's internal form.
     // Must run after every mesh/finalize pass (they reason about the outer
     // wrap) and before serialize.
