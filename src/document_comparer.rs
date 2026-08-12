@@ -4836,6 +4836,81 @@ fn compare_documents_impl(
         adopt_revised_styles_chrome(&mut out, &pkg2, &main1);
         ensure_factory_package_chrome(&mut out, &main1);
         repair_missing_core_relationships(&mut out, &main1);
+        // M492: deleted paragraphs keep their A-ORIGINAL direct spacing.
+        // Word preserves the source paragraph's own w:spacing on del-marked
+        // paragraphs (file_22 × file_23 oracle: 31 deleted paras carry their
+        // line=240/atLeast declarations; we stripped all but one — each
+        // stripped para renders at the taller docDefaults line and the
+        // accumulated height drifts the pagination, the long-standing
+        // 115-vs-116-page mystery). Finalize passes can't see provenance, so
+        // restore here from A's package: any del-marked paragraph whose
+        // A-source para (matched by w14:paraId) declared w:spacing gets the
+        // original attributes back when the output paragraph lost them.
+        if let (Some(a_xml), Some(out_xml)) = (
+            pkg1.part_string("word/document.xml"),
+            out.part_string(&main1),
+        ) {
+            let mut a_spacing: std::collections::HashMap<String, Vec<(String, String)>> =
+                std::collections::HashMap::new();
+            {
+                let mut ad = Dom::new();
+                let d = ad.parse_xdocument(&a_xml);
+                if let Some(r) = ad.root(d) {
+                    let w14_pid = crate::namespaces::W14::name("paraId");
+                    for pnode in ad.descendants(r, Some(&W::p())) {
+                        let Some(pid) = ad.attribute(pnode, &w14_pid).map(str::to_string)
+                        else {
+                            continue;
+                        };
+                        if let Some(ppr) = ad.element(pnode, &W::p_pr())
+                            && let Some(sp) = ad.element(ppr, &W::name("spacing"))
+                        {
+                            let attrs: Vec<(String, String)> = ad
+                                .attributes(sp)
+                                .into_iter()
+                                .map(|(n, v)| (n.local_name().to_string(), v))
+                                .collect();
+                            if !attrs.is_empty() {
+                                a_spacing.insert(pid, attrs);
+                            }
+                        }
+                    }
+                }
+            }
+            if !a_spacing.is_empty() {
+                let mut pd = Dom::new();
+                let d = pd.parse_xdocument(&out_xml);
+                if let Some(root) = pd.root(d) {
+                    let w14_pid = crate::namespaces::W14::name("paraId");
+                    let mut changed = false;
+                    for pnode in pd.descendants(root, Some(&W::p())) {
+                        let Some(pid) = pd.attribute(pnode, &w14_pid).map(str::to_string)
+                        else {
+                            continue;
+                        };
+                        let Some(attrs) = a_spacing.get(&pid) else { continue };
+                        let Some(ppr) = pd.element(pnode, &W::p_pr()) else {
+                            continue;
+                        };
+                        let mark_del = pd
+                            .element(ppr, &W::r_pr())
+                            .is_some_and(|r| pd.element(r, &W::name("del")).is_some());
+                        if !mark_del || pd.element(ppr, &W::name("spacing")).is_some() {
+                            continue;
+                        }
+                        let sp = pd.new_element(W::name("spacing"));
+                        for (n, v) in attrs {
+                            pd.set_attribute_value(sp, &W::name(n), Some(v));
+                        }
+                        insert_child_by_rank(&mut pd, ppr, sp, "spacing", &ppr_child_rank);
+                        changed = true;
+                    }
+                    if changed {
+                        out.set_part(&main1, pd.serialize_element(root).into_bytes());
+                    }
+                }
+            }
+        }
         // M491: B's DOCUMENT-FINAL paragraph mark never materializes as a
         // mid-document insertion — Word EQ-pairs the two documents' final
         // marks. Our windowed diff can splice B's terminal empty ¶ into the
