@@ -4971,19 +4971,23 @@ fn compare_documents_impl(
                 };
                 let out_idx = index(&sd, or);
                 let b_idx = index(&sd, br);
-                let default_pstyle = |dom: &Dom, root: NodeId| -> Option<String> {
-                    dom.elements(root, Some(&W::name("style")))
-                        .into_iter()
-                        .find(|&s| {
-                            dom.attribute(s, &W::name("type")) == Some("paragraph")
-                                && matches!(
-                                    dom.attribute(s, &W::name("default")),
-                                    Some("1") | Some("true")
-                                )
-                        })
-                        .and_then(|s| dom.attribute(s, &W::name("styleId")).map(str::to_string))
+                let b_default = {
+                    let dp = |dom: &Dom, root: NodeId| -> Option<String> {
+                        dom.elements(root, Some(&W::name("style")))
+                            .into_iter()
+                            .find(|&s| {
+                                dom.attribute(s, &W::name("type")) == Some("paragraph")
+                                    && matches!(
+                                        dom.attribute(s, &W::name("default")),
+                                        Some("1") | Some("true")
+                                    )
+                            })
+                            .and_then(|s| {
+                                dom.attribute(s, &W::name("styleId")).map(str::to_string)
+                            })
+                    };
+                    dp(&sd, br)
                 };
-                let b_default = default_pstyle(&sd, br);
                 if let Some(doc_xml) = out.part_string(&main1) {
                     let mut pd = Dom::new();
                     let dd = pd.parse_xdocument(&doc_xml);
@@ -5012,12 +5016,23 @@ fn compare_documents_impl(
                             if !has_text {
                                 continue;
                             }
-                            let style_id = pd
+                            // STYLED OR NUMBERED paragraphs only: the oracle
+                            // bakes pStyle'd paras and pStyle-less LIST paras
+                            // (numPr present — rstyle "List item 2"/"Back"),
+                            // never truly-bare ones (m370 title;
+                            // tiff×h_f_normal regressed −56 when its 52 bare
+                            // inserted paras took the bake).
+                            let pstyle = pd
                                 .element(ppr, &W::name("pStyle"))
                                 .and_then(|ps| pd.attribute(ps, &W::val()))
-                                .map(str::to_string)
-                                .or_else(|| b_default.clone());
-                            let Some(style_id) = style_id else { continue };
+                                .map(str::to_string);
+                            let has_numpr = pd.element(ppr, &W::name("numPr")).is_some();
+                            if pstyle.is_none() && !has_numpr {
+                                continue;
+                            }
+                            let Some(style_id) = pstyle.or_else(|| b_default.clone()) else {
+                                continue;
+                            };
                             if !b_idx.contains_key(&style_id) {
                                 continue; // style not from B — no B-effective target
                             }
