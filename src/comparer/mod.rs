@@ -806,6 +806,10 @@ pub fn compare_bodies_faithful_with_notes(
         // impossible [MD ins+del][MI del-only][live ins…EQ] region one slot
         // to Word's arrangement (diff_after19 × diff_after2).
         finalize::rotate_ins_mark_del_only_paragraph(dom, root);
+        // M473 (same family): restamp a stranded contentless MARK-DEL shell's
+        // into the preceding bare del-only paragraph — Word writes one
+        // paragraph (ooxml_size_rstyle × ooxml_strike_rstyle).
+        finalize::restamp_stranded_del_mark_onto_del_only_paragraph(dom, root);
         // M376: after merge/park peels — strip list line=240/jc that mid pure-D
         // absorbed from pure-I list residual (bookmark×broken_complex −0.6).
         finalize::strip_list_layout_from_mid_pure_del(dom, root);

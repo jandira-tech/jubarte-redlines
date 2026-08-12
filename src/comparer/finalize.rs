@@ -1303,7 +1303,14 @@ fn wrap_revised_hyperlink_as_field(dom: &mut Dom, hl: NodeId) {
     let begin = mk_fld(dom, "begin");
     let instr_r = dom.new_element(W::r());
     let instr = dom.new_element(instr_name);
-    dom.add_text(instr, &format!("HYPERLINK \\l \"{anchor}\""));
+    // M474: carry the tooltip switch — Word writes `\o "<tip>"` after the
+    // anchor (sd_2672 × hyperlink_node_internal oracle).
+    let mut instr_text = format!("HYPERLINK \\l \"{anchor}\"");
+    if let Some(tip) = dom.attribute(hl, &W::name("tooltip")) {
+        let tip = tip.to_string();
+        instr_text.push_str(&format!(" \\o \"{tip}\""));
+    }
+    dom.add_text(instr, &instr_text);
     dom.add(instr_r, instr);
     let sep = mk_fld(dom, "separate");
     let end = mk_fld(dom, "end");
@@ -3342,7 +3349,7 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                 // table_border×toc: empty TOC field-end pure-I × SD-2343
                 // Heading1 pure-D got Heading1 on the MIX; Word leaves bare
                 // pPr (pagefair −11). List numPr adopt still runs (basic_list).
-                let ins_has_fld = !dom.descendants(ins_p, Some(&W::name("fldChar"))).is_empty();
+                let ins_has_fld = para_is_field_residue(dom, ins_p);
                 let del_heading_style = dom.element(del_p, &W::p_pr()).is_some_and(|dp| {
                     dom.element(dp, &W::p_style()).is_some_and(|ps| {
                         let v = dom
@@ -3411,7 +3418,7 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                 if let Some(drpr) = dom.element(dppr, &W::r_pr())
                     && dom.element(drpr, &W::del()).is_some()
                 {
-                    let ins_has_fld = !dom.descendants(ins_p, Some(&W::name("fldChar"))).is_empty();
+                    let ins_has_fld = para_is_field_residue(dom, ins_p);
                     let del_heading_style = dom.element(dppr, &W::p_style()).is_some_and(|ps| {
                         let v = dom
                             .attribute(ps, &W::val())
@@ -3588,6 +3595,102 @@ pub fn rotate_ins_mark_del_only_paragraph(dom: &mut Dom, root: NodeId) {
             for &d in &p0_del {
                 dom.remove(d);
                 dom.add(p1, d);
+            }
+            acted = true;
+            break;
+        }
+        if !acted {
+            break;
+        }
+    }
+}
+
+/// M473 — sibling of the M471 rotation: the deletion mark lands one slot
+/// late. A fully-deleted base paragraph inside a replace region comes out as
+/// [bare-pPr live-mark, del-only content][contentless MARK-DEL shell]. The
+/// content paragraph must carry MARK-DEL (its live mark makes accept-all
+/// strand an empty paragraph B never had). Whether the SHELL also stays
+/// depends on base cardinality: one deleted A-para → Word merges to a
+/// single [MD content] (ooxml_size_rstyle × ooxml_strike_rstyle); two
+/// deleted A-paras (content + empty) → Word keeps BOTH [MD content]
+/// [MD empty] (file_36 × file_37). Cardinality is produce-side provenance a
+/// finalize pass cannot see, and the damage is asymmetric — merging when
+/// wrong removes a rendered line and shifts every page below (−30 pixels on
+/// file_36), keeping the shell when wrong costs one trailing empty line. So
+/// the rewrite only RESTAMPS: clone the shell's marked pPr onto the content
+/// paragraph and leave the shell in place.
+pub fn restamp_stranded_del_mark_onto_del_only_paragraph(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    loop {
+        let kids: Vec<NodeId> = dom
+            .elements(body, None)
+            .into_iter()
+            .filter(|&k| dom.name_is(k, &W::p()))
+            .collect();
+        let mut acted = false;
+        for w in kids.windows(2) {
+            let (p0, p1) = (w[0], w[1]);
+            // p0: live mark, bare pPr (no properties at all), children all
+            // w:del blocks with real deleted text.
+            if para_mark_revision(dom, p0, &W::del()) || para_mark_revision(dom, p0, &W::ins()) {
+                continue;
+            }
+            if let Some(ppr) = dom.element(p0, &W::p_pr()) {
+                if !dom.elements(ppr, None).is_empty() {
+                    continue;
+                }
+            }
+            let c0: Vec<NodeId> = dom
+                .elements(p0, None)
+                .into_iter()
+                .filter(|&c| !dom.name_is(c, &W::p_pr()))
+                .collect();
+            if c0.is_empty() || c0.iter().any(|&c| !dom.name_is(c, &W::del())) {
+                continue;
+            }
+            let has_del_text = c0.iter().any(|&d| {
+                dom.descendants(d, None)
+                    .iter()
+                    .any(|&n| dom.name_is(n, &W::del_text()))
+            });
+            if !has_del_text {
+                continue;
+            }
+            // p1: contentless MARK-DEL shell — pPr holds exactly [rPr [del]].
+            if !para_mark_revision(dom, p1, &W::del()) {
+                continue;
+            }
+            let c1: Vec<NodeId> = dom
+                .elements(p1, None)
+                .into_iter()
+                .filter(|&c| !dom.name_is(c, &W::p_pr()))
+                .collect();
+            if !c1.is_empty() {
+                continue;
+            }
+            let Some(ppr1) = dom.element(p1, &W::p_pr()) else {
+                continue;
+            };
+            let ppr1_kids = dom.elements(ppr1, None);
+            if ppr1_kids.len() != 1 || !dom.name_is(ppr1_kids[0], &W::r_pr()) {
+                continue;
+            }
+            let rpr1_kids = dom.elements(ppr1_kids[0], None);
+            if rpr1_kids.len() != 1 || !dom.name_is(rpr1_kids[0], &W::del()) {
+                continue;
+            }
+            // --- rewrite: clone the shell's marked pPr onto p0 (replacing
+            // its bare pPr); the shell itself stays where it is. The final
+            // revision-id renumber pass resolves the duplicated del id.
+            let cloned = dom.clone_subtree(ppr1);
+            match dom.element(p0, &W::p_pr()) {
+                Some(old) => {
+                    dom.add_before_self(old, cloned);
+                    dom.remove(old);
+                }
+                None => dom.add_first(p0, cloned),
             }
             acted = true;
             break;
@@ -5555,6 +5658,21 @@ fn para_mark_revision(dom: &Dom, p: NodeId, rev: &crate::xmllinq::XName) -> bool
         .is_some_and(|rpr| dom.element(rpr, rev).is_some())
 }
 
+/// M474 — a "field residue" paragraph (M360's TOC field-end fragments)
+/// carries fldChar but NO visible text. M470 synthesizes real HYPERLINK
+/// fields inside content-bearing inserted paragraphs; those must not match
+/// the M360 residue gates (sd_2672_plain_3x3 × hyperlink_node_internal lost
+/// its Heading1 pStyle + MARK-DEL to the bare-pPr branch, 99.91 → 78.64).
+fn para_is_field_residue(dom: &Dom, p: NodeId) -> bool {
+    if dom.descendants(p, Some(&W::name("fldChar"))).is_empty() {
+        return false;
+    }
+    !dom
+        .descendants(p, Some(&W::t()))
+        .iter()
+        .any(|&t| !dom.value_str(t).trim().is_empty())
+}
+
 /// Some(false) = fully deleted, Some(true) = fully inserted, None = neither.
 /// Classify a body child of `p` as ins/del/plain. `w:hyperlink` (TOC fields)
 /// is transparent — deleted TOC entries are `hyperlink > del > r > delText`,
@@ -6275,9 +6393,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                         // M360 guard applies here too: a TOC/field residue
                         // pure-I (fldChar) folded with a Heading pure-D keeps
                         // the bare pPr (table_border×toc SD-2343 title).
-                        let ins_has_fld = !dom
-                            .descendants(last_ins, Some(&W::name("fldChar")))
-                            .is_empty();
+                        let ins_has_fld = para_is_field_residue(dom, last_ins);
                         let adopt_heading = para_has_heading_or_title_style(dom, d) && !ins_has_fld;
                         if adopt_heading {
                             if let Some(ippr) = dom.element(last_ins, &W::p_pr()) {
@@ -6346,7 +6462,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // Heading/Title pure-D keeps a bare pPr — never the Heading
                 // pStyle (table_border×toc SD-2343 title, pagefair −11).
                 let m360_fld_x_heading =
-                    !dom.descendants(ins_p, Some(&W::name("fldChar"))).is_empty()
+                    para_is_field_residue(dom, ins_p)
                         && dom.element(d, &W::p_pr()).is_some_and(|dp| {
                             dom.element(dp, &W::p_style()).is_some_and(|ps| {
                                 let v = dom
@@ -7167,10 +7283,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // M360: a TOC/field residue pure-I (fldChar) folded with a
                 // Heading/Title pure-D keeps a bare pPr — never the Heading
                 // pStyle (table_border×toc SD-2343 title, pagefair −11).
-                let m360_fld_x_heading = del_heading
-                    && !dom
-                        .descendants(last_ins, Some(&W::name("fldChar")))
-                        .is_empty();
+                let m360_fld_x_heading = del_heading && para_is_field_residue(dom, last_ins);
                 let adopt_del_ppr = !m360_fld_x_heading
                     && ((del_structural && !ins_structural && !(ins_long_prose && del_list_multi))
                         || (ins_jc_only && del_has_spacing)
