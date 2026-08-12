@@ -313,6 +313,15 @@ fn get_int_attribute(dom: &Dom, e: NodeId, name: &XName) -> Option<i32> {
 fn normalized_abstract_num_signature(dom: &mut Dom, abstract_num: NodeId) -> String {
     let c = dom.clone_subtree(abstract_num);
     dom.set_attribute_value(c, &W::name("abstractNumId"), None);
+    // w15:restartNumberingAfterBreak="0" is the default — a producer writing
+    // it (or not) doesn't change the list. Treating it as identity split
+    // basic_list × sd_1707_list_enter into two lists once M482 started
+    // rewriting refs: the fresh copy restarts at 1 (99.39 → 72.76).
+    dom.set_attribute_value(
+        c,
+        &crate::namespaces::W15::name("restartNumberingAfterBreak"),
+        None,
+    );
     for name in ["nsid", "tmpl"] {
         if let Some(e) = dom.element(c, &W::name(name)) {
             dom.remove(e);
