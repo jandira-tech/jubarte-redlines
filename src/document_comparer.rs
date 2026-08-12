@@ -403,10 +403,13 @@ fn merge_normal_style_spacing(
                 dom.add_first(ppr, clone);
             }
         }
-        // M72: Word live Normal after spacing merge is ONLY spacing (+ B ind).
-        // A's non-spacing pPr (widowControl/tabs/suppressAutoHyphens on
-        // file_77) must live in pPrChange old, not on the live style — LO
-        // otherwise keeps A tab stops / widow rules and drifts pages.
+        // M72 refined by file_198: Word's live Normal after the merge is B's
+        // EFFECTIVE block — spacing (computed above) plus B's OWN declared
+        // pPr children. A-origin non-spacing props (widowControl/tabs/
+        // suppressAutoHyphens on file_77, where B declares none) drop into
+        // pPrChange old; B-origin ones (the same names on file_198's
+        // LO-flavored B Normal) SURVIVE live — dropping them loses widow
+        // control and drifts pagination.
         let keep: &[&str] = if b_ind.is_some() {
             &["spacing", "ind", "pPrChange"]
         } else {
@@ -424,6 +427,24 @@ fn merge_normal_style_spacing(
             .collect();
         for c in drop {
             dom.remove(c);
+        }
+        // Copy B Normal's remaining declared pPr children (widowControl,
+        // tabs, suppressAutoHyphens, …) in schema order.
+        if let Some(bppr) = b_style.and_then(|bs| dom.element(bs, &W::name("pPr"))) {
+            let skip = ["spacing", "ind", "pPrChange", "rPr"];
+            let b_kids: Vec<NodeId> = dom.elements(bppr, None);
+            for bc in b_kids {
+                let Some(n) = dom.name(bc) else { continue };
+                if skip.iter().any(|s| n == W::name(s)) {
+                    continue;
+                }
+                let local = n.local_name().to_string();
+                if dom.element(ppr, &W::name(&local)).is_some() {
+                    continue;
+                }
+                let clone = dom.clone_subtree(bc);
+                insert_child_by_rank(dom, ppr, clone, &local, &ppr_child_rank);
+            }
         }
     } else if let Some(sp) = dom.element(ppr, &W::name("spacing")) {
         // Clear explicit spacing — Word leaves empty pPr (file_22).
@@ -1098,25 +1119,13 @@ fn merge_revised_style_definitions(
         let a_fonts = a_dd.and_then(|d| dom.element(d, &W::name("rFonts")));
         let b_fonts = b_dd.and_then(|d| dom.element(d, &W::name("rFonts")));
         let fonts_differ = attr_map(dom, a_fonts) != attr_map(dom, b_fonts);
-        // S2 master gate — bake only when the docDefaults change the ASCII
-        // FONT FAMILY itself (motivating oracle: theme font vs concrete
-        // Times New Roman). Same family + metric-only diffs (sz 22 vs 24,
-        // kern, ligatures, szCs, eastAsia theme, spacing): Word copies
-        // B-only styles VERBATIM (tab_test × table_autofit_colspan oracle;
-        // the unconditional bake was 5360dd4's five-pair regression —
-        // file_52/file_198 bisect-proven).
-        let ascii_of = |dom: &Dom, f: Option<NodeId>| -> (String, String) {
-            f.map(|e| {
-                (
-                    dom.attribute(e, &W::name("ascii")).unwrap_or("").to_string(),
-                    dom.attribute(e, &W::name("asciiTheme"))
-                        .unwrap_or("")
-                        .to_string(),
-                )
-            })
-            .unwrap_or_default()
-        };
-        let ascii_family_differs = ascii_of(dom, a_fonts) != ascii_of(dom, b_fonts);
+        // NOTE (M476 falsified, M477 evidence): an ascii-family master gate
+        // ("same family ⇒ copy verbatim, no bake") recovered tab_test ×
+        // table_autofit (+12.8) but broke NINE same-family pairs whose
+        // oracles DO bake (nested_comments × math_matrix −35, doc_with_graphs
+        // −26, pagination_blank −18.6, …): Word's rule is per-attribute, not
+        // per-family — bake exactly the attrs the style's B-side declaration
+        // CHAIN does not itself provide (the b_chain_has gates below).
         // M464 — pPr spacing deltas between the two docDefaults (implicit
         // defaults before/after 0, line 240). A B-only style resolving a
         // spacing attr through B's dd renders wrong under A's dd (file_13 ×
@@ -1173,6 +1182,41 @@ fn merge_revised_style_definitions(
             }
             false
         };
+        // Chain-aware rPr check (file_198 × file_199): a copied style whose
+        // look is declared somewhere on its B-SIDE basedOn chain (Liberation
+        // Serif on B's Normal, later promoted into the output) must not get
+        // dd values baked over it — Word renders the chain's declaration.
+        // Walk B's chain, not the output's: at bake time the output Normal
+        // is still A's (promotion runs later). Mirrors chain_has_sp_attr.
+        let b_by_id_for_chain: std::collections::HashMap<String, NodeId> = dom
+            .elements(b_root, Some(&style_nm))
+            .into_iter()
+            .filter_map(|s| dom.attribute(s, &style_id).map(|i| (i.to_string(), s)))
+            .collect();
+        let b_chain_has_rpr_elem =
+            |dom: &Dom, start: NodeId, name: &crate::xmllinq::XName| -> bool {
+                let mut s = start;
+                for _ in 0..12 {
+                    if dom
+                        .element(s, &W::r_pr())
+                        .and_then(|r| dom.element(r, name))
+                        .is_some()
+                    {
+                        return true;
+                    }
+                    let Some(based) = dom
+                        .element(s, &W::name("basedOn"))
+                        .and_then(|b| dom.attribute(b, &W::val()))
+                    else {
+                        return false;
+                    };
+                    match b_by_id_for_chain.get(based) {
+                        Some(&n) => s = n,
+                        None => return false,
+                    }
+                }
+                false
+            };
         // (local, B-effective value) for whitelist props whose A/B effective
         // values differ; implicit defaults sz/szCs 20, kern 0.
         let mut deltas: Vec<(&str, String)> = Vec::new();
@@ -1185,9 +1229,7 @@ fn merge_revised_style_definitions(
         }
         let ligs = (lig_or(dom, a_dd), lig_or(dom, b_dd));
         let b_lang = b_dd.or(a_dd).and_then(|d| dom.element(d, &W::name("lang")));
-        if ascii_family_differs
-            && (fonts_differ || !deltas.is_empty() || ligs.0 != ligs.1 || !sp_deltas.is_empty())
-        {
+        if fonts_differ || !deltas.is_empty() || ligs.0 != ligs.1 || !sp_deltas.is_empty() {
             for style in dom.elements(out_root, Some(&style_nm)) {
                 let Some(id) = dom.attribute(style, &style_id).map(str::to_string) else {
                     continue;
@@ -1234,8 +1276,13 @@ fn merge_revised_style_definitions(
                         r
                     }
                 };
+                let b_side = b_by_id_for_chain.get(&id).copied();
+                let b_chain_has = |dom: &Dom, name: &crate::xmllinq::XName| -> bool {
+                    b_side.is_some_and(|bs| b_chain_has_rpr_elem(dom, bs, name))
+                };
                 if fonts_differ
                     && dom.element(live, &W::name("rFonts")).is_none()
+                    && !b_chain_has(dom, &W::name("rFonts"))
                     && let Some(bf) = b_fonts
                 {
                     let fc = dom.clone_subtree(bf);
@@ -1245,13 +1292,18 @@ fn merge_revised_style_definitions(
                     }
                 }
                 for (local, bv) in &deltas {
-                    if dom.element(live, &W::name(local)).is_none() {
+                    if dom.element(live, &W::name(local)).is_none()
+                        && !b_chain_has(dom, &W::name(local))
+                    {
                         let e = dom.new_element(W::name(local));
                         dom.set_attribute_value(e, &W::val(), Some(bv));
                         dom.add(live, e);
                     }
                 }
-                if ligs.0 != ligs.1 && dom.element(live, &lig_name).is_none() {
+                if ligs.0 != ligs.1
+                    && dom.element(live, &lig_name).is_none()
+                    && !b_chain_has(dom, &lig_name)
+                {
                     let e = dom.new_element(lig_name.clone());
                     dom.set_attribute_value(e, &lig_val, Some(&ligs.1));
                     dom.add(live, e);
@@ -2613,22 +2665,65 @@ fn merge_normal_style_rpr(
         };
         dom.set_attribute_value(e, &W::val(), v.as_deref());
     }
-    // M461 — B's stored kern / w14:ligatures survive into the live rPr (Word
-    // copies B's stored Normal rPr; dropping kern=0 leaves A-docDefaults
-    // kerning ON and every long paragraph renders a line short).
+    // M461 generalized by file_198 — Word's live Normal is B's FULL
+    // effective rPr: every stored B child survives (color, lang — not just
+    // kern/ligatures), and metrics B keeps in its docDefaults (kern,
+    // w14:ligatures) are materialized when the two documents' docDefaults
+    // disagree on them (oracle Normal: Liberation fonts + color 00000A +
+    // kern 2 + lang zh-CN/hi-IN + ligatures with A-dd declaring none).
+    let lig_name = W14::name("ligatures");
     if let Some(b_rpr) = b_style.and_then(|s| dom.element(s, &W::name("rPr"))) {
-        if dom.element(rpr, &W::name("kern")).is_none()
-            && let Some(bk) = dom.element(b_rpr, &W::name("kern"))
+        let b_kids: Vec<NodeId> = dom.elements(b_rpr, None);
+        for bc in b_kids {
+            let Some(n) = dom.name(bc) else { continue };
+            if ["rFonts", "sz", "szCs", "rPrChange"]
+                .iter()
+                .any(|s| n == W::name(s))
+            {
+                continue; // metric slots written above
+            }
+            if n == lig_name {
+                if dom.element(rpr, &lig_name).is_none() {
+                    let clone = dom.clone_subtree(bc);
+                    dom.add(rpr, clone); // w14 extension: last, pre-rPrChange
+                }
+                continue;
+            }
+            let local = n.local_name().to_string();
+            if dom.element(rpr, &W::name(&local)).is_none() {
+                let clone = dom.clone_subtree(bc);
+                add_rpr_child_in_order(dom, rpr, clone, &local);
+            }
+        }
+    }
+    // dd-held metrics: materialize B's kern/ligatures when the docDefaults
+    // disagree and neither the merged rPr nor B's stored rPr carries them.
+    {
+        let dd_elem = |dom: &Dom, root: NodeId, name: &crate::xmllinq::XName| -> Option<NodeId> {
+            rpr_default(dom, root).and_then(|r| dom.element(r, name))
+        };
+        let kern_name = W::name("kern");
+        let a_kern = dd_elem(dom, out_root, &kern_name)
+            .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string));
+        let b_kern = dd_elem(dom, b_root, &kern_name)
+            .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string));
+        if a_kern != b_kern
+            && dom.element(rpr, &kern_name).is_none()
+            && let Some(bk) = dd_elem(dom, b_root, &kern_name)
         {
             let clone = dom.clone_subtree(bk);
             add_rpr_child_in_order(dom, rpr, clone, "kern");
         }
-        let lig_name = W14::name("ligatures");
-        if dom.element(rpr, &lig_name).is_none()
-            && let Some(bl) = dom.element(b_rpr, &lig_name)
+        let a_lig = dd_elem(dom, out_root, &lig_name)
+            .and_then(|e| dom.attribute(e, &W14::name("val")).map(str::to_string));
+        let b_lig = dd_elem(dom, b_root, &lig_name)
+            .and_then(|e| dom.attribute(e, &W14::name("val")).map(str::to_string));
+        if a_lig != b_lig
+            && dom.element(rpr, &lig_name).is_none()
+            && let Some(bl) = dd_elem(dom, b_root, &lig_name)
         {
             let clone = dom.clone_subtree(bl);
-            dom.add(rpr, clone); // w14 extension: last, before rPrChange lands
+            dom.add(rpr, clone);
         }
     }
     let chg = dom.new_element(W::name("rPrChange"));
