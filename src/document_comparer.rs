@@ -129,7 +129,7 @@ fn effective_para_spacing(
     styles_root: NodeId,
     by_id: &std::collections::HashMap<String, NodeId>,
     style_id: &str,
-) -> [String; 4] {
+) -> ([String; 4], [bool; 4]) {
     let attr_names = ["after", "before", "line", "lineRule"];
     let mut vals: [Option<String>; 4] = [None, None, None, None];
     let mut cur = by_id.get(style_id).copied();
@@ -165,8 +165,18 @@ fn effective_para_spacing(
             }
         }
     }
+    // provenance: true = declared SOMEWHERE in B (style chain or dd).
+    // Word bakes an attr onto inserted paragraphs ONLY when B is entirely
+    // silent on it — the paragraph's look is the OOXML implicit default and
+    // the output's dd would override it (rstyle_combos: implicit 0/240 IS
+    // baked). Values B declares — even in its dd — are never baked (m370:
+    // dd-declared after=200/line=276 stays off the pure-I title).
+    let declared: [bool; 4] = std::array::from_fn(|i| vals[i].is_some());
     let defaults = ["0", "0", "240", "auto"];
-    std::array::from_fn(|i| vals[i].clone().unwrap_or_else(|| defaults[i].to_string()))
+    (
+        std::array::from_fn(|i| vals[i].clone().unwrap_or_else(|| defaults[i].to_string())),
+        declared,
+    )
 }
 
 /// Revision record element local names that carry a `w:id` identifying the
@@ -4998,8 +5008,9 @@ fn compare_documents_impl(
                             if !b_idx.contains_key(&style_id) {
                                 continue; // style not from B — no B-effective target
                             }
-                            let b_eff = effective_para_spacing(&sd, br, &b_idx, &style_id);
-                            let o_eff = effective_para_spacing(&sd, or, &out_idx, &style_id);
+                            let (b_eff, b_declared) =
+                                effective_para_spacing(&sd, br, &b_idx, &style_id);
+                            let (o_eff, _) = effective_para_spacing(&sd, or, &out_idx, &style_id);
                             if b_eff == o_eff {
                                 continue;
                             }
@@ -5007,7 +5018,7 @@ fn compare_documents_impl(
                             let attr_names = ["after", "before", "line", "lineRule"];
                             let mut to_write: Vec<(usize, String)> = Vec::new();
                             for i in 0..4 {
-                                if b_eff[i] == o_eff[i] {
+                                if b_eff[i] == o_eff[i] || b_declared[i] {
                                     continue;
                                 }
                                 let declared = sp.is_some_and(|s| {
