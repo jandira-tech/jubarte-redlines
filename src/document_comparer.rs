@@ -1098,6 +1098,25 @@ fn merge_revised_style_definitions(
         let a_fonts = a_dd.and_then(|d| dom.element(d, &W::name("rFonts")));
         let b_fonts = b_dd.and_then(|d| dom.element(d, &W::name("rFonts")));
         let fonts_differ = attr_map(dom, a_fonts) != attr_map(dom, b_fonts);
+        // S2 master gate — bake only when the docDefaults change the ASCII
+        // FONT FAMILY itself (motivating oracle: theme font vs concrete
+        // Times New Roman). Same family + metric-only diffs (sz 22 vs 24,
+        // kern, ligatures, szCs, eastAsia theme, spacing): Word copies
+        // B-only styles VERBATIM (tab_test × table_autofit_colspan oracle;
+        // the unconditional bake was 5360dd4's five-pair regression —
+        // file_52/file_198 bisect-proven).
+        let ascii_of = |dom: &Dom, f: Option<NodeId>| -> (String, String) {
+            f.map(|e| {
+                (
+                    dom.attribute(e, &W::name("ascii")).unwrap_or("").to_string(),
+                    dom.attribute(e, &W::name("asciiTheme"))
+                        .unwrap_or("")
+                        .to_string(),
+                )
+            })
+            .unwrap_or_default()
+        };
+        let ascii_family_differs = ascii_of(dom, a_fonts) != ascii_of(dom, b_fonts);
         // M464 — pPr spacing deltas between the two docDefaults (implicit
         // defaults before/after 0, line 240). A B-only style resolving a
         // spacing attr through B's dd renders wrong under A's dd (file_13 ×
@@ -1166,7 +1185,9 @@ fn merge_revised_style_definitions(
         }
         let ligs = (lig_or(dom, a_dd), lig_or(dom, b_dd));
         let b_lang = b_dd.or(a_dd).and_then(|d| dom.element(d, &W::name("lang")));
-        if fonts_differ || !deltas.is_empty() || ligs.0 != ligs.1 || !sp_deltas.is_empty() {
+        if ascii_family_differs
+            && (fonts_differ || !deltas.is_empty() || ligs.0 != ligs.1 || !sp_deltas.is_empty())
+        {
             for style in dom.elements(out_root, Some(&style_nm)) {
                 let Some(id) = dom.attribute(style, &style_id).map(str::to_string) else {
                     continue;
