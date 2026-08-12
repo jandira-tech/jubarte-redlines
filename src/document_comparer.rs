@@ -4836,6 +4836,80 @@ fn compare_documents_impl(
         adopt_revised_styles_chrome(&mut out, &pkg2, &main1);
         ensure_factory_package_chrome(&mut out, &main1);
         repair_missing_core_relationships(&mut out, &main1);
+        // M491: B's DOCUMENT-FINAL paragraph mark never materializes as a
+        // mid-document insertion — Word EQ-pairs the two documents' final
+        // marks. Our windowed diff can splice B's terminal empty ¶ into the
+        // body as an ins-para; the extra rendered line cascades every page
+        // break below it (h_f_normal × sd_1495: paraId 5352EB15, 46.66 with
+        // its content-ceiling at 97.13; 16-pair census). Remove the
+        // ins-marked EMPTY paragraph carrying B's final paraId unless it is
+        // itself the output's final paragraph.
+        if let (Some(b_xml), Some(out_xml)) = (
+            pkg2.part_string("word/document.xml"),
+            out.part_string(&main1),
+        ) {
+            let b_final_pid = {
+                let mut bd = Dom::new();
+                let d = bd.parse_xdocument(&b_xml);
+                bd.root(d)
+                    .and_then(|r| bd.element(r, &W::body()))
+                    .and_then(|body| {
+                        let mut bdom = bd;
+                        let paras: Vec<NodeId> = bdom
+                            .elements(body, None)
+                            .into_iter()
+                            .filter(|&k| bdom.name_is(k, &W::p()))
+                            .collect();
+                        paras.last().and_then(|&p| {
+                            bdom.attribute(p, &crate::namespaces::W14::name("paraId"))
+                                .map(str::to_string)
+                        })
+                    })
+            };
+            if let Some(bf) = b_final_pid {
+                let mut pd = Dom::new();
+                let d = pd.parse_xdocument(&out_xml);
+                if let Some(root) = pd.root(d)
+                    && let Some(body) = pd.element(root, &W::body())
+                {
+                    let paras: Vec<NodeId> = pd
+                        .elements(body, None)
+                        .into_iter()
+                        .filter(|&k| pd.name_is(k, &W::p()))
+                        .collect();
+                    let w14_pid = crate::namespaces::W14::name("paraId");
+                    let target = paras.iter().enumerate().find(|&(i, &p)| {
+                        i + 1 != paras.len()
+                            && pd.attribute(p, &w14_pid) == Some(bf.as_str())
+                    });
+                    if let Some((idx, &p)) = target {
+                        let is_ins_empty = |pd: &Dom, q: NodeId| {
+                            let mark_ins = pd
+                                .element(q, &W::p_pr())
+                                .and_then(|pr| pd.element(pr, &W::r_pr()))
+                                .is_some_and(|r| pd.element(r, &W::name("ins")).is_some());
+                            mark_ins
+                                && !pd
+                                    .descendants(q, Some(&W::t()))
+                                    .iter()
+                                    .any(|&t| !pd.value_str(t).trim().is_empty())
+                                && pd.descendants(q, Some(&W::del_text())).is_empty()
+                        };
+                        // Run gate: Word trims B's final ¶ out of a RUN of
+                        // inserted empties (h_f: three in a row, two kept);
+                        // a LONE inserted empty spacer stays — Word keeps it
+                        // under another identity (file_82 × file_83, M389:
+                        // stripping it cost −18.9).
+                        let prev_also_empty =
+                            idx > 0 && is_ins_empty(&pd, paras[idx - 1]);
+                        if is_ins_empty(&pd, p) && prev_also_empty {
+                            pd.remove(p);
+                            out.set_part(&main1, pd.serialize_element(root).into_bytes());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Word-parity: strip pStyle/rStyle that styles.xml does not define. LO maps

@@ -481,6 +481,7 @@ pub fn compare_bodies_faithful_with_notes(
     lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, &mut id);
 
     let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
+
     // moves before format-changes (WmlComparer.ts:2322 then :2326).
     moves::detect_moves_in_atom_list(dom, &mut flat, settings);
     formatchg::detect_format_changes_in_atom_list(dom, &mut flat, settings);
