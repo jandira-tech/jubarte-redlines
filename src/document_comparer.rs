@@ -2662,6 +2662,167 @@ fn prune_normal_rpr_context_equal_attrs(dom: &mut Dom, out_root: NodeId) -> bool
     changed
 }
 
+/// M480b — docDefaults-delta DISABLING neutralizers on both-sides merged
+/// styles.
+///
+/// Word's both-sides algorithm (mined from 132 oracle pairs, 98.7% of the
+/// 2022 heading-axis rows): the output keeps A's docDefaults; every style
+/// whose formatting blocks differ takes B's declaration plus a tracked
+/// redefinition; and Word writes a per-attribute neutralizer for each
+/// docDefaults delta the style's post-merge output chain fails to provide
+/// (evals__memorandum × evals__nda: every merged heading carries kern 0 +
+/// w14:ligatures none against A-dd kern 2 + ligatures). Character styles
+/// count the post-merge Normal as a provider — runs resolve docDefaults →
+/// paragraph layer → character layer — so a stamped Normal covers them
+/// (tab_test × table_autofit oracle). Table styles never take stamps
+/// (0/31 oracle rows).
+///
+/// Only the DISABLING direction fires here (A-dd kerns/ligates, B-dd
+/// doesn't): the oracle neutralized 81/81 such pairs. The ENABLING
+/// direction has a skip class Word applies whose gate is still unmined
+/// (tab_test, table_widths, superdoc_hyperlink_cases) — writing there
+/// re-breaks those pairs (the M480a falsification), so it stays out.
+fn bake_bothsides_dd_disabling_neutralizers(
+    dom: &mut Dom,
+    out_root: NodeId,
+    b_root: NodeId,
+) -> bool {
+    let kern_name = W::name("kern");
+    let lig_name = W14::name("ligatures");
+    let lig_val = W14::name("val");
+    let dd_out = rpr_default(dom, out_root);
+    let dd_b = rpr_default(dom, b_root);
+    let kern_of = |dom: &Dom, holder: Option<NodeId>| -> Option<String> {
+        holder
+            .and_then(|h| dom.element(h, &kern_name))
+            .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string))
+    };
+    let lig_of = |dom: &Dom, holder: Option<NodeId>| -> Option<String> {
+        holder
+            .and_then(|h| dom.element(h, &lig_name))
+            .and_then(|e| dom.attribute(e, &lig_val).map(str::to_string))
+    };
+    let do_kern = kern_of(dom, dd_out).is_some_and(|v| v.parse::<i64>().unwrap_or(0) > 0)
+        && kern_of(dom, dd_b).is_none_or(|v| v == "0");
+    let do_lig = lig_of(dom, dd_out).is_some_and(|v| v != "none")
+        && lig_of(dom, dd_b).is_none_or(|v| v == "none");
+    if !do_kern && !do_lig {
+        return false;
+    }
+
+    let style_nm = W::name("style");
+    let style_id = W::name("styleId");
+    let type_nm = W::name("type");
+    let based_nm = W::name("basedOn");
+    let normal = find_normal_style(dom, out_root);
+    let by_id: std::collections::HashMap<String, NodeId> = dom
+        .elements(out_root, Some(&style_nm))
+        .into_iter()
+        .filter_map(|s| Some((dom.attribute(s, &style_id)?.to_string(), s)))
+        .collect();
+    let based_of = |dom: &Dom, s: NodeId| -> Option<NodeId> {
+        let v = dom
+            .element(s, &based_nm)
+            .and_then(|b| dom.attribute(b, &W::val()))?;
+        by_id.get(v).copied()
+    };
+    // Nearest live declaration wins; walking direct rPr children only keeps
+    // the probe on the live block (change records nest one level deeper).
+    let chain_declares = |dom: &Dom, start: NodeId, name: &crate::xmllinq::XName| -> bool {
+        let mut cur = Some(start);
+        for _ in 0..12 {
+            let Some(s) = cur else { break };
+            if dom
+                .element(s, &W::r_pr())
+                .is_some_and(|r| dom.element(r, name).is_some())
+            {
+                return true;
+            }
+            cur = based_of(dom, s);
+        }
+        false
+    };
+
+    // Parents first: a stamped ancestor then provides for its descendants.
+    let mut styles: Vec<(usize, NodeId)> = dom
+        .elements(out_root, Some(&style_nm))
+        .into_iter()
+        .map(|s| {
+            let mut depth = 0usize;
+            let mut cur = based_of(dom, s);
+            while let Some(p) = cur {
+                depth += 1;
+                if depth >= 12 {
+                    break;
+                }
+                cur = based_of(dom, p);
+            }
+            (depth, s)
+        })
+        .collect();
+    styles.sort_by_key(|&(d, _)| d);
+
+    let mut changed = false;
+    for (_, style) in styles {
+        if Some(style) == normal {
+            continue; // Normal takes the M72/M461/M478 merge path
+        }
+        match dom.attribute(style, &type_nm) {
+            Some("paragraph") | Some("character") => {}
+            _ => continue,
+        }
+        // Only styles the compare actually redefined (tracked records from the
+        // both-sides merge) participate — untouched styles stay byte-stable.
+        let tracked = dom
+            .element(style, &W::p_pr())
+            .is_some_and(|p| dom.element(p, &W::name("pPrChange")).is_some())
+            || dom
+                .element(style, &W::r_pr())
+                .is_some_and(|r| dom.element(r, &W::name("rPrChange")).is_some());
+        if !tracked {
+            continue;
+        }
+        let is_char = dom.attribute(style, &type_nm) == Some("character");
+        for (on, name, mk) in [
+            (
+                do_kern,
+                &kern_name,
+                (|dom: &mut Dom| {
+                    let e = dom.new_element(W::name("kern"));
+                    dom.set_attribute_value(e, &W::val(), Some("0"));
+                    e
+                }) as fn(&mut Dom) -> NodeId,
+            ),
+            (do_lig, &lig_name, |dom: &mut Dom| {
+                let e = dom.new_element(W14::name("ligatures"));
+                dom.set_attribute_value(e, &W14::name("val"), Some("none"));
+                e
+            }),
+        ] {
+            if !on || chain_declares(dom, style, name) {
+                continue;
+            }
+            // Character runs resolve through the paragraph layer before the
+            // character chain: a declaring post-merge Normal already covers.
+            if is_char && normal.is_some_and(|n| chain_declares(dom, n, name)) {
+                continue;
+            }
+            let rpr = match dom.element(style, &W::r_pr()) {
+                Some(r) => r,
+                None => {
+                    let r = dom.new_element(W::r_pr());
+                    insert_child_by_rank(dom, style, r, "rPr", &style_child_rank);
+                    r
+                }
+            };
+            let e = mk(dom);
+            add_rpr_child_in_order(dom, rpr, e, name.local_name());
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn merge_normal_style_rpr(
     dom: &mut Dom,
     out_root: NodeId,
@@ -4504,6 +4665,10 @@ fn compare_documents_impl(
             // on the merged Normal (tab_test × table_autofit: kern/szCs/
             // eastAsiaTheme/ligatures dropped as redundant, Arial+sz=20 kept).
             changed |= prune_normal_rpr_context_equal_attrs(&mut sd, or);
+            // M480b: dd-delta disabling neutralizers on both-sides merged
+            // styles — after the Normal merges (so a stamped Normal reads as
+            // a provider), before M111 adds cascade records.
+            changed |= bake_bothsides_dd_disabling_neutralizers(&mut sd, or, br);
             // M111: cascade Normal pPrChange/rPrChange onto basedOn=Normal styles
             // (ListParagraph/BodyText/Header/… — file_130 Word has ~30).
             changed |= cascade_normal_change_to_based_styles(&mut sd, or, settings);
