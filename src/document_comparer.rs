@@ -4022,6 +4022,132 @@ fn adopt_b_notes_when_a_lacks_separators(
     }
 }
 
+/// M483 — re-cache `w:color` hex values against the package's theme.
+///
+/// A `w:color` with `w:themeColor` renders by its cached `w:val` hex, not by
+/// live theme resolution (LO and Word both paint the cache). Styles brought
+/// over from B were cached under B's theme; the output ships A's theme, so
+/// every themed color is visibly wrong until re-cached. Word's oracle
+/// re-resolves (tab_test H1Char: B declaration kept but val rewritten to
+/// A-theme accent1 shade BF = 365F91). Change-record baselines resolve to
+/// the same theme, so rewriting every color element is a no-op for them.
+fn reresolve_theme_color_hexes(dom: &mut Dom, styles_root: NodeId, theme_xml: &str) -> bool {
+    let slot_hex = |slot: &str| -> Option<String> {
+        let i = theme_xml.find(&format!("<a:{slot}>"))?;
+        let seg = &theme_xml[i..theme_xml[i..].find(&format!("</a:{slot}>")).map_or(theme_xml.len(), |e| i + e)];
+        let hex = if let Some(j) = seg.find("srgbClr val=\"") {
+            &seg[j + 13..j + 19]
+        } else if let Some(j) = seg.find("lastClr=\"") {
+            &seg[j + 9..j + 15]
+        } else {
+            return None;
+        };
+        Some(hex.to_uppercase())
+    };
+    let slot_of = |name: &str| -> Option<&'static str> {
+        Some(match name {
+            "accent1" => "a:accent1",
+            "accent2" => "a:accent2",
+            "accent3" => "a:accent3",
+            "accent4" => "a:accent4",
+            "accent5" => "a:accent5",
+            "accent6" => "a:accent6",
+            "text1" => "a:dk1",
+            "text2" => "a:dk2",
+            "background1" => "a:lt1",
+            "background2" => "a:lt2",
+            "hyperlink" => "a:hlink",
+            "followedHyperlink" => "a:folHlink",
+            _ => return None,
+        })
+    };
+    // Word applies themeShade/themeTint as HSL LUMINANCE scaling, not RGB
+    // multiply (accent1 4F81BD shade BF = "Darker 25%" = 365F91; linear RGB
+    // would give 3B618E).
+    let apply = |hex: &str, factor: &str, toward_white: bool| -> Option<String> {
+        let f = u32::from_str_radix(factor, 16).ok()? as f64 / 255.0;
+        let r = u32::from_str_radix(&hex[0..2], 16).ok()? as f64 / 255.0;
+        let g = u32::from_str_radix(&hex[2..4], 16).ok()? as f64 / 255.0;
+        let b = u32::from_str_radix(&hex[4..6], 16).ok()? as f64 / 255.0;
+        let (mx, mn) = (r.max(g).max(b), r.min(g).min(b));
+        let l = (mx + mn) / 2.0;
+        let (h, s) = if (mx - mn).abs() < 1e-9 {
+            (0.0, 0.0)
+        } else {
+            let d = mx - mn;
+            let s = if l > 0.5 { d / (2.0 - mx - mn) } else { d / (mx + mn) };
+            let h = if (mx - r).abs() < 1e-9 {
+                ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
+            } else if (mx - g).abs() < 1e-9 {
+                ((b - r) / d + 2.0) / 6.0
+            } else {
+                ((r - g) / d + 4.0) / 6.0
+            };
+            (h, s)
+        };
+        let l2 = if toward_white { 1.0 - (1.0 - l) * f } else { l * f };
+        let hue = |p: f64, q: f64, mut t: f64| -> f64 {
+            if t < 0.0 { t += 1.0 }
+            if t > 1.0 { t -= 1.0 }
+            if t < 1.0 / 6.0 { p + (q - p) * 6.0 * t }
+            else if t < 0.5 { q }
+            else if t < 2.0 / 3.0 { p + (q - p) * (2.0 / 3.0 - t) * 6.0 }
+            else { p }
+        };
+        let (r2, g2, b2) = if s.abs() < 1e-9 {
+            (l2, l2, l2)
+        } else {
+            let q = if l2 < 0.5 { l2 * (1.0 + s) } else { l2 + s - l2 * s };
+            let p = 2.0 * l2 - q;
+            (hue(p, q, h + 1.0 / 3.0), hue(p, q, h), hue(p, q, h - 1.0 / 3.0))
+        };
+        Some(
+            [r2, g2, b2]
+                .iter()
+                .map(|c| format!("{:02X}", (c * 255.0).round().clamp(0.0, 255.0) as u32))
+                .collect(),
+        )
+    };
+
+    let color_name = W::name("color");
+    let theme_color = W::name("themeColor");
+    let theme_shade = W::name("themeShade");
+    let theme_tint = W::name("themeTint");
+    let mut changed = false;
+    for e in dom.descendants(styles_root, Some(&color_name)) {
+        let Some(name) = dom.attribute(e, &theme_color).map(str::to_string) else {
+            continue;
+        };
+        let Some(slot) = slot_of(&name) else { continue };
+        let Some(base) = slot_hex(&slot[2..]) else {
+            continue;
+        };
+        let expect = if let Some(sh) = dom.attribute(e, &theme_shade).map(str::to_string) {
+            apply(&base, &sh, false)
+        } else if let Some(ti) = dom.attribute(e, &theme_tint).map(str::to_string) {
+            apply(&base, &ti, true)
+        } else {
+            Some(base)
+        };
+        let Some(expect) = expect else { continue };
+        let cur = dom.attribute(e, &W::val()).unwrap_or("").to_uppercase();
+        // rounding tolerance: correctly-cached values may differ by ±2 per
+        // channel from our HSL math — leave those (they're already right);
+        // only genuinely stale caches (different theme) get rewritten.
+        let close = cur.len() == 6
+            && (0..3).all(|i| {
+                let a = u32::from_str_radix(&cur[i * 2..i * 2 + 2], 16).unwrap_or(999);
+                let b = u32::from_str_radix(&expect[i * 2..i * 2 + 2], 16).unwrap_or(0);
+                a.abs_diff(b) <= 2
+            });
+        if !close && cur != "AUTO" {
+            dom.set_attribute_value(e, &W::val(), Some(&expect));
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// M481 — Word-repair: wire core parts the package carries but the main
 /// document never references. superdoc_hyperlink_cases ships styles.xml
 /// WITHOUT a styles relationship in document.xml.rels; a spec-following
@@ -4757,6 +4883,12 @@ fn compare_documents_impl(
             changed |= normalize_word_paragraph_style_line(&mut sd, or);
             // M80: Title/ListParagraph/Highlighted Arial + Heading Latin inherit.
             changed |= align_paragraph_style_fonts_with_normal(&mut sd, or);
+            // M483: re-cache themed color hexes against the shipped theme —
+            // must run AFTER the merge writes B's blocks (their w:val hexes
+            // were cached under B's theme).
+            if let Some(theme_xml) = out.part_string("word/theme/theme1.xml") {
+                changed |= reresolve_theme_color_hexes(&mut sd, or, &theme_xml);
+            }
             if changed {
                 out.set_part("word/styles.xml", sd.serialize_element(or).into_bytes());
             }
