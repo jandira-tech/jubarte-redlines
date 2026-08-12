@@ -4963,7 +4963,29 @@ fn compare_documents_impl(
                                 .element(q, &W::p_pr())
                                 .and_then(|pr| pd.element(pr, &W::r_pr()))
                                 .is_some_and(|r| pd.element(r, &W::name("ins")).is_some());
+                            // A paragraph whose only content is a real embedded
+                            // object (DrawingML image/shape, OLE object, a VML
+                            // picture, a text box, or an AlternateContent shape)
+                            // carries no w:t, but it is NOT empty — removing it
+                            // drops the graphic (vrect_node × wmf_emf: B's final ¶
+                            // is a full-page WMF, misjudged empty → whole page lost,
+                            // 18.21). A BARE w:pict horizontal rule (o:hr `v:rect`,
+                            // no imagedata/textbox) is decorative, not content, and
+                            // must stay droppable — checking for the real content
+                            // markers (not the w:pict wrapper) avoids regressing the
+                            // trailing-hr-spacer pairs (sd_2517 hr rules).
+                            let has_embedded = [
+                                W::name("drawing"),
+                                W::object(),
+                                crate::namespaces::MC::name("AlternateContent"),
+                                crate::namespaces::VML::name("imagedata"),
+                                W::name("txbxContent"),
+                                crate::namespaces::WNE::name("txbxContent"),
+                            ]
+                            .iter()
+                            .any(|nm| !pd.descendants(q, Some(nm)).is_empty());
                             mark_ins
+                                && !has_embedded
                                 && !pd
                                     .descendants(q, Some(&W::t()))
                                     .iter()
