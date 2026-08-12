@@ -326,11 +326,23 @@ fn normalized_abstract_num_signature(dom: &mut Dom, abstract_num: NodeId) -> Str
 /// id-remap (colliding abstractNumId/numId get fresh ids past the destination
 /// maximum, with num references rewired), and schema-order insertion.
 /// Malformed elements (missing/unparseable ids) are skipped like C#.
-pub fn copy_missing_numbering(dom: &mut Dom, to_root: NodeId, from_root: NodeId) {
+/// Returns the numId remap for COLLIDING source ids (source numId → freshly
+/// allocated destination numId). References inside revised-side inserted
+/// content must be rewritten with this map, or they resolve against the
+/// destination's same-id definitions — B's decimal lists render with A's
+/// bullet abstractNum (complex_list_def_short × basic_list; Word renumbers
+/// to fresh ids 20/21 → abstract 13/14 and rewrites the content refs).
+pub fn copy_missing_numbering(
+    dom: &mut Dom,
+    to_root: NodeId,
+    from_root: NodeId,
+) -> std::collections::HashMap<String, String> {
     let abstract_num = W::name("abstractNum");
     let num = W::name("num");
     let abstract_num_id = W::name("abstractNumId");
     let num_id_attr = W::name("numId");
+    let mut num_remap: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     let mut max_abstract_num_id = dom
         .elements(to_root, Some(&abstract_num))
@@ -415,6 +427,7 @@ pub fn copy_missing_numbering(dom: &mut Dom, to_root: NodeId, from_root: NodeId)
             if let Some(e) = dom.element(cloned, &abstract_num_id) {
                 dom.set_attribute_value(e, &W::val(), Some(&mapped.to_string()));
             }
+            num_remap.insert(from_num_id.to_string(), max_num_id.to_string());
             add_numbering_child_in_schema_order(dom, to_root, cloned);
         } else {
             // retained numId — advance the watermark so a later collision
@@ -429,6 +442,7 @@ pub fn copy_missing_numbering(dom: &mut Dom, to_root: NodeId, from_root: NodeId)
             add_numbering_child_in_schema_order(dom, to_root, cloned);
         }
     }
+    num_remap
 }
 
 /// Word-mode repair (beyond PowerTools): Word synthesizes a default decimal

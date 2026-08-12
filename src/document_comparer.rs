@@ -4022,6 +4022,43 @@ fn adopt_b_notes_when_a_lacks_separators(
     }
 }
 
+/// M481 — Word-repair: wire core parts the package carries but the main
+/// document never references. superdoc_hyperlink_cases ships styles.xml
+/// WITHOUT a styles relationship in document.xml.rels; a spec-following
+/// consumer (LO included) then never loads the stylesheet and the whole
+/// document renders in fallback fonts. Word repairs the relationship on
+/// open (oracle rels: rId1 -> styles.xml), so match it at compare time —
+/// same family as the dangling-numbering repair.
+fn repair_missing_core_relationships(out: &mut PartFs, out_main: &str) {
+    const CORE: [(&str, &str); 5] = [
+        ("word/styles.xml", "styles"),
+        ("word/settings.xml", "settings"),
+        ("word/webSettings.xml", "webSettings"),
+        ("word/fontTable.xml", "fontTable"),
+        ("word/theme/theme1.xml", "theme"),
+    ];
+    for (part, rel_suffix) in CORE {
+        if out.part_bytes(part).is_none() {
+            continue;
+        }
+        let has_rel = out.read_rels_for(out_main).is_some_and(|r| {
+            r.items
+                .iter()
+                .any(|i| i.rel_type.ends_with(&format!("/{rel_suffix}")))
+        });
+        if !has_rel {
+            let target = part.strip_prefix("word/").unwrap_or(part);
+            out.add_document_relationship(
+                out_main,
+                &format!(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{rel_suffix}"
+                ),
+                target,
+            );
+        }
+    }
+}
+
 /// D.6 — `WmlComparer.GetRevisions` (:3940) byte facade: list every tracked
 /// revision in a redline `.docx` — main-part groups, footnote/endnote
 /// definition groups, `w:rPrChange` format changes, then (settings-gated)
@@ -4457,7 +4494,50 @@ fn compare_documents_impl(
                             style_renames = canonicalize_style_ids(&mut sd, tr);
                         }
                     } else {
-                        crate::comparer::footnotes::copy_missing_numbering(&mut sd, tr, fr);
+                        let num_remap =
+                            crate::comparer::footnotes::copy_missing_numbering(&mut sd, tr, fr);
+                        // M482: colliding B numIds were renumbered in the
+                        // merged numbering part — rewrite the refs inside
+                        // B-INSERTED paragraphs (mark rPr carries w:ins) or
+                        // they resolve against A's same-id definitions
+                        // (bullets where B's decimals should render).
+                        if !num_remap.is_empty()
+                            && let Some(doc_xml) = out.part_string(&main1)
+                        {
+                            let mut pd = Dom::new();
+                            let dd = pd.parse_xdocument(&doc_xml);
+                            if let Some(droot) = pd.root(dd) {
+                                let mut changed = false;
+                                for p in pd.descendants(droot, Some(&W::name("p"))) {
+                                    let Some(ppr) = pd.element(p, &W::p_pr()) else {
+                                        continue;
+                                    };
+                                    let mark_inserted = pd
+                                        .element(ppr, &W::r_pr())
+                                        .is_some_and(|r| pd.element(r, &W::name("ins")).is_some());
+                                    if !mark_inserted {
+                                        continue;
+                                    }
+                                    let Some(nid) = pd
+                                        .element(ppr, &W::name("numPr"))
+                                        .and_then(|np| pd.element(np, &W::name("numId")))
+                                    else {
+                                        continue;
+                                    };
+                                    let cur = pd.attribute(nid, &W::val()).map(str::to_string);
+                                    if let Some(new_id) =
+                                        cur.as_deref().and_then(|c| num_remap.get(c))
+                                    {
+                                        let new_id = new_id.clone();
+                                        pd.set_attribute_value(nid, &W::val(), Some(&new_id));
+                                        changed = true;
+                                    }
+                                }
+                                if changed {
+                                    out.set_part(&main1, pd.serialize_element(droot).into_bytes());
+                                }
+                            }
+                        }
                     }
                     out.set_part(part, sd.serialize_element(tr).into_bytes());
                 }
@@ -4570,6 +4650,7 @@ fn compare_documents_impl(
     if settings.merge_replaced_paragraphs {
         adopt_revised_styles_chrome(&mut out, &pkg2, &main1);
         ensure_factory_package_chrome(&mut out, &main1);
+        repair_missing_core_relationships(&mut out, &main1);
     }
 
     // Word-parity: strip pStyle/rStyle that styles.xml does not define. LO maps
