@@ -97,6 +97,16 @@ fn normal_spacing(dom: &Dom, style: NodeId) -> Option<(String, String, String)> 
     Some((get("after"), get("line"), get("lineRule")))
 }
 
+/// `before` companion to [`normal_spacing`]/[`docdefaults_ppr_spacing`] —
+/// M479: the Normal-merge truth table was derived over {after, line} only;
+/// an A-docDefaults `before` (paragraph_spacing_missing: before=240) leaked
+/// through unneutralized, adding 12pt above every Normal paragraph. Word
+/// writes the explicit neutralizer (oracle Normal: before="0").
+fn spacing_before_attr(dom: &Dom, sp_holder: Option<NodeId>) -> Option<String> {
+    let sp = sp_holder?;
+    dom.attribute(sp, &W::name("before")).map(str::to_string)
+}
+
 /// The stylesheet's `docDefaults/pPrDefault/pPr/spacing` as
 /// (after, line, lineRule), each "" when absent. Used only when B's Normal
 /// style has no stored spacing *and* A had stored spacing to rewrite (Word
@@ -250,6 +260,27 @@ fn merge_normal_style_spacing(
     let raw_a_dd = docdefaults_ppr_spacing(dom, out_root);
     let raw_b_dd = docdefaults_ppr_spacing(dom, b_root);
     let raw_b_sp = b_style.and_then(|s| normal_spacing(dom, s));
+    // M479 — `before` rides the same per-attribute cascade (the truth table
+    // was derived over {after, line}; A-dd before=240 leaked live).
+    let sp_node = |dom: &Dom, root: NodeId| -> Option<NodeId> {
+        let dd = dom.element(root, &W::name("docDefaults"))?;
+        let pd = dom.element(dd, &W::name("pPrDefault"))?;
+        let pp = dom.element(pd, &W::p_pr())?;
+        dom.element(pp, &W::name("spacing"))
+    };
+    let stored_sp_node = |dom: &Dom, style: Option<NodeId>| -> Option<NodeId> {
+        let ppr = dom.element(style?, &W::name("pPr"))?;
+        dom.element(ppr, &W::name("spacing"))
+    };
+    let ctx_before = spacing_before_attr(dom, sp_node(dom, out_root)).unwrap_or_else(|| "0".into());
+    let b_eff_before = spacing_before_attr(dom, stored_sp_node(dom, b_style))
+        .or_else(|| spacing_before_attr(dom, sp_node(dom, b_root)))
+        .unwrap_or_else(|| "0".into());
+    let target_before: String = if b_eff_before != ctx_before {
+        b_eff_before
+    } else {
+        String::new()
+    };
     let pick = |raw: &Option<(String, String, String)>, i: usize| -> Option<String> {
         raw.as_ref().and_then(|t| {
             let v = match i {
@@ -295,14 +326,18 @@ fn merge_normal_style_spacing(
             }
         };
     // Identity: A already has the same explicit spacing we would write.
-    if let (Some(a), Some(b)) = (&a_stored, &b_target)
+    if target_before.is_empty()
+        && let (Some(a), Some(b)) = (&a_stored, &b_target)
         && a == b
     {
         return false;
     }
     // Clearing when A already has no stored spacing is a no-op — except M106,
-    // where Word still tracks dd spacing in pPrChange next to rPrChange.
-    if b_target.is_none() && a_stored.is_none() && !m106_same_dd_clear {
+    // where Word still tracks dd spacing in pPrChange next to rPrChange —
+    // and except a live `before` delta (M479), which must be written even
+    // when after/line need nothing.
+    if b_target.is_none() && a_stored.is_none() && !m106_same_dd_clear && target_before.is_empty()
+    {
         return false;
     }
     // Old value = A's stored pPr (empty w:pPr when absent), captured before
@@ -372,6 +407,7 @@ fn merge_normal_style_spacing(
                 if v.is_empty() { None } else { Some(v) },
             );
         };
+        set(dom, "before", &target_before);
         set(dom, "after", after);
         set(dom, "line", line);
         set(dom, "lineRule", rule);
@@ -446,6 +482,22 @@ fn merge_normal_style_spacing(
                 insert_child_by_rank(dom, ppr, clone, &local, &ppr_child_rank);
             }
         }
+    } else if !target_before.is_empty() {
+        // M479 — before-only delta: write the lone neutralizer, clearing any
+        // stale after/line (paragraph_spacing_missing × pci_table oracle:
+        // Normal live spacing = before="0" only).
+        let spacing = match dom.element(ppr, &W::name("spacing")) {
+            Some(s) => s,
+            None => {
+                let s = dom.new_element(W::name("spacing"));
+                dom.add_first(ppr, s);
+                s
+            }
+        };
+        for a in ["after", "line", "lineRule"] {
+            dom.set_attribute_value(spacing, &W::name(a), None);
+        }
+        dom.set_attribute_value(spacing, &W::name("before"), Some(&target_before));
     } else if let Some(sp) = dom.element(ppr, &W::name("spacing")) {
         // Clear explicit spacing — Word leaves empty pPr (file_22).
         dom.remove(sp);
@@ -1193,6 +1245,34 @@ fn merge_revised_style_definitions(
             .into_iter()
             .filter_map(|s| dom.attribute(s, &style_id).map(|i| (i.to_string(), s)))
             .collect();
+        // M479 — same B-side rule for SPACING attrs: at bake time the output
+        // Normal has not yet been promoted, so an out-chain check misses
+        // spacing B's chain provides (pci_table Heading7-9 inherit B-Normal's
+        // stored line=259; the bake stamped B-dd line=278 over it).
+        let b_chain_has_sp_attr = |dom: &Dom, start: NodeId, attr: &str| -> bool {
+            let mut s = start;
+            for _ in 0..12 {
+                if dom
+                    .element(s, &W::p_pr())
+                    .and_then(|p| dom.element(p, &W::name("spacing")))
+                    .and_then(|sp| dom.attribute(sp, &W::name(attr)))
+                    .is_some()
+                {
+                    return true;
+                }
+                let Some(based) = dom
+                    .element(s, &W::name("basedOn"))
+                    .and_then(|b| dom.attribute(b, &W::val()))
+                else {
+                    return false;
+                };
+                match b_by_id_for_chain.get(based) {
+                    Some(&n) => s = n,
+                    None => return false,
+                }
+            }
+            false
+        };
         let b_chain_has_rpr_elem =
             |dom: &Dom, start: NodeId, name: &crate::xmllinq::XName| -> bool {
                 let mut s = start;
@@ -1322,7 +1402,9 @@ fn merge_revised_style_definitions(
                         }
                     };
                     for (attr, bv) in &sp_deltas {
-                        if chain_has_sp_attr(dom, style, attr) {
+                        if chain_has_sp_attr(dom, style, attr)
+                            || b_side.is_some_and(|bs| b_chain_has_sp_attr(dom, bs, attr))
+                        {
                             continue;
                         }
                         let sp = match dom.element(ppr, &W::name("spacing")) {
