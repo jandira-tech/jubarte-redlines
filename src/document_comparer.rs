@@ -4999,6 +4999,19 @@ fn compare_documents_impl(
                             if !mark_inserted {
                                 continue;
                             }
+                            // EMPTY inserted paragraphs keep their bare pPr —
+                            // the oracle never bakes spacing onto them, and the
+                            // empty line's default height decides the page
+                            // break (rstyle_combos: baking onto the one empty
+                            // separator para cost the whole second page,
+                            // 98.18 → 44.70).
+                            let has_text = pd
+                                .descendants(p, Some(&W::t()))
+                                .iter()
+                                .any(|&t| !pd.value_str(t).trim().is_empty());
+                            if !has_text {
+                                continue;
+                            }
                             let style_id = pd
                                 .element(ppr, &W::name("pStyle"))
                                 .and_then(|ps| pd.attribute(ps, &W::val()))
