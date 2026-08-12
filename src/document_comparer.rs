@@ -120,6 +120,55 @@ fn docdefaults_ppr_spacing(dom: &Dom, styles_root: NodeId) -> Option<(String, St
     Some((get("after"), get("line"), get("lineRule")))
 }
 
+/// M487 — effective paragraph spacing for `style_id` under one stylesheet:
+/// (after, before, line, lineRule), each resolved through the basedOn chain
+/// then docDefaults, with OOXML implicit defaults materialized ("0", "0",
+/// "240", "auto") so two stylesheets always compare attr-by-attr.
+fn effective_para_spacing(
+    dom: &Dom,
+    styles_root: NodeId,
+    by_id: &std::collections::HashMap<String, NodeId>,
+    style_id: &str,
+) -> [String; 4] {
+    let attr_names = ["after", "before", "line", "lineRule"];
+    let mut vals: [Option<String>; 4] = [None, None, None, None];
+    let mut cur = by_id.get(style_id).copied();
+    for _ in 0..12 {
+        let Some(s) = cur else { break };
+        if let Some(ppr) = dom.element(s, &W::p_pr())
+            && let Some(sp) = dom.element(ppr, &W::name("spacing"))
+        {
+            for (i, n) in attr_names.iter().enumerate() {
+                if vals[i].is_none()
+                    && let Some(v) = dom.attribute(sp, &W::name(n))
+                {
+                    vals[i] = Some(v.to_string());
+                }
+            }
+        }
+        cur = dom
+            .element(s, &W::name("basedOn"))
+            .and_then(|b| dom.attribute(b, &W::val()))
+            .and_then(|v| by_id.get(v).copied());
+    }
+    if vals.iter().any(Option::is_none)
+        && let Some(dd) = dom.element(styles_root, &W::name("docDefaults"))
+        && let Some(pd) = dom.element(dd, &W::name("pPrDefault"))
+        && let Some(ppr) = dom.element(pd, &W::p_pr())
+        && let Some(sp) = dom.element(ppr, &W::name("spacing"))
+    {
+        for (i, n) in attr_names.iter().enumerate() {
+            if vals[i].is_none()
+                && let Some(v) = dom.attribute(sp, &W::name(n))
+            {
+                vals[i] = Some(v.to_string());
+            }
+        }
+    }
+    let defaults = ["0", "0", "240", "auto"];
+    std::array::from_fn(|i| vals[i].clone().unwrap_or_else(|| defaults[i].to_string()))
+}
+
 /// Revision record element local names that carry a `w:id` identifying the
 /// change. Word treats a colliding id on any of these as the same revision
 /// record and drops the later one, so a newly synthesized `w:*Change` must not
@@ -4891,6 +4940,114 @@ fn compare_documents_impl(
             }
             if changed {
                 out.set_part("word/styles.xml", sd.serialize_element(or).into_bytes());
+            }
+            // M487 — bake B-effective paragraph spacing onto B-INSERTED
+            // paragraphs. The output ships A's docDefaults, so an inserted
+            // paragraph styled by B renders with the wrong spacing unless its
+            // pPr carries B's effective values directly. Word synthesizes
+            // exactly this (rstyle_combos × pre_separated_list oracle: every
+            // inserted ListParagraph gains `w:spacing w:after="0" w:line=
+            // "240" w:lineRule="auto"` that B's source never declared;
+            // content-ceiling for the pair 44.83 → 100.00). The M480
+            // neutralizer principle at the document.xml level.
+            {
+                let index = |dom: &Dom, root: NodeId| -> std::collections::HashMap<String, NodeId> {
+                    dom.elements(root, Some(&W::name("style")))
+                        .into_iter()
+                        .filter_map(|s| {
+                            Some((dom.attribute(s, &W::name("styleId"))?.to_string(), s))
+                        })
+                        .collect()
+                };
+                let out_idx = index(&sd, or);
+                let b_idx = index(&sd, br);
+                let default_pstyle = |dom: &Dom, root: NodeId| -> Option<String> {
+                    dom.elements(root, Some(&W::name("style")))
+                        .into_iter()
+                        .find(|&s| {
+                            dom.attribute(s, &W::name("type")) == Some("paragraph")
+                                && matches!(
+                                    dom.attribute(s, &W::name("default")),
+                                    Some("1") | Some("true")
+                                )
+                        })
+                        .and_then(|s| dom.attribute(s, &W::name("styleId")).map(str::to_string))
+                };
+                let b_default = default_pstyle(&sd, br);
+                if let Some(doc_xml) = out.part_string(&main1) {
+                    let mut pd = Dom::new();
+                    let dd = pd.parse_xdocument(&doc_xml);
+                    if let Some(droot) = pd.root(dd) {
+                        let mut doc_changed = false;
+                        for p in pd.descendants(droot, Some(&W::name("p"))) {
+                            let Some(ppr) = pd.element(p, &W::p_pr()) else {
+                                continue;
+                            };
+                            let mark_inserted = pd
+                                .element(ppr, &W::r_pr())
+                                .is_some_and(|r| pd.element(r, &W::name("ins")).is_some());
+                            if !mark_inserted {
+                                continue;
+                            }
+                            let style_id = pd
+                                .element(ppr, &W::name("pStyle"))
+                                .and_then(|ps| pd.attribute(ps, &W::val()))
+                                .map(str::to_string)
+                                .or_else(|| b_default.clone());
+                            let Some(style_id) = style_id else { continue };
+                            if !b_idx.contains_key(&style_id) {
+                                continue; // style not from B — no B-effective target
+                            }
+                            let b_eff = effective_para_spacing(&sd, br, &b_idx, &style_id);
+                            let o_eff = effective_para_spacing(&sd, or, &out_idx, &style_id);
+                            if b_eff == o_eff {
+                                continue;
+                            }
+                            let sp = pd.element(ppr, &W::name("spacing"));
+                            let attr_names = ["after", "before", "line", "lineRule"];
+                            let mut to_write: Vec<(usize, String)> = Vec::new();
+                            for i in 0..4 {
+                                if b_eff[i] == o_eff[i] {
+                                    continue;
+                                }
+                                let declared = sp.is_some_and(|s| {
+                                    pd.attribute(s, &W::name(attr_names[i])).is_some()
+                                });
+                                if !declared {
+                                    to_write.push((i, b_eff[i].clone()));
+                                }
+                            }
+                            // line without lineRule renders as exact twips —
+                            // carry the rule whenever line is written.
+                            if to_write.iter().any(|(i, _)| *i == 2)
+                                && !to_write.iter().any(|(i, _)| *i == 3)
+                                && !sp.is_some_and(|s| {
+                                    pd.attribute(s, &W::name("lineRule")).is_some()
+                                })
+                            {
+                                to_write.push((3, b_eff[3].clone()));
+                            }
+                            if to_write.is_empty() {
+                                continue;
+                            }
+                            let sp = match sp {
+                                Some(s) => s,
+                                None => {
+                                    let s = pd.new_element(W::name("spacing"));
+                                    insert_child_by_rank(&mut pd, ppr, s, "spacing", &ppr_child_rank);
+                                    s
+                                }
+                            };
+                            for (i, v) in to_write {
+                                pd.set_attribute_value(sp, &W::name(attr_names[i]), Some(&v));
+                                doc_changed = true;
+                            }
+                        }
+                        if doc_changed {
+                            out.set_part(&main1, pd.serialize_element(droot).into_bytes());
+                        }
+                    }
+                }
             }
         }
     }
