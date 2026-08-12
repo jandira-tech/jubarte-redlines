@@ -2707,23 +2707,39 @@ fn merge_normal_style_rpr(
             .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string));
         let b_kern = dd_elem(dom, b_root, &kern_name)
             .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string));
-        if a_kern != b_kern
-            && dom.element(rpr, &kern_name).is_none()
-            && let Some(bk) = dd_elem(dom, b_root, &kern_name)
-        {
-            let clone = dom.clone_subtree(bk);
-            add_rpr_child_in_order(dom, rpr, clone, "kern");
+        if a_kern != b_kern && dom.element(rpr, &kern_name).is_none() {
+            match dd_elem(dom, b_root, &kern_name) {
+                Some(bk) => {
+                    let clone = dom.clone_subtree(bk);
+                    add_rpr_child_in_order(dom, rpr, clone, "kern");
+                }
+                // B-dd lacks kern (implicit 0) while A-dd kerns: Word
+                // materializes the neutralizer — kern 2 left live wraps
+                // every long line differently (list_numbering × list_spacer1
+                // oracle: effective kern 0 on all 14 Normal-based styles).
+                None => {
+                    let e = dom.new_element(W::name("kern"));
+                    dom.set_attribute_value(e, &W::val(), Some("0"));
+                    add_rpr_child_in_order(dom, rpr, e, "kern");
+                }
+            }
         }
         let a_lig = dd_elem(dom, out_root, &lig_name)
             .and_then(|e| dom.attribute(e, &W14::name("val")).map(str::to_string));
         let b_lig = dd_elem(dom, b_root, &lig_name)
             .and_then(|e| dom.attribute(e, &W14::name("val")).map(str::to_string));
-        if a_lig != b_lig
-            && dom.element(rpr, &lig_name).is_none()
-            && let Some(bl) = dd_elem(dom, b_root, &lig_name)
-        {
-            let clone = dom.clone_subtree(bl);
-            dom.add(rpr, clone);
+        if a_lig != b_lig && dom.element(rpr, &lig_name).is_none() {
+            match dd_elem(dom, b_root, &lig_name) {
+                Some(bl) => {
+                    let clone = dom.clone_subtree(bl);
+                    dom.add(rpr, clone);
+                }
+                None => {
+                    let e = dom.new_element(lig_name.clone());
+                    dom.set_attribute_value(e, &W14::name("val"), Some("none"));
+                    dom.add(rpr, e);
+                }
+            }
         }
     }
     let chg = dom.new_element(W::name("rPrChange"));
