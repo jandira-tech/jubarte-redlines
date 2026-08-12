@@ -238,6 +238,27 @@ pub fn compare_bodies_faithful_with_notes(
                             dom.add(scratch, cc);
                         }
                     }
+                    // Normalize implicit-default section props so a section that
+                    // merely SPELLS OUT the defaults doesn't read as changed
+                    // (verdana pair: B declares type=nextPage + cols
+                    // equalWidth=1 that A leaves implicit — Word emits NO
+                    // sectPrChange; ours wrongly did, adding a spurious record).
+                    // type=nextPage is the default → drop it entirely.
+                    if let Some(ty) = dom.element(scratch, &W::name("type"))
+                        && dom.attribute(ty, &W::val()).unwrap_or("nextPage") == "nextPage"
+                    {
+                        dom.remove(ty);
+                    }
+                    // cols equalWidth=1 is the default → strip the attribute.
+                    if let Some(cols) = dom.element(scratch, &W::name("cols")) {
+                        let eq = W::name("equalWidth");
+                        if matches!(
+                            dom.attribute(cols, &eq),
+                            Some("1") | Some("true") | Some("on")
+                        ) {
+                            dom.set_attribute_value(cols, &eq, None);
+                        }
+                    }
                     finalize::sectpr_identity(dom, scratch)
                 };
                 if geometry_of(dom, old_sp) != geometry_of(dom, sp) {
