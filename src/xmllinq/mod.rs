@@ -559,9 +559,13 @@ impl Dom {
             if !self.is_element(c) {
                 continue;
             }
+            // DOM-NAME-REF-01: compare the name by reference (`name_is`) instead
+            // of `self.name(c)` — the latter clones the `XName` (two `Arc` bumps)
+            // for every element visited, and this walk backs the 84-pass finalize
+            // mesh + poststeps. `c` is already known to be an element here.
             let matches = match filter {
                 None => true,
-                Some(f) => self.name(c).as_ref() == Some(f),
+                Some(f) => self.name_is(c, f),
             };
             if matches {
                 visit(c);

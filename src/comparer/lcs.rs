@@ -5253,6 +5253,51 @@ fn tokens_once<'a>(
     cell.get_or_init(|| para_text_tokens_from_units(dom, cu))
 }
 
+/// UNREL-FASTPATH helper: does a common contiguous run of at least `target`
+/// comparison units exist between `left` and `right`? A Rabin–Karp scan over the
+/// units' 128-bit fingerprints (folded to `u64`): equal windows always collide,
+/// so a real run is never missed; a spurious `u64` collision only reports a
+/// possible run (the caller then does the exact word-LCS — never wrong, just not
+/// skipped). O(|left| + |right|), vs the O(shared-word-occurrences) word-LCS it
+/// guards.
+fn has_common_run_ge(left: &[ComparisonUnit], right: &[ComparisonUnit], target: usize) -> bool {
+    if target == 0 {
+        return true;
+    }
+    if left.len() < target || right.len() < target {
+        return false;
+    }
+    const B: u64 = 0x0000_0100_0000_01b3;
+    let key = |u: &ComparisonUnit| -> u64 {
+        let k = u.sha1_key128();
+        (k as u64) ^ ((k >> 64) as u64)
+    };
+    // B^(target-1), for evicting the window's leading element.
+    let mut bpow = 1u64;
+    for _ in 0..target - 1 {
+        bpow = bpow.wrapping_mul(B);
+    }
+    let window_hashes = |units: &[ComparisonUnit]| -> Vec<u64> {
+        let mut hashes = Vec::with_capacity(units.len() + 1 - target);
+        let mut h = 0u64;
+        for u in &units[..target] {
+            h = h.wrapping_mul(B).wrapping_add(key(u));
+        }
+        hashes.push(h);
+        for i in 1..=units.len() - target {
+            h = h
+                .wrapping_sub(key(&units[i - 1]).wrapping_mul(bpow))
+                .wrapping_mul(B)
+                .wrapping_add(key(&units[i + target - 1]));
+            hashes.push(h);
+        }
+        hashes
+    };
+    let right_set: std::collections::HashSet<u64> =
+        window_hashes(right).into_iter().collect();
+    window_hashes(left).into_iter().any(|h| right_set.contains(&h))
+}
+
 /// Returns `Some([Inserted, Deleted])` in Word order, or `None` to fall through
 /// to full word-level LCS.
 pub fn detect_unrelated_sources_word_mode(
@@ -6723,7 +6768,55 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::deleted(cu1.to_vec()),
         ]);
     }
-    let (_i1, _i2, len) = if settings.merge_replaced_paragraphs {
+    // UNREL-FASTPATH: the word-LCS below (over the fully word-flattened docs)
+    // exists only to pick between keep-full-LCS and falling through to the
+    // junction/confetti path — its cost, O(shared-word-occurrences), is the
+    // unrelated-tail's dominant expense. When all three keep-LCS cases are
+    // provably impossible, skip it (EXACT: the block is side-effect-free and the
+    // fall-through below runs identically either way). Cases ruled out by:
+    //   * all-Words on both sides  ⇒ no nested-group run (the `else` arm);
+    //   * no file_/.docx/.doc in the base text ⇒ no stamp_run (the run is a
+    //     sub-slice of it);
+    //   * no common run of length ≥ ceil(detail_threshold·max_len)  ⇒ the ratio
+    //     test `ratio_len/max_len ≥ detail_threshold` cannot pass (ratio_len ≤
+    //     run length). Rolling-hash checked in O(|left|+|right|).
+    let skip_word_lcs = settings.merge_replaced_paragraphs
+        && left.len() >= 256
+        && right.len() >= 256
+        && {
+            // No shared nested Group ⇒ every common run is all-Words ⇒ the
+            // nested-group keep-LCS case (the `else` arm, run_real_text_len ≥ 3)
+            // is unreachable. A run's Group unit must match one on both sides.
+            let right_group_keys: std::collections::HashSet<u128> = right
+                .iter()
+                .filter(|u| matches!(u, ComparisonUnit::Group(_)))
+                .map(ComparisonUnit::sha1_key128)
+                .collect();
+            !left.iter().any(|u| {
+                matches!(u, ComparisonUnit::Group(_))
+                    && right_group_keys.contains(&u.sha1_key128())
+            })
+        }
+        && {
+            let mut lt = String::new();
+            for u in &left {
+                for a in u.descendant_atoms() {
+                    if dom.name_is(a.content_element, &W::t()) {
+                        lt.push_str(&dom.value_str(a.content_element));
+                    }
+                }
+            }
+            let lt = lt.to_ascii_lowercase();
+            !(lt.contains("file_") || lt.contains(".docx") || lt.contains(".doc"))
+        }
+        && {
+            let max_len = left.len().max(right.len());
+            let target = ((settings.detail_threshold * max_len as f64).ceil() as usize).max(2);
+            !has_common_run_ge(&left, &right, target)
+        };
+    let (_i1, _i2, len) = if skip_word_lcs {
+        (0, 0, 0)
+    } else if settings.merge_replaced_paragraphs {
         longest_common_run_with_dom(Some(dom), &left, &right, Some(settings))
     } else {
         longest_common_run(&left, &right)
