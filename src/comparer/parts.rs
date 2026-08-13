@@ -180,6 +180,38 @@ fn dest_uri_for_reconciled_part(dest: &PartFs, target_part: &str, bytes: &[u8]) 
     }
 }
 
+/// True when `el` sits inside inserted / moved-in content (a `w:ins` or
+/// `w:moveTo` ancestor). Such a reference's rId belongs to the REVISED
+/// document, so on an rId collision with the base package it must resolve to
+/// the revised part — not silently render the base one (image_inline_and_block
+/// × image_doc: both docs' first image is rId4; our inserted drawing rendered
+/// BASE's image because reconcile saw rId4 already resolved in the destination).
+fn ref_from_inserted_content(dom: &Dom, mut el: NodeId) -> bool {
+    while let Some(p) = dom.parent(el) {
+        if let Some(n) = dom.name(p)
+            && n.namespace_name() == crate::namespaces::W::URI
+            && matches!(n.local_name(), "ins" | "moveTo")
+        {
+            return true;
+        }
+        el = p;
+    }
+    false
+}
+
+/// Bytes of the part the destination's `rid` currently resolves to (via the
+/// main-document rels), or None if unresolved.
+fn dest_rid_part_bytes(dest: &PartFs, doc_part: &str, rid: &str) -> Option<Vec<u8>> {
+    let rels = dest.read_rels_for(doc_part)?;
+    let target = rels
+        .items
+        .iter()
+        .find(|i| i.id == rid)
+        .map(|i| i.target.clone())?;
+    let part = dest.resolve_rel_target(doc_part, &target);
+    dest.part_bytes(&part).map(|b| b.to_vec())
+}
+
 /// M4.H.3 — `ReconcileDanglingRelationships` (:6711), conservative form: ensure
 /// every rId referenced by the result document resolves in the destination
 /// package. rIds already present are left as-is; rIds missing from the
@@ -197,12 +229,13 @@ pub fn reconcile_dangling_relationships(
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
 
-    // 1. collect referenced (element, attr_name, rId).
-    let mut refs: Vec<(NodeId, crate::xmllinq::XName, String)> = Vec::new();
+    // 1. collect referenced (element, attr_name, rId, from_inserted_content).
+    let mut refs: Vec<(NodeId, crate::xmllinq::XName, String, bool)> = Vec::new();
     for el in dom.descendants_and_self(root, None) {
         for (an, av) in dom.attributes(el) {
             if S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(&an) {
-                refs.push((el, an, av));
+                let inserted = ref_from_inserted_content(dom, el);
+                refs.push((el, an, av, inserted));
             }
         }
     }
@@ -262,7 +295,7 @@ pub fn reconcile_dangling_relationships(
     };
 
     // 4. reconcile each referenced rId not already in the destination.
-    for (el, an, rid) in refs {
+    for (el, an, rid, inserted) in refs {
         let suffix = dom
             .name(el)
             .and_then(|n| required_rel_type_suffix(n.local_name()));
@@ -271,6 +304,40 @@ pub fn reconcile_dangling_relationships(
             .get(&rid)
             .is_some_and(|t| suffix.is_none_or(|s| t.ends_with(s)));
         if dest_ok {
+            // rId collision: an INSERTED ref keeps the revised doc's rId, which
+            // may numerically match a base rId of DIFFERENT content. Left as-is
+            // it silently renders the base part. When the revised source has the
+            // same rId pointing to distinct bytes, carry that part over under a
+            // fresh id and repoint (image_inline_and_block × image_doc). Rare
+            // path (only inserted refs whose rId already resolves in dest); the
+            // common shared-image case (identical bytes) is left untouched.
+            if inserted
+                && let Some((si, row, src_doc)) = source_rows
+                    .iter()
+                    .rev()
+                    .find(|(_, r, _)| r.id == rid && suffix.is_none_or(|s| r.rel_type.ends_with(s)))
+                && !row.external
+            {
+                let src = sources[*si];
+                let modf_part = src.resolve_rel_target(src_doc, &row.target);
+                if let Some(modf_bytes) = src.part_bytes(&modf_part) {
+                    let modf_bytes = modf_bytes.to_vec();
+                    if dest_rid_part_bytes(dest, &doc_part, &rid).as_deref() != Some(&modf_bytes) {
+                        let new_uri = dest_uri_for_reconciled_part(dest, &modf_part, &modf_bytes);
+                        if let Some(ct) = src.content_type_for(&modf_part) {
+                            dest.add_content_type_override(&new_uri, &ct);
+                        }
+                        dest.set_part(&new_uri, modf_bytes);
+                        let rel_target = new_uri
+                            .strip_prefix("word/")
+                            .unwrap_or(&new_uri)
+                            .to_string();
+                        let new_rid =
+                            dest.add_document_relationship(&doc_part, &row.rel_type, &rel_target);
+                        dom.set_attribute_value(el, &an, Some(&new_rid));
+                    }
+                }
+            }
             continue;
         }
         match find_source(&rid, suffix) {
