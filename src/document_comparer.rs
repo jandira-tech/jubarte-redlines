@@ -4665,6 +4665,14 @@ fn compare_documents_impl(
     // canonicalize styleIds (numeric/`styleN` → Heading1/…) and remap refs.
     let mut style_renames: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    // POSTSTEP-STYLES-CACHE-01: the style-validity passes each re-parse the
+    // (often large) output stylesheet — 3-4× per compare dominates medium-doc
+    // poststeps. Capture the defined style-id set here, after styles-copy has
+    // finished mutating `word/styles.xml` (copy-missing + canonicalize), so the
+    // pStyle/rStyle strip below reuses it instead of re-parsing. Nothing between
+    // here and that strip changes the style-id SET (the main-doc / spacing
+    // passes touch the body, not styles.xml), so the cached set is exact.
+    let mut cached_defined_styles: Option<std::collections::HashSet<String>> = None;
     for (part, is_styles) in [("word/styles.xml", true), ("word/numbering.xml", false)] {
         match (out.part_string(part), pkg2.part_string(part)) {
             (Some(to_xml), Some(from_xml)) => {
@@ -4723,6 +4731,10 @@ fn compare_documents_impl(
                                 }
                             }
                         }
+                    }
+                    if is_styles {
+                        cached_defined_styles =
+                            Some(crate::comparer::footnotes::defined_style_ids(&sd, tr));
                     }
                     out.set_part(part, sd.serialize_element(tr).into_bytes());
                 }
@@ -5013,12 +5025,17 @@ fn compare_documents_impl(
     // built-in names (Heading1, Title, …) even when the style entry is absent;
     // Word's redline omits the attribute entirely (heading_1_bold×heading_1_style).
     if settings.merge_replaced_paragraphs {
-        let defined = out.part_string("word/styles.xml").map(|sx| {
-            let mut sd = Dom::new();
-            let doc = sd.parse_xdocument(&sx);
-            sd.root(doc)
-                .map(|r| crate::comparer::footnotes::defined_style_ids(&sd, r))
-                .unwrap_or_default()
+        // POSTSTEP-STYLES-CACHE-01: reuse the defined-style-id set captured after
+        // styles-copy instead of re-parsing word/styles.xml. Fall back to a fresh
+        // parse only when styles-copy did not run (no output stylesheet).
+        let defined = cached_defined_styles.clone().or_else(|| {
+            out.part_string("word/styles.xml").map(|sx| {
+                let mut sd = Dom::new();
+                let doc = sd.parse_xdocument(&sx);
+                sd.root(doc)
+                    .map(|r| crate::comparer::footnotes::defined_style_ids(&sd, r))
+                    .unwrap_or_default()
+            })
         });
         if let Some(defined) = defined {
             // Main document + common related parts that can carry pStyle/rStyle.
