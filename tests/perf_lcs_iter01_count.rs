@@ -27,6 +27,7 @@ fn group(gt: ComparisonUnitGroupType, contents: Vec<ComparisonUnit>) -> Comparis
         contents,
         level: 0,
         sha1_key: sha1_fingerprint(""),
+        sha1_key128: jubarte::util::sha1::sha1_fingerprint128(""),
         sha1_hash: String::new(),
         correlated_sha1_hash: None,
         structure_sha1_hash: None,
