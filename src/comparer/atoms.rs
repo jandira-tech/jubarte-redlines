@@ -192,6 +192,10 @@ pub struct ComparisonUnitWord {
     /// Cached `u64` fingerprint of `sha1_hash` — a cheap pre-filter for the LCS
     /// hot path. MUST be kept in sync with `sha1_hash` (recompute on mutation).
     pub sha1_key: u64,
+    /// Cached 128-bit fingerprint of `sha1_hash` — lets `extend_common_run`
+    /// test equality with one integer compare instead of a 40-byte hex memcmp.
+    /// MUST be kept in sync with `sha1_hash` (recompute on mutation).
+    pub sha1_key128: u128,
 }
 
 impl ComparisonUnitWord {
@@ -205,6 +209,7 @@ impl ComparisonUnitWord {
         ComparisonUnitWord {
             correlation_status: CorrelationStatus::Nil,
             sha1_key: sha1_fingerprint(&sha1_hash),
+            sha1_key128: crate::util::sha1::sha1_fingerprint128(&sha1_hash),
             sha1_hash,
             contents,
         }
@@ -230,6 +235,8 @@ pub struct ComparisonUnitGroup {
     pub sha1_hash: String,
     /// Cached `u64` fingerprint of `sha1_hash` — see [`ComparisonUnitWord`].
     pub sha1_key: u64,
+    /// Cached 128-bit fingerprint of `sha1_hash` — see [`ComparisonUnitWord::sha1_key128`].
+    pub sha1_key128: u128,
     /// `correlated_sha1_hash`.
     pub correlated_sha1_hash: Option<String>,
     /// `pt:StructureSHA1Hash` — only stamped on `w:tbl`/`w:tr` (M4.0/M4.D).
@@ -267,6 +274,16 @@ impl ComparisonUnit {
         match self {
             ComparisonUnit::Word(w) => w.sha1_key,
             ComparisonUnit::Group(g) => g.sha1_key,
+        }
+    }
+    /// Cached 128-bit fingerprint of [`Self::sha1`]. Equal to `sha1()` equality
+    /// with a ~2^-128 false-positive rate, so `a.sha1_key128() == b.sha1_key128()`
+    /// replaces `a.sha1_key()==b.sha1_key() && a.sha1()==b.sha1()` in the LCS
+    /// hot path without the per-step hex-string memcmp.
+    pub fn sha1_key128(&self) -> u128 {
+        match self {
+            ComparisonUnit::Word(w) => w.sha1_key128,
+            ComparisonUnit::Group(g) => g.sha1_key128,
         }
     }
     /// `correlated_sha1`.

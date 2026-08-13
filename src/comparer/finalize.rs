@@ -6063,10 +6063,34 @@ fn should_fold_multi_del_at_document_scale(
         .copied()
         .filter(|&i| !para_revision_body_text(dom, i).trim().is_empty())
         .collect();
-    let any_content_related = content_inss.iter().any(|&i| {
-        content_dels
-            .iter()
-            .any(|&d| should_fold_ins_del_pair(dom, i, d))
+    // Tokenize each side once (O(n+m)) then compare cached sets (O(n·m) cheap
+    // set ops), instead of the former per-pair recompute of
+    // para_revision_body_text + body_token_set (O(n·m) tokenizations — 162×1216
+    // on whole-document replacements). Result is identical: `any` is
+    // order-independent, and both content_* sides are non-empty here, so the
+    // empty-del auto-fold branch of should_fold_ins_del_pair never applies.
+    let ins_tokens: Vec<std::collections::HashSet<String>> = content_inss
+        .iter()
+        .map(|&i| body_token_set(&para_revision_body_text(dom, i)))
+        .collect();
+    let del_tokens: Vec<std::collections::HashSet<String>> = content_dels
+        .iter()
+        .map(|&d| body_token_set(&para_revision_body_text(dom, d)))
+        .collect();
+    let any_content_related = ins_tokens.iter().any(|a| {
+        del_tokens.iter().any(|b| {
+            let jaccard = if a.is_empty() && b.is_empty() {
+                1.0
+            } else {
+                let uni = a.union(b).count();
+                if uni == 0 {
+                    0.0
+                } else {
+                    a.intersection(b).count() as f64 / uni as f64
+                }
+            };
+            jaccard + 1e-12 >= SOLE_DEL_FOLD_MIN_JACCARD
+        })
     });
     // content_inss.len() == 2: Word pure-I/D for short next (title+heading or
     // two list items) vs long short-item list base (basic_list×sd_1707,

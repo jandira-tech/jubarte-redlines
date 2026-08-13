@@ -19,6 +19,34 @@
 use super::CorrelationStatus;
 use super::atoms::ComparisonUnitAtom;
 
+/// Passthrough hasher for `u64`-keyed maps whose keys are already well-mixed
+/// SHA-1 fingerprints (`ComparisonUnit::sha1_key`). Re-hashing a fingerprint
+/// with SipHash was ~10% of a large-doc compare (LCS index rebuilt per
+/// recursion node); identity-hashing the single `write_u64` removes it. Output
+/// is unchanged: the index is used only for point lookups, and bucket contents
+/// / visitation order do not depend on the hasher. Keys must be hashed via one
+/// `write_u64` (true for `u64`); the byte fallback exists only for soundness.
+#[derive(Default)]
+pub(crate) struct U64IdentityHasher(u64);
+impl std::hash::Hasher for U64IdentityHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.0 = i;
+    }
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = self.0.rotate_left(8) ^ u64::from(b);
+        }
+    }
+}
+/// `BuildHasher` for [`U64IdentityHasher`].
+pub(crate) type U64BuildHasher = std::hash::BuildHasherDefault<U64IdentityHasher>;
+
 /// An atom tagged with its correlation status, ready for the produce step.
 #[derive(Clone, Debug)]
 pub struct TaggedAtom {
@@ -730,10 +758,12 @@ fn extend_common_run(
 ) -> usize {
     let (mut t1, mut t2) = (i1, i2);
     let mut len = 0;
+    // 128-bit fingerprint compare == `sha1_key()==sha1_key() && sha1()==sha1()`
+    // (equal hashes always share the fingerprint; distinct hashes collide at
+    // ~2^-128), without the per-step 40-byte hex memcmp.
     while t1 < cul1.len()
         && t2 < cul2.len()
-        && cul1[t1].sha1_key() == cul2[t2].sha1_key()
-        && cul1[t1].sha1() == cul2[t2].sha1()
+        && cul1[t1].sha1_key128() == cul2[t2].sha1_key128()
     {
         t1 += 1;
         t2 += 1;
@@ -888,8 +918,8 @@ fn longest_common_run_indexed(
     // Bucket cul2 positions by their u64 fingerprint key. Pushing in ascending
     // i2 order keeps each bucket ascending, so a probe reproduces the scan's
     // i2-ascending visitation for a given i1.
-    let mut index: std::collections::HashMap<u64, Vec<usize>> =
-        std::collections::HashMap::with_capacity(cul2.len());
+    let mut index: std::collections::HashMap<u64, Vec<usize>, U64BuildHasher> =
+        std::collections::HashMap::with_capacity_and_hasher(cul2.len(), U64BuildHasher::default());
     for (i2, u) in cul2.iter().enumerate() {
         index.entry(u.sha1_key()).or_default().push(i2);
     }
@@ -901,6 +931,22 @@ fn longest_common_run_indexed(
             continue;
         };
         for &i2 in positions {
+            // Interior-run skip: when the diagonal predecessor (i1-1, i2-1) is
+            // itself a true match, the run through (i1, i2) is a strictly
+            // shorter suffix of a run already considered from (i1-1, i2-1)
+            // (content_score is monotone in the run, and consider_candidate
+            // requires a *strict* improvement — the longer super-run always
+            // wins or ties). So (i1, i2) can never become `best`; skipping it is
+            // output-identical and removes the O(run_len^2) re-extension of long
+            // shared passages. The full sha1() check (not just the u64 key)
+            // mirrors extend_common_run, so a u64 key collision at the
+            // predecessor never triggers a wrongful skip.
+            if i1 > 0
+                && i2 > 0
+                && cul1[i1 - 1].sha1_key128() == cul2[i2 - 1].sha1_key128()
+            {
+                continue;
+            }
             let len = extend_common_run(cul1, cul2, i1, i2);
             if len > 0 {
                 let content =
@@ -1931,8 +1977,9 @@ fn rehash_words_by_text_content_opts(dom: &Dom, units: &mut [ComparisonUnit], ca
                     text
                 };
                 w.sha1_hash = sha1_hex(&key);
-                // keep the cached fingerprint in sync with the mutated hash
+                // keep the cached fingerprints in sync with the mutated hash
                 w.sha1_key = sha1_fingerprint(&w.sha1_hash);
+                w.sha1_key128 = crate::util::sha1::sha1_fingerprint128(&w.sha1_hash);
             }
         }
     }
@@ -7997,6 +8044,7 @@ mod correlated_hash_owned_tests {
             contents: vec![ComparisonUnit::Word(ComparisonUnitWord::new(vec![atom]))],
             level: 0,
             sha1_key: sha1_fingerprint(hash),
+            sha1_key128: crate::util::sha1::sha1_fingerprint128(hash),
             sha1_hash: hash.to_string(),
             correlated_sha1_hash: Some(correlated.to_string()),
             structure_sha1_hash: None,
@@ -8118,6 +8166,7 @@ mod correlated_hash_idx_tests {
             contents: vec![word],
             level: 0,
             sha1_key: sha1_fingerprint(hash),
+            sha1_key128: crate::util::sha1::sha1_fingerprint128(hash),
             sha1_hash: hash.to_string(),
             correlated_sha1_hash: correlated.map(|s| s.to_string()),
             structure_sha1_hash: None,
@@ -8334,6 +8383,7 @@ mod indexed_lcr_tests {
             correlation_status: CorrelationStatus::Nil,
             contents: Vec::new(),
             sha1_key: sha1_fingerprint(hash),
+            sha1_key128: crate::util::sha1::sha1_fingerprint128(hash),
             sha1_hash: hash.to_string(),
         })
     }
@@ -8347,6 +8397,7 @@ mod indexed_lcr_tests {
             correlation_status: CorrelationStatus::Nil,
             contents: Vec::new(),
             sha1_key: key,
+            sha1_key128: crate::util::sha1::sha1_fingerprint128(hash),
             sha1_hash: hash.to_string(),
         })
     }
