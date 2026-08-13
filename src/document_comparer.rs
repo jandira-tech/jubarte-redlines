@@ -4673,6 +4673,14 @@ fn compare_documents_impl(
     // here and that strip changes the style-id SET (the main-doc / spacing
     // passes touch the body, not styles.xml), so the cached set is exact.
     let mut cached_defined_styles: Option<std::collections::HashSet<String>> = None;
+    // POSTSTEP-STYLES-CACHE-02: keep the parsed styles arena (out stylesheet
+    // `tr`, revised stylesheet `fr`) alive so the M-PAG Normal-merge below can
+    // reuse it instead of re-parsing both stylesheets. styles-copy still
+    // serializes the stylesheet (so a compare that skips M-PAG is unaffected);
+    // M-PAG then mutates the same in-memory `tr` and re-serializes. serialize→
+    // parse is a lossless structural round-trip, so `tr` is identical to what
+    // M-PAG would have re-parsed.
+    let mut styles_arena: Option<(Dom, NodeId, NodeId)> = None;
     for (part, is_styles) in [("word/styles.xml", true), ("word/numbering.xml", false)] {
         match (out.part_string(part), pkg2.part_string(part)) {
             (Some(to_xml), Some(from_xml)) => {
@@ -4737,6 +4745,10 @@ fn compare_documents_impl(
                             Some(crate::comparer::footnotes::defined_style_ids(&sd, tr));
                     }
                     out.set_part(part, sd.serialize_element(tr).into_bytes());
+                    if is_styles {
+                        // Hand the parsed arena (out `tr`, revised `fr`) to M-PAG.
+                        styles_arena = Some((sd, tr, fr));
+                    }
                 }
             }
             // A has no numbering part, B does (file_21×file_22): copy B's
@@ -5079,16 +5091,27 @@ fn compare_documents_impl(
     // 111 → 117 pages with this patch, GT 116). Provenance: when B's Normal
     // pPr is empty/absent, Word resolves it to FACTORY defaults
     // (after=160 line=278 lineRule=auto — matches neither side's docDefaults).
-    if settings.merge_replaced_paragraphs
-        && let (Some(out_xml), Some(b_xml)) = (
-            out.part_string("word/styles.xml"),
-            pkg2.part_string("word/styles.xml"),
-        )
-    {
-        let mut sd = Dom::new();
-        let od = sd.parse_xdocument(&out_xml);
-        let bd = sd.parse_xdocument(&b_xml);
-        if let (Some(or), Some(br)) = (sd.root(od), sd.root(bd)) {
+    if settings.merge_replaced_paragraphs {
+        // POSTSTEP-STYLES-CACHE-02: reuse the arena styles-copy already parsed;
+        // fall back to a fresh parse of both stylesheets only when it did not run.
+        let arena = styles_arena.take().or_else(|| {
+            match (
+                out.part_string("word/styles.xml"),
+                pkg2.part_string("word/styles.xml"),
+            ) {
+                (Some(out_xml), Some(b_xml)) => {
+                    let mut sd = Dom::new();
+                    let od = sd.parse_xdocument(&out_xml);
+                    let bd = sd.parse_xdocument(&b_xml);
+                    match (sd.root(od), sd.root(bd)) {
+                        (Some(or), Some(br)) => Some((sd, or, br)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        });
+        if let Some((mut sd, or, br)) = arena {
             // Workstream S runs FIRST, while the output stylesheet still holds
             // A's definitions: `merge_normal_style_*` below rewrites Normal to
             // B's values, and every style based on Normal would then resolve its
