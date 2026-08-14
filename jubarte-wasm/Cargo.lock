@@ -156,7 +156,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "rdocx-opc",
  "sha1",

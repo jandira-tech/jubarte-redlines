@@ -241,6 +241,7 @@ fn get_hierarchical_comparison_units(
                 contents: children,
                 level,
                 sha1_key: crate::util::sha1::sha1_fingerprint(&sha1),
+                sha1_key128: crate::util::sha1::sha1_fingerprint128(&sha1),
                 sha1_hash: sha1,
                 correlated_sha1_hash: correlated,
                 structure_sha1_hash: structure,

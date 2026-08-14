@@ -51,6 +51,7 @@ ns_struct!(VML, "urn:schemas-microsoft-com:vml");
 ns_struct!(A, "http://schemas.openxmlformats.org/drawingml/2006/main");
 ns_struct!(C, "http://schemas.openxmlformats.org/drawingml/2006/chart");
 ns_struct!(W14, "http://schemas.microsoft.com/office/word/2010/wordml");
+ns_struct!(W15, "http://schemas.microsoft.com/office/word/2012/wordml");
 ns_struct!(
     WP,
     "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"

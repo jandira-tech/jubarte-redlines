@@ -129,3 +129,22 @@ pub fn sha1_fingerprint(s: &str) -> u64 {
     }
     hash
 }
+
+/// A 128-bit fingerprint of a hash string (128-bit FNV-1a). Used by the LCS
+/// hot path (`extend_common_run`) to test comparison-unit equality with a
+/// single integer compare instead of a full 40-byte SHA-1 hex `memcmp`. Equal
+/// strings always map to equal fingerprints; distinct strings collide with
+/// probability ~2^-128 (negligible for non-adversarial document content, and
+/// strictly stronger than the existing 64-bit index key). Deterministic and
+/// dependency-free, matching [`sha1_fingerprint`]'s FNV construction widened to
+/// 128 bits.
+pub fn sha1_fingerprint128(s: &str) -> u128 {
+    const OFFSET_BASIS: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
+    const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
+    let mut hash = OFFSET_BASIS;
+    for &b in s.as_bytes() {
+        hash ^= b as u128;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}

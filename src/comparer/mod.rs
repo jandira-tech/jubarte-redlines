@@ -238,6 +238,27 @@ pub fn compare_bodies_faithful_with_notes(
                             dom.add(scratch, cc);
                         }
                     }
+                    // Normalize implicit-default section props so a section that
+                    // merely SPELLS OUT the defaults doesn't read as changed
+                    // (verdana pair: B declares type=nextPage + cols
+                    // equalWidth=1 that A leaves implicit — Word emits NO
+                    // sectPrChange; ours wrongly did, adding a spurious record).
+                    // type=nextPage is the default → drop it entirely.
+                    if let Some(ty) = dom.element(scratch, &W::name("type"))
+                        && dom.attribute(ty, &W::val()).unwrap_or("nextPage") == "nextPage"
+                    {
+                        dom.remove(ty);
+                    }
+                    // cols equalWidth=1 is the default → strip the attribute.
+                    if let Some(cols) = dom.element(scratch, &W::name("cols")) {
+                        let eq = W::name("equalWidth");
+                        if matches!(
+                            dom.attribute(cols, &eq),
+                            Some("1") | Some("true") | Some("on")
+                        ) {
+                            dom.set_attribute_value(cols, &eq, None);
+                        }
+                    }
                     finalize::sectpr_identity(dom, scratch)
                 };
                 if geometry_of(dom, old_sp) != geometry_of(dom, sp) {
@@ -481,6 +502,7 @@ pub fn compare_bodies_faithful_with_notes(
     lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, &mut id);
 
     let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
+
     // moves before format-changes (WmlComparer.ts:2322 then :2326).
     moves::detect_moves_in_atom_list(dom, &mut flat, settings);
     formatchg::detect_format_changes_in_atom_list(dom, &mut flat, settings);
@@ -762,6 +784,10 @@ pub fn compare_bodies_faithful_with_notes(
         // M448: pure-I-dominant body + pure-D residual → drop trailing bare
         // empty EQ (diff_after8×doc_with_spacing Word ends IDD not IDDE).
         finalize::strip_trailing_bare_empty_after_pure_i_dominant(dom, root);
+        // M469: head title MIX with SHORT ins title + LONG unrelated del →
+        // split del into a style-less MARK-DEL paragraph (rfonts_rstyle ×
+        // sd_2672_rtl_table: Word renders the deleted opening at body size).
+        finalize::split_head_short_title_long_del_mix(dom, root);
         // M105: pure-D short title + following MIX leading ins → Word subtitle
         // insert lands on title residual (file_7/5/130 document peel).
         finalize::fold_leading_ins_from_mix_into_preceding_pure_del(dom, root);
@@ -798,6 +824,14 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::peel_trailing_for_word_onto_next_mix(dom, root);
         // M393 late: re-apply after free-mesh peels thrash LCS interleave.
         finalize::interleave_list_cluster_after_coalesce(dom, root);
+        // M471 (late — the shape emerges from the folds above): rotate the
+        // impossible [MD ins+del][MI del-only][live ins…EQ] region one slot
+        // to Word's arrangement (diff_after19 × diff_after2).
+        finalize::rotate_ins_mark_del_only_paragraph(dom, root);
+        // M473 (same family): restamp a stranded contentless MARK-DEL shell's
+        // into the preceding bare del-only paragraph — Word writes one
+        // paragraph (ooxml_size_rstyle × ooxml_strike_rstyle).
+        finalize::restamp_stranded_del_mark_onto_del_only_paragraph(dom, root);
         // M376: after merge/park peels — strip list line=240/jc that mid pure-D
         // absorbed from pure-I list residual (bookmark×broken_complex −0.6).
         finalize::strip_list_layout_from_mid_pure_del(dom, root);
