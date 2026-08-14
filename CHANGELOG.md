@@ -15,6 +15,72 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-13
+
+**Jubarte now wins on speed as well as quality.** 0.6.0 already led every
+fidelity metric on the 763-document `script_redlines` benchmark; 0.7.0 closes
+the last gap to the C# incumbent on generation time. Measured interleaved
+(both engines on the same pair back-to-back, so concurrent machine load hits
+both equally) over the 4880 pairs both engines complete:
+
+| speed measure | jubarte 0.7.0 | docxodus 9.0.0 |
+|---|---|---|
+| median / doc | **5.3 ms** | 7.2 ms |
+| mean / doc | **22.2 ms** | 24.1 ms |
+| p95 / doc | **94.8 ms** | 96.2 ms |
+| p99 / doc | **139.7 ms** | 179.9 ms |
+| throughput | **45.0/s** | 41.4/s |
+| generation failures | **0** | 120 |
+
+Jubarte leads all six. Every performance change below is output-identical to
+0.6.0 (verified by LibreOffice render parity, XML c14n equivalence, and LCS
+fuzz/collision tests) — no fidelity was traded for speed.
+
+### Performance
+
+- **Killed the superlinear tail** in the word-level relatedness detector: the
+  worst-case pair dropped 837 → 678 ms with no output change.
+- **Detector fast-path + by-reference descendants walk.** `detect_unrelated_
+  sources_word_mode` now short-circuits the full-document word-LCS when all
+  keep-LCS cases are provably impossible (O(n+m) rolling-hash pre-check), and
+  `Dom::for_each_descendant_element` compares element names by reference
+  instead of cloning an `XName` (2 Arc bumps) per element across the ~84
+  finalize passes. Together these flipped mean and throughput to jubarte.
+- **Poststep re-parse elimination.** The Word-validity poststeps parsed
+  `styles.xml` four times per compare; they now cache the defined-style-id set
+  from the styles-copy pass and reuse a single styles arena in the M-PAG
+  Normal-merge. This closed the p95 gap (6/6). A 128-bit FNV-1a fingerprint
+  (`sha1_key128`) replaces the per-step 40-byte hex compare in the LCS extend
+  step (~2⁻¹²⁸ collision), and the LCS bucket index uses an identity hasher on
+  its already-hashed u64 keys.
+
+### Fixed
+
+- **Mesh & revision ordering** — M468 (yields to the M322 head-junction; no
+  fold across trailing empty pure-I separators), M469 (splits a short inserted
+  title MIX from a long unrelated deletion), M471 (rotates the impossible
+  ins-mark del-only paragraph), M472 (re-asserts ins-before-del order after a
+  comment carry), M473/M474 (restamps a stranded deletion mark; field-residue
+  gate), M491 (B's document-final paragraph mark never inserts mid-document).
+- **Spacing** — M487 bakes B's effective paragraph spacing onto inserted
+  paragraphs, gated to B-implicit values only and never onto empty or
+  declared-value paragraphs; M492 keeps deleted paragraphs' A-original direct
+  spacing; M479 lets spacing `before` join the Normal merge under the B-chain
+  gate.
+- **Styles** — M476 gates the S2 copied-style bake on ascii font-family change;
+  M477 adds a per-attribute B-chain bake gate and Word-complete Normal
+  promotion; M478 materializes implicit `kern`/`ligatures` neutralizers; M480b
+  adds docDefaults-delta disabling neutralizers on both-sides merged styles;
+  M483 re-caches themed color hexes against the shipped theme.
+- **Numbering** — M481/M482 repair the core relationship part and remap
+  `numId` collisions; `w15:restartNumberingAfterBreak` is ignored in
+  `abstractNum` identity.
+- **Images** — M495 keeps an image-only paragraph M491 had misjudged as empty;
+  M496 carries over the revised image on an inserted-reference `rId` collision.
+- **Sections** — M494 emits no spurious `sectPrChange` for implicit-default
+  section properties.
+- **Fields** — M470 keeps Word's field form for deleted anchor hyperlinks.
+
 ## [0.6.0] - 2026-08-11
 
 **Jubarte is now the best redline engine on the market**, leading every
@@ -182,6 +248,8 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.7.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.0
+[0.6.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.6.0
 [0.5.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.5.1
 [0.5.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.5.0
 [0.2.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.2.0
