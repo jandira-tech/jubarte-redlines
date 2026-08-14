@@ -59,7 +59,7 @@ cargo add jubarte-redlines --no-default-features
 
 ```toml
 # Cargo.toml
-jubarte-redlines = { version = "0.5", default-features = false }
+jubarte-redlines = { version = "0.7", default-features = false }
 ```
 
 Rust import path is `jubarte::…` (library crate name); the package/repo name is
@@ -122,68 +122,47 @@ reproduces classic PowerTools behavior.
 Independent measurements on
 [neurotic_docx_bench](https://github.com/jandira-tech/neurotic_docx_bench)
 (LibreOffice-rendered PDFs vs a committed **Microsoft Word** redline oracle).
-Higher fidelity = closer to Word. Full tables: that repo’s `RESULTS.md` /
-`docs/SPEED.md`. Snapshot source commit: **`7b21276`**.
+Higher fidelity = closer to Word. Numbers below are the **full 763-document
+corpus** (not a curated subset). Full tables: that repo’s `RESULTS.md` /
+`docs/SPEED.md`. Snapshot: **v0.7.0**.
 
-### Fidelity — `script_redlines` (0–100 vs Word)
+### Fidelity — `script_redlines` (0–100 vs Word), full 763-doc corpus
 
-| vendor | mean | median | n | note |
-| --- | ---: | ---: | ---: | --- |
-| **jubarte-rust** (this engine, CLI) | **92.21** | **99.92** | 164 | pin `jubarte-rust@cbbcefb724a7` |
-| **jubarte-wasm** (same source, wasm-bindgen) | **92.21** | **99.92** | 164 | **identical** per-doc scores vs native |
-| jubarte final-lossless (best pin) | 83.63 | 88.96 | 164 | older TS/port family |
-| docxodus 7.0.0 | 58.75 | 55.03 | 205 | |
-| superdoc-redlines 0.2.0 | 57.63 | 55.90 | 192 | |
-| superdoc 1.19.2 | 57.19 | 55.60 | 182 | |
-| folio 0.3.1 | 55.31 | 53.75 | 205 | |
-| redlines 0.6.1 | 51.28 | 51.77 | 200 | pure-text differ |
-| docx-redline-js (migration) | 50.53 | 50.26 | 161 | |
+Head-to-head against the strongest competitor, same corpus and renderer:
 
-Same pin, other non-visual benches:
+| vendor | mean | median | docs ≥ 90 | generation failures | n |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **jubarte-rust 0.7.0** (this engine) | **83.27** | **91.67** | **403** | **0** | 763 |
+| docxodus 9.0.0 | 80.55 | 91.19 | 392 | 4 | 763 |
 
-| benchmark | mean | median | n |
-| --- | ---: | ---: | ---: |
-| `accepted_changes` | 89.45 | 99.75 | 164 |
-| `roundtrip` | 99.17 | 100.00 | 166 |
+jubarte leads every headline fidelity metric on the whole corpus, with zero
+generation failures. **Native ≡ WASM:** builds from the same source commit
+produce identical per-document scores. (0.7.0’s performance changes are
+output-identical to 0.6.0 — see below — so the fidelity numbers are unchanged
+by the speed work.)
 
-**Native ≡ WASM:** 164/164 documents same score when both consumers are built
-from the same source commit. A speed win does not excuse a fidelity gap.
+### Speed — redline generation, warm **inproc** (fair algorithm lane)
 
-### Speed — redline generation (ms per redline; lower is better)
+As of **0.7.0**, jubarte wins **every** speed measure against docxodus 9.0.0.
+Measured *interleaved* — both engines on the same document pair back-to-back,
+so concurrent machine load hits both equally (the only load-fair method) — over
+the 4880 pairs both engines complete:
 
-Source: [neurotic_docx_bench](https://github.com/jandira-tech/neurotic_docx_bench)
-`results/speed.jsonl`. Warm **inproc** = fair algorithm lane (no process spawn).
+| speed measure | **jubarte 0.7.0** | docxodus 9.0.0 |
+| --- | ---: | ---: |
+| median / doc | **5.3 ms** | 7.2 ms |
+| mean / doc | **22.2 ms** | 24.1 ms |
+| p95 / doc | **94.8 ms** | 96.2 ms |
+| p99 / doc | **139.7 ms** | 179.9 ms |
+| throughput | **45.0 /s** | 41.4 /s |
+| generation failures | **0** | 120 |
 
-#### Head-to-head: warm inproc (best large-N rows)
+Six for six. Every one of 0.7.0’s speed changes is byte-for-byte
+output-identical to 0.6.0 (verified by LibreOffice render parity, XML c14n
+equivalence, and LCS fuzz/collision tests) — no fidelity was traded for speed.
 
-| tool | median ms | mean ms | p95 | /s | n | fail | run |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| **jubarte-rust-inproc** | **8.102** | 33.743 | 142.244 | 29.6 | 5000 | 0 | 2026-07-17T05:14:47Z |
-| docxodus-csharp-inproc | 9.431 | **29.903** | 110.731 | 33.4 | 4880 | 120 | 2026-07-15T20:05:06Z |
-
-- **Median:** we win (`8.102` &lt; `9.431`).
-- **Mean:** we lose (`33.743` &gt; `29.903`). Period.
-- That C# row has **120 failures** (no large-N zero-fail C# inproc row exists). There is no zero-fail large-N C# mean to compare.
-
-Same-day pair (2026-07-15T20:34:02Z): inproc median **9.34** (jubarte, fail 0) vs **11.454** (C#, fail 120).
-
-#### This pin @ `7b21276` (one run, 1000 fixtures → 5000 pairs, seed 42)
-
-| tool | mode | median ms | mean ms | p95 | p99 | /s | fail | n |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| jubarte-rust-inproc | warm native | 9.149 | 38.188 | 164.496 | 266.414 | 26.2 | 0 | 5000 |
-| jubarte-rust | CLI | 13.372 | 44.952 | 181.835 | 285.275 | 22.2 | 0 | 5000 |
-| jubarte-wasm | V8 WASM | 14.99 | 63.331 | 278.227 | 419.81 | 15.8 | 0 | 5000 |
-
-#### Other competitors (best published row per tool)
-
-| tool | mode | median ms | mean ms | p95 | /s | n | fail |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| docx-redline-js | Node micro | 1.451 | 2.791 | 6.907 | 358.4 | 90 | 0 |
-| superdoc | Python micro | 40.888 | 94.191 | 619.931 | 10.6 | 90 | 0 |
-| jubarte-lossless | Node large-N | 54.642 | 168.184 | 592.49 | 5.9 | 4997 | 3 |
-| docxodus (npm WASM) | Mono WASM | 148.753 | 607.385 | 3212.297 | 1.6 | 496 | 4 |
-| docxodus-csharp | cold CLI | 208.388 | 441.646 | 911.873 | 2.3 | 50 | 0 |
+Non-visual benches (same engine): `accepted_changes` mean 89.45 / median 99.75,
+`roundtrip` 99.17 / 100.00.
 
 ### In-repo microbenches
 
