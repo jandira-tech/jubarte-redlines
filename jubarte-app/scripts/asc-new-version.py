@@ -13,13 +13,25 @@ Run:  uv run --with cryptography python3 scripts/asc-new-version.py 0.6.2 [--app
 Without --apply every write is printed, nothing is sent.
 """
 
+import importlib.util
 import json
 import sys
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-asc = SourceFileLoader("asc", str(ROOT / ".asc_client.py")).load_module()
+
+
+def _load_asc():
+    path = ROOT / ".asc_client.py"
+    spec = importlib.util.spec_from_file_location("asc", path)
+    if spec is None or spec.loader is None:
+        sys.exit(f"cannot load {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+asc = _load_asc()
 
 APP_ID = "6790926615"
 PLATFORM = "MAC_OS"
@@ -48,7 +60,7 @@ def select_build_for_version(payload, version_string):
     preReleaseVersion. First-VALID-wins attaches the wrong train.
     """
     trains = {
-        item["id"]: item.get("attributes", {}).get("version")
+        item["id"]: item.get("attributes") or {}
         for item in payload.get("included", [])
         if item.get("type") == "preReleaseVersions"
     }
@@ -61,9 +73,13 @@ def select_build_for_version(payload, version_string):
         rel = ((b.get("relationships") or {}).get("preReleaseVersion") or {}).get(
             "data"
         ) or {}
-        train = trains.get(rel.get("id"))
-        if train == version_string:
-            return b["id"], attrs.get("version")
+        train_attrs = trains.get(rel.get("id")) or {}
+        if train_attrs.get("version") != version_string:
+            continue
+        train_plat = train_attrs.get("platform")
+        if train_plat is not None and train_plat != PLATFORM:
+            continue
+        return b["id"], attrs.get("version")
     return None
 
 

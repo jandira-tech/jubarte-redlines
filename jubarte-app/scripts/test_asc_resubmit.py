@@ -8,8 +8,8 @@ only submissions that actually hold this version), and #3691882467 (abort with
 guidance when the API refuses the first-subscription flow) on PR #1.
 """
 
+import importlib.util
 import json
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
@@ -18,7 +18,12 @@ MOD_PATH = Path(__file__).resolve().parent / "asc-resubmit.py"
 
 
 def load_script():
-    return SourceFileLoader("asc_resubmit_under_test", str(MOD_PATH)).load_module()
+    spec = importlib.util.spec_from_file_location("asc_resubmit_under_test", MOD_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {MOD_PATH}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 class FakeAsc:

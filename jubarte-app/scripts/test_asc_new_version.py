@@ -11,14 +11,19 @@ Run with:
     uv run --with pytest,cryptography pytest scripts/test_asc_new_version.py -q
 """
 
-from importlib.machinery import SourceFileLoader
+import importlib.util
 from pathlib import Path
 
 MOD_PATH = Path(__file__).resolve().parent / "asc-new-version.py"
 
 
 def load_script():
-    return SourceFileLoader("asc_new_version_under_test", str(MOD_PATH)).load_module()
+    spec = importlib.util.spec_from_file_location("asc_new_version_under_test", MOD_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {MOD_PATH}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def build(build_id, build_number, train_id, state="VALID"):
@@ -100,3 +105,21 @@ def test_skips_train_match_with_missing_build_number():
     assert chosen is not None
     assert chosen[0] == "BUILD-OK"
     assert chosen[1] == "14"
+
+
+def test_skips_matching_train_on_a_different_platform():
+    """Same marketing version on IOS must not beat the MAC_OS train."""
+    mod = load_script()
+    body = payload(
+        build("BUILD-IOS", "20", "TRAIN-IOS"),
+        build("BUILD-MAC", "15", "TRAIN-MAC"),
+        included=[
+            {**train("TRAIN-IOS", "0.7.0"), "attributes": {"version": "0.7.0", "platform": "IOS"}},
+            train("TRAIN-MAC", "0.7.0"),
+        ],
+    )
+
+    chosen = mod.select_build_for_version(body, "0.7.0")
+
+    assert chosen is not None
+    assert chosen[0] == "BUILD-MAC"
