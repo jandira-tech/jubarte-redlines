@@ -83,3 +83,20 @@ def test_skips_non_valid_build_on_the_requested_train():
 
     assert chosen is not None
     assert chosen[0] == "BUILD-OLD"
+
+
+def test_skips_train_match_with_missing_build_number():
+    """VALID + matching train is not enough if CFBundleVersion is absent."""
+    mod = load_script()
+    body = payload(
+        build("BUILD-NAKED", None, "TRAIN-070"),
+        build("BUILD-EMPTY", "", "TRAIN-070"),
+        build("BUILD-OK", "14", "TRAIN-070"),
+        included=[train("TRAIN-070", "0.7.0")],
+    )
+
+    chosen = mod.select_build_for_version(body, "0.7.0")
+
+    assert chosen is not None
+    assert chosen[0] == "BUILD-OK"
+    assert chosen[1] == "14"

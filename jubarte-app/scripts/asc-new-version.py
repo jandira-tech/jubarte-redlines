@@ -56,6 +56,8 @@ def select_build_for_version(payload, version_string):
         attrs = b.get("attributes") or {}
         if attrs.get("processingState") != "VALID":
             continue
+        if not attrs.get("version"):
+            continue
         rel = ((b.get("relationships") or {}).get("preReleaseVersion") or {}).get(
             "data"
         ) or {}
