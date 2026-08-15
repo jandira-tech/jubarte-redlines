@@ -14,7 +14,7 @@
 
 [package]
 name = "jubarte-app"
-version = "0.6.2"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.88"
 publish = false
@@ -35,7 +35,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-quick-xml = "0.40"
+quick-xml = "0.41"
 # Path to the enclosing engine checkout when this repo is the `jubarte-app`
 # submodule of arthrod/jubarte-rs. Once `jubarte` is on crates.io, prefer:
 #   jubarte = { version = "0.x", default-features = false }

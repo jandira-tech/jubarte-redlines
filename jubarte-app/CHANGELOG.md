@@ -8,6 +8,23 @@ features bump the **minor**, fixes bump the **patch**).
 See [README → Versioning & release](README.md#versioning--release) for how to cut
 a new version.
 
+## [0.7.0] — 2026-08-13
+
+### Changed
+- **Engine upgraded to jubarte-redlines 0.7.0 — now the fastest redline engine
+  as well as the most faithful.** On top of 0.6.0's fidelity lead, 0.7.0 wins
+  every generation-speed measure against docxodus 9.0.0 (median 5.3 ms vs
+  7.2 ms, mean 22.2 ms vs 24.1 ms, p95 94.8 ms vs 96.2 ms, p99 139.7 ms vs
+  179.9 ms, throughput 45.0/s vs 41.4/s, 0 vs 120 generation failures),
+  measured load-fair — every speed change is output-identical to 0.6.0. Also
+  folds in the 0.6.0→0.7.0 correctness batch (M468–M496: mesh ordering,
+  paragraph spacing, style/Normal merge, numbering, images, sections, fields).
+
+### Added
+- **`asc-new-version.py`** — creates and attaches a fresh App Store Connect
+  version through the ASC API, so cutting a store submission no longer requires
+  hand-clicking the version row.
+
 ## [0.6.2] — 2026-08-11
 
 ### Fixed
