@@ -4097,10 +4097,9 @@ fn reresolve_theme_color_hexes(dom: &mut Dom, styles_root: NodeId, theme_xml: &s
             .map_or(theme_xml.len(), |e| i + e)];
         let hex = if let Some(j) = seg.find("srgbClr val=\"") {
             &seg[j + 13..j + 19]
-        } else if let Some(j) = seg.find("lastClr=\"") {
-            &seg[j + 9..j + 15]
         } else {
-            return None;
+            let j = seg.find("lastClr=\"")?;
+            &seg[j + 9..j + 15]
         };
         Some(hex.to_uppercase())
     };
