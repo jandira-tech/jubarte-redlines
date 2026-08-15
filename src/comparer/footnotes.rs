@@ -350,8 +350,7 @@ pub fn copy_missing_numbering(
     let num = W::name("num");
     let abstract_num_id = W::name("abstractNumId");
     let num_id_attr = W::name("numId");
-    let mut num_remap: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    let mut num_remap: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
     let mut max_abstract_num_id = dom
         .elements(to_root, Some(&abstract_num))

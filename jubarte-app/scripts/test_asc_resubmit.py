@@ -9,16 +9,22 @@ guidance when the API refuses the first-subscription flow) on PR #1.
 """
 
 import json
-from importlib.machinery import SourceFileLoader
+import sys
 from pathlib import Path
 
 import pytest
 
-MOD_PATH = Path(__file__).resolve().parent / "asc-resubmit.py"
+SCRIPTS = Path(__file__).resolve().parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from asc_loader import load_module_from_path
+
+MOD_PATH = SCRIPTS / "asc-resubmit.py"
 
 
 def load_script():
-    return SourceFileLoader("asc_resubmit_under_test", str(MOD_PATH)).load_module()
+    return load_module_from_path("asc_resubmit_under_test", MOD_PATH)
 
 
 class FakeAsc:

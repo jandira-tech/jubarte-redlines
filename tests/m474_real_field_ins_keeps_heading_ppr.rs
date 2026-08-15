@@ -42,13 +42,21 @@ fn content_bearing_field_ins_keeps_heading_ppr_and_mark() {
     let p_start = xml.find("SD-2672 plain 3x3").expect("merged para text");
     let p = {
         let before = &xml[..p_start];
-        let ps = before.rfind("<w:p ").into_iter().chain(before.rfind("<w:p>")).max().unwrap();
+        let ps = before
+            .rfind("<w:p ")
+            .into_iter()
+            .chain(before.rfind("<w:p>"))
+            .max()
+            .unwrap();
         let rest = &xml[ps..];
         &rest[..rest.find("</w:p>").unwrap()]
     };
     let ppr = {
         let s = p.find("<w:pPr").expect("pPr present");
-        let e = p.find("</w:pPr>").map(|e| e + 8).unwrap_or(s + p[s..].find('>').unwrap() + 1);
+        let e = p
+            .find("</w:pPr>")
+            .map(|e| e + 8)
+            .unwrap_or(s + p[s..].find('>').unwrap() + 1);
         &p[s..e]
     };
     assert!(

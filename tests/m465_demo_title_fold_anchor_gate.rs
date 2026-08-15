@@ -39,7 +39,9 @@ fn text_of(p: &str) -> String {
         while let Some(i) = r.find(open) {
             let r2 = &r[i..];
             let Some(gt) = r2.find('>') else { break };
-            let Some(end) = r2[gt + 1..].find(close) else { break };
+            let Some(end) = r2[gt + 1..].find(close) else {
+                break;
+            };
             t.push_str(&r2[gt + 1..gt + 1 + end]);
             r = &r2[gt + 1 + end..];
         }

@@ -66,7 +66,10 @@ fn factory_docdefaults_and_style_bake_when_a_has_no_styles() {
     let dd_start = xml.find("<w:docDefaults>").expect("docDefaults");
     let dd_end = xml.find("</w:docDefaults>").expect("docDefaults close");
     let dd = &xml[dd_start..dd_end];
-    assert!(dd.contains("w:kern w:val=\"2\""), "factory kern=2, got: {dd}");
+    assert!(
+        dd.contains("w:kern w:val=\"2\""),
+        "factory kern=2, got: {dd}"
+    );
     assert!(dd.contains("w:sz w:val=\"24\""), "factory sz=24, got: {dd}");
     assert!(
         dd.contains("w:after=\"160\"") && dd.contains("w:line=\"278\""),

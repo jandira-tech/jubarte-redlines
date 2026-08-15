@@ -677,10 +677,11 @@ fn mark_math_revisions_internally(
         .collect();
     for (node, is_ctrl_pr) in targets {
         // Skip runs that already carry a revision mark (defensive).
-        if dom.elements(node, None).iter().any(|&c| {
-            dom.name(c)
-                .is_some_and(|n| n == W::ins() || n == W::del())
-        }) {
+        if dom
+            .elements(node, None)
+            .iter()
+            .any(|&c| dom.name(c).is_some_and(|n| n == W::ins() || n == W::del()))
+        {
             continue;
         }
         let children: Vec<NodeId> = dom.elements(node, None);
