@@ -1,3 +1,7 @@
+# Standalone `arthrod/jubarte-app` workflow, vendored with the app tree.
+# GitHub does not run nested `.github/workflows/` — this file is a no-op on
+# `jandira-tech/jubarte-redlines`. The monorepo CI is the repo-root
+# `.github/workflows/ci.yml`.
 name: CI
 
 on:
@@ -26,15 +30,15 @@ jobs:
       run:
         working-directory: engine/jubarte-app/src-tauri
     steps:
-      - name: Checkout engine (jubarte-rs)
+      - name: Checkout engine (jandira-tech/jubarte-redlines)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: arthrod/jubarte-rs
+          repository: jandira-tech/jubarte-redlines
           path: engine
           persist-credentials: false
-          # Fine-grained PAT with Contents: Read on arthrod/jubarte-rs
-          # (secret JUBARTE_RS_TOKEN). Falls back to github.token when the
-          # workflow is allowed to read that private repo.
+          # Fine-grained PAT with Contents: Read on jandira-tech/jubarte-redlines
+          # (secret JUBARTE_RS_TOKEN, name leftover). Falls back to github.token
+          # when the workflow is allowed to read that repo.
           token: ${{ secrets.JUBARTE_RS_TOKEN || github.token }}
 
       - name: Checkout app into engine/jubarte-app
