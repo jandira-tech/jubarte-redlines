@@ -40,6 +40,31 @@ def mutate(method, path, body=None, ok=(200, 201, 204)):
     return call(method, path, body=body, ok=ok)
 
 
+def select_build_for_version(payload, version_string):
+    """Pick a VALID build whose preReleaseVersion train equals `version_string`.
+
+    `builds.attributes.version` is the CFBundleVersion (build number). The
+    marketing train (CFBundleShortVersionString) is on the included
+    preReleaseVersion. First-VALID-wins attaches the wrong train.
+    """
+    trains = {
+        item["id"]: item.get("attributes", {}).get("version")
+        for item in payload.get("included", [])
+        if item.get("type") == "preReleaseVersions"
+    }
+    for b in payload.get("data", []):
+        attrs = b.get("attributes") or {}
+        if attrs.get("processingState") != "VALID":
+            continue
+        rel = ((b.get("relationships") or {}).get("preReleaseVersion") or {}).get(
+            "data"
+        ) or {}
+        train = trains.get(rel.get("id"))
+        if train == version_string:
+            return b["id"], attrs.get("version")
+    return None
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if not args:
@@ -53,22 +78,17 @@ def main():
         params={
             "filter[app]": APP_ID,
             "filter[processingState]": "VALID",
+            "filter[preReleaseVersion.version]": version_string,
+            "include": "preReleaseVersion",
             "sort": "-uploadedDate",
             "limit": "10",
         },
     )
-    build_id = None
-    for b in builds.get("data", []):
-        if b["attributes"].get("version") and b["attributes"].get("processingState") == "VALID":
-            pre = b.get("relationships", {})
-            # match by the train's version string via preReleaseVersion is
-            # indirect; the CFBundleShortVersionString lives on the train.
-            build_id = b["id"]
-            marketing = b["attributes"].get("version")
-            print(f"  candidate build {build_id} (build number {marketing})")
-            break
-    if not build_id:
-        sys.exit("no VALID build found")
+    chosen = select_build_for_version(builds, version_string)
+    if not chosen:
+        sys.exit(f"no VALID build found for train {version_string}")
+    build_id, marketing = chosen
+    print(f"  candidate build {build_id} (build number {marketing})")
 
     print(f"2/4  Create appStoreVersion {version_string}")
     resp = mutate(

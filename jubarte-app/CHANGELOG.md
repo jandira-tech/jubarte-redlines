@@ -21,9 +21,17 @@ a new version.
   paragraph spacing, style/Normal merge, numbering, images, sections, fields).
 
 ### Added
-- **`asc-new-version.py`** — creates and attaches a fresh App Store Connect
-  version through the ASC API, so cutting a store submission no longer requires
-  hand-clicking the version row.
+- Changelog catch-up for **`asc-new-version.py`** (script already on main
+  since `2de7e3a`, missed the 0.6.2 notes): creates and attaches a fresh
+  App Store Connect version through the ASC API, so cutting a store
+  submission no longer requires hand-clicking the version row.
+
+### Fixed
+- **`asc-new-version.py` attaches the matching marketing train.** It no
+  longer picks the newest `VALID` build regardless of
+  `CFBundleShortVersionString` (build `attributes.version` is the build
+  number). Selection now requires an included `preReleaseVersion` whose
+  version equals the requested train.
 
 ## [0.6.2] — 2026-08-11
 
