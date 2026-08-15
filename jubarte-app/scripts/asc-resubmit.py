@@ -13,24 +13,13 @@ printed as a plan instead of executed (reads still run, so the plan reflects
 live state).
 """
 
-import importlib.util
 import sys
 from pathlib import Path
 
+from asc_loader import load_asc
+
 ROOT = Path(__file__).resolve().parent.parent
-
-
-def _load_asc():
-    path = ROOT / ".asc_client.py"
-    spec = importlib.util.spec_from_file_location("asc", path)
-    if spec is None or spec.loader is None:
-        sys.exit(f"cannot load {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-asc = _load_asc()
+asc = load_asc(ROOT)
 
 APP_ID = "6790926615"
 VERSION_ID = "a0194c95-7621-42b7-9e73-ec210f1c3fc5"

@@ -13,25 +13,14 @@ Run:  uv run --with cryptography python3 scripts/asc-new-version.py 0.6.2 [--app
 Without --apply every write is printed, nothing is sent.
 """
 
-import importlib.util
 import json
 import sys
 from pathlib import Path
 
+from asc_loader import load_asc
+
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _load_asc():
-    path = ROOT / ".asc_client.py"
-    spec = importlib.util.spec_from_file_location("asc", path)
-    if spec is None or spec.loader is None:
-        sys.exit(f"cannot load {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-asc = _load_asc()
+asc = load_asc(ROOT)
 
 APP_ID = "6790926615"
 PLATFORM = "MAC_OS"
