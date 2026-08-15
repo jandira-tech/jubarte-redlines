@@ -63,8 +63,8 @@ fn ins_mark_paragraph_never_holds_only_deleted_content() {
     f.read_to_string(&mut xml).unwrap();
 
     for p in body_paras(&xml) {
-        let mark_ins = p.contains("<w:rPr><w:ins ")
-            || p.contains("<w:rPr>\n") && p.contains("<w:ins ");
+        let mark_ins =
+            p.contains("<w:rPr><w:ins ") || p.contains("<w:rPr>\n") && p.contains("<w:ins ");
         let has_ins_text = {
             // any w:t inside a w:ins block
             let mut found = false;

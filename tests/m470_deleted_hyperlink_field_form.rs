@@ -41,7 +41,10 @@ fn deleted_toc_hyperlink_keeps_field_form() {
     let i = xml
         .find("aliqua eiusmod elit elit consectetur")
         .expect("deleted TOC text present");
-    let start = xml[..i].rfind("<w:p ").or_else(|| xml[..i].rfind("<w:p>")).unwrap();
+    let start = xml[..i]
+        .rfind("<w:p ")
+        .or_else(|| xml[..i].rfind("<w:p>"))
+        .unwrap();
     let end = xml[i..].find("</w:p>").map(|j| i + j + 6).unwrap();
     let para = &xml[start..end];
 
@@ -61,5 +64,8 @@ fn deleted_toc_hyperlink_keeps_field_form() {
         begins >= 2 && seps >= 2,
         "expected HYPERLINK + PAGEREF field chars, got begins={begins} seps={seps}"
     );
-    assert_eq!(begins, ends, "field chars must balance: begins={begins} ends={ends}");
+    assert_eq!(
+        begins, ends,
+        "field chars must balance: begins={begins} ends={ends}"
+    );
 }

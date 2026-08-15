@@ -395,8 +395,7 @@ fn merge_normal_style_spacing(
     // where Word still tracks dd spacing in pPrChange next to rPrChange —
     // and except a live `before` delta (M479), which must be written even
     // when after/line need nothing.
-    if b_target.is_none() && a_stored.is_none() && !m106_same_dd_clear && target_before.is_empty()
-    {
+    if b_target.is_none() && a_stored.is_none() && !m106_same_dd_clear && target_before.is_empty() {
         return false;
     }
     // Old value = A's stored pPr (empty w:pPr when absent), captured before
@@ -1261,7 +1260,8 @@ fn merge_revised_style_definitions(
                 sp_deltas.push((attr, bv));
             }
         }
-        let b_line_rule = b_sp.and_then(|s| dom.attribute(s, &W::name("lineRule")).map(str::to_string));
+        let b_line_rule =
+            b_sp.and_then(|s| dom.attribute(s, &W::name("lineRule")).map(str::to_string));
         // Output-stylesheet basedOn chains, for "does the declared chain
         // already provide this attr" checks.
         let out_by_id: std::collections::HashMap<String, NodeId> = dom
@@ -1476,8 +1476,7 @@ fn merge_revised_style_definitions(
                         };
                         if dom.attribute(sp, &W::name(attr)).is_none() {
                             dom.set_attribute_value(sp, &W::name(attr), Some(bv));
-                            if *attr == "line"
-                                && dom.attribute(sp, &W::name("lineRule")).is_none()
+                            if *attr == "line" && dom.attribute(sp, &W::name("lineRule")).is_none()
                             {
                                 let rule = b_line_rule.as_deref().unwrap_or("auto");
                                 dom.set_attribute_value(sp, &W::name("lineRule"), Some(rule));
@@ -4093,7 +4092,9 @@ fn adopt_b_notes_when_a_lacks_separators(
 fn reresolve_theme_color_hexes(dom: &mut Dom, styles_root: NodeId, theme_xml: &str) -> bool {
     let slot_hex = |slot: &str| -> Option<String> {
         let i = theme_xml.find(&format!("<a:{slot}>"))?;
-        let seg = &theme_xml[i..theme_xml[i..].find(&format!("</a:{slot}>")).map_or(theme_xml.len(), |e| i + e)];
+        let seg = &theme_xml[i..theme_xml[i..]
+            .find(&format!("</a:{slot}>"))
+            .map_or(theme_xml.len(), |e| i + e)];
         let hex = if let Some(j) = seg.find("srgbClr val=\"") {
             &seg[j + 13..j + 19]
         } else if let Some(j) = seg.find("lastClr=\"") {
@@ -4134,7 +4135,11 @@ fn reresolve_theme_color_hexes(dom: &mut Dom, styles_root: NodeId, theme_xml: &s
             (0.0, 0.0)
         } else {
             let d = mx - mn;
-            let s = if l > 0.5 { d / (2.0 - mx - mn) } else { d / (mx + mn) };
+            let s = if l > 0.5 {
+                d / (2.0 - mx - mn)
+            } else {
+                d / (mx + mn)
+            };
             let h = if (mx - r).abs() < 1e-9 {
                 ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
             } else if (mx - g).abs() < 1e-9 {
@@ -4144,21 +4149,42 @@ fn reresolve_theme_color_hexes(dom: &mut Dom, styles_root: NodeId, theme_xml: &s
             };
             (h, s)
         };
-        let l2 = if toward_white { 1.0 - (1.0 - l) * f } else { l * f };
+        let l2 = if toward_white {
+            1.0 - (1.0 - l) * f
+        } else {
+            l * f
+        };
         let hue = |p: f64, q: f64, mut t: f64| -> f64 {
-            if t < 0.0 { t += 1.0 }
-            if t > 1.0 { t -= 1.0 }
-            if t < 1.0 / 6.0 { p + (q - p) * 6.0 * t }
-            else if t < 0.5 { q }
-            else if t < 2.0 / 3.0 { p + (q - p) * (2.0 / 3.0 - t) * 6.0 }
-            else { p }
+            if t < 0.0 {
+                t += 1.0;
+            }
+            if t > 1.0 {
+                t -= 1.0;
+            }
+            if t < 1.0 / 6.0 {
+                p + (q - p) * 6.0 * t
+            } else if t < 0.5 {
+                q
+            } else if t < 2.0 / 3.0 {
+                p + (q - p) * (2.0 / 3.0 - t) * 6.0
+            } else {
+                p
+            }
         };
         let (r2, g2, b2) = if s.abs() < 1e-9 {
             (l2, l2, l2)
         } else {
-            let q = if l2 < 0.5 { l2 * (1.0 + s) } else { l2 + s - l2 * s };
+            let q = if l2 < 0.5 {
+                l2 * (1.0 + s)
+            } else {
+                l2 + s - l2 * s
+            };
             let p = 2.0 * l2 - q;
-            (hue(p, q, h + 1.0 / 3.0), hue(p, q, h), hue(p, q, h - 1.0 / 3.0))
+            (
+                hue(p, q, h + 1.0 / 3.0),
+                hue(p, q, h),
+                hue(p, q, h - 1.0 / 3.0),
+            )
         };
         Some(
             [r2, g2, b2]
@@ -4882,8 +4908,7 @@ fn compare_documents_impl(
                 if let Some(r) = ad.root(d) {
                     let w14_pid = crate::namespaces::W14::name("paraId");
                     for pnode in ad.descendants(r, Some(&W::p())) {
-                        let Some(pid) = ad.attribute(pnode, &w14_pid).map(str::to_string)
-                        else {
+                        let Some(pid) = ad.attribute(pnode, &w14_pid).map(str::to_string) else {
                             continue;
                         };
                         if let Some(ppr) = ad.element(pnode, &W::p_pr())
@@ -4908,11 +4933,12 @@ fn compare_documents_impl(
                     let w14_pid = crate::namespaces::W14::name("paraId");
                     let mut changed = false;
                     for pnode in pd.descendants(root, Some(&W::p())) {
-                        let Some(pid) = pd.attribute(pnode, &w14_pid).map(str::to_string)
-                        else {
+                        let Some(pid) = pd.attribute(pnode, &w14_pid).map(str::to_string) else {
                             continue;
                         };
-                        let Some(attrs) = a_spacing.get(&pid) else { continue };
+                        let Some(attrs) = a_spacing.get(&pid) else {
+                            continue;
+                        };
                         let Some(ppr) = pd.element(pnode, &W::p_pr()) else {
                             continue;
                         };
@@ -4953,7 +4979,7 @@ fn compare_documents_impl(
                 bd.root(d)
                     .and_then(|r| bd.element(r, &W::body()))
                     .and_then(|body| {
-                        let mut bdom = bd;
+                        let bdom = bd;
                         let paras: Vec<NodeId> = bdom
                             .elements(body, None)
                             .into_iter()
@@ -4978,8 +5004,7 @@ fn compare_documents_impl(
                         .collect();
                     let w14_pid = crate::namespaces::W14::name("paraId");
                     let target = paras.iter().enumerate().find(|&(i, &p)| {
-                        i + 1 != paras.len()
-                            && pd.attribute(p, &w14_pid) == Some(bf.as_str())
+                        i + 1 != paras.len() && pd.attribute(p, &w14_pid) == Some(bf.as_str())
                     });
                     if let Some((idx, &p)) = target {
                         let is_ins_empty = |pd: &Dom, q: NodeId| {
@@ -5021,8 +5046,7 @@ fn compare_documents_impl(
                         // a LONE inserted empty spacer stays — Word keeps it
                         // under another identity (file_82 × file_83, M389:
                         // stripping it cost −18.9).
-                        let prev_also_empty =
-                            idx > 0 && is_ins_empty(&pd, paras[idx - 1]);
+                        let prev_also_empty = idx > 0 && is_ins_empty(&pd, paras[idx - 1]);
                         if is_ins_empty(&pd, p) && prev_also_empty {
                             pd.remove(p);
                             out.set_part(&main1, pd.serialize_element(root).into_bytes());
@@ -5172,14 +5196,15 @@ fn compare_documents_impl(
             // content-ceiling for the pair 44.83 → 100.00). The M480
             // neutralizer principle at the document.xml level.
             {
-                let index = |dom: &Dom, root: NodeId| -> std::collections::HashMap<String, NodeId> {
-                    dom.elements(root, Some(&W::name("style")))
-                        .into_iter()
-                        .filter_map(|s| {
-                            Some((dom.attribute(s, &W::name("styleId"))?.to_string(), s))
-                        })
-                        .collect()
-                };
+                let index =
+                    |dom: &Dom, root: NodeId| -> std::collections::HashMap<String, NodeId> {
+                        dom.elements(root, Some(&W::name("style")))
+                            .into_iter()
+                            .filter_map(|s| {
+                                Some((dom.attribute(s, &W::name("styleId"))?.to_string(), s))
+                            })
+                            .collect()
+                    };
                 let out_idx = index(&sd, or);
                 let b_idx = index(&sd, br);
                 let b_default = {
@@ -5193,9 +5218,7 @@ fn compare_documents_impl(
                                         Some("1") | Some("true")
                                     )
                             })
-                            .and_then(|s| {
-                                dom.attribute(s, &W::name("styleId")).map(str::to_string)
-                            })
+                            .and_then(|s| dom.attribute(s, &W::name("styleId")).map(str::to_string))
                     };
                     dp(&sd, br)
                 };
@@ -5284,7 +5307,13 @@ fn compare_documents_impl(
                                 Some(s) => s,
                                 None => {
                                     let s = pd.new_element(W::name("spacing"));
-                                    insert_child_by_rank(&mut pd, ppr, s, "spacing", &ppr_child_rank);
+                                    insert_child_by_rank(
+                                        &mut pd,
+                                        ppr,
+                                        s,
+                                        "spacing",
+                                        &ppr_child_rank,
+                                    );
                                     s
                                 }
                             };

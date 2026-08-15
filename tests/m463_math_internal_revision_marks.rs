@@ -23,9 +23,7 @@ use jubarte::document_comparer::compare_documents;
 fn last_tag_before(hay: &str, i: usize) -> &str {
     let start = hay[..i].rfind('<').unwrap_or(0);
     let rest = &hay[start..i];
-    let end = rest
-        .find([' ', '>', '/'])
-        .unwrap_or(rest.len());
+    let end = rest.find([' ', '>', '/']).unwrap_or(rest.len());
     &rest[..end]
 }
 
