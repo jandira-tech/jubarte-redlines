@@ -90,6 +90,10 @@ fn shipped_docx_to_pdf_writes_real_pdf_with_a_page() {
     );
     let text = String::from_utf8_lossy(&pdf);
     assert!(text.contains("/Producer (jubarte)"), "must not be soffice");
+    assert!(
+        text.contains("/FontFile2"),
+        "must embed a TrueType face (Carlito/Liberation), not Helvetica"
+    );
 }
 
 #[test]
