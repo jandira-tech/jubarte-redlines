@@ -24,6 +24,13 @@ pub(crate) enum Op {
         width: f32,
         color: [f32; 3],
     },
+    FillRect {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: [f32; 3],
+    },
     Jpeg {
         x: f32,
         y: f32,
@@ -44,12 +51,24 @@ pub(crate) enum Op {
     },
 }
 
-/// One finished page.
+/// One finished page, with the section `pgSz` it was laid out against.
 pub(crate) struct Page {
     pub ops: Vec<Op>,
+    pub width: f32,
+    pub height: f32,
 }
 
-pub(crate) fn emit(width: f32, height: f32, fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
+impl Page {
+    pub(crate) fn new(width: f32, height: f32) -> Self {
+        Self {
+            ops: Vec::new(),
+            width,
+            height,
+        }
+    }
+}
+
+pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
     let used: Vec<FaceId> = {
         let mut seen = Vec::new();
         for page in pages {
@@ -175,6 +194,14 @@ pub(crate) fn emit(width: f32, height: f32, fonts: &Fonts, pages: &[Page]) -> Ve
                         b = color[2],
                     ));
                 }
+                Op::FillRect { x, y, w, h, color } => {
+                    stream.push_str(&format!(
+                        "{r:.3} {g:.3} {b:.3} rg {x:.2} {y:.2} {w:.2} {h:.2} re f\n",
+                        r = color[0],
+                        g = color[1],
+                        b = color[2],
+                    ));
+                }
                 Op::Jpeg { .. } | Op::Rgb { .. } => {}
             }
         }
@@ -185,9 +212,11 @@ pub(crate) fn emit(width: f32, height: f32, fonts: &Fonts, pages: &[Page]) -> Ve
         page_ids.push(page_id);
         objs.push(
             format!(
-                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width:.2} {height:.2}] \
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w:.2} {h:.2}] \
                    /Contents {content_id} 0 R \
-                   /Resources << /Font << {font_res} >> /XObject << {xobjects} >> >> >>"
+                   /Resources << /Font << {font_res} >> /XObject << {xobjects} >> >> >>",
+                w = page.width,
+                h = page.height,
             )
             .into_bytes(),
         );

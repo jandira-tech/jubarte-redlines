@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Bundled metric-compatible faces (Carlito = Calibri, Liberation = Arial/Times)
-//! plus glyph advances for wrap and PDF embedding.
+//! Bundled metric-compatible faces (Carlito = Calibri, Liberation Sans/Serif =
+//! Arial/Times, Liberation Mono = Courier) plus glyph advances for wrap and
+//! PDF embedding.
 
 use std::collections::HashMap;
 
@@ -22,10 +23,14 @@ pub(crate) enum FaceId {
     SerifBold,
     SerifItalic,
     SerifBoldItalic,
+    MonoRegular,
+    MonoBold,
+    MonoItalic,
+    MonoBoldItalic,
 }
 
 impl FaceId {
-    pub(crate) fn all() -> [Self; 12] {
+    pub(crate) fn all() -> [Self; 16] {
         [
             Self::CarlitoRegular,
             Self::CarlitoBold,
@@ -39,6 +44,10 @@ impl FaceId {
             Self::SerifBold,
             Self::SerifItalic,
             Self::SerifBoldItalic,
+            Self::MonoRegular,
+            Self::MonoBold,
+            Self::MonoItalic,
+            Self::MonoBoldItalic,
         ]
     }
 
@@ -60,6 +69,12 @@ impl FaceId {
             Self::SerifBoldItalic => {
                 include_bytes!("../../assets/fonts/LiberationSerif-BoldItalic.ttf")
             }
+            Self::MonoRegular => include_bytes!("../../assets/fonts/LiberationMono-Regular.ttf"),
+            Self::MonoBold => include_bytes!("../../assets/fonts/LiberationMono-Bold.ttf"),
+            Self::MonoItalic => include_bytes!("../../assets/fonts/LiberationMono-Italic.ttf"),
+            Self::MonoBoldItalic => {
+                include_bytes!("../../assets/fonts/LiberationMono-BoldItalic.ttf")
+            }
         }
     }
 
@@ -77,6 +92,10 @@ impl FaceId {
             Self::SerifBold => "LiberationSerif-Bold",
             Self::SerifItalic => "LiberationSerif-Italic",
             Self::SerifBoldItalic => "LiberationSerif-BoldItalic",
+            Self::MonoRegular => "LiberationMono",
+            Self::MonoBold => "LiberationMono-Bold",
+            Self::MonoItalic => "LiberationMono-Italic",
+            Self::MonoBoldItalic => "LiberationMono-BoldItalic",
         }
     }
 }
@@ -199,7 +218,7 @@ impl Face {
     }
 }
 
-/// Catalogue of the 12 bundled faces.
+/// Catalogue of the 16 bundled faces.
 pub(crate) struct Fonts {
     faces: HashMap<FaceId, Face>,
 }
@@ -222,29 +241,43 @@ impl Fonts {
             .to_ascii_lowercase()
             .replace([' ', '-'], "")
             .replace("mt", "");
+        let mono = key.contains("courier")
+            || key.contains("consolas")
+            || key.contains("monaco")
+            || key.contains("menlo")
+            || key.contains("cousine")
+            || key.contains("nimbusmono")
+            || key.ends_with("mono");
         let sans = key.contains("arial")
             || key.contains("helvetica")
             || key.contains("liberationsans")
-            || key.contains("sansserif");
+            || key.contains("sansserif")
+            || key.starts_with("aptos");
         let serif = key.contains("times")
             || key.contains("georgia")
             || key.contains("cambria")
             || key.contains("caladea")
             || key.contains("liberationserif")
+            || key == "inter"
+            || key.starts_with("inter")
             || key.contains("serif") && !key.contains("sans");
-        match (sans, serif, bold, italic) {
-            (true, _, false, false) => FaceId::SansRegular,
-            (true, _, true, false) => FaceId::SansBold,
-            (true, _, false, true) => FaceId::SansItalic,
-            (true, _, true, true) => FaceId::SansBoldItalic,
-            (_, true, false, false) => FaceId::SerifRegular,
-            (_, true, true, false) => FaceId::SerifBold,
-            (_, true, false, true) => FaceId::SerifItalic,
-            (_, true, true, true) => FaceId::SerifBoldItalic,
-            (_, _, false, false) => FaceId::CarlitoRegular,
-            (_, _, true, false) => FaceId::CarlitoBold,
-            (_, _, false, true) => FaceId::CarlitoItalic,
-            (_, _, true, true) => FaceId::CarlitoBoldItalic,
+        match (mono, sans, serif, bold, italic) {
+            (true, _, _, false, false) => FaceId::MonoRegular,
+            (true, _, _, true, false) => FaceId::MonoBold,
+            (true, _, _, false, true) => FaceId::MonoItalic,
+            (true, _, _, true, true) => FaceId::MonoBoldItalic,
+            (_, true, _, false, false) => FaceId::SansRegular,
+            (_, true, _, true, false) => FaceId::SansBold,
+            (_, true, _, false, true) => FaceId::SansItalic,
+            (_, true, _, true, true) => FaceId::SansBoldItalic,
+            (_, _, true, false, false) => FaceId::SerifRegular,
+            (_, _, true, true, false) => FaceId::SerifBold,
+            (_, _, true, false, true) => FaceId::SerifItalic,
+            (_, _, true, true, true) => FaceId::SerifBoldItalic,
+            (_, _, _, false, false) => FaceId::CarlitoRegular,
+            (_, _, _, true, false) => FaceId::CarlitoBold,
+            (_, _, _, false, true) => FaceId::CarlitoItalic,
+            (_, _, _, true, true) => FaceId::CarlitoBoldItalic,
         }
     }
 }
