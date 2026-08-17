@@ -3020,7 +3020,7 @@ fn del_and_ins_paint_revision_colors() {
     assert!(
         text.contains("0.753 0.565 0.000"),
         "same-author del/ins must paint soffice gold; pdf snippet {}",
-        &text[text.find("rg").unwrap_or(0)..]
+        text[text.find("rg").unwrap_or(0)..]
             .chars()
             .take(200)
             .collect::<String>()

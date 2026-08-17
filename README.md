@@ -85,6 +85,7 @@ jubarte -b old.docx -m new.docx -o redline.docx --author "Legal"
 jubarte revisions redline.docx --json     # list tracked revisions
 jubarte accept redline.docx -o final.docx # accept every revision
 jubarte reject redline.docx -o clean.docx # reject every revision
+jubarte convert contract.docx             # independent DOCX → PDF
 ```
 
 Run `jubarte --help` for author/date stamping, `--detail-threshold`, and
@@ -98,6 +99,7 @@ Run `jubarte --help` for author/date stamping, `--detail-threshold`, and
 | `document_comparer::compare_documents_with_settings` | Same with `WmlComparerSettings` |
 | `document_comparer::get_revisions` | Inspect tracked changes |
 | `document_comparer::accept_revisions` / `reject_revisions` | Flatten a redline |
+| `convert::docx_to_pdf` | Independent DOCX → PDF (not LibreOffice) |
 
 ### Feature flags
 
