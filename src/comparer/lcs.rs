@@ -761,10 +761,7 @@ fn extend_common_run(
     // 128-bit fingerprint compare == `sha1_key()==sha1_key() && sha1()==sha1()`
     // (equal hashes always share the fingerprint; distinct hashes collide at
     // ~2^-128), without the per-step 40-byte hex memcmp.
-    while t1 < cul1.len()
-        && t2 < cul2.len()
-        && cul1[t1].sha1_key128() == cul2[t2].sha1_key128()
-    {
+    while t1 < cul1.len() && t2 < cul2.len() && cul1[t1].sha1_key128() == cul2[t2].sha1_key128() {
         t1 += 1;
         t2 += 1;
         len += 1;
@@ -941,10 +938,7 @@ fn longest_common_run_indexed(
             // shared passages. The full sha1() check (not just the u64 key)
             // mirrors extend_common_run, so a u64 key collision at the
             // predecessor never triggers a wrongful skip.
-            if i1 > 0
-                && i2 > 0
-                && cul1[i1 - 1].sha1_key128() == cul2[i2 - 1].sha1_key128()
-            {
+            if i1 > 0 && i2 > 0 && cul1[i1 - 1].sha1_key128() == cul2[i2 - 1].sha1_key128() {
                 continue;
             }
             let len = extend_common_run(cul1, cul2, i1, i2);
@@ -5293,9 +5287,10 @@ fn has_common_run_ge(left: &[ComparisonUnit], right: &[ComparisonUnit], target: 
         }
         hashes
     };
-    let right_set: std::collections::HashSet<u64> =
-        window_hashes(right).into_iter().collect();
-    window_hashes(left).into_iter().any(|h| right_set.contains(&h))
+    let right_set: std::collections::HashSet<u64> = window_hashes(right).into_iter().collect();
+    window_hashes(left)
+        .into_iter()
+        .any(|h| right_set.contains(&h))
 }
 
 /// Returns `Some([Inserted, Deleted])` in Word order, or `None` to fall through
@@ -6793,8 +6788,7 @@ pub fn detect_unrelated_sources_word_mode(
                 .map(ComparisonUnit::sha1_key128)
                 .collect();
             !left.iter().any(|u| {
-                matches!(u, ComparisonUnit::Group(_))
-                    && right_group_keys.contains(&u.sha1_key128())
+                matches!(u, ComparisonUnit::Group(_)) && right_group_keys.contains(&u.sha1_key128())
             })
         }
         && {

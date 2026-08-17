@@ -15,6 +15,24 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-16
+
+Independent DOCX → PDF converter. Redline output is unchanged from 0.7.0.
+
+### Added
+
+- **`jubarte convert` / `convert::docx_to_pdf`.** Emit a real multi-page PDF
+  from DOCX bytes without LibreOffice: paragraphs, lists, tables, JPEG/PNG,
+  headers/footers, and WMF/EMF rasterization. Layout aims at soffice visual
+  parity — Carlito/Liberation (the metric-compatible faces LibreOffice
+  embeds), rustybuzz shaping, `sectPr` page geometry, and named-style
+  resolution.
+
+### Fixed
+
+- Clippy 1.97 `question_mark` on the theme `lastClr` fallback.
+- rustfmt across comparer / `document_comparer`.
+
 ## [0.7.0] - 2026-08-13
 
 **Jubarte now wins on speed as well as quality.** 0.6.0 already led every
@@ -248,6 +266,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.7.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.1
 [0.7.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.0
 [0.6.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.6.0
 [0.5.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.5.1

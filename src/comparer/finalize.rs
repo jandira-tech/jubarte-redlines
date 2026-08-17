@@ -1271,9 +1271,9 @@ fn wrap_revised_hyperlink_as_field(dom: &mut Dom, hl: NodeId) {
     });
     let has_del_text = !dom.descendants(hl, Some(&W::del_text())).is_empty();
     let has_ins = !dom.descendants(hl, Some(&W::ins())).is_empty();
-    let parent_rev = dom.parent(hl).filter(|&p| {
-        dom.name_is(p, &W::del()) || dom.name_is(p, &W::ins())
-    });
+    let parent_rev = dom
+        .parent(hl)
+        .filter(|&p| dom.name_is(p, &W::del()) || dom.name_is(p, &W::ins()));
     // Classify: deleted (delText, no live text), inserted (all under ins),
     // or the hyperlink itself sits inside a revision wrapper.
     let (is_del, is_ins) = if let Some(p) = parent_rev {
@@ -3547,15 +3547,20 @@ pub fn rotate_ins_mark_del_only_paragraph(dom: &mut Dom, root: NodeId) {
             }
             // --- rewrite ---
             // Pi mark MD → MI (copy attrs).
-            let flip_mark = |dom: &mut Dom, p: NodeId, from: &crate::xmllinq::XName, to: crate::xmllinq::XName| {
-                let Some(ppr) = dom.element(p, &W::p_pr()) else { return };
-                let Some(rpr) = dom.element(ppr, &W::r_pr()) else { return };
-                let Some(old) = dom.element(rpr, from) else { return };
-                let attrs: Vec<_> = dom
-                    .attributes(old)
-                    .into_iter()
-                    .map(|(n, v)| (n, v))
-                    .collect();
+            let flip_mark = |dom: &mut Dom,
+                             p: NodeId,
+                             from: &crate::xmllinq::XName,
+                             to: crate::xmllinq::XName| {
+                let Some(ppr) = dom.element(p, &W::p_pr()) else {
+                    return;
+                };
+                let Some(rpr) = dom.element(ppr, &W::r_pr()) else {
+                    return;
+                };
+                let Some(old) = dom.element(rpr, from) else {
+                    return;
+                };
+                let attrs: Vec<_> = dom.attributes(old).into_iter().collect();
                 dom.remove(old);
                 let neu = dom.new_element(to);
                 for (n, v) in attrs {
@@ -3637,10 +3642,10 @@ pub fn restamp_stranded_del_mark_onto_del_only_paragraph(dom: &mut Dom, root: No
             if para_mark_revision(dom, p0, &W::del()) || para_mark_revision(dom, p0, &W::ins()) {
                 continue;
             }
-            if let Some(ppr) = dom.element(p0, &W::p_pr()) {
-                if !dom.elements(ppr, None).is_empty() {
-                    continue;
-                }
+            if let Some(ppr) = dom.element(p0, &W::p_pr())
+                && !dom.elements(ppr, None).is_empty()
+            {
+                continue;
             }
             let c0: Vec<NodeId> = dom
                 .elements(p0, None)
@@ -3724,7 +3729,10 @@ pub fn split_head_short_title_long_del_mix(dom: &mut Dom, root: NodeId) {
         .into_iter()
         .filter(|&c| !dom.name_is(c, &W::p_pr()))
         .collect();
-    if kids.is_empty() || para_mark_revision(dom, first, &W::ins()) || para_mark_revision(dom, first, &W::del()) {
+    if kids.is_empty()
+        || para_mark_revision(dom, first, &W::ins())
+        || para_mark_revision(dom, first, &W::del())
+    {
         return;
     }
     let mut ins_run = Vec::new();
@@ -3768,8 +3776,11 @@ pub fn split_head_short_title_long_del_mix(dom: &mut Dom, root: NodeId) {
         return;
     }
     // No shared significant token (len≥4) — unrelated titles only.
-    let dset: std::collections::HashSet<&str> =
-        dt.iter().map(String::as_str).filter(|t| t.len() >= 4).collect();
+    let dset: std::collections::HashSet<&str> = dt
+        .iter()
+        .map(String::as_str)
+        .filter(|t| t.len() >= 4)
+        .collect();
     if it.iter().any(|t| t.len() >= 4 && dset.contains(t.as_str())) {
         return;
     }
@@ -3780,7 +3791,10 @@ pub fn split_head_short_title_long_del_mix(dom: &mut Dom, root: NodeId) {
     let max_id: u32 = dom
         .descendants(root, None)
         .into_iter()
-        .filter_map(|e| dom.attribute(e, &W::id()).and_then(|v| v.parse::<u32>().ok()))
+        .filter_map(|e| {
+            dom.attribute(e, &W::id())
+                .and_then(|v| v.parse::<u32>().ok())
+        })
         .max()
         .unwrap_or(0);
     let np = dom.new_element(W::p());
@@ -5667,8 +5681,7 @@ fn para_is_field_residue(dom: &Dom, p: NodeId) -> bool {
     if dom.descendants(p, Some(&W::name("fldChar"))).is_empty() {
         return false;
     }
-    !dom
-        .descendants(p, Some(&W::t()))
+    !dom.descendants(p, Some(&W::t()))
         .iter()
         .any(|&t| !dom.value_str(t).trim().is_empty())
 }
@@ -6485,17 +6498,16 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // M360: a TOC/field residue pure-I (fldChar) merged with a
                 // Heading/Title pure-D keeps a bare pPr — never the Heading
                 // pStyle (table_border×toc SD-2343 title, pagefair −11).
-                let m360_fld_x_heading =
-                    para_is_field_residue(dom, ins_p)
-                        && dom.element(d, &W::p_pr()).is_some_and(|dp| {
-                            dom.element(dp, &W::p_style()).is_some_and(|ps| {
-                                let v = dom
-                                    .attribute(ps, &W::val())
-                                    .unwrap_or("")
-                                    .to_ascii_lowercase();
-                                v == "title" || v.starts_with("heading")
-                            })
-                        });
+                let m360_fld_x_heading = para_is_field_residue(dom, ins_p)
+                    && dom.element(d, &W::p_pr()).is_some_and(|dp| {
+                        dom.element(dp, &W::p_style()).is_some_and(|ps| {
+                            let v = dom
+                                .attribute(ps, &W::val())
+                                .unwrap_or("")
+                                .to_ascii_lowercase();
+                            v == "title" || v.starts_with("heading")
+                        })
+                    });
                 if ins_struct {
                     if let Some(ppr) = dom.element(ins_p, &W::p_pr()) {
                         let c = dom.clone_subtree(ppr);
@@ -11128,7 +11140,10 @@ pub fn fold_boiler_eq_between_ins(dom: &mut Dom, root: NodeId) {
         // tracked format change (rPrChange, e.g. strike+bold heading residual)
         // is NOT a bare EQ — Word keeps it live; merging it into the del text
         // would drop the format-change record.
-        if !dom.descendants(last, Some(&W::name("rPrChange"))).is_empty() {
+        if !dom
+            .descendants(last, Some(&W::name("rPrChange")))
+            .is_empty()
+        {
             continue;
         }
         let prev = body_kids[body_kids.len() - 2];
