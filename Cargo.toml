@@ -80,7 +80,7 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # 
 sha1 = "0.10"
 ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)
 rustybuzz = "0.20" # HarfBuzz-compatible shaping so advances match soffice
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] } # raster images in the PDF writer
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff"] } # raster images in the PDF writer
 clap = { version = "4.5", features = ["derive"], optional = true }
 # CLI-only global allocator. The redline pipeline is ~41% allocation self-time
 # (xmllinq node clone/drop churn, measured via samply on the RFP17 fixtures);

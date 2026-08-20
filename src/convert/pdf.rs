@@ -4,7 +4,7 @@
 
 //! PDF 1.4 writer: embedded TTF (Identity-H), stroked rules, JPEG/RGB images.
 
-use super::font::{FaceId, Fonts};
+use super::font::{FaceId, Fonts, word_device_paint, word_device_track};
 
 /// One drawing command on a page (PDF user space, origin bottom-left).
 pub(crate) enum Op {
@@ -15,6 +15,10 @@ pub(crate) enum Op {
         y: f32,
         glyphs: Vec<u16>,
         color: [f32; 3],
+        /// Source characters. When every char is WinAnsi, the writer emits a
+        /// simple TrueType font like Word Quartz (hinted by MuPDF). Empty or
+        /// non-WinAnsi text stays on Identity-H CID.
+        text: String,
     },
     Line {
         x1: f32,
@@ -49,6 +53,17 @@ pub(crate) enum Op {
         height: u32,
         bytes: Vec<u8>,
     },
+    /// Behind-doc Word watermark (header SDT gallery=Watermarks).
+    Watermark {
+        face: FaceId,
+        size: f32,
+        x: f32,
+        y: f32,
+        glyphs: Vec<u16>,
+        color: [f32; 3],
+        text: String,
+        rotate_deg: f32,
+    },
 }
 
 /// One finished page, with the section `pgSz` it was laid out against.
@@ -68,12 +83,34 @@ impl Page {
     }
 }
 
+impl Op {
+    pub(crate) fn text(
+        face: FaceId,
+        size: f32,
+        x: f32,
+        y: f32,
+        glyphs: Vec<u16>,
+        color: [f32; 3],
+        text: impl Into<String>,
+    ) -> Self {
+        Self::Text {
+            face,
+            size,
+            x,
+            y,
+            glyphs,
+            color,
+            text: text.into(),
+        }
+    }
+}
+
 pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
     let used: Vec<FaceId> = {
         let mut seen = Vec::new();
         for page in pages {
             for op in &page.ops {
-                if let Op::Text { face, .. } = op
+                if let Op::Text { face, .. } | Op::Watermark { face, .. } = op
                     && !seen.contains(face)
                 {
                     seen.push(*face);
@@ -88,18 +125,50 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
 
     let mut objs: Vec<Vec<u8>> = vec![Vec::new(), Vec::new(), Vec::new()];
     // 1 catalog, 2 pages, 3 info
-    let mut font_obj = HashMapLite::new();
+    let mut simple_need = Vec::new();
+    let mut cid_need = Vec::new();
+    for page in pages {
+        for op in &page.ops {
+            if let Op::Text { face, text, .. } | Op::Watermark { face, text, .. } = op {
+                if winansi_bytes(text).is_some() {
+                    if !simple_need.contains(face) {
+                        simple_need.push(*face);
+                    }
+                } else if !cid_need.contains(face) {
+                    cid_need.push(*face);
+                }
+            }
+        }
+    }
+    if simple_need.is_empty() && cid_need.is_empty() {
+        cid_need.push(FaceId::CarlitoRegular);
+    }
+
+    let mut simple_obj = HashMapLite::new();
+    let mut cid_obj = HashMapLite::new();
     for face_id in &used {
         let face = fonts.get(*face_id);
+        let want_simple = simple_need.contains(face_id);
+        let want_cid = cid_need.contains(face_id);
+        if !want_simple && !want_cid {
+            continue;
+        }
         let file_id = objs.len() + 1;
-        objs.push(font_file_obj(face.id.bytes()));
+        objs.push(font_file_obj(face.bytes()));
         let desc_id = objs.len() + 1;
         objs.push(font_descriptor_obj(face, file_id));
-        let cid_id = objs.len() + 1;
-        objs.push(cid_font_obj(face, desc_id));
-        let type0_id = objs.len() + 1;
-        objs.push(type0_font_obj(face, cid_id));
-        font_obj.insert(*face_id, type0_id);
+        if want_simple {
+            let id = objs.len() + 1;
+            objs.push(simple_ttf_obj(face, desc_id));
+            simple_obj.insert(*face_id, id);
+        }
+        if want_cid {
+            let cid_id = objs.len() + 1;
+            objs.push(cid_font_obj(face, desc_id));
+            let type0_id = objs.len() + 1;
+            objs.push(type0_font_obj(face, cid_id));
+            cid_obj.insert(*face_id, type0_id);
+        }
     }
 
     let mut page_ids = Vec::new();
@@ -150,11 +219,20 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
         }
         let mut stream = String::new();
         let mut font_res = String::new();
-        for (face_id, obj_id) in &font_obj {
+        for (face_id, obj_id) in &simple_obj {
             font_res.push_str(&format!(
                 "/{name} {obj_id} 0 R ",
-                name = face_id.postscript()
+                name = fonts.get(*face_id).pdf_name()
             ));
+        }
+        for (face_id, obj_id) in &cid_obj {
+            let base = fonts.get(*face_id).pdf_name();
+            let name = if simple_obj.contains(*face_id) {
+                format!("{base}CID")
+            } else {
+                base.to_string()
+            };
+            font_res.push_str(&format!("/{name} {obj_id} 0 R "));
         }
         for op in &page.ops {
             match op {
@@ -165,14 +243,74 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
                     y,
                     glyphs,
                     color,
+                    text,
                 } => {
                     if glyphs.is_empty() {
                         continue;
                     }
-                    let hex: String = glyphs.iter().map(|g| format!("{g:04X}")).collect();
+                    let base = fonts.get(*face).pdf_name();
+                    let name = if winansi_bytes(text).is_none() && simple_obj.contains(*face) {
+                        format!("{base}CID")
+                    } else {
+                        base.to_string()
+                    };
+                    let lit = if let Some(bytes) = winansi_bytes(text) {
+                        pdf_literal(&bytes)
+                    } else {
+                        let hex: String = glyphs.iter().map(|g| format!("{g:04X}")).collect();
+                        format!("<{hex}>")
+                    };
+                    let (r, g, b) = (color[0], color[1], color[2]);
+                    if let Some((ppem, tc)) = word_device_paint(*size) {
+                        stream.push_str(&format!(
+                            "q 0.24 0 0 0.24 {x:.2} {y:.2} cm BT /{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg {tc:.4} Tc 0 0 Td {lit} Tj ET Q\n",
+                        ));
+                    } else {
+                        let tc = word_device_track(*size);
+                        let tc_op = if tc.abs() > 0.00005 {
+                            format!("{tc:.5} Tc ")
+                        } else {
+                            String::new()
+                        };
+                        stream.push_str(&format!(
+                            "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {tc_op}{x:.2} {y:.2} Td {lit} Tj ET\n",
+                        ));
+                    }
+                }
+                Op::Watermark {
+                    face,
+                    size,
+                    x,
+                    y,
+                    glyphs,
+                    color,
+                    text,
+                    rotate_deg,
+                } => {
+                    if glyphs.is_empty() {
+                        continue;
+                    }
+                    let base = fonts.get(*face).pdf_name();
+                    let rad = rotate_deg.to_radians();
+                    let (sin, cos) = (rad.sin(), rad.cos());
+                    let width = fonts.get(*face).width_pt(text, *size);
+                    let dx = -width / 2.0;
+                    let dy = -size * 0.35;
+                    let lit = if let Some(bytes) = winansi_bytes(text) {
+                        pdf_literal(&bytes)
+                    } else {
+                        let hex: String = glyphs.iter().map(|g| format!("{g:04X}")).collect();
+                        format!("<{hex}>")
+                    };
+                    let name = if winansi_bytes(text).is_none() && simple_obj.contains(*face) {
+                        format!("{base}CID")
+                    } else {
+                        base.to_string()
+                    };
                     stream.push_str(&format!(
-                        "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {x:.2} {y:.2} Td <{hex}> Tj ET\n",
-                        name = face.postscript(),
+                        "q 1 0 0 1 {x:.2} {y:.2} cm {cos:.4} {sin:.4} {nsin:.4} {cos:.4} 0 0 cm \
+                         BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {dx:.2} {dy:.2} Td {lit} Tj ET Q\n",
+                        nsin = -sin,
                         r = color[0],
                         g = color[1],
                         b = color[2],
@@ -248,6 +386,10 @@ impl HashMapLite {
     fn insert(&mut self, k: FaceId, v: usize) {
         self.items.push((k, v));
     }
+
+    fn contains(&self, k: FaceId) -> bool {
+        self.items.iter().any(|(id, _)| *id == k)
+    }
 }
 
 impl<'a> IntoIterator for &'a HashMapLite {
@@ -271,24 +413,35 @@ fn font_file_obj(ttf: &[u8]) -> Vec<u8> {
 }
 
 fn font_descriptor_obj(face: &super::font::Face, file_id: usize) -> Vec<u8> {
-    let name = face.id.postscript();
+    let name = face.pdf_name();
+    let [a, b, c, d] = face.pdf_bbox_1000();
+    let ascent = face.pdf_ascent_1000();
+    let descent = face.pdf_descent_1000();
     format!(
         "<< /Type /FontDescriptor /FontName /{name} /Flags 32 \
            /FontBBox [{a} {b} {c} {d}] /ItalicAngle 0 \
            /Ascent {ascent} /Descent {descent} /CapHeight {ascent} /StemV 80 \
-           /FontFile2 {file_id} 0 R >>",
-        a = face.bbox[0],
-        b = face.bbox[1],
-        c = face.bbox[2],
-        d = face.bbox[3],
-        ascent = face.ascent as i32,
-        descent = face.descent as i32,
+           /FontFile2 {file_id} 0 R >>"
+    )
+    .into_bytes()
+}
+
+fn simple_ttf_obj(face: &super::font::Face, desc_id: usize) -> Vec<u8> {
+    let name = face.pdf_name();
+    let widths: Vec<String> = (32u8..=255)
+        .map(|b| face.width_1000(winansi_char(b)).to_string())
+        .collect();
+    format!(
+        "<< /Type /Font /Subtype /TrueType /BaseFont /{name} \
+           /FirstChar 32 /LastChar 255 /Widths [{}] \
+           /Encoding /WinAnsiEncoding /FontDescriptor {desc_id} 0 R >>",
+        widths.join(" ")
     )
     .into_bytes()
 }
 
 fn cid_font_obj(face: &super::font::Face, desc_id: usize) -> Vec<u8> {
-    let name = face.id.postscript();
+    let name = face.pdf_name();
     let widths = face.pdf_widths_1000();
     let w_list = widths
         .iter()
@@ -304,7 +457,7 @@ fn cid_font_obj(face: &super::font::Face, desc_id: usize) -> Vec<u8> {
 }
 
 fn type0_font_obj(face: &super::font::Face, cid_id: usize) -> Vec<u8> {
-    let name = face.id.postscript();
+    let name = face.pdf_name();
     format!(
         "<< /Type /Font /Subtype /Type0 /BaseFont /{name} /Encoding /Identity-H \
            /DescendantFonts [{cid_id} 0 R] >>"
@@ -343,6 +496,97 @@ fn stream_object(ops: &str) -> Vec<u8> {
     let mut out = format!("<< /Length {} >>\nstream\n", bytes.len()).into_bytes();
     out.extend_from_slice(bytes);
     out.extend_from_slice(b"\nendstream");
+    out
+}
+
+fn winansi_byte(ch: char) -> Option<u8> {
+    match ch as u32 {
+        0x20..=0x7E | 0xA0..=0xFF => Some(ch as u8),
+        0x0152 => Some(0x8C),
+        0x0153 => Some(0x9C),
+        0x0160 => Some(0x8A),
+        0x0161 => Some(0x9A),
+        0x0178 => Some(0x9F),
+        0x017D => Some(0x8E),
+        0x017E => Some(0x9E),
+        0x0192 => Some(0x83),
+        0x02C6 => Some(0x88),
+        0x02DC => Some(0x98),
+        0x2013 => Some(0x96),
+        0x2014 => Some(0x97),
+        0x2018 => Some(0x91),
+        0x2019 => Some(0x92),
+        0x201A => Some(0x82),
+        0x201C => Some(0x93),
+        0x201D => Some(0x94),
+        0x201E => Some(0x84),
+        0x2020 => Some(0x86),
+        0x2021 => Some(0x87),
+        0x2022 => Some(0x95),
+        0x2026 => Some(0x85),
+        0x2030 => Some(0x89),
+        0x2039 => Some(0x8B),
+        0x203A => Some(0x9B),
+        0x20AC => Some(0x80),
+        0x2122 => Some(0x99),
+        _ => None,
+    }
+}
+
+fn winansi_char(byte: u8) -> char {
+    match byte {
+        0x80 => '\u{20AC}',
+        0x82 => '\u{201A}',
+        0x83 => '\u{0192}',
+        0x84 => '\u{201E}',
+        0x85 => '\u{2026}',
+        0x86 => '\u{2020}',
+        0x87 => '\u{2021}',
+        0x88 => '\u{02C6}',
+        0x89 => '\u{2030}',
+        0x8A => '\u{0160}',
+        0x8B => '\u{2039}',
+        0x8C => '\u{0152}',
+        0x8E => '\u{017D}',
+        0x91 => '\u{2018}',
+        0x92 => '\u{2019}',
+        0x93 => '\u{201C}',
+        0x94 => '\u{201D}',
+        0x95 => '\u{2022}',
+        0x96 => '\u{2013}',
+        0x97 => '\u{2014}',
+        0x98 => '\u{02DC}',
+        0x99 => '\u{2122}',
+        0x9A => '\u{0161}',
+        0x9B => '\u{203A}',
+        0x9C => '\u{0153}',
+        0x9E => '\u{017E}',
+        0x9F => '\u{0178}',
+        0x20..=0x7E | 0xA0..=0xFF => char::from(byte),
+        _ => ' ',
+    }
+}
+
+fn winansi_bytes(text: &str) -> Option<Vec<u8>> {
+    if text.is_empty() {
+        return None;
+    }
+    text.chars().map(winansi_byte).collect()
+}
+
+fn pdf_literal(bytes: &[u8]) -> String {
+    let mut out = String::from("(");
+    for &b in bytes {
+        match b {
+            b'(' | b')' | b'\\' => {
+                out.push('\\');
+                out.push(char::from(b));
+            }
+            32..=126 => out.push(char::from(b)),
+            _ => out.push_str(&format!("\\{b:03o}")),
+        }
+    }
+    out.push(')');
     out
 }
 

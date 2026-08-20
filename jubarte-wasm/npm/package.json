@@ -1,0 +1,61 @@
+{
+  "name": "jubarte-wasm",
+  "version": "0.7.1",
+  "description": "Word-mode DOCX redline engine (jubarte-redlines) compiled to WebAssembly: compare two DOCX files into a tracked-changes redline, accept/reject revisions, list revisions. Node and browser builds included.",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jandira-tech/jubarte-redlines.git",
+    "directory": "jubarte-wasm"
+  },
+  "homepage": "https://github.com/jandira-tech/jubarte-redlines#readme",
+  "bugs": {
+    "url": "https://github.com/jandira-tech/jubarte-redlines/issues"
+  },
+  "keywords": [
+    "docx",
+    "redline",
+    "tracked-changes",
+    "track-changes",
+    "revisions",
+    "word",
+    "ooxml",
+    "diff",
+    "compare",
+    "wasm",
+    "webassembly"
+  ],
+  "main": "./node/jubarte_wasm.js",
+  "types": "./node/jubarte_wasm.d.ts",
+  "browser": "./web/jubarte_wasm.js",
+  "exports": {
+    ".": {
+      "node": {
+        "types": "./node/jubarte_wasm.d.ts",
+        "default": "./node/jubarte_wasm.js"
+      },
+      "default": {
+        "types": "./web/jubarte_wasm.d.ts",
+        "default": "./web/jubarte_wasm.js"
+      }
+    },
+    "./node": {
+      "types": "./node/jubarte_wasm.d.ts",
+      "default": "./node/jubarte_wasm.js"
+    },
+    "./web": {
+      "types": "./web/jubarte_wasm.d.ts",
+      "default": "./web/jubarte_wasm.js"
+    },
+    "./web/jubarte_wasm_bg.wasm": "./web/jubarte_wasm_bg.wasm",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "node/",
+    "web/",
+    "ENGINE_COMMIT.txt"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
