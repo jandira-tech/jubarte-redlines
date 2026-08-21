@@ -12,8 +12,9 @@ SPDX-FileCopyrightText = "2026 Jandira Technologies, LLC"
 SPDX-License-Identifier = "AGPL-3.0-only"
 
 # The root license is the canonical repository license text, not a source file.
+# jubarte-python/ carries a copy so the PyPI sdist/wheel bundle the full text.
 [[annotations]]
-path = "LICENSE"
+path = ["LICENSE", "jubarte-python/LICENSE"]
 precedence = "override"
 SPDX-FileCopyrightText = "1989, 1991 Free Software Foundation, Inc."
 SPDX-License-Identifier = "AGPL-3.0-only"

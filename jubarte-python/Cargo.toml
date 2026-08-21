@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Standalone workspace so this binding does not join the engine crate's
+# workspace (mirrors jubarte-wasm). Published to PyPI (as `jubarte-redlines`),
+# never to crates.io.
+[workspace]
+
+[package]
+name = "jubarte-python"
+version = "0.7.1"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+description = "PyO3 bindings for jubarte-redlines: Word-mode DOCX redline compare, accept/reject/list revisions, DOCX→PDF"
+license = "AGPL-3.0-only"
+repository = "https://github.com/jandira-tech/jubarte-redlines"
+
+[lib]
+name = "jubarte_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Library-only build: no CLI, no mimalloc — Python picks its own allocator.
+jubarte-redlines = { path = "..", default-features = false }
+# abi3-py310: one wheel per platform covers every CPython >= 3.10.
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = "symbols"
