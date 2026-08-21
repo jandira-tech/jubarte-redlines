@@ -22,8 +22,13 @@ js-sys = "0.3"
 console_error_panic_hook = { version = "0.1", optional = true }
 
 [features]
-default = ["console-panic"]
+default = ["console-panic", "pdf"]
 console-panic = ["dep:console_error_panic_hook"]
+# DOCX→PDF exports (docxToPdf / pdfPageCount). Referencing the PDF writer
+# links in rustybuzz shaping, the image decoders, and the embedded
+# Carlito/Liberation fonts (~7.5 MB of wasm). The npm package's *-slim
+# builds turn this off for compare-only consumers.
+pdf = []
 # Diagnostic-only linear-memory page counter used by the W3 bench harness.
 # It is absent from the shipped default build.
 memory-metrics = []

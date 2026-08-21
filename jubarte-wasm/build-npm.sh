@@ -16,13 +16,19 @@ if ! git diff --quiet HEAD -- . ..; then
 fi
 
 # Bare invocations only: RUSTFLAGS must come from .cargo/config.toml (see README).
+# Full builds (default features: compare + PDF), then slim builds (no `pdf`
+# feature — compare-only, ~4x smaller wasm).
 wasm-pack build --target nodejs --release
 wasm-pack build --target web --release --out-dir pkg-web
+wasm-pack build --target nodejs --release --out-dir pkg-slim -- --no-default-features --features console-panic
+wasm-pack build --target web --release --out-dir pkg-web-slim -- --no-default-features --features console-panic
 
-mkdir -p npm/node npm/web
+mkdir -p npm/node npm/web npm/node-slim npm/web-slim
 for f in jubarte_wasm.js jubarte_wasm.d.ts jubarte_wasm_bg.wasm jubarte_wasm_bg.wasm.d.ts; do
   cp "pkg/$f" npm/node/
   cp "pkg-web/$f" npm/web/
+  cp "pkg-slim/$f" npm/node-slim/
+  cp "pkg-web-slim/$f" npm/web-slim/
 done
 cp ../LICENSE npm/LICENSE
 git rev-parse HEAD > npm/ENGINE_COMMIT.txt

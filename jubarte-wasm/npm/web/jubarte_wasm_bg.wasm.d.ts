@@ -3,7 +3,9 @@
 export const memory: WebAssembly.Memory;
 export const acceptRevisions: (a: number, b: number, c: number) => void;
 export const compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const docxToPdf: (a: number, b: number, c: number) => void;
 export const getRevisions: (a: number, b: number, c: number) => void;
+export const pdfPageCount: (a: number, b: number) => number;
 export const rejectRevisions: (a: number, b: number, c: number) => void;
 export const initPanicHook: () => void;
 export const __wbindgen_export: (a: number, b: number, c: number) => void;

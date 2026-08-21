@@ -16,16 +16,6 @@ export function acceptRevisions(docx: Uint8Array): Uint8Array;
 export function compareDocuments(original: Uint8Array, modified: Uint8Array, author: string): Uint8Array;
 
 /**
- * Render a DOCX package (bytes) → PDF bytes (Word-style layout).
- *
- * Mirrors `jubarte::convert::docx_to_pdf`. Fonts come from the embedded
- * Carlito / Liberation set; the native system/cloud font overrides are
- * no-ops under wasm (no filesystem), which only changes glyph sourcing,
- * never layout metrics.
- */
-export function docxToPdf(docx: Uint8Array): Uint8Array;
-
-/**
  * List the tracked revisions in a DOCX as a JSON array string — the same
  * object shape as the CLI `jubarte revisions --json` lines
  * (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
@@ -39,14 +29,6 @@ export function getRevisions(docx: Uint8Array): string;
  * One-shot init: panic hook → `console.error`. Safe to call multiple times.
  */
 export function initPanicHook(): void;
-
-/**
- * Number of pages in a PDF (cheap object scan; `0` if the bytes are not a
- * readable PDF).
- *
- * Mirrors `jubarte::convert::pdf_page_count`.
- */
-export function pdfPageCount(pdf: Uint8Array): number;
 
 /**
  * Reject every tracked revision (package-wide) → base DOCX bytes.

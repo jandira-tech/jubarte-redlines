@@ -65,6 +65,38 @@ function compareDocuments(original, modified, author) {
 exports.compareDocuments = compareDocuments;
 
 /**
+ * Render a DOCX package (bytes) → PDF bytes (Word-style layout).
+ *
+ * Mirrors `jubarte::convert::docx_to_pdf`. Fonts come from the embedded
+ * Carlito / Liberation set; the native system/cloud font overrides are
+ * no-ops under wasm (no filesystem), which only changes glyph sourcing,
+ * never layout metrics.
+ * @param {Uint8Array} docx
+ * @returns {Uint8Array}
+ */
+function docxToPdf(docx) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.docxToPdf(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export(r0, r1 * 1, 1);
+        return v2;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+exports.docxToPdf = docxToPdf;
+
+/**
  * List the tracked revisions in a DOCX as a JSON array string — the same
  * object shape as the CLI `jubarte revisions --json` lines
  * (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
@@ -109,6 +141,22 @@ function initPanicHook() {
     wasm.initPanicHook();
 }
 exports.initPanicHook = initPanicHook;
+
+/**
+ * Number of pages in a PDF (cheap object scan; `0` if the bytes are not a
+ * readable PDF).
+ *
+ * Mirrors `jubarte::convert::pdf_page_count`.
+ * @param {Uint8Array} pdf
+ * @returns {number}
+ */
+function pdfPageCount(pdf) {
+    const ptr0 = passArray8ToWasm0(pdf, wasm.__wbindgen_export2);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.pdfPageCount(ptr0, len0);
+    return ret >>> 0;
+}
+exports.pdfPageCount = pdfPageCount;
 
 /**
  * Reject every tracked revision (package-wide) → base DOCX bytes.
