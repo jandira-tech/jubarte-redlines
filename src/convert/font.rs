@@ -6,10 +6,10 @@
 //! Arial/Times, Liberation Mono = Courier) plus glyph advances for wrap and
 //! PDF embedding.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 /// Word Quartz Save-as-PDF writes a small `Tc` at 300dpi body sizes so
 /// linear hmtx does not sit ~1pt wide of the oracle (color_sim wipe).
@@ -232,8 +232,16 @@ impl FaceId {
 }
 
 /// Parsed metrics + cmap for one bundled (or system-overlaid) face.
+///
+/// `bytes` is `&'static`: bundled faces are `include_bytes!` data, and
+/// system-override files are leaked once at `Fonts` (process-lifetime
+/// `LazyLock`) construction so the pre-parsed `rustybuzz::Face` below can
+/// borrow them without a self-referential struct.
 pub(crate) struct Face {
-    bytes: Cow<'static, [u8]>,
+    bytes: &'static [u8],
+    /// Parsed once here; `shape` runs per text run and must not re-parse
+    /// the font table directory each call.
+    buzz: Option<rustybuzz::Face<'static>>,
     pdf_name: String,
     pub upem: f32,
     pub ascent: f32,
@@ -248,7 +256,7 @@ pub(crate) struct Face {
 
 impl Face {
     pub(crate) fn bytes(&self) -> &[u8] {
-        &self.bytes
+        self.bytes
     }
 
     pub(crate) fn pdf_name(&self) -> &str {
@@ -256,21 +264,23 @@ impl Face {
     }
 
     fn load(id: FaceId) -> Self {
-        Self::from_bytes(id, Cow::Borrowed(id.bytes()), id.postscript().to_string())
+        Self::from_bytes(id, id.bytes(), id.postscript().to_string()).expect("bundled TTF is valid")
     }
 
     fn from_path(id: FaceId, path: &Path) -> Option<Self> {
         let bytes = fs::read(path).ok()?;
         let ps = ttf_postscript_name(&bytes).unwrap_or_else(|| id.postscript().to_string());
-        Some(Self::from_bytes(
-            id,
-            Cow::Owned(bytes),
-            sanitize_pdf_name(&ps),
-        ))
+        // Leaked once per process: `Fonts` lives in a LazyLock, and the
+        // pre-parsed rustybuzz face needs 'static bytes.
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        Self::from_bytes(id, bytes, sanitize_pdf_name(&ps))
     }
 
-    fn from_bytes(_id: FaceId, bytes: Cow<'static, [u8]>, pdf_name: String) -> Self {
-        let face = ttf_parser::Face::parse(&bytes, 0).expect("TTF is valid");
+    /// `None` when the bytes are not a parseable TTF/TTC face — a truncated
+    /// or unsupported *system* font file must fall back to the bundled face,
+    /// never panic (a panic here poisons the process-wide `Fonts` LazyLock).
+    fn from_bytes(_id: FaceId, bytes: &'static [u8], pdf_name: String) -> Option<Self> {
+        let face = ttf_parser::Face::parse(bytes, 0).ok()?;
         let upem = f32::from(face.units_per_em());
         let ascent = f32::from(
             face.typographic_ascender()
@@ -311,8 +321,10 @@ impl Face {
             }
         }
         let bbox = face.global_bounding_box();
-        Self {
+        let buzz = rustybuzz::Face::from_slice(bytes, 0);
+        Some(Self {
             bytes,
+            buzz,
             pdf_name,
             upem,
             ascent,
@@ -322,7 +334,7 @@ impl Face {
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
             cmap,
-        }
+        })
     }
 
     pub(crate) fn glyph(&self, ch: char) -> u16 {
@@ -355,12 +367,14 @@ impl Face {
     }
 
     pub(crate) fn glyphs(&self, text: &str) -> Vec<u16> {
+        // Only the glyph ids are kept; ids are size-independent, so the
+        // shaping size passed here is arbitrary.
         self.shape(text, 11.0).into_iter().map(|(g, _)| g).collect()
     }
 
     /// HarfBuzz-compatible glyph ids + advances in points.
     pub(crate) fn shape(&self, text: &str, size: f32) -> Vec<(u16, f32)> {
-        let Some(face) = rustybuzz::Face::from_slice(&self.bytes, 0) else {
+        let Some(face) = self.buzz.as_ref() else {
             return text
                 .chars()
                 .map(|ch| (self.glyph(ch), self.advance_pt(ch, size)))
@@ -377,7 +391,7 @@ impl Face {
             rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"dlig"), 0, ..),
             rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"kern"), 0, ..),
         ];
-        let out = rustybuzz::shape(&face, &word_pdf, buf);
+        let out = rustybuzz::shape(face, &word_pdf, buf);
         let infos = out.glyph_infos();
         let pos = out.glyph_positions();
         infos
@@ -428,7 +442,7 @@ impl Face {
     }
 }
 
-/// Catalogue of the 16 bundled faces.
+/// Catalogue of the bundled faces (one entry per `FaceId::all()` member).
 pub(crate) struct Fonts {
     faces: HashMap<FaceId, Face>,
 }
@@ -486,7 +500,7 @@ impl Fonts {
                 FaceId::CalibriLightRegular
             };
         }
-        if key.contains("cambria") || key == "inter" || key.starts_with("inter") {
+        if key.contains("cambria") || key == "inter" {
             return match (bold, italic) {
                 (false, false) => FaceId::CambriaRegular,
                 (true, false) => FaceId::CambriaBold,
@@ -507,7 +521,7 @@ impl Fonts {
             || key.contains("georgia")
             || key.contains("caladea")
             || key.contains("liberationserif")
-            || key.contains("serif") && !key.contains("sans");
+            || (key.contains("serif") && !key.contains("sans"));
         match (
             mono,
             aptos_display,
@@ -588,6 +602,10 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
         FaceId::CambriaBoldItalic => &["Cambriaz.ttf", "Cambria Bold Italic.ttf"],
         FaceId::Symbol => &["Symbol.ttf", "symbol.ttf"],
     };
+    // Deliberately macOS-only: these overrides exist to match the
+    // Word-on-macOS oracles this converter is calibrated against. On other
+    // platforms no override is found and the bundled metric-compatible
+    // faces are used.
     const DIRS: &[&str] = &[
         "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
         "/Library/Fonts/Microsoft",
@@ -607,24 +625,39 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
 }
 
 fn cloud_font_override(id: FaceId) -> Option<PathBuf> {
-    let want = id.postscript();
-    let home = std::env::var_os("HOME")?;
-    let dir = PathBuf::from(home)
-        .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/Aptos Display");
-    let entries = fs::read_dir(&dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("ttf") {
-            continue;
-        }
-        let Ok(bytes) = fs::read(&path) else {
-            continue;
+    // Scanned once per process: `Fonts::new` probes every FaceId, and each
+    // probe would otherwise re-read the directory and re-parse every font
+    // file in it just to recover PostScript names.
+    static CLOUD_FONTS: LazyLock<Vec<(String, PathBuf)>> = LazyLock::new(|| {
+        let mut found = Vec::new();
+        let Some(home) = std::env::var_os("HOME") else {
+            return found;
         };
-        if ttf_postscript_name(&bytes).as_deref() == Some(want) {
-            return Some(path);
+        let dir = PathBuf::from(home).join(
+            "Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/Aptos Display",
+        );
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return found;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("ttf") {
+                continue;
+            }
+            let Ok(bytes) = fs::read(&path) else {
+                continue;
+            };
+            if let Some(ps) = ttf_postscript_name(&bytes) {
+                found.push((ps, path));
+            }
         }
-    }
-    None
+        found
+    });
+    let want = id.postscript();
+    CLOUD_FONTS
+        .iter()
+        .find(|(ps, _)| ps == want)
+        .map(|(_, path)| path.clone())
 }
 
 fn ttf_postscript_name(bytes: &[u8]) -> Option<String> {
