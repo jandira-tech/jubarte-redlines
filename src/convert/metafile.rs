@@ -66,8 +66,8 @@ impl Canvas {
     fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: [u8; 3]) {
         let x1 = x.max(0);
         let y1 = y.max(0);
-        let x2 = (x + w.max(1)).min(self.w as i32);
-        let y2 = (y + h.max(1)).min(self.h as i32);
+        let x2 = x.saturating_add(w.max(1)).min(self.w as i32);
+        let y2 = y.saturating_add(h.max(1)).min(self.h as i32);
         for yy in y1..y2 {
             for xx in x1..x2 {
                 self.put(xx, yy, color);
@@ -76,7 +76,48 @@ impl Canvas {
     }
 
     fn stroke_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: [u8; 3], width: i32) {
-        let w = width.max(1);
+        // A pen wider than the canvas paints the same pixels as one exactly
+        // canvas-sized; capping keeps the per-step fill_rect bounded.
+        let w = width.max(1).min(MAX_SIDE as i32);
+        // Liang-Barsky clip to the canvas rectangle (grown by the pen
+        // radius) BEFORE walking: mapped endpoints from a hostile metafile
+        // sit up to i32::MIN..i32::MAX apart, and the walk must be
+        // proportional to the canvas, not to the coordinate span.
+        let r = f64::from(w / 2 + 1);
+        let (min_x, min_y) = (-r, -r);
+        let (max_x, max_y) = (self.w as f64 + r, self.h as f64 + r);
+        let (fx0, fy0) = (f64::from(x0), f64::from(y0));
+        let (fdx, fdy) = (f64::from(x1) - fx0, f64::from(y1) - fy0);
+        let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+        for (p, q) in [
+            (-fdx, fx0 - min_x),
+            (fdx, max_x - fx0),
+            (-fdy, fy0 - min_y),
+            (fdy, max_y - fy0),
+        ] {
+            if p == 0.0 {
+                if q < 0.0 {
+                    return; // parallel and fully outside
+                }
+            } else {
+                let t = q / p;
+                if p < 0.0 {
+                    if t > t1 {
+                        return;
+                    }
+                    t0 = t0.max(t);
+                } else {
+                    if t < t0 {
+                        return;
+                    }
+                    t1 = t1.min(t);
+                }
+            }
+        }
+        let x0 = (fx0 + t0 * fdx).round() as i32;
+        let y0 = (fy0 + t0 * fdy).round() as i32;
+        let x1 = (fx0 + t1 * fdx).round() as i32;
+        let y1 = (fy0 + t1 * fdy).round() as i32;
         let dx = (x1 - x0).abs();
         let dy = -(y1 - y0).abs();
         let sx = if x0 < x1 { 1 } else { -1 };
@@ -89,7 +130,7 @@ impl Canvas {
                 self.put(x, y, color);
             } else {
                 let r = w / 2;
-                self.fill_rect(x - r, y - r, w, w, color);
+                self.fill_rect(x.saturating_sub(r), y.saturating_sub(r), w, w, color);
             }
             if x == x1 && y == y1 {
                 break;
@@ -123,10 +164,12 @@ impl Canvas {
                 let (x0, y0) = pts[i];
                 let (x1, y1) = pts[(i + 1) % pts.len()];
                 if (y0 <= y && y1 > y) || (y1 <= y && y0 > y) {
-                    let dy = y1 - y0;
+                    let dy = i64::from(y1) - i64::from(y0);
                     if dy != 0 {
-                        let x = x0 + (y - y0) * (x1 - x0) / dy;
-                        xs.push(x);
+                        // Full-range i32 coords overflow the i32 product.
+                        let x = i64::from(x0)
+                            + i64::from(y - y0) * (i64::from(x1) - i64::from(x0)) / dy;
+                        xs.push(x.clamp(-1, self.w as i64) as i32);
                     }
                 }
             }
@@ -135,8 +178,10 @@ impl Canvas {
                 if pair.len() < 2 {
                     break;
                 }
-                let a = pair[0].min(pair[1]);
-                let b = pair[0].max(pair[1]);
+                // Clamp the span to the canvas so the walk is bounded by
+                // the canvas width, not the coordinate span.
+                let a = pair[0].min(pair[1]).max(0);
+                let b = pair[0].max(pair[1]).min(self.w as i32 - 1);
                 for x in a..=b {
                     self.put(x, y, color);
                 }
@@ -181,11 +226,11 @@ fn sized_canvas(bw: i32, bh: i32) -> (usize, usize) {
     let bh = bh.unsigned_abs().max(1) as usize;
     if bw >= bh {
         let w = bw.min(MAX_SIDE);
-        let h = ((bh * w) / bw).max(1);
+        let h = (((bh as u64 * w as u64) / bw as u64).max(1)) as usize;
         (w, h)
     } else {
         let h = bh.min(MAX_SIDE);
-        let w = ((bw * h) / bh).max(1);
+        let w = (((bw as u64 * h as u64) / bh as u64).max(1)) as usize;
         (w, h)
     }
 }
@@ -252,7 +297,13 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     while off + 6 <= data.len() {
         let size = read_u32(data, off)? as usize;
         let func = read_u16(data, off + 4)?;
-        if size < 3 || off + size * 2 > data.len() {
+        // checked_mul: `size` is untrusted and `usize` is 32-bit on wasm32;
+        // comparing against the remaining length keeps `off` from ever
+        // moving past (or wrapping around) the buffer end.
+        let Some(size2) = size.checked_mul(2) else {
+            break;
+        };
+        if size < 3 || size2 > data.len() - off {
             break;
         }
         let payload = off + 6;
@@ -344,7 +395,7 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
             }
             _ => {}
         }
-        off += size * 2;
+        off += size2;
     }
     Some(canvas.finish())
 }
@@ -357,13 +408,13 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let top = read_i32(data, 12)?;
     let right = read_i32(data, 16)?;
     let bottom = read_i32(data, 20)?;
-    let (cw, ch) = sized_canvas(right - left, bottom - top);
+    let (cw, ch) = sized_canvas(right.saturating_sub(left), bottom.saturating_sub(top));
     let mut canvas = Canvas::new(cw, ch);
     let map = Map {
         org_x: left as f32,
         org_y: top as f32,
-        ext_x: (right - left).max(1) as f32,
-        ext_y: (bottom - top).max(1) as f32,
+        ext_x: right.saturating_sub(left).max(1) as f32,
+        ext_y: bottom.saturating_sub(top).max(1) as f32,
         w: cw as f32,
         h: ch as f32,
     };
@@ -377,7 +428,7 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     while off + 8 <= data.len() {
         let typ = read_u32(data, off)?;
         let size = read_u32(data, off + 4)? as usize;
-        if size < 8 || off + size > data.len() {
+        if size < 8 || size > data.len() - off {
             break;
         }
         match typ {
@@ -445,12 +496,12 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                 let w = read_i32(data, off + 32)?;
                 let h = read_i32(data, off + 36)?;
                 let a = map.map(x, y);
-                let b = map.map(x + w.max(1), y + h.max(1));
+                let b = map.map(x.saturating_add(w.max(1)), y.saturating_add(h.max(1)));
                 canvas.fill_rect(
                     a.0.min(b.0),
                     a.1.min(b.1),
-                    (b.0 - a.0).abs().max(1),
-                    (b.1 - a.1).abs().max(1),
+                    b.0.saturating_sub(a.0).saturating_abs().max(1),
+                    b.1.saturating_sub(a.1).saturating_abs().max(1),
                     brush,
                 );
             }
@@ -501,4 +552,76 @@ fn read_emf_points(data: &[u8], off: usize, size: usize, pts16: bool) -> Option<
         }
     }
     Some(pts)
+}
+
+#[cfg(test)]
+mod hostile_input_tests {
+    //! CR PR#4 review: crafted WMF/EMF must terminate quickly without
+    //! panicking — coordinate spans and record sizes are attacker-chosen.
+    use super::*;
+
+    fn emf_header(left: i32, top: i32, right: i32, bottom: i32) -> Vec<u8> {
+        let mut d = vec![0u8; 108];
+        d[0..4].copy_from_slice(&1u32.to_le_bytes());
+        d[4..8].copy_from_slice(&108u32.to_le_bytes()); // first record offset
+        d[8..12].copy_from_slice(&left.to_le_bytes());
+        d[12..16].copy_from_slice(&top.to_le_bytes());
+        d[16..20].copy_from_slice(&right.to_le_bytes());
+        d[20..24].copy_from_slice(&bottom.to_le_bytes());
+        d[40..44].copy_from_slice(b" EMF");
+        d
+    }
+
+    fn rec(d: &mut Vec<u8>, typ: u32, fields: &[i32]) {
+        d.extend_from_slice(&typ.to_le_bytes());
+        d.extend_from_slice(&((8 + 4 * fields.len()) as u32).to_le_bytes());
+        for f in fields {
+            d.extend_from_slice(&f.to_le_bytes());
+        }
+    }
+
+    /// Full-range header bounds: `right - left` must not overflow.
+    #[test]
+    fn emf_extreme_header_bounds_terminate() {
+        let mut d = emf_header(i32::MIN, i32::MIN, i32::MAX, i32::MAX);
+        rec(&mut d, 14, &[]); // EMR_EOF
+        assert!(rasterize(&d).is_some());
+    }
+
+    /// A line whose mapped endpoints sit ~2^31 pixels apart: the walk must
+    /// be clipped to the canvas, and the Bresenham deltas must not overflow.
+    #[test]
+    fn emf_offcanvas_line_terminates() {
+        let big = 1 << 30;
+        let mut d = emf_header(0, 0, 384, 384);
+        rec(&mut d, 27, &[-big, -big]); // EMR_MOVETOEX
+        rec(&mut d, 54, &[big, big]); // EMR_LINETO
+        rec(&mut d, 14, &[]);
+        assert!(rasterize(&d).is_some());
+    }
+
+    /// Polygon with full-range vertices: the scanline intersection product
+    /// must be computed in i64 and the span clamped to the canvas.
+    #[test]
+    fn emf_offcanvas_polygon_terminates() {
+        let big = 1 << 30;
+        let mut d = emf_header(0, 0, 384, 384);
+        // EMR_POLYGON: bounds rect (4 fields), count, then points.
+        rec(&mut d, 3, &[0, 0, 0, 0, 3, -big, -big, big, -big, 0, big]);
+        rec(&mut d, 14, &[]);
+        assert!(rasterize(&d).is_some());
+    }
+
+    /// WMF record size near u32::MAX: `size * 2` wraps a 32-bit usize
+    /// (wasm32). Natively this documents the guard; the checked_mul keeps
+    /// wasm from looping forever on a wrapped offset.
+    #[test]
+    fn wmf_huge_record_size_terminates() {
+        let mut d = vec![0u8; 40];
+        d[0..4].copy_from_slice(&[0xD7, 0xCD, 0xC6, 0x9A]);
+        d.extend_from_slice(&0x8000_0001u32.to_le_bytes()); // size (words)
+        d.extend_from_slice(&0u16.to_le_bytes()); // func
+        d.extend_from_slice(&[0u8; 32]);
+        assert!(rasterize(&d).is_some());
+    }
 }
