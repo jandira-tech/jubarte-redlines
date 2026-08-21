@@ -12,12 +12,19 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 if ! git diff --quiet HEAD -- . ..; then
-  echo "WARNING: working tree is dirty — the ENGINE_COMMIT.txt stamp will lie." >&2
+  if [ "${ALLOW_DIRTY:-0}" = "1" ]; then
+    echo "WARNING: working tree is dirty — the ENGINE_COMMIT.txt stamp will lie (ALLOW_DIRTY=1)." >&2
+  else
+    echo "ERROR: working tree is dirty — the ENGINE_COMMIT.txt stamp would lie and the" >&2
+    echo "       published artifacts could not be reproduced from the recorded commit." >&2
+    echo "       Commit first, or rerun with ALLOW_DIRTY=1 to override deliberately." >&2
+    exit 1
+  fi
 fi
 
 # Bare invocations only: RUSTFLAGS must come from .cargo/config.toml (see README).
 # Full builds (default features: compare + PDF), then slim builds (no `pdf`
-# feature — compare-only, ~4x smaller wasm).
+# feature — everything except the PDF renderer, ~4x smaller wasm).
 wasm-pack build --target nodejs --release
 wasm-pack build --target web --release --out-dir pkg-web
 wasm-pack build --target nodejs --release --out-dir pkg-slim -- --no-default-features --features console-panic

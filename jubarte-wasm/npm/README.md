@@ -15,7 +15,8 @@ Everything runs in-process — no Word, no LibreOffice, no server round-trip.
 Ships prebuilt binaries for **Node** (CommonJS, auto-initializing) and the
 **browser / bundlers** (ES module with explicit init), each in two flavors:
 the **full** build (compare + PDF, ~10 MB wasm) and a **slim** build
-(compare-only, ~2.4 MB wasm) for bundle-size-sensitive deployments.
+(everything except PDF rendering, ~2.4 MB wasm) for
+bundle-size-sensitive deployments.
 
 ## Install
 
@@ -59,12 +60,12 @@ Vite, webpack 5, and other bundlers that understand
 `new URL("...", import.meta.url)` will bundle the `.wasm` file automatically.
 You can also pass the wasm source yourself: `await init({ module_or_path: url })`.
 
-## Slim builds (compare-only)
+## Slim builds (no PDF)
 
 If you don't need PDF rendering, the slim entry points drop `docxToPdf` /
 `pdfPageCount` — and with them the PDF engine and its embedded
 Carlito/Liberation fonts — shrinking the wasm from ~10 MB to ~2.4 MB.
-Redline output is byte-identical to the full build.
+Redline output carries the same parts and revisions as the full build.
 
 ```js
 const { compareDocuments } = require("jubarte-wasm/slim");   // Node
@@ -80,8 +81,9 @@ import init, { compareDocuments } from "jubarte-wasm/web-slim"; // browser
 
 ## API
 
-All byte parameters and returns are `Uint8Array` holding complete `.docx`
-packages.
+Document parameters and returns are `Uint8Array` holding complete `.docx`
+(or, for `docxToPdf`, `.pdf`) packages; `getRevisions` returns a JSON
+`string`, `pdfPageCount` a `number`, and `initPanicHook` returns nothing.
 
 | Function | Signature | Description |
 |---|---|---|

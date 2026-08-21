@@ -110,7 +110,7 @@ npm install jubarte-wasm
 
 ```js
 const { compareDocuments, docxToPdf } = require("jubarte-wasm"); // full build
-const { compareDocuments: compareSlim } = require("jubarte-wasm/slim"); // compare-only, ~2.4 MB wasm
+const { compareDocuments: compareSlim } = require("jubarte-wasm/slim"); // no PDF, ~2.4 MB wasm
 // browser: import init, { compareDocuments } from "jubarte-wasm/web" (or "jubarte-wasm/web-slim")
 ```
 

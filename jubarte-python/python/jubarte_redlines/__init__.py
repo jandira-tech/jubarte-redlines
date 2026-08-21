@@ -7,8 +7,10 @@
 Compare two Word documents into a tracked-changes document that opens cleanly
 in Microsoft Word; list, accept, or reject revisions; render DOCX to PDF.
 
-All functions take and return ``bytes`` (whole DOCX/PDF packages) and release
-the GIL while the Rust engine runs.
+Document arguments and results are ``bytes`` (whole DOCX/PDF packages);
+``get_revisions`` returns parsed revision records (``list[dict]``) and
+``get_revisions_json`` their JSON string. The GIL is released while the
+Rust engine runs.
 
 >>> from jubarte_redlines import compare_documents, get_revisions
 >>> redline = compare_documents(original_bytes, modified_bytes, author="Reviewer")

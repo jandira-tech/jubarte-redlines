@@ -13,7 +13,9 @@ or reject revisions; render DOCX to PDF.
 Python bindings (PyO3 + maturin) for the Rust
 [`jubarte-redlines`](https://github.com/jandira-tech/jubarte-redlines) engine.
 Pure compute, no Word/LibreOffice dependency, no network, no temp files —
-every function takes and returns `bytes`, and the GIL is released while the
+documents go in and come out as `bytes` (whole DOCX/PDF packages), revision
+metadata comes back as parsed records (`get_revisions` → `list[dict]`,
+`get_revisions_json` → JSON string), and the GIL is released while the
 engine runs.
 
 ## Install
