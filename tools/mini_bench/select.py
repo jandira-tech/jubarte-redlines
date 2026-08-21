@@ -4,22 +4,35 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Pin the 60-stem mini-bench from an official no-redline report.
+"""Pin a 60-stem mini-bench (50 worst + 10 >90 / next-highest fill).
 
 Usage:
-  python3 tools/mini_bench/select.py [docx_to_pdf_no_redline.json]
+  python3 tools/mini_bench/select.py --track docx_to_pdf_no_redline_docs [report.json]
+  python3 tools/mini_bench/select.py --track docx_to_pdf [report.json]
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_REPORT = (
-    HERE.parent.parent.parent / "neurotic_docx_bench" / "results" / "docx_to_pdf_no_redline.json"
-)
+BENCH_RESULTS = HERE.parent.parent.parent / "neurotic_docx_bench" / "results"
+
+TRACKS = {
+    "docx_to_pdf_no_redline_docs": {
+        "default_report": BENCH_RESULTS / "docx_to_pdf_no_redline.json",
+        "membership": HERE / "membership.json",
+        "membership_txt": HERE / "membership.txt",
+    },
+    "docx_to_pdf": {
+        "default_report": BENCH_RESULTS / "docx_to_pdf.json",
+        "membership": HERE / "membership_redline.json",
+        "membership_txt": HERE / "membership_redline.txt",
+    },
+}
 
 
 def select(per_doc: dict[str, float]) -> list[dict]:
@@ -35,26 +48,37 @@ def select(per_doc: dict[str, float]) -> list[dict]:
         key=lambda kv: (-kv[1], kv[0]),
     )
     fills = rest[: max(0, 10 - len(gt90))]
+    controls = gt90[:10] if len(gt90) >= 10 else gt90 + fills
     out: list[dict] = []
     for k, v in worst:
         out.append({"stem": k, "role": "worst", "baseline_score": v})
-    for k, v in gt90:
-        out.append({"stem": k, "role": "gt90", "baseline_score": v})
-    for k, v in fills:
-        out.append({"stem": k, "role": "next_highest_fill", "baseline_score": v})
+    for k, v in controls:
+        role = "gt90" if v > 90 else "next_highest_fill"
+        out.append({"stem": k, "role": role, "baseline_score": v})
     if len(out) != 60 or len({row["stem"] for row in out}) != 60:
         raise SystemExit(f"expected 60 unique stems, got {len(out)}")
     return out
 
 
 def main() -> None:
-    report_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_REPORT
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--track",
+        choices=sorted(TRACKS),
+        default="docx_to_pdf_no_redline_docs",
+    )
+    parser.add_argument("report", nargs="?", type=Path, default=None)
+    args = parser.parse_args()
+    spec = TRACKS[args.track]
+    report_path = args.report or spec["default_report"]
     report = json.loads(report_path.read_text(encoding="utf-8"))
     tool = report["tools"]["jubarte"]
     stems = select(tool["per_doc"])
+    n_gt90 = sum(1 for row in stems if row["role"] == "gt90")
+    n_fill = sum(1 for row in stems if row["role"] == "next_highest_fill")
     payload = {
-        "track": "docx_to_pdf_no_redline_docs",
-        "source_report": str(report_path),
+        "track": args.track,
+        "source_report": str(report_path.resolve()),
         "baseline": {
             "tool": tool.get("tool"),
             "version": tool.get("version"),
@@ -63,25 +87,29 @@ def main() -> None:
             "n_scored": tool.get("n_scored"),
             "mean": tool.get("mean"),
             "median": tool.get("median"),
-            "n_gt90": sum(1 for row in stems if row["role"] == "gt90"),
+            "n_gt90": n_gt90,
+            "n_next_highest_fill": n_fill,
         },
         "selection_rule": (
-            "Fixed for the first 20 mini-runs. 50 lowest jubarte scores "
-            "(ties by stem) + every >90 + next-highest fill to 10 controls."
+            "50 lowest jubarte scores (ties by stem) + every >90 up to 10 "
+            "controls, else next-highest fill to 10 controls."
         ),
         "n": 60,
         "stems": stems,
     }
-    (HERE / "membership.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    spec["membership"].write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     lines = [
         "# role\tstem\tbaseline_score",
-        "# selection: worst 50 + all >90 + next-highest fill to 10 controls",
+        "# selection: worst 50 + all >90 (cap 10) + next-highest fill to 10 controls",
     ]
     for row in stems:
         lines.append(f"{row['role']}\t{row['stem']}\t{row['baseline_score']:.10f}")
-    (HERE / "membership.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"wrote {HERE / 'membership.json'} n={len(stems)}")
+    spec["membership_txt"].write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"wrote {spec['membership']} n={len(stems)} gt90={n_gt90} fill={n_fill}")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BrokenPipeError:
+        sys.exit(0)

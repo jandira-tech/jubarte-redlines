@@ -4,12 +4,16 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Score the pinned 60-stem mini-bench with shipped `jubarte convert`.
+"""Score a pinned 60-stem mini-bench with shipped `jubarte convert`.
 
 Must be launched from neurotic_docx_bench so the official Word-oracle
 scorer (`docx_to_pdf.run_eval`) is on the path:
 
   uv run python ../jubarte-redlines/tools/mini_bench/run.py \\
+    --converter ../jubarte-redlines/target/release/jubarte
+
+  uv run python ../jubarte-redlines/tools/mini_bench/run.py \\
+    --track docx_to_pdf \\
     --converter ../jubarte-redlines/target/release/jubarte
 """
 
@@ -25,7 +29,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_MEMBERSHIP = HERE / "membership.json"
+TRACK_MEMBERSHIP = {
+    "docx_to_pdf_no_redline_docs": HERE / "membership.json",
+    "docx_to_pdf": HERE / "membership_redline.json",
+}
 DEFAULT_LOG = HERE / "runs.jsonl"
 
 
@@ -67,7 +74,12 @@ def _next_index(log_path: Path) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--converter", type=Path, required=True)
-    parser.add_argument("--membership", type=Path, default=DEFAULT_MEMBERSHIP)
+    parser.add_argument(
+        "--track",
+        choices=sorted(TRACK_MEMBERSHIP),
+        default="docx_to_pdf_no_redline_docs",
+    )
+    parser.add_argument("--membership", type=Path, default=None)
     parser.add_argument("--log", type=Path, default=DEFAULT_LOG)
     parser.add_argument("--work-dir", type=Path, default=None)
     parser.add_argument("--json-out", type=Path, default=None)
@@ -81,14 +93,18 @@ def main() -> None:
     if not converter.is_file():
         raise SystemExit(f"converter not found: {converter}")
 
-    membership = json.loads(args.membership.read_text(encoding="utf-8"))
+    membership_path = args.membership or TRACK_MEMBERSHIP[args.track]
+    membership = json.loads(membership_path.read_text(encoding="utf-8"))
+    track = membership.get("track") or args.track
+    if track != args.track and args.membership is None:
+        raise SystemExit(f"membership track {track!r} != --track {args.track!r}")
     wanted = [row["stem"] for row in membership["stems"]]
     if len(wanted) != 60 or len(set(wanted)) != 60:
         raise SystemExit(f"membership must be 60 unique stems, got {len(wanted)}")
 
     from neurotic_docx_bench.docx_to_pdf import load_fixtures, run_eval
 
-    fixtures = load_fixtures(track="docx_to_pdf_no_redline_docs")
+    fixtures = load_fixtures(track=track)
     by_stem = {item.stem: item for item in fixtures}
     missing = [stem for stem in wanted if stem not in by_stem]
     if missing:
@@ -96,7 +112,7 @@ def main() -> None:
     items = [by_stem[stem] for stem in wanted]
 
     run_idx = args.run if args.run is not None else _next_index(args.log)
-    work_dir = args.work_dir or (HERE / "work" / f"run_{run_idx:02d}")
+    work_dir = args.work_dir or (HERE / "work" / f"{track}_run_{run_idx:02d}")
     json_out = args.json_out or (work_dir / "mini_bench.json")
 
     report = run_eval(
@@ -109,7 +125,7 @@ def main() -> None:
         fixtures=items,
         resume=False,
         convert_workers=args.convert_workers,
-        track="docx_to_pdf_no_redline_docs",
+        track=track,
     )
     tool = report["tools"]["jubarte"]
     per_doc = tool["per_doc"]
@@ -133,7 +149,7 @@ def main() -> None:
     with args.log.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, sort_keys=True) + "\n")
     print(
-        f"mini-run {run_idx}  n={row['itt_n']}  mean={row['mean']}  "
+        f"mini-run {run_idx}  track={track}  n={row['itt_n']}  mean={row['mean']}  "
         f"median={row['median']}  fail={row['failures']}  → {args.log}",
         flush=True,
     )

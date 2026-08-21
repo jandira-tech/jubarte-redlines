@@ -236,6 +236,10 @@ fn sized_canvas(bw: i32, bh: i32) -> (usize, usize) {
 }
 
 fn colorref(c: u32) -> [u8; 3] {
+    // COLORREF is 0x00BBGGRR; WMF CREATEBRUSHINDIRECT packs hatch in the
+    // high byte (image1.bin: `dadada02`). Mask to 24-bit or the CRT fill
+    // becomes (218,218,2) instead of gray.
+    let c = c & 0x00FF_FFFF;
     [
         (c & 0xFF) as u8,
         ((c >> 8) & 0xFF) as u8,
@@ -349,6 +353,9 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
             }
             0x012D => {
                 let idx = read_u16(data, payload).unwrap_or(0) as usize;
+                // Placeable Office WMFs use 1-based object handles (Select 1
+                // after the first CreateBrush lands in slot 0).
+                let idx = idx.saturating_sub(1);
                 if let Some(obj) = objects.get(idx) {
                     match *obj {
                         GdiObj::Brush(c) => brush = c,
@@ -362,6 +369,7 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
             }
             0x01F0 => {
                 let idx = read_u16(data, payload).unwrap_or(0) as usize;
+                let idx = idx.saturating_sub(1);
                 if let Some(slot) = objects.get_mut(idx) {
                     *slot = GdiObj::Empty;
                 }

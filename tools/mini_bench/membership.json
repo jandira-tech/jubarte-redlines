@@ -1,106 +1,129 @@
 {
   "track": "docx_to_pdf_no_redline_docs",
-  "source_report": "/var/folders/7w/dvl66_d13wx2v88nv5rcwltc0000gn/T/grok-goal-26ccc564fdeb/implementer/docx_to_pdf_no_redline.json",
-  "refreshed_after_mini_runs": 20,
+  "source_report": "/Users/arthrod/temp/T/neurotic_docx_bench/results/docx_to_pdf_no_redline.json",
   "baseline": {
+    "tool": "jubarte",
+    "version": "jubarte 0.7.0",
+    "converter": "/Users/arthrod/temp/T/jubarte-redlines/target/release/jubarte",
     "itt_n": 398,
     "n_scored": 398,
-    "mean": 70.4542,
-    "median": 78.7572,
-    "n_gt90": 10
+    "mean": 66.2471,
+    "median": 67.3859,
+    "n_gt90": 6,
+    "n_next_highest_fill": 4
   },
-  "selection_rule": "Refreshed after 20 mini-runs from the new full-track report. Worst 50 + all 10 files >90.",
+  "selection_rule": "50 lowest jubarte scores (ties by stem) + every >90 up to 10 controls, else next-highest fill to 10 controls.",
   "n": 60,
   "stems": [
     {
       "stem": "source__Strict01",
       "role": "worst",
-      "baseline_score": 33.74730449636921
+      "baseline_score": 33.42677594678756
     },
     {
       "stem": "source__ole_object",
       "role": "worst",
-      "baseline_score": 33.74730449636921
+      "baseline_score": 33.42677594678756
     },
     {
       "stem": "source__strict01_sdt_controls",
       "role": "worst",
-      "baseline_score": 33.74730449636921
+      "baseline_score": 33.42677594678756
     },
     {
       "stem": "source__word_clean_strict01",
       "role": "worst",
-      "baseline_score": 33.74760278213674
+      "baseline_score": 33.42709888113451
     },
     {
       "stem": "source__docx_lots_of_comments_addition_removal_redline_removal_v_addition",
       "role": "worst",
-      "baseline_score": 34.77336101713761
+      "baseline_score": 36.13493006926612
     },
     {
       "stem": "source_randomized__file_27",
       "role": "worst",
-      "baseline_score": 34.786684480659225
-    },
-    {
-      "stem": "source__docx_lots_of_comments_addition_removal",
-      "role": "worst",
-      "baseline_score": 39.317559796742025
+      "baseline_score": 36.135342135766926
     },
     {
       "stem": "source__docx_lots_of_comments_addition",
       "role": "worst",
-      "baseline_score": 39.31813139643571
+      "baseline_score": 37.44385976725738
     },
     {
       "stem": "source__docx_lots_of_comments_addition_redline",
       "role": "worst",
-      "baseline_score": 39.31813139643571
+      "baseline_score": 37.44385976725738
     },
     {
       "stem": "source__docx_lots_of_comments_addition_removal_redline",
       "role": "worst",
-      "baseline_score": 39.31813139643571
+      "baseline_score": 37.44385976725738
     },
     {
-      "stem": "source_randomized__file_9",
+      "stem": "source__docx_lots_of_comments_addition_removal",
       "role": "worst",
-      "baseline_score": 39.34959944785744
+      "baseline_score": 37.47210218708076
     },
     {
       "stem": "source_randomized__file_6",
       "role": "worst",
-      "baseline_score": 39.35107853176065
-    },
-    {
-      "stem": "source_randomized__file_74",
-      "role": "worst",
-      "baseline_score": 39.35318708738047
+      "baseline_score": 37.50186484355966
     },
     {
       "stem": "source_randomized__file_53",
       "role": "worst",
-      "baseline_score": 39.35394504112432
+      "baseline_score": 37.5030626317405
+    },
+    {
+      "stem": "source_randomized__file_74",
+      "role": "worst",
+      "baseline_score": 37.50378237940275
+    },
+    {
+      "stem": "source_randomized__file_9",
+      "role": "worst",
+      "baseline_score": 37.52822024017297
     },
     {
       "stem": "source__docx_lots_of_comments_addition_redline_addition_v_removal",
       "role": "worst",
-      "baseline_score": 39.59887771752678
-    },
-    {
-      "stem": "source__sd_2517_localized_heading_styles",
-      "role": "worst",
-      "baseline_score": 39.60295493276
-    },
-    {
-      "stem": "source_randomized__file_22",
-      "role": "worst",
-      "baseline_score": 39.60319069722162
+      "baseline_score": 37.775609428034514
     },
     {
       "stem": "source_randomized__file_16",
       "role": "worst",
-      "baseline_score": 39.63483058788586
+      "baseline_score": 37.83509005838654
+    },
+    {
+      "stem": "source_randomized__file_22",
+      "role": "worst",
+      "baseline_score": 39.47346266250908
+    },
+    {
+      "stem": "source__sd_2517_localized_heading_styles",
+      "role": "worst",
+      "baseline_score": 39.47447281811434
+    },
+    {
+      "stem": "source__sample_document_word_repair_of_our_output_iter2_word_repaired_2",
+      "role": "worst",
+      "baseline_score": 39.74371407785638
+    },
+    {
+      "stem": "source__docx_lots_of_comments",
+      "role": "worst",
+      "baseline_score": 40.026750775946944
+    },
+    {
+      "stem": "source_randomized__file_131",
+      "role": "worst",
+      "baseline_score": 40.09472183902886
+    },
+    {
+      "stem": "source__I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you",
+      "role": "worst",
+      "baseline_score": 40.25570405657888
     },
     {
       "stem": "source__mcdoc",
@@ -108,164 +131,144 @@
       "baseline_score": 40.39049253956405
     },
     {
-      "stem": "source_randomized__file_175",
-      "role": "worst",
-      "baseline_score": 40.45523503986165
-    },
-    {
-      "stem": "source__image_out_of_folder",
-      "role": "worst",
-      "baseline_score": 41.02310184282143
-    },
-    {
-      "stem": "source_randomized__file_48",
-      "role": "worst",
-      "baseline_score": 41.02310184282143
-    },
-    {
-      "stem": "source__sample_document_word_repair_of_our_output_iter2_word_repaired_2",
-      "role": "worst",
-      "baseline_score": 41.37162741256966
-    },
-    {
-      "stem": "source__I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you",
-      "role": "worst",
-      "baseline_score": 41.5180643668214
-    },
-    {
-      "stem": "source_randomized__file_170",
-      "role": "worst",
-      "baseline_score": 41.66094729110988
-    },
-    {
       "stem": "source_randomized__file_146",
       "role": "worst",
-      "baseline_score": 41.821144721879065
-    },
-    {
-      "stem": "source__eigenpal_docx_editor_suggesting_mixed_edits_2",
-      "role": "worst",
-      "baseline_score": 41.83340325402354
-    },
-    {
-      "stem": "source__sample_document_word_repair_of_our_output_word_repaired_2",
-      "role": "worst",
-      "baseline_score": 42.5022958439459
-    },
-    {
-      "stem": "source__docx_lots_of_comments",
-      "role": "worst",
-      "baseline_score": 42.5550369743997
-    },
-    {
-      "stem": "source_randomized__file_131",
-      "role": "worst",
-      "baseline_score": 42.58838978850574
-    },
-    {
-      "stem": "source_randomized__file_34",
-      "role": "worst",
-      "baseline_score": 42.74825071925859
+      "baseline_score": 40.501622237943096
     },
     {
       "stem": "source_randomized__file_8",
       "role": "worst",
-      "baseline_score": 42.77625629952403
-    },
-    {
-      "stem": "source_randomized__file_176",
-      "role": "worst",
-      "baseline_score": 42.85980592954244
-    },
-    {
-      "stem": "source__potpourritest",
-      "role": "worst",
-      "baseline_score": 42.997814721261584
+      "baseline_score": 40.73345133062816
     },
     {
       "stem": "source__word_tolerated_misplaced_uipriority",
       "role": "worst",
-      "baseline_score": 43.367333039749475
+      "baseline_score": 41.16086450649325
+    },
+    {
+      "stem": "source__image_out_of_folder",
+      "role": "worst",
+      "baseline_score": 41.20062542628955
+    },
+    {
+      "stem": "source_randomized__file_48",
+      "role": "worst",
+      "baseline_score": 41.20062542628955
+    },
+    {
+      "stem": "source_randomized__file_170",
+      "role": "worst",
+      "baseline_score": 41.58839739694848
+    },
+    {
+      "stem": "source_randomized__file_34",
+      "role": "worst",
+      "baseline_score": 42.45771132936524
     },
     {
       "stem": "source__table_bookmark_end",
       "role": "worst",
-      "baseline_score": 43.59493250325742
+      "baseline_score": 42.4693188186857
     },
     {
-      "stem": "source__Redline_CiceroDo_v_plate_30",
+      "stem": "source__potpourritest",
       "role": "worst",
-      "baseline_score": 44.48509758273225
-    },
-    {
-      "stem": "source_randomized__file_134",
-      "role": "worst",
-      "baseline_score": 44.995587619967004
+      "baseline_score": 42.614800960601585
     },
     {
       "stem": "source__sample_document_word_repair_of_our_output_iter2_word_repaired",
       "role": "worst",
-      "baseline_score": 45.01208733715197
+      "baseline_score": 42.732171647311915
     },
     {
       "stem": "source__eigenpal_docx_editor_suggesting_mixed_edits",
       "role": "worst",
-      "baseline_score": 45.04826094425582
+      "baseline_score": 42.81079046239175
     },
     {
       "stem": "source__sample_document_afterword_repaired_word_repaired",
       "role": "worst",
-      "baseline_score": 45.04826094425582
+      "baseline_score": 42.81079046239175
     },
     {
       "stem": "source__sample_document_really_repaired_word_repaired",
       "role": "worst",
-      "baseline_score": 45.05356923710975
+      "baseline_score": 42.816730470735216
     },
     {
       "stem": "source__sample_document_word_repair_of_our_output_word_repaired",
       "role": "worst",
-      "baseline_score": 45.05356923710975
+      "baseline_score": 42.816730470735216
+    },
+    {
+      "stem": "source__sample_document_word_repair_of_our_output_word_repaired_2",
+      "role": "worst",
+      "baseline_score": 42.99072563110499
+    },
+    {
+      "stem": "source_randomized__file_134",
+      "role": "worst",
+      "baseline_score": 43.133626819147445
+    },
+    {
+      "stem": "source__eigenpal_docx_editor_suggesting_mixed_edits_2",
+      "role": "worst",
+      "baseline_score": 43.292226585099556
+    },
+    {
+      "stem": "source_randomized__file_175",
+      "role": "worst",
+      "baseline_score": 43.30848962061071
+    },
+    {
+      "stem": "source_randomized__file_176",
+      "role": "worst",
+      "baseline_score": 43.72008165596577
+    },
+    {
+      "stem": "source__Redline_CiceroDo_v_plate_30",
+      "role": "worst",
+      "baseline_score": 44.80553429308395
     },
     {
       "stem": "source_randomized__file_100",
       "role": "worst",
-      "baseline_score": 45.41878548505185
+      "baseline_score": 45.07184121040221
     },
     {
       "stem": "source_randomized__file_115",
       "role": "worst",
-      "baseline_score": 45.420593096524755
-    },
-    {
-      "stem": "source_randomized__file_196",
-      "role": "worst",
-      "baseline_score": 45.420646438293794
+      "baseline_score": 45.07377106472456
     },
     {
       "stem": "source_randomized__file_185",
       "role": "worst",
-      "baseline_score": 45.42111528068297
+      "baseline_score": 45.074017756859845
     },
     {
-      "stem": "source_randomized__file_197",
+      "stem": "source_randomized__file_196",
       "role": "worst",
-      "baseline_score": 45.886126532626456
+      "baseline_score": 45.07401992613047
     },
     {
-      "stem": "source_randomized__file_2",
+      "stem": "source_randomized__file_19",
       "role": "worst",
-      "baseline_score": 46.21356354530856
+      "baseline_score": 45.66131733627533
     },
     {
-      "stem": "source_randomized__file_41",
+      "stem": "source_randomized__file_69",
       "role": "worst",
-      "baseline_score": 46.214542386906885
+      "baseline_score": 45.67765811256472
+    },
+    {
+      "stem": "source_randomized__file_78",
+      "role": "worst",
+      "baseline_score": 45.83113697677959
     },
     {
       "stem": "source__gdocs_comments_export",
       "role": "gt90",
-      "baseline_score": 93.83165824269867
+      "baseline_score": 93.83489933407361
     },
     {
       "stem": "source__comments",
@@ -273,44 +276,44 @@
       "baseline_score": 92.94691654411376
     },
     {
+      "stem": "source__subtitle_style_demo_id_paraid_overflow",
+      "role": "gt90",
+      "baseline_score": 92.69329151224089
+    },
+    {
       "stem": "source_randomized__file_61",
       "role": "gt90",
-      "baseline_score": 92.00358847905004
+      "baseline_score": 91.11620398900942
     },
     {
-      "stem": "source_randomized__file_71",
+      "stem": "source__red_bold_heading_demo_style_default_missing",
       "role": "gt90",
-      "baseline_score": 91.73733657062722
-    },
-    {
-      "stem": "source__heading_3_center_italic_id_paraid_overflow",
-      "role": "gt90",
-      "baseline_score": 91.37927097935557
+      "baseline_score": 90.09765826046203
     },
     {
       "stem": "source__font_color_blue_demo_style_default_missing",
       "role": "gt90",
-      "baseline_score": 91.29310799604495
+      "baseline_score": 90.01499046620617
     },
     {
-      "stem": "source_randomized__file_181",
-      "role": "gt90",
-      "baseline_score": 91.10462790088039
+      "stem": "source__green_underline_bullet_list_id_paraid_overflow",
+      "role": "next_highest_fill",
+      "baseline_score": 89.79521224410536
     },
     {
-      "stem": "source__blue_centered_title_demo_style_default_missing",
-      "role": "gt90",
-      "baseline_score": 90.91121183206225
+      "stem": "source_randomized__file_135",
+      "role": "next_highest_fill",
+      "baseline_score": 89.4026583375541
     },
     {
-      "stem": "source__green_highlight_demo_id_paraid_overflow",
-      "role": "gt90",
-      "baseline_score": 90.856532425525
+      "stem": "source__red_heading_demo_id_paraid_overflow",
+      "role": "next_highest_fill",
+      "baseline_score": 88.95181879657451
     },
     {
-      "stem": "source_randomized__file_184",
-      "role": "gt90",
-      "baseline_score": 90.63955784223899
+      "stem": "source__subtitle_style_demo_style_default_missing",
+      "role": "next_highest_fill",
+      "baseline_score": 88.35242234100322
     }
   ]
 }

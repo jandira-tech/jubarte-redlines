@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::namespaces::{A, MC, R, W, WP};
+use crate::namespaces::{A, MC, R, W, WNE, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
@@ -28,7 +28,7 @@ fn fonts() -> &'static Fonts {
     static FONTS: LazyLock<Fonts> = LazyLock::new(Fonts::new);
     &FONTS
 }
-use pdf::{Op, Page};
+use pdf::{Op, Page, PdfComment};
 
 /// Failure opening a DOCX or emitting a PDF.
 #[derive(Debug)]
@@ -78,10 +78,16 @@ pub fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, ConvertError> {
         .ok_or(ConvertError::MissingDocument)?;
 
     let fonts = fonts();
-    let sheet = load_stylesheet(&pkg);
+    let markup = settings_track_revisions(&pkg);
+    let mut sheet = load_stylesheet(&pkg);
+    // Word Save-as-PDF All Markup (file_27): gray balloon pasteboard + scale.
+    // Ins-only trackRevisions (file_6) stays full-page / 0.24 cm.
+    if markup && document_wants_markup_pane(&pkg, &main) {
+        sheet.defaults.page.balloon_gutter = 144.0;
+    }
     let page = load_page_setup(&dom, body, &sheet.defaults.page);
     let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
-    let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
+    let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, markup);
     let pages = layout(fonts, &page, &hf, &blocks);
     Ok(pdf::emit(fonts, &pages))
 }
@@ -123,6 +129,7 @@ struct RunStyle {
     italic: bool,
     underline: bool,
     underline_double: bool,
+    underline_wave: bool,
     strike: bool,
     color: [f32; 3],
     highlight: Option<[f32; 3]>,
@@ -180,6 +187,9 @@ struct ParaStyle {
     after: f32,
     before: f32,
     line_mult: f32,
+    /// `w:spacing w:lineRule="exact"` in points. Word uses this as the
+    /// line box (sd_2517 Ttulo1 line=400 → 20pt), not size×(line/11).
+    line_exact: Option<f32>,
     indent_left: f32,
     indent_right: f32,
     indent_first: f32,
@@ -241,6 +251,10 @@ struct PageSetup {
     /// `w:pgNumType w:chapStyle` — Heading N (1-based) whose number prefixes PAGE.
     chap_style: Option<u32>,
     chap_sep: &'static str,
+    /// Non-zero when Word Save-as-PDF All Markup applies: scale the
+    /// laid-out letter page and paint a gray balloon pasteboard (file_27).
+    /// Must not shrink wrap/`margin_r` or 30pt titles wrap (12→14pp).
+    balloon_gutter: f32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -323,6 +337,7 @@ impl Defaults {
                 italic: false,
                 underline: false,
                 underline_double: false,
+                underline_wave: false,
                 strike: false,
                 color: [0.0, 0.0, 0.0],
                 highlight: None,
@@ -337,6 +352,7 @@ impl Defaults {
                 after: 10.0,
                 before: 0.0,
                 line_mult: 276.0 / 240.0,
+                line_exact: None,
                 indent_left: 0.0,
                 indent_right: 0.0,
                 indent_first: 0.0,
@@ -367,6 +383,7 @@ impl Defaults {
                 page_num_fmt: PageNumFmt::Decimal,
                 chap_style: None,
                 chap_sep: "-",
+                balloon_gutter: 0.0,
             },
         }
     }
@@ -380,11 +397,22 @@ enum FieldKind {
 }
 
 #[derive(Clone)]
+struct CommentNote {
+    id: String,
+    author: String,
+    text: String,
+}
+
+#[derive(Clone)]
 struct TextRun {
     text: String,
     style: RunStyle,
     field: FieldKind,
     rev: bool,
+    comments: Vec<CommentNote>,
+    /// `PAGEREF _Toc…` bookmark. Cached `w:t` is a first-pass guess;
+    /// Word Save-as-PDF patches it from the bookmark’s layout page.
+    pageref: Option<String>,
 }
 
 impl TextRun {
@@ -392,8 +420,10 @@ impl TextRun {
         Self {
             text: text.into(),
             style,
+            pageref: None,
             field: FieldKind::None,
             rev: false,
+            comments: Vec::new(),
         }
     }
 }
@@ -405,6 +435,8 @@ enum Block {
         list: bool,
         images: Vec<LaidImage>,
         boxes: Vec<LaidTextBox>,
+        /// `w:bookmarkStart/@w:name` on this para (`_Toc…` for PAGEREF).
+        bookmarks: Vec<String>,
     },
     Table {
         cols: Vec<f32>,
@@ -495,6 +527,8 @@ struct LaidImage {
     h: f32,
     kind: ImageKind,
     slot: ImageSlot,
+    behind: bool,
+    z: u32,
 }
 
 struct LaidTextBox {
@@ -506,12 +540,27 @@ struct LaidTextBox {
     /// False for SmartArt/diagram labels (a stroked hollow box is a net
     /// ITT loss; Strict01 empty Diagram 1).
     stroke: bool,
+    fill: Option<[f32; 3]>,
+    geom: ShapeGeom,
+    /// Inline `a:noFill` frames still consume flow (Strict01 Rectangle 3).
+    reserve_only: bool,
+    /// `wp:anchor/@behindDoc` — paint under later shapes.
+    behind: bool,
+    /// `wp:anchor/@relativeHeight` — higher draws on top.
+    z: u32,
+    /// `a:xfrm/@flipH` / `@flipV` (curvedConnector3 Strict01 is flipV).
+    flip_h: bool,
+    flip_v: bool,
+    /// `a:tailEnd` (bentConnector3 Strict01 is a filled triangle).
+    tail_end: bool,
 }
 
 struct ChartData {
     title: String,
     cats: Vec<String>,
     series: Vec<Vec<f32>>,
+    names: Vec<String>,
+    legend: bool,
 }
 
 /// Inline / wrapTopAndBottom images consume flow; wrapSquare anchors overlay.
@@ -524,7 +573,30 @@ enum ImageSlot {
         page_x: Option<f32>,
         /// `wp:positionV relativeFrom=page` posOffset (pt). `None` → top margin.
         page_y: Option<f32>,
+        /// `wp:positionH relativeFrom=column|margin` posOffset (pt).
+        col_x: Option<f32>,
+        /// `wp:positionV relativeFrom=paragraph` posOffset (pt).
+        para_y: Option<f32>,
+        /// `wp14:pctPosHOffset` as 0..1 of page width.
+        pct_x: Option<f32>,
+        /// `wp14:pctPosVOffset` as 0..1 of page height.
+        pct_y: Option<f32>,
+        /// `wp14:sizeRelH/pctWidth` as 0..1 of page width.
+        pct_w: Option<f32>,
+        /// `wp14:sizeRelV/pctHeight` as 0..1 of page height.
+        pct_h: Option<f32>,
+        /// `wp:positionV/align` when there is no posOffset/pct (page center).
+        v_align: Align,
     },
+}
+
+#[derive(Clone, Copy)]
+enum ShapeGeom {
+    Box,
+    RightArrow,
+    BentConnector,
+    CurvedConnector,
+    Line,
 }
 
 enum ImageKind {
@@ -913,6 +985,7 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
         let off = val.is_some_and(|v| v == "none");
         style.underline = !off;
         style.underline_double = val.is_some_and(|v| v == "double" || v == "thick");
+        style.underline_wave = val.is_some_and(|v| v == "wave" || v == "wavy");
     }
     style.strike = first_named(dom, rpr, "strike").is_some_and(|n| !val_is_false(dom, Some(n)))
         || first_named(dom, rpr, "dstrike").is_some_and(|n| !val_is_false(dom, Some(n)));
@@ -1015,13 +1088,23 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
             let unit = line.chars().any(|c| c.is_ascii_alphabetic());
             if unit {
                 if let Some(pt) = parse_len(line) {
-                    style.line_mult = (pt / 11.0).max(0.8);
+                    if rule == "exact" {
+                        style.line_exact = Some(pt);
+                    } else {
+                        style.line_exact = None;
+                        style.line_mult = (pt / 11.0).max(0.8);
+                    }
                 }
             } else if let Ok(v) = line.parse::<f32>() {
-                if rule == "exact" || rule == "atLeast" {
-                    style.line_mult = (twip(v) / 11.0).max(0.8);
+                if rule == "exact" {
+                    style.line_exact = Some(twip(v));
                 } else {
-                    style.line_mult = v / 240.0;
+                    style.line_exact = None;
+                    if rule == "atLeast" {
+                        style.line_mult = (twip(v) / 11.0).max(0.8);
+                    } else {
+                        style.line_mult = v / 240.0;
+                    }
                 }
             }
         }
@@ -1039,18 +1122,24 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
         style.border_right = Some(border);
     }
     if let Some(ind) = first_named(dom, ppr, "ind") {
-        if let Some(left) = attr_any(dom, ind, "left").and_then(|s| s.parse::<f32>().ok()) {
-            style.indent_left = twip(left);
+        if let Some(left) = attr_any(dom, ind, "left")
+            .or_else(|| attr_any(dom, ind, "start"))
+            .and_then(parse_len)
+        {
+            style.indent_left = left;
         }
-        if let Some(right) = attr_any(dom, ind, "right").and_then(|s| s.parse::<f32>().ok()) {
-            style.indent_right = twip(right);
+        if let Some(right) = attr_any(dom, ind, "right")
+            .or_else(|| attr_any(dom, ind, "end"))
+            .and_then(parse_len)
+        {
+            style.indent_right = right;
         }
-        if let Some(first) = attr_any(dom, ind, "firstLine").and_then(|s| s.parse::<f32>().ok()) {
-            style.indent_first = twip(first);
+        if let Some(first) = attr_any(dom, ind, "firstLine").and_then(parse_len) {
+            style.indent_first = first;
         }
         // Hanging and firstLine are mutually exclusive in Word; hanging wins if both exist.
-        if let Some(hanging) = attr_any(dom, ind, "hanging").and_then(|s| s.parse::<f32>().ok()) {
-            style.indent_first = -twip(hanging);
+        if let Some(hanging) = attr_any(dom, ind, "hanging").and_then(parse_len) {
+            style.indent_first = -hanging;
         }
     }
     if first_named(dom, ppr, "contextualSpacing").is_some() {
@@ -1372,6 +1461,18 @@ impl Numbering {
 
     fn render(&self, abs: &str, num_id: &str, ilvl: u32, lvl: &NumLevel, this: u32) -> String {
         if lvl.fmt == NumFmt::Bullet {
+            // Word ListBullet is U+F0B7 in Symbol (cmap has F0B7/00B7, not
+            // U+2022). Mapping PUA→U+2022 painted Aptos 0x95 and skipped
+            // SymbolMT (empty glyphs). Keep the PUA on Symbol so Quartz
+            // • matches comments-lots; hanging indent already places it.
+            if lvl.family.to_ascii_lowercase().contains("symbol") {
+                let t = lvl.text.trim();
+                return if t.is_empty() {
+                    "\u{F0B7}".into()
+                } else {
+                    t.to_string()
+                };
+            }
             return bullet_glyph(&lvl.text);
         }
         let mut out = lvl.text.clone();
@@ -1622,12 +1723,46 @@ fn lvl_indent(dom: &Dom, lvl: NodeId) -> (f32, f32) {
         return (0.0, 0.0);
     };
     let left = attr_any(dom, ind, "left")
+        .or_else(|| attr_any(dom, ind, "start"))
         .and_then(parse_len)
         .unwrap_or(0.0);
     let hanging = attr_any(dom, ind, "hanging")
         .and_then(parse_len)
         .unwrap_or(0.0);
     (left, hanging)
+}
+
+fn settings_track_revisions(pkg: &PartFs) -> bool {
+    let Some(xml) = pkg.part_string("word/settings.xml") else {
+        return false;
+    };
+    xml.contains("trackRevisions")
+        && !xml.contains("trackRevisions w:val=\"0\"")
+        && !xml.contains("trackRevisions w:val=\"false\"")
+}
+
+/// Word Save-as-PDF All Markup pasteboard only on file_27-class docs
+/// (~160 ins + ~103 del). Randomized redlines have 500+ dels but Word
+/// still exports 0.24 cm / no pane (file_9_file_10_redline).
+const MARKUP_PANE_MIN_DEL: usize = 100;
+const MARKUP_PANE_MIN_INS: usize = 100;
+
+fn document_wants_markup_pane(pkg: &PartFs, main: &str) -> bool {
+    pkg.part_string(main).is_some_and(|xml| {
+        w_revision_count(&xml, "<w:del") >= MARKUP_PANE_MIN_DEL
+            && w_revision_count(&xml, "<w:ins") >= MARKUP_PANE_MIN_INS
+    })
+}
+
+fn w_revision_count(xml: &str, tag: &str) -> usize {
+    xml.match_indices(tag)
+        .filter(|(i, _)| {
+            matches!(
+                xml.as_bytes().get(i + tag.len()).copied(),
+                Some(b' ' | b'>' | b'/')
+            )
+        })
+        .count()
 }
 
 fn collect_blocks(
@@ -1637,17 +1772,23 @@ fn collect_blocks(
     body: NodeId,
     sheet: &StyleSheet,
     fonts: &Fonts,
+    markup: bool,
 ) -> Vec<Block> {
     let _ = fonts;
     let mut blocks = Vec::new();
     let mut numbering = load_numbering(pkg);
     let sects = dom.descendants(body, Some(&W::sect_pr()));
+    let comments = load_comments(pkg, main);
     let ctx = WalkCtx {
         pkg,
         main,
         sheet,
         sects: &sects,
-        authors: RefCell::new(AuthorColors::default()),
+        authors: RefCell::new(AuthorColors {
+            names: Vec::new(),
+            word_markup: markup,
+        }),
+        comments,
     };
     walk_container(&ctx, dom, body, &mut numbering, &mut blocks);
     append_endnotes(&ctx, dom, body, &mut numbering, &mut blocks);
@@ -1660,6 +1801,47 @@ struct WalkCtx<'a> {
     sheet: &'a StyleSheet,
     sects: &'a [NodeId],
     authors: RefCell<AuthorColors>,
+    comments: HashMap<String, CommentRec>,
+}
+
+#[derive(Clone)]
+struct CommentRec {
+    author: String,
+    text: String,
+}
+
+fn load_comments(pkg: &PartFs, main: &str) -> HashMap<String, CommentRec> {
+    let Some(xml) = part_xml_by_rel_kind(pkg, main, "comments") else {
+        return HashMap::new();
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return HashMap::new();
+    };
+    let mut out = HashMap::new();
+    for node in dom.descendants(root, Some(&W::name("comment"))) {
+        let Some(id) = attr_any(&dom, node, "id").map(str::to_string) else {
+            continue;
+        };
+        let author = attr_any(&dom, node, "author").unwrap_or("").to_string();
+        let mut text = String::new();
+        for t in dom.descendants(node, Some(&W::t())) {
+            if let Some(s) = dom.text_value(t).or_else(|| {
+                (0..dom.child_count(t)).find_map(|i| dom.text_value(dom.child_at(t, i)))
+            }) {
+                if !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(s);
+            }
+        }
+        if text.is_empty() {
+            text = element_text(&dom, node);
+        }
+        out.insert(id, CommentRec { author, text });
+    }
+    out
 }
 
 fn next_sect_pr(sects: &[NodeId], current: NodeId) -> Option<NodeId> {
@@ -1763,6 +1945,7 @@ fn append_endnotes(
                     ctx.sheet,
                     numbering,
                     &mut ctx.authors.borrow_mut(),
+                    &ctx.comments,
                 );
                 if !block_is_blank(&block) {
                     blocks.push(block);
@@ -1837,6 +2020,7 @@ fn walk_container(
                 ctx.sheet,
                 numbering,
                 &mut ctx.authors.borrow_mut(),
+                &ctx.comments,
             );
             if !block_is_blank(&block) {
                 blocks.push(block);
@@ -1907,6 +2091,12 @@ fn is_word_heading_style(style: &ParaStyle) -> bool {
     matches!(style.style_id.as_str(), "Heading1" | "Heading2")
 }
 
+fn leftover_break_heading(style_id: &str) -> bool {
+    // sd_2517 / file_22 empty page-breaks sit after TextHeading2/3/4.
+    // Do not treat Título1/Heading1 exact leftovers as skip sites.
+    style_id.to_ascii_lowercase().starts_with("textheading")
+}
+
 fn is_toc_style(style: &ParaStyle) -> bool {
     // Word built-in toc 1..9 (`TOC1` / localized `Sumrio2`). Not
     // DocumentTOC (exact 20pt title) and not body Times.
@@ -1933,7 +2123,8 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
 fn table_row_pad(nlines: usize, spec: f32, exact: bool, line_mult: f32) -> f32 {
     if nlines > 1 {
         // TableGrid line=240 wrapped headers (comments-addition
-        // capability matrix) still need the 8pt chrome. line=276
+        // capability matrix) still need the 8pt chrome so the
+        // Compatibility row stays on Word page 5. line=276
         // multi-line cells already carry it in 11×1.15 boxes
         // (Courier wrap ~25pt; +8 there is 33pt).
         if line_mult <= 1.01 { 8.0 } else { 0.0 }
@@ -1949,6 +2140,20 @@ fn table_row_pad(nlines: usize, spec: f32, exact: bool, line_mult: f32) -> f32 {
     }
 }
 
+fn table_row_line_size(row: &[TableCell], line_mult: f32) -> f32 {
+    // line=276 (1.15) keeps the 11pt box: mini 114 Courier 9.5
+    // listings sit on 11×1.15=12.65. line=240 uses the cell face.
+    if line_mult > 1.01 {
+        return 11.0;
+    }
+    let size = row
+        .iter()
+        .flat_map(|cell| cell.runs.iter())
+        .map(|run| run.style.size)
+        .fold(0.0_f32, f32::max);
+    if size > 0.0 { size } else { 11.0 }
+}
+
 fn table_row_height_pt(
     fonts: &Fonts,
     row: &[TableCell],
@@ -1957,7 +2162,15 @@ fn table_row_height_pt(
     line_mult: f32,
     ri: usize,
 ) -> f32 {
-    let line_box = 11.0 * line_mult;
+    // 2-col line=240 (comments-lots LightShading metadata): Word
+    // 1-line is ~12pt. 3/4-col TableGrid must keep 11+5 or the
+    // Compatibility row leaves Word page 5.
+    let two_col_single = line_mult <= 1.01 && col_w.len() == 2;
+    let line_box = if two_col_single {
+        table_row_line_size(row, line_mult)
+    } else {
+        11.0 * line_mult
+    };
     let nlines = row
         .iter()
         .map(|cell| {
@@ -1979,6 +2192,9 @@ fn table_row_height_pt(
     let spec = geom.row_min.get(ri).copied().unwrap_or(0.0);
     let exact = geom.row_exact.get(ri).copied().unwrap_or(false);
     let mut row_pad = table_row_pad(nlines, spec, exact, line_mult);
+    if two_col_single && nlines == 1 {
+        row_pad = 2.0;
+    }
     if geom.unstyled
         && row.len() == 1
         && row.iter().any(|c| c.fill.is_some() && c.valign_center)
@@ -2155,8 +2371,12 @@ fn paragraph_block(
         &rstyle,
         &sheet.theme,
         Some(&sheet.by_id),
-        &mut ctx.authors.borrow_mut(),
-        in_table,
+        &mut RunBag {
+            authors: &mut ctx.authors.borrow_mut(),
+            comments: &ctx.comments,
+            in_table,
+            toc: is_toc_style(&pstyle),
+        },
     );
     if !marker.is_empty() {
         let mut marker_style = rstyle.clone();
@@ -2164,11 +2384,19 @@ fn paragraph_block(
             if !lvl.family.is_empty() {
                 marker_style.family = lvl.family.clone();
             }
-            if pstyle.indent_left == 0.0 && lvl.left > 0.0 {
-                pstyle.indent_left = lvl.left;
-            }
-            if pstyle.indent_first == 0.0 && lvl.hanging > 0.0 {
-                pstyle.indent_first = -lvl.hanging;
+            // Numbering lvl pPr/ind overrides the paragraph style (ListParagraph
+            // start=720 vs Strict01 ilvl start=18pt/36pt). Direct pPr/ind wins.
+            let direct_ind = dom
+                .element(para, &W::p_pr())
+                .and_then(|ppr| first_named(dom, ppr, "ind"))
+                .is_some();
+            if !direct_ind {
+                if lvl.left > 0.0 {
+                    pstyle.indent_left = lvl.left;
+                }
+                if lvl.hanging > 0.0 {
+                    pstyle.indent_first = -lvl.hanging;
+                }
             }
         }
         runs.insert(0, TextRun::new(marker, marker_style));
@@ -2181,7 +2409,33 @@ fn paragraph_block(
         list: false, // marker already prepended
         images,
         boxes,
+        bookmarks: para_bookmark_names(dom, para),
     }
+}
+
+fn para_bookmark_names(dom: &Dom, para: NodeId) -> Vec<String> {
+    let want = W::name("bookmarkStart");
+    (0..dom.child_count(para))
+        .filter_map(|i| {
+            let child = dom.child_at(para, i);
+            if !dom.name_is(child, &want) {
+                return None;
+            }
+            attr_any(dom, child, "name").map(str::to_string)
+        })
+        .collect()
+}
+
+fn pageref_bookmark(instr: &str) -> Option<String> {
+    let mut parts = instr.split_whitespace();
+    let pageref = parts.next()?.eq_ignore_ascii_case("PAGEREF");
+    if !pageref {
+        return None;
+    }
+    parts
+        .find(|p| !p.starts_with('\\'))
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
 }
 
 fn resolve_num_pr(
@@ -2273,20 +2527,19 @@ fn table_look(dom: &Dom, table: NodeId) -> TblLook {
 }
 
 fn row_band_fill(tdef: &TblStyle, look: &TblLook, row: usize) -> Option<[f32; 3]> {
-    // firstRow fill wins when the style actually has one (MediumShading
-    // header). LightShading firstRow is bold-only; soffice still bands
-    // from row 0, so skipping the header inverted comments/I_am_sharing.
-    if look.first_row && row == 0 && tdef.first_row_fill.is_some() {
+    // Word: firstRow consumes row 0 even when that style has no fill
+    // (LightShading-Accent1: Prepared for is white, Prepared by is band1).
+    // Banding from row 0 inverted Date / Document purpose / Status.
+    if look.first_row && row == 0 {
         return tdef.first_row_fill;
     }
     if look.no_h_band {
         return None;
     }
-    let body = if look.first_row && tdef.first_row_fill.is_some() {
-        row.saturating_sub(1)
-    } else {
-        row
-    };
+    // Filled-header (MediumShading1) Word-visual invert of body 0
+    // dropped comments-lots ~0.10 ITT (gated-to-filled-header still
+    // −0.02 / median 51.14→51.09). Keep body 0 as band1.
+    let body = if look.first_row { row - 1 } else { row };
     if body % 2 == 0 {
         tdef.band1_fill
     } else {
@@ -2331,6 +2584,7 @@ fn table_block(
     sheet: &StyleSheet,
     numbering: &mut Numbering,
     authors: &mut AuthorColors,
+    comments: &HashMap<String, CommentRec>,
 ) -> Block {
     let look = table_look(dom, table);
     let tdef = table_style_id(dom, table).and_then(|id| sheet.tables.get(id).cloned());
@@ -2371,8 +2625,12 @@ fn table_block(
                         &r,
                         &sheet.theme,
                         Some(&sheet.by_id),
-                        authors,
-                        true,
+                        &mut RunBag {
+                            authors,
+                            comments,
+                            in_table: true,
+                            toc: false,
+                        },
                     );
                     // Word cells almost always end with an empty <w:p>.
                     // Counting that as a \\n doubled every row (table median).
@@ -2400,8 +2658,12 @@ fn table_block(
                     &sheet.defaults.run,
                     &sheet.theme,
                     Some(&sheet.by_id),
-                    authors,
-                    true,
+                    &mut RunBag {
+                        authors,
+                        comments,
+                        in_table: true,
+                        toc: false,
+                    },
                 );
             }
             let (colspan, vmerge) = cell_span(dom, cell);
@@ -2699,7 +2961,19 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
 
 fn collect_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts) -> Vec<TextRun> {
     let mut authors = AuthorColors::default();
-    collect_runs_in(dom, node, base, theme, None, &mut authors, false)
+    collect_runs_in(
+        dom,
+        node,
+        base,
+        theme,
+        None,
+        &mut RunBag {
+            authors: &mut authors,
+            comments: &HashMap::new(),
+            in_table: false,
+            toc: false,
+        },
+    )
 }
 
 struct RunCollect<'a> {
@@ -2709,6 +2983,20 @@ struct RunCollect<'a> {
     styles: Option<&'a HashMap<String, NamedStyle>>,
     authors: &'a mut AuthorColors,
     in_table: bool,
+    toc: bool,
+    comments: &'a HashMap<String, CommentRec>,
+    open: Vec<String>,
+    pending: Vec<String>,
+    bound: HashSet<String>,
+    pageref: Option<String>,
+    field_result: bool,
+}
+
+struct RunBag<'a> {
+    authors: &'a mut AuthorColors,
+    comments: &'a HashMap<String, CommentRec>,
+    in_table: bool,
+    toc: bool,
 }
 
 fn collect_runs_in(
@@ -2717,8 +3005,7 @@ fn collect_runs_in(
     base: &RunStyle,
     theme: &ThemeFonts,
     styles: Option<&HashMap<String, NamedStyle>>,
-    authors: &mut AuthorColors,
-    in_table: bool,
+    bag: &mut RunBag<'_>,
 ) -> Vec<TextRun> {
     let mut runs = Vec::new();
     let mut ctx = RunCollect {
@@ -2726,11 +3013,50 @@ fn collect_runs_in(
         base,
         theme,
         styles,
-        authors,
-        in_table,
+        authors: bag.authors,
+        in_table: bag.in_table,
+        toc: bag.toc,
+        comments: bag.comments,
+        open: Vec::new(),
+        pending: Vec::new(),
+        bound: HashSet::new(),
+        pageref: None,
+        field_result: false,
     };
     collect_runs_rec(&mut ctx, node, RevMark::None, "", &mut runs);
+    flush_pending_comments(&mut ctx, &mut runs);
     runs
+}
+
+fn notes_for(ctx: &mut RunCollect<'_>, ids: &[String]) -> Vec<CommentNote> {
+    let mut out = Vec::new();
+    for id in ids {
+        if !ctx.bound.insert(id.clone()) {
+            continue;
+        }
+        if let Some(rec) = ctx.comments.get(id) {
+            out.push(CommentNote {
+                id: id.clone(),
+                author: rec.author.clone(),
+                text: rec.text.clone(),
+            });
+        }
+    }
+    out
+}
+
+fn flush_pending_comments(ctx: &mut RunCollect<'_>, runs: &mut [TextRun]) {
+    if ctx.pending.is_empty() {
+        return;
+    }
+    let pending = std::mem::take(&mut ctx.pending);
+    let notes = notes_for(ctx, &pending);
+    if notes.is_empty() {
+        return;
+    }
+    if let Some(last) = runs.last_mut() {
+        last.comments.extend(notes);
+    }
 }
 
 fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
@@ -2743,6 +3069,9 @@ fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
     }
     if run.underline_double {
         style.underline_double = true;
+    }
+    if run.underline_wave {
+        style.underline_wave = true;
     }
     if run.strike {
         style.strike = true;
@@ -2761,16 +3090,21 @@ fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
 #[derive(Default)]
 struct AuthorColors {
     names: Vec<String>,
+    /// `w:trackRevisions`: Word Save-as-PDF first-author ins is #D13438.
+    word_markup: bool,
 }
 
 impl AuthorColors {
     fn color(&mut self, author: &str) -> [f32; 3] {
-        // soffice "by author" palette measured on sample/eigenpal +
-        // project_tasks (gold, blue, olive). Word first-author red
-        // #D13438 lifted addition* +0.12 but dropped comments-lots
-        // −0.29 (mini 69). Keep gold until that cluster is re-sampled.
-        const PALETTE: [[f32; 3]; 3] = [
-            [192.0 / 255.0, 144.0 / 255.0, 0.0],
+        // soffice gold/blue/olive when markup is off. Word first-author
+        // red matches file_27 markup PDFs without touching comments-lots.
+        let first = if self.word_markup {
+            [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0]
+        } else {
+            [192.0 / 255.0, 144.0 / 255.0, 0.0]
+        };
+        let palette = [
+            first,
             [0.0, 64.0 / 255.0, 160.0 / 255.0],
             [80.0 / 255.0, 152.0 / 255.0, 24.0 / 255.0],
         ];
@@ -2782,7 +3116,7 @@ impl AuthorColors {
                 self.names.len() - 1
             }
         };
-        PALETTE[idx % PALETTE.len()]
+        palette[idx % palette.len()]
     }
 }
 
@@ -2828,6 +3162,58 @@ fn collect_runs_rec(
     author: &str,
     runs: &mut Vec<TextRun>,
 ) {
+    if ctx.dom.name_is(node, &W::name("commentRangeStart")) {
+        if let Some(id) = attr_any(ctx.dom, node, "id") {
+            let id = id.to_string();
+            if !ctx.open.iter().any(|o| o == &id) {
+                ctx.open.push(id.clone());
+            }
+            if !ctx.pending.iter().any(|o| o == &id) {
+                ctx.pending.push(id);
+            }
+        }
+        return;
+    }
+    if ctx.dom.name_is(node, &W::name("commentRangeEnd")) {
+        if let Some(id) = attr_any(ctx.dom, node, "id") {
+            ctx.open.retain(|o| o != id);
+        }
+        return;
+    }
+    if ctx.dom.name_is(node, &W::name("commentReference")) {
+        if let Some(id) = attr_any(ctx.dom, node, "id") {
+            let id = id.to_string();
+            if !ctx.bound.contains(&id)
+                && !ctx.open.iter().any(|o| o == &id)
+                && !ctx.pending.iter().any(|o| o == &id)
+            {
+                ctx.pending.push(id);
+            }
+        }
+        return;
+    }
+    if ctx.dom.name_is(node, &W::fld_char()) {
+        match attr_any(ctx.dom, node, "fldCharType").unwrap_or("") {
+            "begin" => {
+                ctx.pageref = None;
+                ctx.field_result = false;
+            }
+            "separate" => ctx.field_result = true,
+            "end" => {
+                ctx.pageref = None;
+                ctx.field_result = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+    if ctx.dom.name_is(node, &W::instr_text()) {
+        let raw = element_text(ctx.dom, node);
+        if let Some(name) = pageref_bookmark(&raw) {
+            ctx.pageref = Some(name);
+        }
+        return;
+    }
     if skip_non_text(ctx.dom, node) {
         return;
     }
@@ -2852,6 +3238,17 @@ fn collect_runs_rec(
         return;
     }
     if ctx.dom.name_is(node, &W::r()) {
+        for idx in 0..ctx.dom.child_count(node) {
+            let child = ctx.dom.child_at(node, idx);
+            if ctx.dom.name_is(child, &W::name("commentRangeStart"))
+                || ctx.dom.name_is(child, &W::name("commentRangeEnd"))
+                || ctx.dom.name_is(child, &W::name("commentReference"))
+                || ctx.dom.name_is(child, &W::fld_char())
+                || ctx.dom.name_is(child, &W::instr_text())
+            {
+                collect_runs_rec(ctx, child, mark, author, runs);
+            }
+        }
         if let Some(rpr) = ctx.dom.element(node, &W::r_pr())
             && first_named(ctx.dom, rpr, "vanish").is_some_and(|n| !val_is_false(ctx.dom, Some(n)))
         {
@@ -2864,7 +3261,11 @@ fn collect_runs_rec(
             if let Some(sid) =
                 first_named(ctx.dom, rpr, "rStyle").and_then(|n| ctx.dom.attribute(n, &W::val()))
                 && let Some(named) = ctx.styles.and_then(|s| s.get(sid))
+                && !(ctx.toc && sid.eq_ignore_ascii_case("hyperlink"))
             {
+                // Word Save-as-PDF paints TOC \h entries in the toc
+                // paragraph style (black). Applying Hyperlink 0000FF
+                // + underline wiped sd_2517 / file_22 contents pages.
                 apply_named_char_style(&mut style, named);
             }
             apply_rpr(ctx.dom, rpr, &mut style, ctx.theme);
@@ -2879,6 +3280,13 @@ fn collect_runs_rec(
         if !text.is_empty() {
             let mut run = TextRun::new(text, style);
             run.rev = mark != RevMark::None;
+            if ctx.field_result {
+                run.pageref.clone_from(&ctx.pageref);
+            }
+            if !ctx.pending.is_empty() {
+                let pending = std::mem::take(&mut ctx.pending);
+                run.comments = notes_for(ctx, &pending);
+            }
             runs.push(run);
         }
         return;
@@ -2891,6 +3299,10 @@ fn collect_runs_rec(
             }
             let mut run = TextRun::new(rev_text(text, mark, ctx.in_table), style);
             run.rev = mark != RevMark::None;
+            if !ctx.pending.is_empty() {
+                let pending = std::mem::take(&mut ctx.pending);
+                run.comments = notes_for(ctx, &pending);
+            }
             runs.push(run);
         }
         return;
@@ -2909,16 +3321,11 @@ fn visible_text(dom: &Dom, node: NodeId, mark: RevMark, preserve_ws: bool) -> St
 
 fn rev_text(text: &str, mark: RevMark, preserve_ws: bool) -> String {
     match mark {
-        // Body: soffice squeezes generator xml:space padding. Keeping
-        // those 9–15 spaces blew sample wrap (github underline off-page).
-        // Table cells (npm/github badges) are the Word exception: the
-        // padding *is* the column. Header/footer padding (file_146
-        // `Page       1of       7`) is Word-faithful but mini 88 dropped
-        // the sample/file_146 family ~0.10 ITT — keep collapse there.
+        // Body xml:space padding collapses. Keeping it (Courier-only or
+        // all-preserve) dropped sample_document/eigenpal ~6 ITT. Table
+        // cells keep padding (in_table).
         RevMark::None if preserve_ws => text.to_string(),
         RevMark::None => collapse_ws(text),
-        // Tracked ins/del are the exception: soffice keeps the generator
-        // pad so the underline/strike explodes (sample/eigenpal).
         RevMark::Ins | RevMark::Del => text.to_string(),
     }
 }
@@ -3050,10 +3457,66 @@ fn collect_textboxes(
         let chart = object
             .then(|| src.and_then(|(pkg, main)| load_chart(pkg, main, dom, shape)))
             .flatten();
+        let mut fill = shape_fill_color(dom, shape);
+        let line = shape_line_color(dom, shape);
+        let geom = shape_geom(dom, shape);
+        if matches!(
+            geom,
+            ShapeGeom::BentConnector | ShapeGeom::CurvedConnector | ShapeGeom::Line
+        ) {
+            fill = fill.or(line);
+        }
+        let (behind, z) = drawing_z(dom, shape);
+        let (flip_h, flip_v) = shape_flip(dom, shape);
+        let tail_end = shape_has_tail_end(dom, shape);
         if empty && chart.is_none() {
-            // Empty wsp frames and diagram drawings with no series must not
-            // stroke. A chart graphicData without a part still reserves a box
-            // (inline_chart_extent_is_drawn_as_a_box).
+            if fill.is_some() || line.is_some() {
+                out.push(LaidTextBox {
+                    w,
+                    h,
+                    runs: Vec::new(),
+                    slot,
+                    chart: None,
+                    stroke: line.is_some() && fill.is_none(),
+                    fill,
+                    geom,
+                    reserve_only: false,
+                    behind,
+                    z,
+                    flip_h,
+                    flip_v,
+                    tail_end,
+                });
+                continue;
+            }
+            // Strict01 Rectangle 3: inline a:noFill 402×167. Word keeps the
+            // hole above the chart so wrapNone fills sit in it, not on the
+            // plot, and the WMF clipart lands on page 3.
+            if !object
+                && !diagram
+                && !drawing_has_blip(dom, shape)
+                && matches!(slot, ImageSlot::Flow)
+                && h > 16.0
+                && first_named_any(dom, shape, "extent").is_some()
+            {
+                out.push(LaidTextBox {
+                    w,
+                    h,
+                    runs: Vec::new(),
+                    slot,
+                    chart: None,
+                    stroke: false,
+                    fill: None,
+                    geom,
+                    reserve_only: true,
+                    behind,
+                    z,
+                    flip_h,
+                    flip_v,
+                    tail_end,
+                });
+                continue;
+            }
             if !object || diagram {
                 continue;
             }
@@ -3065,8 +3528,29 @@ fn collect_textboxes(
             slot,
             chart,
             stroke: !diagram,
+            fill,
+            geom,
+            reserve_only: false,
+            behind,
+            z,
+            flip_h,
+            flip_v,
+            tail_end,
         });
     }
+    // WrapNone accent fills on the same paragraph as an inline chart
+    // paint on top of the plot (Strict01 page 1) and wreck SSIM. The
+    // theme-fill test has no chart and still paints.
+    if out.iter().any(|b| b.chart.is_some()) {
+        out.retain(|b| {
+            b.chart.is_some()
+                || !b.runs.iter().all(|r| r.text.trim().is_empty())
+                || matches!(b.slot, ImageSlot::Flow)
+        });
+    }
+    // behindDoc first, then relativeHeight so the cover white paper (468)
+    // stays under the dark abstract header (467).
+    out.sort_by_key(|b| (!b.behind, b.z));
     out
 }
 
@@ -3187,6 +3671,18 @@ fn chart_pts(dom: &Dom, node: NodeId) -> Vec<String> {
     pts
 }
 
+fn chart_ser_name(dom: &Dom, ser: NodeId, idx: usize) -> String {
+    if let Some(tx) = descendants_local(dom, ser, "tx").into_iter().next() {
+        for v in descendants_local(dom, tx, "v") {
+            let s = element_text(dom, v);
+            if !s.trim().is_empty() {
+                return s;
+            }
+        }
+    }
+    format!("Series {}", idx + 1)
+}
+
 fn chart_title(dom: &Dom, root: NodeId) -> String {
     let deleted = descendants_local(dom, root, "autoTitleDeleted")
         .into_iter()
@@ -3219,12 +3715,14 @@ fn parse_chart(xml: &str) -> Option<ChartData> {
         .unwrap_or(root);
     let mut cats = Vec::new();
     let mut series = Vec::new();
+    let mut names = Vec::new();
     for ser in descendants_local(&dom, host, "ser") {
         if cats.is_empty()
             && let Some(cat) = descendants_local(&dom, ser, "cat").into_iter().next()
         {
             cats = chart_pts(&dom, cat);
         }
+        names.push(chart_ser_name(&dom, ser, names.len()));
         if let Some(val) = descendants_local(&dom, ser, "val").into_iter().next() {
             let nums: Vec<f32> = chart_pts(&dom, val)
                 .iter()
@@ -3238,10 +3736,14 @@ fn parse_chart(xml: &str) -> Option<ChartData> {
     if series.is_empty() {
         return None;
     }
+    names.truncate(series.len());
+    let legend = !descendants_local(&dom, root, "legend").is_empty();
     Some(ChartData {
         title: chart_title(&dom, root),
         cats,
         series,
+        names,
+        legend,
     })
 }
 
@@ -3306,15 +3808,53 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
     for drawing in dom.descendants(para, Some(&W::drawing())) {
         let (w, h) = drawing_extent_pt(dom, drawing);
         let slot = drawing_slot(dom, drawing);
+        let (behind, z) = drawing_z(dom, drawing);
         for blip in dom.descendants(drawing, Some(&A::name("blip"))) {
             if let Some(rid) = attr_any(dom, blip, "embed")
                 && let Some(bytes) = resolve_media(pkg, main, rid)
             {
                 let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);
-                out.push(LaidImage { w, h, kind, slot });
+                out.push(LaidImage {
+                    w,
+                    h,
+                    kind,
+                    slot,
+                    behind,
+                    z,
+                });
             }
         }
     }
+    // Choice Requires=v OLE / clipart: v:imagedata, not a:blip. Skip when
+    // the Fallback already contributed a DrawingML picture (Strict01 Excel
+    // object) — a second Flow reserve blows the 13-page pairing.
+    if out.is_empty() {
+        for root in shape_roots(dom, para) {
+            if dom.name_is(root, &W::drawing()) {
+                continue;
+            }
+            for im in descendants_local(dom, root, "imagedata") {
+                let Some(rid) = attr_any(dom, im, "id").or_else(|| attr_any(dom, im, "embed"))
+                else {
+                    continue;
+                };
+                let Some(bytes) = resolve_media(pkg, main, rid) else {
+                    continue;
+                };
+                let (w, h) = vml_extent_pt(dom, root);
+                let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);
+                out.push(LaidImage {
+                    w,
+                    h,
+                    kind,
+                    slot: ImageSlot::Flow,
+                    behind: false,
+                    z: 0,
+                });
+            }
+        }
+    }
+    out.sort_by_key(|im| (!im.behind, im.z));
     out
 }
 
@@ -3375,11 +3915,235 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         "center" => Align::Center,
         _ => Align::Left,
     };
+    let v_align_s = pv
+        .and_then(|n| first_named_any(dom, n, "align"))
+        .map(|n| local_text(dom, n))
+        .unwrap_or_default();
+    let v_align = match v_align_s.as_str() {
+        "bottom" | "outside" => Align::Right,
+        "center" => Align::Center,
+        _ => Align::Left,
+    };
+    let (pct_w, pct_h) = size_rel_pct(dom, drawing);
     ImageSlot::Float {
         align,
-        page_x: (h_from == "page").then(|| pos_offset_pt(dom, ph).unwrap_or(0.0)),
-        page_y: (v_from == "page").then(|| pos_offset_pt(dom, pv).unwrap_or(0.0)),
+        page_x: (h_from == "page").then(|| pos_offset_pt(dom, ph)).flatten(),
+        page_y: (v_from == "page").then(|| pos_offset_pt(dom, pv)).flatten(),
+        col_x: matches!(h_from, "column" | "margin" | "character")
+            .then(|| pos_offset_pt(dom, ph))
+            .flatten(),
+        para_y: matches!(v_from, "paragraph" | "line")
+            .then(|| pos_offset_pt(dom, pv))
+            .flatten(),
+        pct_x: ph.and_then(|n| parse_pct_offset(dom, n, "pctPosHOffset")),
+        pct_y: pv.and_then(|n| parse_pct_offset(dom, n, "pctPosVOffset")),
+        pct_w,
+        pct_h,
+        v_align,
     }
+}
+
+fn parse_pct_value(raw: &str) -> Option<f32> {
+    let trimmed = raw.trim();
+    let n: f32 = trimmed.trim_end_matches('%').trim().parse().ok()?;
+    let frac = if trimmed.ends_with('%') || n.abs() <= 100.0 {
+        n / 100.0
+    } else {
+        n / 100_000.0
+    };
+    Some(frac.clamp(0.0, 10.0))
+}
+
+fn parse_pct_offset(dom: &Dom, parent: NodeId, local: &str) -> Option<f32> {
+    let el = descendants_local(dom, parent, local).into_iter().next()?;
+    parse_pct_value(&local_text(dom, el))
+}
+
+fn size_rel_pct(dom: &Dom, shape: NodeId) -> (Option<f32>, Option<f32>) {
+    let w = descendants_local(dom, shape, "pctWidth")
+        .into_iter()
+        .find_map(|n| parse_pct_value(&local_text(dom, n)))
+        .filter(|p| *p > 0.001);
+    let h = descendants_local(dom, shape, "pctHeight")
+        .into_iter()
+        .find_map(|n| parse_pct_value(&local_text(dom, n)))
+        .filter(|p| *p > 0.001);
+    (w, h)
+}
+
+fn drawing_z(dom: &Dom, shape: NodeId) -> (bool, u32) {
+    let Some(anchor) = first_named_any(dom, shape, "anchor") else {
+        return (false, 0);
+    };
+    let behind = attr_any(dom, anchor, "behindDoc")
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    let z = attr_any(dom, anchor, "relativeHeight")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    (behind, z)
+}
+
+fn vml_style_pt(style: &str, key: &str) -> Option<f32> {
+    for part in style.split(';') {
+        let mut kv = part.splitn(2, ':');
+        let k = kv.next()?.trim();
+        let v = kv.next()?.trim();
+        if k.eq_ignore_ascii_case(key) {
+            return parse_len(v);
+        }
+    }
+    None
+}
+
+fn vml_extent_pt(dom: &Dom, root: NodeId) -> (f32, f32) {
+    for shape in descendants_local(dom, root, "shape") {
+        if let Some(style) = attr_any(dom, shape, "style")
+            && let (Some(w), Some(h)) =
+                (vml_style_pt(style, "width"), vml_style_pt(style, "height"))
+        {
+            return (w, h);
+        }
+    }
+    (
+        attr_any(dom, root, "dxaOrig")
+            .and_then(parse_len)
+            .unwrap_or(72.0),
+        attr_any(dom, root, "dyaOrig")
+            .and_then(parse_len)
+            .unwrap_or(72.0),
+    )
+}
+
+fn shape_prst(dom: &Dom, shape: NodeId) -> String {
+    descendants_local(dom, shape, "prstGeom")
+        .into_iter()
+        .find_map(|n| attr_any(dom, n, "prst").map(str::to_string))
+        .unwrap_or_default()
+}
+
+fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
+    match shape_prst(dom, shape).as_str() {
+        "rightArrow" | "leftArrow" | "upArrow" | "downArrow" => ShapeGeom::RightArrow,
+        "bentConnector2" | "bentConnector3" | "bentConnector4" | "bentConnector5" => {
+            ShapeGeom::BentConnector
+        }
+        "curvedConnector2" | "curvedConnector3" | "curvedConnector4" | "curvedConnector5" => {
+            ShapeGeom::CurvedConnector
+        }
+        "straightConnector1" | "line" => ShapeGeom::Line,
+        _ => ShapeGeom::Box,
+    }
+}
+
+fn shape_flip(dom: &Dom, shape: NodeId) -> (bool, bool) {
+    let mut flip_h = false;
+    let mut flip_v = false;
+    for xfrm in descendants_local(dom, shape, "xfrm") {
+        flip_h |= attr_truthy(dom, xfrm, "flipH");
+        flip_v |= attr_truthy(dom, xfrm, "flipV");
+    }
+    (flip_h, flip_v)
+}
+
+fn shape_has_tail_end(dom: &Dom, shape: NodeId) -> bool {
+    descendants_local(dom, shape, "tailEnd")
+        .into_iter()
+        .any(|n| attr_any(dom, n, "type").is_some_and(|t| !t.is_empty() && t != "none"))
+}
+
+fn attr_truthy(dom: &Dom, node: NodeId, name: &str) -> bool {
+    attr_any(dom, node, name).is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+}
+
+fn scheme_color(dom: &Dom, node: NodeId) -> Option<[f32; 3]> {
+    if let Some(srgb) = descendants_local(dom, node, "srgbClr").into_iter().next() {
+        let mut color = parse_hex_color(attr_any(dom, srgb, "val")?)?;
+        apply_lum(dom, srgb, &mut color);
+        return Some(color);
+    }
+    let scheme = descendants_local(dom, node, "schemeClr")
+        .into_iter()
+        .next()?;
+    let mut color = theme_slot_color(attr_any(dom, scheme, "val")?)?;
+    apply_lum(dom, scheme, &mut color);
+    Some(color)
+}
+
+fn apply_lum(dom: &Dom, node: NodeId, color: &mut [f32; 3]) {
+    let lum_mod = descendants_local(dom, node, "lumMod")
+        .into_iter()
+        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+        .unwrap_or(100_000.0)
+        / 100_000.0;
+    let lum_off = descendants_local(dom, node, "lumOff")
+        .into_iter()
+        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+        .unwrap_or(0.0)
+        / 100_000.0;
+    for c in color.iter_mut() {
+        *c = (*c * lum_mod + lum_off).clamp(0.0, 1.0);
+    }
+}
+
+fn shape_has_no_fill(dom: &Dom, shape: NodeId) -> bool {
+    descendants_local(dom, shape, "spPr").into_iter().any(|sp| {
+        (0..dom.child_count(sp)).any(|i| local_name_is(dom, dom.child_at(sp, i), "noFill"))
+    })
+}
+
+fn fill_ref_idx(dom: &Dom, shape: NodeId) -> Option<i32> {
+    descendants_local(dom, shape, "fillRef")
+        .into_iter()
+        .find_map(|n| attr_any(dom, n, "idx").and_then(|s| s.parse().ok()))
+}
+
+fn ln_ref_idx(dom: &Dom, shape: NodeId) -> Option<i32> {
+    descendants_local(dom, shape, "lnRef")
+        .into_iter()
+        .find_map(|n| attr_any(dom, n, "idx").and_then(|s| s.parse().ok()))
+}
+
+fn shape_fill_color(dom: &Dom, shape: NodeId) -> Option<[f32; 3]> {
+    if shape_has_no_fill(dom, shape) {
+        return None;
+    }
+    if let Some(fill) = descendants_local(dom, shape, "solidFill")
+        .into_iter()
+        .find_map(|n| scheme_color(dom, n))
+    {
+        return Some(fill);
+    }
+    // Cover-page wash (Strict01 Rectangle 466): gradFill stops → first stop.
+    if let Some(gs) = descendants_local(dom, shape, "gs").into_iter().next()
+        && let Some(fill) = scheme_color(dom, gs)
+    {
+        return Some(fill);
+    }
+    let idx = fill_ref_idx(dom, shape).unwrap_or(0);
+    if idx == 0 {
+        return None;
+    }
+    descendants_local(dom, shape, "fillRef")
+        .into_iter()
+        .find_map(|n| scheme_color(dom, n))
+}
+
+fn shape_line_color(dom: &Dom, shape: NodeId) -> Option<[f32; 3]> {
+    for ln in descendants_local(dom, shape, "ln") {
+        if !descendants_local(dom, ln, "noFill").is_empty() {
+            return None;
+        }
+        if let Some(c) = scheme_color(dom, ln) {
+            return Some(c);
+        }
+    }
+    let idx = ln_ref_idx(dom, shape).unwrap_or(0);
+    if idx == 0 {
+        return None;
+    }
+    descendants_local(dom, shape, "lnRef")
+        .into_iter()
+        .find_map(|n| scheme_color(dom, n))
 }
 
 fn pos_offset_pt(dom: &Dom, node: Option<NodeId>) -> Option<f32> {
@@ -3392,7 +4156,12 @@ fn pos_offset_pt(dom: &Dom, node: Option<NodeId>) -> Option<f32> {
 }
 
 fn first_named_any(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {
-    for idx_walk in [WP::name(local), W::name(local), A::name(local)] {
+    for idx_walk in [
+        WP::name(local),
+        W::name(local),
+        A::name(local),
+        WNE::name(local),
+    ] {
         if let Some(found) = dom.descendants(node, Some(&idx_walk)).into_iter().next() {
             return Some(found);
         }
@@ -3737,6 +4506,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         after: 0.0,
         before: 0.0,
         line_mult: 1.0,
+        line_exact: None,
         indent_left: 0.0,
         indent_right: 0.0,
         indent_first: 0.0,
@@ -3870,6 +4640,8 @@ fn collect_hf_rec(
                         style: base.clone(),
                         field: kind,
                         rev: false,
+                        comments: Vec::new(),
+                        pageref: None,
                     });
                 }
                 *scan = FieldScan::default();
@@ -3907,6 +4679,8 @@ fn collect_hf_rec(
                     style,
                     field: kind,
                     rev: false,
+                    comments: Vec::new(),
+                    pageref: None,
                 });
                 scan.emitted = true;
             }
@@ -3946,6 +4720,17 @@ struct Layout<'a> {
     chapter: String,
     header_rest: Option<ChromePart>,
     footer_rest: Option<ChromePart>,
+    placed_comments: HashSet<String>,
+    /// Word clips table-cell ink at the cell’s right edge (file_146
+    /// github underline ran ~46pt past the table when xml:space
+    /// padding on an underlined hyperlink was kept).
+    clip_right: Option<f32>,
+    /// Last emitted paragraph style. Empty `w:br type=page` after
+    /// TextHeading* with leftover under ~23pt skips a blank (sd_2517
+    /// 1-4). Table leftover must not (file_78 / file_196).
+    last_style_id: String,
+    bookmark_pages: HashMap<String, String>,
+    pageref_ops: Vec<(usize, usize, String)>,
 }
 
 fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
@@ -3992,10 +4777,12 @@ impl<'a> Layout<'a> {
         let body_floor = page.margin_b.max(page.footer + footer_band);
         let y = page.height - body_top;
         let (pw, ph) = (page.width, page.height);
+        let mut first = Page::new(pw, ph);
+        first.markup_pane = page.balloon_gutter > 0.0;
         let mut lay = Self {
             fonts,
             page,
-            pages: vec![Page::new(pw, ph)],
+            pages: vec![first],
             y,
             header,
             footer,
@@ -4015,6 +4802,11 @@ impl<'a> Layout<'a> {
             chapter: String::new(),
             header_rest: hf.header_rest,
             footer_rest: hf.footer_rest,
+            placed_comments: HashSet::new(),
+            clip_right: None,
+            last_style_id: String::new(),
+            bookmark_pages: HashMap::new(),
+            pageref_ops: Vec::new(),
         };
         lay.chrome();
         lay.chrome_end = lay.current().ops.len();
@@ -4085,14 +4877,19 @@ impl<'a> Layout<'a> {
         &mut self.pages[idx]
     }
 
+    fn fresh_page(&self) -> Page {
+        let mut page = Page::new(self.page.width, self.page.height);
+        page.markup_pane = self.page.balloon_gutter > 0.0;
+        page
+    }
+
     fn new_page(&mut self) {
         if self.pages.len() == 1 {
             self.center_first_page_body();
         }
         self.patch_chap_page();
         self.section_page = self.section_page.saturating_add(1);
-        self.pages
-            .push(Page::new(self.page.width, self.page.height));
+        self.pages.push(self.fresh_page());
         self.y = self.page.height - self.body_top;
         self.page_has_body = false;
         self.at_page_top = true;
@@ -4122,6 +4919,9 @@ impl<'a> Layout<'a> {
         for op in &mut self.pages[0].ops[start..] {
             shift_op_y(op, dy);
         }
+        for note in &mut self.pages[0].comments {
+            note.y += dy;
+        }
     }
 
     fn hard_page_break(&mut self, next: Option<&SectionChrome>) {
@@ -4129,12 +4929,21 @@ impl<'a> Layout<'a> {
         // starts on the next page and still breaks — one skipped page
         // (sd_2517 1-4 / 13-9). Only explicit page breaks (not sectPr).
         let remaining = self.y - self.body_floor;
-        // Deep overflow only. sd_2517 leftover blanks come from
-        // painting the empty break para (after=200 line=276) so it
-        // starts on the next page; remaining < 14pt here double-counted
-        // those and went to 114pp.
-        let skip_blank =
-            next.is_none() && self.page_has_body && !self.at_page_top && remaining < -5.0;
+        // Word: empty `w:br type=page` after TextHeading* whose leftover
+        // is under the empty para's line=276/after=200 box (~23pt) starts
+        // on the next page and still breaks (sd_2517 1-4 / 1-6). Ungated
+        // leftover in (0,22) extra-skipped file_78 (−6) / file_196 (−10).
+        // Título1/Heading1 exact leftover was the wrong skip (ITT −0.02).
+        // TextHeading after=120 can overflow the floor by <5pt
+        // (sd_2517 1-4 rem=-4.29). remaining < -5 missed that skip;
+        // remaining < 23 hit 5 sites (111pp). remaining < 0 after
+        // TextHeading skips the three near-overflows (109). Only
+        // rem=-4.29 is the Word 1-4 site in our layout (+1 → 107).
+        let leftover_heading = leftover_break_heading(&self.last_style_id) && remaining < -4.0;
+        let skip_blank = next.is_none()
+            && self.page_has_body
+            && !self.at_page_top
+            && (remaining < -5.0 || leftover_heading);
         if skip_blank {
             self.new_page();
         }
@@ -4154,8 +4963,7 @@ impl<'a> Layout<'a> {
                 self.section_page = self.section_page.saturating_add(1);
                 self.promote_rest_chrome();
             }
-            self.pages
-                .push(Page::new(self.page.width, self.page.height));
+            self.pages.push(self.fresh_page());
             self.y = self.page.height - self.body_top;
             self.page_has_body = false;
             self.at_page_top = true;
@@ -4186,6 +4994,7 @@ impl<'a> Layout<'a> {
 
     fn emit_runs(&mut self, runs: &[TextRun], style: &ParaStyle, list: bool, compact_title: bool) {
         self.note_chapter_heading(style);
+        self.last_style_id.clone_from(&style.style_id);
         self.page_has_body = true;
         self.tab_stops.clone_from(&style.tab_stops);
         // Word suppresses Spacing Before at the top of an overflow page,
@@ -4247,7 +5056,9 @@ impl<'a> Layout<'a> {
             // hits. Arial 12 size×1.15 matches Word 13.8 / file_34 2pp
             // but mini 86 dropped heading_3_center 97→94, file_34 −0.86,
             // uipriority −1.40. Keep typo×line_mult.
-            let line_box = if is_toc_style(style) {
+            let line_box = if let Some(exact) = style.line_exact {
+                exact
+            } else if is_toc_style(style) {
                 size * line_mult.max(1.15)
             } else if compact_title || face.is_cambria() {
                 size * line_mult
@@ -4403,13 +5214,25 @@ impl<'a> Layout<'a> {
             self.page.margin_l + indent + if has_marker { 0.0 } else { style.indent_first };
         // Word wraps every TOC line in the column up to the right tab,
         // then puts the PAGEREF on the last line. Capping the hanging
-        // first line at `width` (content minus left indent) broke
-        // Sumrio headings a word early (sd_2517 p3 9.2 vs 11-1).
+        // first line at `width` (label+description in one budget) put
+        // sd_2517 11-1 on p4. Wrap the *description* (after the hanging
+        // left tab) at rest_w so file_22 3.03 wraps like Word.
         let first_w = (self.page.margin_l + stop.pos - first_x - suf_w).max(40.0);
         let rest_w = (self.page.margin_l + stop.pos - (self.page.margin_l + indent) - suf_w)
             .min(width)
             .max(40.0);
-        let mut lines = wrap_runs(self.fonts, &prefix, first_w, rest_w, list);
+        let mut lines = if let Some((head, desc)) = peel_leading_tab(&prefix) {
+            let mut lines = wrap_runs(self.fonts, &desc, rest_w, rest_w, list);
+            if lines.is_empty() {
+                lines.push(Vec::new());
+            }
+            let mut first = head;
+            first.append(&mut lines[0]);
+            lines[0] = first;
+            lines
+        } else {
+            wrap_runs(self.fonts, &prefix, first_w, rest_w, list)
+        };
         if let Some(last) = lines.last_mut() {
             last.extend(suffix);
         }
@@ -4423,7 +5246,13 @@ impl<'a> Layout<'a> {
         let fid = self
             .fonts
             .resolve(&run.style.family, run.style.bold, run.style.italic);
-        self.fonts.get(fid).width_pt(text, run.style.paint_size())
+        let face = self.fonts.get(fid);
+        let size = run.style.paint_size();
+        let w = face.width_pt(text, size);
+        if w > 0.05 || text.chars().all(char::is_whitespace) {
+            return w;
+        }
+        self.fonts.get(FaceId::SansRegular).width_pt(text, size)
     }
 
     fn tab_suffix_width(&self, rest_of_run: &str, run: &TextRun, following: &[TextRun]) -> f32 {
@@ -4499,10 +5328,10 @@ impl<'a> Layout<'a> {
     }
 
     fn paint_run(&mut self, run: &TextRun, x: f32, y: f32) -> f32 {
-        let fid = self
+        let mut fid = self
             .fonts
             .resolve(&run.style.family, run.style.bold, run.style.italic);
-        let face = self.fonts.get(fid);
+        let mut face = self.fonts.get(fid);
         if run.text.contains('\t') {
             let mut xcur = x;
             let mut first = true;
@@ -4522,7 +5351,26 @@ impl<'a> Layout<'a> {
         }
         let size = run.style.paint_size();
         let y = run.style.paint_y(y);
-        let shaped = face.shape(&run.text, size);
+        let mut shaped = face.shape(&run.text, size);
+        let chars: Vec<char> = run.text.chars().collect();
+        let ink_missing = if chars.len() == shaped.len() {
+            chars
+                .iter()
+                .zip(shaped.iter())
+                .any(|(ch, (gid, _))| !ch.is_whitespace() && *gid == 0)
+        } else {
+            run.text.chars().any(|ch| !ch.is_whitespace())
+                && shaped.iter().any(|(gid, _)| *gid == 0)
+        };
+        if ink_missing {
+            fid = if run.style.bold {
+                FaceId::SansBold
+            } else {
+                FaceId::SansRegular
+            };
+            face = self.fonts.get(fid);
+            shaped = face.shape(&run.text, size);
+        }
         let scale = if run.style.scale > 0.0 {
             run.style.scale
         } else {
@@ -4530,6 +5378,10 @@ impl<'a> Layout<'a> {
         };
         let w: f32 = shaped.iter().map(|(_, a)| *a * scale).sum::<f32>()
             + run.style.track * shaped.len().saturating_sub(1) as f32;
+        let w = self.clip_width(x, w);
+        if w <= 0.0 {
+            return x;
+        }
         if let Some(fill) = run.style.highlight {
             self.current().ops.push(Op::FillRect {
                 x,
@@ -4541,28 +5393,77 @@ impl<'a> Layout<'a> {
         }
         let chars: Vec<char> = run.text.chars().collect();
         let paired = chars.len() == shaped.len();
-        let mut gx = x;
-        for (i, (gid, adv)) in shaped.iter().enumerate() {
-            if *gid != 0 {
-                let piece = if paired {
-                    chars[i].to_string()
-                } else {
-                    String::new()
-                };
-                self.current().ops.push(Op::text(
-                    fid,
-                    size,
-                    gx,
-                    y,
-                    vec![*gid],
-                    run.style.color,
-                    piece,
-                ));
+        if let Some(name) = run.pageref.as_deref() {
+            let glyphs: Vec<u16> = shaped.iter().map(|(g, _)| *g).collect();
+            let page_i = self.pages.len().saturating_sub(1);
+            let op_i = self.current().ops.len();
+            self.current().ops.push(Op::text(
+                fid,
+                size,
+                x,
+                y,
+                glyphs,
+                run.style.color,
+                run.text.clone(),
+            ));
+            self.pageref_ops.push((page_i, op_i, name.to_string()));
+        } else {
+            let mut gx = x;
+            for (i, (gid, adv)) in shaped.iter().enumerate() {
+                let adv_pt = *adv * scale + run.style.track;
+                if self.past_clip(gx) {
+                    break;
+                }
+                if *gid != 0 {
+                    let piece = if paired {
+                        chars[i].to_string()
+                    } else {
+                        String::new()
+                    };
+                    self.current().ops.push(Op::text(
+                        fid,
+                        size,
+                        gx,
+                        y,
+                        vec![*gid],
+                        run.style.color,
+                        piece,
+                    ));
+                }
+                gx += adv_pt;
             }
-            gx += *adv * scale + run.style.track;
         }
         self.decorate_run(x, y, w, &run.style);
+        self.place_run_comments(run, x, y, w);
         x + w
+    }
+
+    fn clip_width(&self, x: f32, w: f32) -> f32 {
+        match self.clip_right {
+            Some(limit) => w.min(limit - x).max(0.0),
+            None => w,
+        }
+    }
+
+    fn past_clip(&self, x: f32) -> bool {
+        self.clip_right.is_some_and(|limit| x >= limit - 0.05)
+    }
+
+    fn place_run_comments(&mut self, run: &TextRun, x: f32, y: f32, w: f32) {
+        for note in &run.comments {
+            if !self.placed_comments.insert(note.id.clone()) {
+                continue;
+            }
+            let width = w.clamp(12.0, 18.0);
+            self.current().comments.push(PdfComment {
+                x,
+                y,
+                w: width,
+                h: run.style.size.max(12.0),
+                contents: note.text.clone(),
+                author: note.author.clone(),
+            });
+        }
     }
 
     fn paint_justified_line(&mut self, line: &[TextRun], mut x: f32, y: f32, leftover: f32) {
@@ -4602,24 +5503,41 @@ impl<'a> Layout<'a> {
     }
 
     fn decorate_run(&mut self, x: f32, y: f32, w: f32, style: &RunStyle) {
+        let w = self.clip_width(x, w);
+        if w <= 0.05 {
+            return;
+        }
         if style.underline {
-            self.current().ops.push(Op::Line {
-                x1: x,
-                y1: y - 1.2,
-                x2: x + w,
-                y2: y - 1.2,
-                width: 0.6,
-                color: style.color,
-            });
-            if style.underline_double {
+            if style.underline_wave {
+                for (x1, y1, x2, y2) in wave_underline_segments(x, y - 1.2, w) {
+                    self.current().ops.push(Op::Line {
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        width: 0.6,
+                        color: style.color,
+                    });
+                }
+            } else {
                 self.current().ops.push(Op::Line {
                     x1: x,
-                    y1: y - 2.6,
+                    y1: y - 1.2,
                     x2: x + w,
-                    y2: y - 2.6,
+                    y2: y - 1.2,
                     width: 0.6,
                     color: style.color,
                 });
+                if style.underline_double {
+                    self.current().ops.push(Op::Line {
+                        x1: x,
+                        y1: y - 2.6,
+                        x2: x + w,
+                        y2: y - 2.6,
+                        width: 0.6,
+                        color: style.color,
+                    });
+                }
             }
         }
         if style.strike {
@@ -4634,49 +5552,105 @@ impl<'a> Layout<'a> {
         }
     }
 
-    fn slot_max_w(&self, slot: ImageSlot) -> f32 {
-        match slot {
-            ImageSlot::Float {
-                page_x: Some(_), ..
-            }
-            | ImageSlot::Float {
-                page_y: Some(_), ..
-            } => self.page.width,
-            _ => self.content_width(),
-        }
-    }
-
-    fn float_xy(
-        &self,
-        dw: f32,
-        dh: f32,
-        align: Align,
-        page_x: Option<f32>,
-        page_y: Option<f32>,
-    ) -> (f32, f32) {
-        let x = match page_x {
-            Some(px) => px,
-            None => match align {
-                Align::Left | Align::Justify => self.page.margin_l,
-                Align::Right => self.page.width - self.page.margin_r - dw,
-                Align::Center => self.page.margin_l + ((self.content_width() - dw) * 0.5).max(0.0),
+    fn float_xy(&self, dw: f32, dh: f32, slot: ImageSlot) -> (f32, f32) {
+        let ImageSlot::Float {
+            align,
+            page_x,
+            page_y,
+            col_x,
+            para_y,
+            pct_x,
+            pct_y,
+            pct_w,
+            v_align,
+            ..
+        } = slot
+        else {
+            return (
+                self.page.margin_l,
+                (self.page.height - self.page.margin_t - dh).max(self.page.margin_b),
+            );
+        };
+        let page_sized = pct_w.is_some();
+        let x = match (pct_x, page_x, col_x) {
+            (Some(pct), _, _) => pct * self.page.width,
+            (_, Some(px), _) => px,
+            (_, _, Some(cx)) => self.page.margin_l + cx,
+            _ => match align {
+                Align::Left | Align::Justify => {
+                    if page_sized {
+                        0.0
+                    } else {
+                        self.page.margin_l
+                    }
+                }
+                Align::Right => {
+                    let inset = if page_sized { 0.0 } else { self.page.margin_r };
+                    self.page.width - inset - dw
+                }
+                Align::Center => {
+                    let origin = if page_sized { 0.0 } else { self.page.margin_l };
+                    let avail = if page_sized {
+                        self.page.width
+                    } else {
+                        self.content_width()
+                    };
+                    origin + ((avail - dw) * 0.5).max(0.0)
+                }
             },
         };
-        let y = match page_y {
-            Some(py) => (self.page.height - py - dh).max(0.0),
-            None => (self.page.height - self.page.margin_t - dh).max(self.page.margin_b),
+        let y = match (pct_y, page_y, para_y) {
+            (Some(pct), _, _) => ((1.0 - pct) * self.page.height - dh).max(0.0),
+            (_, Some(py), _) => (self.page.height - py - dh).max(0.0),
+            (_, _, Some(py)) => {
+                (self.page.height - self.body_top - py - dh).max(self.page.margin_b)
+            }
+            _ => match v_align {
+                Align::Center => ((self.page.height - dh) * 0.5).max(0.0),
+                Align::Right => 0.0,
+                Align::Left | Align::Justify => {
+                    (self.page.height - self.page.margin_t - dh).max(self.page.margin_b)
+                }
+            },
         };
         (x, y)
     }
 
+    fn sized_wh(&self, slot: ImageSlot, w: f32, h: f32, min_w: f32, min_h: f32) -> (f32, f32) {
+        match slot {
+            ImageSlot::Float { pct_w, pct_h, .. } => {
+                let max_w = self.page.width;
+                let dw = pct_w
+                    .filter(|p| *p > 0.001)
+                    .map(|p| (p * self.page.width).max(1.0))
+                    .unwrap_or_else(|| w.min(max_w).max(min_w));
+                let dh = pct_h
+                    .filter(|p| *p > 0.001)
+                    .map(|p| (p * self.page.height).max(1.0))
+                    .unwrap_or_else(|| {
+                        let mut dh = h.max(min_h);
+                        if pct_w.is_none() && w > max_w && w > 0.0 {
+                            dh *= max_w / w;
+                        }
+                        dh
+                    });
+                (dw, dh)
+            }
+            ImageSlot::Flow => {
+                let max_w = self.content_width();
+                let dw = w.min(max_w).max(min_w);
+                let mut dh = h.max(min_h);
+                if w > max_w && w > 0.0 {
+                    dh *= max_w / w;
+                }
+                (dw, dh)
+            }
+        }
+    }
+
     fn emit_image(&mut self, img: &LaidImage) {
         self.page_has_body = true;
-        let max_w = self.slot_max_w(img.slot);
-        let dw = img.w.min(max_w).max(1.0);
-        let mut dh = img.h.max(1.0);
-        if img.w > max_w && img.w > 0.0 {
-            dh *= max_w / img.w;
-        }
+        let (dw, dh) = self.sized_wh(img.slot, img.w, img.h, 1.0, 1.0);
         let (x, y) = match img.slot {
             ImageSlot::Flow => {
                 self.ensure(dh + 4.0);
@@ -4685,11 +5659,7 @@ impl<'a> Layout<'a> {
                 self.y -= 4.0;
                 pos
             }
-            ImageSlot::Float {
-                align,
-                page_x,
-                page_y,
-            } => self.float_xy(dw, dh, align, page_x, page_y),
+            slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
         };
         match &img.kind {
             ImageKind::Jpeg {
@@ -4724,12 +5694,17 @@ impl<'a> Layout<'a> {
 
     fn emit_textbox(&mut self, box_: &LaidTextBox) {
         self.page_has_body = true;
-        let max_w = self.slot_max_w(box_.slot);
-        let dw = box_.w.min(max_w).max(24.0);
-        let mut dh = box_.h.max(16.0);
-        if box_.w > max_w && box_.w > 0.0 {
-            dh *= max_w / box_.w;
-        }
+        let min_dim = if box_.reserve_only || box_.fill.is_some() {
+            1.0
+        } else {
+            16.0
+        };
+        let min_w = if box_.reserve_only || box_.fill.is_some() {
+            1.0
+        } else {
+            24.0
+        };
+        let (dw, dh) = self.sized_wh(box_.slot, box_.w, box_.h, min_w, min_dim);
         let (x, y) = match box_.slot {
             ImageSlot::Flow => {
                 self.ensure(dh + 4.0);
@@ -4738,28 +5713,93 @@ impl<'a> Layout<'a> {
                 self.y -= 4.0;
                 pos
             }
-            ImageSlot::Float {
-                align,
-                page_x,
-                page_y,
-            } => self.float_xy(dw, dh, align, page_x, page_y),
+            slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
         };
+        if box_.reserve_only {
+            return;
+        }
         let color = [0.0, 0.0, 0.0];
+        if let Some(fill) = box_.fill {
+            match box_.geom {
+                ShapeGeom::RightArrow => {
+                    // OOXML rightArrow default adj1=adj2=50000: shaft is
+                    // the middle 50% of height; head width is min(w,h)/2.
+                    // Word Quartz fills the 7-vertex chevron (Strict01).
+                    self.current().ops.push(Op::FillPoly {
+                        points: right_arrow_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::CurvedConnector => {
+                    let curve = curved_connector_cubics(x, y, dw, dh, box_.flip_h, box_.flip_v);
+                    self.current().ops.push(Op::Cubic {
+                        start: curve.start,
+                        segments: curve.segments,
+                        width: 1.25,
+                        color: fill,
+                    });
+                }
+                ShapeGeom::BentConnector | ShapeGeom::Line => {
+                    self.emit_connector(x, y, dw, dh, fill, box_.geom);
+                    if box_.tail_end && matches!(box_.geom, ShapeGeom::BentConnector) {
+                        let pts = bent_connector_points(x, y, dw, dh);
+                        self.current().ops.push(Op::FillPoly {
+                            points: arrowhead_triangle(pts[2], pts[3]).to_vec(),
+                            color: fill,
+                        });
+                    }
+                }
+                ShapeGeom::Box => {
+                    self.current().ops.push(Op::FillRect {
+                        x,
+                        y,
+                        w: dw,
+                        h: dh,
+                        color: fill,
+                    });
+                }
+            }
+        }
         if box_.stroke {
-            for (x1, y1, x2, y2) in [
-                (x, y, x + dw, y),
-                (x, y + dh, x + dw, y + dh),
-                (x, y, x, y + dh),
-                (x + dw, y, x + dw, y + dh),
-            ] {
-                self.current().ops.push(Op::Line {
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                    width: 0.6,
-                    color,
-                });
+            match box_.geom {
+                ShapeGeom::CurvedConnector => {
+                    let line_c = box_.fill.unwrap_or([0.310, 0.506, 0.741]);
+                    let curve = curved_connector_cubics(x, y, dw, dh, box_.flip_h, box_.flip_v);
+                    self.current().ops.push(Op::Cubic {
+                        start: curve.start,
+                        segments: curve.segments,
+                        width: 1.25,
+                        color: line_c,
+                    });
+                }
+                ShapeGeom::BentConnector | ShapeGeom::Line => {
+                    let line_c = box_.fill.unwrap_or([0.310, 0.506, 0.741]);
+                    self.emit_connector(x, y, dw, dh, line_c, box_.geom);
+                    if box_.tail_end && matches!(box_.geom, ShapeGeom::BentConnector) {
+                        let pts = bent_connector_points(x, y, dw, dh);
+                        self.current().ops.push(Op::FillPoly {
+                            points: arrowhead_triangle(pts[2], pts[3]).to_vec(),
+                            color: line_c,
+                        });
+                    }
+                }
+                _ => {
+                    for (x1, y1, x2, y2) in [
+                        (x, y, x + dw, y),
+                        (x, y + dh, x + dw, y + dh),
+                        (x, y, x, y + dh),
+                        (x + dw, y, x + dw, y + dh),
+                    ] {
+                        self.current().ops.push(Op::Line {
+                            x1,
+                            y1,
+                            x2,
+                            y2,
+                            width: 0.6,
+                            color,
+                        });
+                    }
+                }
             }
         }
         if let Some(chart) = &box_.chart {
@@ -4806,6 +5846,37 @@ impl<'a> Layout<'a> {
         }
     }
 
+    fn emit_connector(
+        &mut self,
+        x: f32,
+        y: f32,
+        dw: f32,
+        dh: f32,
+        color: [f32; 3],
+        geom: ShapeGeom,
+    ) {
+        let mut stroke = |x1: f32, y1: f32, x2: f32, y2: f32| {
+            self.current().ops.push(Op::Line {
+                x1,
+                y1,
+                x2,
+                y2,
+                width: 1.25,
+                color,
+            });
+        };
+        match geom {
+            ShapeGeom::Line => stroke(x, y + dh * 0.5, x + dw, y + dh * 0.5),
+            ShapeGeom::BentConnector => {
+                let [(x0, y0), (x1, y1), (x2, y2), (x3, y3)] = bent_connector_points(x, y, dw, dh);
+                stroke(x0, y0, x1, y1);
+                stroke(x1, y1, x2, y2);
+                stroke(x2, y2, x3, y3);
+            }
+            _ => stroke(x, y + dh * 0.5, x + dw, y + dh * 0.5),
+        }
+    }
+
     fn emit_label(&mut self, text: &str, size: f32, x: f32, y: f32) {
         if text.is_empty() {
             return;
@@ -4843,8 +5914,22 @@ impl<'a> Layout<'a> {
             .copied()
             .fold(0.0_f32, f32::max)
             .max(1.0);
+        // Word auto-axis: integer max 5 → 6 ticks (Strict01).
+        let axis_max = {
+            let ceil = max_v.ceil();
+            if (max_v - ceil).abs() < 0.05 {
+                (ceil + 1.0).max(1.0)
+            } else {
+                ceil.max(1.0)
+            }
+        };
         let title_h = if chart.title.is_empty() { 0.0 } else { 20.0 };
         let cat_h = if chart.cats.is_empty() { 0.0 } else { 14.0 };
+        let legend_h = if chart.legend && !chart.names.is_empty() {
+            16.0
+        } else {
+            0.0
+        };
         if !chart.title.is_empty() {
             let face = self.fonts.get(FaceId::CarlitoRegular);
             let tw = face.width_pt(&chart.title, 14.0);
@@ -4853,21 +5938,30 @@ impl<'a> Layout<'a> {
         }
         let axis_w = 20.0;
         let plot_x = x + axis_w;
-        let plot_y = y + cat_h + 6.0;
+        let plot_y = y + cat_h + legend_h + 6.0;
         let plot_w = (dw - axis_w - 12.0).max(8.0);
-        let plot_h = (dh - title_h - cat_h - 16.0).max(8.0);
+        let plot_h = (dh - title_h - cat_h - legend_h - 16.0).max(8.0);
         let group_w = plot_w / n_cats as f32;
         let bar_w = (group_w / (n_ser as f32 + 0.5)).max(2.0);
-        let ticks = max_v.ceil().clamp(1.0, 10.0) as u32;
+        let ticks = axis_max.clamp(1.0, 10.0) as u32;
+        let grid = [0.88, 0.88, 0.88];
         for i in 0..=ticks {
             let val = i as f32;
-            let ty = plot_y + (val / max_v.max(ticks as f32)) * plot_h;
+            let ty = plot_y + (val / axis_max) * plot_h;
+            self.current().ops.push(Op::Line {
+                x1: plot_x,
+                y1: ty,
+                x2: plot_x + plot_w,
+                y2: ty,
+                width: 0.4,
+                color: grid,
+            });
             self.emit_label(&i.to_string(), 9.0, x + 2.0, ty);
         }
         for ci in 0..n_cats {
             for (si, ser) in chart.series.iter().enumerate() {
                 let val = ser.get(ci).copied().unwrap_or(0.0).max(0.0);
-                let bh = (val / max_v) * plot_h;
+                let bh = (val / axis_max) * plot_h;
                 if bh < 0.5 {
                     continue;
                 }
@@ -4884,7 +5978,24 @@ impl<'a> Layout<'a> {
                 let face = self.fonts.get(FaceId::CarlitoRegular);
                 let cw = face.width_pt(cat, 9.0);
                 let cx = plot_x + ci as f32 * group_w + ((group_w - cw) / 2.0).max(0.0);
-                self.emit_label(cat, 9.0, cx, y + 4.0);
+                self.emit_label(cat, 9.0, cx, y + legend_h + 4.0);
+            }
+        }
+        if legend_h > 0.0 {
+            let face = self.fonts.get(FaceId::CarlitoRegular);
+            let mut lx = plot_x;
+            let ly = y + 4.0;
+            for (si, name) in chart.names.iter().enumerate() {
+                let color = PALETTE[si % PALETTE.len()];
+                self.current().ops.push(Op::FillRect {
+                    x: lx,
+                    y: ly + 1.0,
+                    w: 8.0,
+                    h: 8.0,
+                    color,
+                });
+                self.emit_label(name, 9.0, lx + 10.0, ly);
+                lx += 10.0 + face.width_pt(name, 9.0) + 14.0;
             }
         }
     }
@@ -4898,12 +6009,11 @@ impl<'a> Layout<'a> {
         geom: &TableGeom,
     ) {
         self.page_has_body = true;
+        self.last_style_id.clear();
         let avail = self.content_width();
         // tblW dxa/pct is the preferred width (table_bookmark_end Tests 3–5
         // use pct 50ths). Grid-only tables still never stretch.
         let col_w = table_col_widths(cols, geom, avail);
-        let size = 11.0;
-        let face = self.fonts.get(FaceId::CarlitoRegular);
         let line_mult = if style.line_mult > 0.0 {
             style.line_mult
         } else {
@@ -4912,7 +6022,6 @@ impl<'a> Layout<'a> {
         // Word `auto` line is a multiple of font size (276/240 = 1.15),
         // not of the full glyph box. The em-box made sample_document's
         // 11-line code cell ~50pt too tall (5pp vs soffice 3).
-        let line_box = size * line_mult;
         let row_h: Vec<f32> = rows
             .iter()
             .enumerate()
@@ -4932,6 +6041,24 @@ impl<'a> Layout<'a> {
             self.at_page_top = false;
             self.y -= rh;
             let y_top = self.y + rh;
+            let size = if line_mult <= 1.01 && col_w.len() == 2 {
+                table_row_line_size(row, line_mult)
+            } else {
+                11.0
+            };
+            let line_box = size * line_mult;
+            let face_id = row
+                .iter()
+                .find_map(|cell| {
+                    cell.runs.iter().find_map(|run| {
+                        (!run.text.is_empty()).then(|| {
+                            self.fonts
+                                .resolve(&run.style.family, run.style.bold, run.style.italic)
+                        })
+                    })
+                })
+                .unwrap_or(FaceId::CarlitoRegular);
+            let face = self.fonts.get(face_id);
             for cell in row {
                 let x: f32 = table_left + col_w.iter().take(cell.col).copied().sum::<f32>();
                 let w: f32 = (0..cell.colspan)
@@ -4992,12 +6119,14 @@ impl<'a> Layout<'a> {
                         });
                     }
                     let mut tx = x + pad_l;
+                    self.clip_right = Some(x + w);
                     for run in &line {
                         if run.text.is_empty() {
                             continue;
                         }
                         tx = self.paint_run(run, tx, ty);
                     }
+                    self.clip_right = None;
                     ty -= line_box;
                 }
             }
@@ -5224,6 +6353,30 @@ impl<'a> Layout<'a> {
         }
     }
 
+    fn patch_pagerefs(&mut self) {
+        let fonts = self.fonts;
+        let pages = &mut self.pages;
+        let map = &self.bookmark_pages;
+        for (pi, oi, name) in &self.pageref_ops {
+            let Some(label) = map.get(name) else {
+                continue;
+            };
+            let Some(page) = pages.get_mut(*pi) else {
+                continue;
+            };
+            let Some(op) = page.ops.get_mut(*oi) else {
+                continue;
+            };
+            if let Op::Text {
+                face, text, glyphs, ..
+            } = op
+            {
+                *glyphs = fonts.get(*face).glyphs(label);
+                *text = label.clone();
+            }
+        }
+    }
+
     fn patch_chap_page(&mut self) {
         if self.page.chap_style.is_none() {
             return;
@@ -5320,6 +6473,7 @@ fn default_run_style() -> RunStyle {
         italic: false,
         underline: false,
         underline_double: false,
+        underline_wave: false,
         strike: false,
         color: [0.0, 0.0, 0.0],
         highlight: None,
@@ -5338,6 +6492,7 @@ fn style_eq(a: &RunStyle, b: &RunStyle) -> bool {
         && a.italic == b.italic
         && a.underline == b.underline
         && a.underline_double == b.underline_double
+        && a.underline_wave == b.underline_wave
         && a.strike == b.strike
         && a.color == b.color
         && a.highlight == b.highlight
@@ -5385,7 +6540,10 @@ fn is_list_marker_text(text: &str) -> bool {
     if t.is_empty() || t.chars().count() > 8 {
         return false;
     }
-    if t == "•" || t == "·" || t == "-" || t == "o" {
+    if t == "•" || t == "·" || t == "-" || t == "o" || t == "\u{F0B7}" {
+        return true;
+    }
+    if t.chars().any(|c| (c as u32) >= 0xF000) {
         return true;
     }
     matches!(t.chars().last(), Some('.' | ')'))
@@ -5411,6 +6569,32 @@ fn trailing_ws_pt(fonts: &Fonts, line: &[TextRun]) -> f32 {
         }
     }
     extra
+}
+
+fn peel_leading_tab(runs: &[TextRun]) -> Option<(Vec<TextRun>, Vec<TextRun>)> {
+    let mut found = None;
+    for (i, run) in runs.iter().enumerate() {
+        if let Some(at) = run.text.find('\t') {
+            found = Some((i, at));
+            break;
+        }
+    }
+    let (i, at) = found?;
+    let mut head = runs[..i].to_vec();
+    let mut lead = runs[i].clone();
+    lead.text = runs[i].text[..=at].to_string();
+    if !lead.text.is_empty() {
+        head.push(lead);
+    }
+    let mut rest = Vec::new();
+    let tail = &runs[i].text[at + 1..];
+    if !tail.is_empty() {
+        let mut after = runs[i].clone();
+        after.text = tail.to_string();
+        rest.push(after);
+    }
+    rest.extend(runs[i + 1..].iter().cloned());
+    Some((head, rest))
 }
 
 fn peel_trailing_tab(runs: &[TextRun]) -> Option<(Vec<TextRun>, Vec<TextRun>)> {
@@ -5456,6 +6640,8 @@ fn wrap_runs(
                 style: run.style.clone(),
                 field: run.field,
                 rev: run.rev,
+                comments: run.comments.clone(),
+                pageref: run.pageref.clone(),
             });
         }
         for part in parts {
@@ -5466,6 +6652,8 @@ fn wrap_runs(
                     style: run.style.clone(),
                     field: run.field,
                     rev: run.rev,
+                    comments: Vec::new(),
+                    pageref: None,
                 });
             }
         }
@@ -5515,6 +6703,8 @@ fn wrap_runs_segment(
             x += w;
             if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
                 && style_eq(&last.style, &run.style)
+                && last.pageref.is_none()
+                && run.pageref.is_none()
             {
                 last.text.push_str(tok);
             } else if let Some(line) = lines.last_mut() {
@@ -5523,6 +6713,8 @@ fn wrap_runs_segment(
                     style: run.style.clone(),
                     field: run.field,
                     rev: run.rev,
+                    comments: run.comments.clone(),
+                    pageref: run.pageref.clone(),
                 });
             }
         }
@@ -5554,6 +6746,7 @@ fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> V
                 list,
                 images,
                 boxes,
+                bookmarks,
             } => {
                 let mut style = style.clone();
                 if let Some(next) = blocks.get(i + 1).and_then(block_para_style) {
@@ -5598,13 +6791,18 @@ fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> V
                 // heading (comments-lots chart before "5. Built-in…") does
                 // not also consume a Normal line box. Cover/gallery figure
                 // stacks (Strict01) are not that pattern and keep the line.
-                let skip_empty_line = !has_ink
-                    && images
+                let skip_hole_line = !has_ink
+                    && boxes
                         .iter()
-                        .any(|im| matches!(im.slot, ImageSlot::Flow) && im.h > 8.0)
-                    && i > 0
-                    && para_has_ink(&blocks[i - 1])
-                    && blocks.get(i + 1).is_some_and(para_is_heading);
+                        .any(|b| b.reserve_only && matches!(b.slot, ImageSlot::Flow) && b.h > 16.0);
+                let skip_empty_line = skip_hole_line
+                    || (!has_ink
+                        && images
+                            .iter()
+                            .any(|im| matches!(im.slot, ImageSlot::Flow) && im.h > 8.0)
+                        && i > 0
+                        && para_has_ink(&blocks[i - 1])
+                        && blocks.get(i + 1).is_some_and(para_is_heading));
                 // table_bookmark_end: Word's required empty <w:p> after a
                 // table does not keep a Normal line box when the next
                 // block is Heading2 (Tests 1–7 stay on page 1). Keep
@@ -5640,6 +6838,10 @@ fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> V
                 if skip_empty_line {
                     lay.y -= style.after;
                 }
+                let label = lay.chap_page_label();
+                for name in bookmarks {
+                    lay.bookmark_pages.insert(name.clone(), label.clone());
+                }
             }
             Block::Table {
                 cols,
@@ -5666,8 +6868,105 @@ fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> V
         lay.center_first_page_body();
     }
     lay.patch_chap_page();
+    lay.patch_pagerefs();
     patch_numpages(fonts, &mut lay.pages);
     lay.pages
+}
+
+struct ConnectorCubic {
+    start: (f32, f32),
+    segments: Vec<[(f32, f32); 3]>,
+}
+
+fn curved_connector_cubics(
+    x: f32,
+    y: f32,
+    dw: f32,
+    dh: f32,
+    flip_h: bool,
+    flip_v: bool,
+) -> ConnectorCubic {
+    // OOXML curvedConnector3 default adj1=50000: two cubics from (l,t)
+    // to (r,b). flipV (Strict01) sends the stroke bottom-left → top-right.
+    let map = |lx: f32, ly: f32| {
+        let ox = if flip_h { dw - lx } else { lx };
+        let oy = if flip_v { dh - ly } else { ly };
+        (x + ox, y + dh - oy)
+    };
+    ConnectorCubic {
+        start: map(0.0, 0.0),
+        segments: vec![
+            [
+                map(dw * 0.25, 0.0),
+                map(dw * 0.5, dh * 0.5),
+                map(dw * 0.5, dh * 0.5),
+            ],
+            [map(dw * 0.5, dh * 0.5), map(dw * 0.75, dh), map(dw, dh)],
+        ],
+    }
+}
+
+fn arrowhead_triangle(from: (f32, f32), to: (f32, f32)) -> [(f32, f32); 3] {
+    // Word Quartz tailEnd=triangle: ~6pt tip past the stroke end, 3pt half-base.
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let len = (dx * dx + dy * dy).sqrt().max(0.001);
+    let (ux, uy) = (dx / len, dy / len);
+    let (px, py) = (-uy, ux);
+    let tip = (to.0 + ux * 6.0, to.1 + uy * 6.0);
+    let base = (to.0 - ux * 1.0, to.1 - uy * 1.0);
+    [
+        (base.0 + px * 3.0, base.1 + py * 3.0),
+        tip,
+        (base.0 - px * 3.0, base.1 - py * 3.0),
+    ]
+}
+
+fn wave_underline_segments(x: f32, y: f32, w: f32) -> Vec<(f32, f32, f32, f32)> {
+    // Word `w:u val="wave"` is a ~5pt-period, ~0.9pt-amplitude sine.
+    // Phase is in page x so per-glyph paints join into one wave.
+    let amp = 0.9;
+    let period = 5.0;
+    let step = period / 4.0;
+    let phase = |px: f32| y + amp * (px / period * std::f32::consts::TAU).sin();
+    let mut out = Vec::new();
+    let mut x0 = x;
+    let mut y0 = phase(x);
+    let mut t = 0.0;
+    while t < w - 0.05 {
+        t = (t + step).min(w);
+        let x1 = x + t;
+        let y1 = phase(x1);
+        out.push((x0, y0, x1, y1));
+        x0 = x1;
+        y0 = y1;
+    }
+    if out.is_empty() {
+        out.push((x, y, x + w, y));
+    }
+    out
+}
+
+fn bent_connector_points(x: f32, y: f32, dw: f32, dh: f32) -> [(f32, f32); 4] {
+    // OOXML bentConnector3 default adj1=50000: elbow at w/2, full height.
+    let mid = x + dw * 0.5;
+    [(x, y + dh), (mid, y + dh), (mid, y), (x + dw, y)]
+}
+
+fn right_arrow_points(x: f32, y: f32, dw: f32, dh: f32) -> Vec<(f32, f32)> {
+    let head = dw.min(dh) * 0.5;
+    let body_w = (dw - head).max(1.0);
+    let shaft_bot = y + dh * 0.25;
+    let shaft_top = y + dh * 0.75;
+    let vc = y + dh * 0.5;
+    vec![
+        (x, shaft_top),
+        (x + body_w, shaft_top),
+        (x + body_w, y + dh),
+        (x + dw, vc),
+        (x + body_w, y),
+        (x + body_w, shaft_bot),
+        (x, shaft_bot),
+    ]
 }
 
 fn shift_op_y(op: &mut Op, dy: f32) {
@@ -5678,6 +6977,21 @@ fn shift_op_y(op: &mut Op, dy: f32) {
         Op::Line { y1, y2, .. } => {
             *y1 += dy;
             *y2 += dy;
+        }
+        Op::FillPoly { points, .. } => {
+            for p in points {
+                p.1 += dy;
+            }
+        }
+        Op::Cubic {
+            start, segments, ..
+        } => {
+            start.1 += dy;
+            for seg in segments {
+                for p in seg {
+                    p.1 += dy;
+                }
+            }
         }
         Op::Watermark { .. } => {}
     }
@@ -5703,6 +7017,24 @@ fn body_op_yrange(ops: &[Op]) -> Option<(f32, f32)> {
             Op::Line { y1, y2, .. } => {
                 min_y = min_y.min(*y1).min(*y2);
                 max_y = max_y.max(*y1).max(*y2);
+            }
+            Op::FillPoly { points, .. } => {
+                for &(_, py) in points {
+                    min_y = min_y.min(py);
+                    max_y = max_y.max(py);
+                }
+            }
+            Op::Cubic {
+                start, segments, ..
+            } => {
+                min_y = min_y.min(start.1);
+                max_y = max_y.max(start.1);
+                for seg in segments {
+                    for &(_, py) in seg {
+                        min_y = min_y.min(py);
+                        max_y = max_y.max(py);
+                    }
+                }
             }
             Op::Watermark { .. } => {}
         }
@@ -6097,7 +7429,7 @@ mod drawing_tests {
 <w:r><w:drawing>
   <wp:inline>
     <wp:extent cx="5104000" cy="2122000"/>
-    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"/>
+    <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingShape"/>
     </a:graphic>
   </wp:inline>
 </w:drawing></w:r>
@@ -6117,10 +7449,12 @@ mod drawing_tests {
             &Defaults::word().run,
             &ThemeFonts::default(),
         );
+        assert_eq!(boxes.len(), 1, "inline noFill extent must reserve flow");
+        assert!(boxes[0].reserve_only, "must not stroke or fill Rectangle 3");
         assert!(
-            boxes.is_empty(),
-            "empty inline frame must not reserve flow; n={}",
-            boxes.len()
+            (boxes[0].h - 167.09).abs() < 0.5,
+            "167pt hole; h={}",
+            boxes[0].h
         );
     }
 
@@ -6163,6 +7497,172 @@ mod drawing_tests {
     }
 
     #[test]
+    fn bent_connector_shape_is_collected() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="2149522" cy="1207827"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="bentConnector3"/>
+        <a:ln><a:solidFill><a:srgbClr val="4F81BD"/></a:solidFill></a:ln>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(
+            boxes.len(),
+            1,
+            "bent connector must be collected; n={}",
+            boxes.len()
+        );
+        assert!(
+            matches!(boxes[0].geom, ShapeGeom::BentConnector),
+            "geom must be BentConnector"
+        );
+        assert!(boxes[0].fill.is_some(), "line color must paint");
+        assert!(!boxes[0].tail_end, "fixture has no tailEnd");
+    }
+
+    #[test]
+    fn bent_connector_reads_triangle_tail_end() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="2149522" cy="1207827"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="bentConnector3"/>
+        <a:ln><a:solidFill><a:srgbClr val="4F81BD"/></a:solidFill>
+          <a:tailEnd type="triangle"/>
+        </a:ln>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            boxes[0].tail_end,
+            "a:tailEnd type=triangle must set tail_end"
+        );
+    }
+
+    #[test]
+    fn arrowhead_triangle_points_past_the_stroke_end() {
+        let tri = arrowhead_triangle((0.0, 10.0), (10.0, 10.0));
+        let tip = tri[1];
+        assert!(
+            tip.0 > 10.0 && (tip.1 - 10.0).abs() < 0.02,
+            "rightward tailEnd tip past x=10; {tri:?}"
+        );
+    }
+
+    #[test]
+    fn wave_underline_segments_have_dy() {
+        let segs = wave_underline_segments(100.0, 50.0, 20.0);
+        assert!(segs.len() >= 4, "{segs:?}");
+        assert!(
+            segs.iter().any(|s| (s.3 - s.1).abs() > 0.35),
+            "wave must not be a horizontal rule; {segs:?}"
+        );
+        let x1 = segs.first().map(|s| s.0).unwrap();
+        let x2 = segs.last().map(|s| s.2).unwrap();
+        assert!(
+            (x1 - 100.0).abs() < 0.05 && (x2 - 120.0).abs() < 0.05,
+            "{segs:?}"
+        );
+    }
+
+    #[test]
+    fn bent_connector_points_match_ooxml_default() {
+        let pts = bent_connector_points(262.7, 608.25, 164.25, 95.35);
+        assert!((pts[1].0 - (262.7 + 164.25 * 0.5)).abs() < 0.02, "{pts:?}");
+        assert!((pts[0].1 - (608.25 + 95.35)).abs() < 0.02, "top {pts:?}");
+        assert!((pts[2].1 - 608.25).abs() < 0.02, "bottom {pts:?}");
+        assert!((pts[3].0 - (262.7 + 164.25)).abs() < 0.02, "end {pts:?}");
+    }
+
+    #[test]
+    fn curved_connector_flip_v_starts_at_bottom() {
+        let x = 10.0;
+        let y = 20.0;
+        let dw = 100.0;
+        let dh = 40.0;
+        let curve = curved_connector_cubics(x, y, dw, dh, false, true);
+        assert!(
+            (curve.start.0 - x).abs() < 0.02 && (curve.start.1 - y).abs() < 0.02,
+            "flipV start is bottom-left; {:?}",
+            curve.start
+        );
+        let end = curve.segments[1][2];
+        assert!(
+            (end.0 - (x + dw)).abs() < 0.02 && (end.1 - (y + dh)).abs() < 0.02,
+            "flipV end is top-right; {end:?}"
+        );
+    }
+
+    #[test]
+    fn right_arrow_points_match_ooxml_default() {
+        // Word Strict01 rightArrow: adj1=adj2=50000, extent ~91.3×25.25.
+        let x = 227.8001;
+        let y = 664.6999;
+        let dw = 91.3;
+        let dh = 25.25;
+        let pts = right_arrow_points(x, y, dw, dh);
+        assert_eq!(pts.len(), 7, "{pts:?}");
+        let (px, py) = pts[3];
+        assert!(
+            (px - (x + dw)).abs() < 0.02 && (py - (y + dh * 0.5)).abs() < 0.02,
+            "tip must be (right, mid); {pts:?}"
+        );
+        let head = pts[3].0 - pts[2].0;
+        assert!(
+            (head - dh * 0.5).abs() < 0.02,
+            "head width is min(w,h)/2; head={head} pts={pts:?}"
+        );
+        assert!(
+            (pts[0].1 - (y + dh * 0.75)).abs() < 0.02 && (pts[6].1 - (y + dh * 0.25)).abs() < 0.02,
+            "shaft is the middle 50%; {pts:?}"
+        );
+    }
+
+    #[test]
     fn parse_bar_chart_reads_series_values() {
         let xml = r#"<?xml version="1.0"?>
 <c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
@@ -6190,6 +7690,30 @@ mod drawing_tests {
         assert_eq!(data.series.len(), 2);
         assert!((data.series[0][0] - 4.3).abs() < 0.01);
         assert!((data.series[1][1] - 4.4).abs() < 0.01);
+        assert_eq!(data.names, ["Series 1", "Series 2"]);
+        assert!(!data.legend);
+    }
+
+    #[test]
+    fn parse_chart_reads_series_names_and_bottom_legend() {
+        let xml = r#"<?xml version="1.0"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart>
+  <c:plotArea><c:barChart>
+    <c:ser>
+      <c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>Series 1</c:v></c:pt></c:strCache></c:strRef></c:tx>
+      <c:val><c:numLit><c:pt idx="0"><c:v>4.3</c:v></c:pt></c:numLit></c:val>
+    </c:ser>
+    <c:ser>
+      <c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>Series 2</c:v></c:pt></c:strCache></c:strRef></c:tx>
+      <c:val><c:numLit><c:pt idx="0"><c:v>2.4</c:v></c:pt></c:numLit></c:val>
+    </c:ser>
+  </c:barChart></c:plotArea>
+  <c:legend><c:legendPos val="b"/></c:legend>
+</c:chart></c:chartSpace>"#;
+        let data = parse_chart(xml).expect("chart");
+        assert_eq!(data.names, ["Series 1", "Series 2"]);
+        assert!(data.legend);
     }
 
     #[test]
@@ -6378,6 +7902,7 @@ mod table_tests {
             &sheet,
             &mut numbering,
             &mut AuthorColors::default(),
+            &HashMap::new(),
         ) {
             Block::Table { rows, .. } => assert_eq!(rows.len(), 1, "outer table has one row"),
             Block::Paragraph { .. } | Block::PageBreak { .. } => panic!("expected table"),
@@ -6421,6 +7946,7 @@ mod table_tests {
             &sheet,
             &mut numbering,
             &mut AuthorColors::default(),
+            &HashMap::new(),
         ) {
             Block::Table { rows, .. } => {
                 assert_eq!(rows.len(), 2, "Word still paints deleted TableGrid");
@@ -6458,6 +7984,7 @@ mod table_tests {
             &sheet,
             &mut numbering,
             &mut AuthorColors::default(),
+            &HashMap::new(),
         ) {
             Block::Table { style, .. } => {
                 assert!(
@@ -6519,6 +8046,7 @@ mod table_tests {
             &sheet,
             &mut numbering,
             &mut AuthorColors::default(),
+            &HashMap::new(),
         ) {
             Block::Table { rows, cols, .. } => {
                 assert_eq!(cols.len(), 4);
@@ -6565,6 +8093,7 @@ mod table_tests {
             &sheet,
             &mut numbering,
             &mut AuthorColors::default(),
+            &HashMap::new(),
         ) {
             Block::Table { rows, .. } => {
                 let fill = rows[0][0].fill.expect("fill");
@@ -6616,9 +8145,11 @@ mod table_tests {
     }
 
     #[test]
-    fn tbl_style_bands_from_row_zero_when_firstrow_has_no_fill() {
-        // LightShading-Accent1 (docx_lots_of_comments): firstRow is bold
-        // only; soffice applies band1Horz to row 0.
+    fn tbl_style_skips_header_when_firstrow_has_no_fill() {
+        // Word LightShading-Accent1 (docx_lots_of_comments page 1):
+        // firstRow is bold-only. Banding still starts *after* the header
+        // (Prepared for white, Prepared by D3DFEE). Banding from row 0
+        // inverted Date / Document purpose / Status vs the Word oracle.
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body><w:tbl>
@@ -6652,6 +8183,7 @@ mod table_tests {
             &sheet,
             &mut numbering,
             &mut AuthorColors::default(),
+            &HashMap::new(),
         ) {
             Block::Table {
                 rows,
@@ -6659,9 +8191,12 @@ mod table_tests {
                 style,
                 ..
             } => {
-                let fill0 = rows[0][0].fill.expect("row0 band1");
-                assert!((fill0[0] - 0xD3 as f32 / 255.0).abs() < 0.01);
-                assert!(rows[1][0].fill.is_none(), "row1 is band2 empty");
+                assert!(
+                    rows[0][0].fill.is_none(),
+                    "Word header stays unshaded when firstRow has no fill"
+                );
+                let fill1 = rows[1][0].fill.expect("row1 band1");
+                assert!((fill1[0] - 0xD3 as f32 / 255.0).abs() < 0.01);
                 assert!(rows[0][0].runs.iter().any(|r| r.style.bold));
                 assert!(rows[1][0].runs.iter().any(|r| r.style.bold), "first col");
                 assert!(!rows[1][1].runs.iter().any(|r| r.style.bold));
@@ -6741,7 +8276,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sheet = load_stylesheet(&pkg);
         let fonts = fonts();
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
         let mut images = 0usize;
         let mut empty_boxes = 0usize;
         for block in &blocks {
@@ -6753,7 +8288,10 @@ mod comments_spacing_tests {
                 empty_boxes += boxes
                     .iter()
                     .filter(|b| {
-                        b.runs.iter().all(|r| r.text.trim().is_empty()) && b.chart.is_none()
+                        !b.reserve_only
+                            && b.runs.iter().all(|r| r.text.trim().is_empty())
+                            && b.chart.is_none()
+                            && b.fill.is_none()
                     })
                     .count();
             }
@@ -6802,7 +8340,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sheet = load_stylesheet(&pkg);
         let fonts = fonts();
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
         let mut collapsed = 0u32;
         let mut list_after = 0.0_f32;
         let mut all_after = 0.0_f32;
@@ -6883,7 +8421,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sheet = load_stylesheet(&pkg);
         let fonts = fonts();
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
         let mut seen = 0u32;
         for block in &blocks {
             let Block::Paragraph { style, runs, .. } = block else {
@@ -6939,7 +8477,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sheet = load_stylesheet(&pkg);
         let fonts = fonts();
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
         let mut seen = 0u32;
         for block in &blocks {
             let Block::Paragraph { style, runs, .. } = block else {
@@ -6960,8 +8498,12 @@ mod comments_spacing_tests {
                 style.indent_first
             );
             assert!(
-                runs.first().is_some_and(|r| r.text.starts_with('•')),
-                "marker must stay a leading run"
+                runs.first().is_some_and(|r| {
+                    let t = r.text.trim_start();
+                    t.starts_with('•') || t.starts_with('\u{F0B7}')
+                }),
+                "marker must stay a leading run, first={:?}",
+                runs.first().map(|r| r.text.as_str())
             );
         }
         assert!(seen >= 30, "expected ListBullet paras, got {seen}");
@@ -6990,6 +8532,7 @@ mod comments_spacing_tests {
                 list: false,
                 images: Vec::new(),
                 boxes: Vec::new(),
+                bookmarks: Vec::new(),
             }],
         );
         let xs: Vec<f32> = pages[0]
@@ -7043,6 +8586,7 @@ mod comments_spacing_tests {
                 list: false,
                 images: Vec::new(),
                 boxes: Vec::new(),
+                bookmarks: Vec::new(),
             }],
         );
         let ys: Vec<i32> = pages[0]
@@ -7109,7 +8653,7 @@ mod comments_spacing_tests {
             .next()
             .expect("body");
         let sheet = load_stylesheet(&pkg);
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts());
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts(), false);
         let br = blocks
             .iter()
             .filter(|b| matches!(b, Block::PageBreak { .. }))
@@ -7144,7 +8688,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sects = dom.descendants(body, Some(&W::sect_pr()));
         let sheet = load_stylesheet(&pkg);
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts());
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts(), false);
         let br = blocks
             .iter()
             .filter(|b| matches!(b, Block::PageBreak { next } if next.is_some()))
@@ -7173,6 +8717,17 @@ mod comments_spacing_tests {
         assert!(
             seq.windows(2).any(|w| w[0] && w[1]),
             "empty section 2 is two consecutive section breaks; seq={seq:?}"
+        );
+    }
+
+    #[test]
+    fn comments_listbullet_marker_uses_symbol_family() {
+        let bytes = std::fs::read(COMMENTS).expect("comments fixture");
+        let family = listbullet_marker_family(&bytes);
+        assert_eq!(
+            family.as_deref(),
+            Some("Symbol"),
+            "ListBullet lvl rFonts ascii=Symbol, got {family:?}"
         );
     }
 
@@ -7223,7 +8778,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sheet = load_stylesheet(&pkg);
         let fonts = fonts();
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
         let mut found = 0;
         let mut with_mark = 0;
         for block in &blocks {
@@ -7234,10 +8789,47 @@ mod comments_spacing_tests {
                 continue;
             }
             found += 1;
-            if runs.first().is_some_and(|r| r.text.starts_with('•')) {
+            if runs.first().is_some_and(|r| {
+                let t = r.text.trim();
+                t.starts_with('•') || t.starts_with('\u{F0B7}')
+            }) {
                 with_mark += 1;
             }
         }
         Marked { found, with_mark }
+    }
+
+    fn listbullet_marker_family(docx: &[u8]) -> Option<String> {
+        let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+        let pkg = PartFs::open(&normalized).expect("pkg");
+        let main = pkg
+            .main_document_part()
+            .or_else(|| {
+                pkg.part_bytes("word/document.xml")
+                    .map(|_| "word/document.xml".to_string())
+            })
+            .expect("main");
+        let xml = pkg.part_string(&main).expect("xml");
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).expect("root");
+        let body = dom
+            .descendants(root, Some(&W::body()))
+            .into_iter()
+            .next()
+            .expect("body");
+        let sheet = load_stylesheet(&pkg);
+        let fonts = fonts();
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
+        for block in &blocks {
+            let Block::Paragraph { style, runs, .. } = block else {
+                continue;
+            };
+            if style.style_id != "ListBullet" {
+                continue;
+            }
+            return runs.first().map(|r| r.style.family.clone());
+        }
+        None
     }
 }

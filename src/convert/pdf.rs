@@ -35,6 +35,18 @@ pub(crate) enum Op {
         h: f32,
         color: [f32; 3],
     },
+    FillPoly {
+        points: Vec<(f32, f32)>,
+        color: [f32; 3],
+    },
+    /// Cubic Bézier stroke (DrawingML curvedConnector). `segments` are
+    /// (ctrl1, ctrl2, end) triples after `start`.
+    Cubic {
+        start: (f32, f32),
+        segments: Vec<[(f32, f32); 3]>,
+        width: f32,
+        color: [f32; 3],
+    },
     Jpeg {
         x: f32,
         y: f32,
@@ -66,11 +78,24 @@ pub(crate) enum Op {
     },
 }
 
+/// Sticky-note PDF annotation (not painted into the content stream).
+pub(crate) struct PdfComment {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub contents: String,
+    pub author: String,
+}
+
 /// One finished page, with the section `pgSz` it was laid out against.
 pub(crate) struct Page {
     pub ops: Vec<Op>,
     pub width: f32,
     pub height: f32,
+    pub comments: Vec<PdfComment>,
+    /// Word All-Markup pasteboard: scale content, paint gray balloon column.
+    pub markup_pane: bool,
 }
 
 impl Page {
@@ -79,7 +104,49 @@ impl Page {
             ops: Vec::new(),
             width,
             height,
+            comments: Vec::new(),
+            markup_pane: false,
         }
+    }
+}
+
+/// Word Save-as-PDF All Markup (file_27): letter content is scaled into the
+/// left ~415pt and a 0.949 gray balloon sits on the right. Landscape uses
+/// the matching Word path (cm 0.184 vs portrait 0.1752).
+#[derive(Clone, Copy)]
+struct MarkupChrome {
+    gx: f32,
+    gy: f32,
+    gw: f32,
+    gh: f32,
+    k: f32,
+    tx: f32,
+    ty: f32,
+}
+
+fn markup_chrome(width: f32, height: f32) -> Option<MarkupChrome> {
+    if (width - 612.0).abs() < 2.0 && (height - 792.0).abs() < 2.0 {
+        Some(MarkupChrome {
+            gx: 414.9576,
+            gy: 107.52,
+            gw: 187.8144,
+            gh: 578.16,
+            k: 0.73,
+            tx: 0.96,
+            ty: 107.52,
+        })
+    } else if (width - 792.0).abs() < 2.0 && (height - 612.0).abs() < 2.0 {
+        Some(MarkupChrome {
+            gx: 587.552,
+            gy: 71.04,
+            gw: 197.248,
+            gh: 469.2,
+            k: 0.184 / 0.24,
+            tx: 0.96,
+            ty: 71.04,
+        })
+    } else {
+        None
     }
 }
 
@@ -218,6 +285,23 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
             }
         }
         let mut stream = String::new();
+        let markup = page
+            .markup_pane
+            .then(|| markup_chrome(page.width, page.height))
+            .flatten();
+        if let Some(m) = markup {
+            stream.push_str(&format!(
+                "0.949 0.949 0.949 rg {x:.2} {y:.2} {w:.2} {h:.2} re f\n\
+                 q {k:.4} 0 0 {k:.4} {tx:.2} {ty:.2} cm\n",
+                x = m.gx,
+                y = m.gy,
+                w = m.gw,
+                h = m.gh,
+                k = m.k,
+                tx = m.tx,
+                ty = m.ty,
+            ));
+        }
         let mut font_res = String::new();
         for (face_id, obj_id) in &simple_obj {
             font_res.push_str(&format!(
@@ -340,19 +424,77 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
                         b = color[2],
                     ));
                 }
+                Op::FillPoly { points, color } => {
+                    if let Some((x0, y0)) = points.first() {
+                        stream.push_str(&format!(
+                            "{r:.3} {g:.3} {b:.3} rg {x0:.2} {y0:.2} m",
+                            r = color[0],
+                            g = color[1],
+                            b = color[2],
+                        ));
+                        for (x, y) in points.iter().skip(1) {
+                            stream.push_str(&format!(" {x:.2} {y:.2} l"));
+                        }
+                        stream.push_str(" h f\n");
+                    }
+                }
+                Op::Cubic {
+                    start,
+                    segments,
+                    width,
+                    color,
+                } => {
+                    stream.push_str(&format!(
+                        "{w:.2} w {r:.3} {g:.3} {b:.3} RG {x:.2} {y:.2} m",
+                        w = width,
+                        r = color[0],
+                        g = color[1],
+                        b = color[2],
+                        x = start.0,
+                        y = start.1,
+                    ));
+                    for [(c1x, c1y), (c2x, c2y), (ex, ey)] in segments {
+                        stream.push_str(&format!(
+                            " {c1x:.2} {c1y:.2} {c2x:.2} {c2y:.2} {ex:.2} {ey:.2} c"
+                        ));
+                    }
+                    stream.push_str(" S\n");
+                }
                 Op::Jpeg { .. } | Op::Rgb { .. } => {}
             }
         }
         stream.push_str(&extra_ops);
+        if markup.is_some() {
+            stream.push_str("Q\n");
+        }
         let content_id = objs.len() + 1;
         objs.push(stream_object(&stream));
+        let mut annot_refs = String::new();
+        for note in &page.comments {
+            let id = objs.len() + 1;
+            let scaled = markup.map(|m| PdfComment {
+                x: m.k * note.x + m.tx,
+                y: m.k * note.y + m.ty,
+                w: note.w * m.k,
+                h: note.h * m.k,
+                contents: note.contents.clone(),
+                author: note.author.clone(),
+            });
+            objs.push(text_annot_obj(scaled.as_ref().unwrap_or(note)));
+            annot_refs.push_str(&format!("{id} 0 R "));
+        }
+        let annots = if annot_refs.is_empty() {
+            String::new()
+        } else {
+            format!(" /Annots [{annot_refs}]")
+        };
         let page_id = objs.len() + 1;
         page_ids.push(page_id);
         objs.push(
             format!(
                 "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w:.2} {h:.2}] \
                    /Contents {content_id} 0 R \
-                   /Resources << /Font << {font_res} >> /XObject << {xobjects} >> >> >>",
+                   /Resources << /Font << {font_res} >> /XObject << {xobjects} >> >>{annots} >>",
                 w = page.width,
                 h = page.height,
             )
@@ -489,6 +631,22 @@ fn rgb_xobject(width: u32, height: u32, bytes: &[u8]) -> Vec<u8> {
     out.extend_from_slice(bytes);
     out.extend_from_slice(b"\nendstream");
     out
+}
+
+fn text_annot_obj(note: &PdfComment) -> Vec<u8> {
+    let x2 = note.x + note.w.max(12.0);
+    let y2 = note.y + note.h.max(12.0);
+    let contents = pdf_literal(note.contents.as_bytes());
+    let author = pdf_literal(note.author.as_bytes());
+    // /F 0: not Printed, so raster oracles (comment-stripped Word PDFs)
+    // do not pick up balloon chrome.
+    format!(
+        "<< /Type /Annot /Subtype /Text /Rect [{x:.2} {y:.2} {x2:.2} {y2:.2}] \
+           /Contents {contents} /T {author} /Name /Comment /F 0 /C [1 0.92 0.4] >>",
+        x = note.x,
+        y = note.y,
+    )
+    .into_bytes()
 }
 
 fn stream_object(ops: &str) -> Vec<u8> {
