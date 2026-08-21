@@ -604,6 +604,7 @@ enum ImageKind {
         width: u32,
         height: u32,
         bytes: Vec<u8>,
+        components: u8,
     },
     Rgb {
         width: u32,
@@ -4202,12 +4203,13 @@ fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {
     if bytes.len() > 3
         && bytes[0] == 0xFF
         && bytes[1] == 0xD8
-        && let Some((width, height)) = jpeg_size(&bytes)
+        && let Some((width, height, components)) = jpeg_info(&bytes)
     {
         return Some(ImageKind::Jpeg {
             width,
             height,
             bytes,
+            components,
         });
     }
     let img = image::load_from_memory(&bytes).ok()?;
@@ -4220,6 +4222,10 @@ fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {
 }
 
 fn jpeg_size(data: &[u8]) -> Option<(u32, u32)> {
+    jpeg_info(data).map(|(w, h, _)| (w, h))
+}
+
+fn jpeg_info(data: &[u8]) -> Option<(u32, u32, u8)> {
     if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
         return None;
     }
@@ -4239,9 +4245,13 @@ fn jpeg_size(data: &[u8]) -> Option<(u32, u32)> {
         }
         let len = u16::from_be_bytes([data[idx + 2], data[idx + 3]]) as usize;
         if matches!(marker, 0xC0..=0xC2) {
+            if idx + 9 >= data.len() {
+                break;
+            }
             let height = u16::from_be_bytes([data[idx + 5], data[idx + 6]]) as u32;
             let width = u16::from_be_bytes([data[idx + 7], data[idx + 8]]) as u32;
-            return Some((width, height));
+            let components = data[idx + 9];
+            return Some((width, height, components));
         }
         idx += 2 + len;
     }
@@ -5666,6 +5676,7 @@ impl<'a> Layout<'a> {
                 width,
                 height,
                 bytes,
+                components,
             } => self.current().ops.push(Op::Jpeg {
                 x,
                 y,
@@ -5674,6 +5685,7 @@ impl<'a> Layout<'a> {
                 width: *width,
                 height: *height,
                 bytes: bytes.clone(),
+                components: *components,
             }),
             ImageKind::Rgb {
                 width,

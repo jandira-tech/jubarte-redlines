@@ -18,7 +18,9 @@ Word-oracle convert tracks:
 Each file is 60 unique stems:
 
 1. The 50 lowest official jubarte per-doc scores (ties broken by stem).
-2. Every official score **> 90**, capped at 10 controls.
+2. The top 10 official scores **> 90**, ordered descending (ties broken by stem).
+   Bounded to at most 10 candidates before building controls, ensuring
+   reproducible selection when the >90 pool grows.
 3. If fewer than 10 files score >90, fill with the next-highest official
    scores (`next_highest_fill`).
 

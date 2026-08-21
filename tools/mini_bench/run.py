@@ -59,16 +59,25 @@ def _version(binary: Path) -> str | None:
     return text.splitlines()[0] if text else None
 
 
-def _next_index(log_path: Path) -> int:
+def _reserve_index(log_path: Path):
+    """Reserve run index atomically, returning (index, lock_file).
+
+    Caller must hold lock_file open through completion-row writing.
+    """
+    import fcntl
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = log_path.with_suffix(".lock")
+    lock_file = lock_path.open("a")
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
     if not log_path.is_file():
-        return 1
+        return 1, lock_file
     last = 0
     for line in log_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         row = json.loads(line)
         last = max(last, int(row.get("run") or 0))
-    return last + 1
+    return last + 1, lock_file
 
 
 def main() -> None:
@@ -111,48 +120,57 @@ def main() -> None:
         raise SystemExit(f"stems not on official track: {missing[:5]}")
     items = [by_stem[stem] for stem in wanted]
 
-    run_idx = args.run if args.run is not None else _next_index(args.log)
-    work_dir = args.work_dir or (HERE / "work" / f"{track}_run_{run_idx:02d}")
-    json_out = args.json_out or (work_dir / "mini_bench.json")
+    if args.run is not None:
+        run_idx = args.run
+        lock_file = None
+    else:
+        run_idx, lock_file = _reserve_index(args.log)
 
-    report = run_eval(
-        json_out,
-        converter=converter,
-        tools=("jubarte",),
-        jobs=args.jobs,
-        dpi=args.dpi,
-        work_dir=work_dir,
-        fixtures=items,
-        resume=False,
-        convert_workers=args.convert_workers,
-        track=track,
-    )
-    tool = report["tools"]["jubarte"]
-    per_doc = tool["per_doc"]
-    vals = [float(per_doc[stem]) for stem in wanted]
-    row = {
-        "run": run_idx,
-        "generated_at": datetime.now(UTC).isoformat(),
-        "track": report.get("track"),
-        "converter": str(converter),
-        "converter_sha256": _sha256(converter),
-        "version": _version(converter) or tool.get("version"),
-        "itt_n": len(wanted),
-        "n_scored": int(tool.get("n_scored") or 0),
-        "mean": round(statistics.mean(vals), 4),
-        "median": round(statistics.median(vals), 4),
-        "failures": int(tool.get("failures") or 0),
-        "per_doc": {stem: per_doc[stem] for stem in wanted},
-        "json_out": str(json_out),
-    }
-    args.log.parent.mkdir(parents=True, exist_ok=True)
-    with args.log.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, sort_keys=True) + "\n")
-    print(
-        f"mini-run {run_idx}  track={track}  n={row['itt_n']}  mean={row['mean']}  "
-        f"median={row['median']}  fail={row['failures']}  → {args.log}",
-        flush=True,
-    )
+    try:
+        work_dir = args.work_dir or (HERE / "work" / f"{track}_run_{run_idx:02d}")
+        json_out = args.json_out or (work_dir / "mini_bench.json")
+
+        report = run_eval(
+            json_out,
+            converter=converter,
+            tools=("jubarte",),
+            jobs=args.jobs,
+            dpi=args.dpi,
+            work_dir=work_dir,
+            fixtures=items,
+            resume=False,
+            convert_workers=args.convert_workers,
+            track=track,
+        )
+        tool = report["tools"]["jubarte"]
+        per_doc = tool["per_doc"]
+        vals = [float(per_doc[stem]) for stem in wanted]
+        row = {
+            "run": run_idx,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "track": report.get("track"),
+            "converter": str(converter),
+            "converter_sha256": _sha256(converter),
+            "version": _version(converter) or tool.get("version"),
+            "itt_n": len(wanted),
+            "n_scored": int(tool.get("n_scored") or 0),
+            "mean": round(statistics.mean(vals), 4),
+            "median": round(statistics.median(vals), 4),
+            "failures": int(tool.get("failures") or 0),
+            "per_doc": {stem: per_doc[stem] for stem in wanted},
+            "json_out": str(json_out),
+        }
+        args.log.parent.mkdir(parents=True, exist_ok=True)
+        with args.log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+        print(
+            f"mini-run {run_idx}  track={track}  n={row['itt_n']}  mean={row['mean']}  "
+            f"median={row['median']}  fail={row['failures']}  → {args.log}",
+            flush=True,
+        )
+    finally:
+        if lock_file is not None:
+            lock_file.close()
 
 
 if __name__ == "__main__":

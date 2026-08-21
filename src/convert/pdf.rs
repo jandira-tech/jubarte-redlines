@@ -55,6 +55,7 @@ pub(crate) enum Op {
         width: u32,
         height: u32,
         bytes: Vec<u8>,
+        components: u8,
     },
     Rgb {
         x: f32,
@@ -241,7 +242,6 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
     let mut page_ids = Vec::new();
     for page in pages {
         let mut xobjects = String::new();
-        let mut extra_ops = String::new();
         let mut img_n = 0usize;
         for op in &page.ops {
             match op {
@@ -249,37 +249,24 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
                     width,
                     height,
                     bytes,
-                    x,
-                    y,
-                    dw,
-                    dh,
+                    components,
                     ..
                 } => {
                     img_n += 1;
                     let id = objs.len() + 1;
-                    objs.push(jpeg_xobject(*width, *height, bytes));
+                    objs.push(jpeg_xobject(*width, *height, bytes, *components));
                     xobjects.push_str(&format!("/Im{img_n} {id} 0 R "));
-                    extra_ops.push_str(&format!(
-                        "q {dw:.2} 0 0 {dh:.2} {x:.2} {y:.2} cm /Im{img_n} Do Q\n"
-                    ));
                 }
                 Op::Rgb {
                     width,
                     height,
                     bytes,
-                    x,
-                    y,
-                    dw,
-                    dh,
                     ..
                 } => {
                     img_n += 1;
                     let id = objs.len() + 1;
                     objs.push(rgb_xobject(*width, *height, bytes));
                     xobjects.push_str(&format!("/Im{img_n} {id} 0 R "));
-                    extra_ops.push_str(&format!(
-                        "q {dw:.2} 0 0 {dh:.2} {x:.2} {y:.2} cm /Im{img_n} Do Q\n"
-                    ));
                 }
                 _ => {}
             }
@@ -318,6 +305,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
             };
             font_res.push_str(&format!("/{name} {obj_id} 0 R "));
         }
+        let mut img_counter = 0usize;
         for op in &page.ops {
             match op {
                 Op::Text {
@@ -460,10 +448,20 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
                     }
                     stream.push_str(" S\n");
                 }
-                Op::Jpeg { .. } | Op::Rgb { .. } => {}
+                Op::Jpeg { x, y, dw, dh, .. } => {
+                    img_counter += 1;
+                    stream.push_str(&format!(
+                        "q {dw:.2} 0 0 {dh:.2} {x:.2} {y:.2} cm /Im{img_counter} Do Q\n"
+                    ));
+                }
+                Op::Rgb { x, y, dw, dh, .. } => {
+                    img_counter += 1;
+                    stream.push_str(&format!(
+                        "q {dw:.2} 0 0 {dh:.2} {x:.2} {y:.2} cm /Im{img_counter} Do Q\n"
+                    ));
+                }
             }
         }
-        stream.push_str(&extra_ops);
         if markup.is_some() {
             stream.push_str("Q\n");
         }
@@ -607,10 +605,16 @@ fn type0_font_obj(face: &super::font::Face, cid_id: usize) -> Vec<u8> {
     .into_bytes()
 }
 
-fn jpeg_xobject(width: u32, height: u32, bytes: &[u8]) -> Vec<u8> {
+fn jpeg_xobject(width: u32, height: u32, bytes: &[u8], components: u8) -> Vec<u8> {
+    let (colorspace, decode) = match components {
+        1 => ("/DeviceGray", ""),
+        3 => ("/DeviceRGB", ""),
+        4 => ("/DeviceCMYK", " /Decode [1 0 1 0 1 0 1 0]"),
+        _ => ("/DeviceRGB", ""),
+    };
     let mut out = format!(
         "<< /Type /XObject /Subtype /Image /Width {width} /Height {height} \
-           /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode \
+           /ColorSpace {colorspace} /BitsPerComponent 8 /Filter /DCTDecode{decode} \
            /Length {} >>\nstream\n",
         bytes.len()
     )

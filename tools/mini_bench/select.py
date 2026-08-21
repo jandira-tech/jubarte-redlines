@@ -38,17 +38,18 @@ TRACKS = {
 def select(per_doc: dict[str, float]) -> list[dict]:
     items = sorted(per_doc.items(), key=lambda kv: (kv[1], kv[0]))
     worst = items[:50]
-    gt90 = sorted(
+    gt90_candidates = sorted(
         [(k, v) for k, v in per_doc.items() if v > 90],
         key=lambda kv: (-kv[1], kv[0]),
     )
+    gt90 = gt90_candidates[:10]
     used = {k for k, _ in worst} | {k for k, _ in gt90}
     rest = sorted(
         [(k, v) for k, v in per_doc.items() if k not in used],
         key=lambda kv: (-kv[1], kv[0]),
     )
     fills = rest[: max(0, 10 - len(gt90))]
-    controls = gt90[:10] if len(gt90) >= 10 else gt90 + fills
+    controls = gt90 + fills
     out: list[dict] = []
     for k, v in worst:
         out.append({"stem": k, "role": "worst", "baseline_score": v})
@@ -91,8 +92,8 @@ def main() -> None:
             "n_next_highest_fill": n_fill,
         },
         "selection_rule": (
-            "50 lowest jubarte scores (ties by stem) + every >90 up to 10 "
-            "controls, else next-highest fill to 10 controls."
+            "50 lowest jubarte scores (ties by stem) + top 10 >90 "
+            "(descending, ties by stem), else next-highest fill to 10 controls."
         ),
         "n": 60,
         "stems": stems,
@@ -100,7 +101,7 @@ def main() -> None:
     spec["membership"].write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     lines = [
         "# role\tstem\tbaseline_score",
-        "# selection: worst 50 + all >90 (cap 10) + next-highest fill to 10 controls",
+        "# selection: worst 50 + top 10 >90 (descending, ties by stem) + next-highest fill to 10 controls",
     ]
     for row in stems:
         lines.append(f"{row['role']}\t{row['stem']}\t{row['baseline_score']:.10f}")
