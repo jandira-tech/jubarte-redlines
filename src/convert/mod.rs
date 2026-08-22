@@ -200,10 +200,12 @@ struct ParaStyle {
     /// `w:style/w:name` (uipriority uses styleId="2" name="heading 1").
     style_name: String,
     /// `w:pBdr` edges (sample_document bottom; Strict01 Video box).
-    border_top: Option<([f32; 3], f32)>,
-    border_left: Option<([f32; 3], f32)>,
-    border_bottom: Option<([f32; 3], f32)>,
-    border_right: Option<([f32; 3], f32)>,
+    /// `(color, width_pt, space_pt)` — space is the gap between the
+    /// border and the text (sd_2517 TextHeading2 left/right space=4).
+    border_top: Option<([f32; 3], f32, f32)>,
+    border_left: Option<([f32; 3], f32, f32)>,
+    border_bottom: Option<([f32; 3], f32, f32)>,
+    border_right: Option<([f32; 3], f32, f32)>,
     /// Explicit `w:tabs/w:tab` stops (pos from the left margin).
     tab_stops: Vec<TabStop>,
     page_break_before: bool,
@@ -302,6 +304,9 @@ struct TblStyle {
     /// `tblStylePr firstRow rPr w:color` (GridTable4-Accent1 FFFFFF).
     /// Not the table-level rPr color — that was mini 112 ITT-wrong.
     first_row_color: Option<[f32; 3]>,
+    /// `tblStylePr firstRow tcBorders` (GridTable4-Accent1 156082).
+    /// Body `tblBorders` stay 45B0E1; header lattice is the darker edge.
+    first_row_borders: Option<CellBorders>,
     borders: Option<TblBorders>,
 }
 
@@ -521,8 +526,16 @@ struct TableCell {
     align: Align,
     pad_l: f32,
     pad_r: f32,
+    /// `tcMar` top (falls back to `tblCellMar`); Word npm 100 twips.
+    pad_t: f32,
+    /// `tcMar` bottom (falls back to `tblCellMar`).
+    pad_b: f32,
     nowrap: bool,
     borders: Option<CellBorders>,
+    /// Fill came from `tblStylePr` (GridTable4 band1Horz), not direct
+    /// `tcPr/shd`. Word paints that shd at cell height with x-inset
+    /// only (C1E4F5 14.64/14.64); per-line inner is for direct shd.
+    style_fill: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -541,6 +554,8 @@ struct RawCell {
     align: Align,
     pad_l: f32,
     pad_r: f32,
+    pad_t: f32,
+    pad_b: f32,
     nowrap: bool,
     borders: Option<CellBorders>,
 }
@@ -623,6 +638,12 @@ enum ImageSlot {
         pct_h: Option<f32>,
         /// `wp:positionV/align` when there is no posOffset/pct (page center).
         v_align: Align,
+        /// `wp:wrapSquare` — body wraps beside the float (not wrapNone overlay).
+        wrap_square: bool,
+        /// `wp:anchor/@distL` in points (114300 EMU = 9pt).
+        dist_l: f32,
+        /// `wp:anchor/@distR` in points.
+        dist_r: f32,
     },
 }
 
@@ -851,6 +872,7 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
         last_row_fill: None,
         last_col_fill: None,
         first_row_color: None,
+        first_row_borders: None,
         borders: first_named(dom, style, "tblPr").and_then(|pr| parse_tbl_borders(dom, pr)),
     };
     for pr in dom.descendants(style, Some(&W::name("tblStylePr"))) {
@@ -862,6 +884,7 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
                 out.first_row_fill = fill;
                 out.first_row_bold = bold;
                 out.first_row_color = style_pr_color(dom, pr);
+                out.first_row_borders = parse_style_pr_tc_borders(dom, pr);
             }
             "band1Horz" => out.band1_fill = fill,
             "band2Horz" => out.band2_fill = fill,
@@ -957,6 +980,15 @@ fn parse_tbl_borders(dom: &Dom, parent: NodeId) -> Option<TblBorders> {
 
 fn parse_tc_borders(dom: &Dom, cell: NodeId) -> Option<CellBorders> {
     let pr = first_named(dom, cell, "tcPr")?;
+    parse_tc_borders_el(dom, pr)
+}
+
+fn parse_style_pr_tc_borders(dom: &Dom, pr: NodeId) -> Option<CellBorders> {
+    let tc_pr = first_named(dom, pr, "tcPr")?;
+    parse_tc_borders_el(dom, tc_pr)
+}
+
+fn parse_tc_borders_el(dom: &Dom, pr: NodeId) -> Option<CellBorders> {
     let borders = direct_named(dom, pr, "tcBorders")?;
     Some(CellBorders {
         top: border_el(dom, borders, "top").and_then(|el| parse_border_edge(dom, el)),
@@ -995,9 +1027,35 @@ fn resolve_named(
 }
 
 fn first_named(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {
+    // w:pPrChange / rPrChange / tblPrChange hold the *previous* pPr.
+    // file_146 live pPr is pBdr+spacing; ListParagraph hanging lives
+    // only in pPrChange. Stealing that ghost indented Hello at 90.
     dom.descendants(node, Some(&W::name(local)))
         .into_iter()
-        .next()
+        .find(|&cand| !under_prior_change(dom, node, cand))
+}
+
+fn under_prior_change(dom: &Dom, root: NodeId, mut n: NodeId) -> bool {
+    while n != root {
+        let Some(parent) = dom.parent(n) else {
+            break;
+        };
+        if parent == root {
+            break;
+        }
+        if local_name_is(dom, parent, "pPrChange")
+            || local_name_is(dom, parent, "rPrChange")
+            || local_name_is(dom, parent, "tblPrChange")
+            || local_name_is(dom, parent, "trPrChange")
+            || local_name_is(dom, parent, "tcPrChange")
+            || local_name_is(dom, parent, "sectPrChange")
+            || local_name_is(dom, parent, "numPrChange")
+        {
+            return true;
+        }
+        n = parent;
+    }
+    false
 }
 
 fn direct_named(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {
@@ -1190,7 +1248,9 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
                     style.line_exact = None;
                     if rule == "atLeast" {
                         // max(spec, natural) + line_mult=1 packed Cicero
-                        // 5→4pp (mini 92: keep 5). Keep spec/11 as mult.
+                        // 5→4pp (mini 92: keep 5). Flooring the box at
+                        // spec (mini 203) dropped image_out_of_folder
+                        // / file_48 −1.68 each. Keep spec/11 as mult.
                         style.line_mult = (twip(v) / 11.0).max(0.8);
                     } else {
                         style.line_mult = v / 240.0;
@@ -1455,6 +1515,9 @@ struct NumLevel {
     hanging: f32,
     /// lvl rPr ascii/hAnsi (ListBullet is Symbol).
     family: String,
+    /// `w:suff=nothing` (sd_2517 Título1 `Article %2`). Default is a
+    /// trailing space so existing markers stay `1. `.
+    suff_nothing: bool,
 }
 
 #[derive(Default)]
@@ -1515,6 +1578,7 @@ impl Numbering {
                 twip(360.0)
             },
             family: parent.family,
+            suff_nothing: parent.suff_nothing,
         };
         self.levels
             .entry(abs.to_string())
@@ -1556,11 +1620,16 @@ impl Numbering {
             // SymbolMT (empty glyphs). Keep the PUA on Symbol so Quartz
             // • matches comments-lots; hanging indent already places it.
             if lvl.family.to_ascii_lowercase().contains("symbol") {
+                // Word paints PUA • at 72 then an Arial space at ~77.5
+                // before the hanging body at 90 (potpourri ListBullet).
+                // Keep the PUA (mini 108 U+00B7 was ITT-wrong); append
+                // the gutter space non-Symbol bullets already have.
                 let t = lvl.text.trim();
-                return if t.is_empty() {
-                    "\u{F0B7}".into()
+                let mark = if t.is_empty() { "\u{F0B7}" } else { t };
+                return if mark.ends_with(' ') {
+                    mark.to_string()
                 } else {
-                    t.to_string()
+                    format!("{mark} ")
                 };
             }
             return bullet_glyph(&lvl.text);
@@ -1599,7 +1668,7 @@ impl Numbering {
             };
             out = out.replace(&token, &format_num(fmt, val));
         }
-        if !out.ends_with(' ') {
+        if !lvl.suff_nothing && !out.ends_with(' ') {
             out.push(' ');
         }
         out
@@ -1764,6 +1833,9 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
                 .unwrap_or(1);
             let (left, hanging) = lvl_indent(&dom, lvl);
             let family = lvl_marker_family(&dom, lvl);
+            let suff_nothing = first_named(&dom, lvl, "suff")
+                .and_then(|n| attr_any(&dom, n, "val"))
+                .is_some_and(|v| v.eq_ignore_ascii_case("nothing"));
             lvls.insert(
                 ilvl,
                 NumLevel {
@@ -1773,6 +1845,7 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
                     left,
                     hanging,
                     family,
+                    suff_nothing,
                 },
             );
         }
@@ -2297,12 +2370,27 @@ fn table_row_height_pt(
         // Prepared-for 22pt (align max_shift 5px).
         row_pad += 10.0 + 8.0;
     }
-    // Explicit tblCellMar top+bottom replaces generic row chrome.
+    // Explicit tblCellMar / tcMar top+bottom replaces generic row chrome.
     // uipriority Feature table is 100+100 twips; stacking +8pt made
     // each row 31pt (Word ~23) and spilled Summary onto page 3.
     // Cicero 80+80 == chrome: Word stacks (~28.6pt, West on page 2)
     // but mini 92 dropped Cicero −0.10 ITT with 0 better. Keep max().
-    let padded = nlines as f32 * line_box + row_pad.max(geom.pad_v);
+    // sample_iter2 npm: no tblCellMar, cell tcMar 100+100 (10pt) must
+    // win over the 8pt 1-line chrome (Word outer 22.32 vs 20.65).
+    // Multi-line code listings (tcMar 120+120) must NOT pick this up:
+    // mini-run 188 applied it globally and dropped the 3pp sample/
+    // eigenpal cluster −3 (median 53.15 → 50.95).
+    let cell_v = row
+        .iter()
+        .map(|c| c.pad_t + c.pad_b)
+        .fold(0.0_f32, f32::max);
+    let extra = row_pad.max(geom.pad_v);
+    let extra = if nlines == 1 {
+        extra.max(cell_v)
+    } else {
+        extra
+    };
+    let padded = nlines as f32 * line_box + extra;
     if exact && spec > 0.0 {
         spec
     } else if line_mult <= 1.01 {
@@ -2702,6 +2790,7 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
             }
             if cell.fill.is_none() {
                 cell.fill = fill;
+                cell.style_fill = fill.is_some();
             }
             let col0 = look.first_col && cell.col == 0 && tdef.first_col_bold;
             if header_bold || col0 {
@@ -2715,6 +2804,9 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
                         run.style.color = color;
                     }
                 }
+            }
+            if look.first_row && ri == 0 && cell.borders.is_none() {
+                cell.borders = tdef.first_row_borders;
             }
         }
     }
@@ -2745,6 +2837,7 @@ fn table_block(
         }
     }
     let (tbl_pad_l, tbl_pad_r) = table_pad_h(dom, table);
+    let (tbl_pad_t, tbl_pad_b) = table_pad_tb(dom, table);
     let mut raw_rows: Vec<Vec<RawCell>> = Vec::new();
     let mut row_min = Vec::new();
     let mut row_exact = Vec::new();
@@ -2816,6 +2909,7 @@ fn table_block(
             }
             let (colspan, vmerge) = cell_span(dom, cell);
             let (pad_l, pad_r) = cell_pad_h(dom, cell, tbl_pad_l, tbl_pad_r);
+            let (pad_t, pad_b) = cell_pad_tb(dom, cell, tbl_pad_t, tbl_pad_b);
             cells.push(RawCell {
                 runs: cell_runs,
                 colspan,
@@ -2825,6 +2919,8 @@ fn table_block(
                 align: cell_align,
                 pad_l,
                 pad_r,
+                pad_t,
+                pad_b,
                 nowrap: cell_nowrap(dom, cell),
                 borders: parse_tc_borders(dom, cell),
             });
@@ -2947,6 +3043,8 @@ fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
             .and_then(|n| attr_any(dom, n, "w"))
             .and_then(parse_len)
     };
+    // Cicero tblCellMar is start/end=160. Mapping those to left/right
+    // (mini 221–224) dropped Cicero −0.027 ITT (2.6pt pad, >5px align).
     (
         edge("left").unwrap_or(default),
         edge("right").unwrap_or(default),
@@ -2971,12 +3069,12 @@ fn cell_pad_h(dom: &Dom, cell: NodeId, table_l: f32, table_r: f32) -> (f32, f32)
     (edge("left", table_l), edge("right", table_r))
 }
 
-fn table_pad_v(dom: &Dom, table: NodeId) -> f32 {
+fn table_pad_tb(dom: &Dom, table: NodeId) -> (f32, f32) {
     let Some(pr) = first_named(dom, table, "tblPr") else {
-        return 0.0;
+        return (0.0, 0.0);
     };
     let Some(mar) = first_named(dom, pr, "tblCellMar") else {
-        return 0.0;
+        return (0.0, 0.0);
     };
     let edge = |name: &str| {
         first_named(dom, mar, name)
@@ -2984,7 +3082,30 @@ fn table_pad_v(dom: &Dom, table: NodeId) -> f32 {
             .and_then(parse_len)
             .unwrap_or(0.0)
     };
-    edge("top") + edge("bottom")
+    (edge("top"), edge("bottom"))
+}
+
+fn table_pad_v(dom: &Dom, table: NodeId) -> f32 {
+    let (t, b) = table_pad_tb(dom, table);
+    t + b
+}
+
+fn cell_pad_tb(dom: &Dom, cell: NodeId, table_t: f32, table_b: f32) -> (f32, f32) {
+    // Word: tcMar top/bottom wins over tblCellMar (file_146 npm is
+    // 100+100 while the table has no tblCellMar).
+    let Some(pr) = first_named(dom, cell, "tcPr") else {
+        return (table_t, table_b);
+    };
+    let Some(mar) = direct_named(dom, pr, "tcMar") else {
+        return (table_t, table_b);
+    };
+    let edge = |name: &str, fallback: f32| {
+        first_named(dom, mar, name)
+            .and_then(|n| attr_any(dom, n, "w"))
+            .and_then(parse_len)
+            .unwrap_or(fallback)
+    };
+    (edge("top", table_t), edge("bottom", table_b))
 }
 
 fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {
@@ -3029,6 +3150,8 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
         align: Align::Left,
         pad_l: twip(108.0),
         pad_r: twip(108.0),
+        pad_t: 0.0,
+        pad_b: 0.0,
         nowrap: false,
         borders: None,
     }
@@ -3097,8 +3220,11 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
                 align: raw.align,
                 pad_l: raw.pad_l,
                 pad_r: raw.pad_r,
+                pad_t: raw.pad_t,
+                pad_b: raw.pad_b,
                 nowrap: raw.nowrap,
                 borders: raw.borders,
+                style_fill: false,
             });
             if open.len() < col + span {
                 open.resize(col + span, None);
@@ -3284,7 +3410,8 @@ fn apply_rev(style: &mut RunStyle, mark: RevMark, color: [f32; 3]) {
             style.strike = true;
             // Word Quartz deletion ink is #D13438 (addition_removal p3
             // capability matrix). Author gold on delText zeroed color_sim
-            // there. Insertions keep the by-author palette (mini 69).
+            // there. Second/third-author del as ins palette (mini 239)
+            // dropped no-redline median 53.4615→53.4464. Keep always-red.
             style.color = [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0];
         }
         RevMark::Ins => {
@@ -4151,6 +4278,15 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         _ => Align::Left,
     };
     let (pct_w, pct_h) = size_rel_pct(dom, drawing);
+    let wrap_square = first_named_any(dom, drawing, "wrapSquare").is_some();
+    let anchor = first_named_any(dom, drawing, "anchor");
+    let emu_pt = |name: &str| {
+        anchor
+            .and_then(|n| attr_any(dom, n, name))
+            .and_then(|s| s.parse::<f32>().ok())
+            .map(|emu| emu / 12700.0)
+            .unwrap_or(0.0)
+    };
     ImageSlot::Float {
         align,
         page_x: (h_from == "page").then(|| pos_offset_pt(dom, ph)).flatten(),
@@ -4166,6 +4302,9 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         pct_w,
         pct_h,
         v_align,
+        wrap_square,
+        dist_l: emu_pt("distL"),
+        dist_r: emu_pt("distR"),
     }
 }
 
@@ -4445,10 +4584,6 @@ fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {
         height: rgb.height(),
         bytes: rgb.into_raw(),
     })
-}
-
-fn jpeg_size(data: &[u8]) -> Option<(u32, u32)> {
-    jpeg_info(data).map(|(w, h, _)| (w, h))
 }
 
 fn jpeg_info(data: &[u8]) -> Option<(u32, u32, u8)> {
@@ -4764,7 +4899,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
     style.align
 }
 
-fn pbdr_edge(dom: &Dom, ppr: NodeId, edge: &str) -> Option<([f32; 3], f32)> {
+fn pbdr_edge(dom: &Dom, ppr: NodeId, edge: &str) -> Option<([f32; 3], f32, f32)> {
     let pbdr = first_named(dom, ppr, "pBdr")?;
     let el = first_named(dom, pbdr, edge)?;
     let color = attr_any(dom, el, "color")
@@ -4772,15 +4907,25 @@ fn pbdr_edge(dom: &Dom, ppr: NodeId, edge: &str) -> Option<([f32; 3], f32)> {
         .unwrap_or([0.0, 0.0, 0.0]);
     let width = attr_any(dom, el, "sz")
         .and_then(|s| s.parse::<f32>().ok())
-        .map(|eighths| (eighths / 8.0).max(0.4))
+        .map(|eighths| {
+            let pt = eighths / 8.0;
+            // file_146 / sample_iter2 heading pBdr sz=3 is Word 0.24pt
+            // (1px @ 300dpi). (sz/8).max(0.4) painted 0.40pt on 45 rules.
+            // sz=4 IntenseQuote / table hairlines stay 0.5pt.
+            if pt < 0.5 { 0.24 } else { pt }
+        })
         .unwrap_or(0.6);
-    Some((color, width))
+    // Word ST_Pts; omitted space is 0 (ECMA-376 17.3.1.24).
+    let space = attr_any(dom, el, "space")
+        .and_then(|s| s.parse::<f32>().ok())
+        .unwrap_or(0.0);
+    Some((color, width, space))
 }
 
 fn first_para_border(dom: &Dom, root: NodeId, edge: &str) -> Option<([f32; 3], f32)> {
     let para = dom.descendants(root, Some(&W::p())).into_iter().next()?;
     let ppr = dom.element(para, &W::p_pr())?;
-    pbdr_edge(dom, ppr, edge)
+    pbdr_edge(dom, ppr, edge).map(|(color, width, _)| (color, width))
 }
 
 const HF_LINE_BREAK: &str = "\n";
@@ -5233,7 +5378,58 @@ impl<'a> Layout<'a> {
         self.page.width - self.page.margin_l - self.page.margin_r
     }
 
-    fn emit_runs(&mut self, runs: &[TextRun], style: &ParaStyle, list: bool, compact_title: bool) {
+    /// wrapSquare bothSides: body measure shrinks by the float + distL/distR.
+    /// Full-width page banners (image_out 841pt) have no side room — skip.
+    fn wrap_square_inset(&self, images: &[LaidImage], boxes: &[LaidTextBox]) -> (f32, f32) {
+        let mut left = 0.0_f32;
+        let mut right = 0.0_f32;
+        let max_side = self.content_width() * 0.7;
+        let mut consider = |slot: ImageSlot, w: f32, h: f32| {
+            let ImageSlot::Float {
+                align,
+                wrap_square,
+                dist_l,
+                dist_r,
+                ..
+            } = slot
+            else {
+                return;
+            };
+            if !wrap_square {
+                return;
+            }
+            let (dw, _) = self.sized_wh(slot, w, h, 1.0, 1.0);
+            if dw >= max_side {
+                return;
+            }
+            match align {
+                Align::Right => right = right.max(dw + dist_l),
+                Align::Left => left = left.max(dw + dist_r),
+                Align::Center | Align::Justify => {
+                    let (fx, _) = self.float_xy(dw, h.max(1.0), slot);
+                    let avail = (fx - dist_l - self.page.margin_l).max(0.0);
+                    right = right.max((self.content_width() - avail).max(0.0));
+                }
+            }
+        };
+        for img in images {
+            consider(img.slot, img.w, img.h);
+        }
+        for box_ in boxes {
+            consider(box_.slot, box_.w, box_.h);
+        }
+        (left, right)
+    }
+
+    fn emit_runs(
+        &mut self,
+        runs: &[TextRun],
+        style: &ParaStyle,
+        list: bool,
+        compact_title: bool,
+        wrap_left: f32,
+        wrap_right: f32,
+    ) {
         let rewritten = apply_missing_pagerefs(runs, &self.known_bookmarks);
         let runs = rewritten.as_slice();
         self.note_chapter_heading(style);
@@ -5255,10 +5451,12 @@ impl<'a> Layout<'a> {
             0.0
         };
         let (marker, body) = split_hanging_marker(runs, hanging > 0.0);
-        let indent = style.indent_left + if list { 18.0 } else { 0.0 };
+        let indent = style.indent_left + if list { 18.0 } else { 0.0 } + wrap_left;
         // Body lives at `left`. The marker occupies the hanging gutter to its
         // left, matching Word/soffice `w:ind w:left w:hanging` + num tab.
-        let width = (self.content_width() - indent - style.indent_right).max(40.0);
+        // wrapSquare distL/distR shrink the remaining measure so text does
+        // not run under the float (Strict01 / ole / image_out).
+        let width = (self.content_width() - indent - style.indent_right - wrap_right).max(40.0);
         let lines = self.wrap_para_runs(body, style, indent, marker.is_some(), width, list);
         for (line_i, line) in lines.iter().enumerate() {
             // Layout uses the authored point size so line boxes stay on
@@ -5340,15 +5538,7 @@ impl<'a> Layout<'a> {
                 });
             }
             self.y -= ascent;
-            let line_w: f32 = line
-                .iter()
-                .map(|r| {
-                    let f = self
-                        .fonts
-                        .resolve(&r.style.family, r.style.bold, r.style.italic);
-                    self.fonts.get(f).width_pt(&r.text, r.style.paint_size())
-                })
-                .sum();
+            let line_w: f32 = line.iter().map(|r| self.run_width_pt(r, &r.text)).sum();
             let leftover = (width - line_w).max(0.0);
             let extra = match style.align {
                 Align::Left | Align::Justify => 0.0,
@@ -5382,6 +5572,9 @@ impl<'a> Layout<'a> {
             }
             self.y -= (line_box - ascent).max(1.0);
         }
+        // Do not skip empty/del-only pBdr (mini 217–220): no-redline
+        // file_146 +0.026 but redline mean −0.020 (comments-lots family
+        // −0.48). Keep painting every pBdr.
         self.paint_pbdr(style, y_top, self.y);
         if runs.iter().any(|r| r.rev) {
             self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
@@ -5418,21 +5611,30 @@ impl<'a> Layout<'a> {
         // 3pp vs soffice 3; space="4" lives inside the after gap.
         // Word IntenseQuote (comments-lots p2) paints the rule at
         // w:ind left/right, not the page margins (~90pt extra ink).
+        // Do not outset 1.44pt / 6px@300dpi (mini 225–228): Word
+        // file_146 E2E8F0 is 70.56–541.44, but the global outset was
+        // no-redline mean −0.0001 (file_134 −0.003). Keep the content
+        // box (72×468).
         let x1 = self.page.margin_l + style.indent_left;
         let x2 = self.page.width - self.page.margin_r - style.indent_right;
         let top = y_top.max(y_bot);
         let bot = y_top.min(y_bot) - 2.0;
-        if let Some((color, width)) = style.border_top {
+        if let Some((color, width, _)) = style.border_top {
             self.hairline_h(x1, top, x2, width, color);
         }
-        if let Some((color, width)) = style.border_bottom {
+        if let Some((color, width, _)) = style.border_bottom {
             self.hairline_h(x1, bot, x2, width, color);
         }
-        if let Some((color, width)) = style.border_left {
-            self.hairline_v(x1, bot, top, width, color);
+        // sd_2517 / file_22 TextHeading2 4-edge: left/right space=4.
+        // Word box 93.36–518.88 vs indent-only 99–513 (5.6pt / 11px
+        // past max_shift). space is the gap between border and text;
+        // left/right sit outside the indent. Do not outset horizontal
+        // rules (mini 225–228 file_134 −0.003).
+        if let Some((color, width, space)) = style.border_left {
+            self.hairline_v(x1 - space, bot, top, width, color);
         }
-        if let Some((color, width)) = style.border_right {
-            self.hairline_v(x2, bot, top, width, color);
+        if let Some((color, width, space)) = style.border_right {
+            self.hairline_v(x2 + space, bot, top, width, color);
         }
     }
 
@@ -5444,9 +5646,11 @@ impl<'a> Layout<'a> {
     }
 
     fn paint_rev_bar(&mut self, x: f32, y_bot: f32, y_top: f32) {
-        // Word CiceroDo paints one ~395pt changed-line mark through a
-        // run of revised paras, not a 12pt tick per paragraph. Merge
-        // when the gap is under one body line (~16pt). file_146 title
+        // Word file_146 / CiceroDo Quartz: filled 0.72pt rect
+        // (`36 726.96 m 36.72 726.96 l 36.72 688.56 l 36 688.56 l h f`),
+        // left-aligned at the change-bar x — not a 0.75pt stroke.
+        // Do not move x to margin_l-36 (mini revx ITT-neg). Merge
+        // adjacent paras under one body line (~16pt); file_146 title
         // vs body stays split (gap ~160pt).
         let x = x.max(2.0);
         let top = y_top.max(y_bot);
@@ -5454,29 +5658,29 @@ impl<'a> Layout<'a> {
         if top - bot < 4.0 {
             return;
         }
+        const W: f32 = 0.72;
         for op in self.current().ops.iter_mut().rev() {
-            let Op::Line {
-                x1,
-                y1,
-                x2,
-                y2,
-                width,
+            let Op::FillRect {
+                x: rx,
+                y,
+                w,
+                h,
                 color,
             } = op
             else {
                 continue;
             };
-            if (*x1 - x).abs() > 0.6 || (*x2 - x).abs() > 0.6 {
+            if (*rx - x).abs() > 0.6 || (*w - W).abs() > 0.02 {
                 continue;
             }
-            if (*width - 0.75).abs() > 0.02 || color.iter().any(|c| *c > 0.02) {
+            if color.iter().any(|c| *c > 0.02) {
                 continue;
             }
-            let existing_top = (*y1).max(*y2);
-            let existing_bot = (*y1).min(*y2);
-            if existing_top - existing_bot <= 6.0 {
+            if *h <= 6.0 {
                 continue;
             }
+            let existing_top = *y + *h;
+            let existing_bot = *y;
             // Overlap or a gap under one body line. 30pt heading
             // gaps stay split (CiceroDo p2 Word is 395pt via those
             // gaps; merging them over-merged p3).
@@ -5485,16 +5689,17 @@ impl<'a> Layout<'a> {
             if !near {
                 continue;
             }
-            *y1 = existing_bot.min(bot);
-            *y2 = existing_top.max(top);
+            let new_bot = existing_bot.min(bot);
+            let new_top = existing_top.max(top);
+            *y = new_bot;
+            *h = new_top - new_bot;
             return;
         }
-        self.current().ops.push(Op::Line {
-            x1: x,
-            y1: bot,
-            x2: x,
-            y2: top,
-            width: 0.75,
+        self.current().ops.push(Op::FillRect {
+            x,
+            y: bot,
+            w: W,
+            h: top - bot,
             color: [0.0, 0.0, 0.0],
         });
     }
@@ -5623,6 +5828,8 @@ impl<'a> Layout<'a> {
         let face = self.fonts.get(fid);
         let size = run.style.paint_size();
         let w = face.width_pt(text, size);
+        let n = text.chars().count();
+        let w = w + run.style.track * n.saturating_sub(1) as f32;
         if w > 0.05 || text.chars().all(char::is_whitespace) {
             return w;
         }
@@ -5650,7 +5857,10 @@ impl<'a> Layout<'a> {
             return;
         }
         let pad = dw * 0.35;
-        let span = x1 - x0 - pad * 2.0;
+        // Word TOC right-tab leaves a space before the PAGEREF
+        // (`...... 1-3`). Ending at dest-0.35em jammed sd_2517 1-3.
+        let trail = pad + face.width_pt(" ", size);
+        let span = x1 - x0 - pad - trail;
         if span < dw {
             return;
         }
@@ -5756,6 +5966,19 @@ impl<'a> Layout<'a> {
         if w <= 0.0 {
             return x;
         }
+        // sample_iter2 / file_146 github cell: in-table xml:space padding
+        // is kept for wrap, but Word underlines ink only (x2=488.9) not
+        // through the pad to clip_right 540.
+        let ink_n = run.text.trim_end().chars().count();
+        let ink_w = if ink_n == 0 {
+            0.0
+        } else if ink_n >= shaped.len() {
+            w
+        } else {
+            let adv: f32 = shaped.iter().take(ink_n).map(|(_, a)| *a * scale).sum();
+            adv + run.style.track * ink_n.saturating_sub(1) as f32
+        };
+        let ink_w = self.clip_width(x, ink_w);
         if let Some(fill) = run.style.highlight {
             self.current().ops.push(Op::FillRect {
                 x,
@@ -5807,7 +6030,7 @@ impl<'a> Layout<'a> {
                 gx += adv_pt;
             }
         }
-        self.decorate_run(x, y, w, &run.style);
+        self.decorate_run(x, y, ink_w, &run.style);
         self.place_run_comments(run, x, y, w);
         x + w
     }
@@ -5896,6 +6119,10 @@ impl<'a> Layout<'a> {
             } else {
                 // Word Quartz single/double underline is a filled hairline
                 // (file_34 p1: 0.48pt `f`), not `l S`. Wave stays stroked.
+                // size×0.075 on all u: mini 197 median −0.007
+                // (green_underline 90.4→89.2). size≥20: mini 199 mean
+                // −0.007. 28pt+ / 32pt title-only (mini 238) no-redline
+                // 59.1612→59.1552. Keep 0.6pt.
                 self.hairline_h(x, y - 1.2, x + w, 0.6, style.color);
                 if style.underline_double {
                     self.hairline_h(x, y - 2.6, x + w, 0.6, style.color);
@@ -6462,6 +6689,8 @@ impl<'a> Layout<'a> {
             Align::Right => (avail - used).max(0.0),
             Align::Left | Align::Justify => 0.0,
         };
+        // Do not add w:tblInd (mini 233): file_146 ±4/5 twips dropped
+        // no-redline median −0.011. Nested −216 twips is off the 60-stem.
         let table_left = self.page.margin_l + shift;
         let color = [0.0, 0.0, 0.0];
         for (ri, row) in rows.iter().enumerate() {
@@ -6526,7 +6755,23 @@ impl<'a> Layout<'a> {
                 );
                 // Win-ascent already places the first baseline; the extra
                 // -3pt (tuned for typo 1536) clipped the second cell line.
-                let mut ty = y_top - face.ascent_pt(size);
+                // 1-line tcMar that exceeds chrome (sample_iter2 npm
+                // 100+100 vs 8pt) insets the inner fill 5pt, matching
+                // Word. Multi-line / chrome-sized pads stay flush: run
+                // 188's global inset packed the 3pp sample cluster.
+                let chrome = if line_mult <= 1.01 { 5.0_f32 } else { 8.0_f32 };
+                let chrome = chrome.max(geom.pad_v);
+                let one_line = lines.len() == 1;
+                // Do not inset when tcMar 80+80 == chrome (file_146
+                // 1E293B pills): mini 257–260 no-redline +0.033/+0.102
+                // but redline mean −0.005 (file_34 −0.25). Keep flush
+                // tops; 100+100 still insets.
+                let inset = if one_line && cell.pad_t + cell.pad_b > chrome + 0.01 {
+                    cell.pad_t
+                } else {
+                    0.0
+                };
+                let mut ty = y_top - inset - face.ascent_pt(size);
                 for line in lines {
                     if ty < bottom {
                         break;
@@ -6539,12 +6784,19 @@ impl<'a> Layout<'a> {
                         // Word Quartz: cell shd plus an inset fill per line
                         // (tblCellMar 108 twips). comments-lots p3 is 35
                         // D3DFEE rects, not 9 cell-only paints.
+                        // GridTable4 band1Horz is cell-height × x-inset
+                        // (14.64/14.64), not a shorter line_box inner.
                         let inner_w = (w - pad_l - pad_r).max(1.0);
+                        let (iy, ih) = if one_line && inset == 0.0 && cell.style_fill {
+                            (bottom, h)
+                        } else {
+                            (ty - (line_box - face.ascent_pt(size)), line_box)
+                        };
                         self.current().ops.push(Op::FillRect {
                             x: x + pad_l,
-                            y: ty - (line_box - face.ascent_pt(size)),
+                            y: iy,
                             w: inner_w,
-                            h: line_box,
+                            h: ih,
                             color: fill,
                         });
                     }
@@ -6588,6 +6840,8 @@ impl<'a> Layout<'a> {
         }
         // Styled TableGrid / body tables keep 4pt chrome. Layout sets
         // after=10 only for unstyled callouts immediately before Heading*.
+        // Do not drop unstyled after (file_146 heading 4pt): 12 tables × 4pt
+        // packed official file_146 7→6pp.
         self.y -= style.after.max(4.0);
     }
 
@@ -6770,6 +7024,10 @@ impl<'a> Layout<'a> {
                 self.draw_line_of_runs(line, y, self.header_align);
             }
             if let Some((color, width)) = self.header_bottom {
+                // Word file_146 header E2E8F0 is 70.56–541.44, but chrome
+                // Quartz 1.44pt outset (mini 244) was no-redline mean
+                // 59.1612→59.1611 / median 53.4615→53.4613. Keep the
+                // content box like body pBdr (mini 225–228).
                 let x1 = self.page.margin_l;
                 let x2 = self.page.width - self.page.margin_r;
                 self.hairline_h(x1, y - 3.0, x2, width, color);
@@ -6798,6 +7056,7 @@ impl<'a> Layout<'a> {
             let base = self.page.footer.max(12.0) + self.fonts.get(fid).descent_pt(size);
             if let Some((color, width)) = self.footer_top {
                 let top = base + n.saturating_sub(1) as f32 * one + 10.0;
+                // mini 244 chrome outset ITT-neg; keep content box.
                 let x1 = self.page.margin_l;
                 let x2 = self.page.width - self.page.margin_r;
                 self.hairline_h(x1, top, x2, width, color);
@@ -7015,7 +7274,11 @@ fn is_list_marker_text(text: &str) -> bool {
     if t.is_empty() || t.chars().count() > 8 {
         return false;
     }
-    if t == "•" || t == "·" || t == "-" || t == "o" || t == "\u{F0B7}" {
+    if matches!(t, "•" | "·" | "-" | "o" | "\u{F0B7}") {
+        // file_146 ListBullet lvlText is U+2013 (–). Hanging it (mini
+        // 205–208) lifted no-redline +0.044/+0.233 but dropped redline
+        // mean 54.5872→54.5825. Do not add U+2013 / U+2014 / U+25CF /
+        // U+25CB; ASCII '-' already hangs.
         return true;
     }
     if t.chars().any(|c| (c as u32) >= 0xF000) {
@@ -7236,6 +7499,10 @@ fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> V
                         // Heading2 after=10 + before=18 was 28pt vs Word 18.
                         style.after = style.after.max(next.before);
                     }
+                    // Do not max body→Heading1 (potpourri before=18): mini
+                    // 209–212 dropped no-redline mean −0.057 (potpourri
+                    // −1.13, file_170 −2.31). Ungated also packed Cicero
+                    // 5→4 and file_22 107→102.
                 }
                 if i > 0
                     && let Some(prev) = block_para_style(&blocks[i - 1])
@@ -7303,7 +7570,8 @@ fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> V
                         lay.at_page_top = false;
                     }
                 } else if has_ink || (images.is_empty() && boxes.is_empty()) || !skip_empty_line {
-                    lay.emit_runs(runs, &style, *list, compact_title);
+                    let (wrap_left, wrap_right) = lay.wrap_square_inset(images, boxes);
+                    lay.emit_runs(runs, &style, *list, compact_title, wrap_left, wrap_right);
                 } else if !lay.at_page_top {
                     lay.y -= style.before;
                     lay.at_page_top = false;
@@ -8276,6 +8544,7 @@ mod numbering_tests {
                 left: 0.0,
                 hanging: 0.0,
                 family: String::new(),
+                suff_nothing: false,
             },
         );
         n.levels.insert("0".into(), lvls);
@@ -8310,6 +8579,7 @@ mod numbering_tests {
                 left: 0.0,
                 hanging: 0.0,
                 family: String::new(),
+                suff_nothing: false,
             },
         );
         lvls.insert(
@@ -8321,6 +8591,7 @@ mod numbering_tests {
                 left: 0.0,
                 hanging: 0.0,
                 family: String::new(),
+                suff_nothing: false,
             },
         );
         n.levels.insert("3".into(), lvls);
@@ -8353,6 +8624,7 @@ mod numbering_tests {
                 left: 0.0,
                 hanging: 0.0,
                 family: String::new(),
+                suff_nothing: false,
             },
         );
         lvls.insert(
@@ -8364,6 +8636,7 @@ mod numbering_tests {
                 left: 0.0,
                 hanging: 0.0,
                 family: String::new(),
+                suff_nothing: false,
             },
         );
         lvls.insert(
@@ -8375,6 +8648,7 @@ mod numbering_tests {
                 left: 0.0,
                 hanging: 0.0,
                 family: String::new(),
+                suff_nothing: false,
             },
         );
         n.levels.insert("2".into(), lvls);
@@ -8384,6 +8658,42 @@ mod numbering_tests {
         assert_eq!(n.next_marker("2", 2), "Section 1.02 ");
         assert_eq!(n.next_marker("2", 1), "Article Two ");
         assert_eq!(n.next_marker("2", 2), "Section 2.01 ");
+    }
+
+    #[test]
+    fn suff_nothing_omits_trailing_space() {
+        // sd_2517 Título1 `Article %2` has w:suff=nothing. We always
+        // push a gutter space (`Article One `).
+        let mut n = Numbering::default();
+        n.instances.insert("2".into(), "2".into());
+        let mut lvls = HashMap::new();
+        lvls.insert(
+            0,
+            NumLevel {
+                fmt: NumFmt::Decimal,
+                text: "%1".into(),
+                start: 1,
+                left: 0.0,
+                hanging: 0.0,
+                family: String::new(),
+                suff_nothing: false,
+            },
+        );
+        lvls.insert(
+            1,
+            NumLevel {
+                fmt: NumFmt::CardinalText,
+                text: "Article %2".into(),
+                start: 1,
+                left: 0.0,
+                hanging: 0.0,
+                family: String::new(),
+                suff_nothing: true,
+            },
+        );
+        n.levels.insert("2".into(), lvls);
+        n.next_marker("2", 0);
+        assert_eq!(n.next_marker("2", 1), "Article One");
     }
 }
 
@@ -8650,6 +8960,7 @@ mod table_tests {
                 last_row_fill: None,
                 last_col_fill: None,
                 first_row_color: None,
+                first_row_borders: None,
                 borders: Some(TblBorders {
                     top: true,
                     bottom: true,
