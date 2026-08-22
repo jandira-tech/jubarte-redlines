@@ -26,6 +26,7 @@
 //! [`document_comparer::compare_documents_with_settings`]. To inspect a
 //! redline, use [`document_comparer::get_revisions`]; to flatten one, use
 //! [`document_comparer::accept_revisions`] / [`document_comparer::reject_revisions`].
+//! Convert a document to PDF with [`convert::docx_to_pdf`].
 //!
 #![warn(missing_docs)]
 //! ## Provenance
@@ -40,6 +41,8 @@
 pub mod comparer;
 /// Structured comparison log (info / warning / error entries).
 pub mod comparison_log;
+/// Independent DOCX → PDF conversion (not LibreOffice).
+pub mod convert;
 /// Byte-level package API: compare, list, accept, and reject revisions.
 pub mod document_comparer;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).

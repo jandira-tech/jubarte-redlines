@@ -153,6 +153,29 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Convert a .docx to PDF (independent of LibreOffice).
+    Convert {
+        /// The document (.docx) to convert.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Output path [default: <stem>.pdf next to the input].
+        #[arg(short = 'o', long, value_name = "FILE")]
+        output: Option<PathBuf>,
+        /// Overwrite the output file if it already exists.
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+/// No-clobber contract shared by every writing subcommand.
+fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
+    if output.exists() && !force {
+        return Err(format!(
+            "output '{}' already exists (use --force to overwrite)",
+            output.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Shared body for `accept` / `reject`: read the redline, apply the package-wide
@@ -166,15 +189,28 @@ fn run_resolution<E: std::fmt::Debug>(
     apply: fn(&[u8]) -> Result<Vec<u8>, E>,
     what: &str,
 ) -> Result<(), String> {
-    if output.exists() && !force {
-        return Err(format!(
-            "output '{}' already exists (use --force to overwrite)",
-            output.display()
-        ));
-    }
+    ensure_writable(output, force)?;
     let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
     let out = apply(&bytes).map_err(|e| format!("{what} failed: {e:?}"))?;
     std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
+}
+
+fn run_convert(file: &Path, output: Option<&Path>, force: bool) -> Result<(), String> {
+    let output = output
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| file.with_extension("pdf"));
+    ensure_writable(&output, force)?;
+    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    let pdf = jubarte::convert::docx_to_pdf(&bytes).map_err(|e| format!("convert failed: {e}"))?;
+    std::fs::write(&output, &pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
+    let pages = jubarte::convert::pdf_page_count(&pdf);
+    println!(
+        "wrote {} ({} bytes, {pages} page{})",
+        output.display(),
+        pdf.len(),
+        if pages == 1 { "" } else { "s" }
+    );
+    Ok(())
 }
 
 fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
@@ -265,12 +301,7 @@ fn default_output(original: &Path, modified: &Path) -> PathBuf {
 }
 
 fn run(job: &Job) -> Result<(), String> {
-    if job.output.exists() && !job.force {
-        return Err(format!(
-            "output '{}' already exists (use --force to overwrite)",
-            job.output.display()
-        ));
-    }
+    ensure_writable(&job.output, job.force)?;
     let original = std::fs::read(&job.original)
         .map_err(|e| format!("reading {}: {e}", job.original.display()))?;
     let modified = std::fs::read(&job.modified)
@@ -348,6 +379,13 @@ fn main() -> ExitCode {
                 jubarte::document_comparer::reject_revisions,
                 "reject",
             ));
+        }
+        Some(Command::Convert {
+            file,
+            output,
+            force,
+        }) => {
+            return exit_code(run_convert(&file, output.as_deref(), force));
         }
         None => {}
     }
