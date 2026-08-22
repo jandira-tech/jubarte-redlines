@@ -74,11 +74,19 @@ pub(crate) enum FaceId {
     CambriaBold,
     CambriaItalic,
     CambriaBoldItalic,
+    ConsolasRegular,
+    ConsolasBold,
+    ConsolasItalic,
+    ConsolasBoldItalic,
+    GeorgiaRegular,
+    GeorgiaBold,
+    GeorgiaItalic,
+    GeorgiaBoldItalic,
     Symbol,
 }
 
 impl FaceId {
-    pub(crate) fn all() -> [Self; 35] {
+    pub(crate) fn all() -> [Self; 43] {
         [
             Self::CarlitoRegular,
             Self::CarlitoBold,
@@ -114,6 +122,14 @@ impl FaceId {
             Self::CambriaBold,
             Self::CambriaItalic,
             Self::CambriaBoldItalic,
+            Self::ConsolasRegular,
+            Self::ConsolasBold,
+            Self::ConsolasItalic,
+            Self::ConsolasBoldItalic,
+            Self::GeorgiaRegular,
+            Self::GeorgiaBold,
+            Self::GeorgiaItalic,
+            Self::GeorgiaBoldItalic,
             Self::Symbol,
         ]
     }
@@ -125,6 +141,13 @@ impl FaceId {
                 | Self::CambriaBold
                 | Self::CambriaItalic
                 | Self::CambriaBoldItalic
+        )
+    }
+
+    pub(crate) fn is_arial(self) -> bool {
+        matches!(
+            self,
+            Self::SansRegular | Self::SansBold | Self::SansItalic | Self::SansBoldItalic
         )
     }
 
@@ -184,6 +207,26 @@ impl FaceId {
             Self::CambriaBoldItalic => {
                 include_bytes!("../../assets/fonts/LiberationSerif-BoldItalic.ttf")
             }
+            // System Consolas overlays these; Liberation Mono is the
+            // fallback when Word DFonts are absent.
+            Self::ConsolasRegular => {
+                include_bytes!("../../assets/fonts/LiberationMono-Regular.ttf")
+            }
+            Self::ConsolasBold => include_bytes!("../../assets/fonts/LiberationMono-Bold.ttf"),
+            Self::ConsolasItalic => include_bytes!("../../assets/fonts/LiberationMono-Italic.ttf"),
+            Self::ConsolasBoldItalic => {
+                include_bytes!("../../assets/fonts/LiberationMono-BoldItalic.ttf")
+            }
+            // System Georgia overlays these; Liberation Serif is the
+            // fallback when Georgia.ttf is absent.
+            Self::GeorgiaRegular => {
+                include_bytes!("../../assets/fonts/LiberationSerif-Regular.ttf")
+            }
+            Self::GeorgiaBold => include_bytes!("../../assets/fonts/LiberationSerif-Bold.ttf"),
+            Self::GeorgiaItalic => include_bytes!("../../assets/fonts/LiberationSerif-Italic.ttf"),
+            Self::GeorgiaBoldItalic => {
+                include_bytes!("../../assets/fonts/LiberationSerif-BoldItalic.ttf")
+            }
             // System Symbol overlays this; Liberation Sans U+2022 is the
             // fallback when Symbol.ttf is absent.
             Self::Symbol => include_bytes!("../../assets/fonts/LiberationSans-Regular.ttf"),
@@ -226,6 +269,14 @@ impl FaceId {
             Self::CambriaBold => "Cambria-Bold",
             Self::CambriaItalic => "Cambria-Italic",
             Self::CambriaBoldItalic => "Cambria-BoldItalic",
+            Self::ConsolasRegular => "Consolas",
+            Self::ConsolasBold => "Consolas-Bold",
+            Self::ConsolasItalic => "Consolas-Italic",
+            Self::ConsolasBoldItalic => "Consolas-BoldItalic",
+            Self::GeorgiaRegular => "Georgia",
+            Self::GeorgiaBold => "Georgia-Bold",
+            Self::GeorgiaItalic => "Georgia-Italic",
+            Self::GeorgiaBoldItalic => "Georgia-BoldItalic",
             Self::Symbol => "Symbol",
         }
     }
@@ -475,7 +526,6 @@ impl Fonts {
             .replace([' ', '-'], "")
             .replace("mt", "");
         let mono = key.contains("courier")
-            || key.contains("consolas")
             || key.contains("monaco")
             || key.contains("menlo")
             || key.contains("cousine")
@@ -508,6 +558,22 @@ impl Fonts {
                 (true, true) => FaceId::CambriaBoldItalic,
             };
         }
+        if key.contains("consolas") {
+            return match (bold, italic) {
+                (false, false) => FaceId::ConsolasRegular,
+                (true, false) => FaceId::ConsolasBold,
+                (false, true) => FaceId::ConsolasItalic,
+                (true, true) => FaceId::ConsolasBoldItalic,
+            };
+        }
+        if key.contains("georgia") {
+            return match (bold, italic) {
+                (false, false) => FaceId::GeorgiaRegular,
+                (true, false) => FaceId::GeorgiaBold,
+                (false, true) => FaceId::GeorgiaItalic,
+                (true, true) => FaceId::GeorgiaBoldItalic,
+            };
+        }
         let sans = key.contains("arial")
             || key.contains("helvetica")
             || key.contains("liberationsans")
@@ -518,7 +584,6 @@ impl Fonts {
             || key.contains("geneva")
             || key == "sansserif";
         let serif = key.contains("times")
-            || key.contains("georgia")
             || key.contains("caladea")
             || key.contains("liberationserif")
             || (key.contains("serif") && !key.contains("sans"));
@@ -600,6 +665,14 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
         FaceId::CambriaBold => &["Cambriab.ttf", "Cambria Bold.ttf"],
         FaceId::CambriaItalic => &["Cambriai.ttf", "Cambria Italic.ttf"],
         FaceId::CambriaBoldItalic => &["Cambriaz.ttf", "Cambria Bold Italic.ttf"],
+        FaceId::ConsolasRegular => &["Consola.ttf", "Consolas.ttf", "consola.ttf"],
+        FaceId::ConsolasBold => &["Consolab.ttf", "Consolas Bold.ttf", "consolab.ttf"],
+        FaceId::ConsolasItalic => &["Consolai.ttf", "Consolas Italic.ttf", "consolai.ttf"],
+        FaceId::ConsolasBoldItalic => &["Consolaz.ttf", "Consolas Bold Italic.ttf", "consolaz.ttf"],
+        FaceId::GeorgiaRegular => &["Georgia.ttf", "georgia.ttf"],
+        FaceId::GeorgiaBold => &["Georgia Bold.ttf", "georgiab.ttf"],
+        FaceId::GeorgiaItalic => &["Georgia Italic.ttf", "georgiai.ttf"],
+        FaceId::GeorgiaBoldItalic => &["Georgia Bold Italic.ttf", "georgiaz.ttf"],
         FaceId::Symbol => &["Symbol.ttf", "symbol.ttf"],
     };
     // Deliberately macOS-only: these overrides exist to match the

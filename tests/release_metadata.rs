@@ -124,10 +124,7 @@ fn every_bundled_font_parses_with_ttf_parser_and_has_glyphs_and_cmap() {
             face.tables().cmap.is_some(),
             "{name} is missing a cmap table (required for text shaping/embedding)"
         );
-        assert!(
-            face.units_per_em() > 0,
-            "{name} reports zero units-per-em"
-        );
+        assert!(face.units_per_em() > 0, "{name} reports zero units-per-em");
     }
 }
 
@@ -258,7 +255,10 @@ fn reuse_toml_covers_liberation_fonts_with_ofl() {
 #[test]
 fn reuse_toml_covers_both_font_license_files() {
     let text = read("REUSE.toml");
-    for path in ["assets/fonts/LICENSE-Carlito", "assets/fonts/LICENSE-Liberation"] {
+    for path in [
+        "assets/fonts/LICENSE-Carlito",
+        "assets/fonts/LICENSE-Liberation",
+    ] {
         assert!(
             text.contains(path),
             "REUSE.toml is missing an annotation for {path}"
@@ -326,7 +326,11 @@ fn cargo_toml_declares_the_font_and_image_dependencies() {
 #[test]
 fn cargo_lock_is_consistent_with_the_new_dependencies() {
     let lock = read("Cargo.lock");
-    for pkg in ["name = \"ttf-parser\"", "name = \"rustybuzz\"", "name = \"image\""] {
+    for pkg in [
+        "name = \"ttf-parser\"",
+        "name = \"rustybuzz\"",
+        "name = \"image\"",
+    ] {
         assert!(
             lock.contains(pkg),
             "Cargo.lock does not contain a resolved entry for {pkg}"
@@ -377,12 +381,8 @@ fn root_changelog_has_a_dated_entry_and_release_link_for_the_version() {
 #[test]
 fn root_changelog_orders_the_new_version_above_the_previous_one() {
     let changelog = read("CHANGELOG.md");
-    let idx_071 = changelog
-        .find("## [0.7.1]")
-        .expect("0.7.1 section present");
-    let idx_070 = changelog
-        .find("## [0.7.0]")
-        .expect("0.7.0 section present");
+    let idx_071 = changelog.find("## [0.7.1]").expect("0.7.1 section present");
+    let idx_070 = changelog.find("## [0.7.0]").expect("0.7.0 section present");
     assert!(
         idx_071 < idx_070,
         "0.7.1 changelog entry must be listed above the older 0.7.0 entry"

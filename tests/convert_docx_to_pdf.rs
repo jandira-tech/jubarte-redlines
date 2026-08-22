@@ -444,6 +444,36 @@ fn inline_extent_is_written_to_pdf_cm() {
 }
 
 #[test]
+fn page_float_blip_keeps_xml_extent_when_wider_than_page() {
+    // image_out_of_folder DeepL banner: 10690522×807396 EMU = 841.77×63.57
+    // on A4 (595.3pt). Word paints the overflow (clipped by the page);
+    // scaling to page.width squashed it to 595.3×44.96.
+    let drawing = blip(
+        "10690522",
+        "807396",
+        "<wp:anchor simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" \
+          locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"page\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"page\"><wp:posOffset>0</wp:posOffset></wp:positionV>",
+        "<wp:wrapNone/></wp:anchor>",
+    );
+    let body = format!(
+        "<w:p><w:r>{drawing}</w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert wide page-float blip");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("841.77 0 0 63.57"),
+        "xml extent 841.77×63.57 must not scale to A4 width; snippet {}",
+        text.split("/Im")
+            .nth(1)
+            .unwrap_or(&text[text.len().saturating_sub(240)..])
+    );
+}
+
+#[test]
 fn placeable_wmf_blip_paints_rgb_ink() {
     // Strict01 image1.bin is a placeable WMF (d7 cd c6 9a) of filled
     // polygons — the P2 hammer/computer clipart. Reserve-only leaves a
@@ -1503,6 +1533,24 @@ fn keep_next_heading_moves_with_the_following_table() {
 }
 
 #[test]
+fn official_comments_lots_positioning_thesis_is_word_tall() {
+    // Page-1 "Positioning thesis" is a 1-cell vAlign-center D9EAF7
+    // banner. wrap_runs counts 4 lines so the +18pt Demo pad (gated to
+    // 2..=3) never fires; Word's box is ~69pt and Prepared-for starts
+    // 22pt lower than we paint (align max_shift is 5px).
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
+        .expect("convert official comments-lots");
+    assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
+    let hs = pdf_fill_hs(&pdf, 0.851, 0.918, 0.969);
+    let cell_h = hs.iter().copied().fold(0.0_f32, f32::max);
+    assert!(
+        cell_h >= 64.0,
+        "Word Positioning thesis banner is ~69pt D9EAF7, not 4-line 50pt; cell_h={cell_h} fills={hs:?}"
+    );
+}
+
+#[test]
 fn official_comments_lots_stays_nine_pages() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
     let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
@@ -1588,6 +1636,28 @@ fn official_uipriority_stays_two_pages() {
 }
 
 #[test]
+fn official_uipriority_lists_heading_stays_on_page_one() {
+    // uipriority styles are styleId="2"/"3" with w:name heading 1/2 (not
+    // Heading1). is_word_heading_style missed those so Calibri typo×1.15
+    // extra ~3pt/heading left "5. Lists" on page 2; Word paints it on p1.
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/word_tolerated_misplaced_uipriority.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official uipriority"))
+        .expect("convert official uipriority");
+    let pages = pdf_content_streams(&pdf);
+    assert_eq!(pages.len(), 2, "Word uipriority is 2pp");
+    let p1 = pdf_winansi_text(pages[0].as_bytes());
+    let p2 = pdf_winansi_text(pages[1].as_bytes());
+    assert!(
+        p1.contains("5. Lists"),
+        "Word Heading1-by-name grid keeps 5. Lists on page 1; p1={p1}"
+    );
+    assert!(
+        p2.contains("5.1 Bullet List"),
+        "page 2 starts at 5.1 like Word; p2={p2}"
+    );
+}
+
+#[test]
 fn official_file_34_summary_stays_on_page_two() {
     // Word is 2pp. Arial 12 size×1.15 lands 2pp but mini 86 ITT-wrong
     // (file_34 −0.86, heading_3_center 97→94). Keep typo; allow Word+1.
@@ -1603,6 +1673,160 @@ fn official_file_34_summary_stays_on_page_two() {
     assert!(
         pages.len() >= 2 && pdf_winansi_text(pages[1].as_bytes()).contains("Summary"),
         "Summary must sit on page 2 like Word, not a leftover page 3"
+    );
+}
+
+#[test]
+fn official_file_34_matches_word_two_pages() {
+    // Word Quartz auto leading for Arial is size×line_mult (12→13.8pt
+    // box, 28→32.2). We used em-box×1.15 (~1.5pt extra per Normal line,
+    // ~3pt per Title wrap) so "Text alignment options" spilled onto
+    // page 3. Glyph size stays 12pt — Arial paint_size×1.15 was ITT-wrong.
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
+        .expect("convert official file_34");
+    let pages = pdf_content_streams(&pdf);
+    assert_eq!(
+        pages.len(),
+        2,
+        "Word file_34 is 2pp; leftover page 3 is extra Arial leading; got {}",
+        pages.len()
+    );
+    let p2 = pdf_winansi_text(pages[1].as_bytes());
+    assert!(
+        p2.contains("Text alignment options"),
+        "last summary bullet must stay on Word's page 2; p2={p2}"
+    );
+}
+
+#[test]
+fn table_cell_jc_center_centers_header_text() {
+    // file_34 / uipriority: header cells `w:jc center`. Word Feature sits
+    // at x=125.3 in a 150pt col (pad 9pt). We always painted at pad_l=81.
+    let body = "<w:tbl>\
+         <w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/>\
+           <w:tblCellMar>\
+             <w:top w:w=\"100\" w:type=\"dxa\"/><w:left w:w=\"180\" w:type=\"dxa\"/>\
+             <w:bottom w:w=\"100\" w:type=\"dxa\"/><w:right w:w=\"180\" w:type=\"dxa\"/>\
+           </w:tblCellMar>\
+         </w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2996\"/><w:gridCol w:w=\"3026\"/><w:gridCol w:w=\"3004\"/></w:tblGrid>\
+         <w:tr>\
+           <w:tc><w:tcPr><w:tcW w:w=\"2996\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+                 <w:b/><w:sz w:val=\"24\"/></w:rPr><w:t>Feature</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"3026\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+                 <w:b/><w:sz w:val=\"24\"/></w:rPr><w:t>Description</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"3004\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+                 <w:b/><w:sz w:val=\"24\"/></w:rPr><w:t>Example</w:t></w:r></w:p></w:tc>\
+         </w:tr>\
+         <w:tr>\
+           <w:tc><w:p><w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t>Bold</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t>Makes</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t>Ex</w:t></w:r></w:p></w:tc>\
+         </w:tr>\
+         </w:tbl><w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert centered header cells");
+    let xs = pdf_tf_xs(&pdf, "12.00 Tf");
+    let feature = pdf_tj_xy(&String::from_utf8_lossy(&pdf), "F")
+        .into_iter()
+        .map(|(x, _)| x)
+        .min_by(|a, b| a.partial_cmp(b).unwrap());
+    let feature_x = feature.or_else(|| xs.iter().copied().min_by(|a, b| a.partial_cmp(b).unwrap()));
+    let feature_x = feature_x.expect("Feature F");
+    assert!(
+        (118.0..=132.0).contains(&feature_x),
+        "Word centers Feature in the first col at ~125pt, not pad_l 81; x={feature_x} xs={xs:?}"
+    );
+}
+
+#[test]
+fn official_file_34_table_header_feature_is_centered() {
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
+        .expect("convert official file_34");
+    assert_eq!(pdf_page_count(&pdf), 2, "Word file_34 is 2pp");
+    let pages = pdf_content_streams(&pdf);
+    let p2 = &pages[1];
+    let fs = pdf_tj_xy(p2, "F");
+    assert!(
+        fs.iter().any(|(x, _)| (118.0..=132.0).contains(x)),
+        "Word Feature is centered at ~125pt; F xs={fs:?}"
+    );
+}
+
+#[test]
+fn official_file_34_heading1_to_body_uses_word_calibri_line_box() {
+    // Word Calibri Heading1 (sz=32, before=240, after=120, auto 276) sits
+    // 26.3pt above the following Arial 12 body. Calibri typo line is
+    // already ~1.22×size; multiplying by line_mult 1.15 again is +3pt
+    // per heading and leaves file_34 / uipriority ~1 para low of Word
+    // (p2 leftover char-style vs Word "5. Lists").
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
+        .expect("convert official file_34");
+    let h1 = distinct_tf_ys(&pdf, "16.08 Tf");
+    let body = distinct_tf_ys(&pdf, "12.00 Tf");
+    assert!(
+        h1.len() >= 2 && body.len() >= 2,
+        "Heading1 16.08 and Arial 12 must paint; h1={h1:?} body={body:?}"
+    );
+    let heading_y = h1[0];
+    let body_y = body
+        .iter()
+        .copied()
+        .find(|y| *y < heading_y - 1.0)
+        .expect("Arial body below first Heading1");
+    let gap = heading_y - body_y;
+    assert!(
+        (20.5..=22.5).contains(&gap),
+        "Word Heading1→body baseline gap is 21.8pt (Calibri typo line, not typo×1.15), got {gap} h1={heading_y} body={body_y}"
+    );
+}
+
+fn pdf_has_factory_calibri_11(hay: &str) -> bool {
+    hay.contains("/Calibri 11.04 Tf") || hay.contains("/Calibri 46 Tf")
+}
+
+#[test]
+fn official_file_34_omits_factory_calibri_trailing_space() {
+    // Word Quartz file_34 is Arial 12 + Calibri-Bold headings. convert
+    // currently appends a synthetic 11.04 Calibri space after every
+    // non-empty paragraph (~58 extra glyphs). Word has zero Calibri 11.
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
+        .expect("convert official file_34");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        !pdf_has_factory_calibri_11(&hay),
+        "file_34 must not paint factory Calibri 11 trailing spaces; Word is Arial"
+    );
+}
+
+#[test]
+fn official_sd_2517_omits_factory_calibri_trailing_space() {
+    // Word sd_2517 body is Times/Arial. The same 11.04 Calibri trailer
+    // is extra ink on every paragraph of the 107pp fixture.
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official sd_2517"))
+        .expect("convert official sd_2517");
+    let pages = pdf_content_streams(&pdf);
+    assert_eq!(pages.len(), 107, "Word sd_2517 is 107pp");
+    let body = pages.get(6).expect("article page");
+    assert!(
+        !pdf_has_factory_calibri_11(body),
+        "Times body pages must not grow Calibri 11 trailers"
     );
 }
 
@@ -2062,6 +2286,36 @@ fn numbering_xml_decimal_list_converts() {
 }
 
 #[test]
+fn section_lvltext_does_not_hang_after_mini_sechang() {
+    // Word Título2 hangs `Section 1.01` (lvlText longer than 8 chars) at
+    // 90pt with body at 180. Hanging it (mini sechang) packed sd_2517 /
+    // file_22 107→106pp and dropped ITT −0.10 each. Keep the 8-char cap.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\">\
+              <w:start w:val=\"1\"/><w:numFmt w:val=\"decimalZero\"/>\
+              <w:lvlText w:val=\"Section %1\"/>\
+              <w:pPr><w:ind w:left=\"1800\" w:hanging=\"1800\"/></w:pPr>\
+            </w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+         <w:r><w:t>HelloWorld</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("convert Section marker");
+    let mut xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let max_gap = xs.windows(2).map(|w| w[1] - w[0]).fold(0.0_f32, f32::max);
+    assert!(
+        max_gap < 20.0,
+        "mini sechang 90pt gutter packed 107→106; max_gap={max_gap} xs={xs:?}"
+    );
+}
+
+#[test]
 fn fixed_width_table_is_not_stretched_to_the_page() {
     // 2000+2000+2000 twips = 300pt. Page content is 468pt; stretching would
     // draw the right edge at 72+468=540 (table_bookmark_end failure mode).
@@ -2158,9 +2412,13 @@ fn hyperlink_rstyle_paints_styled_teal_and_underline() {
         "Hyperlink rStyle must paint #467886; tail {}",
         &text[text.len().saturating_sub(280)..]
     );
+    let hair: Vec<_> = pdf_fill_rects(&pdf, 0.275, 0.471, 0.525)
+        .into_iter()
+        .filter(|(w, h)| *h > 0.0 && *h < 1.6 && *w > 20.0)
+        .collect();
     assert!(
-        text.contains("0.275 0.471 0.525 RG"),
-        "Hyperlink rStyle must underline in #467886"
+        !hair.is_empty(),
+        "Hyperlink rStyle must fill an underline in #467886; hair={hair:?}"
     );
 }
 
@@ -2236,9 +2494,13 @@ fn table_cell_hyperlink_keeps_run_color() {
         "hyperlink run must keep 2563EB; tail {}",
         &text[text.len().saturating_sub(280)..]
     );
+    let hair: Vec<_> = pdf_fill_rects(&pdf, 0.145, 0.388, 0.922)
+        .into_iter()
+        .filter(|(w, h)| *h > 0.0 && *h < 1.6 && *w > 8.0)
+        .collect();
     assert!(
-        text.contains("0.145 0.388 0.922 RG"),
-        "hyperlink underline must stroke 2563EB"
+        !hair.is_empty(),
+        "hyperlink underline must fill 2563EB; hair={hair:?}"
     );
 }
 
@@ -2406,6 +2668,27 @@ fn ten_pt_uses_word_300dpi_device_size() {
     assert!(
         !text.contains("10.00 Tf"),
         "unrounded 10.00 Tf misses the official Word headers"
+    );
+}
+
+#[test]
+fn eight_pt_stays_unsnapped_after_mini_snap8() {
+    // sd_2517 / file_22 cover is Word 7.92 (33×0.24). Snapping 8pt
+    // (mini snap8) left those stems ~0 and dropped file_34 −0.011.
+    let body = "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>\
+           <w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+             <w:spacing w:val=\"24\"/><w:sz w:val=\"16\"/></w:rPr>\
+             <w:t>1363 ipsum eiusmod</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert 8pt");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("8.00 Tf"),
+        "8pt stays 8.00 after mini snap8; tail {}",
+        &text[text.len().saturating_sub(200)..]
+    );
+    assert!(
+        !text.contains("7.92 Tf"),
+        "7.92 snap was ITT-wrong on file_34"
     );
 }
 
@@ -3019,6 +3302,69 @@ fn exact_line_400_is_twenty_pt_box_not_size_times_eleven() {
 }
 
 #[test]
+fn empty_exact_title_para_keeps_style_face_and_size() {
+    // sd_2517 / file_22 cover: TitlePage empty w:p has no w:t. Wrapping
+    // that as factory Calibri 11 (not Arial 18 / exact 20 / after 24)
+    // skipped Word's 18pt spaces and stretched DocumentTitle→date to 88pt
+    // via ascent mismatch (Word grid is 44pt).
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:style w:type=\"paragraph\" w:styleId=\"TitlePage\">\
+             <w:name w:val=\"Title Page\"/>\
+             <w:pPr><w:spacing w:after=\"480\" w:line=\"400\" w:lineRule=\"exact\"/>\
+               <w:jc w:val=\"center\"/></w:pPr>\
+             <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+               <w:b/><w:sz w:val=\"36\"/></w:rPr>\
+           </w:style>\
+         </w:styles>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"TitlePage\"/></w:pPr>\
+           <w:r><w:t>CoverTitle</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pStyle w:val=\"TitlePage\"/></w:pPr></w:p>\
+         <w:p><w:pPr><w:pStyle w:val=\"TitlePage\"/></w:pPr>\
+           <w:r><w:t>CoverDate</w:t></w:r></w:p>\
+         <w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("convert empty TitlePage");
+    let mut ys = pdf_tf_ys(&pdf, "18.00 Tf");
+    if ys.is_empty() {
+        ys = pdf_tf_ys(&pdf, "18 Tf");
+    }
+    ys.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.4);
+    assert!(
+        ys.len() >= 3,
+        "empty TitlePage must paint the 18pt Arial space like Word; ys={ys:?}"
+    );
+    let gap = ys[0] - ys[1];
+    assert!(
+        (42.0..=46.0).contains(&gap),
+        "TitlePage exact 20 + after 24 is 44pt, not Calibri-11 ascent stretch; gap={gap} ys={ys:?}"
+    );
+}
+
+#[test]
+fn official_sd_2517_cover_paints_title_page_empty_eighteen_pt() {
+    // Word cover is 7× Arial 18pt (title, 3 spaces, date, 2 spaces).
+    // Factory Calibri 11 on empty TitlePage dropped 3 of those spaces.
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official sd_2517"))
+        .expect("convert official sd_2517");
+    let pages = pdf_content_streams(&pdf);
+    assert!(!pages.is_empty(), "sd_2517 must emit pages");
+    let p1 = &pages[0];
+    let mut ys = pdf_tf_ys(p1.as_bytes(), "18.00 Tf");
+    if ys.is_empty() {
+        ys = pdf_tf_ys(p1.as_bytes(), "18 Tf");
+    }
+    ys.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.4);
+    assert!(
+        ys.len() >= 6,
+        "Word cover paints 7 Arial 18pt lines (empty TitlePage spaces); got {} ys={ys:?}",
+        ys.len()
+    );
+}
+
+#[test]
 fn sd_2517_matches_oracle_page_count() {
     let bytes = std::fs::read(
         "../neurotic_docx_bench/corpus/word_based/docx_source/sd_2517_localized_heading_styles.docx",
@@ -3097,16 +3443,136 @@ fn official_sd_2517_toc_page_three_reaches_article_eleven() {
     );
 }
 
+#[test]
+fn missing_pageref_paints_error_bookmark_not_defined() {
+    // Word Save-as-PDF recomputes PAGEREF. A name with no w:bookmarkStart
+    // paints "Error! Bookmark not defined." at wrap time (sd_2517 /
+    // file_22 TOC lorem 9.01–9.02). Cached "1" must not stay.
+    let body = "\
+         <w:p>\
+           <w:r><w:t>Missing </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> PAGEREF _Missing \\h </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+           <w:r><w:t>1</w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:bookmarkStart w:id=\"1\" w:name=\"_Here\"/>\
+           <w:r><w:t>Target</w:t></w:r>\
+           <w:bookmarkEnd w:id=\"1\"/>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t>Live </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> PAGEREF _Here \\h </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+           <w:r><w:t>99</w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert missing PAGEREF");
+    let painted = pdf_winansi_text(&pdf);
+    assert!(
+        painted.contains("Error! Bookmark not defined."),
+        "Word paints Error! Bookmark not defined. for a missing PAGEREF; painted={painted}"
+    );
+    assert!(
+        painted.contains("Target") && painted.contains("Live") && painted.contains("1"),
+        "existing PAGEREF must still live-patch to page 1, not cached 99; painted={painted}"
+    );
+    assert!(
+        !painted.contains("99"),
+        "cached PAGEREF 99 must not survive; painted={painted}"
+    );
+}
+
+#[test]
+fn official_sd_2517_toc_missing_pagerefs_paint_error_bookmark_not_defined() {
+    // Word p3 wraps PAGEREF _Toc218523836/_Toc218523837 as
+    // "Error! Bookmark not defined." (lorem 9.01–9.02). Cached 9-1
+    // packs an extra TOC row so our p4 started at 11.03 vs Word 11.02.
+    let bytes = std::fs::read(
+        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx",
+    )
+    .expect("official sd_2517 fixture");
+    let pdf = docx_to_pdf(&bytes).expect("convert official sd_2517");
+    let n = pdf_page_count(&pdf);
+    assert_eq!(
+        n, 107,
+        "Word sd_2517 stays 107pp after Error! wrap; got {n}"
+    );
+    let pages = pdf_content_streams(&pdf);
+    assert!(pages.len() >= 4, "expected 107pp, got {}", pages.len());
+    let p3 = pdf_winansi_text(pages[2].as_bytes());
+    assert!(
+        p3.contains("Error! Bookmark") && p3.contains("not defined."),
+        "Word TOC p3 paints Error! Bookmark not defined. for missing _Toc; p3={p3}"
+    );
+    assert!(
+        p3.contains("11-1") || p3.contains("11.01"),
+        "Word TOC p3 still reaches 11.01 after Error! wrap; p3={p3}"
+    );
+    let p4 = pdf_winansi_text(pages[3].as_bytes());
+    assert!(
+        p4.contains("11.02") || p4.contains("11-7"),
+        "Word TOC p4 starts at lorem 11.02, not 11.03; p4={p4}"
+    );
+}
+
+#[test]
+fn official_sd_2517_sumrio1_wraps_doloret_like_word() {
+    // Sumrio1 hanging first line ignored w:right=720 and packed
+    // "dolor'et" onto line 1 (x2≈487). Word wraps it so the hanging
+    // continuation (x≈216) starts with dolor'et.
+    let bytes = std::fs::read(
+        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx",
+    )
+    .expect("official sd_2517 fixture");
+    let pdf = docx_to_pdf(&bytes).expect("convert official sd_2517");
+    let pages = pdf_content_streams(&pdf);
+    assert!(pages.len() >= 3, "expected 107pp, got {}", pages.len());
+    let mut by_y: std::collections::BTreeMap<i32, Vec<(f32, String)>> =
+        std::collections::BTreeMap::new();
+    for (x, y, ch) in pdf_tf_glyphs(pages[2].as_bytes(), "12.00 Tf") {
+        by_y.entry((y * 2.0).round() as i32)
+            .or_default()
+            .push((x, ch));
+    }
+    let hanging = by_y
+        .values()
+        .filter_map(|row| {
+            let min_x = row.iter().map(|(x, _)| *x).fold(f32::INFINITY, f32::min);
+            if !(210.0..230.0).contains(&min_x) {
+                return None;
+            }
+            let mut row = row.clone();
+            row.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            Some(row.into_iter().map(|(_, ch)| ch).collect::<String>())
+        })
+        .find(|s| s.contains("labore adipiscing") || s.contains("dolor"));
+    let hanging = hanging.unwrap_or_default();
+    assert!(
+        hanging.starts_with("dolor"),
+        "Word p3 Sumrio1 continuation starts with dolor'et; hanging={hanging:?}"
+    );
+}
+
 fn pdf_winansi_text(pdf: &[u8]) -> String {
+    pdf_winansi_literals(pdf).concat()
+}
+
+fn pdf_winansi_literals(pdf: &[u8]) -> Vec<String> {
     let hay = String::from_utf8_lossy(pdf);
-    let mut out = String::new();
+    let mut out = Vec::new();
     let mut from = 0;
     while let Some(rel) = hay[from..].find(") Tj") {
         let end = from + rel;
         if let Some(start) = hay[..end].rfind('(') {
             let inner = &hay[start + 1..end];
             if inner.chars().all(|c| c.is_ascii_graphic() || c == ' ') && !inner.is_empty() {
-                out.push_str(inner);
+                out.push(inner.to_string());
             }
         }
         from = end + 4;
@@ -3166,6 +3632,24 @@ fn official_image_out_of_folder_omits_deepl_textbox() {
     assert!(
         painted.contains("Aristoxeni") || painted.contains("Quantum"),
         "body text must still paint; painted={painted}"
+    );
+}
+
+#[test]
+fn official_image_out_of_folder_banner_uses_xml_extent() {
+    // wrapSquare page-origin logo.png is 10690522×807396 EMU = 841.77×63.57
+    // on A4 (595.3pt). Word paints that overflow (visible left 595×63.5);
+    // page-width clamp squashed it to 595.3×44.96.
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/image_out_of_folder.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official image_out_of_folder"))
+        .expect("convert image_out_of_folder");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("841.77 0 0 63.57"),
+        "DeepL banner must keep xml extent 841.77×63.57; snippet {}",
+        text.split("/Im")
+            .nth(1)
+            .unwrap_or(&text[text.len().saturating_sub(240)..])
     );
 }
 
@@ -3582,11 +4066,103 @@ llll mmmm nnnn oooo pppp qqqq rrrr ssss tttt uuuu vvvv</w:t></w:r></w:p></w:tc><
 }
 
 #[test]
+fn official_file_146_cambria_body_uses_word_auto_leading() {
+    // Word Inter→Cambria 11 / auto is size×1.15 (~12.65; measured 13.2).
+    // Body baselines currently sit ~11.36pt apart (size×1 + 1pt remainder),
+    // packing "Serialises to w:ins" onto page 1 (Word starts it on page 2).
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_146"))
+        .expect("convert official file_146");
+    assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
+    let hay = String::from_utf8_lossy(&pdf);
+    let mut ys: Vec<f32> = pdf_device_xy(hay.as_ref(), "46 Tf")
+        .into_iter()
+        .map(|(_, y)| (y * 20.0).round() / 20.0)
+        .collect();
+    ys.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    ys.dedup();
+    let gaps: Vec<f32> = ys
+        .windows(2)
+        .map(|w| w[0] - w[1])
+        .filter(|g| (10.0..14.5).contains(g))
+        .collect();
+    let med = {
+        let mut g = gaps.clone();
+        g.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        g[g.len() / 2]
+    };
+    assert!(
+        med >= 12.4,
+        "Cambria 11 auto must be size×1.15 not size×1; median gap={med} gaps={gaps:?}"
+    );
+}
+
+#[test]
 fn official_file_146_stays_seven_pages_after_mini_114() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
     let pdf =
         docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
+}
+
+fn pdf_tj_xy(hay: &str, lit: &str) -> Vec<(f32, f32)> {
+    let needle = format!("({lit}) Tj");
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(&needle) {
+        let i = from + rel;
+        let window = &hay[i.saturating_sub(160)..i];
+        let mut last = None;
+        let mut wfrom = 0;
+        while let Some(td) = window[wfrom..].find(" Td") {
+            let before = window[..wfrom + td].trim_end();
+            let mut parts = before.rsplitn(3, char::is_whitespace);
+            let y = parts.next().and_then(|s| s.parse().ok());
+            let x = parts.next().and_then(|s| s.parse().ok());
+            if let (Some(x), Some(y)) = (x, y) {
+                last = Some((x, y));
+            }
+            wfrom += td + 3;
+        }
+        if let Some(xy) = last {
+            out.push(xy);
+        }
+        from = i + needle.len();
+    }
+    out
+}
+
+#[test]
+fn official_file_146_footer_numpages_does_not_open_a_hole() {
+    // Word footer is "Page 1of 7· eigenpal.com". NUMPAGES is painted as
+    // @@N@@ then patched to "7"; advancing x by the mark (~45pt) left a
+    // hole so middot sat at 333 vs Word 298 (7 at 291).
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
+    let pdf =
+        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
+    let hay = String::from_utf8_lossy(&pdf);
+    let footer_seven = pdf_tj_xy(&hay, "7")
+        .into_iter()
+        .filter(|(_, y)| *y < 80.0)
+        .map(|(x, _)| x)
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .expect("footer NUMPAGES 7");
+    let mut dots = pdf_tj_xy(&hay, "\\267 ");
+    if dots.is_empty() {
+        dots = pdf_tj_xy(&hay, "\\267");
+    }
+    let footer_dot = dots
+        .into_iter()
+        .filter(|(_, y)| *y < 80.0)
+        .map(|(x, _)| x)
+        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .expect("footer middot");
+    assert!(
+        (footer_dot - footer_seven) > 0.0 && (footer_dot - footer_seven) < 16.0,
+        "Word glues 7·; NUMPAGES @@N@@ advance opened a hole; 7={footer_seven} middot={footer_dot} gap={}",
+        footer_dot - footer_seven
+    );
 }
 
 #[test]
@@ -4707,6 +5283,95 @@ fn medium_list_firstcol_fill_wins_over_row_band() {
     );
 }
 
+fn grid_table4_accent1_styles() -> &'static str {
+    // potpourri / file_170 GridTable4-Accent1: firstRow fill 156082 +
+    // rPr color FFFFFF. Header cells have no direct w:color; Word paints
+    // Region/Q1 white on the dark fill. We currently leave them black.
+    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"table\" w:styleId=\"GridTable4-Accent1\">\
+            <w:tblPr><w:tblBorders>\
+              <w:top w:val=\"single\" w:sz=\"4\" w:color=\"45B0E1\"/>\
+              <w:left w:val=\"single\" w:sz=\"4\" w:color=\"45B0E1\"/>\
+              <w:bottom w:val=\"single\" w:sz=\"4\" w:color=\"45B0E1\"/>\
+              <w:right w:val=\"single\" w:sz=\"4\" w:color=\"45B0E1\"/>\
+              <w:insideH w:val=\"single\" w:sz=\"4\" w:color=\"45B0E1\"/>\
+              <w:insideV w:val=\"single\" w:sz=\"4\" w:color=\"45B0E1\"/>\
+            </w:tblBorders></w:tblPr>\
+            <w:tblStylePr w:type=\"firstRow\">\
+              <w:rPr><w:b/><w:color w:val=\"FFFFFF\" w:themeColor=\"background1\"/></w:rPr>\
+              <w:tcPr><w:shd w:val=\"clear\" w:fill=\"156082\"/></w:tcPr>\
+            </w:tblStylePr>\
+            <w:tblStylePr w:type=\"firstCol\"><w:rPr><w:b/></w:rPr></w:tblStylePr>\
+            <w:tblStylePr w:type=\"band1Horz\">\
+              <w:tcPr><w:shd w:val=\"clear\" w:fill=\"C1E4F5\"/></w:tcPr>\
+            </w:tblStylePr>\
+          </w:style>\
+        </w:styles>"
+}
+
+#[test]
+fn grid_table4_firstrow_header_text_is_white() {
+    // Word Quartz: GridTable4-Accent1 firstRow rPr color FFFFFF on the
+    // header run even when the cell has no direct w:color (potpourri
+    // Region/Q1). Table-level rPr color is still ITT-wrong (mini 112).
+    // Glyphs emit one Tj each, so assert the bold header paint color.
+    let body = "<w:tbl>\
+         <w:tblPr><w:tblStyle w:val=\"GridTable4-Accent1\"/>\
+           <w:tblLook w:firstRow=\"1\" w:firstColumn=\"1\" w:noHBand=\"0\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2337\"/><w:gridCol w:w=\"2337\"/></w:tblGrid>\
+         <w:tr>\
+           <w:tc><w:p><w:r><w:t>Region</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:t>Q1</w:t></w:r></w:p></w:tc>\
+         </w:tr>\
+         <w:tr>\
+           <w:tc><w:p><w:r><w:t>North</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:t>$120k</w:t></w:r></w:p></w:tc>\
+         </w:tr>\
+         </w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, grid_table4_accent1_styles()))
+        .expect("convert GridTable4 firstRow color");
+    let hay = String::from_utf8_lossy(&pdf);
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("Region") && text.contains("North"),
+        "table text missing; got {text}"
+    );
+    assert!(
+        hay.contains("/Calibri-Bold 46 Tf 1.000 1.000 1.000 rg"),
+        "Word paints GridTable4 firstRow FFFFFF on 11pt header; tail {}",
+        &hay[hay.len().saturating_sub(280)..]
+    );
+    assert!(
+        hay.contains("/Calibri-Bold 46 Tf 0.000 0.000 0.000 rg"),
+        "firstCol body (North) stays bold black; tail {}",
+        &hay[hay.len().saturating_sub(280)..]
+    );
+    assert!(
+        hay.contains("0.082 0.376 0.510 rg"),
+        "firstRow fill 156082 must still paint; tail {}",
+        &hay[hay.len().saturating_sub(240)..]
+    );
+}
+
+#[test]
+fn official_potpourri_gridtable_header_region_is_white() {
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official potpourri"))
+        .expect("convert official potpourri");
+    assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("/Aptos-Bold 12.00 Tf 1.000 1.000 1.000 rg"),
+        "Word GridTable4 header Region/Q1 is Aptos-Bold 12 white; tail {}",
+        &hay[hay.len().saturating_sub(280)..]
+    );
+    assert!(
+        hay.contains("/Aptos-Bold 12.00 Tf 0.000 0.000 0.000 rg"),
+        "firstCol body North stays bold black"
+    );
+}
+
 #[test]
 fn cli_convert_twice_writes_openable_pdfs() {
     let dir = tempfile::tempdir().unwrap();
@@ -4815,9 +5480,14 @@ fn header_pbdr_bottom_paints_a_rule() {
     .expect("convert header rule");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("1.000 0.000 0.000 RG"),
-        "header pBdr bottom must stroke red; tail {}",
+        text.contains("1.000 0.000 0.000 rg"),
+        "header pBdr bottom must fill red like Word Quartz; tail {}",
         &text[text.len().saturating_sub(400)..]
+    );
+    assert!(
+        !text.contains("1.000 0.000 0.000 RG"),
+        "header pBdr must not stroke; tail {}",
+        &text[text.len().saturating_sub(240)..]
     );
 }
 
@@ -4834,8 +5504,8 @@ fn body_pbdr_bottom_paints_a_rule() {
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert body pBdr");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("1.000 0.000 0.000 RG"),
-        "body pBdr bottom must stroke red; tail {}",
+        text.contains("1.000 0.000 0.000 rg"),
+        "body pBdr bottom must fill red like Word Quartz; tail {}",
         &text[text.len().saturating_sub(400)..]
     );
 }
@@ -4851,8 +5521,8 @@ fn body_pbdr_top_paints_a_rule() {
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert pBdr top");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("0.000 1.000 0.000 RG"),
-        "body pBdr top must stroke green; tail {}",
+        text.contains("0.000 1.000 0.000 rg"),
+        "body pBdr top must fill green like Word Quartz; tail {}",
         &text[text.len().saturating_sub(400)..]
     );
 }
@@ -4864,10 +5534,158 @@ fn body_pbdr_left_paints_a_vertical_rule() {
          </w:pBdr></w:pPr>\
          <w:r><w:t>LeftRule</w:t></w:r></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert pBdr left");
-    let verts = pdf_stroke_verticals(&pdf, 0.0, 0.0, 1.0);
+    let verts: Vec<_> = pdf_fill_rects(&pdf, 0.0, 0.0, 1.0)
+        .into_iter()
+        .filter(|(w, h)| *w > 0.0 && *w < 1.6 && *h > 8.0)
+        .collect();
     assert!(
-        verts.iter().any(|&h| h > 8.0),
-        "body pBdr left must stroke a vertical rule; verts={verts:?}"
+        !verts.is_empty(),
+        "body pBdr left must fill a vertical hairline; verts={verts:?}"
+    );
+}
+
+#[test]
+fn body_pbdr_bottom_is_filled_hairline_like_word_quartz() {
+    // file_146 / eigenpal / sample_document: Word Quartz paints pBdr as
+    // filled hairline rects (p1 is 4× E2E8F0 0.24pt `f`, 0 strokes). We
+    // emitted `w RG … l S`, so color_sim/edge_iou saw a stroked rule
+    // against Word's ink-union fill — same miss TableGrid had before
+    // FillRect.
+    let body = "<w:p><w:pPr><w:pBdr>\
+           <w:bottom w:val=\"single\" w:sz=\"3\" w:space=\"4\" w:color=\"E2E8F0\"/>\
+         </w:pBdr></w:pPr>\
+         <w:r><w:t>Rule</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert filled pBdr");
+    let text = String::from_utf8_lossy(&pdf);
+    let fills = pdf_fill_rects(&pdf, 0.886, 0.910, 0.941);
+    let hair: Vec<_> = fills
+        .iter()
+        .filter(|(w, h)| *h > 0.0 && *h < 1.6 && *w > 40.0)
+        .collect();
+    assert!(
+        !hair.is_empty(),
+        "pBdr must paint E2E8F0 filled hairlines; fills={fills:?} tail {}",
+        &text[text.len().saturating_sub(240)..]
+    );
+    assert!(
+        !text.contains("0.886 0.910 0.941 RG"),
+        "pBdr must not stroke the Quartz hairline; tail {}",
+        &text[text.len().saturating_sub(240)..]
+    );
+}
+
+#[test]
+fn body_pbdr_follows_paragraph_indent() {
+    // comments-lots IntenseQuote: left/right=936 twips (46.8pt). Word
+    // paints the accent1 bottom rule at the indent (x≈100, w≈413), not
+    // the page margins (x=54, w=504). Full-width extra ink is an unused
+    // <50-cluster class (comments-lots family / I_am_sharing / file_9).
+    let body = "<w:p><w:pPr><w:pBdr>\
+           <w:bottom w:val=\"single\" w:sz=\"12\" w:space=\"4\" w:color=\"FF0000\"/>\
+         </w:pBdr><w:ind w:left=\"936\" w:right=\"936\"/></w:pPr>\
+         <w:r><w:t>IndentedQuote</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert indented pBdr");
+    let hay = String::from_utf8_lossy(&pdf);
+    let boxes = pdf_fill_boxes_in(&hay, 1.0, 0.0, 0.0);
+    let hair: Vec<_> = boxes
+        .iter()
+        .copied()
+        .filter(|(_, _, w, h)| *h > 0.0 && *h < 1.6 && *w > 40.0)
+        .collect();
+    assert!(
+        !hair.is_empty(),
+        "indented pBdr must still fill a hairline; boxes={boxes:?}"
+    );
+    let (x, _, w, _) = hair[0];
+    assert!(
+        (x - 118.8).abs() < 2.0,
+        "pBdr x must be margin 72 + indent 46.8, not page margin 72; x={x} hair={hair:?}"
+    );
+    assert!(
+        (w - 374.4).abs() < 4.0,
+        "pBdr w must shrink by left+right indent (468-93.6=374.4), not span the page; w={w} hair={hair:?}"
+    );
+}
+
+#[test]
+fn official_comments_lots_intensequote_rule_follows_indent() {
+    // Word p2 IntenseQuote "Tip: In Word…" rule is 99.4–512.6 (ind
+    // 936/936 on 54pt margins). Ours painted 54–558, ~90pt of extra
+    // accent1 ink on every comments-lots family stem.
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
+        .expect("convert comments-lots");
+    assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
+    let pages = pdf_content_streams(&pdf);
+    assert!(pages.len() >= 2, "comments-lots p2 holds IntenseQuote");
+    let boxes = pdf_fill_boxes_in(&pages[1], 0.310, 0.506, 0.741);
+    let hair: Vec<_> = boxes
+        .iter()
+        .copied()
+        .filter(|(_, _, w, h)| *h > 0.0 && *h < 1.6 && *w > 200.0)
+        .collect();
+    assert!(
+        !hair.is_empty(),
+        "p2 IntenseQuote must fill an accent1 hairline; boxes={boxes:?}"
+    );
+    let (x, _, w, _) = hair[0];
+    assert!(
+        (95.0..110.0).contains(&x),
+        "Word IntenseQuote rule starts at ~100 (54+46.8), not margin 54; x={x} hair={hair:?}"
+    );
+    assert!(
+        (400.0..430.0).contains(&w),
+        "Word IntenseQuote rule is ~413pt wide, not full 504pt content; w={w} hair={hair:?}"
+    );
+}
+
+#[test]
+fn single_underline_is_filled_hairline_like_word_quartz() {
+    // file_34 p1: Word Quartz paints single `w:u` as filled 0.48pt
+    // hairlines (9 `f`, 2 `s` — the strokes are the wave). We emitted
+    // ~68 `l S` rules, so edge_iou/color_sim saw strokes against fills.
+    let body = "<w:p><w:r><w:rPr><w:u w:val=\"single\"/><w:color w:val=\"FF0000\"/></w:rPr>\
+           <w:t>UnderlinedSample</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert filled underline");
+    let text = String::from_utf8_lossy(&pdf);
+    let hair: Vec<_> = pdf_fill_rects(&pdf, 1.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(w, h)| *h > 0.0 && *h < 1.6 && *w > 40.0)
+        .collect();
+    assert!(
+        !hair.is_empty(),
+        "single underline must paint a filled hairline; fills={:?} tail {}",
+        pdf_fill_rects(&pdf, 1.0, 0.0, 0.0),
+        &text[text.len().saturating_sub(240)..]
+    );
+    assert!(
+        !text.contains("1.000 0.000 0.000 RG"),
+        "single underline must not stroke; tail {}",
+        &text[text.len().saturating_sub(240)..]
+    );
+}
+
+#[test]
+fn strike_is_filled_hairline_like_word_quartz() {
+    // Word Quartz deletions / w:strike are filled hairlines, not `l S`.
+    let body = "<w:p><w:r><w:rPr><w:strike/><w:color w:val=\"0000FF\"/></w:rPr>\
+           <w:t>StruckSample</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert filled strike");
+    let text = String::from_utf8_lossy(&pdf);
+    let hair: Vec<_> = pdf_fill_rects(&pdf, 0.0, 0.0, 1.0)
+        .into_iter()
+        .filter(|(w, h)| *h > 0.0 && *h < 1.6 && *w > 40.0)
+        .collect();
+    assert!(
+        !hair.is_empty(),
+        "strike must paint a filled hairline; fills={:?} tail {}",
+        pdf_fill_rects(&pdf, 0.0, 0.0, 1.0),
+        &text[text.len().saturating_sub(240)..]
+    );
+    assert!(
+        !text.contains("0.000 0.000 1.000 RG"),
+        "strike must not stroke; tail {}",
+        &text[text.len().saturating_sub(240)..]
     );
 }
 
@@ -5315,39 +6133,13 @@ fn official_header_no_rels_page_one_uses_first_header() {
     );
 }
 
-fn pdf_stroke_verticals(pdf: &[u8], r: f32, g: f32, b: f32) -> Vec<f32> {
-    let needle = format!("{r:.3} {g:.3} {b:.3} RG");
-    let hay = String::from_utf8_lossy(pdf);
-    let mut out = Vec::new();
-    let mut from = 0;
-    while let Some(rel) = hay[from..].find(&needle) {
-        let rest = &hay[from + rel + needle.len()..];
-        let end = rest.find(" l S").unwrap_or(rest.len());
-        let line = &rest[..end];
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if let Some(mi) = parts.iter().position(|t| *t == "m")
-            && mi >= 2
-            && mi + 2 < parts.len()
-            && let (Ok(x1), Ok(y1), Ok(x2), Ok(y2)) = (
-                parts[mi - 2].parse::<f32>(),
-                parts[mi - 1].parse::<f32>(),
-                parts[mi + 1].parse::<f32>(),
-                parts[mi + 2].parse::<f32>(),
-            )
-            && (x2 - x1).abs() < 0.6
-            && (y2 - y1).abs() > 8.0
-        {
-            out.push((y2 - y1).abs());
-        }
-        from += rel + needle.len();
-    }
-    out
-}
-
 fn pdf_rgb_rule_widths(pdf: &[u8], r: f32, g: f32, b: f32) -> Vec<f32> {
+    let mut out: Vec<f32> = pdf_fill_rects(pdf, r, g, b)
+        .into_iter()
+        .filter_map(|(w, h)| (h > 0.0 && h < 1.6 && w > 4.0).then_some(w))
+        .collect();
     let needle = format!("{r:.3} {g:.3} {b:.3} RG");
     let hay = String::from_utf8_lossy(pdf);
-    let mut out = Vec::new();
     let mut from = 0;
     while let Some(rel) = hay[from..].find(&needle) {
         let rest = &hay[from + rel + needle.len()..];
@@ -5368,9 +6160,29 @@ fn pdf_rgb_rule_widths(pdf: &[u8], r: f32, g: f32, b: f32) -> Vec<f32> {
 
 fn pdf_rgb_underline_x2s(pdf: &[u8], r: f32, g: f32, b: f32) -> Vec<f32> {
     let hay = String::from_utf8_lossy(pdf);
-    let needle = format!("{r:.3} {g:.3} {b:.3} RG");
+    let fill_needle = format!("{r:.3} {g:.3} {b:.3} rg ");
     let mut out = Vec::new();
     let mut from = 0;
+    while let Some(rel) = hay[from..].find(&fill_needle) {
+        let rest = &hay[from + rel + fill_needle.len()..];
+        let end = rest.find(" re f").unwrap_or(0);
+        let parts: Vec<&str> = rest[..end].split_whitespace().collect();
+        if parts.len() >= 4
+            && let (Ok(x), Ok(w), Ok(h)) = (
+                parts[0].parse::<f32>(),
+                parts[2].parse::<f32>(),
+                parts[3].parse::<f32>(),
+            )
+            && h > 0.0
+            && h < 1.6
+            && w > 4.0
+        {
+            out.push(x + w);
+        }
+        from += rel + fill_needle.len();
+    }
+    let needle = format!("{r:.3} {g:.3} {b:.3} RG");
+    from = 0;
     while let Some(rel) = hay[from..].find(&needle) {
         let window = &hay[from + rel..hay.len().min(from + rel + 420)];
         if let Some(ls) = window.find(" l S") {
@@ -5430,6 +6242,50 @@ fn pdf_vertical_rule_xs(pdf: &[u8]) -> Vec<f32> {
             && (y1 - y2).abs() > 6.0
         {
             out.push(x1);
+        }
+        from += rel + 4;
+    }
+    out
+}
+
+fn pdf_vertical_rule_hs(pdf: &[u8]) -> Vec<f32> {
+    let hay = String::from_utf8_lossy(pdf);
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(" re f\n") {
+        let start = hay[..from + rel].rfind('\n').map_or(0, |i| i + 1);
+        let line = &hay[start..from + rel];
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 5
+            && let (Ok(w), Ok(h)) = (
+                parts[parts.len() - 2].parse::<f32>(),
+                parts[parts.len() - 1].parse::<f32>(),
+            )
+            && w < 1.5
+            && h > 6.0
+        {
+            out.push(h);
+        }
+        from += rel + 5;
+    }
+    from = 0;
+    while let Some(rel) = hay[from..].find(" l S\n") {
+        let start = hay[..from + rel].rfind('\n').map_or(0, |i| i + 1);
+        let line = &hay[start..from + rel];
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if let Some(mi) = parts.iter().position(|t| *t == "m")
+            && mi >= 2
+            && mi + 2 < parts.len()
+            && let (Ok(x1), Ok(y1), Ok(x2), Ok(y2)) = (
+                parts[mi - 2].parse::<f32>(),
+                parts[mi - 1].parse::<f32>(),
+                parts[mi + 1].parse::<f32>(),
+                parts[mi + 2].parse::<f32>(),
+            )
+            && (x1 - x2).abs() < 0.4
+            && (y1 - y2).abs() > 6.0
+        {
+            out.push((y1 - y2).abs());
         }
         from += rel + 4;
     }
@@ -5930,6 +6786,34 @@ fn pdf_tf_xs(pdf: &[u8], tf: &str) -> Vec<f32> {
         );
     }
     xs
+}
+
+fn pdf_tf_glyphs(pdf: &[u8], tf: &str) -> Vec<(f32, f32, String)> {
+    let hay = String::from_utf8_lossy(pdf);
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(tf) {
+        let start = from + rel;
+        let window = &hay[start..hay.len().min(start + tf.len() + 120)];
+        if let Some(td) = window.find(" Td") {
+            let before = &window[..td];
+            let mut parts = before.rsplit([' ', '\n']);
+            let y = parts.next().and_then(|s| s.parse::<f32>().ok());
+            let x = parts.next().and_then(|s| s.parse::<f32>().ok());
+            let after = &window[td + 3..];
+            if let (Some(x), Some(y)) = (x, y)
+                && let Some(tj) = after.find(") Tj")
+                && let Some(paren) = after[..tj].rfind('(')
+            {
+                let inner = &after[paren + 1..tj];
+                if inner.chars().all(|c| c.is_ascii_graphic() || c == ' ') && !inner.is_empty() {
+                    out.push((x, y, inner.to_string()));
+                }
+            }
+        }
+        from += rel + tf.len();
+    }
+    out
 }
 
 #[test]
@@ -6526,6 +7410,49 @@ fn table_default_cell_left_is_word_108_twips() {
 }
 
 #[test]
+fn table_cell_interior_empty_para_stays_skipped_after_mini_78() {
+    // Word file_146 code listing wants the interior blank (~24pt).
+    // Keeping interior empties (mini empty) was file_146 +3.0 but
+    // eigenpal_2 −8.3 / sample −2.5 and median 51.20→50.57. Skip all
+    // empty cell paras, including interior.
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>\
+         <w:tr><w:tc>\
+           <w:p><w:r><w:rPr><w:rFonts w:ascii=\"Courier New\"/>\
+             <w:sz w:val=\"19\"/></w:rPr><w:t>importCss</w:t></w:r></w:p>\
+           <w:p></w:p>\
+           <w:p><w:r><w:rPr><w:rFonts w:ascii=\"Courier New\"/>\
+             <w:sz w:val=\"19\"/></w:rPr><w:t>functionApp</w:t></w:r></w:p>\
+           <w:p></w:p>\
+         </w:tc></w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert interior empty cell para");
+    let ys = distinct_tf_ys(&pdf, "9.50 Tf");
+    assert_eq!(ys.len(), 2, "no painted blank line; ys={ys:?}");
+    let gap = (ys[0] - ys[1]).abs();
+    assert!(
+        gap < 20.0,
+        "mini 78/empty interior blank was ITT-wrong; gap={gap} ys={ys:?}"
+    );
+}
+
+#[test]
+fn table_cell_trailing_empty_para_is_not_a_blank_line() {
+    // mini 78: shipping trailing empty <w:p> doubled every Word cell.
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"3600\"/></w:tblGrid>\
+         <w:tr><w:tc>\
+           <w:p><w:r><w:rPr><w:rFonts w:ascii=\"Courier New\"/>\
+             <w:sz w:val=\"19\"/></w:rPr><w:t>OnlyLine</w:t></w:r></w:p>\
+           <w:p></w:p>\
+         </w:tc></w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert trailing empty cell para");
+    let ys = distinct_tf_ys(&pdf, "9.50 Tf");
+    assert_eq!(
+        ys.len(),
+        1,
+        "trailing empty cell para must not add a line; ys={ys:?}"
+    );
+}
+
+#[test]
 fn cell_tcmar_left_overrides_tblcellmar() {
     // file_146 / 175 / 176 / sample code listing: tblCellMar left=10 twips
     // but the cell has tcMar left=200 (10pt). Word paints Courier at
@@ -6838,6 +7765,96 @@ fn superscript_is_smaller_and_raised() {
 }
 
 #[test]
+fn rev_bar_sits_half_an_inch_from_the_page_edge() {
+    // Word file_146 / eigenpal / sample Save-as-PDF paints the
+    // changed-line mark at x=36 (half of the default 72pt left
+    // margin). margin_l-10 sat at 62 and overlapped the title.
+    let pdf = docx_to_pdf(&minimal_docx_body(
+        "<w:p><w:ins w:id=\"1\" w:author=\"a\"><w:r>\
+           <w:t>fresh insert that must carry a change bar</w:t>\
+         </w:r></w:ins></w:p><w:sectPr/>",
+    ))
+    .expect("convert ins rev bar");
+    let xs = pdf_vertical_rule_xs(&pdf);
+    assert!(
+        xs.iter().any(|x| (34.0..38.0).contains(x)),
+        "Word change bar is 0.5in from the page edge; xs={xs:?}"
+    );
+    assert!(
+        xs.iter().all(|x| (*x - 62.0).abs() > 0.5),
+        "must not still sit at margin_l-10=62; xs={xs:?}"
+    );
+}
+
+#[test]
+fn rev_bar_stays_half_margin_after_mini_revx() {
+    // CiceroDo Word is margin_l-36=54 at left=90pt, but shipping that
+    // (mini revx) dropped comments-lots family −0.36 to −0.49 and
+    // no-redline mean −0.044. Keep margin_l/2 (x=45).
+    let pdf = docx_to_pdf(&minimal_docx_body(
+        "<w:p><w:ins w:id=\"1\" w:author=\"a\"><w:r>\
+           <w:t>fresh insert that must carry a change bar</w:t>\
+         </w:r></w:ins></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1800\" w:bottom=\"1440\" w:left=\"1800\"/></w:sectPr>",
+    ))
+    .expect("convert 90pt-margin ins rev bar");
+    let xs = pdf_vertical_rule_xs(&pdf);
+    assert!(
+        xs.iter().any(|x| (43.0..47.0).contains(x)),
+        "mini revx margin_l-36 was ITT-wrong; keep x=45; xs={xs:?}"
+    );
+}
+
+#[test]
+fn adjacent_rev_paras_share_one_change_bar() {
+    // Word CiceroDo paints one ~395pt changed-line mark through a run
+    // of revised paras, not a 12pt tick per paragraph.
+    let pdf = docx_to_pdf(&minimal_docx_body(
+        "<w:p><w:ins w:id=\"1\" w:author=\"a\"><w:r>\
+           <w:t>first revised paragraph</w:t></w:r></w:ins></w:p>\
+         <w:p><w:ins w:id=\"2\" w:author=\"a\"><w:r>\
+           <w:t>second revised paragraph</w:t></w:r></w:ins></w:p>\
+         <w:sectPr/>",
+    ))
+    .expect("convert adjacent ins paras");
+    let hs = pdf_vertical_rule_hs(&pdf);
+    let tall = hs.iter().copied().fold(0.0_f32, f32::max);
+    assert!(
+        tall > 22.0,
+        "adjacent ins paras must merge into one bar, not two ~12pt ticks; hs={hs:?}"
+    );
+}
+
+#[test]
+fn official_cicerodo_p2_has_a_tall_change_bar() {
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Redline_CiceroDo_v_plate_30.docx";
+    let pdf =
+        docx_to_pdf(&std::fs::read(path).expect("official CiceroDo")).expect("convert CiceroDo");
+    let pages = pdf_content_streams(&pdf);
+    assert!(pages.len() >= 2, "Word CiceroDo is 5pp");
+    let hs = pdf_vertical_rule_hs(pages[1].as_bytes());
+    let tall = hs.iter().copied().fold(0.0_f32, f32::max);
+    assert!(
+        tall > 60.0,
+        "adjacent revised paras merge (Word p2 is 395pt; 12pt ticks are wrong); hs={hs:?}"
+    );
+}
+
+#[test]
+fn official_file_146_rev_bar_is_half_inch() {
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
+    let pdf =
+        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pages = pdf_content_streams(&pdf);
+    let xs = pdf_vertical_rule_xs(pages[0].as_bytes());
+    assert!(
+        xs.iter().any(|x| (34.0..38.0).contains(x)),
+        "Word file_146 title change bar is x=36; xs={xs:?}"
+    );
+}
+
+#[test]
 fn del_and_ins_paint_revision_colors() {
     let docx = minimal_docx_body(
         "<w:p>\
@@ -6847,22 +7864,54 @@ fn del_and_ins_paint_revision_colors() {
     );
     let pdf = docx_to_pdf(&docx).expect("convert revisions");
     let text = String::from_utf8_lossy(&pdf);
-    // Word Quartz on addition_removal paints deletions #D13438
-    // (0.820 0.204 0.220). Mini 69 also retinted insertions and
-    // dropped comments-lots −0.29 (that oracle is Final / no red).
-    // Insertions keep the soffice-by-author gold.
+    // Word Quartz on addition_removal / file_176 paints del AND first-author
+    // ins #D13438 (0.820 0.204 0.220). soffice gold on ins was an ITT miss.
     assert!(
         text.contains("0.820 0.204 0.220"),
-        "delText must paint Word markup red; pdf snippet {}",
+        "delText / first-author ins must paint Word markup red; pdf snippet {}",
         text[text.find("rg").unwrap_or(0)..]
             .chars()
             .take(200)
             .collect::<String>()
     );
     assert!(
-        text.contains("0.753 0.565 0.000"),
-        "same-author ins must stay soffice gold; tail {}",
-        &text[text.len().saturating_sub(200)..]
+        !text.contains("0.753 0.565 0.000"),
+        "must not keep soffice gold on first-author ins"
+    );
+}
+
+#[test]
+fn ins_without_track_revisions_uses_word_red() {
+    // file_176 / CiceroDo / file_19: Word Save-as-PDF paints first-author
+    // ins #D13438 even when settings.xml has no w:trackRevisions (4800+
+    // gold chars vs Word red). soffice gold is an ITT miss on that cluster.
+    let body = "<w:p><w:ins w:id=\"1\" w:author=\"a\"><w:r><w:t>fresh</w:t></w:r></w:ins></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert ins");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("0.820 0.204 0.220"),
+        "Word first-author ins is #D13438 without trackRevisions; tail {}",
+        &text[text.len().saturating_sub(240)..]
+    );
+    assert!(
+        !text.contains("0.753 0.565 0.000"),
+        "must not keep soffice gold #C09000 on Word-oracle ins"
+    );
+}
+
+#[test]
+fn official_file_176_ins_is_word_red_not_soffice_gold() {
+    // Word file_176 (~4800 ins chars) is #D13438 with trackRevisions off.
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_176.docx";
+    let pdf =
+        docx_to_pdf(&std::fs::read(path).expect("official file_176")).expect("convert file_176");
+    let hay = String::from_utf8_lossy(&pdf);
+    let gold = hay.matches("0.753 0.565 0.000").count();
+    let red = hay.matches("0.820 0.204 0.220").count();
+    assert_eq!(gold, 0, "soffice gold must not paint file_176 ins");
+    assert!(
+        red > 20,
+        "Word first-author ins must be #D13438; red={red} gold={gold}"
     );
 }
 
@@ -6882,8 +7931,8 @@ fn ins_xml_space_padding_explodes_underline() {
            <w:r><w:t>fresh</w:t></w:r></w:ins></w:p><w:sectPr/>";
     let exploded = docx_to_pdf(&minimal_docx_body(&padded)).expect("convert padded ins");
     let compact = docx_to_pdf(&minimal_docx_body(tight)).expect("convert tight ins");
-    let wide = pdf_rgb_rule_widths(&exploded, 192.0 / 255.0, 144.0 / 255.0, 0.0);
-    let slim = pdf_rgb_rule_widths(&compact, 192.0 / 255.0, 144.0 / 255.0, 0.0);
+    let wide = pdf_rgb_rule_widths(&exploded, 209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0);
+    let slim = pdf_rgb_rule_widths(&compact, 209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0);
     let wmax = wide.iter().copied().fold(0.0_f32, f32::max);
     let smax = slim.iter().copied().fold(0.0_f32, f32::max);
     assert!(smax > 10.0, "tight ins must still underline; slim={slim:?}");
@@ -6895,8 +7944,8 @@ fn ins_xml_space_padding_explodes_underline() {
 
 #[test]
 fn revision_authors_use_soffice_palette() {
-    // sample/eigenpal: soffice colors tracked changes by author, not
-    // by type. First author is gold #C09000, second is blue #0040A0.
+    // Word colors tracked changes by author. First author is #D13438,
+    // second is blue #0040A0 (soffice gold on first-author was ITT-wrong).
     let body = "<w:p>\
            <w:del w:id=\"0\" w:author=\"sara.k\">\
              <w:r><w:delText>gone</w:delText></w:r></w:del>\
@@ -6908,8 +7957,8 @@ fn revision_authors_use_soffice_palette() {
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert authors");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("0.753 0.565 0.000"),
-        "first author must paint soffice gold #C09000; tail {}",
+        text.contains("0.820 0.204 0.220"),
+        "first author must paint Word #D13438; tail {}",
         &text[text.len().saturating_sub(280)..]
     );
     assert!(
@@ -7072,6 +8121,123 @@ fn table_grid_borders_are_filled_rects_like_word_quartz() {
     assert!(
         strokes == 0,
         "TableGrid must not stroke 0.50pt lines; strokes={strokes}"
+    );
+}
+
+#[test]
+fn explicit_none_tblborders_do_not_inherit_tablegrid() {
+    // file_22 / sd_2517: the TOC table lists TableGrid/Tabelacomgrade but
+    // then writes tblBorders with every edge val=none sz=0. Word treats
+    // that as a real no-grid (107pp of body text, no black lattice).
+    // Parsing all-none as None fell through to the style's sz=4 grid.
+    let body = "<w:tbl><w:tblPr>\
+           <w:tblStyle w:val=\"TableGrid\"/>\
+           <w:tblBorders>\
+             <w:top w:val=\"none\" w:sz=\"0\" w:space=\"0\" w:color=\"auto\"/>\
+             <w:left w:val=\"none\" w:sz=\"0\" w:space=\"0\" w:color=\"auto\"/>\
+             <w:bottom w:val=\"none\" w:sz=\"0\" w:space=\"0\" w:color=\"auto\"/>\
+             <w:right w:val=\"none\" w:sz=\"0\" w:space=\"0\" w:color=\"auto\"/>\
+             <w:insideH w:val=\"none\" w:sz=\"0\" w:space=\"0\" w:color=\"auto\"/>\
+             <w:insideV w:val=\"none\" w:sz=\"0\" w:space=\"0\" w:color=\"auto\"/>\
+           </w:tblBorders></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:p><w:r><w:t>R0</w:t></w:r></w:p></w:tc></w:tr>\
+           <w:tr><w:tc><w:p><w:r><w:t>R1</w:t></w:r></w:p></w:tc></w:tr>\
+           <w:tr><w:tc><w:p><w:r><w:t>R2</w:t></w:r></w:p></w:tc></w:tr>\
+         </w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, &table_grid_line240_styles()))
+        .expect("convert none-override table");
+    let ys = pdf_horiz_rule_ys(&pdf);
+    assert!(
+        ys.is_empty(),
+        "explicit tblBorders val=none must not inherit TableGrid; ys={ys:?}"
+    );
+}
+
+#[test]
+fn cell_tcborders_sz0_suppresses_table_grid() {
+    // file_34 / uipriority: tblBorders is a sz=4 auto grid, but every
+    // cell then lists tcBorders sz=0. Word paints no lattice (the
+    // highlight/wavy demo table is fill+text only).
+    let body = "<w:tbl><w:tblPr><w:tblBorders>\
+           <w:top w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+           <w:left w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+           <w:bottom w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+           <w:right w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+           <w:insideH w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+           <w:insideV w:val=\"single\" w:sz=\"4\" w:color=\"auto\"/>\
+         </w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+         <w:tr>\
+           <w:tc><w:tcPr><w:tcBorders>\
+             <w:top w:val=\"single\" w:sz=\"0\" w:color=\"000000\"/>\
+             <w:left w:val=\"single\" w:sz=\"0\" w:color=\"000000\"/>\
+             <w:bottom w:val=\"single\" w:sz=\"0\" w:color=\"000000\"/>\
+             <w:right w:val=\"single\" w:sz=\"0\" w:color=\"000000\"/>\
+           </w:tcBorders></w:tcPr>\
+             <w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcBorders>\
+             <w:top w:val=\"single\" w:sz=\"0\" w:color=\"CCCCCC\"/>\
+             <w:left w:val=\"single\" w:sz=\"0\" w:color=\"CCCCCC\"/>\
+             <w:bottom w:val=\"single\" w:sz=\"0\" w:color=\"CCCCCC\"/>\
+             <w:right w:val=\"single\" w:sz=\"0\" w:color=\"CCCCCC\"/>\
+           </w:tcBorders></w:tcPr>\
+             <w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc>\
+         </w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert sz0 cells");
+    let ys = pdf_horiz_rule_ys(&pdf);
+    assert!(
+        ys.is_empty(),
+        "tcBorders sz=0 must suppress the table grid; ys={ys:?}"
+    );
+}
+
+#[test]
+fn cell_tcborders_override_table_black_with_gray() {
+    // CiceroDo / file_19: tblBorders are black sz=2, but every cell
+    // restates CCCCCC sz=8. Word Quartz paints the gray 1pt lattice.
+    let body = "<w:tbl><w:tblPr><w:tblBorders>\
+           <w:top w:val=\"single\" w:sz=\"2\" w:color=\"000000\"/>\
+           <w:start w:val=\"single\" w:sz=\"2\" w:color=\"000000\"/>\
+           <w:bottom w:val=\"single\" w:sz=\"2\" w:color=\"000000\"/>\
+           <w:end w:val=\"single\" w:sz=\"2\" w:color=\"000000\"/>\
+           <w:insideH w:val=\"single\" w:sz=\"2\" w:color=\"000000\"/>\
+           <w:insideV w:val=\"single\" w:sz=\"2\" w:color=\"000000\"/>\
+         </w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+         <w:tr>\
+           <w:tc><w:tcPr><w:tcBorders>\
+             <w:top w:val=\"single\" w:sz=\"8\" w:color=\"CCCCCC\"/>\
+             <w:start w:val=\"single\" w:sz=\"8\" w:color=\"CCCCCC\"/>\
+             <w:bottom w:val=\"single\" w:sz=\"8\" w:color=\"CCCCCC\"/>\
+             <w:end w:val=\"single\" w:sz=\"8\" w:color=\"CCCCCC\"/>\
+           </w:tcBorders></w:tcPr>\
+             <w:p><w:r><w:t>G</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcBorders>\
+             <w:top w:val=\"single\" w:sz=\"8\" w:color=\"CCCCCC\"/>\
+             <w:left w:val=\"single\" w:sz=\"8\" w:color=\"CCCCCC\"/>\
+             <w:bottom w:val=\"single\" w:sz=\"8\" w:color=\"CCCCCC\"/>\
+             <w:right w:val=\"single\" w:sz=\"8\" w:color=\"CCCCCC\"/>\
+           </w:tcBorders></w:tcPr>\
+             <w:p><w:r><w:t>H</w:t></w:r></w:p></w:tc>\
+         </w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert gray cell borders");
+    let gray = pdf_fill_rects(&pdf, 0.800, 0.800, 0.800);
+    let gray_hair: Vec<_> = gray
+        .iter()
+        .filter(|(w, h)| (*h > 0.0 && *h < 1.6 && *w > 40.0) || (*w > 0.0 && *w < 1.6 && *h > 8.0))
+        .collect();
+    assert!(
+        !gray_hair.is_empty(),
+        "cell tcBorders CCCCCC sz=8 must paint gray hairlines; gray={gray:?}"
+    );
+    let black_hair = pdf_fill_rects(&pdf, 0.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(w, h)| *h > 0.0 && *h < 1.6 && *w > 40.0)
+        .count();
+    assert_eq!(
+        black_hair, 0,
+        "gray cell borders must replace the black tblBorders lattice, not paint both"
     );
 }
 
@@ -7839,11 +9005,13 @@ fn double_underline_paints_two_rules() {
     let body = "<w:p><w:r><w:rPr><w:u w:val=\"double\"/></w:rPr>\
            <w:t>Hi</w:t></w:r></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert double u");
-    let text = String::from_utf8_lossy(&pdf);
-    let strokes = text.matches(" l S\n").count();
+    let hair: Vec<_> = pdf_fill_rects(&pdf, 0.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(w, h)| *h > 0.0 && *h < 1.6 && *w > 4.0)
+        .collect();
     assert!(
-        strokes >= 2,
-        "double underline must stroke two rules, strokes={strokes}"
+        hair.len() >= 2,
+        "double underline must fill two hairlines, hair={hair:?}"
     );
 }
 
@@ -8057,6 +9225,56 @@ fn toc_wrap_column_honors_right_indent() {
     );
 }
 
+#[test]
+fn toc_sumrio1_first_line_honors_right_indent() {
+    // sd_2517 / file_22 Sumrio1 (Arial Bold 12, hanging 2520, right=720,
+    // right tab 8640, TOC pgMar 1800, no leading label tab). first_w used
+    // the tab edge (~412pt) so "dolor'et" packed onto line 1 (ends x≈487).
+    // Word wraps it (line 1 x2≈439). Cap first_w by content minus right
+    // indent (budget 396pt, ends x≈486).
+    let desc = "aliqua aliqua incididunt elit sit ut adipiscing incididunt dolore \
+         dolor'et labore adipiscing";
+    let body = format!(
+        "<w:p><w:pPr>\
+           <w:tabs>\
+             <w:tab w:val=\"left\" w:pos=\"2520\"/>\
+             <w:tab w:val=\"right\" w:leader=\"dot\" w:pos=\"8640\"/>\
+           </w:tabs>\
+           <w:ind w:left=\"2520\" w:right=\"720\" w:hanging=\"2520\"/>\
+         </w:pPr>\
+         <w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+           <w:b/><w:sz w:val=\"24\"/></w:rPr><w:t>{desc}</w:t></w:r>\
+         <w:r><w:tab/></w:r>\
+         <w:r><w:t>6-1</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1800\" w:bottom=\"1440\" w:left=\"1800\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert Sumrio1 wrap");
+    let mut by_y: std::collections::BTreeMap<i32, Vec<(f32, String)>> =
+        std::collections::BTreeMap::new();
+    for (x, y, ch) in pdf_tf_glyphs(&pdf, "12.00 Tf") {
+        by_y.entry((y * 2.0).round() as i32)
+            .or_default()
+            .push((x, ch));
+    }
+    let hanging = by_y
+        .values()
+        .find_map(|row| {
+            let min_x = row.iter().map(|(x, _)| *x).fold(f32::INFINITY, f32::min);
+            if !(210.0..230.0).contains(&min_x) {
+                return None;
+            }
+            let mut row = row.clone();
+            row.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            Some(row.into_iter().map(|(_, ch)| ch).collect::<String>())
+        })
+        .unwrap_or_default();
+    assert!(
+        hanging.starts_with("dolor"),
+        "Word hanging line starts with dolor'et, not labore; hanging={hanging:?}"
+    );
+}
+
 fn sumrio2_styles() -> String {
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
@@ -8113,8 +9331,8 @@ fn times_normal_styles() -> String {
 #[test]
 fn times_body_auto_line_stays_typo_so_sd_2517_is_107() {
     // Word Quartz Times 12 / line=240 is ~13.8. Applying that to
-    // Normal blew official sd_2517 107→115 and left TOC 1.05 at 1-5
-    // (cached PAGEREF). Body Times stays typo 12.71; TOC size×1.15.
+    // Normal still blows official file_22 107→116 after leftover skip
+    // / live PAGEREF. Body Times stays typo 12.71; TOC size×1.15.
     let body = "<w:p><w:r><w:t>alpha body line</w:t></w:r></w:p>\
          <w:p><w:r><w:t>bravo body line</w:t></w:r></w:p>\
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
@@ -8128,7 +9346,7 @@ fn times_body_auto_line_stays_typo_so_sd_2517_is_107() {
     let gap = ys[0] - ys[1];
     assert!(
         (12.3..13.2).contains(&gap),
-        "Times body must stay typo ~12.71 (13.8 is 115pp); gap={gap} ys={ys:?}"
+        "Times body must stay typo ~12.71 (13.8 is 116pp); gap={gap} ys={ys:?}"
     );
 }
 
@@ -8145,10 +9363,10 @@ fn arial_normal_styles() -> String {
 }
 
 #[test]
-fn arial_12_auto_line_stays_typo_after_mini_86() {
-    // Word Quartz Arial 12 / line=276 is size×1.15 ~13.8 and file_34
-    // is 2pp. Shipping that (mini 86) dropped heading_3_center
-    // 97.38→94.54, file_34 −0.86, uipriority −1.40. Keep typo×1.15.
+fn arial_12_auto_line_is_size_times_line_mult() {
+    // Word Quartz Arial 12 / line=276 is size×1.15 ~13.8 (file_34 body
+    // dy 13.7–13.9, 2pp). em-box×1.15 (~15.1) was the 3pp extra. Mini 86
+    // forbade paint_size×1.15 (glyph 12→13.8), not the line box.
     let body = "<w:p><w:r><w:t>alpha arial line</w:t></w:r></w:p>\
          <w:p><w:r><w:t>bravo arial line</w:t></w:r></w:p>\
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
@@ -8161,8 +9379,8 @@ fn arial_12_auto_line_stays_typo_after_mini_86() {
     assert!(ys.len() >= 2, "two Arial 12 lines must paint; ys={ys:?}");
     let gap = ys[0] - ys[1];
     assert!(
-        (14.6..15.5).contains(&gap),
-        "Arial 12 must stay typo×1.15 ~15.1 (13.8 is ITT-wrong); gap={gap} ys={ys:?}"
+        (13.5..=14.2).contains(&gap),
+        "Arial 12 auto-276 line box is size×1.15 ~13.8 like Word file_34; gap={gap} ys={ys:?}"
     );
 }
 
@@ -8606,8 +9824,8 @@ fn shipped_docx_to_pdf_paints_ins_underline_and_del_strike() {
         &text[text.len().saturating_sub(280)..]
     );
     assert!(
-        text.contains("0.753 0.565 0.000 RG") || text.contains("0.753 0.565 0.000"),
-        "by-author ins underline is gold #C09000; tail {}",
+        text.contains("0.820 0.204 0.220 RG") || text.contains("0.820 0.204 0.220"),
+        "by-author ins underline is Word #D13438; tail {}",
         &text[text.len().saturating_sub(280)..]
     );
 }
@@ -9050,6 +10268,133 @@ fn official_file_34_paints_wavy_underline() {
     );
 }
 
+#[test]
+fn official_file_34_single_underlines_are_filled_not_stroked() {
+    // Word Quartz p1 single `w:u` is filled 0.48pt hairlines. Mini 0.6pt
+    // `l S` (~68 strokes) fought that ink-union. Wave on the same page
+    // stays stroked (official_file_34_paints_wavy_underline).
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
+        .expect("convert official file_34");
+    let hair: Vec<_> = pdf_fill_rects(&pdf, 0.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(w, h)| *h > 0.0 && *h < 1.6 && *w > 40.0)
+        .collect();
+    assert!(
+        hair.len() >= 4,
+        "file_34 single underlines must fill hairlines like Word; hair={hair:?}"
+    );
+    let pages = pdf_content_streams(&pdf);
+    assert!(
+        pdf_has_wavy_stroke(&pages[0]),
+        "wave underline must still stroke"
+    );
+}
+
+#[test]
+fn georgia_run_embeds_georgia_not_times() {
+    // file_34 / uipriority: Word Quartz embeds Georgia. convert folds
+    // Georgia into the Times serif slot (LiberationSerif / Times).
+    let body = "<w:p><w:r>\
+           <w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"/>\
+             <w:sz w:val=\"24\"/></w:rPr>\
+           <w:t>GeorgiaSample</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Georgia");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/Georgia"),
+        "Georgia run must embed Georgia, not Times; tail {}",
+        &text[text.len().saturating_sub(320)..]
+    );
+    assert!(
+        !text.contains("/TimesNewRoman") && !text.contains("/LiberationSerif"),
+        "Georgia must not fall through to Times; tail {}",
+        &text[text.len().saturating_sub(280)..]
+    );
+}
+
+#[test]
+fn consolas_run_embeds_consolas_not_courier() {
+    // Word Quartz embeds Consolas (Strict01 keyword-search line,
+    // potpourri/file_170 Consolas-BoldItalic). convert currently folds
+    // Consolas into the Courier New mono slot.
+    let body = "<w:p><w:r>\
+           <w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\"/>\
+             <w:sz w:val=\"22\"/></w:rPr>\
+           <w:t>ConsolasKeyword</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Consolas");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/Consolas"),
+        "Consolas run must embed Consolas, not Courier; tail {}",
+        &text[text.len().saturating_sub(320)..]
+    );
+    assert!(
+        !text.contains("/CourierNew") && !text.contains("/LiberationMono"),
+        "Consolas must not fall through to Courier; tail {}",
+        &text[text.len().saturating_sub(280)..]
+    );
+}
+
+#[test]
+fn official_strict01_diagram_paints_accent1_roundrects() {
+    // Word SmartArt on page 13 is three accent1-filled roundRects
+    // (Item 1/2/3). convert currently dumps the labels with no fills.
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
+        .expect("convert official Strict01");
+    let pages = pdf_content_streams(&pdf);
+    assert_eq!(pages.len(), 13, "Word Strict01 is 13pp");
+    let last = pages.last().expect("page 13");
+    let n = last.matches("0.310 0.506 0.741 rg").count();
+    assert!(
+        n >= 3,
+        "SmartArt must fill 3 accent1 (4F81BD) roundRects; n={n} tail {}",
+        &last[last.len().saturating_sub(400)..]
+    );
+}
+
+#[test]
+fn official_strict01_diagram_roundrects_are_polygons() {
+    // Word roundRect adj=16667 (r = min(w,h)/6). Sharp `re` boxes wipe
+    // p13 edge_iou at the 9pt corners.
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
+    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
+        .expect("convert official Strict01");
+    let pages = pdf_content_streams(&pdf);
+    assert_eq!(pages.len(), 13, "Word Strict01 is 13pp");
+    let last = pages.last().expect("page 13");
+    assert!(
+        last.contains("0.310 0.506 0.741 rg"),
+        "need accent1 fills on p13; tail {}",
+        &last[last.len().saturating_sub(280)..]
+    );
+    assert!(
+        !accent1_fill_is_sharp_rect(last),
+        "accent1 SmartArt must be roundRect polygons (h f), not re; tail {}",
+        &last[last.len().saturating_sub(400)..]
+    );
+    assert!(
+        pdf_has_filled_polygon(last),
+        "roundRect must close a filled polygon; tail {}",
+        &last[last.len().saturating_sub(280)..]
+    );
+}
+
+fn accent1_fill_is_sharp_rect(hay: &str) -> bool {
+    let needle = "0.310 0.506 0.741 rg ";
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(needle) {
+        let rest = &hay[from + rel + needle.len()..];
+        let until = rest.find('\n').unwrap_or(rest.len().min(80));
+        if rest[..until].contains(" re f") {
+            return true;
+        }
+        from += rel + needle.len();
+    }
+    false
+}
+
 fn pdf_fill_boxes_in(hay: &str, r: f32, g: f32, b: f32) -> Vec<(f32, f32, f32, f32)> {
     let needle = format!("{r:.3} {g:.3} {b:.3} rg ");
     let mut out = Vec::new();
@@ -9175,15 +10520,19 @@ fn track_revisions_does_not_add_a_page() {
 }
 
 #[test]
-fn without_track_revisions_ins_stays_author_gold() {
-    let body = "<w:p><w:ins w:id=\"1\" w:author=\"Ada\"><w:r><w:t>FreshGold</w:t></w:r></w:ins></w:p>\
+fn without_track_revisions_ins_uses_word_red() {
+    let body = "<w:p><w:ins w:id=\"1\" w:author=\"Ada\"><w:r><w:t>FreshRed</w:t></w:r></w:ins></w:p>\
          <w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert plain ins");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("0.753 0.565 0.000"),
-        "no-markup ins stays soffice gold; tail {}",
+        text.contains("0.820 0.204 0.220"),
+        "no-markup ins is still Word #D13438; tail {}",
         &text[text.len().saturating_sub(240)..]
+    );
+    assert!(
+        !text.contains("0.753 0.565 0.000"),
+        "must not keep soffice gold on Word-oracle ins"
     );
 }
 

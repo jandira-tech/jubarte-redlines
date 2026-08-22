@@ -87,7 +87,7 @@ pub fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, ConvertError> {
     }
     let page = load_page_setup(&dom, body, &sheet.defaults.page);
     let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
-    let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, markup);
+    let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
     let pages = layout(fonts, &page, &hf, &blocks);
     Ok(pdf::emit(fonts, &pages))
 }
@@ -149,9 +149,11 @@ struct RunStyle {
 /// (heading_3, file_61) lost 20+ ITT when painted at 13.92/15.12.
 fn word_device_pt(pt: f32) -> f32 {
     // 10pt headers (sample_document) → 42 → 10.08; 32pt titles → 133 → 31.92.
-    // Do not snap 9.5 (mini 99), 10.5 (mini 110: I_am_sharing −1.14,
-    // comments-lots −1.23, image_out_of_folder −3.23), 20/28 (mini 105),
-    // or 14/15 (heading_3 / file_61).
+    // Do not snap 8pt (sd_2517 cover 7.92 is Word-faithful but mini snap8
+    // dropped file_34 −0.011 with sd_2517/file_22 ~0), 9.5 (mini 99),
+    // 10.5 (mini 110: I_am_sharing −1.14, comments-lots −1.23,
+    // image_out_of_folder −3.23), 20/28 (mini 105), or 14/15
+    // (heading_3 / file_61).
     if (pt - 10.0).abs() < 0.05
         || (pt - 11.0).abs() < 0.05
         || (pt - 16.0).abs() < 0.05
@@ -195,6 +197,8 @@ struct ParaStyle {
     indent_first: f32,
     contextual: bool,
     style_id: String,
+    /// `w:style/w:name` (uipriority uses styleId="2" name="heading 1").
+    style_name: String,
     /// `w:pBdr` edges (sample_document bottom; Strict01 Video box).
     border_top: Option<([f32; 3], f32)>,
     border_left: Option<([f32; 3], f32)>,
@@ -295,6 +299,9 @@ struct TblStyle {
     first_col_fill: Option<[f32; 3]>,
     last_row_fill: Option<[f32; 3]>,
     last_col_fill: Option<[f32; 3]>,
+    /// `tblStylePr firstRow rPr w:color` (GridTable4-Accent1 FFFFFF).
+    /// Not the table-level rPr color — that was mini 112 ITT-wrong.
+    first_row_color: Option<[f32; 3]>,
     borders: Option<TblBorders>,
 }
 
@@ -310,6 +317,16 @@ struct TblBorders {
     /// `w:sz` eighths of a point. Word Quartz paints this as a filled
     /// hairline (sz=4 → 0.5pt), not a stroked path.
     width: f32,
+}
+
+/// Per-cell `w:tcBorders`. `Some` means the cell restated edges (even
+/// when every side is none/sz=0) and table-level rules must not paint.
+#[derive(Clone, Copy, Default)]
+struct CellBorders {
+    top: Option<([f32; 3], f32)>,
+    bottom: Option<([f32; 3], f32)>,
+    left: Option<([f32; 3], f32)>,
+    right: Option<([f32; 3], f32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -358,6 +375,7 @@ impl Defaults {
                 indent_first: 0.0,
                 contextual: false,
                 style_id: String::new(),
+                style_name: String::new(),
                 border_top: None,
                 border_left: None,
                 border_bottom: None,
@@ -499,9 +517,12 @@ struct TableCell {
     rowspan: usize,
     fill: Option<[f32; 3]>,
     valign_center: bool,
+    /// First ink paragraph `w:jc` (file_34 header Feature is center).
+    align: Align,
     pad_l: f32,
     pad_r: f32,
     nowrap: bool,
+    borders: Option<CellBorders>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -517,9 +538,11 @@ struct RawCell {
     vmerge: VMerge,
     fill: Option<[f32; 3]>,
     valign_center: bool,
+    align: Align,
     pad_l: f32,
     pad_r: f32,
     nowrap: bool,
+    borders: Option<CellBorders>,
 }
 
 struct LaidImage {
@@ -553,6 +576,19 @@ struct LaidTextBox {
     flip_v: bool,
     /// `a:tailEnd` (bentConnector3 Strict01 is a filled triangle).
     tail_end: bool,
+    /// SmartArt `dsp:sp` fills (Strict01 Diagram 1 roundRects), in
+    /// points from the parent box's top-left.
+    diag_shapes: Vec<DiagShape>,
+}
+
+struct DiagShape {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    fill: Option<[f32; 3]>,
+    label: String,
+    round: bool,
 }
 
 struct ChartData {
@@ -597,6 +633,7 @@ enum ShapeGeom {
     BentConnector,
     CurvedConnector,
     Line,
+    RoundRect,
 }
 
 enum ImageKind {
@@ -735,10 +772,15 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     }
     let mut tables = HashMap::new();
     let mut implicit_para: Option<String> = None;
+    let mut style_names: HashMap<String, String> = HashMap::new();
     for style in dom.descendants(root, Some(&W::name("style"))) {
         let Some(sid) = dom.attribute(style, &W::name("styleId")) else {
             continue;
         };
+        if let Some(nm) = first_named(&dom, style, "name").and_then(|n| dom.attribute(n, &W::val()))
+        {
+            style_names.insert(sid.to_string(), nm.to_string());
+        }
         if attr_any(&dom, style, "type") == Some("table") {
             tables.insert(sid.to_string(), parse_tbl_style(&dom, style, &defaults));
             continue;
@@ -762,6 +804,9 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     for id in ids {
         let (mut para, run) = resolve_named(&dom, &raw, &defaults, &theme, &id, 0);
         para.style_id = id.clone();
+        if let Some(nm) = style_names.get(&id) {
+            para.style_name = nm.clone();
+        }
         let (num_id, ilvl) = resolve_num_pr(&dom, &raw, &id, 0);
         by_id.insert(
             id,
@@ -805,6 +850,7 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
         first_col_fill: None,
         last_row_fill: None,
         last_col_fill: None,
+        first_row_color: None,
         borders: first_named(dom, style, "tblPr").and_then(|pr| parse_tbl_borders(dom, pr)),
     };
     for pr in dom.descendants(style, Some(&W::name("tblStylePr"))) {
@@ -815,6 +861,7 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
             "firstRow" => {
                 out.first_row_fill = fill;
                 out.first_row_bold = bold;
+                out.first_row_color = style_pr_color(dom, pr);
             }
             "band1Horz" => out.band1_fill = fill,
             "band2Horz" => out.band2_fill = fill,
@@ -839,6 +886,40 @@ fn style_pr_fill(dom: &Dom, pr: NodeId) -> Option<[f32; 3]> {
     parse_hex_color(fill)
 }
 
+fn style_pr_color(dom: &Dom, pr: NodeId) -> Option<[f32; 3]> {
+    let el = first_named(dom, pr, "color")?;
+    let val = attr_any(dom, el, "val")?;
+    if val.eq_ignore_ascii_case("auto") {
+        return None;
+    }
+    parse_hex_color(val)
+}
+
+fn border_el(dom: &Dom, borders: NodeId, local: &str) -> Option<NodeId> {
+    first_named(dom, borders, local).or_else(|| match local {
+        "left" => first_named(dom, borders, "start"),
+        "right" => first_named(dom, borders, "end"),
+        _ => None,
+    })
+}
+
+fn parse_border_edge(dom: &Dom, el: NodeId) -> Option<([f32; 3], f32)> {
+    let val = attr_any(dom, el, "val").unwrap_or("single");
+    if val == "nil" || val == "none" {
+        return None;
+    }
+    let sz = attr_any(dom, el, "sz")
+        .and_then(|s| s.parse::<f32>().ok())
+        .unwrap_or(8.0);
+    if sz <= 0.0 {
+        return None;
+    }
+    let color = attr_any(dom, el, "color")
+        .and_then(parse_hex_color)
+        .unwrap_or([0.0, 0.0, 0.0]);
+    Some((color, (sz / 8.0).max(0.24)))
+}
+
 fn parse_tbl_borders(dom: &Dom, parent: NodeId) -> Option<TblBorders> {
     let borders = first_named(dom, parent, "tblBorders")?;
     let mut out = TblBorders {
@@ -851,7 +932,6 @@ fn parse_tbl_borders(dom: &Dom, parent: NodeId) -> Option<TblBorders> {
         color: [0.0, 0.0, 0.0],
         width: 0.5,
     };
-    let mut any = false;
     for (local, flag) in [
         ("top", &mut out.top),
         ("bottom", &mut out.bottom),
@@ -860,23 +940,30 @@ fn parse_tbl_borders(dom: &Dom, parent: NodeId) -> Option<TblBorders> {
         ("insideH", &mut out.inside_h),
         ("insideV", &mut out.inside_v),
     ] {
-        let Some(el) = first_named(dom, borders, local) else {
+        let Some(el) = border_el(dom, borders, local) else {
             continue;
         };
-        let val = attr_any(dom, el, "val").unwrap_or("single");
-        if val == "nil" || val == "none" {
+        let Some((color, width)) = parse_border_edge(dom, el) else {
             continue;
-        }
+        };
         *flag = true;
-        any = true;
-        if let Some(rgb) = attr_any(dom, el, "color").and_then(parse_hex_color) {
-            out.color = rgb;
-        }
-        if let Some(sz) = attr_any(dom, el, "sz").and_then(|s| s.parse::<f32>().ok()) {
-            out.width = (sz / 8.0).max(0.24);
-        }
+        out.color = color;
+        out.width = width;
     }
-    any.then_some(out)
+    // Present `w:tblBorders` is a real override, including all-none
+    // (file_22 / sd_2517). Returning None here used to inherit TableGrid.
+    Some(out)
+}
+
+fn parse_tc_borders(dom: &Dom, cell: NodeId) -> Option<CellBorders> {
+    let pr = first_named(dom, cell, "tcPr")?;
+    let borders = direct_named(dom, pr, "tcBorders")?;
+    Some(CellBorders {
+        top: border_el(dom, borders, "top").and_then(|el| parse_border_edge(dom, el)),
+        bottom: border_el(dom, borders, "bottom").and_then(|el| parse_border_edge(dom, el)),
+        left: border_el(dom, borders, "left").and_then(|el| parse_border_edge(dom, el)),
+        right: border_el(dom, borders, "right").and_then(|el| parse_border_edge(dom, el)),
+    })
 }
 
 fn resolve_named(
@@ -1102,6 +1189,8 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
                 } else {
                     style.line_exact = None;
                     if rule == "atLeast" {
+                        // max(spec, natural) + line_mult=1 packed Cicero
+                        // 5→4pp (mini 92: keep 5). Keep spec/11 as mult.
                         style.line_mult = (twip(v) / 11.0).max(0.8);
                     } else {
                         style.line_mult = v / 240.0;
@@ -1773,7 +1862,6 @@ fn collect_blocks(
     body: NodeId,
     sheet: &StyleSheet,
     fonts: &Fonts,
-    markup: bool,
 ) -> Vec<Block> {
     let _ = fonts;
     let mut blocks = Vec::new();
@@ -1785,10 +1873,7 @@ fn collect_blocks(
         main,
         sheet,
         sects: &sects,
-        authors: RefCell::new(AuthorColors {
-            names: Vec::new(),
-            word_markup: markup,
-        }),
+        authors: RefCell::new(AuthorColors::default()),
         comments,
     };
     walk_container(&ctx, dom, body, &mut numbering, &mut blocks);
@@ -2089,7 +2174,10 @@ fn is_word_heading_style(style: &ParaStyle) -> bool {
     // Word's grid. Heading3/4 already use latent after=0 (34.6pt test).
     // Localized sd_2517 ids (`Título2`, TextHeading3) must keep the sum —
     // collapsing those halved Word's 107pp fixture to 91.
-    matches!(style.style_id.as_str(), "Heading1" | "Heading2")
+    // uipriority uses styleId="2"/"3" with w:name heading 1/2.
+    let id = style.style_id.as_str();
+    let name = style.style_name.to_ascii_lowercase();
+    matches!(id, "Heading1" | "Heading2") || matches!(name.as_str(), "heading 1" | "heading 2")
 }
 
 fn leftover_break_heading(style_id: &str) -> bool {
@@ -2199,13 +2287,14 @@ fn table_row_height_pt(
     if geom.unstyled
         && row.len() == 1
         && row.iter().any(|c| c.fill.is_some() && c.valign_center)
-        && (2..=3).contains(&nlines)
+        && (2..=4).contains(&nlines)
         && line_mult > 1.01
     {
         // 1-cell yellow Demo (comments-lots p7): 3 wrapped lines, Word
-        // 55pt vs 3×11×1.15=38. The page-1 "Positioning thesis" banner
-        // is the same unstyled+vAlign 1-cell but wraps to 4 lines;
-        // Word stays ~40 and +18 makes 68pt (addition_removal / file_27).
+        // 55pt vs 3×11×1.15=38. Page-1 Positioning thesis is the same
+        // unstyled+vAlign 1-cell wrapping to 4 lines; Word's D9EAF7 box
+        // is ~69pt. Gating 2..=3 left that banner at 50pt and shifted
+        // Prepared-for 22pt (align max_shift 5px).
         row_pad += 10.0 + 8.0;
     }
     // Explicit tblCellMar top+bottom replaces generic row chrome.
@@ -2404,6 +2493,18 @@ fn paragraph_block(
     }
     let images = collect_images(ctx.pkg, ctx.main, dom, para);
     let boxes = collect_textboxes(Some((ctx.pkg, ctx.main)), dom, para, &rstyle, &sheet.theme);
+    // Word paints empty TitlePage/DocumentTitle with the style's rPr
+    // (Arial 18 / exact 20 / after 24). Factory Calibri 11 stretched
+    // DocumentTitle→date to 88pt and dropped the cover's 18pt spaces.
+    // Do not stamp Normal 11 (file_146 Inter→Cambria): that swapped a
+    // 15.4pt Calibri em-box for 12.65 and collapsed 7pp→6.
+    if runs.is_empty()
+        && images.is_empty()
+        && boxes.is_empty()
+        && (pstyle.line_exact.is_some() || rstyle.size >= 14.0)
+    {
+        runs.push(TextRun::new(" ", rstyle));
+    }
     Block::Paragraph {
         runs,
         style: pstyle,
@@ -2416,13 +2517,46 @@ fn paragraph_block(
 
 fn para_bookmark_names(dom: &Dom, para: NodeId) -> Vec<String> {
     let want = W::name("bookmarkStart");
-    (0..dom.child_count(para))
-        .filter_map(|i| {
-            let child = dom.child_at(para, i);
-            if !dom.name_is(child, &want) {
-                return None;
+    let mut names = Vec::new();
+    collect_bookmark_names(dom, para, &want, &mut names);
+    names
+}
+
+fn collect_bookmark_names(dom: &Dom, node: NodeId, want: &XName, out: &mut Vec<String>) {
+    if dom.name_is(node, want)
+        && let Some(name) = attr_any(dom, node, "name")
+    {
+        out.push(name.to_string());
+    }
+    for i in 0..dom.child_count(node) {
+        collect_bookmark_names(dom, dom.child_at(node, i), want, out);
+    }
+}
+
+fn document_bookmark_names(blocks: &[Block]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for block in blocks {
+        if let Block::Paragraph { bookmarks, .. } = block {
+            names.extend(bookmarks.iter().cloned());
+        }
+    }
+    names
+}
+
+/// Word Save-as-PDF result for `PAGEREF` whose bookmark is gone
+/// (`_Toc218523836` / `_Toc218523837` on sd_2517 / file_22).
+const BOOKMARK_NOT_DEFINED: &str = "Error! Bookmark not defined.";
+
+fn apply_missing_pagerefs(runs: &[TextRun], known: &HashSet<String>) -> Vec<TextRun> {
+    runs.iter()
+        .map(|run| {
+            let mut out = run.clone();
+            if let Some(name) = run.pageref.as_deref()
+                && !known.contains(name)
+            {
+                out.text = BOOKMARK_NOT_DEFINED.to_string();
             }
-            attr_any(dom, child, "name").map(str::to_string)
+            out
         })
         .collect()
 }
@@ -2575,6 +2709,13 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
                     run.style.bold = true;
                 }
             }
+            if header && let Some(color) = tdef.first_row_color {
+                for run in &mut cell.runs {
+                    if run.style.color == [0.0, 0.0, 0.0] {
+                        run.style.color = color;
+                    }
+                }
+            }
         }
     }
 }
@@ -2615,42 +2756,48 @@ fn table_block(
             row_has_cell_del |= cell_is_deleted(dom, cell);
             let mut cell_runs = Vec::new();
             let mut cell_para = 0usize;
+            let mut cell_align = Align::Left;
             for idx in 0..dom.child_count(cell) {
                 let child = dom.child_at(cell, idx);
-                if dom.name_is(child, &W::p()) {
-                    let (_p, r) = para_base(dom, child, sheet, true);
-                    let (mark, _, _) = list_marker(dom, child, sheet, numbering);
-                    let runs = collect_runs_in(
-                        dom,
-                        child,
-                        &r,
-                        &sheet.theme,
-                        Some(&sheet.by_id),
-                        &mut RunBag {
-                            authors,
-                            comments,
-                            in_table: true,
-                            toc: false,
-                        },
-                    );
-                    // Word cells almost always end with an empty <w:p>.
-                    // Counting that as a \\n doubled every row (table median).
-                    // Interior empties are Word-taller (file_146 p7) but
-                    // shipping them dropped 3pp sample −2.5 / eigenpal_2 −8
-                    // (mini 78). Skip all empty cell paras.
-                    if mark.is_empty() && runs.iter().all(|run| run.text.trim().is_empty()) {
-                        continue;
-                    }
-                    if cell_para > 0 {
-                        // sample_document code listing: each <w:p> is a line.
-                        cell_runs.push(TextRun::new("\n", r.clone()));
-                    }
-                    cell_para += 1;
-                    if !mark.is_empty() {
-                        cell_runs.push(TextRun::new(mark, r.clone()));
-                    }
-                    cell_runs.extend(runs);
+                if !dom.name_is(child, &W::p()) {
+                    continue;
                 }
+                let (pstyle, r) = para_base(dom, child, sheet, true);
+                let (mark, _, _) = list_marker(dom, child, sheet, numbering);
+                let runs = collect_runs_in(
+                    dom,
+                    child,
+                    &r,
+                    &sheet.theme,
+                    Some(&sheet.by_id),
+                    &mut RunBag {
+                        authors,
+                        comments,
+                        in_table: true,
+                        toc: false,
+                    },
+                );
+                // Word cells almost always end with an empty <w:p>.
+                // Counting that as a \\n doubled every row (table median).
+                // Interior empties are Word-taller (file_146 listing +3
+                // ITT) but shipping them dropped eigenpal_2 −8.3 /
+                // sample −2.5 (mini 78 and mini empty). Skip all empty
+                // cell paras.
+                if mark.is_empty() && runs.iter().all(|run| run.text.trim().is_empty()) {
+                    continue;
+                }
+                if cell_para == 0 {
+                    cell_align = pstyle.align;
+                }
+                if cell_para > 0 {
+                    // sample_document code listing: each <w:p> is a line.
+                    cell_runs.push(TextRun::new("\n", r.clone()));
+                }
+                cell_para += 1;
+                if !mark.is_empty() {
+                    cell_runs.push(TextRun::new(mark, r.clone()));
+                }
+                cell_runs.extend(runs);
             }
             if cell_runs.is_empty() {
                 cell_runs = collect_runs_in(
@@ -2675,9 +2822,11 @@ fn table_block(
                 vmerge,
                 fill: cell_fill(dom, cell),
                 valign_center: cell_valign_center(dom, cell),
+                align: cell_align,
                 pad_l,
                 pad_r,
                 nowrap: cell_nowrap(dom, cell),
+                borders: parse_tc_borders(dom, cell),
             });
         }
         // Word All Markup appends a “Deleted Cells” column when the
@@ -2877,9 +3026,11 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
         vmerge: VMerge::None,
         fill: None,
         valign_center: false,
+        align: Align::Left,
         pad_l: twip(108.0),
         pad_r: twip(108.0),
         nowrap: false,
+        borders: None,
     }
 }
 
@@ -2943,9 +3094,11 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
                 rowspan: 1,
                 fill: raw.fill,
                 valign_center: raw.valign_center,
+                align: raw.align,
                 pad_l: raw.pad_l,
                 pad_r: raw.pad_r,
                 nowrap: raw.nowrap,
+                borders: raw.borders,
             });
             if open.len() < col + span {
                 open.resize(col + span, None);
@@ -3091,21 +3244,17 @@ fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
 #[derive(Default)]
 struct AuthorColors {
     names: Vec<String>,
-    /// `w:trackRevisions`: Word Save-as-PDF first-author ins is #D13438.
-    word_markup: bool,
 }
 
 impl AuthorColors {
     fn color(&mut self, author: &str) -> [f32; 3] {
-        // soffice gold/blue/olive when markup is off. Word first-author
-        // red matches file_27 markup PDFs without touching comments-lots.
-        let first = if self.word_markup {
-            [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0]
-        } else {
-            [192.0 / 255.0, 144.0 / 255.0, 0.0]
-        };
+        // Word Save-as-PDF first-author ins is #D13438 with or without
+        // w:trackRevisions (file_176 / file_19 / CiceroDo: ~4800 gold
+        // chars vs Word red). soffice gold #C09000 is an ITT miss.
+        // Second/third authors stay Word-blue / olive. `w:trackRevisions`
+        // still gates the Reviewing Pane, not the first-author hue.
         let palette = [
-            first,
+            [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0],
             [0.0, 64.0 / 255.0, 160.0 / 255.0],
             [80.0 / 255.0, 152.0 / 255.0, 24.0 / 255.0],
         ];
@@ -3322,9 +3471,10 @@ fn visible_text(dom: &Dom, node: NodeId, mark: RevMark, preserve_ws: bool) -> St
 
 fn rev_text(text: &str, mark: RevMark, preserve_ws: bool) -> String {
     match mark {
-        // Body xml:space padding collapses. Keeping it (Courier-only or
-        // all-preserve) dropped sample_document/eigenpal ~6 ITT. Table
-        // cells keep padding (in_table).
+        // Body xml:space padding collapses. Keeping it (Courier-only,
+        // all-preserve, or interior run gaps) dropped sample/eigenpal
+        // ~6 ITT (wrap median 53.03→50.80). Table cells keep padding
+        // (in_table). HF collect stays collapsed (mini 88).
         RevMark::None if preserve_ws => text.to_string(),
         RevMark::None => collapse_ws(text),
         RevMark::Ins | RevMark::Del => text.to_string(),
@@ -3487,6 +3637,7 @@ fn collect_textboxes(
                     flip_h,
                     flip_v,
                     tail_end,
+                    diag_shapes: Vec::new(),
                 });
                 continue;
             }
@@ -3515,6 +3666,7 @@ fn collect_textboxes(
                     flip_h,
                     flip_v,
                     tail_end,
+                    diag_shapes: Vec::new(),
                 });
                 continue;
             }
@@ -3522,6 +3674,12 @@ fn collect_textboxes(
                 continue;
             }
         }
+        let diag_shapes = if diagram {
+            src.and_then(|(pkg, main)| load_diag_shapes(pkg, main))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         out.push(LaidTextBox {
             w,
             h,
@@ -3537,6 +3695,7 @@ fn collect_textboxes(
             flip_h,
             flip_v,
             tail_end,
+            diag_shapes,
         });
     }
     // WrapNone accent fills on the same paragraph as an inline chart
@@ -3628,6 +3787,72 @@ fn diagram_label_runs(
             TextRun::new(label, base.clone())
         })
         .collect()
+}
+
+fn load_diag_shapes(pkg: &PartFs, main: &str) -> Option<Vec<DiagShape>> {
+    let xml = part_xml_by_rel_kind(pkg, main, "diagramDrawing")?;
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc)?;
+    let mut out = Vec::new();
+    for sp in descendants_local(&dom, root, "sp") {
+        let Some(xfrm) = descendants_local(&dom, sp, "xfrm").into_iter().next() else {
+            continue;
+        };
+        let Some(off) = descendants_local(&dom, xfrm, "off").into_iter().next() else {
+            continue;
+        };
+        let Some(ext) = descendants_local(&dom, xfrm, "ext").into_iter().next() else {
+            continue;
+        };
+        let x = emu_attr(&dom, off, "x");
+        let y = emu_attr(&dom, off, "y");
+        let w = emu_attr(&dom, ext, "cx");
+        let h = emu_attr(&dom, ext, "cy");
+        if w < 8.0 || h < 8.0 {
+            continue;
+        }
+        let fill = descendants_local(&dom, sp, "schemeClr")
+            .into_iter()
+            .next()
+            .and_then(|n| attr_any(&dom, n, "val"))
+            .and_then(theme_slot_color);
+        let Some(fill) = fill else {
+            continue;
+        };
+        // lt1 connector bars are near-white; painting them is extra ink.
+        if fill[0] > 0.95 && fill[1] > 0.95 && fill[2] > 0.95 {
+            continue;
+        }
+        let label = descendants_local(&dom, sp, "t")
+            .into_iter()
+            .map(|n| element_text(&dom, n))
+            .filter(|s| !s.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let round = descendants_local(&dom, sp, "prstGeom")
+            .into_iter()
+            .next()
+            .and_then(|n| attr_any(&dom, n, "prst"))
+            .is_some_and(|p| p == "roundRect");
+        out.push(DiagShape {
+            x,
+            y,
+            w,
+            h,
+            fill: Some(fill),
+            label,
+            round,
+        });
+    }
+    if out.is_empty() { None } else { Some(out) }
+}
+
+fn emu_attr(dom: &Dom, node: NodeId, name: &str) -> f32 {
+    attr_any(dom, node, name)
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|v| (v / 12700.0) as f32)
+        .unwrap_or(0.0)
 }
 
 fn drawing_is_chart_or_diagram(dom: &Dom, node: NodeId) -> bool {
@@ -4032,6 +4257,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
             ShapeGeom::CurvedConnector
         }
         "straightConnector1" | "line" => ShapeGeom::Line,
+        "roundRect" => ShapeGeom::RoundRect,
         _ => ShapeGeom::Box,
     }
 }
@@ -4522,6 +4748,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         indent_first: 0.0,
         contextual: false,
         style_id: String::new(),
+        style_name: String::new(),
         border_top: None,
         border_left: None,
         border_bottom: None,
@@ -4741,6 +4968,9 @@ struct Layout<'a> {
     last_style_id: String,
     bookmark_pages: HashMap<String, String>,
     pageref_ops: Vec<(usize, usize, String)>,
+    /// Bookmark names present in the DOCX (before layout pages exist).
+    /// Missing PAGEREF wraps Word's Error! string; live names patch later.
+    known_bookmarks: HashSet<String>,
 }
 
 fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
@@ -4817,6 +5047,7 @@ impl<'a> Layout<'a> {
             last_style_id: String::new(),
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
+            known_bookmarks: HashSet::new(),
         };
         lay.chrome();
         lay.chrome_end = lay.current().ops.len();
@@ -5003,6 +5234,8 @@ impl<'a> Layout<'a> {
     }
 
     fn emit_runs(&mut self, runs: &[TextRun], style: &ParaStyle, list: bool, compact_title: bool) {
+        let rewritten = apply_missing_pagerefs(runs, &self.known_bookmarks);
+        let runs = rewritten.as_slice();
         self.note_chapter_heading(style);
         self.last_style_id.clone_from(&style.style_id);
         self.page_has_body = true;
@@ -5062,15 +5295,32 @@ impl<'a> Layout<'a> {
             // blue_centered_title 95→88; mini 75 dropped file_170 −2.5.
             // TOC (Sumrio/toc N): Word Times 12 / line=240 is size×1.15
             // (13.80; Quartz 13.92). Body Times stays typo 12.71 —
-            // size×1.15 on Normal blew sd_2517 107→115 with 0 leftover
-            // hits. Arial 12 size×1.15 matches Word 13.8 / file_34 2pp
+            // size×1.15 on Normal still blows file_22 107→116 after
+            // leftover skip / live PAGEREF. Arial 12 size×1.15 matches
+            // Word 13.8 / file_34 2pp
             // but mini 86 dropped heading_3_center 97→94, file_34 −0.86,
             // uipriority −1.40. Keep typo×line_mult.
             let line_box = if let Some(exact) = style.line_exact {
                 exact
             } else if is_toc_style(style) {
                 size * line_mult.max(1.15)
-            } else if compact_title || face.is_cambria() {
+            } else if is_word_heading_style(style) && line_mult >= 1.14 {
+                // Calibri/Carlito typo lineGap already encodes ~122% leading
+                // (2500/2048). Auto 276 (×1.15) on top of that was +3pt per
+                // Heading1/2 so file_34 / uipriority sat ~1 para low of Word.
+                // Arial Heading2 (heading_2_style_demo, Word gap 39.12) still
+                // wants typo×1.15 — size×1.15 drops that grid to 36.4.
+                if face.is_arial() {
+                    metrics.single_line_pt(size) * line_mult
+                } else {
+                    metrics.single_line_pt(size)
+                }
+            } else if compact_title || face.is_cambria() || (face.is_arial() && line_mult >= 1.14) {
+                // Word Quartz *auto* 276 leading is size×1.15 (Arial 12 →
+                // 13.8pt box). em-box×1.15 added ~1.5pt/line on file_34
+                // (3pp vs Word 2). Do not use size×1.0 on line=240 Arial
+                // (file_22 / sd_2517 TOC+body: 107→104). Glyph size stays
+                // 12 — paint_size×1.15 was ITT-wrong (mini 86).
                 size * line_mult
             } else {
                 metrics.single_line_pt(size) * line_mult
@@ -5117,7 +5367,7 @@ impl<'a> Layout<'a> {
             } else {
                 0.0
             };
-            let mut x = self.page.margin_l + indent + extra + first_extra;
+            let x = self.page.margin_l + indent + extra + first_extra;
             let baseline = self.y;
             if line_i == 0
                 && let Some(mark) = marker
@@ -5128,60 +5378,115 @@ impl<'a> Layout<'a> {
             if justify {
                 self.paint_justified_line(line, x, baseline, justify_left);
             } else {
-                x = self.paint_line_with_tabs(line, x, baseline);
-            }
-            if line_i + 1 == lines.len() && runs.iter().any(|r| !r.text.trim().is_empty()) {
-                // Word PDF export appends a default-size (11pt Calibri)
-                // space on the last baseline of every non-empty paragraph.
-                self.paint_run(&TextRun::new(" ", default_run_style()), x, baseline);
+                self.paint_line_with_tabs(line, x, baseline);
             }
             self.y -= (line_box - ascent).max(1.0);
         }
         self.paint_pbdr(style, y_top, self.y);
         if runs.iter().any(|r| r.rev) {
-            self.paint_rev_bar(self.page.margin_l - 10.0, self.y, y_top);
+            self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
         }
         self.y -= style.after;
+    }
+
+    fn hairline_h(&mut self, x1: f32, y: f32, x2: f32, width: f32, color: [f32; 3]) {
+        // Word Quartz pBdr / TableGrid rules are filled rects (`re f`),
+        // not stroked paths. file_146 E2E8F0 bottoms are 0.24pt fills.
+        let thick = width.max(0.24);
+        self.current().ops.push(Op::FillRect {
+            x: x1.min(x2),
+            y: y - thick * 0.5,
+            w: (x2 - x1).abs().max(thick),
+            h: thick,
+            color,
+        });
+    }
+
+    fn hairline_v(&mut self, x: f32, y1: f32, y2: f32, width: f32, color: [f32; 3]) {
+        let thick = width.max(0.24);
+        self.current().ops.push(Op::FillRect {
+            x: x - thick * 0.5,
+            y: y1.min(y2),
+            w: thick,
+            h: (y2 - y1).abs().max(thick),
+            color,
+        });
     }
 
     fn paint_pbdr(&mut self, style: &ParaStyle, y_top: f32, y_bot: f32) {
         // Do not consume extra leading — sample_document is already
         // 3pp vs soffice 3; space="4" lives inside the after gap.
-        let x1 = self.page.margin_l;
-        let x2 = self.page.width - self.page.margin_r;
+        // Word IntenseQuote (comments-lots p2) paints the rule at
+        // w:ind left/right, not the page margins (~90pt extra ink).
+        let x1 = self.page.margin_l + style.indent_left;
+        let x2 = self.page.width - self.page.margin_r - style.indent_right;
         let top = y_top.max(y_bot);
         let bot = y_top.min(y_bot) - 2.0;
-        let mut lines = Vec::new();
         if let Some((color, width)) = style.border_top {
-            lines.push((x1, top, x2, top, width, color));
+            self.hairline_h(x1, top, x2, width, color);
         }
         if let Some((color, width)) = style.border_bottom {
-            lines.push((x1, bot, x2, bot, width, color));
+            self.hairline_h(x1, bot, x2, width, color);
         }
         if let Some((color, width)) = style.border_left {
-            lines.push((x1, bot, x1, top, width, color));
+            self.hairline_v(x1, bot, top, width, color);
         }
         if let Some((color, width)) = style.border_right {
-            lines.push((x2, bot, x2, top, width, color));
-        }
-        for (lx1, ly1, lx2, ly2, width, color) in lines {
-            self.current().ops.push(Op::Line {
-                x1: lx1,
-                y1: ly1,
-                x2: lx2,
-                y2: ly2,
-                width,
-                color,
-            });
+            self.hairline_v(x2, bot, top, width, color);
         }
     }
 
+    fn rev_bar_x(&self) -> f32 {
+        // Word file_146 / eigenpal (left=72) is x=36 = margin_l/2.
+        // CiceroDo Word is margin_l-36=54, but shipping that (mini revx)
+        // dropped comments-lots family −0.36 to −0.49 and mean −0.044.
+        (self.page.margin_l * 0.5).max(8.0)
+    }
+
     fn paint_rev_bar(&mut self, x: f32, y_bot: f32, y_top: f32) {
-        // soffice changed-line mark: ~0.75pt in the left margin.
+        // Word CiceroDo paints one ~395pt changed-line mark through a
+        // run of revised paras, not a 12pt tick per paragraph. Merge
+        // when the gap is under one body line (~16pt). file_146 title
+        // vs body stays split (gap ~160pt).
         let x = x.max(2.0);
         let top = y_top.max(y_bot);
         let bot = y_top.min(y_bot);
         if top - bot < 4.0 {
+            return;
+        }
+        for op in self.current().ops.iter_mut().rev() {
+            let Op::Line {
+                x1,
+                y1,
+                x2,
+                y2,
+                width,
+                color,
+            } = op
+            else {
+                continue;
+            };
+            if (*x1 - x).abs() > 0.6 || (*x2 - x).abs() > 0.6 {
+                continue;
+            }
+            if (*width - 0.75).abs() > 0.02 || color.iter().any(|c| *c > 0.02) {
+                continue;
+            }
+            let existing_top = (*y1).max(*y2);
+            let existing_bot = (*y1).min(*y2);
+            if existing_top - existing_bot <= 6.0 {
+                continue;
+            }
+            // Overlap or a gap under one body line. 30pt heading
+            // gaps stay split (CiceroDo p2 Word is 395pt via those
+            // gaps; merging them over-merged p3).
+            let slack = 16.0;
+            let near = bot <= existing_top + slack && top >= existing_bot - slack;
+            if !near {
+                continue;
+            }
+            *y1 = existing_bot.min(bot);
+            *y2 = existing_top.max(top);
             return;
         }
         self.current().ops.push(Op::Line {
@@ -5216,10 +5521,19 @@ impl<'a> Layout<'a> {
         let Some((prefix, suffix)) = peel_trailing_tab(body) else {
             return wrap_runs(self.fonts, body, width, width, list);
         };
-        let suf_w: f32 = suffix
-            .iter()
-            .map(|r| self.run_width_pt(r, r.text.trim_start_matches('\t')))
-            .sum();
+        // Missing PAGEREF is Word's long Error! string, not a 9-1 page
+        // number. Subtracting its width from the TOC column packed the
+        // description into 40pt slices. Fold it into the wrap so
+        // sd_2517 9.01 breaks after "Bookmark" like Word.
+        let error_suffix = suffix.iter().any(|r| r.text == BOOKMARK_NOT_DEFINED);
+        let suf_w: f32 = if error_suffix {
+            0.0
+        } else {
+            suffix
+                .iter()
+                .map(|r| self.run_width_pt(r, r.text.trim_start_matches('\t')))
+                .sum()
+        };
         let first_x =
             self.page.margin_l + indent + if has_marker { 0.0 } else { style.indent_first };
         // Word wraps every TOC line in the column up to the right tab,
@@ -5227,7 +5541,13 @@ impl<'a> Layout<'a> {
         // first line at `width` (label+description in one budget) put
         // sd_2517 11-1 on p4. Wrap the *description* (after the hanging
         // left tab) at rest_w so file_22 3.03 wraps like Word.
-        let first_w = (self.page.margin_l + stop.pos - first_x - suf_w).max(40.0);
+        // Hanging first line starts at the left margin (indent_first is
+        // negative). Cap at `width+indent` so w:right (Sumrio1 720 twips)
+        // wraps sd_2517 / file_22 "dolor'et" like Word. The right-tab
+        // edge alone (~412pt) packed that word onto line 1.
+        let first_w = (self.page.margin_l + stop.pos - first_x - suf_w)
+            .min(width + indent)
+            .max(40.0);
         let rest_w = (self.page.margin_l + stop.pos - (self.page.margin_l + indent) - suf_w)
             .min(width)
             .max(40.0);
@@ -5243,10 +5563,54 @@ impl<'a> Layout<'a> {
         } else {
             wrap_runs(self.fonts, &prefix, first_w, rest_w, list)
         };
-        if let Some(last) = lines.last_mut() {
+        if error_suffix {
+            // Word right-aligns the Error! string to the TOC tab. When
+            // the last description line already ate that slot (9.01),
+            // "Error! Bookmark" stays on that line and "not defined."
+            // wraps at the hanging indent. Folding Error! into the
+            // description wrap (9.02 + 168pt) dropped 11.01 off p3.
+            let last_w = lines
+                .last()
+                .map(|line| self.width_after_last_tab(line))
+                .unwrap_or(0.0);
+            // Remainder is to the right-tab edge (Word 9.02 Error! fits
+            // at x=367–522). rest_w also subtracts w:right=720 so 9.02
+            // wrapped an extra line and dropped 11.01 off p3.
+            let remain = (stop.pos - indent - last_w).max(8.0);
+            let extra = wrap_runs_segment(self.fonts, &suffix, remain, rest_w, false);
+            if let Some(last) = lines.last_mut()
+                && let Some(first) = extra.first()
+            {
+                let mut glue = first.clone();
+                if let Some(run) = glue.first_mut()
+                    && !run.text.starts_with('\t')
+                {
+                    run.text.insert(0, '\t');
+                }
+                last.extend(glue);
+            }
+            lines.extend(extra.into_iter().skip(1));
+        } else if let Some(last) = lines.last_mut() {
             last.extend(suffix);
         }
         lines
+    }
+
+    fn width_after_last_tab(&self, line: &[TextRun]) -> f32 {
+        let mut last_tab = None;
+        for (i, run) in line.iter().enumerate() {
+            if let Some(at) = run.text.rfind('\t') {
+                last_tab = Some((i, at));
+            }
+        }
+        let Some((i, at)) = last_tab else {
+            return line.iter().map(|r| self.run_width_pt(r, &r.text)).sum();
+        };
+        let mut w = self.run_width_pt(&line[i], &line[i].text[at + 1..]);
+        for run in &line[i + 1..] {
+            w += self.run_width_pt(run, &run.text);
+        }
+        w
     }
 
     fn run_width_pt(&self, run: &TextRun, text: &str) -> f32 {
@@ -5530,35 +5894,16 @@ impl<'a> Layout<'a> {
                     });
                 }
             } else {
-                self.current().ops.push(Op::Line {
-                    x1: x,
-                    y1: y - 1.2,
-                    x2: x + w,
-                    y2: y - 1.2,
-                    width: 0.6,
-                    color: style.color,
-                });
+                // Word Quartz single/double underline is a filled hairline
+                // (file_34 p1: 0.48pt `f`), not `l S`. Wave stays stroked.
+                self.hairline_h(x, y - 1.2, x + w, 0.6, style.color);
                 if style.underline_double {
-                    self.current().ops.push(Op::Line {
-                        x1: x,
-                        y1: y - 2.6,
-                        x2: x + w,
-                        y2: y - 2.6,
-                        width: 0.6,
-                        color: style.color,
-                    });
+                    self.hairline_h(x, y - 2.6, x + w, 0.6, style.color);
                 }
             }
         }
         if style.strike {
-            self.current().ops.push(Op::Line {
-                x1: x,
-                y1: y + style.size * 0.28,
-                x2: x + w,
-                y2: y + style.size * 0.28,
-                width: 0.6,
-                color: style.color,
-            });
+            self.hairline_h(x, y + style.size * 0.28, x + w, 0.6, style.color);
         }
     }
 
@@ -5658,9 +6003,31 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// Word paints floating `wp:extent` as specified (overflow clipped by
+    /// the page). Scaling to `page.width` squashed the DeepL wrapSquare
+    /// banner (841.77pt on A4) to 595.3×44.96. Inline/flow blips still
+    /// fit the content box — comments-lots' 518.4pt chart PNG at native
+    /// height pushes that stem 9→10pp vs Word.
+    fn image_wh(&self, img: &LaidImage) -> (f32, f32) {
+        match img.slot {
+            ImageSlot::Float { pct_w, pct_h, .. } => {
+                let dw = pct_w
+                    .filter(|p| *p > 0.001)
+                    .map(|p| (p * self.page.width).max(1.0))
+                    .unwrap_or_else(|| img.w.max(1.0));
+                let dh = pct_h
+                    .filter(|p| *p > 0.001)
+                    .map(|p| (p * self.page.height).max(1.0))
+                    .unwrap_or_else(|| img.h.max(1.0));
+                (dw, dh)
+            }
+            slot @ ImageSlot::Flow => self.sized_wh(slot, img.w, img.h, 1.0, 1.0),
+        }
+    }
+
     fn emit_image(&mut self, img: &LaidImage) {
         self.page_has_body = true;
-        let (dw, dh) = self.sized_wh(img.slot, img.w, img.h, 1.0, 1.0);
+        let (dw, dh) = self.image_wh(img);
         let (x, y) = match img.slot {
             ImageSlot::Flow => {
                 self.ensure(dh + 4.0);
@@ -5770,6 +6137,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::RoundRect => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: round_rect_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -5817,6 +6190,10 @@ impl<'a> Layout<'a> {
         if let Some(chart) = &box_.chart {
             self.emit_chart_bars(x, y, dw, dh, chart);
         }
+        if !box_.diag_shapes.is_empty() {
+            self.emit_diag_shapes(x, y, dh, &box_.diag_shapes);
+            return;
+        }
         let pad = 4.0;
         let inner = (dw - pad * 2.0).max(8.0);
         let lines = wrap_runs(self.fonts, &box_.runs, inner, inner, false);
@@ -5855,6 +6232,46 @@ impl<'a> Layout<'a> {
                 tx += w;
             }
             ty -= 2.0;
+        }
+    }
+
+    fn emit_diag_shapes(&mut self, x: f32, y: f32, dh: f32, shapes: &[DiagShape]) {
+        for shape in shapes {
+            let px = x + shape.x;
+            let py = y + dh - shape.y - shape.h;
+            if let Some(fill) = shape.fill {
+                if shape.round {
+                    self.current().ops.push(Op::FillPoly {
+                        points: round_rect_points(px, py, shape.w, shape.h),
+                        color: fill,
+                    });
+                } else {
+                    self.current().ops.push(Op::FillRect {
+                        x: px,
+                        y: py,
+                        w: shape.w,
+                        h: shape.h,
+                        color: fill,
+                    });
+                }
+            }
+            let label = shape.label.trim();
+            if label.is_empty() {
+                continue;
+            }
+            let fid = FaceId::CarlitoRegular;
+            let face = self.fonts.get(fid);
+            let size = 14.0;
+            let ty = py + shape.h * 0.5 - face.ascent_pt(size) * 0.4;
+            self.current().ops.push(Op::text(
+                fid,
+                size,
+                px + 12.0,
+                ty,
+                face.glyphs(label),
+                [1.0, 1.0, 1.0],
+                label.to_string(),
+            ));
         }
     }
 
@@ -6093,6 +6510,7 @@ impl<'a> Layout<'a> {
                     [x, bottom, w, h],
                     color,
                     borders,
+                    cell.borders,
                     [ri == 0, last_row, cell.col == 0, last_col],
                 );
                 // Per-run style. First-run-only paint mashed sample_document
@@ -6130,7 +6548,29 @@ impl<'a> Layout<'a> {
                             color: fill,
                         });
                     }
-                    let mut tx = x + pad_l;
+                    let line_w: f32 = line
+                        .iter()
+                        .map(|run| {
+                            if run.text.is_empty() {
+                                return 0.0;
+                            }
+                            let fid = self.fonts.resolve(
+                                &run.style.family,
+                                run.style.bold,
+                                run.style.italic,
+                            );
+                            self.fonts
+                                .get(fid)
+                                .width_pt(&run.text, run.style.paint_size())
+                        })
+                        .sum();
+                    let inner = (w - pad_l - pad_r).max(0.0);
+                    let extra = match cell.align {
+                        Align::Center => ((inner - line_w) / 2.0).max(0.0),
+                        Align::Right => (inner - line_w).max(0.0),
+                        Align::Left | Align::Justify => 0.0,
+                    };
+                    let mut tx = x + pad_l + extra;
                     self.clip_right = Some(x + w);
                     for run in &line {
                         if run.text.is_empty() {
@@ -6143,7 +6583,7 @@ impl<'a> Layout<'a> {
                 }
             }
             if row.iter().any(|c| c.runs.iter().any(|r| r.rev)) {
-                self.paint_rev_bar(table_left - 10.0, self.y, y_top);
+                self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
             }
         }
         // Styled TableGrid / body tables keep 4pt chrome. Layout sets
@@ -6156,12 +6596,45 @@ impl<'a> Layout<'a> {
         rect: [f32; 4],
         fallback: [f32; 3],
         borders: Option<TblBorders>,
+        cell_borders: Option<CellBorders>,
         edges: [bool; 4],
     ) {
         let [x, y, w, h] = rect;
         let [first_row, last_row, first_col, last_col] = edges;
         let x2 = x + w;
         let y2 = y + h;
+        if let Some(cb) = cell_borders {
+            // Cell restated edges (file_34 sz=0; CiceroDo CCCCCC sz=8).
+            // Listed sides paint; omitted/none/sz=0 stay off — no table
+            // fallback, or gray would sit on top of the black lattice.
+            let segs = [
+                (cb.top, true, x, y2, x2 - x, 0.0),
+                (cb.bottom, true, x, y, x2 - x, 0.0),
+                (cb.left, false, x, y, 0.0, y2 - y),
+                (cb.right, false, x2, y, 0.0, y2 - y),
+            ];
+            for (edge, horiz, mut fx, mut fy, mut fw, mut fh) in segs {
+                let Some((color, thick)) = edge else {
+                    continue;
+                };
+                let half = thick * 0.5;
+                if horiz {
+                    fy -= half;
+                    fh = thick;
+                } else {
+                    fx -= half;
+                    fw = thick;
+                }
+                self.current().ops.push(Op::FillRect {
+                    x: fx,
+                    y: fy,
+                    w: fw.max(thick),
+                    h: fh.max(thick),
+                    color,
+                });
+            }
+            return;
+        }
         let (color, top, bottom, left, right) = match borders {
             // Word default (TableNormal, shaded callouts) is no grid.
             // Painting all four edges here boxed comments/I_am_sharing
@@ -6235,7 +6708,9 @@ impl<'a> Layout<'a> {
                 .resolve(&run.style.family, run.style.bold, run.style.italic);
             let face = self.fonts.get(fid);
             let size = run.style.paint_size();
-            let w = face.width_pt(&run.text, size);
+            // Same measure as line_w: @@N@@/@@P@@ are patched after paint,
+            // so advancing by the mark shoved file_146 "7·" 42pt apart.
+            let w = face.width_pt(chrome_measure_text(&run.text), size);
             self.current().ops.push(Op::text(
                 fid,
                 size,
@@ -6297,14 +6772,7 @@ impl<'a> Layout<'a> {
             if let Some((color, width)) = self.header_bottom {
                 let x1 = self.page.margin_l;
                 let x2 = self.page.width - self.page.margin_r;
-                self.current().ops.push(Op::Line {
-                    x1,
-                    y1: y - 3.0,
-                    x2,
-                    y2: y - 3.0,
-                    width,
-                    color,
-                });
+                self.hairline_h(x1, y - 3.0, x2, width, color);
             }
         }
         if !self.footer.is_empty() {
@@ -6332,14 +6800,7 @@ impl<'a> Layout<'a> {
                 let top = base + n.saturating_sub(1) as f32 * one + 10.0;
                 let x1 = self.page.margin_l;
                 let x2 = self.page.width - self.page.margin_r;
-                self.current().ops.push(Op::Line {
-                    x1,
-                    y1: top,
-                    x2,
-                    y2: top,
-                    width,
-                    color,
-                });
+                self.hairline_h(x1, top, x2, width, color);
             }
             for (i, line) in lines.iter().enumerate() {
                 let y = base + (n.saturating_sub(1).saturating_sub(i)) as f32 * one;
@@ -6549,6 +7010,8 @@ fn split_hanging_marker(runs: &[TextRun], hanging: bool) -> (Option<&TextRun>, &
 
 fn is_list_marker_text(text: &str) -> bool {
     let t = text.trim();
+    // Cap at 8 chars: `Section 1.01` is Word-hanging on sd_2517 Título2,
+    // but treating it as a marker packed 107→106pp (mini sechang −0.10).
     if t.is_empty() || t.chars().count() > 8 {
         return false;
     }
@@ -6707,6 +7170,9 @@ fn wrap_runs_segment(
             let w = face.width_pt(tok, run.style.paint_size());
             let is_space = tok.chars().all(char::is_whitespace);
             let limit = if line_i == 0 { first_width } else { width };
+            // Unbreakable tokens wider than the cell overflow (Test 7).
+            // Character-break was ITT-wrong: file_196 13→15pp and
+            // file_100/115/185/196 ~−24 ITT even when gated to tables.
             if !is_space && x + w > limit && x > 0.0 {
                 lines.push(Vec::new());
                 line_i += 1;
@@ -6739,6 +7205,7 @@ fn wrap_runs_segment(
 
 fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> Vec<Page> {
     let mut lay = Layout::new(fonts, *page, hf.clone());
+    lay.known_bookmarks = document_bookmark_names(blocks);
     if blocks.is_empty() {
         lay.current().ops.push(Op::text(
             FaceId::CarlitoRegular,
@@ -6964,6 +7431,31 @@ fn bent_connector_points(x: f32, y: f32, dw: f32, dh: f32) -> [(f32, f32); 4] {
     [(x, y + dh), (mid, y + dh), (mid, y), (x + dw, y)]
 }
 
+/// OOXML `roundRect` default adj=16667: corner radius is min(w,h)×1/6.
+fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
+    let mut pts = Vec::with_capacity(24);
+    pts.push((x + r, y));
+    pts.push((x + w - r, y));
+    quarter_arc(&mut pts, x + w - r, y + r, r, -90.0, 0.0);
+    pts.push((x + w, y + h - r));
+    quarter_arc(&mut pts, x + w - r, y + h - r, r, 0.0, 90.0);
+    pts.push((x + r, y + h));
+    quarter_arc(&mut pts, x + r, y + h - r, r, 90.0, 180.0);
+    pts.push((x, y + r));
+    quarter_arc(&mut pts, x + r, y + r, r, 180.0, 270.0);
+    pts
+}
+
+fn quarter_arc(pts: &mut Vec<(f32, f32)>, cx: f32, cy: f32, r: f32, deg0: f32, deg1: f32) {
+    const STEPS: i32 = 4;
+    for i in 1..=STEPS {
+        let t = i as f32 / STEPS as f32;
+        let a = (deg0 + (deg1 - deg0) * t).to_radians();
+        pts.push((cx + r * a.cos(), cy + r * a.sin()));
+    }
+}
+
 fn right_arrow_points(x: f32, y: f32, dw: f32, dh: f32) -> Vec<(f32, f32)> {
     let head = dw.min(dh) * 0.5;
     let body_w = (dw - head).max(1.0);
@@ -7146,11 +7638,12 @@ mod field_tests {
             .expect("p");
         let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
         let run = runs.iter().find(|r| r.text.contains("fresh")).expect("ins");
-        assert!(run.style.underline, "soffice paints w:ins as underline");
+        assert!(run.style.underline, "Word paints w:ins as underline");
         assert!(
-            (run.style.color[0] - 192.0 / 255.0).abs() < 0.02
-                && (run.style.color[1] - 144.0 / 255.0).abs() < 0.02,
-            "soffice first-author ins is gold #C09000, got {:?}",
+            (run.style.color[0] - 209.0 / 255.0).abs() < 0.02
+                && (run.style.color[1] - 52.0 / 255.0).abs() < 0.02
+                && (run.style.color[2] - 56.0 / 255.0).abs() < 0.02,
+            "Word first-author ins is #D13438, got {:?}",
             run.style.color
         );
     }
@@ -7650,6 +8143,26 @@ mod drawing_tests {
     }
 
     #[test]
+    fn round_rect_points_use_ooxml_default_radius() {
+        let pts = round_rect_points(0.0, 0.0, 120.0, 60.0);
+        let r = 60.0 * 16_667.0 / 100_000.0;
+        assert!(pts.len() > 8, "arcs must add vertices; n={}", pts.len());
+        assert!(
+            pts.iter().any(|(x, y)| (*x - r).abs() < 0.05 && *y < 0.05),
+            "bottom edge starts after radius; {pts:?}"
+        );
+        let sharp_corner = pts.iter().any(|(x, y)| x.abs() < 0.05 && y.abs() < 0.05);
+        assert!(
+            !sharp_corner,
+            "must not include the sharp (0,0) corner; {pts:?}"
+        );
+        let inset = pts
+            .iter()
+            .any(|(x, y)| *x > 0.5 && *x < r && *y > 0.5 && *y < r);
+        assert!(inset, "quarter-arc vertices sit inside the corner; {pts:?}");
+    }
+
+    #[test]
     fn right_arrow_points_match_ooxml_default() {
         // Word Strict01 rightArrow: adj1=adj2=50000, extent ~91.3×25.25.
         let x = 227.8001;
@@ -8136,6 +8649,7 @@ mod table_tests {
                 first_col_fill: None,
                 last_row_fill: None,
                 last_col_fill: None,
+                first_row_color: None,
                 borders: Some(TblBorders {
                     top: true,
                     bottom: true,
@@ -8251,10 +8765,40 @@ mod table_tests {
         let fill = parsed.band1_fill.expect("band1");
         assert!((fill[0] - 0xD3 as f32 / 255.0).abs() < 0.01);
         assert!(parsed.first_row_fill.is_none());
+        assert!(parsed.first_row_color.is_none());
         assert!(parsed.first_row_bold && parsed.first_col_bold);
         let b = parsed.borders.expect("borders");
         assert!(b.top && b.bottom && !b.left && !b.inside_v);
         assert!((parsed.para.line_mult - 1.0).abs() < 0.02);
+    }
+
+    #[test]
+    fn parse_grid_table4_reads_firstrow_white() {
+        let xml = r#"<?xml version="1.0"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:style w:type="table" w:styleId="GridTable4-Accent1">
+  <w:tblStylePr w:type="firstRow">
+    <w:rPr><w:b/><w:color w:val="FFFFFF" w:themeColor="background1"/></w:rPr>
+    <w:tcPr><w:shd w:val="clear" w:fill="156082"/></w:tcPr>
+  </w:tblStylePr>
+</w:style>
+</w:styles>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let style = dom
+            .descendants(root, Some(&W::name("style")))
+            .into_iter()
+            .next()
+            .expect("style");
+        let parsed = parse_tbl_style(&dom, style, &Defaults::word());
+        let fill = parsed.first_row_fill.expect("firstRow fill");
+        assert!((fill[0] - 0x15 as f32 / 255.0).abs() < 0.01);
+        let color = parsed.first_row_color.expect("firstRow color");
+        assert!((color[0] - 1.0).abs() < 0.01);
+        assert!((color[1] - 1.0).abs() < 0.01);
+        assert!((color[2] - 1.0).abs() < 0.01);
+        assert!(parsed.first_row_bold);
     }
 }
 
@@ -8288,7 +8832,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sheet = load_stylesheet(&pkg);
         let fonts = fonts();
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
         let mut images = 0usize;
         let mut empty_boxes = 0usize;
         for block in &blocks {
@@ -8352,7 +8896,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sheet = load_stylesheet(&pkg);
         let fonts = fonts();
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
         let mut collapsed = 0u32;
         let mut list_after = 0.0_f32;
         let mut all_after = 0.0_f32;
@@ -8433,7 +8977,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sheet = load_stylesheet(&pkg);
         let fonts = fonts();
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
         let mut seen = 0u32;
         for block in &blocks {
             let Block::Paragraph { style, runs, .. } = block else {
@@ -8489,7 +9033,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sheet = load_stylesheet(&pkg);
         let fonts = fonts();
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
         let mut seen = 0u32;
         for block in &blocks {
             let Block::Paragraph { style, runs, .. } = block else {
@@ -8665,7 +9209,7 @@ mod comments_spacing_tests {
             .next()
             .expect("body");
         let sheet = load_stylesheet(&pkg);
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts(), false);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts());
         let br = blocks
             .iter()
             .filter(|b| matches!(b, Block::PageBreak { .. }))
@@ -8700,7 +9244,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sects = dom.descendants(body, Some(&W::sect_pr()));
         let sheet = load_stylesheet(&pkg);
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts(), false);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts());
         let br = blocks
             .iter()
             .filter(|b| matches!(b, Block::PageBreak { next } if next.is_some()))
@@ -8790,7 +9334,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sheet = load_stylesheet(&pkg);
         let fonts = fonts();
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
         let mut found = 0;
         let mut with_mark = 0;
         for block in &blocks {
@@ -8832,7 +9376,7 @@ mod comments_spacing_tests {
             .expect("body");
         let sheet = load_stylesheet(&pkg);
         let fonts = fonts();
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts, false);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
         for block in &blocks {
             let Block::Paragraph { style, runs, .. } = block else {
                 continue;
