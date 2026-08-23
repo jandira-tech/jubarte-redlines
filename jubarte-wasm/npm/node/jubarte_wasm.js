@@ -71,15 +71,18 @@ exports.compareDocuments = compareDocuments;
  * Carlito / Liberation set; the native system/cloud font overrides are
  * no-ops under wasm (no filesystem), which only changes glyph sourcing,
  * never layout metrics.
+ * `compress` (optional, default `false`) deflates the PDF's streams
+ * (`/FlateDecode`): much smaller output, no longer plain text.
  * @param {Uint8Array} docx
+ * @param {boolean | null} [compress]
  * @returns {Uint8Array}
  */
-function docxToPdf(docx) {
+function docxToPdf(docx, compress) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        wasm.docxToPdf(retptr, ptr0, len0);
+        wasm.docxToPdf(retptr, ptr0, len0, isLikeNone(compress) ? 0xFFFFFF : compress ? 1 : 0);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -272,6 +275,10 @@ let heap = new Array(1024).fill(undefined);
 heap.push(undefined, null, true, false);
 
 let heap_next = heap.length;
+
+function isLikeNone(x) {
+    return x === undefined || x === null;
+}
 
 function passArray8ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 1, 1) >>> 0;

@@ -22,8 +22,10 @@ export function compareDocuments(original: Uint8Array, modified: Uint8Array, aut
  * Carlito / Liberation set; the native system/cloud font overrides are
  * no-ops under wasm (no filesystem), which only changes glyph sourcing,
  * never layout metrics.
+ * `compress` (optional, default `false`) deflates the PDF's streams
+ * (`/FlateDecode`): much smaller output, no longer plain text.
  */
-export function docxToPdf(docx: Uint8Array): Uint8Array;
+export function docxToPdf(docx: Uint8Array, compress?: boolean | null): Uint8Array;
 
 /**
  * List the tracked revisions in a DOCX as a JSON array string — the same

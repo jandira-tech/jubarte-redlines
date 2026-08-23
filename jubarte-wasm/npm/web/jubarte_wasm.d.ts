@@ -22,8 +22,10 @@ export function compareDocuments(original: Uint8Array, modified: Uint8Array, aut
  * Carlito / Liberation set; the native system/cloud font overrides are
  * no-ops under wasm (no filesystem), which only changes glyph sourcing,
  * never layout metrics.
+ * `compress` (optional, default `false`) deflates the PDF's streams
+ * (`/FlateDecode`): much smaller output, no longer plain text.
  */
-export function docxToPdf(docx: Uint8Array): Uint8Array;
+export function docxToPdf(docx: Uint8Array, compress?: boolean | null): Uint8Array;
 
 /**
  * List the tracked revisions in a DOCX as a JSON array string — the same
@@ -61,7 +63,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly acceptRevisions: (a: number, b: number, c: number) => void;
     readonly compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly docxToPdf: (a: number, b: number, c: number) => void;
+    readonly docxToPdf: (a: number, b: number, c: number, d: number) => void;
     readonly getRevisions: (a: number, b: number, c: number) => void;
     readonly pdfPageCount: (a: number, b: number) => number;
     readonly rejectRevisions: (a: number, b: number, c: number) => void;
