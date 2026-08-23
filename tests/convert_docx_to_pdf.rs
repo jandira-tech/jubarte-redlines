@@ -241,6 +241,99 @@ fn pprchange_ghost_list_does_not_hang_live_text() {
 }
 
 #[test]
+fn deleted_para_skips_pprchange_list_marker_after_mini_303() {
+    // file_146 deleted Ground rules: Word paints the pPrChange en-dash,
+    // but shipping that marker (mini 303–305) dropped file_146 −0.018
+    // / sample_iter2 −0.018. Keep live pPr only (no ghost numPr).
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr>\
+           <w:spacing w:before=\"300\" w:after=\"80\"/>\
+           <w:pPrChange w:id=\"1\" w:author=\"a\">\
+             <w:pPr><w:pStyle w:val=\"ListParagraph\"/>\
+               <w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+               <w:ind w:left=\"720\" w:hanging=\"360\"/>\
+             </w:pPr>\
+           </w:pPrChange>\
+         </w:pPr>\
+         <w:del w:id=\"0\" w:author=\"a\">\
+           <w:r><w:delText>DelItem</w:delText></w:r></w:del></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering)))
+        .expect("convert deleted pPrChange list");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("DelItem") && !text.contains("1."),
+        "mini 303 ghost numPr on del-only was ITT-neg; text={text:?}"
+    );
+}
+
+#[test]
+fn numbered_list_revision_keeps_single_counter_after_mini_310() {
+    // potpourri Word All Markup `6.11.` is original+current numbering.
+    // Ungated mini 310–312 dropped redline file_21_file_22 −0.1035.
+    // Gated `%1.`-only mini 313–315 lifted no-redline +0.0007/+0.0127
+    // but redline mean −0.0002 (file_52/53/6/74 −0.006). Keep one
+    // counter: Ins+Live+Del paints `1. 2. 3.`, not `1.2.`.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"360\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let numpr = "<w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>";
+    let body = format!(
+        "<w:p>{numpr}<w:ins w:id=\"1\" w:author=\"a\">\
+           <w:r><w:t>Alpha</w:t></w:r></w:ins></w:p>\
+         <w:p>{numpr}<w:r><w:t>Bravo</w:t></w:r></w:p>\
+         <w:p>{numpr}<w:del w:id=\"2\" w:author=\"a\">\
+           <w:r><w:delText>Charlie</w:delText></w:r></w:del></w:p>\
+         <w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering)))
+        .expect("convert list revision markers");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("3.") && !text.contains("1.2.") && text.contains("Charlie"),
+        "mini 310/313 dual orig+current was ITT-neg on redline; text={text:?}"
+    );
+}
+
+#[test]
+fn tbl_header_repeats_on_overflow_page() {
+    // file_34 / uipriority: `w:trPr/w:tblHeader` is Word's repeating
+    // header. Without it, overflow pages lose Feature/Description.
+    let mut rows = String::from(
+        "<w:tr><w:trPr><w:tblHeader/></w:trPr>\
+           <w:tc><w:p><w:r><w:t>HdrCol</w:t></w:r></w:p></w:tc></w:tr>",
+    );
+    for i in 0..40 {
+        rows.push_str(&format!(
+            "<w:tr><w:tc><w:p><w:r><w:t>Body{i:02}</w:t></w:r></w:p></w:tc></w:tr>"
+        ));
+    }
+    let body =
+        format!("<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl><w:sectPr/>");
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert tblHeader");
+    let pages = pdf_page_count(&pdf);
+    let text = pdf_winansi_text(&pdf);
+    let n = text.matches("HdrCol").count();
+    assert!(
+        pages >= 2 && n >= 2 && text.contains("Body00"),
+        "tblHeader must repeat on overflow pages; pages={pages} n={n} text={text:?}"
+    );
+}
+
+#[test]
 fn trailing_body_sectpr_does_not_add_a_page() {
     let docx = minimal_docx_body("<w:p><w:r><w:t>Only page</w:t></w:r></w:p><w:sectPr/>");
     let pdf = docx_to_pdf(&docx).expect("convert trailing sectPr");
@@ -1240,6 +1333,136 @@ fn numbering_hanging_indent_shifts_bullet_off_the_margin() {
     assert!(
         (min_x - 90.0).abs() < 4.0,
         "bullet at hanging start 90pt, not margin 72; min_x={min_x} xs={xs:?}"
+    );
+}
+
+#[test]
+fn numbering_lvljc_right_puts_marker_at_gutter_end() {
+    // sd_2517 unnamed ilvl 2/5/8 are w:lvlJc=right with hanging=180.
+    // Word right-aligns the marker in the hanging gutter (right edge at
+    // body start). We left-align at hanging start.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/><w:lvlJc w:val=\"right\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"80\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+         <w:r><w:t>Hello</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("convert lvlJc=right");
+    let ones = pdf_tf_xs(&pdf, "11.04 Tf");
+    assert!(!ones.is_empty(), "marker 1. must paint; xs={ones:?}");
+    let min_x = ones.iter().copied().fold(f32::INFINITY, f32::min);
+    assert!(
+        min_x < 102.0,
+        "lvlJc=right tucks a wider-than-gutter marker so its right hits body 108, not hanging-start 99; min_x={min_x} xs={ones:?}"
+    );
+}
+
+#[test]
+fn numbering_default_suff_tabs_body_to_num_stop() {
+    // sd_2517 Título2 is suff=tab (default) + w:tab val=num pos=1800,
+    // hanging=1800. We glue `Section 1. Hello` with a space; Word tabs
+    // the body to the 90pt hanging indent.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"Section %1\"/>\
+              <w:pPr><w:tabs><w:tab w:val=\"num\" w:pos=\"1800\"/></w:tabs>\
+                <w:ind w:left=\"1800\" w:hanging=\"1800\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+         <w:r><w:t>Hello</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("convert num tab");
+    let hs = pdf_tf_xs(&pdf, "11.04 Tf");
+    assert!(!hs.is_empty(), "Hello must paint; xs={hs:?}");
+    // Glyphs of "Section 1" sit near the left margin; Hello must sit at
+    // the 90pt hanging indent (72+90=162), not immediately after "1 ".
+    let hello = hs
+        .iter()
+        .copied()
+        .filter(|x| *x > 140.0)
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        (156.0..170.0).contains(&hello),
+        "default suff is tab to num pos 1800 (x=162), not a space; hello={hello} xs={hs:?}"
+    );
+}
+
+#[test]
+fn ppr_rpr_does_not_restyle_bare_runs_after_mini_pprrpr() {
+    // ECMA-376 17.3.1.29: w:pPr/w:rPr is the paragraph-mark glyph only.
+    // Applying it to bare runs (mini pprrpr) italicized/blued sd_2517
+    // TextHeading2 and dropped ITT −0.33 (file_22 too; mean 59.1995→59.1885).
+    let body = "<w:p><w:pPr><w:rPr><w:i/><w:color w:val=\"0000FF\"/></w:rPr></w:pPr>\
+         <w:r><w:t>Hello</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&numbering_docx(body, None)).expect("convert pPr/rPr lock");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        !text.contains("/Carlito-Italic") && !text.contains("/Calibri-Italic"),
+        "paragraph-mark italic must not restyle bare Hello; mini pprrpr −0.33"
+    );
+    assert!(
+        !text.contains("0.000 0.000 1.000 rg"),
+        "paragraph-mark 0000FF must not paint bare Hello blue; mini pprrpr −0.33"
+    );
+}
+
+#[test]
+fn keeplines_moves_wrapped_para_off_the_widow_line() {
+    // sd_2517 Título1–5 / DocumentTitle set w:keepLines. Letter 792 / 72pt
+    // margins leave 648pt. Eight exact-72pt fillers leave 72pt — enough
+    // for one line of a two-line keepLines para. Word moves both lines
+    // to the next page; we park AlphaOne on the floor (y≈72). Glyphs
+    // paint as one-char Tj; unique A/B starters locate each line.
+    let mut body = String::new();
+    for i in 0..8 {
+        body.push_str(&format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"1440\" w:lineRule=\"exact\"/></w:pPr>\
+             <w:r><w:t>Fill{i}</w:t></w:r></w:p>"
+        ));
+    }
+    body.push_str(
+        "<w:p><w:pPr><w:keepLines/>\
+           <w:spacing w:after=\"0\" w:line=\"1440\" w:lineRule=\"exact\"/></w:pPr>\
+         <w:r><w:t>AlphaOne</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>BetaTwo</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, None)).expect("convert keepLines");
+    assert!(
+        pdf_page_count(&pdf) >= 2,
+        "two-line keepLines plus 8×72pt fillers need a second page; n={}",
+        pdf_page_count(&pdf)
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    let one_y = pdf_cm_tj_xy(&hay, "A")
+        .into_iter()
+        .map(|(_, y)| y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let two_y = pdf_cm_tj_xy(&hay, "B")
+        .into_iter()
+        .map(|(_, y)| y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        one_y > 400.0 && two_y > 400.0,
+        "keepLines must lift both lines off the 72pt widow slot onto the next page top; AlphaOne={one_y} BetaTwo={two_y}"
+    );
+    assert!(
+        (one_y - two_y).abs() < 80.0,
+        "keepLines pair must share a page (72pt exact gap); AlphaOne={one_y} BetaTwo={two_y}"
     );
 }
 
@@ -3878,6 +4101,34 @@ fn missing_pageref_paints_error_bookmark_not_defined() {
 }
 
 #[test]
+fn missing_pageref_error_is_bold_like_word_quartz() {
+    // sd_2517 / file_22 TOC lorem 9.01: Word paints
+    // "Error! Bookmark not defined." in bold. We kept the result run's
+    // Sumrio2 roman, so the error sat light vs Word's bold wrap.
+    let body = "\
+         <w:p>\
+           <w:r><w:t>Label </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> PAGEREF _Gone \\h </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+           <w:r><w:t>1</w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert bold Error!");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("/Calibri-Bold"),
+        "Word field-error is bold; hay tail {}",
+        &hay[hay.len().saturating_sub(240)..]
+    );
+    let painted = pdf_winansi_text(&pdf);
+    assert!(
+        painted.contains("Error! Bookmark not defined."),
+        "error text still paints; painted={painted}"
+    );
+}
+
+#[test]
 fn official_sd_2517_toc_missing_pagerefs_paint_error_bookmark_not_defined() {
     // Word p3 wraps PAGEREF _Toc218523836/_Toc218523837 as
     // "Error! Bookmark not defined." (lorem 9.01–9.02). Cached 9-1
@@ -5970,6 +6221,48 @@ fn official_potpourri_gridtable_shared_vertical_stays_stacked_after_mini_sharede
     assert!(
         keys.windows(2).any(|pair| pair[0] == pair[1]),
         "mini shared-edge skip was ITT-neg (comments-lots −0.16); keep stacked; keys={keys:?}"
+    );
+}
+
+fn black_vertical_keys(pdf: &[u8]) -> Vec<(i32, i32)> {
+    let mut keys: Vec<(i32, i32)> =
+        pdf_fill_boxes_in(&String::from_utf8_lossy(pdf), 0.000, 0.000, 0.000)
+            .into_iter()
+            .filter(|(_, _, w, h)| *w < 2.0 && *h > 4.0)
+            .map(|(x, y, _, _)| ((x * 2.0).round() as i32, (y * 2.0).round() as i32))
+            .collect();
+    keys.sort_unstable();
+    keys
+}
+
+#[test]
+fn tblborders_shared_vertical_stays_stacked_after_mini_inside() {
+    // Word paints each insideV once (LIGHT 64 vs 44). Skipping interior
+    // left/top (mini 271–272) lifted no-redline +0.015/+0.006 but dropped
+    // redline mean −0.005 (file_146 −0.73). Keep stacked.
+    let body = "<w:tbl><w:tblPr><w:tblBorders>\
+           <w:top w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+           <w:left w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+           <w:bottom w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+           <w:right w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+           <w:insideH w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+           <w:insideV w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+         </w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2337\"/><w:gridCol w:w=\"2337\"/></w:tblGrid>\
+         <w:tr>\
+           <w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc>\
+         </w:tr>\
+         <w:tr>\
+           <w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:t>D</w:t></w:r></w:p></w:tc>\
+         </w:tr>\
+         </w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert tblBorders lattice");
+    let keys = black_vertical_keys(&pdf);
+    assert!(
+        keys.windows(2).any(|pair| pair[0] == pair[1]),
+        "mini insideV skip was redline ITT-neg; keep left+right stacked; keys={keys:?}"
     );
 }
 
@@ -8369,6 +8662,124 @@ fn table_cell_trailing_empty_para_is_not_a_blank_line() {
 }
 
 #[test]
+fn table_cell_empty_pbdr_paints_signature_rule_after_mini_78() {
+    // file_146 / sample_iter2 Sign-off cells: EigenPal, Maintainer
+    // (after=320), empty <w:p> with pBdr bottom E2E8F0 (the signature
+    // line), then "signature · date". mini 78 skipped every empty cell
+    // para, so Word's rule vanished and both Sign-off tables packed
+    // onto page 6 (Word page 7 is the second table). Keep pBdr empties;
+    // plain interior empties stay skipped.
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"4680\"/></w:tblGrid>\
+         <w:tr><w:tc>\
+           <w:p><w:r><w:t>EigenPal</w:t></w:r></w:p>\
+           <w:p><w:pPr><w:spacing w:after=\"320\"/></w:pPr>\
+             <w:r><w:t>Maintainer</w:t></w:r></w:p>\
+           <w:p><w:pPr><w:pBdr>\
+             <w:bottom w:val=\"single\" w:sz=\"3\" w:space=\"1\" w:color=\"E2E8F0\"/>\
+           </w:pBdr><w:spacing w:after=\"60\"/></w:pPr></w:p>\
+           <w:p><w:r><w:t>signature</w:t></w:r></w:p>\
+         </w:tc></w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert empty pBdr cell para");
+    let bars = pdf_fill_rects(&pdf, 0.886, 0.910, 0.941);
+    assert!(
+        bars.iter()
+            .any(|(w, h)| *w > 100.0 && (0.20..0.40).contains(h)),
+        "Word Sign-off empty pBdr is an E2E8F0 hairline; bars={bars:?}"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    let e_y = pdf_cm_tj_xy(&hay, "E")
+        .into_iter()
+        .map(|(_, y)| y)
+        .fold(0.0_f32, f32::max);
+    let s_y = pdf_cm_tj_xy(&hay, "s")
+        .into_iter()
+        .map(|(_, y)| y)
+        .fold(0.0_f32, f32::max);
+    let gap = (e_y - s_y).abs();
+    assert!(
+        gap > 30.0,
+        "empty pBdr must occupy a line between EigenPal and signature; E={e_y} s={s_y} gap={gap}"
+    );
+}
+
+#[test]
+fn table_cell_after_320_stays_line_box_after_mini_300() {
+    // Word Sign-off Maintainer after=320 is 16pt. Honoring cell after
+    // ≥10pt (mini 300–302) was no-redline +0.008/+0.016 but redline
+    // mean −0.010 (file_78_file_79 −0.49). Keep the \\n line box.
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"4680\"/></w:tblGrid>\
+         <w:tr><w:tc>\
+           <w:p><w:pPr><w:spacing w:after=\"320\"/></w:pPr>\
+             <w:r><w:t>AlphaGap</w:t></w:r></w:p>\
+           <w:p><w:r><w:t>BetaGap</w:t></w:r></w:p>\
+         </w:tc></w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert cell after=320");
+    let hay = String::from_utf8_lossy(&pdf);
+    let a_y = pdf_cm_tj_xy(&hay, "A")
+        .into_iter()
+        .map(|(_, y)| y)
+        .fold(0.0_f32, f32::max);
+    let b_y = pdf_cm_tj_xy(&hay, "B")
+        .into_iter()
+        .map(|(_, y)| y)
+        .fold(0.0_f32, f32::max);
+    let gap = (a_y - b_y).abs();
+    assert!(
+        gap < 20.0,
+        "mini 300 cell after=320 was RL ITT-neg; keep line box; A={a_y} B={b_y} gap={gap}"
+    );
+}
+
+#[test]
+fn table_cell_listing_after_80_stays_collapsed_after_mini_188() {
+    // Code-listing cells use after=80 (4pt) on every line. Honoring that
+    // globally is mini 188 (median −2.20). Keep the 9.5 line box.
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>\
+         <w:tr><w:tc>\
+           <w:p><w:pPr><w:spacing w:after=\"80\"/></w:pPr>\
+             <w:r><w:rPr><w:rFonts w:ascii=\"Courier New\"/>\
+               <w:sz w:val=\"19\"/></w:rPr><w:t>importCss</w:t></w:r></w:p>\
+           <w:p><w:pPr><w:spacing w:after=\"80\"/></w:pPr>\
+             <w:r><w:rPr><w:rFonts w:ascii=\"Courier New\"/>\
+               <w:sz w:val=\"19\"/></w:rPr><w:t>functionApp</w:t></w:r></w:p>\
+         </w:tc></w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert listing after=80");
+    let ys = distinct_tf_ys(&pdf, "9.50 Tf");
+    assert_eq!(ys.len(), 2, "two listing lines; ys={ys:?}");
+    let gap = (ys[0] - ys[1]).abs();
+    assert!(
+        gap < 20.0,
+        "after=80 listing must stay a 9.5 line box; gap={gap} ys={ys:?}"
+    );
+}
+
+#[test]
+fn official_file_146_second_signoff_table_is_on_page_seven() {
+    // Word p6 ends with the first Sign-off table + the next heading;
+    // p7 is the duplicate EigenPal/Contributor table. Empty pBdr
+    // signature lines (not after=320 — mini 300 RL −0.010) overflow
+    // table 2. Keep 7pp.
+    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
+    let pdf =
+        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
+    let pages = pdf_content_streams(&pdf);
+    assert_eq!(pages.len(), 7, "Word file_146 is 7 content streams");
+    let p6 = pdf_winansi_text(pages[5].as_bytes());
+    let p7 = pdf_winansi_text(pages[6].as_bytes());
+    assert!(
+        p6.contains("EigenPal"),
+        "Word p6 still has the first Sign-off table; p6 len {}",
+        p6.len()
+    );
+    assert!(
+        p7.contains("EigenPal") && p7.len() < 800,
+        "Word p7 is the second Sign-off table only; p7={p7} len={}",
+        p7.len()
+    );
+}
+
+#[test]
 fn cell_tcmar_left_overrides_tblcellmar() {
     // file_146 / 175 / 176 / sample code listing: tblCellMar left=10 twips
     // but the cell has tcMar left=200 (10pt). Word paints Courier at
@@ -9006,6 +9417,28 @@ fn adjacent_rev_paras_share_one_change_bar() {
     assert!(
         tall > 22.0,
         "adjacent ins paras must merge into one bar, not two ~12pt ticks; hs={hs:?}"
+    );
+}
+
+#[test]
+fn rev_bar_stays_split_across_empty_spacer_after_mini_emptymerge() {
+    // Word file_146 p2 merges 19pt empty spacers. Slack 40 (mini 279)
+    // lifted file_146 +0.039 / redline +0.015 but no-redline median
+    // −0.006 and Cicero −0.037. Keep 16pt ticks.
+    let pdf = docx_to_pdf(&minimal_docx_body(
+        "<w:p><w:ins w:id=\"1\" w:author=\"a\"><w:r>\
+           <w:t>first revised paragraph</w:t></w:r></w:ins></w:p>\
+         <w:p><w:pPr><w:spacing w:before=\"60\" w:after=\"60\"/></w:pPr></w:p>\
+         <w:p><w:ins w:id=\"2\" w:author=\"a\"><w:r>\
+           <w:t>second revised paragraph</w:t></w:r></w:ins></w:p>\
+         <w:sectPr/>",
+    ))
+    .expect("convert ins paras with empty spacer");
+    let hs = pdf_vertical_rule_hs(&pdf);
+    let tall = hs.iter().copied().fold(0.0_f32, f32::max);
+    assert!(
+        tall < 28.0,
+        "mini empty-spacer merge was ITT-neg (Cicero −0.037); keep split ticks; hs={hs:?}"
     );
 }
 

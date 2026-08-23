@@ -212,12 +212,18 @@ struct ParaStyle {
     /// `w:keepNext` — stay with the next paragraph or the start of the
     /// following table (Heading1 + capability matrix on comments-lots).
     keep_next: bool,
+    /// `w:keepLines` — do not split this paragraph across a page
+    /// (sd_2517 Título1–5 / DocumentTitle).
+    keep_lines: bool,
     /// `w:outlineLvl` (Heading 1 = 0). Used with `pgNumType chapStyle`.
     outline_lvl: Option<u32>,
     /// Numbering counter captured when this para is a chapter heading.
     chap_num: Option<String>,
     /// `w:pPr/w:shd` fill (paragraph extents, not the glyph box).
     fill: Option<[f32; 3]>,
+    /// Numbering `w:lvlJc=right` — marker sits in the hanging gutter
+    /// with its right edge on the body start.
+    list_jc_right: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -388,9 +394,11 @@ impl Defaults {
                 tab_stops: Vec::new(),
                 page_break_before: false,
                 keep_next: false,
+                keep_lines: false,
                 outline_lvl: None,
                 chap_num: None,
                 fill: None,
+                list_jc_right: false,
             },
             page: PageSetup {
                 width: 612.0,
@@ -436,6 +444,8 @@ struct TextRun {
     /// `PAGEREF _Toc…` bookmark. Cached `w:t` is a first-pass guess;
     /// Word Save-as-PDF patches it from the bookmark’s layout page.
     pageref: Option<String>,
+    /// Empty cell-para `w:pBdr` bottom (file_146 Sign-off signature rule).
+    rule: Option<([f32; 3], f32)>,
 }
 
 impl TextRun {
@@ -447,6 +457,7 @@ impl TextRun {
             field: FieldKind::None,
             rev: false,
             comments: Vec::new(),
+            rule: None,
         }
     }
 }
@@ -482,6 +493,8 @@ struct TableGeom {
     /// No `tblStyle`. Shaded callouts keep docDefaults after + chrome
     /// inside the cell (Word Demo boxes are ~55pt, not 3×11×1.15).
     unstyled: bool,
+    /// Leading `w:trPr/w:tblHeader` rows Word repeats after a page break.
+    header_rows: usize,
 }
 
 /// Preferred table width from `tblW`. Word `pct` is 50ths of a percent
@@ -705,6 +718,55 @@ fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop]) -> TabStop {
 
 fn next_tab_x(x: f32, origin: f32, stops: &[TabStop]) -> f32 {
     next_tab_stop(x, origin, stops).pos
+}
+
+/// `w:tabs/w:tab`. `val=num` is a numbering left stop (ECMA-376 17.3.1.38).
+fn parse_tab_stops(dom: &Dom, ppr: NodeId) -> Vec<TabStop> {
+    let Some(tabs) = first_named(dom, ppr, "tabs") else {
+        return Vec::new();
+    };
+    let mut stops = Vec::new();
+    for tab in dom.elements(tabs, Some(&W::name("tab"))) {
+        let val = attr_any(dom, tab, "val").unwrap_or("left");
+        if val == "clear" || val == "bar" {
+            continue;
+        }
+        if let Some(pos) = attr_any(dom, tab, "pos").and_then(|s| s.parse::<f32>().ok()) {
+            let align = match val {
+                "right" => TabAlign::Right,
+                "center" => TabAlign::Center,
+                _ => TabAlign::Left,
+            };
+            let leader = match attr_any(dom, tab, "leader").unwrap_or("") {
+                "dot" | "middleDot" => TabLeader::Dot,
+                _ => TabLeader::None,
+            };
+            stops.push(TabStop {
+                pos: twip(pos),
+                align,
+                leader,
+            });
+        }
+    }
+    stops.sort_by(|a, b| {
+        a.pos
+            .partial_cmp(&b.pos)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    stops
+}
+
+fn merge_tab_stops(into: &mut Vec<TabStop>, extra: &[TabStop]) {
+    for &stop in extra {
+        if !into.iter().any(|t| (t.pos - stop.pos).abs() < 0.5) {
+            into.push(stop);
+        }
+    }
+    into.sort_by(|a, b| {
+        a.pos
+            .partial_cmp(&b.pos)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 }
 
 /// OOXML length: bare number is twips; `pt` / `in` / `cm` / `mm` are already units.
@@ -1295,42 +1357,17 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
     if first_named(dom, ppr, "contextualSpacing").is_some() {
         style.contextual = !val_is_false(dom, first_named(dom, ppr, "contextualSpacing"));
     }
-    if let Some(tabs) = first_named(dom, ppr, "tabs") {
-        let mut stops = Vec::new();
-        for tab in dom.elements(tabs, Some(&W::name("tab"))) {
-            let val = attr_any(dom, tab, "val").unwrap_or("left");
-            if val == "clear" || val == "bar" {
-                continue;
-            }
-            if let Some(pos) = attr_any(dom, tab, "pos").and_then(|s| s.parse::<f32>().ok()) {
-                let align = match val {
-                    "right" => TabAlign::Right,
-                    "center" => TabAlign::Center,
-                    _ => TabAlign::Left,
-                };
-                let leader = match attr_any(dom, tab, "leader").unwrap_or("") {
-                    "dot" | "middleDot" => TabLeader::Dot,
-                    _ => TabLeader::None,
-                };
-                stops.push(TabStop {
-                    pos: twip(pos),
-                    align,
-                    leader,
-                });
-            }
-        }
-        stops.sort_by(|a, b| {
-            a.pos
-                .partial_cmp(&b.pos)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        style.tab_stops = stops;
+    if first_named(dom, ppr, "tabs").is_some() {
+        style.tab_stops = parse_tab_stops(dom, ppr);
     }
     if first_named(dom, ppr, "pageBreakBefore").is_some() {
         style.page_break_before = !val_is_false(dom, first_named(dom, ppr, "pageBreakBefore"));
     }
     if first_named(dom, ppr, "keepNext").is_some() {
         style.keep_next = !val_is_false(dom, first_named(dom, ppr, "keepNext"));
+    }
+    if first_named(dom, ppr, "keepLines").is_some() {
+        style.keep_lines = !val_is_false(dom, first_named(dom, ppr, "keepLines"));
     }
     if let Some(lvl) = first_named(dom, ppr, "outlineLvl")
         && let Some(v) = attr_any(dom, lvl, "val").and_then(|s| s.parse::<u32>().ok())
@@ -1518,6 +1555,10 @@ struct NumLevel {
     /// `w:suff=nothing` (sd_2517 Título1 `Article %2`). Default is a
     /// trailing space so existing markers stay `1. `.
     suff_nothing: bool,
+    /// `w:lvlJc=right`: marker right edge at hanging end (body start).
+    jc_right: bool,
+    /// Numbering `w:tabs` (`val=num` is a left stop at hanging indent).
+    tab_stops: Vec<TabStop>,
 }
 
 #[derive(Default)]
@@ -1579,6 +1620,8 @@ impl Numbering {
             },
             family: parent.family,
             suff_nothing: parent.suff_nothing,
+            jc_right: parent.jc_right,
+            tab_stops: parent.tab_stops,
         };
         self.levels
             .entry(abs.to_string())
@@ -1668,8 +1711,15 @@ impl Numbering {
             };
             out = out.replace(&token, &format_num(fmt, val));
         }
-        if !lvl.suff_nothing && !out.ends_with(' ') {
-            out.push(' ');
+        if !lvl.suff_nothing && !out.ends_with(' ') && !out.ends_with('\t') {
+            // Default `w:suff` is tab. Only emit `\t` when the level
+            // carries an explicit numbering tab; synthesizing a stop at
+            // hanging packed sd_2517 107→106 (mini sechang).
+            if lvl.tab_stops.is_empty() {
+                out.push(' ');
+            } else {
+                out.push('\t');
+            }
         }
         out
     }
@@ -1836,6 +1886,9 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
             let suff_nothing = first_named(&dom, lvl, "suff")
                 .and_then(|n| attr_any(&dom, n, "val"))
                 .is_some_and(|v| v.eq_ignore_ascii_case("nothing"));
+            let tab_stops = first_named(&dom, lvl, "pPr")
+                .map(|ppr| parse_tab_stops(&dom, ppr))
+                .unwrap_or_default();
             lvls.insert(
                 ilvl,
                 NumLevel {
@@ -1846,6 +1899,10 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
                     hanging,
                     family,
                     suff_nothing,
+                    jc_right: first_named(&dom, lvl, "lvlJc")
+                        .and_then(|n| attr_any(&dom, n, "val"))
+                        .is_some_and(|v| v.eq_ignore_ascii_case("right")),
+                    tab_stops,
                 },
             );
         }
@@ -2400,6 +2457,26 @@ fn table_row_height_pt(
     }
 }
 
+fn keep_lines_need_pt(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle, width: f32) -> f32 {
+    if !style.keep_lines {
+        return 0.0;
+    }
+    let lines = wrap_runs(fonts, runs, width, width, false);
+    if lines.len() <= 1 {
+        return 0.0;
+    }
+    let size = runs.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
+    let line_h = style.line_exact.unwrap_or_else(|| {
+        let m = if style.line_mult > 0.0 {
+            style.line_mult
+        } else {
+            1.0
+        };
+        size * m
+    });
+    line_h * lines.len() as f32
+}
+
 fn keep_next_follow_pt(fonts: &Fonts, avail: f32, block: &Block) -> f32 {
     match block {
         Block::Table {
@@ -2576,6 +2653,8 @@ fn paragraph_block(
                     pstyle.indent_first = -lvl.hanging;
                 }
             }
+            pstyle.list_jc_right = lvl.jc_right;
+            merge_tab_stops(&mut pstyle.tab_stops, &lvl.tab_stops);
         }
         runs.insert(0, TextRun::new(marker, marker_style));
     }
@@ -2642,7 +2721,10 @@ fn apply_missing_pagerefs(runs: &[TextRun], known: &HashSet<String>) -> Vec<Text
             if let Some(name) = run.pageref.as_deref()
                 && !known.contains(name)
             {
+                // Word Quartz paints the missing-PAGEREF result in bold
+                // (sd_2517 / file_22 TOC lorem 9.01–9.02).
                 out.text = BOOKMARK_NOT_DEFINED.to_string();
+                out.style.bold = true;
             }
             out
         })
@@ -2841,6 +2923,8 @@ fn table_block(
     let mut raw_rows: Vec<Vec<RawCell>> = Vec::new();
     let mut row_min = Vec::new();
     let mut row_exact = Vec::new();
+    let mut header_rows = 0usize;
+    let mut still_header = true;
     // Direct `w:tr` only — descendants() would flatten nested tables into this one.
     for row in dom.elements(table, Some(&W::tr())) {
         let mut cells = Vec::new();
@@ -2874,9 +2958,13 @@ fn table_block(
                 // Counting that as a \\n doubled every row (table median).
                 // Interior empties are Word-taller (file_146 listing +3
                 // ITT) but shipping them dropped eigenpal_2 −8.3 /
-                // sample −2.5 (mini 78 and mini empty). Skip all empty
-                // cell paras.
-                if mark.is_empty() && runs.iter().all(|run| run.text.trim().is_empty()) {
+                // sample −2.5 (mini 78 and mini empty). Skip empty
+                // cell paras unless they paint `w:pBdr` (Sign-off
+                // signature line: empty p + bottom E2E8F0).
+                let empty_ink =
+                    mark.is_empty() && runs.iter().all(|run| run.text.trim().is_empty());
+                let cell_rule = pstyle.border_bottom.map(|(c, w, _)| (c, w));
+                if empty_ink && cell_rule.is_none() {
                     continue;
                 }
                 if cell_para == 0 {
@@ -2891,6 +2979,11 @@ fn table_block(
                     cell_runs.push(TextRun::new(mark, r.clone()));
                 }
                 cell_runs.extend(runs);
+                if empty_ink && let Some((color, width)) = cell_rule {
+                    let mut rule = TextRun::new(" ", r.clone());
+                    rule.rule = Some((color, width));
+                    cell_runs.push(rule);
+                }
             }
             if cell_runs.is_empty() {
                 cell_runs = collect_runs_in(
@@ -2936,6 +3029,14 @@ fn table_block(
             let (h, exact) = row_height_spec(dom, row);
             row_min.push(h);
             row_exact.push(exact);
+            let hdr = first_named(dom, row, "trPr")
+                .and_then(|pr| first_named(dom, pr, "tblHeader"))
+                .is_some_and(|n| !val_is_false(dom, Some(n)));
+            if still_header && hdr {
+                header_rows += 1;
+            } else {
+                still_header = false;
+            }
         }
     }
     let mut occupancy = 0usize;
@@ -2992,6 +3093,7 @@ fn table_block(
                 pad_v: table_pad_v(dom, table),
                 width: table_pref_width(dom, table),
                 unstyled,
+                header_rows,
             }
         },
     }
@@ -4891,9 +4993,11 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         tab_stops: Vec::new(),
         page_break_before: false,
         keep_next: false,
+        keep_lines: false,
         outline_lvl: None,
         chap_num: None,
         fill: None,
+        list_jc_right: false,
     };
     apply_ppr(dom, ppr, &mut style);
     style.align
@@ -5024,6 +5128,7 @@ fn collect_hf_rec(
                         rev: false,
                         comments: Vec::new(),
                         pageref: None,
+                        rule: None,
                     });
                 }
                 *scan = FieldScan::default();
@@ -5063,6 +5168,7 @@ fn collect_hf_rec(
                     rev: false,
                     comments: Vec::new(),
                     pageref: None,
+                    rule: None,
                 });
                 scan.emitted = true;
             }
@@ -5562,7 +5668,13 @@ impl<'a> Layout<'a> {
             if line_i == 0
                 && let Some(mark) = marker
             {
-                let mx = self.page.margin_l + indent - hanging + extra;
+                let mx = if style.list_jc_right {
+                    let mw = self.run_width_pt(mark, &mark.text);
+                    let body_x = self.page.margin_l + indent + extra;
+                    (body_x - mw).max(self.page.margin_l + extra)
+                } else {
+                    self.page.margin_l + indent - hanging + extra
+                };
                 self.paint_run(mark, mx, baseline);
             }
             if justify {
@@ -5684,6 +5796,9 @@ impl<'a> Layout<'a> {
             // Overlap or a gap under one body line. 30pt heading
             // gaps stay split (CiceroDo p2 Word is 395pt via those
             // gaps; merging them over-merged p3).
+            // Empty-spacer slack 40 (mini 279) lifted file_146 +0.039
+            // / redline +0.015 but no-redline median −0.006 and Cicero
+            // −0.037. Keep 16pt.
             let slack = 16.0;
             let near = bot <= existing_top + slack && top >= existing_bot - slack;
             if !near {
@@ -6693,149 +6808,179 @@ impl<'a> Layout<'a> {
         // no-redline median −0.011. Nested −216 twips is off the 60-stem.
         let table_left = self.page.margin_l + shift;
         let color = [0.0, 0.0, 0.0];
-        for (ri, row) in rows.iter().enumerate() {
+        let header_n = geom.header_rows.min(rows.len());
+        let header_h: f32 = row_h.iter().take(header_n).copied().sum();
+        for ri in 0..rows.len() {
             let rh = row_h[ri];
-            self.ensure(rh);
-            self.at_page_top = false;
-            self.y -= rh;
-            let y_top = self.y + rh;
-            let size = if line_mult <= 1.01 && col_w.len() == 2 {
-                table_row_line_size(row, line_mult)
+            let will_break = header_n > 0
+                && ri >= header_n
+                && !self.at_page_top
+                && self.y - rh - header_h < self.body_floor;
+            self.ensure(rh + if will_break { header_h } else { 0.0 });
+            let paint: Vec<usize> = if will_break {
+                (0..header_n).chain(std::iter::once(ri)).collect()
             } else {
-                11.0
+                vec![ri]
             };
-            let line_box = size * line_mult;
-            let face_id = row
-                .iter()
-                .find_map(|cell| {
-                    cell.runs.iter().find_map(|run| {
-                        (!run.text.is_empty()).then(|| {
-                            self.fonts
-                                .resolve(&run.style.family, run.style.bold, run.style.italic)
+            for ri in paint {
+                let row = &rows[ri];
+                let rh = row_h[ri];
+                self.at_page_top = false;
+                self.y -= rh;
+                let y_top = self.y + rh;
+                let size = if line_mult <= 1.01 && col_w.len() == 2 {
+                    table_row_line_size(row, line_mult)
+                } else {
+                    11.0
+                };
+                let line_box = size * line_mult;
+                let face_id = row
+                    .iter()
+                    .find_map(|cell| {
+                        cell.runs.iter().find_map(|run| {
+                            (!run.text.is_empty()).then(|| {
+                                self.fonts.resolve(
+                                    &run.style.family,
+                                    run.style.bold,
+                                    run.style.italic,
+                                )
+                            })
                         })
                     })
-                })
-                .unwrap_or(FaceId::CarlitoRegular);
-            let face = self.fonts.get(face_id);
-            for cell in row {
-                let x: f32 = table_left + col_w.iter().take(cell.col).copied().sum::<f32>();
-                let w: f32 = (0..cell.colspan)
-                    .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
-                    .sum();
-                let h: f32 = row_h.iter().skip(ri).take(cell.rowspan.max(1)).sum();
-                let bottom = y_top - h;
-                if let Some(fill) = cell.fill {
-                    self.current().ops.push(Op::FillRect {
-                        x,
-                        y: bottom,
-                        w,
-                        h,
-                        color: fill,
-                    });
-                }
-                let last_row = ri + cell.rowspan.max(1) >= rows.len();
-                let last_col = cell.col + cell.colspan >= col_w.len();
-                self.stroke_cell(
-                    [x, bottom, w, h],
-                    color,
-                    borders,
-                    cell.borders,
-                    [ri == 0, last_row, cell.col == 0, last_col],
-                );
-                // Per-run style. First-run-only paint mashed sample_document
-                // npm/github cells (black label + 2563EB hyperlink).
-                let pad_l = cell.pad_l;
-                let pad_r = cell.pad_r;
-                let lines = wrap_runs(
-                    self.fonts,
-                    &cell.runs,
-                    cell_wrap_width(cell, w),
-                    cell_wrap_width(cell, w),
-                    false,
-                );
-                // Win-ascent already places the first baseline; the extra
-                // -3pt (tuned for typo 1536) clipped the second cell line.
-                // 1-line tcMar that exceeds chrome (sample_iter2 npm
-                // 100+100 vs 8pt) insets the inner fill 5pt, matching
-                // Word. Multi-line / chrome-sized pads stay flush: run
-                // 188's global inset packed the 3pp sample cluster.
-                let chrome = if line_mult <= 1.01 { 5.0_f32 } else { 8.0_f32 };
-                let chrome = chrome.max(geom.pad_v);
-                let one_line = lines.len() == 1;
-                // Do not inset when tcMar 80+80 == chrome (file_146
-                // 1E293B pills): mini 257–260 no-redline +0.033/+0.102
-                // but redline mean −0.005 (file_34 −0.25). Keep flush
-                // tops; 100+100 still insets.
-                let inset = if one_line && cell.pad_t + cell.pad_b > chrome + 0.01 {
-                    cell.pad_t
-                } else {
-                    0.0
-                };
-                let mut ty = y_top - inset - face.ascent_pt(size);
-                for line in lines {
-                    if ty < bottom {
-                        break;
-                    }
-                    if line.iter().all(|r| r.text.is_empty()) {
-                        ty -= line_box;
-                        continue;
-                    }
+                    .unwrap_or(FaceId::CarlitoRegular);
+                let face = self.fonts.get(face_id);
+                for cell in row {
+                    let x: f32 = table_left + col_w.iter().take(cell.col).copied().sum::<f32>();
+                    let w: f32 = (0..cell.colspan)
+                        .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
+                        .sum();
+                    let h: f32 = row_h.iter().skip(ri).take(cell.rowspan.max(1)).sum();
+                    let bottom = y_top - h;
                     if let Some(fill) = cell.fill {
-                        // Word Quartz: cell shd plus an inset fill per line
-                        // (tblCellMar 108 twips). comments-lots p3 is 35
-                        // D3DFEE rects, not 9 cell-only paints.
-                        // GridTable4 band1Horz is cell-height × x-inset
-                        // (14.64/14.64), not a shorter line_box inner.
-                        let inner_w = (w - pad_l - pad_r).max(1.0);
-                        let (iy, ih) = if one_line && inset == 0.0 && cell.style_fill {
-                            (bottom, h)
-                        } else {
-                            (ty - (line_box - face.ascent_pt(size)), line_box)
-                        };
                         self.current().ops.push(Op::FillRect {
-                            x: x + pad_l,
-                            y: iy,
-                            w: inner_w,
-                            h: ih,
+                            x,
+                            y: bottom,
+                            w,
+                            h,
                             color: fill,
                         });
                     }
-                    let line_w: f32 = line
-                        .iter()
-                        .map(|run| {
-                            if run.text.is_empty() {
-                                return 0.0;
-                            }
-                            let fid = self.fonts.resolve(
-                                &run.style.family,
-                                run.style.bold,
-                                run.style.italic,
-                            );
-                            self.fonts
-                                .get(fid)
-                                .width_pt(&run.text, run.style.paint_size())
-                        })
-                        .sum();
-                    let inner = (w - pad_l - pad_r).max(0.0);
-                    let extra = match cell.align {
-                        Align::Center => ((inner - line_w) / 2.0).max(0.0),
-                        Align::Right => (inner - line_w).max(0.0),
-                        Align::Left | Align::Justify => 0.0,
+                    let last_row = ri + cell.rowspan.max(1) >= rows.len();
+                    let last_col = cell.col + cell.colspan >= col_w.len();
+                    self.stroke_cell(
+                        [x, bottom, w, h],
+                        color,
+                        borders,
+                        cell.borders,
+                        [ri == 0, last_row, cell.col == 0, last_col],
+                    );
+                    // Per-run style. First-run-only paint mashed sample_document
+                    // npm/github cells (black label + 2563EB hyperlink).
+                    let pad_l = cell.pad_l;
+                    let pad_r = cell.pad_r;
+                    let lines = wrap_runs(
+                        self.fonts,
+                        &cell.runs,
+                        cell_wrap_width(cell, w),
+                        cell_wrap_width(cell, w),
+                        false,
+                    );
+                    // Win-ascent already places the first baseline; the extra
+                    // -3pt (tuned for typo 1536) clipped the second cell line.
+                    // 1-line tcMar that exceeds chrome (sample_iter2 npm
+                    // 100+100 vs 8pt) insets the inner fill 5pt, matching
+                    // Word. Multi-line / chrome-sized pads stay flush: run
+                    // 188's global inset packed the 3pp sample cluster.
+                    let chrome = if line_mult <= 1.01 { 5.0_f32 } else { 8.0_f32 };
+                    let chrome = chrome.max(geom.pad_v);
+                    let one_line = lines.len() == 1;
+                    // Do not inset when tcMar 80+80 == chrome (file_146
+                    // 1E293B pills): mini 257–260 no-redline +0.033/+0.102
+                    // but redline mean −0.005 (file_34 −0.25). Keep flush
+                    // tops; 100+100 still insets.
+                    let inset = if one_line && cell.pad_t + cell.pad_b > chrome + 0.01 {
+                        cell.pad_t
+                    } else {
+                        0.0
                     };
-                    let mut tx = x + pad_l + extra;
-                    self.clip_right = Some(x + w);
-                    for run in &line {
-                        if run.text.is_empty() {
+                    let mut ty = y_top - inset - face.ascent_pt(size);
+                    for line in lines {
+                        if ty < bottom {
+                            break;
+                        }
+                        if let Some((color, width)) = line.iter().find_map(|r| r.rule) {
+                            // file_146 Sign-off: empty cell para pBdr bottom
+                            // is a cell-wide hairline, not a space glyph.
+                            let inner_w = (w - pad_l - pad_r).max(1.0);
+                            self.current().ops.push(Op::FillRect {
+                                x: x + pad_l,
+                                y: ty,
+                                w: inner_w,
+                                h: width,
+                                color,
+                            });
+                        }
+                        if line.iter().all(|r| r.text.trim().is_empty()) {
+                            ty -= line_box;
                             continue;
                         }
-                        tx = self.paint_run(run, tx, ty);
+                        if let Some(fill) = cell.fill {
+                            // Word Quartz: cell shd plus an inset fill per line
+                            // (tblCellMar 108 twips). comments-lots p3 is 35
+                            // D3DFEE rects, not 9 cell-only paints.
+                            // GridTable4 band1Horz is cell-height × x-inset
+                            // (14.64/14.64), not a shorter line_box inner.
+                            let inner_w = (w - pad_l - pad_r).max(1.0);
+                            let (iy, ih) = if one_line && inset == 0.0 && cell.style_fill {
+                                (bottom, h)
+                            } else {
+                                (ty - (line_box - face.ascent_pt(size)), line_box)
+                            };
+                            self.current().ops.push(Op::FillRect {
+                                x: x + pad_l,
+                                y: iy,
+                                w: inner_w,
+                                h: ih,
+                                color: fill,
+                            });
+                        }
+                        let line_w: f32 = line
+                            .iter()
+                            .map(|run| {
+                                if run.text.is_empty() {
+                                    return 0.0;
+                                }
+                                let fid = self.fonts.resolve(
+                                    &run.style.family,
+                                    run.style.bold,
+                                    run.style.italic,
+                                );
+                                self.fonts
+                                    .get(fid)
+                                    .width_pt(&run.text, run.style.paint_size())
+                            })
+                            .sum();
+                        let inner = (w - pad_l - pad_r).max(0.0);
+                        let extra = match cell.align {
+                            Align::Center => ((inner - line_w) / 2.0).max(0.0),
+                            Align::Right => (inner - line_w).max(0.0),
+                            Align::Left | Align::Justify => 0.0,
+                        };
+                        let mut tx = x + pad_l + extra;
+                        self.clip_right = Some(x + w);
+                        for run in &line {
+                            if run.text.is_empty() {
+                                continue;
+                            }
+                            tx = self.paint_run(run, tx, ty);
+                        }
+                        self.clip_right = None;
+                        ty -= line_box;
                     }
-                    self.clip_right = None;
-                    ty -= line_box;
                 }
-            }
-            if row.iter().any(|c| c.runs.iter().any(|r| r.rev)) {
-                self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
+                if row.iter().any(|c| c.runs.iter().any(|r| r.rev)) {
+                    self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
+                }
             }
         }
         // Styled TableGrid / body tables keep 4pt chrome. Layout sets
@@ -7380,6 +7525,7 @@ fn wrap_runs(
                 rev: run.rev,
                 comments: run.comments.clone(),
                 pageref: run.pageref.clone(),
+                rule: run.rule,
             });
         }
         for part in parts {
@@ -7392,6 +7538,7 @@ fn wrap_runs(
                     rev: run.rev,
                     comments: Vec::new(),
                     pageref: None,
+                    rule: run.rule,
                 });
             }
         }
@@ -7430,7 +7577,12 @@ fn wrap_runs_segment(
         let fid = fonts.resolve(&run.style.family, run.style.bold, run.style.italic);
         let face = fonts.get(fid);
         for tok in ws_tokens(&run.text) {
-            let w = face.width_pt(tok, run.style.paint_size());
+            // Tabs jump at paint time; counting .notdef width packed wraps.
+            let w = if tok.contains('\t') {
+                0.0
+            } else {
+                face.width_pt(tok, run.style.paint_size())
+            };
             let is_space = tok.chars().all(char::is_whitespace);
             let limit = if line_i == 0 { first_width } else { width };
             // Unbreakable tokens wider than the cell overflow (Test 7).
@@ -7456,6 +7608,7 @@ fn wrap_runs_segment(
                     rev: run.rev,
                     comments: run.comments.clone(),
                     pageref: run.pageref.clone(),
+                    rule: run.rule,
                 });
             }
         }
@@ -7530,6 +7683,15 @@ fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> V
                         // not orphaned above a table row that then wraps
                         // (comments-lots Heading1 + capability header).
                         lay.ensure(style.before + sz * 1.2 + 8.0 + follow + 2.0);
+                    }
+                }
+                if style.keep_lines {
+                    let width =
+                        (lay.content_width() - style.indent_left - style.indent_right).max(40.0);
+                    let need = keep_lines_need_pt(lay.fonts, runs, &style, width);
+                    let page_h = (lay.page.height - lay.body_top - lay.body_floor).max(1.0);
+                    if need > 0.0 && need < page_h {
+                        lay.ensure(style.before + need);
                     }
                 }
                 let has_ink = runs.iter().any(|r| !r.text.trim().is_empty());
@@ -8545,6 +8707,8 @@ mod numbering_tests {
                 hanging: 0.0,
                 family: String::new(),
                 suff_nothing: false,
+                jc_right: false,
+                tab_stops: Vec::new(),
             },
         );
         n.levels.insert("0".into(), lvls);
@@ -8580,6 +8744,8 @@ mod numbering_tests {
                 hanging: 0.0,
                 family: String::new(),
                 suff_nothing: false,
+                jc_right: false,
+                tab_stops: Vec::new(),
             },
         );
         lvls.insert(
@@ -8592,6 +8758,8 @@ mod numbering_tests {
                 hanging: 0.0,
                 family: String::new(),
                 suff_nothing: false,
+                jc_right: false,
+                tab_stops: Vec::new(),
             },
         );
         n.levels.insert("3".into(), lvls);
@@ -8625,6 +8793,8 @@ mod numbering_tests {
                 hanging: 0.0,
                 family: String::new(),
                 suff_nothing: false,
+                jc_right: false,
+                tab_stops: Vec::new(),
             },
         );
         lvls.insert(
@@ -8637,6 +8807,8 @@ mod numbering_tests {
                 hanging: 0.0,
                 family: String::new(),
                 suff_nothing: false,
+                jc_right: false,
+                tab_stops: Vec::new(),
             },
         );
         lvls.insert(
@@ -8649,6 +8821,8 @@ mod numbering_tests {
                 hanging: 0.0,
                 family: String::new(),
                 suff_nothing: false,
+                jc_right: false,
+                tab_stops: Vec::new(),
             },
         );
         n.levels.insert("2".into(), lvls);
@@ -8677,6 +8851,8 @@ mod numbering_tests {
                 hanging: 0.0,
                 family: String::new(),
                 suff_nothing: false,
+                jc_right: false,
+                tab_stops: Vec::new(),
             },
         );
         lvls.insert(
@@ -8689,11 +8865,40 @@ mod numbering_tests {
                 hanging: 0.0,
                 family: String::new(),
                 suff_nothing: true,
+                jc_right: false,
+                tab_stops: Vec::new(),
             },
         );
         n.levels.insert("2".into(), lvls);
         n.next_marker("2", 0);
         assert_eq!(n.next_marker("2", 1), "Article One");
+    }
+
+    #[test]
+    fn default_suff_with_num_tab_appends_tab() {
+        let mut n = Numbering::default();
+        n.instances.insert("1".into(), "0".into());
+        let mut lvls = HashMap::new();
+        lvls.insert(
+            0,
+            NumLevel {
+                fmt: NumFmt::Decimal,
+                text: "Section %1".into(),
+                start: 1,
+                left: 90.0,
+                hanging: 90.0,
+                family: String::new(),
+                suff_nothing: false,
+                jc_right: false,
+                tab_stops: vec![TabStop {
+                    pos: 90.0,
+                    align: TabAlign::Left,
+                    leader: TabLeader::None,
+                }],
+            },
+        );
+        n.levels.insert("0".into(), lvls);
+        assert_eq!(n.next_marker("1", 0), "Section 1\t");
     }
 }
 
