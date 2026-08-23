@@ -12544,3 +12544,75 @@ fn track_revisions_ins_only_does_not_paint_balloon_pane() {
         "ins-only markup stays full-page; hs={hs:?}"
     );
 }
+
+/// Every `/Font` resource key on every page, in document order.
+fn font_resource_keys(pdf: &[u8]) -> Vec<Vec<String>> {
+    let text = String::from_utf8_lossy(pdf);
+    let mut pages = Vec::new();
+    let mut rest = text.as_ref();
+    while let Some(at) = rest.find("/Font <<") {
+        rest = &rest[at + "/Font <<".len()..];
+        let Some(end) = rest.find(">>") else { break };
+        let dict = &rest[..end];
+        rest = &rest[end..];
+        pages.push(
+            dict.split_whitespace()
+                .filter(|t| t.starts_with('/'))
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>(),
+        );
+    }
+    pages
+}
+
+/// CodeRabbit PR#4: `font_res` keyed each entry with `face.pdf_name()`, which
+/// `sanitize_pdf_name` derives by mapping every non-alphanumeric byte to `-`.
+/// Two override faces whose PostScript names differ only in punctuation
+/// (`Foo_Bar` / `Foo.Bar`) collapse to one key, so the page resource dictionary
+/// held a duplicate and a reader bound one of the faces to the wrong glyph
+/// mapping. Names stay readable — the suite reads face selection straight off
+/// the content stream — but no page dictionary may hold a duplicate key.
+#[test]
+fn font_resource_keys_are_unique_per_page() {
+    let pdf = docx_to_pdf(&minimal_docx(&["Alpha beta gamma"], None)).expect("convert");
+    let pages = font_resource_keys(&pdf);
+    assert!(!pages.is_empty(), "no /Font resource dictionary emitted");
+    for keys in &pages {
+        let mut sorted = keys.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            keys.len(),
+            "duplicate key in a page /Font dictionary: {keys:?}"
+        );
+    }
+}
+
+/// The page dictionary lists the faces the page paints, not every face in the
+/// document: a `Tf` operator may only name a font the page resources declare.
+#[test]
+fn page_font_dict_covers_every_font_the_page_selects() {
+    let pdf = docx_to_pdf(&minimal_docx(&["Alpha beta gamma"], None)).expect("convert");
+    let text = String::from_utf8_lossy(&pdf);
+    let declared: Vec<String> = font_resource_keys(&pdf).into_iter().flatten().collect();
+    assert!(!declared.is_empty(), "no /Font resource dictionary emitted");
+    let mut selected = 0usize;
+    for chunk in text.split("BT ").skip(1) {
+        let Some(tf) = chunk.split(" Tf").next() else {
+            continue;
+        };
+        let Some(name) = tf.split_whitespace().next() else {
+            continue;
+        };
+        if !name.starts_with('/') {
+            continue;
+        }
+        selected += 1;
+        assert!(
+            declared.iter().any(|d| d == name),
+            "content stream selects {name}, which no page /Font dictionary declares"
+        );
+    }
+    assert!(selected > 0, "no Tf operator found in the content stream");
+}

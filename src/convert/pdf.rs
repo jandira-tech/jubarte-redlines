@@ -195,10 +195,17 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
     // 1 catalog, 2 pages, 3 info
     let mut simple_need = Vec::new();
     let mut cid_need = Vec::new();
+    // `winansi_bytes` scans the text and allocates, and every text op needs the
+    // answer twice more below (resource name + string literal). Encode once
+    // here, indexed by `[page][op]`, and read it back in the emit loop.
+    let mut encodings: Vec<Vec<Option<Vec<u8>>>> = Vec::with_capacity(pages.len());
     for page in pages {
+        let mut page_enc: Vec<Option<Vec<u8>>> = Vec::with_capacity(page.ops.len());
         for op in &page.ops {
+            let mut enc = None;
             if let Op::Text { face, text, .. } | Op::Watermark { face, text, .. } = op {
-                if winansi_bytes(text).is_some() {
+                enc = winansi_bytes(text);
+                if enc.is_some() {
                     if !simple_need.contains(face) {
                         simple_need.push(*face);
                     }
@@ -206,14 +213,22 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
                     cid_need.push(*face);
                 }
             }
+            page_enc.push(enc);
         }
+        encodings.push(page_enc);
     }
     if simple_need.is_empty() && cid_need.is_empty() {
         cid_need.push(FaceId::CarlitoRegular);
     }
 
-    let mut simple_obj = HashMapLite::new();
-    let mut cid_obj = HashMapLite::new();
+    let mut simple_obj = FaceObjIds::new();
+    let mut cid_obj = FaceObjIds::new();
+    // Resource names stay readable (`/Calibri-Bold`), but every name is run
+    // through `uniquify`: `sanitize_pdf_name` maps every non-alphanumeric byte
+    // to `-`, so two override faces whose PostScript names differ only in
+    // punctuation (`Foo_Bar` / `Foo.Bar`) would otherwise collapse to one key
+    // and a reader would bind one of them to the wrong glyph mapping.
+    let mut taken: Vec<String> = Vec::new();
     for face_id in &used {
         let face = fonts.get(*face_id);
         let want_simple = simple_need.contains(face_id);
@@ -228,19 +243,29 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
         if want_simple {
             let id = objs.len() + 1;
             objs.push(simple_ttf_obj(face, desc_id));
-            simple_obj.insert(*face_id, id);
+            let name = uniquify(face.pdf_name(), &mut taken);
+            simple_obj.insert(*face_id, id, name);
         }
         if want_cid {
             let cid_id = objs.len() + 1;
             objs.push(cid_font_obj(face, desc_id));
             let type0_id = objs.len() + 1;
             objs.push(type0_font_obj(face, cid_id));
-            cid_obj.insert(*face_id, type0_id);
+            // `…CID` keeps the Type0 entry distinct from this face's simple
+            // entry, exactly as before.
+            let base = if want_simple {
+                format!("{}CID", face.pdf_name())
+            } else {
+                face.pdf_name().to_string()
+            };
+            let name = uniquify(&base, &mut taken);
+            cid_obj.insert(*face_id, type0_id, name);
         }
     }
 
     let mut page_ids = Vec::new();
-    for page in pages {
+    for (page_idx, page) in pages.iter().enumerate() {
+        let page_enc = &encodings[page_idx];
         let mut xobjects = String::new();
         let mut img_n = 0usize;
         for op in &page.ops {
@@ -289,24 +314,35 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
                 ty = m.ty,
             ));
         }
-        let mut font_res = String::new();
-        for (face_id, obj_id) in &simple_obj {
-            font_res.push_str(&format!(
-                "/{name} {obj_id} 0 R ",
-                name = fonts.get(*face_id).pdf_name()
-            ));
-        }
-        for (face_id, obj_id) in &cid_obj {
-            let base = fonts.get(*face_id).pdf_name();
-            let name = if simple_obj.contains(*face_id) {
-                format!("{base}CID")
+        // Only the faces this page actually paints, not every face in the
+        // document.
+        let res_for = |face: FaceId, winansi: bool| -> Option<(usize, &str)> {
+            if winansi {
+                simple_obj.get(face).or_else(|| cid_obj.get(face))
             } else {
-                base.to_string()
+                cid_obj.get(face).or_else(|| simple_obj.get(face))
+            }
+        };
+        let mut page_faces: Vec<(usize, &str)> = Vec::new();
+        for (op_idx, op) in page.ops.iter().enumerate() {
+            let (Op::Text { face, glyphs, .. } | Op::Watermark { face, glyphs, .. }) = op else {
+                continue;
             };
+            if glyphs.is_empty() {
+                continue;
+            }
+            if let Some(entry) = res_for(*face, page_enc[op_idx].is_some())
+                && !page_faces.iter().any(|(_, name)| *name == entry.1)
+            {
+                page_faces.push(entry);
+            }
+        }
+        let mut font_res = String::new();
+        for (obj_id, name) in &page_faces {
             font_res.push_str(&format!("/{name} {obj_id} 0 R "));
         }
         let mut img_counter = 0usize;
-        for op in &page.ops {
+        for (op_idx, op) in page.ops.iter().enumerate() {
             match op {
                 Op::Text {
                     face,
@@ -315,19 +351,17 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
                     y,
                     glyphs,
                     color,
-                    text,
+                    text: _,
                 } => {
                     if glyphs.is_empty() {
                         continue;
                     }
-                    let base = fonts.get(*face).pdf_name();
-                    let name = if winansi_bytes(text).is_none() && simple_obj.contains(*face) {
-                        format!("{base}CID")
-                    } else {
-                        base.to_string()
+                    let encoded = page_enc[op_idx].as_deref();
+                    let Some((_, name)) = res_for(*face, encoded.is_some()) else {
+                        continue;
                     };
-                    let lit = if let Some(bytes) = winansi_bytes(text) {
-                        pdf_literal(&bytes)
+                    let lit = if let Some(bytes) = encoded {
+                        pdf_literal(bytes)
                     } else {
                         let hex: String = glyphs.iter().map(|g| format!("{g:04X}")).collect();
                         format!("<{hex}>")
@@ -362,22 +396,20 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
                     if glyphs.is_empty() {
                         continue;
                     }
-                    let base = fonts.get(*face).pdf_name();
                     let rad = rotate_deg.to_radians();
                     let (sin, cos) = (rad.sin(), rad.cos());
                     let width = fonts.get(*face).width_pt(text, *size);
                     let dx = -width / 2.0;
                     let dy = -size * 0.35;
-                    let lit = if let Some(bytes) = winansi_bytes(text) {
-                        pdf_literal(&bytes)
+                    let encoded = page_enc[op_idx].as_deref();
+                    let lit = if let Some(bytes) = encoded {
+                        pdf_literal(bytes)
                     } else {
                         let hex: String = glyphs.iter().map(|g| format!("{g:04X}")).collect();
                         format!("<{hex}>")
                     };
-                    let name = if winansi_bytes(text).is_none() && simple_obj.contains(*face) {
-                        format!("{base}CID")
-                    } else {
-                        base.to_string()
+                    let Some((_, name)) = res_for(*face, encoded.is_some()) else {
+                        continue;
                     };
                     stream.push_str(&format!(
                         "q 1 0 0 1 {x:.2} {y:.2} cm {cos:.4} {sin:.4} {nsin:.4} {cos:.4} 0 0 cm \
@@ -515,28 +547,45 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
     finalize_pdf(&objs)
 }
 
-struct HashMapLite {
-    items: Vec<(FaceId, usize)>,
+/// A PDF resource name that no other font entry in this document holds.
+///
+/// `sanitize_pdf_name` is lossy (every non-alphanumeric byte becomes `-`), so
+/// distinct faces can want the same name. The first claimant keeps the plain
+/// name — which is what makes a content stream readable, and what the
+/// conversion tests assert on — and later collisions get `-2`, `-3`, … so the
+/// page resource dictionary can never hold a duplicate key.
+fn uniquify(base: &str, taken: &mut Vec<String>) -> String {
+    let mut name = base.to_string();
+    let mut n = 1u32;
+    while taken.contains(&name) {
+        n += 1;
+        name = format!("{base}-{n}");
+    }
+    taken.push(name.clone());
+    name
 }
 
-impl HashMapLite {
+/// Face → (font object id, PDF resource name). Vec-backed: a
+/// document uses a handful of faces, so a linear scan beats hashing.
+struct FaceObjIds {
+    items: Vec<(FaceId, usize, String)>,
+}
+
+impl FaceObjIds {
     fn new() -> Self {
         Self { items: Vec::new() }
     }
-    fn insert(&mut self, k: FaceId, v: usize) {
-        self.items.push((k, v));
+
+    fn insert(&mut self, k: FaceId, obj_id: usize, res_name: String) {
+        self.items.push((k, obj_id, res_name));
     }
 
-    fn contains(&self, k: FaceId) -> bool {
-        self.items.iter().any(|(id, _)| *id == k)
-    }
-}
-
-impl<'a> IntoIterator for &'a HashMapLite {
-    type Item = &'a (FaceId, usize);
-    type IntoIter = std::slice::Iter<'a, (FaceId, usize)>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.items.iter()
+    /// `(object id, resource name)` for `k`, if this map holds it.
+    fn get(&self, k: FaceId) -> Option<(usize, &str)> {
+        self.items
+            .iter()
+            .find(|(id, _, _)| *id == k)
+            .map(|(_, obj_id, name)| (*obj_id, name.as_str()))
     }
 }
 
@@ -778,4 +827,37 @@ fn finalize_pdf(objects: &[Vec<u8>]) -> Vec<u8> {
         .as_bytes(),
     );
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::uniquify;
+
+    /// CodeRabbit PR#4: two override faces whose PostScript names differ only
+    /// in punctuation both sanitize to `Foo-Bar`, so the page resource
+    /// dictionary held a duplicate key and a reader bound one of the faces to
+    /// the wrong glyph mapping.
+    #[test]
+    fn colliding_font_names_get_distinct_resource_names() {
+        let mut taken = Vec::new();
+        let first = uniquify("Foo-Bar", &mut taken);
+        let second = uniquify("Foo-Bar", &mut taken);
+        let third = uniquify("Foo-Bar", &mut taken);
+        assert_eq!(first, "Foo-Bar", "first claimant keeps the readable name");
+        assert_ne!(first, second);
+        assert_ne!(second, third);
+        assert_ne!(first, third);
+        assert_eq!(second, "Foo-Bar-2");
+        assert_eq!(third, "Foo-Bar-3");
+    }
+
+    /// A disambiguated name must not collide with a face that genuinely
+    /// carries the disambiguated spelling.
+    #[test]
+    fn uniquify_skips_a_name_already_claimed_verbatim() {
+        let mut taken = Vec::new();
+        assert_eq!(uniquify("Sans", &mut taken), "Sans");
+        assert_eq!(uniquify("Sans-2", &mut taken), "Sans-2");
+        assert_eq!(uniquify("Sans", &mut taken), "Sans-3");
+    }
 }
