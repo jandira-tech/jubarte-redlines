@@ -1,7 +1,7 @@
 {
   "name": "jubarte-app",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.7.1",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",

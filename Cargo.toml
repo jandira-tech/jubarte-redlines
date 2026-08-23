@@ -8,7 +8,7 @@
 
 [package]
 name = "jubarte-redlines"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Jandira Technologies, LLC"]
@@ -22,17 +22,21 @@ keywords = ["docx", "redline", "track-changes", "openxml", "word"]
 categories = ["text-processing", "parser-implementations", "command-line-utilities"]
 # Keep the published package lean: test fixtures/goldens (~3 MB) and dev tools
 # stay in the repository only.
+# Patterns are anchored ("/…"): cargo include globs use gitignore semantics,
+# so an unanchored "README.md" would also drag in every README.md under
+# jubarte-app/…/node_modules etc.
 include = [
-  "src/**",
-  "benches/**",
-  "Cargo.toml",
-  "README.md",
-  "CHANGELOG.md",
-  "KNOWN_ISSUES.md",
-  "LICENSE",
-  "LICENSES.md",
-  "NOTICE",
-  "LICENSES/**",
+  "/src/**",
+  "/assets/fonts/**",
+  "/benches/**",
+  "/Cargo.toml",
+  "/README.md",
+  "/CHANGELOG.md",
+  "/KNOWN_ISSUES.md",
+  "/LICENSE",
+  "/LICENSES.md",
+  "/NOTICE",
+  "/LICENSES/**",
 ]
 
 # Rust import path stays `jubarte::…` (historical library name). The crates.io
@@ -77,6 +81,10 @@ perf-profile = []
 rdocx-opc = "0.1" # OPC/zip package layer
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # fallback / direct zip access if rdocx-opc's surface is insufficient
 sha1 = "0.10"
+ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)
+rustybuzz = "0.20" # HarfBuzz-compatible shaping so advances match soffice
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff"] } # raster images in the PDF writer
+flate2 = "1.1" # optional `/FlateDecode` on PDF streams (already in the tree via zip/png, but a transitive dep is not usable directly)
 clap = { version = "4.5", features = ["derive"], optional = true }
 # CLI-only global allocator. The redline pipeline is ~41% allocation self-time
 # (xmllinq node clone/drop churn, measured via samply on the RFP17 fixtures);

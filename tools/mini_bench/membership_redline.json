@@ -1,0 +1,319 @@
+{
+  "track": "docx_to_pdf",
+  "source_report": "/Users/arthrod/temp/T/neurotic_docx_bench/results/docx_to_pdf.json",
+  "baseline": {
+    "tool": "jubarte",
+    "version": "jubarte 0.7.0",
+    "converter": "/Users/arthrod/temp/T/jubarte-redlines/target/release/jubarte",
+    "itt_n": 428,
+    "n_scored": 857,
+    "mean": 60.991,
+    "median": 62.544,
+    "n_gt90": 1,
+    "n_next_highest_fill": 9
+  },
+  "selection_rule": "50 lowest jubarte scores (ties by stem) + every >90 up to 10 controls, else next-highest fill to 10 controls.",
+  "n": 60,
+  "stems": [
+    {
+      "stem": "redline_randomized__file_154_file_155_redline",
+      "role": "worst",
+      "baseline_score": 14.762470792047871
+    },
+    {
+      "stem": "redline_randomized__file_196_file_197_redline",
+      "role": "worst",
+      "baseline_score": 32.52591801164269
+    },
+    {
+      "stem": "redline_randomized__file_77_file_78_redline",
+      "role": "worst",
+      "baseline_score": 33.30366969183682
+    },
+    {
+      "stem": "accepted__strict01_sdt_controls_strict01_word_redline",
+      "role": "worst",
+      "baseline_score": 33.30557669689843
+    },
+    {
+      "stem": "redline_randomized__file_184_file_185_redline",
+      "role": "worst",
+      "baseline_score": 34.51318538308813
+    },
+    {
+      "stem": "redline_randomized__file_78_file_79_redline",
+      "role": "worst",
+      "baseline_score": 34.550125393722425
+    },
+    {
+      "stem": "accepted__verdana_italic_centered_demo_id_paraid_overflow_word_clean_strict01_redline",
+      "role": "worst",
+      "baseline_score": 34.68316926220186
+    },
+    {
+      "stem": "accepted__numwords_fldsimple_ole_object_word_redline",
+      "role": "worst",
+      "baseline_score": 34.76829872919797
+    },
+    {
+      "stem": "accepted__small_font_size_demo_id_paraid_overflow_strict01_sdt_controls_word_redline",
+      "role": "worst",
+      "baseline_score": 34.87711524360111
+    },
+    {
+      "stem": "redline_randomized__file_195_file_196_redline",
+      "role": "worst",
+      "baseline_score": 35.08790648267242
+    },
+    {
+      "stem": "redline_randomized__file_114_file_115_redline",
+      "role": "worst",
+      "baseline_score": 35.138926206672664
+    },
+    {
+      "stem": "redline_randomized__file_99_file_100_redline",
+      "role": "worst",
+      "baseline_score": 35.249477652286245
+    },
+    {
+      "stem": "redline_randomized__file_100_file_101_redline",
+      "role": "worst",
+      "baseline_score": 35.27520529787011
+    },
+    {
+      "stem": "redline_randomized__file_185_file_186_redline",
+      "role": "worst",
+      "baseline_score": 35.33044740234331
+    },
+    {
+      "stem": "redline_randomized__file_115_file_116_redline",
+      "role": "worst",
+      "baseline_score": 35.46177184842382
+    },
+    {
+      "stem": "accepted__document_100_ultimate_demo_id_paraid_overflow_docx_lots_of_comments_addition_redline_addition_v_removal_redline",
+      "role": "worst",
+      "baseline_score": 36.145216312168
+    },
+    {
+      "stem": "accepted__docx_lots_of_comments_double_spacing_bold_demo_id_paraid_overflow_redline",
+      "role": "worst",
+      "baseline_score": 36.649216788018585
+    },
+    {
+      "stem": "accepted__I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you_increase_indent_demo_id_paraid_overflow_redline",
+      "role": "worst",
+      "baseline_score": 36.72454951658843
+    },
+    {
+      "stem": "redline_randomized__file_15_file_16_redline",
+      "role": "worst",
+      "baseline_score": 36.88955232341193
+    },
+    {
+      "stem": "accepted__sample_document_word_repair_of_our_output_word_repaired_sd_2517_localized_heading_styles_word_redline",
+      "role": "worst",
+      "baseline_score": 37.425222495444714
+    },
+    {
+      "stem": "redline_randomized__file_27_file_28_redline",
+      "role": "worst",
+      "baseline_score": 37.592109691602474
+    },
+    {
+      "stem": "accepted__docx_lots_of_comments_addition_removal_redline_docx_lots_of_comments_addition_removal_redline",
+      "role": "worst",
+      "baseline_score": 37.75306971076694
+    },
+    {
+      "stem": "redline_randomized__file_22_file_23_redline",
+      "role": "worst",
+      "baseline_score": 37.75410848094908
+    },
+    {
+      "stem": "accepted__docx_lots_of_comments_addition_redline_addition_v_removal_docx_lots_of_comments_addition_redline_redline",
+      "role": "worst",
+      "baseline_score": 37.868929791711665
+    },
+    {
+      "stem": "accepted__docx_lots_of_comments_addition_removal_docx_lots_of_comments_addition_redline",
+      "role": "worst",
+      "baseline_score": 37.868929791711665
+    },
+    {
+      "stem": "accepted__docx_lots_of_comments_addition_redline_docx_lots_of_comments_addition_removal_redline_removal_v_addition_redline",
+      "role": "worst",
+      "baseline_score": 37.879422742312855
+    },
+    {
+      "stem": "accepted__docx_lots_of_comments_addition_removal_redline_removal_v_addition_docx_lots_of_comments_addition_removal_redline_redline",
+      "role": "worst",
+      "baseline_score": 37.879422742312855
+    },
+    {
+      "stem": "redline_randomized__file_8_file_9_redline",
+      "role": "worst",
+      "baseline_score": 38.17593690021041
+    },
+    {
+      "stem": "redline_randomized__file_33_file_34_redline",
+      "role": "worst",
+      "baseline_score": 38.971419499937944
+    },
+    {
+      "stem": "redline_randomized__file_52_file_53_redline",
+      "role": "worst",
+      "baseline_score": 39.07159029142391
+    },
+    {
+      "stem": "accepted__sales_report_january_2026_suggesting_insertions_sample_document_afterword_repaired_word_repaired_redline",
+      "role": "worst",
+      "baseline_score": 39.51750976082409
+    },
+    {
+      "stem": "accepted__sales_report_january_2026_suggesting_insertions_sample_document_afterword_repaired_word_repaired_word_redline",
+      "role": "worst",
+      "baseline_score": 39.519484967546916
+    },
+    {
+      "stem": "accepted__double_spacing_bold_demo_id_paraid_overflow_eigenpal_docx_editor_suggesting_mixed_edits_redline",
+      "role": "worst",
+      "baseline_score": 39.60295045396846
+    },
+    {
+      "stem": "accepted__docx_lots_of_comments_addition_docx_lots_of_comments_redline",
+      "role": "worst",
+      "baseline_score": 39.60311447050856
+    },
+    {
+      "stem": "redline_randomized__file_21_file_22_redline",
+      "role": "worst",
+      "baseline_score": 39.62969569582504
+    },
+    {
+      "stem": "redline_randomized__file_74_file_75_redline",
+      "role": "worst",
+      "baseline_score": 39.651080113272606
+    },
+    {
+      "stem": "redline_randomized__file_73_file_74_redline",
+      "role": "worst",
+      "baseline_score": 39.68480338247279
+    },
+    {
+      "stem": "redline_randomized__file_26_file_27_redline",
+      "role": "worst",
+      "baseline_score": 39.723417317103426
+    },
+    {
+      "stem": "redline_randomized__file_5_file_6_redline",
+      "role": "worst",
+      "baseline_score": 39.76446126139011
+    },
+    {
+      "stem": "redline_randomized__file_6_file_7_redline",
+      "role": "worst",
+      "baseline_score": 39.97507896248181
+    },
+    {
+      "stem": "redline_randomized__file_53_file_54_redline",
+      "role": "worst",
+      "baseline_score": 40.01216237635683
+    },
+    {
+      "stem": "accepted__hr_onboarding_checklist_table_I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you_redline",
+      "role": "worst",
+      "baseline_score": 40.35817782926223
+    },
+    {
+      "stem": "redline_randomized__file_16_file_17_redline",
+      "role": "worst",
+      "baseline_score": 40.55754653223999
+    },
+    {
+      "stem": "redline_randomized__file_13_file_14_redline",
+      "role": "worst",
+      "baseline_score": 40.622389908329424
+    },
+    {
+      "stem": "redline_randomized__file_9_file_10_redline",
+      "role": "worst",
+      "baseline_score": 40.76325894695065
+    },
+    {
+      "stem": "redline_randomized__file_7_file_8_redline",
+      "role": "worst",
+      "baseline_score": 41.06522422666034
+    },
+    {
+      "stem": "redline_randomized__file_130_file_131_redline",
+      "role": "worst",
+      "baseline_score": 41.06925493846053
+    },
+    {
+      "stem": "redline_randomized__file_34_file_35_redline",
+      "role": "worst",
+      "baseline_score": 41.12412806313066
+    },
+    {
+      "stem": "redline_randomized__file_174_file_175_redline",
+      "role": "worst",
+      "baseline_score": 41.148674104047544
+    },
+    {
+      "stem": "redline_randomized__file_145_file_146_redline",
+      "role": "worst",
+      "baseline_score": 41.1685371755207
+    },
+    {
+      "stem": "accepted__clear_formatting_demo_id_paraid_overflow_comments_word_redline",
+      "role": "gt90",
+      "baseline_score": 92.54800273920341
+    },
+    {
+      "stem": "accepted__employee_review_john_smith_suggesting_insertions_font_color_blue_demo_style_default_missing_redline",
+      "role": "next_highest_fill",
+      "baseline_score": 88.60909233597846
+    },
+    {
+      "stem": "accepted__green_highlight_demo_id_paraid_overflow_green_underline_bullet_list_id_paraid_overflow_redline",
+      "role": "next_highest_fill",
+      "baseline_score": 88.51028190051406
+    },
+    {
+      "stem": "accepted__subtitle_style_demo_id_paraid_overflow_subtitle_style_demo_style_default_missing_redline",
+      "role": "next_highest_fill",
+      "baseline_score": 88.35242234100322
+    },
+    {
+      "stem": "accepted__24_id_paraid_overflow_blue_bold_centered_demo_id_paraid_overflow_redline",
+      "role": "next_highest_fill",
+      "baseline_score": 86.44513986737388
+    },
+    {
+      "stem": "accepted__heading_2_center_demo_id_paraid_overflow_heading_2_style_demo_id_paraid_overflow_redline",
+      "role": "next_highest_fill",
+      "baseline_score": 86.39210317164154
+    },
+    {
+      "stem": "accepted__heading_1_style_demo_id_paraid_overflow_heading_2_center_demo_id_paraid_overflow_redline",
+      "role": "next_highest_fill",
+      "baseline_score": 85.03401366434417
+    },
+    {
+      "stem": "accepted__times_new_roman_font_id_paraid_overflow_title_style_centered_demo_id_paraid_overflow_redline",
+      "role": "next_highest_fill",
+      "baseline_score": 84.87922978766488
+    },
+    {
+      "stem": "accepted__title_style_centered_demo_id_paraid_overflow_title_style_demo_id_paraid_overflow_redline",
+      "role": "next_highest_fill",
+      "baseline_score": 84.5348448931684
+    },
+    {
+      "stem": "accepted__blue_bold_centered_demo_id_paraid_overflow_blue_centered_title_demo_style_default_missing_redline",
+      "role": "next_highest_fill",
+      "baseline_score": 84.2978002563566
+    }
+  ]
+}

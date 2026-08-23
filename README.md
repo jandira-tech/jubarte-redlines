@@ -5,6 +5,8 @@
 [![codecov](https://codecov.io/gh/jandira-tech/jubarte-redlines/branch/main/graph/badge.svg)](https://codecov.io/gh/jandira-tech/jubarte-redlines)
 [![crates.io](https://img.shields.io/crates/v/jubarte-redlines.svg)](https://crates.io/crates/jubarte-redlines)
 [![docs.rs](https://docs.rs/jubarte-redlines/badge.svg)](https://docs.rs/jubarte-redlines)
+[![PyPI](https://img.shields.io/pypi/v/jubarte-redlines.svg)](https://pypi.org/project/jubarte-redlines/)
+[![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-blue)](./Cargo.toml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
 [![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](./Cargo.toml)
@@ -15,11 +17,18 @@ Lossless **DOCX redline** engine for Rust. Compare two Word documents and get a
 tracked-changes `.docx` that opens cleanly in Microsoft Word — insertions,
 deletions, moves, and format changes on top of the original package.
 
-Also list, accept, or reject tracked revisions.
+Also list, accept, or reject tracked revisions — and render any DOCX to PDF
+(Word-style layout, embedded fonts, no LibreOffice).
+
+Ships as a **Rust crate + CLI**, a **Python package**, and an **npm /
+WebAssembly package** (Node + browser) — the same engine and output model
+everywhere.
 
 - **Repo:** [jandira-tech/jubarte-redlines](https://github.com/jandira-tech/jubarte-redlines)
 - **crates.io:** [`jubarte-redlines`](https://crates.io/crates/jubarte-redlines)
 - **docs:** [docs.rs/jubarte-redlines](https://docs.rs/jubarte-redlines)
+- **PyPI:** [`jubarte-redlines`](https://pypi.org/project/jubarte-redlines/) (abi3 wheels, CPython ≥ 3.10)
+- **npm:** [`jubarte-wasm`](https://www.npmjs.com/package/jubarte-wasm) (Node ≥ 18 + browsers, full and slim builds)
 - **Maintainer:** [jandira.tech](https://www.jandira.tech) — we build legal tech.
   Jandira Technologies is the studio behind [Cicero](https://www.cicero.im) (a
   legal workbench that turns messy inputs into redlines, issue lists, and memos),
@@ -37,7 +46,8 @@ Also list, accept, or reject tracked revisions.
 | --- | --- |
 | Word-valid output | Produces native `w:ins` / `w:del` / move / format-change markup that Word opens without repair |
 | Lossless package | Keeps parts, relationships, headers/footers, footnotes, styles, and media from the original |
-| Library + CLI | `compare_documents` in-process; `jubarte` binary for shell/CI |
+| Library + CLI + bindings | `compare_documents` in-process (Rust); `jubarte` binary for shell/CI; PyO3 wheels on PyPI; wasm-bindgen package on npm |
+| DOCX → PDF | Independent Word-style PDF renderer (`convert::docx_to_pdf`) — no LibreOffice, no Word |
 | Safety | `#![forbid]`-style policy: **`unsafe_code = "deny"`** at the crate root — 100% safe Rust today |
 | Supply chain | CI runs **cargo-deny**, **REUSE** license compliance, fmt, clippy `-D warnings`, MSRV **1.88** |
 
@@ -75,6 +85,35 @@ std::fs::write("original_v_modified.docx", &redline)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+**Python** ([PyPI](https://pypi.org/project/jubarte-redlines/) — prebuilt abi3
+wheels for macOS arm64/x86_64 and manylinux x86_64/aarch64, CPython ≥ 3.10;
+GIL released during compute)
+
+```sh
+pip install jubarte-redlines
+```
+
+```python
+from jubarte_redlines import compare_documents, get_revisions, docx_to_pdf
+
+redline = compare_documents(original_bytes, modified_bytes, author="Reviewer")
+revs = get_revisions(redline)        # list[dict], same shape as `jubarte revisions --json`
+pdf = docx_to_pdf(redline)           # Word-style PDF bytes
+```
+
+**JavaScript / WebAssembly** ([npm](https://www.npmjs.com/package/jubarte-wasm)
+— Node ≥ 18 CJS + browser ESM)
+
+```sh
+npm install jubarte-wasm
+```
+
+```js
+const { compareDocuments, docxToPdf } = require("jubarte-wasm"); // full build
+const { compareDocuments: compareSlim } = require("jubarte-wasm/slim"); // no PDF, ~2.4 MB wasm
+// browser: import init, { compareDocuments } from "jubarte-wasm/web" (or "jubarte-wasm/web-slim")
+```
+
 ## CLI
 
 ```text
@@ -85,6 +124,7 @@ jubarte -b old.docx -m new.docx -o redline.docx --author "Legal"
 jubarte revisions redline.docx --json     # list tracked revisions
 jubarte accept redline.docx -o final.docx # accept every revision
 jubarte reject redline.docx -o clean.docx # reject every revision
+jubarte convert contract.docx             # independent DOCX → PDF
 ```
 
 Run `jubarte --help` for author/date stamping, `--detail-threshold`, and
@@ -98,6 +138,7 @@ Run `jubarte --help` for author/date stamping, `--detail-threshold`, and
 | `document_comparer::compare_documents_with_settings` | Same with `WmlComparerSettings` |
 | `document_comparer::get_revisions` | Inspect tracked changes |
 | `document_comparer::accept_revisions` / `reject_revisions` | Flatten a redline |
+| `convert::docx_to_pdf` | Independent DOCX → PDF (not LibreOffice) |
 
 ### Feature flags
 
@@ -217,7 +258,8 @@ src/
   comparer/              — atomize, LCS, produce, tables, notes, …
   bin/jubarte.rs         — CLI
 benches/redline.rs       — Criterion
-jubarte-wasm/            — wasm-bindgen adapter (bench consumer)
+jubarte-wasm/            — wasm-bindgen adapter → npm `jubarte-wasm` (full + slim builds)
+jubarte-python/          — PyO3/maturin adapter → PyPI `jubarte-redlines`
 jubarte-rust-inproc/     — long-lived stdin worker (fair speed lane)
 tests/                   — integration + goldens
 tools/                   — validate-docx, parity, perf harnesses

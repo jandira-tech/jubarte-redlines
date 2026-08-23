@@ -8,6 +8,17 @@ features bump the **minor**, fixes bump the **patch**).
 See [README → Versioning & release](README.md#versioning--release) for how to cut
 a new version.
 
+## [0.7.1] — 2026-08-16
+
+### Changed
+- **Engine upgraded to jubarte-redlines 0.7.1.** Adds independent DOCX→PDF
+  (`jubarte convert`). Redline behaviour is unchanged from 0.7.0.
+
+### Fixed
+- ASC skips builds with no `CFBundleVersion`.
+- ASC `MAC_OS` train filter; drop deprecated `load_module`.
+- Share the ASC module loader; tests use the script `PLATFORM`.
+
 ## [0.7.0] — 2026-08-13
 
 ### Changed

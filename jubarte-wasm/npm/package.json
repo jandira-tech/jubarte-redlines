@@ -1,0 +1,84 @@
+{
+  "name": "jubarte-wasm",
+  "version": "0.7.2",
+  "description": "Word-mode DOCX redline engine (jubarte-redlines) compiled to WebAssembly: compare two DOCX files into a tracked-changes redline, accept/reject revisions, list revisions, render DOCX to PDF. Node and browser builds included, plus compare-only slim builds without the PDF engine.",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jandira-tech/jubarte-redlines.git",
+    "directory": "jubarte-wasm"
+  },
+  "homepage": "https://github.com/jandira-tech/jubarte-redlines#readme",
+  "bugs": {
+    "url": "https://github.com/jandira-tech/jubarte-redlines/issues"
+  },
+  "keywords": [
+    "docx",
+    "redline",
+    "tracked-changes",
+    "track-changes",
+    "revisions",
+    "word",
+    "ooxml",
+    "diff",
+    "compare",
+    "wasm",
+    "webassembly",
+    "pdf",
+    "docx-to-pdf"
+  ],
+  "main": "./node/jubarte_wasm.js",
+  "types": "./node/jubarte_wasm.d.ts",
+  "browser": "./web/jubarte_wasm.js",
+  "exports": {
+    ".": {
+      "node": {
+        "types": "./node/jubarte_wasm.d.ts",
+        "default": "./node/jubarte_wasm.js"
+      },
+      "default": {
+        "types": "./web/jubarte_wasm.d.ts",
+        "default": "./web/jubarte_wasm.js"
+      }
+    },
+    "./node": {
+      "types": "./node/jubarte_wasm.d.ts",
+      "default": "./node/jubarte_wasm.js"
+    },
+    "./web": {
+      "types": "./web/jubarte_wasm.d.ts",
+      "default": "./web/jubarte_wasm.js"
+    },
+    "./web/jubarte_wasm_bg.wasm": "./web/jubarte_wasm_bg.wasm",
+    "./slim": {
+      "node": {
+        "types": "./node-slim/jubarte_wasm.d.ts",
+        "default": "./node-slim/jubarte_wasm.js"
+      },
+      "default": {
+        "types": "./web-slim/jubarte_wasm.d.ts",
+        "default": "./web-slim/jubarte_wasm.js"
+      }
+    },
+    "./node-slim": {
+      "types": "./node-slim/jubarte_wasm.d.ts",
+      "default": "./node-slim/jubarte_wasm.js"
+    },
+    "./web-slim": {
+      "types": "./web-slim/jubarte_wasm.d.ts",
+      "default": "./web-slim/jubarte_wasm.js"
+    },
+    "./web-slim/jubarte_wasm_bg.wasm": "./web-slim/jubarte_wasm_bg.wasm",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "node/",
+    "web/",
+    "node-slim/",
+    "web-slim/",
+    "ENGINE_COMMIT.txt"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

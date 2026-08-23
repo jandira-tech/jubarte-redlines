@@ -7,10 +7,12 @@
 //! # JS API (Node target)
 //!
 //! ```js
-//! import init, { compareDocuments } from "./pkg/jubarte_wasm.js";
+//! import init, { compareDocuments, docxToPdf } from "./pkg/jubarte_wasm.js";
 //! await init();
 //! const redline = compareDocuments(baseBytes, nextBytes, "jubarte-wasm");
 //! // redline: Uint8Array
+//! const pdf = docxToPdf(redline);
+//! // pdf: Uint8Array
 //! ```
 //!
 //! # Build
@@ -80,4 +82,31 @@ pub fn get_revisions(docx: &[u8]) -> Result<String, JsValue> {
     let settings = jubarte::comparer::WmlComparerSettings::default();
     let revs = jubarte::document_comparer::get_revisions(docx, &settings).map_err(js_err)?;
     Ok(jubarte::document_comparer::revisions_to_json(&revs))
+}
+
+/// Render a DOCX package (bytes) → PDF bytes (Word-style layout).
+///
+/// Mirrors `jubarte::convert::docx_to_pdf`. Fonts come from the embedded
+/// Carlito / Liberation set; the native system/cloud font overrides are
+/// no-ops under wasm (no filesystem), which only changes glyph sourcing,
+/// never layout metrics.
+/// `compress` (optional, default `false`) deflates the PDF's streams
+/// (`/FlateDecode`): much smaller output, no longer plain text.
+#[cfg(feature = "pdf")]
+#[wasm_bindgen(js_name = docxToPdf)]
+pub fn docx_to_pdf(docx: &[u8], compress: Option<bool>) -> Result<Vec<u8>, JsValue> {
+    let options = jubarte::convert::PdfOptions {
+        compress: compress.unwrap_or(false),
+    };
+    jubarte::convert::docx_to_pdf_with(docx, options).map_err(js_err)
+}
+
+/// Number of pages in a PDF (cheap object scan; `0` if the bytes are not a
+/// readable PDF).
+///
+/// Mirrors `jubarte::convert::pdf_page_count`.
+#[cfg(feature = "pdf")]
+#[wasm_bindgen(js_name = pdfPageCount)]
+pub fn pdf_page_count(pdf: &[u8]) -> usize {
+    jubarte::convert::pdf_page_count(pdf)
 }
