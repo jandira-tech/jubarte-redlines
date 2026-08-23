@@ -2443,8 +2443,23 @@ fn table_row_height_pt(
         // 1-cell yellow Demo (comments-lots p7): 3 wrapped lines, Word
         // 55pt vs 3×11×1.15=38. Page-1 Positioning thesis is the same
         // unstyled+vAlign 1-cell wrapping to 4 lines; Word's D9EAF7 box
-        // is ~69pt. Gating 2..=3 left that banner at 50pt and shifted
+        // is ~69pt (measured: 69.60pt outer over 15.36/14.88/14.64/24.72
+        // inner). Gating 2..=3 left that banner at 50pt and shifted
         // Prepared-for 22pt (align max_shift 5px).
+        //
+        // The +18 is a stand-in for real per-document line metrics, and it
+        // cannot be right for every fixture. Word paints this banner as the
+        // exact sum of its inner line boxes with no pad at all; the two
+        // oracles simply have different line boxes —
+        // docx_lots_of_comments is 69.60pt over ~15pt lines, and
+        // docx_lots_of_comments_addition_removal_redline_removal_v_addition
+        // is 50.81pt over ~11pt lines, the whole banner (width included:
+        // 504.0 vs 367.92) scaled by exactly 0.73 despite identical pgSz,
+        // identical docDefaults and an identical sz=22 in the cell. Until
+        // that 0.73 is explained and the line box comes from the document
+        // rather than 11×1.15, one constant has to miss one of them; this
+        // gate keeps comments-lots exact. See
+        // `official_addition_removal_page_one_thesis_is_compact`.
         row_pad += 10.0 + 8.0;
     }
     // Explicit tblCellMar / tcMar top+bottom replaces generic row chrome.
@@ -6104,14 +6119,24 @@ impl<'a> Layout<'a> {
         // sample_iter2 / file_146 github cell: in-table xml:space padding
         // is kept for wrap, but Word underlines ink only (x2=488.9) not
         // through the pad to clip_right 540.
-        let ink_n = run.text.trim_end().chars().count();
-        let ink_w = if ink_n == 0 {
-            0.0
-        } else if ink_n >= shaped.len() {
+        //
+        // Scoped to cells on purpose. `clip_right` is set only while painting
+        // inside one, and outside a cell there is no clip to run into: Word
+        // does carry a revision mark through generator padding, so a body
+        // `w:ins` of `fresh` + 12 spaces underlines the whole pad. Trimming
+        // there collapsed the mark to the tight width.
+        let ink_w = if self.clip_right.is_none() {
             w
         } else {
-            let adv: f32 = shaped.iter().take(ink_n).map(|(_, a)| *a * scale).sum();
-            adv + run.style.track * ink_n.saturating_sub(1) as f32
+            let ink_n = run.text.trim_end().chars().count();
+            if ink_n == 0 {
+                0.0
+            } else if ink_n >= shaped.len() {
+                w
+            } else {
+                let adv: f32 = shaped.iter().take(ink_n).map(|(_, a)| *a * scale).sum();
+                adv + run.style.track * ink_n.saturating_sub(1) as f32
+            }
         };
         let ink_w = self.clip_width(x, ink_w);
         if let Some(fill) = run.style.highlight {
@@ -6876,24 +6901,6 @@ impl<'a> Layout<'a> {
                         .sum();
                     let h: f32 = row_h.iter().skip(ri).take(cell.rowspan.max(1)).sum();
                     let bottom = y_top - h;
-                    if let Some(fill) = cell.fill {
-                        self.current().ops.push(Op::FillRect {
-                            x,
-                            y: bottom,
-                            w,
-                            h,
-                            color: fill,
-                        });
-                    }
-                    let last_row = ri + cell.rowspan.max(1) >= rows.len();
-                    let last_col = cell.col + cell.colspan >= col_w.len();
-                    self.stroke_cell(
-                        [x, bottom, w, h],
-                        color,
-                        borders,
-                        cell.borders,
-                        [ri == 0, last_row, cell.col == 0, last_col],
-                    );
                     // Per-run style. First-run-only paint mashed sample_document
                     // npm/github cells (black label + 2563EB hyperlink).
                     let pad_l = cell.pad_l;
@@ -6923,6 +6930,28 @@ impl<'a> Layout<'a> {
                     } else {
                         0.0
                     };
+                    // Outer + inner is deliberate: Word paints a band cell as
+                    // the cell extent plus a tblCellMar-inset rect (see
+                    // `grid_table4_band_inner_fill_matches_cell_height`, which
+                    // requires both).
+                    if let Some(fill) = cell.fill {
+                        self.current().ops.push(Op::FillRect {
+                            x,
+                            y: bottom,
+                            w,
+                            h,
+                            color: fill,
+                        });
+                    }
+                    let last_row = ri + cell.rowspan.max(1) >= rows.len();
+                    let last_col = cell.col + cell.colspan >= col_w.len();
+                    self.stroke_cell(
+                        [x, bottom, w, h],
+                        color,
+                        borders,
+                        cell.borders,
+                        [ri == 0, last_row, cell.col == 0, last_col],
+                    );
                     let mut ty = y_top - inset - face.ascent_pt(size);
                     for line in lines {
                         if ty < bottom {
