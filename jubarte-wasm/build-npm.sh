@@ -11,7 +11,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if ! git diff --quiet HEAD -- . ..; then
+# `git diff --quiet HEAD` does not see untracked files, so an untracked source
+# file or `include_bytes!` asset could change the package while ENGINE_COMMIT.txt
+# records a commit the artifacts cannot be rebuilt from.
+if [ -n "$(git status --porcelain --untracked-files=all -- . ..)" ]; then
   if [ "${ALLOW_DIRTY:-0}" = "1" ]; then
     echo "WARNING: working tree is dirty — the ENGINE_COMMIT.txt stamp will lie (ALLOW_DIRTY=1)." >&2
   else

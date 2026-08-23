@@ -38,8 +38,12 @@ TRACKS = {
 def select(per_doc: dict[str, float]) -> list[dict]:
     items = sorted(per_doc.items(), key=lambda kv: (kv[1], kv[0]))
     worst = items[:50]
+    worst_stems = {k for k, _ in worst}
+    # Controls come from outside the worst 50. With fewer than 50 scores at or
+    # below 90 a stem can qualify for both, and the 60-unique guard below would
+    # abort the whole selection.
     gt90_candidates = sorted(
-        [(k, v) for k, v in per_doc.items() if v > 90],
+        [(k, v) for k, v in per_doc.items() if v > 90 and k not in worst_stems],
         key=lambda kv: (-kv[1], kv[0]),
     )
     gt90 = gt90_candidates[:10]
@@ -56,8 +60,11 @@ def select(per_doc: dict[str, float]) -> list[dict]:
     for k, v in controls:
         role = "gt90" if v > 90 else "next_highest_fill"
         out.append({"stem": k, "role": role, "baseline_score": v})
-    if len(out) != 60 or len({row["stem"] for row in out}) != 60:
-        raise SystemExit(f"expected 60 unique stems, got {len(out)}")
+    unique = len({row["stem"] for row in out})
+    if len(out) != 60 or unique != 60:
+        raise SystemExit(
+            f"expected 60 unique stems, got {len(out)} rows / {unique} unique"
+        )
     return out
 
 

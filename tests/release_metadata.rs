@@ -362,6 +362,33 @@ fn root_changelog_has_a_dated_entry_and_release_link_for_the_version() {
         changelog.contains(&heading),
         "CHANGELOG.md is missing a `{heading}` section"
     );
+    // The test is named "dated entry", so require the date rather than
+    // accepting a bare `## [0.7.1]`. Matched as a shape, not a pinned
+    // constant, so cutting a release does not mean editing two places.
+    let dated = changelog
+        .lines()
+        .filter(|line| line.starts_with(&heading))
+        .any(|line| {
+            let rest = line[heading.len()..].trim_start();
+            let Some(date) = rest.strip_prefix("- ") else {
+                return false;
+            };
+            let date = date.trim();
+            date.len() == 10
+                && date.as_bytes()[4] == b'-'
+                && date.as_bytes()[7] == b'-'
+                && date.char_indices().all(|(i, c)| {
+                    if i == 4 || i == 7 {
+                        c == '-'
+                    } else {
+                        c.is_ascii_digit()
+                    }
+                })
+        });
+    assert!(
+        dated,
+        "CHANGELOG.md `{heading}` heading must carry a `- YYYY-MM-DD` release date"
+    );
     let link = format!(
         "[{EXPECTED_VERSION}]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v{EXPECTED_VERSION}"
     );

@@ -166,9 +166,13 @@ impl Canvas {
                 if (y0 <= y && y1 > y) || (y1 <= y && y0 > y) {
                     let dy = i64::from(y1) - i64::from(y0);
                     if dy != 0 {
-                        // Full-range i32 coords overflow the i32 product.
+                        // Full-range i32 coords overflow the i32 product — and
+                        // the i32 *subtraction* too: mapped points saturate to
+                        // i32::MIN/MAX (`px.round() as i32`), so `y - y0` with
+                        // `y0 == i32::MIN` panics in debug and wraps to a wrong
+                        // intersection in release. Widen before subtracting.
                         let x = i64::from(x0)
-                            + i64::from(y - y0) * (i64::from(x1) - i64::from(x0)) / dy;
+                            + (i64::from(y) - i64::from(y0)) * (i64::from(x1) - i64::from(x0)) / dy;
                         xs.push(x.clamp(-1, self.w as i64) as i32);
                     }
                 }
@@ -586,6 +590,21 @@ mod hostile_input_tests {
         for f in fields {
             d.extend_from_slice(&f.to_le_bytes());
         }
+    }
+
+    /// A polygon edge starting at `i32::MIN` after mapping: the scanline
+    /// subtraction `y - y0` must not overflow i32 (debug panic / release
+    /// wrap-around to a wrong intersection).
+    #[test]
+    fn emf_polygon_with_extreme_edge_does_not_overflow_scanline() {
+        let mut d = emf_header(0, 0, 64, 64);
+        // EMR_POLYGON: bounds[4], count, then full-range i32 points.
+        let pts: [i32; 8] = [0, i32::MIN, 32, i32::MAX, 64, 0, 0, 0];
+        let mut fields: Vec<i32> = vec![0, 0, 64, 64, 4];
+        fields.extend_from_slice(&pts);
+        rec(&mut d, 3, &fields);
+        rec(&mut d, 14, &[]); // EMR_EOF
+        assert!(rasterize(&d).is_some());
     }
 
     /// Full-range header bounds: `right - left` must not overflow.

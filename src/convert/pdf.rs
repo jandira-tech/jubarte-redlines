@@ -710,8 +710,8 @@ fn rgb_xobject(width: u32, height: u32, bytes: &[u8], compress: bool) -> Vec<u8>
 fn text_annot_obj(note: &PdfComment) -> Vec<u8> {
     let x2 = note.x + note.w.max(12.0);
     let y2 = note.y + note.h.max(12.0);
-    let contents = pdf_literal(note.contents.as_bytes());
-    let author = pdf_literal(note.author.as_bytes());
+    let contents = pdf_text_string(&note.contents);
+    let author = pdf_text_string(&note.author);
     // /F 0: not Printed, so raster oracles (comment-stripped Word PDFs)
     // do not pick up balloon chrome.
     format!(
@@ -822,6 +822,25 @@ fn winansi_bytes(text: &str) -> Option<Vec<u8>> {
     text.chars().map(winansi_byte).collect()
 }
 
+/// A PDF *text string* (PDF 32000-1 7.9.2.2), for annotation fields.
+///
+/// A literal string is read as PDFDocEncoding, so raw UTF-8 shows up as
+/// mojibake — `José` becomes `JosÃ©`, and anything outside Latin-1 is worse.
+/// Non-ASCII text therefore goes out as a UTF-16BE hex string with a `FEFF`
+/// BOM. ASCII stays a literal: it is identical under both encodings and keeps
+/// the annotation readable in the raw file.
+fn pdf_text_string(text: &str) -> String {
+    if text.is_ascii() {
+        return pdf_literal(text.as_bytes());
+    }
+    let mut out = String::from("<FEFF");
+    for unit in text.encode_utf16() {
+        out.push_str(&format!("{unit:04X}"));
+    }
+    out.push('>');
+    out
+}
+
 fn pdf_literal(bytes: &[u8]) -> String {
     let mut out = String::from("(");
     for &b in bytes {
@@ -886,6 +905,26 @@ mod tests {
         assert_ne!(first, third);
         assert_eq!(second, "Foo-Bar-2");
         assert_eq!(third, "Foo-Bar-3");
+    }
+
+    /// CodeRabbit PR#4: annotation text went out as raw UTF-8 in a literal
+    /// string, which readers decode as PDFDocEncoding.
+    #[test]
+    fn non_ascii_annotation_text_is_utf16be_with_a_bom() {
+        // "José" — U+004A U+006F U+0073 U+00E9
+        assert_eq!(super::pdf_text_string("José"), "<FEFF004A006F007300E9>");
+        // Outside Latin-1 entirely.
+        assert_eq!(super::pdf_text_string("東京"), "<FEFF67714EAC>");
+        // Astral plane must survive as a surrogate pair.
+        assert_eq!(super::pdf_text_string("\u{1F600}"), "<FEFFD83DDE00>");
+    }
+
+    /// ASCII keeps the readable literal form: identical under PDFDocEncoding
+    /// and UTF-16BE, and the conversion suite parses `(...)` literals.
+    #[test]
+    fn ascii_annotation_text_stays_a_literal_string() {
+        assert_eq!(super::pdf_text_string("Reviewer"), "(Reviewer)");
+        assert_eq!(super::pdf_text_string("a (b) c"), "(a \\(b\\) c)");
     }
 
     /// A disambiguated name must not collide with a face that genuinely
