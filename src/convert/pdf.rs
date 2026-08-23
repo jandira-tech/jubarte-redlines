@@ -4,6 +4,13 @@
 
 //! PDF 1.4 writer: embedded TTF (Identity-H), stroked rules, JPEG/RGB images.
 
+use std::borrow::Cow;
+use std::io::Write;
+
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
+
+use super::PdfOptions;
 use super::font::{FaceId, Fonts, word_device_paint, word_device_track};
 
 /// One drawing command on a page (PDF user space, origin bottom-left).
@@ -173,7 +180,7 @@ impl Op {
     }
 }
 
-pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
+pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8> {
     let used: Vec<FaceId> = {
         let mut seen = Vec::new();
         for page in pages {
@@ -237,7 +244,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
             continue;
         }
         let file_id = objs.len() + 1;
-        objs.push(font_file_obj(face.bytes()));
+        objs.push(font_file_obj(face.bytes(), options.compress));
         let desc_id = objs.len() + 1;
         objs.push(font_descriptor_obj(face, file_id));
         if want_simple {
@@ -290,7 +297,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
                 } => {
                     img_n += 1;
                     let id = objs.len() + 1;
-                    objs.push(rgb_xobject(*width, *height, bytes));
+                    objs.push(rgb_xobject(*width, *height, bytes, options.compress));
                     xobjects.push_str(&format!("/Im{img_n} {id} 0 R "));
                 }
                 _ => {}
@@ -498,7 +505,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page]) -> Vec<u8> {
             stream.push_str("Q\n");
         }
         let content_id = objs.len() + 1;
-        objs.push(stream_object(&stream));
+        objs.push(stream_object(&stream, options.compress));
         let mut annot_refs = String::new();
         for note in &page.comments {
             let id = objs.len() + 1;
@@ -589,14 +596,17 @@ impl FaceObjIds {
     }
 }
 
-fn font_file_obj(ttf: &[u8]) -> Vec<u8> {
+fn font_file_obj(ttf: &[u8], compress: bool) -> Vec<u8> {
+    // `/Length1` stays the *uncompressed* face length (PDF 32000-1 9.9), so a
+    // reader knows how many bytes to expect after inflating.
+    let raw_len = ttf.len();
+    let (bytes, filter) = deflate(ttf, compress);
     let mut out = format!(
-        "<< /Length {} /Length1 {} >>\nstream\n",
-        ttf.len(),
-        ttf.len()
+        "<< /Length {} /Length1 {raw_len}{filter} >>\nstream\n",
+        bytes.len()
     )
     .into_bytes();
-    out.extend_from_slice(ttf);
+    out.extend_from_slice(&bytes);
     out.extend_from_slice(b"\nendstream");
     out
 }
@@ -629,6 +639,16 @@ fn simple_ttf_obj(face: &super::font::Face, desc_id: usize) -> Vec<u8> {
     .into_bytes()
 }
 
+/// Faces are embedded whole, and `/W` carries a width for every glyph in the
+/// face rather than only the ids the page ops reference.
+///
+/// The tradeoff is deliberate for now: subsetting means rebuilding `loca` /
+/// `glyf` / `cmap` and remapping every emitted glyph id, and a wrong subset is
+/// a silently missing glyph in an oracle diff. It costs size — on a 217-page
+/// redline the five embedded faces are 5.5 MB of a 48.8 MB file, and `/W`
+/// lists thousands of unused widths. `PdfOptions::compress` recovers most of
+/// that (5.5 MB → 3.0 MB) without touching glyph data; narrowing `/W` to the
+/// referenced ids is the cheaper next step if it is not enough.
 fn cid_font_obj(face: &super::font::Face, desc_id: usize) -> Vec<u8> {
     let name = face.pdf_name();
     let widths = face.pdf_widths_1000();
@@ -673,15 +693,16 @@ fn jpeg_xobject(width: u32, height: u32, bytes: &[u8], components: u8) -> Vec<u8
     out
 }
 
-fn rgb_xobject(width: u32, height: u32, bytes: &[u8]) -> Vec<u8> {
+fn rgb_xobject(width: u32, height: u32, bytes: &[u8], compress: bool) -> Vec<u8> {
+    let (bytes, filter) = deflate(bytes, compress);
     let mut out = format!(
         "<< /Type /XObject /Subtype /Image /Width {width} /Height {height} \
-           /ColorSpace /DeviceRGB /BitsPerComponent 8 \
+           /ColorSpace /DeviceRGB /BitsPerComponent 8{filter} \
            /Length {} >>\nstream\n",
         bytes.len()
     )
     .into_bytes();
-    out.extend_from_slice(bytes);
+    out.extend_from_slice(&bytes);
     out.extend_from_slice(b"\nendstream");
     out
 }
@@ -702,10 +723,26 @@ fn text_annot_obj(note: &PdfComment) -> Vec<u8> {
     .into_bytes()
 }
 
-fn stream_object(ops: &str) -> Vec<u8> {
-    let bytes = ops.as_bytes();
-    let mut out = format!("<< /Length {} >>\nstream\n", bytes.len()).into_bytes();
-    out.extend_from_slice(bytes);
+/// Stream payload plus the `/Filter` entry that describes it.
+///
+/// `/FlateDecode` is zlib-wrapped deflate (PDF 32000-1 7.4.4), which is what
+/// `ZlibEncoder` writes. A deflate failure is not worth failing a conversion
+/// over: fall back to the raw bytes and no filter.
+fn deflate(raw: &[u8], compress: bool) -> (Cow<'_, [u8]>, &'static str) {
+    if !compress {
+        return (Cow::Borrowed(raw), "");
+    }
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+    match enc.write_all(raw).and_then(|()| enc.finish()) {
+        Ok(packed) => (Cow::Owned(packed), " /Filter /FlateDecode"),
+        Err(_) => (Cow::Borrowed(raw), ""),
+    }
+}
+
+fn stream_object(ops: &str, compress: bool) -> Vec<u8> {
+    let (bytes, filter) = deflate(ops.as_bytes(), compress);
+    let mut out = format!("<< /Length {}{filter} >>\nstream\n", bytes.len()).into_bytes();
+    out.extend_from_slice(&bytes);
     out.extend_from_slice(b"\nendstream");
     out
 }

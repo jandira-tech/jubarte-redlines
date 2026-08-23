@@ -164,6 +164,11 @@ enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
+        /// Deflate the PDF's streams (`/FlateDecode`). Much smaller output;
+        /// the trade is that the page content is no longer plain text, so it
+        /// cannot be read with `strings` or `grep`.
+        #[arg(long)]
+        compress: bool,
     },
 }
 
@@ -195,13 +200,20 @@ fn run_resolution<E: std::fmt::Debug>(
     std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
 }
 
-fn run_convert(file: &Path, output: Option<&Path>, force: bool) -> Result<(), String> {
+fn run_convert(
+    file: &Path,
+    output: Option<&Path>,
+    force: bool,
+    compress: bool,
+) -> Result<(), String> {
     let output = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| file.with_extension("pdf"));
     ensure_writable(&output, force)?;
     let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
-    let pdf = jubarte::convert::docx_to_pdf(&bytes).map_err(|e| format!("convert failed: {e}"))?;
+    let options = jubarte::convert::PdfOptions { compress };
+    let pdf = jubarte::convert::docx_to_pdf_with(&bytes, options)
+        .map_err(|e| format!("convert failed: {e}"))?;
     std::fs::write(&output, &pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
     let pages = jubarte::convert::pdf_page_count(&pdf);
     println!(
@@ -384,8 +396,9 @@ fn main() -> ExitCode {
             file,
             output,
             force,
+            compress,
         }) => {
-            return exit_code(run_convert(&file, output.as_deref(), force));
+            return exit_code(run_convert(&file, output.as_deref(), force, compress));
         }
         None => {}
     }

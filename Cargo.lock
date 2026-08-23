@@ -678,6 +678,7 @@ version = "0.7.1"
 dependencies = [
  "clap",
  "criterion",
+ "flate2",
  "image",
  "mimalloc",
  "ooxmlsdk",

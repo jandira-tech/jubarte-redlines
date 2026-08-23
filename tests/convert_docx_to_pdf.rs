@@ -7,7 +7,7 @@
 use std::io::{Cursor, Read, Write};
 use std::process::Command;
 
-use jubarte::convert::{docx_to_pdf, pdf_page_count};
+use jubarte::convert::{PdfOptions, docx_to_pdf, docx_to_pdf_with, pdf_page_count};
 use zip::ZipArchive;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
@@ -12615,4 +12615,131 @@ fn page_font_dict_covers_every_font_the_page_selects() {
         );
     }
     assert!(selected > 0, "no Tf operator found in the content stream");
+}
+
+/// CodeRabbit PR#4 asked for `/FlateDecode` on the content and image streams.
+/// It is a caller's choice, not a default: an uncompressed stream is plain
+/// text, which is what this suite asserts on and what makes a page greppable
+/// when diffing against Word.
+#[test]
+fn compress_option_deflates_streams_and_default_leaves_them_plain() {
+    let docx = minimal_docx(&["Alpha beta gamma", "Delta epsilon zeta"], None);
+
+    let plain = docx_to_pdf(&docx).expect("convert");
+    let plain_text = String::from_utf8_lossy(&plain);
+    assert!(
+        !plain_text.contains("/FlateDecode"),
+        "the default must not deflate anything"
+    );
+    assert!(
+        plain_text.contains(" Tf"),
+        "the default content stream must stay readable"
+    );
+
+    let packed = docx_to_pdf_with(&docx, PdfOptions { compress: true }).expect("convert");
+    let packed_text = String::from_utf8_lossy(&packed);
+    assert!(
+        packed_text.contains("/Filter /FlateDecode"),
+        "compress: true must declare the filter"
+    );
+    assert!(
+        packed.len() < plain.len(),
+        "compressed {} is not smaller than plain {}",
+        packed.len(),
+        plain.len()
+    );
+    assert_eq!(
+        pdf_page_count(&packed),
+        pdf_page_count(&plain),
+        "compression must not change the page tree"
+    );
+    assert!(
+        packed.starts_with(b"%PDF-") && packed.ends_with(b"%%EOF\n") || packed.ends_with(b"%%EOF"),
+        "compressed output must still be a well-formed PDF"
+    );
+}
+
+/// Every deflated stream must inflate back cleanly, and `/Length1` must stay
+/// the uncompressed face length — a length that disagrees with the payload
+/// makes the file unreadable in Word and Acrobat even though every byte is
+/// present.
+#[test]
+fn deflated_streams_inflate_back_to_the_plain_bytes() {
+    let docx = minimal_docx(&["Alpha beta gamma"], None);
+    let packed = docx_to_pdf_with(&docx, PdfOptions { compress: true }).expect("convert");
+
+    const OPEN: &[u8] = b"stream\n";
+    const CLOSE: &[u8] = b"endstream";
+    let mut checked = 0usize;
+    let mut at = 0usize;
+    while at < packed.len() {
+        let Some(rel) = packed[at..].windows(OPEN.len()).position(|w| w == OPEN) else {
+            break;
+        };
+        let open_at = at + rel;
+        // `endstream` ends in `stream`; only a keyword at a token boundary
+        // opens a payload.
+        if packed[..open_at].ends_with(b"end") {
+            at = open_at + OPEN.len();
+            continue;
+        }
+        let body = open_at + OPEN.len();
+        let Some(end_rel) = packed[body..].windows(CLOSE.len()).position(|w| w == CLOSE) else {
+            break;
+        };
+        let dict_from = open_at.saturating_sub(400);
+        let dict = String::from_utf8_lossy(&packed[dict_from..open_at]);
+        let dict = dict.rsplit("<<").next().unwrap_or("").to_string();
+        if dict.contains("/FlateDecode") {
+            // The writer separates the payload from `endstream` with a `\n`.
+            let payload = &packed[body..body + end_rel - 1];
+            let inflated = inflate(payload).expect("every /FlateDecode stream must inflate");
+            assert!(!inflated.is_empty(), "inflated to nothing: {dict}");
+            if let Some(len1) = dict
+                .split("/Length1 ")
+                .nth(1)
+                .and_then(|t| t.split_whitespace().next())
+                .and_then(|t| t.parse::<usize>().ok())
+            {
+                assert_eq!(
+                    inflated.len(),
+                    len1,
+                    "/Length1 must be the uncompressed face length"
+                );
+            }
+            let declared = dict
+                .split("/Length ")
+                .nth(1)
+                .and_then(|t| t.split_whitespace().next())
+                .and_then(|t| t.parse::<usize>().ok())
+                .expect("stream dictionary carries /Length");
+            assert_eq!(
+                declared,
+                payload.len(),
+                "/Length must be the compressed payload length"
+            );
+            checked += 1;
+        }
+        at = body + end_rel + CLOSE.len();
+    }
+    assert!(
+        checked >= 2,
+        "expected several deflated streams, saw {checked}"
+    );
+}
+
+/// Minimal raw-inflate so the test does not depend on the writer's own encoder.
+fn inflate(data: &[u8]) -> Option<Vec<u8>> {
+    let out = std::process::Command::new("python3")
+        .arg("-c")
+        .arg("import sys,zlib; sys.stdout.buffer.write(zlib.decompress(sys.stdin.buffer.read()))")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .ok()
+        .and_then(|mut child| {
+            child.stdin.take()?.write_all(data).ok()?;
+            child.wait_with_output().ok()
+        })?;
+    out.status.success().then_some(out.stdout)
 }

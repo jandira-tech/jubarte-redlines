@@ -428,6 +428,7 @@ dependencies = [
 name = "jubarte-redlines"
 version = "0.7.1"
 dependencies = [
+ "flate2",
  "image",
  "rdocx-opc",
  "rustybuzz",

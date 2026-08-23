@@ -54,7 +54,27 @@ impl fmt::Display for ConvertError {
 impl std::error::Error for ConvertError {}
 
 /// Convert a `.docx` package into a PDF (`%PDF` header, one or more pages).
+/// How `docx_to_pdf` writes the PDF's stream objects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PdfOptions {
+    /// Deflate content streams, raw image samples, and embedded font files
+    /// (`/Filter /FlateDecode`).
+    ///
+    /// Off by default, because an uncompressed stream is plain text: it is
+    /// what the conversion suite asserts on and what makes a generated page
+    /// greppable when diffing against Word. Turning it on costs a fraction of
+    /// a second and takes a text-heavy document to roughly a seventh of its
+    /// size (a 217-page redline: 48.8 MB → 6.7 MB).
+    pub compress: bool,
+}
+
+/// Render a DOCX package to PDF with the default options.
 pub fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, ConvertError> {
+    docx_to_pdf_with(docx, PdfOptions::default())
+}
+
+/// Render a DOCX package to PDF, choosing how streams are written.
+pub fn docx_to_pdf_with(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, ConvertError> {
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
     let pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;
@@ -89,7 +109,7 @@ pub fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, ConvertError> {
     let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
     let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
     let pages = layout(fonts, &page, &hf, &blocks);
-    Ok(pdf::emit(fonts, &pages))
+    Ok(pdf::emit(fonts, &pages, options))
 }
 
 /// Count page objects in a PDF (`/Type /Page`, excluding `/Type /Pages`).

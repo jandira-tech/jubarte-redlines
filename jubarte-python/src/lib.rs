@@ -85,10 +85,15 @@ fn get_revisions_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
 }
 
 /// Render a DOCX package (bytes) → PDF bytes (Word-style layout).
+///
+/// `compress=True` deflates the PDF's streams (`/FlateDecode`), which is much
+/// smaller but no longer plain text.
 #[pyfunction]
-fn docx_to_pdf(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
+#[pyo3(signature = (docx, compress = false))]
+fn docx_to_pdf(py: Python<'_>, docx: &[u8], compress: bool) -> PyResult<Py<PyBytes>> {
+    let options = jubarte::convert::PdfOptions { compress };
     let out = py
-        .detach(|| jubarte::convert::docx_to_pdf(docx))
+        .detach(|| jubarte::convert::docx_to_pdf_with(docx, options))
         .map_err(err)?;
     Ok(PyBytes::new(py, &out).unbind())
 }

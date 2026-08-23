@@ -90,10 +90,15 @@ pub fn get_revisions(docx: &[u8]) -> Result<String, JsValue> {
 /// Carlito / Liberation set; the native system/cloud font overrides are
 /// no-ops under wasm (no filesystem), which only changes glyph sourcing,
 /// never layout metrics.
+/// `compress` (optional, default `false`) deflates the PDF's streams
+/// (`/FlateDecode`): much smaller output, no longer plain text.
 #[cfg(feature = "pdf")]
 #[wasm_bindgen(js_name = docxToPdf)]
-pub fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, JsValue> {
-    jubarte::convert::docx_to_pdf(docx).map_err(js_err)
+pub fn docx_to_pdf(docx: &[u8], compress: Option<bool>) -> Result<Vec<u8>, JsValue> {
+    let options = jubarte::convert::PdfOptions {
+        compress: compress.unwrap_or(false),
+    };
+    jubarte::convert::docx_to_pdf_with(docx, options).map_err(js_err)
 }
 
 /// Number of pages in a PDF (cheap object scan; `0` if the bytes are not a
