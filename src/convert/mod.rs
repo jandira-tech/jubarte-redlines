@@ -9,6 +9,7 @@
 //! (Calibri 11 / line 276 / after 200 twips), and `sectPr` page geometry.
 
 mod font;
+mod font_table;
 mod metafile;
 mod pdf;
 
@@ -98,21 +99,24 @@ pub fn docx_to_pdf_with(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Con
         .ok_or(ConvertError::MissingDocument)?;
 
     let fonts = fonts();
-    let markup = settings_track_revisions(&pkg);
-    let mut sheet = load_stylesheet(&pkg);
-    if let Some(tab) = settings_default_tab_pt(&pkg) {
-        sheet.defaults.page.default_tab = tab;
-    }
-    // Word Save-as-PDF All Markup (file_27): gray balloon pasteboard + scale.
-    // Ins-only trackRevisions (file_6) stays full-page / 0.24 cm.
-    if markup && document_wants_markup_pane(&pkg, &main) {
-        sheet.defaults.page.balloon_gutter = 144.0;
-    }
-    let page = load_page_setup(&dom, body, &sheet.defaults.page);
-    let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
-    let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
-    let pages = layout(fonts, &page, &hf, &blocks);
-    Ok(pdf::emit(fonts, &pages, options))
+    let table = font_table::load_font_table(&pkg);
+    font::with_font_table(table, || {
+        let markup = settings_track_revisions(&pkg);
+        let mut sheet = load_stylesheet(&pkg);
+        if let Some(tab) = settings_default_tab_pt(&pkg) {
+            sheet.defaults.page.default_tab = tab;
+        }
+        // Word Save-as-PDF All Markup (file_27): gray balloon pasteboard + scale.
+        // Ins-only trackRevisions (file_6) stays full-page / 0.24 cm.
+        if markup && document_wants_markup_pane(&pkg, &main) {
+            sheet.defaults.page.balloon_gutter = 144.0;
+        }
+        let page = load_page_setup(&dom, body, &sheet.defaults.page);
+        let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
+        let pages = layout(fonts, &page, &hf, &blocks);
+        Ok(pdf::emit(fonts, &pages, options))
+    })
 }
 
 /// Count page objects in a PDF (`/Type /Page`, excluding `/Type /Pages`).

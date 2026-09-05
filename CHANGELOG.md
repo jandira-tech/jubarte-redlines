@@ -17,6 +17,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- **`word/fontTable.xml` altName.** Unknown requested families now follow
+  Word's recorded `w:altName` (installed faces still win). Calibri stays the
+  Carlito catalogue slot so an altName on Calibri cannot steal Cambria.
+
 - **Convert fidelity gate.** `scripts/convert_sweep.py` (wrapper
   `scripts/convert-sweep.sh`) scores `jubarte convert` against Word PDFs on the
   76 docxide fixtures and the 398 corpus, path-referencing the sibling

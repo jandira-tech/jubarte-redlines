@@ -6,10 +6,26 @@
 //! Arial/Times, Liberation Mono = Courier) plus glyph advances for wrap and
 //! PDF embedding.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+
+thread_local! {
+    static ACTIVE_FONT_TABLE: RefCell<super::font_table::FontTable> =
+        RefCell::new(super::font_table::FontTable::default());
+}
+
+/// Install `table` for the duration of `f` so `Fonts::resolve` honours altName.
+pub(crate) fn with_font_table<T>(table: super::font_table::FontTable, f: impl FnOnce() -> T) -> T {
+    ACTIVE_FONT_TABLE.with(|slot| {
+        let prev = slot.replace(table);
+        let out = f();
+        slot.replace(prev);
+        out
+    })
+}
 
 /// Word Quartz Save-as-PDF writes a small `Tc` at 300dpi body sizes so
 /// linear hmtx does not sit ~1pt wide of the oracle (color_sim wipe).
@@ -567,6 +583,31 @@ impl Fonts {
     }
 
     pub(crate) fn resolve(&self, family: &str, bold: bool, italic: bool) -> FaceId {
+        ACTIVE_FONT_TABLE.with(|slot| self.resolve_in(family, bold, italic, &slot.borrow()))
+    }
+
+    /// Resolve `family` using Word's font table. Installed faces win;
+    /// otherwise `w:altName` is tried (cycle-guarded). Unknown names still
+    /// fall through to Carlito, matching today's `resolve`.
+    pub(crate) fn resolve_in(
+        &self,
+        family: &str,
+        bold: bool,
+        italic: bool,
+        table: &super::font_table::FontTable,
+    ) -> FaceId {
+        let mut visited = HashSet::new();
+        self.resolve_walk(family, bold, italic, table, &mut visited)
+    }
+
+    fn resolve_walk(
+        &self,
+        family: &str,
+        bold: bool,
+        italic: bool,
+        table: &super::font_table::FontTable,
+        visited: &mut HashSet<String>,
+    ) -> FaceId {
         let primary = family
             .split(',')
             .next()
@@ -577,6 +618,31 @@ impl Fonts {
             .to_ascii_lowercase()
             .replace([' ', '-'], "")
             .replace("mt", "");
+        if let Some(id) = Self::mapped_face(&key, bold, italic) {
+            return id;
+        }
+        let visit_key = primary.to_ascii_lowercase();
+        if !visited.insert(visit_key) {
+            return Self::carlito(bold, italic);
+        }
+        if let Some(alt) = table.alt_name(primary) {
+            return self.resolve_walk(alt, bold, italic, table, visited);
+        }
+        Self::carlito(bold, italic)
+    }
+
+    fn carlito(bold: bool, italic: bool) -> FaceId {
+        match (bold, italic) {
+            (false, false) => FaceId::CarlitoRegular,
+            (true, false) => FaceId::CarlitoBold,
+            (false, true) => FaceId::CarlitoItalic,
+            (true, true) => FaceId::CarlitoBoldItalic,
+        }
+    }
+
+    /// Known catalogue faces. `None` means "not in the 47-face table" so
+    /// `resolve_in` can try `altName` before the Carlito last resort.
+    fn mapped_face(key: &str, bold: bool, italic: bool) -> Option<FaceId> {
         let mono = key.contains("courier")
             || key.contains("monaco")
             || key.contains("menlo")
@@ -591,50 +657,55 @@ impl Fonts {
         // (sample_document / eigenpal). Times overlay on the serif slot
         // left that cluster at ITT ~44.
         if key.contains("symbol") {
-            return FaceId::Symbol;
+            return Some(FaceId::Symbol);
         }
         // Strict01 Title/Heading1/2 are major=Calibri Light. Do not fall
         // through to Calibri Regular (Carlito).
         if key.contains("calibrilight") || (key.contains("calibri") && key.contains("light")) {
-            return if italic {
+            return Some(if italic {
                 FaceId::CalibriLightItalic
             } else {
                 FaceId::CalibriLightRegular
-            };
+            });
+        }
+        // Calibri/Carlito is the catalogue default, not the unknown-family
+        // last resort — otherwise altName on Calibri would steal Cambria.
+        if key.contains("calibri") || key.contains("carlito") {
+            return Some(Self::carlito(bold, italic));
         }
         if key.contains("cambria") || key == "inter" {
-            return match (bold, italic) {
+            return Some(match (bold, italic) {
                 (false, false) => FaceId::CambriaRegular,
                 (true, false) => FaceId::CambriaBold,
                 (false, true) => FaceId::CambriaItalic,
                 (true, true) => FaceId::CambriaBoldItalic,
-            };
+            });
         }
         if key.contains("consolas") {
-            return match (bold, italic) {
+            return Some(match (bold, italic) {
                 (false, false) => FaceId::ConsolasRegular,
                 (true, false) => FaceId::ConsolasBold,
                 (false, true) => FaceId::ConsolasItalic,
                 (true, true) => FaceId::ConsolasBoldItalic,
-            };
+            });
         }
         if key.contains("georgia") {
-            return match (bold, italic) {
+            return Some(match (bold, italic) {
                 (false, false) => FaceId::GeorgiaRegular,
                 (true, false) => FaceId::GeorgiaBold,
                 (false, true) => FaceId::GeorgiaItalic,
                 (true, true) => FaceId::GeorgiaBoldItalic,
-            };
+            });
         }
         // file_22 / sd_2517 live period run is Book Antiqua. Folding it
         // into Carlito (or Times) missed Word Quartz's BookAntiqua embed.
         if key.contains("bookantiqua") || key.contains("palatino") {
-            return match (bold, italic) {
+            return Some(match (bold, italic) {
                 (false, false) => FaceId::BookAntiquaRegular,
                 (true, false) => FaceId::BookAntiquaBold,
                 (false, true) => FaceId::BookAntiquaItalic,
                 (true, true) => FaceId::BookAntiquaBoldItalic,
-            };
+            });
         }
         let sans = key.contains("arial")
             || key.contains("helvetica")
@@ -659,34 +730,31 @@ impl Fonts {
             bold,
             italic,
         ) {
-            (true, _, _, _, _, _, false, false) => FaceId::MonoRegular,
-            (true, _, _, _, _, _, true, false) => FaceId::MonoBold,
-            (true, _, _, _, _, _, false, true) => FaceId::MonoItalic,
-            (true, _, _, _, _, _, true, true) => FaceId::MonoBoldItalic,
-            (_, true, _, _, _, _, false, false) => FaceId::AptosDisplayRegular,
-            (_, true, _, _, _, _, true, false) => FaceId::AptosDisplayBold,
-            (_, true, _, _, _, _, false, true) => FaceId::AptosDisplayItalic,
-            (_, true, _, _, _, _, true, true) => FaceId::AptosDisplayBoldItalic,
-            (_, _, true, _, _, _, false, false) => FaceId::AptosRegular,
-            (_, _, true, _, _, _, true, false) => FaceId::AptosBold,
-            (_, _, true, _, _, _, false, true) => FaceId::AptosItalic,
-            (_, _, true, _, _, _, true, true) => FaceId::AptosBoldItalic,
-            (_, _, _, true, _, _, false, false) => FaceId::VerdanaRegular,
-            (_, _, _, true, _, _, true, false) => FaceId::VerdanaBold,
-            (_, _, _, true, _, _, false, true) => FaceId::VerdanaItalic,
-            (_, _, _, true, _, _, true, true) => FaceId::VerdanaBoldItalic,
-            (_, _, _, _, true, _, false, false) => FaceId::SansRegular,
-            (_, _, _, _, true, _, true, false) => FaceId::SansBold,
-            (_, _, _, _, true, _, false, true) => FaceId::SansItalic,
-            (_, _, _, _, true, _, true, true) => FaceId::SansBoldItalic,
-            (_, _, _, _, _, true, false, false) => FaceId::SerifRegular,
-            (_, _, _, _, _, true, true, false) => FaceId::SerifBold,
-            (_, _, _, _, _, true, false, true) => FaceId::SerifItalic,
-            (_, _, _, _, _, true, true, true) => FaceId::SerifBoldItalic,
-            (_, _, _, _, _, _, false, false) => FaceId::CarlitoRegular,
-            (_, _, _, _, _, _, true, false) => FaceId::CarlitoBold,
-            (_, _, _, _, _, _, false, true) => FaceId::CarlitoItalic,
-            (_, _, _, _, _, _, true, true) => FaceId::CarlitoBoldItalic,
+            (true, _, _, _, _, _, false, false) => Some(FaceId::MonoRegular),
+            (true, _, _, _, _, _, true, false) => Some(FaceId::MonoBold),
+            (true, _, _, _, _, _, false, true) => Some(FaceId::MonoItalic),
+            (true, _, _, _, _, _, true, true) => Some(FaceId::MonoBoldItalic),
+            (_, true, _, _, _, _, false, false) => Some(FaceId::AptosDisplayRegular),
+            (_, true, _, _, _, _, true, false) => Some(FaceId::AptosDisplayBold),
+            (_, true, _, _, _, _, false, true) => Some(FaceId::AptosDisplayItalic),
+            (_, true, _, _, _, _, true, true) => Some(FaceId::AptosDisplayBoldItalic),
+            (_, _, true, _, _, _, false, false) => Some(FaceId::AptosRegular),
+            (_, _, true, _, _, _, true, false) => Some(FaceId::AptosBold),
+            (_, _, true, _, _, _, false, true) => Some(FaceId::AptosItalic),
+            (_, _, true, _, _, _, true, true) => Some(FaceId::AptosBoldItalic),
+            (_, _, _, true, _, _, false, false) => Some(FaceId::VerdanaRegular),
+            (_, _, _, true, _, _, true, false) => Some(FaceId::VerdanaBold),
+            (_, _, _, true, _, _, false, true) => Some(FaceId::VerdanaItalic),
+            (_, _, _, true, _, _, true, true) => Some(FaceId::VerdanaBoldItalic),
+            (_, _, _, _, true, _, false, false) => Some(FaceId::SansRegular),
+            (_, _, _, _, true, _, true, false) => Some(FaceId::SansBold),
+            (_, _, _, _, true, _, false, true) => Some(FaceId::SansItalic),
+            (_, _, _, _, true, _, true, true) => Some(FaceId::SansBoldItalic),
+            (_, _, _, _, _, true, false, false) => Some(FaceId::SerifRegular),
+            (_, _, _, _, _, true, true, false) => Some(FaceId::SerifBold),
+            (_, _, _, _, _, true, false, true) => Some(FaceId::SerifItalic),
+            (_, _, _, _, _, true, true, true) => Some(FaceId::SerifBoldItalic),
+            _ => None,
         }
     }
 }
@@ -903,5 +971,50 @@ mod tests {
         let face = fonts.get(FaceId::AptosRegular);
         let g = face.shape("fl", 10.5);
         assert_eq!(g.len(), 2, "Word Aptos 10.5 does not ligate; glyphs={g:?}");
+    }
+
+    #[test]
+    fn resolve_uses_altname_when_requested_face_missing() {
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="SomeRare"><w:altName w:val="Cambria"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("SomeRare", false, false, &table),
+            FaceId::CambriaRegular,
+            "missing face must follow font-table altName"
+        );
+    }
+
+    #[test]
+    fn resolve_keeps_installed_face_over_altname() {
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="Calibri"><w:altName w:val="Cambria"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("Calibri", false, false, &table),
+            FaceId::CarlitoRegular,
+            "installed Calibri (Carlito) wins over altName Cambria"
+        );
+    }
+
+    #[test]
+    fn resolve_altname_cycle_falls_back() {
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="GhostA"><w:altName w:val="GhostB"/></w:font>
+                 <w:font w:name="GhostB"><w:altName w:val="GhostA"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("GhostA", false, false, &table),
+            FaceId::CarlitoRegular
+        );
     }
 }
