@@ -15,6 +15,30 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Added
+
+- **Convert fidelity gate.** `scripts/convert_sweep.py` (wrapper
+  `scripts/convert-sweep.sh`) scores `jubarte convert` against Word PDFs on the
+  76 docxide fixtures and the 398 corpus, path-referencing the sibling
+  checkouts rather than vendoring 46 MB of cases. `planning/sample50_check.py`
+  is the 50-row smoke after every engine change. Baselines from jubarte 0.9.0:
+  76 mean Jaccard **13.74** (median 8.86), 398 mean Jaccard **53.10**
+  (median 43.50). No converter behaviour change in this commit.
+
+### Fixed
+
+- **CI on GitHub Actions.** `cargo fmt` wraps two `finalize.rs` lines; tests
+  that `std::fs::read` sibling `../neurotic_docx_bench` fixtures now skip when
+  that checkout is absent (Actions has no sibling). `deny.toml` ignores
+  RUSTSEC-2026-0206 (`rustybuzz` unmaintained) and RUSTSEC-2026-0192
+  (`ttf-parser` via rustybuzz) until the FaceKey/harfbuzz swap (plan 2e).
+  Clippy 1.98 `chunks_exact_to_as_chunks` on the WMF gray-fill helper.
+  Convert tests that look for `/Calibri` in the PDF also accept bundled
+  `/Carlito` (Actions has no Word DFonts). Aptos/Calibri wrap-width oracles
+  skip when Word DFonts are absent (PDF still names the logical face).
+  Font overlay no longer scans `/System/Library/Fonts` (Apple Symbol ≠ Word
+  SymbolMT; GitHub macOS runners have it).
+
 ## [0.9.0] - 2026-09-05
 
 Ring 3 is green for the first time: all 207 corpus redlines open in Microsoft

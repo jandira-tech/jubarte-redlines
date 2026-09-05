@@ -73,3 +73,4 @@ tools/validate-docx/obj/
 # check, which reads untracked files.
 tools/mini_bench/work/
 tools/mini_bench/__pycache__/
+**/__pycache__/

@@ -24,6 +24,10 @@ yanked = "warn"
 ignore = [
     { id = "RUSTSEC-2026-0194", reason = "transitive quick-xml 0.37 via rdocx-opc; direct dep is 0.41+" },
     { id = "RUSTSEC-2026-0195", reason = "transitive quick-xml 0.37 via rdocx-opc; direct dep is 0.41+" },
+    # Direct rustybuzz 0.20 (shaping). Unmaintained as of 2026-08; migrating
+    # off it is plan Step 2e / PR5 (FaceKey registry), not a CI ignore-forever.
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz unmaintained; migrate with FaceKey/harfbuzz in plan 2e" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained via rustybuzz 0.20; same 2e migration" },
 ]
 
 [licenses]

@@ -1,0 +1,256 @@
+{
+ "jubarte": "/Users/arthrod/temp/T/jubarte-redlines/target/release/jubarte",
+ "mean": 37.565388748073616,
+ "rows": {
+  "source__Redline_CiceroDo_v_plate_30": {
+   "jaccard": 8.074241449174579,
+   "ssim": 21.192721315786002,
+   "text_boundary": 26.0
+  },
+  "source__endnotes_sample": {
+   "jaccard": 7.623179423613263,
+   "ssim": 15.33617902246179,
+   "text_boundary": 0.0
+  },
+  "source_randomized__file_47": {
+   "jaccard": 1.582944459694391,
+   "ssim": 14.156008596741007,
+   "text_boundary": 0.0
+  },
+  "source__project_tasks_suggesting_insertions": {
+   "jaccard": 13.318109157341858,
+   "ssim": 71.61210990704632,
+   "text_boundary": 100.0
+  },
+  "source__q1_sales_summary_table": {
+   "jaccard": 14.675638534805477,
+   "ssim": 74.05329854616872,
+   "text_boundary": 100.0
+  },
+  "source_randomized__file_184": {
+   "jaccard": 14.566600269870847,
+   "ssim": 36.433312689138894,
+   "text_boundary": 100.0
+  },
+  "source__eigenpal_docx_editor_suggesting_mixed_edits": {
+   "jaccard": 17.874567605515082,
+   "ssim": 41.54744562552376,
+   "text_boundary": 37.5
+  },
+  "source__multi_section": {
+   "jaccard": 18.137162300924807,
+   "ssim": 28.85511219121584,
+   "text_boundary": 84.21052631578947
+  },
+  "source_randomized__file_76": {
+   "jaccard": 18.36507260152742,
+   "ssim": 79.87696134193688,
+   "text_boundary": 100.0
+  },
+  "source__docx_lots_of_comments_addition_redline_addition_v_removal": {
+   "jaccard": 29.29224608180495,
+   "ssim": 62.47826704730707,
+   "text_boundary": 58.187134502923975
+  },
+  "source_randomized__file_83": {
+   "jaccard": 26.877975888967683,
+   "ssim": 46.93167725152808,
+   "text_boundary": 66.66666666666666
+  },
+  "source_randomized__file_93": {
+   "jaccard": 25.252815032632864,
+   "ssim": 74.07152321885741,
+   "text_boundary": 100.0
+  },
+  "source__red_heading_demo_id_paraid_overflow": {
+   "jaccard": 41.636343341890836,
+   "ssim": 89.21118575521007,
+   "text_boundary": 100.0
+  },
+  "source__superscript_demo_id_paraid_overflow": {
+   "jaccard": 34.72060535506402,
+   "ssim": 42.83898713573286,
+   "text_boundary": 100.0
+  },
+  "source_randomized__file_9": {
+   "jaccard": 29.996033220814684,
+   "ssim": 63.035529548648114,
+   "text_boundary": 58.309037900874635
+  },
+  "source__project_tasks_suggesting_insertions_2": {
+   "jaccard": 58.97404654563177,
+   "ssim": 71.52375255419354,
+   "text_boundary": 33.33333333333333
+  },
+  "source_randomized__file_174": {
+   "jaccard": 51.32798884628791,
+   "ssim": 73.49923551132994,
+   "text_boundary": 100.0
+  },
+  "source_randomized__file_48": {
+   "jaccard": 48.793405711388985,
+   "ssim": 38.764309172245156,
+   "text_boundary": 36.36363636363637
+  },
+  "source__header_no_rels": {
+   "jaccard": 76.92138046953649,
+   "ssim": 96.38443064689741,
+   "text_boundary": 100.0
+  },
+  "source_randomized__file_191": {
+   "jaccard": 88.33414341562089,
+   "ssim": 95.57353482846881,
+   "text_boundary": 100.0
+  },
+  "source_randomized__file_31": {
+   "jaccard": 91.54340446168769,
+   "ssim": 96.97667276430464,
+   "text_boundary": 100.0
+  },
+  "source__right_aligned_italic_demo_id_paraid_overflow": {
+   "jaccard": 93.09630102040816,
+   "ssim": 98.32292421027778,
+   "text_boundary": 100.0
+  },
+  "source_randomized__file_105": {
+   "jaccard": 93.59251259899209,
+   "ssim": 98.34557758068767,
+   "text_boundary": 100.0
+  },
+  "source_randomized__file_121": {
+   "jaccard": 94.67380583345076,
+   "ssim": 98.86695703228463,
+   "text_boundary": 100.0
+  },
+  "source__project_proposal_id_paraid_overflow": {
+   "jaccard": 96.92999867672357,
+   "ssim": 99.27034667274513,
+   "text_boundary": 100.0
+  },
+  "source_randomized__file_157": {
+   "jaccard": 96.73659673659674,
+   "ssim": 98.63807682202857,
+   "text_boundary": 100.0
+  },
+  "source_randomized__file_182": {
+   "jaccard": 96.52267431439327,
+   "ssim": 99.05319186031683,
+   "text_boundary": 100.0
+  },
+  "source__text_highlight_demo_style_default_missing": {
+   "jaccard": 98.37153196622437,
+   "ssim": 99.53788125760946,
+   "text_boundary": 100.0
+  },
+  "source_randomized__file_5": {
+   "jaccard": 97.50265674814028,
+   "ssim": 99.45970628930257,
+   "text_boundary": 100.0
+  },
+  "source_randomized__file_51": {
+   "jaccard": 98.62547135384989,
+   "ssim": 99.67356663220727,
+   "text_boundary": 100.0
+  },
+  "case3": {
+   "jaccard": 0.8904967302073188,
+   "ssim": 11.853116304489788,
+   "text_boundary": 60.0
+  },
+  "case26": {
+   "jaccard": 1.458085026646339,
+   "ssim": 12.560863584361057,
+   "text_boundary": 40.0
+  },
+  "case2": {
+   "jaccard": 4.021795537104307,
+   "ssim": 10.840938869584479,
+   "text_boundary": 100.0
+  },
+  "case23": {
+   "jaccard": 3.5872241746156974,
+   "ssim": 10.861444926896292,
+   "text_boundary": 28.57142857142857
+  },
+  "case19": {
+   "jaccard": 5.482390501845755,
+   "ssim": 19.612912107406586,
+   "text_boundary": 100.0
+  },
+  "case21": {
+   "jaccard": 5.195766813551976,
+   "ssim": 12.18530465154259,
+   "text_boundary": 0.0
+  },
+  "case44": {
+   "jaccard": 5.5374757128965575,
+   "ssim": 14.866553717001157,
+   "text_boundary": 100.0
+  },
+  "case46": {
+   "jaccard": 5.836352563317958,
+   "ssim": 19.175162042674092,
+   "text_boundary": 5.3156146179401995
+  },
+  "case49": {
+   "jaccard": 6.870204434304241,
+   "ssim": 21.439614782870816,
+   "text_boundary": 46.96969696969697
+  },
+  "case62": {
+   "jaccard": 8.716620335270827,
+   "ssim": 28.83445731575534,
+   "text_boundary": 100.0
+  },
+  "case7": {
+   "jaccard": 9.795858127100622,
+   "ssim": 22.145326505105025,
+   "text_boundary": 100.0
+  },
+  "case70": {
+   "jaccard": 9.162648753092439,
+   "ssim": 21.3405398118589,
+   "text_boundary": 0.0
+  },
+  "case31": {
+   "jaccard": 10.371244849375758,
+   "ssim": 28.87948774419987,
+   "text_boundary": 0.0
+  },
+  "case57": {
+   "jaccard": 13.630312494013994,
+   "ssim": 31.743125093488402,
+   "text_boundary": 100.0
+  },
+  "case53": {
+   "jaccard": 18.72711423488663,
+   "ssim": 20.387713480815727,
+   "text_boundary": 0.0
+  },
+  "case78": {
+   "jaccard": 18.006213381946583,
+   "ssim": 45.85691665362297,
+   "text_boundary": 100.0
+  },
+  "case5": {
+   "jaccard": 29.306926293940506,
+   "ssim": 45.0338531617289,
+   "text_boundary": 100.0
+  },
+  "case54": {
+   "jaccard": 25.228667336783317,
+   "ssim": 56.8710237098577,
+   "text_boundary": 77.04918032786885
+  },
+  "case14": {
+   "jaccard": 64.15655189497151,
+   "ssim": 88.59581967133717,
+   "text_boundary": 100.0
+  },
+  "case27": {
+   "jaccard": 48.34803478523283,
+   "ssim": 48.32352450595355,
+   "text_boundary": 100.0
+  }
+ }
+}
