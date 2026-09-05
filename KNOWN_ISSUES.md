@@ -78,6 +78,40 @@ after `c2547f4a`.
 (2026-07-24), so losslessness has been partially broken for some time. These
 two are the only L0 regressions still outstanding against that build.
 
+## 4. Internal `Unid` scratch ships as an undeclared `w:Unid` attribute
+
+**Symptom (Ring 2, `Sch_UndeclaredAttribute`):** 81 findings of
+`The 'http://…/wordprocessingml/2006/main:Unid' attribute is not declared.`
+
+**Evidence it is ours, not inherited:** `Unid` appears in **0 of 192** corpus
+source documents and in **12 of 207** of our outputs.
+
+**Mechanism:** `unid.rs` stamps `PT::unid()` (`http://powertools.codeplex.com/2011`)
+and `document_comparer.rs` strips `pt:*` scratch before writing. But at least one
+attribute reaches the serializer bound to the **`w:` prefix** instead of `pt14:`,
+so it (a) escapes the `pt:*` stripper, which looks for the PT namespace, and
+(b) serializes as `w:Unid`, which is not in the wordprocessingml schema:
+
+```xml
+<w:spacing w:line="276" w:Unid="00000000000000000000000000000004" />
+```
+
+The root does declare `xmlns:pt14="http://powertools.codeplex.com/2011"`, and
+these documents contain exactly one `w:Unid` and zero `pt14:Unid`, so this is a
+single mis-namespaced stamp rather than a general serializer fault. Find the
+write site that builds the name in the element's own namespace instead of PT.
+
+**Status:** open. Pre-existing — present well before 0.8.0. Word's tolerance
+varies: most of these files still open, so it is a validity defect rather than a
+guaranteed corruption.
+
+**Ring 2 note:** `tools/validity_baseline.tsv` was empty ("initial bless is
+empty") — Ring 2 had never been run. The first full sweep over the 207-pair
+corpus reports 1294 findings across 54 pairs. The dominant class (495) is
+`r`/`g`/`b="0%"` colour attributes, which **are** inherited: 4 source documents
+carry them. `tools/validate-docx/` is also empty in this checkout; the C#
+project lives in the `wt-r2` / `wt-styles` worktrees.
+
 ## Notes
 
 - **Hyperlink `r:id` preservation**: unwrap only anchor-based internal
