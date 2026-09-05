@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[build-system]
+requires = ["maturin>=1.14,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "jubarte-redlines"
+description = "Lossless DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions; render DOCX to PDF"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-only"
+authors = [{ name = "Jandira Technologies, LLC" }]
+keywords = ["docx", "redline", "track-changes", "tracked-changes", "openxml", "word", "diff", "compare", "pdf"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Legal Industry",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Rust",
+  "Topic :: Office/Business :: Office Suites",
+  "Topic :: Text Processing :: Markup :: XML",
+  "Typing :: Typed",
+]
+# Version comes from Cargo.toml (single source of truth).
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/jandira-tech/jubarte-redlines"
+Repository = "https://github.com/jandira-tech/jubarte-redlines"
+Changelog = "https://github.com/jandira-tech/jubarte-redlines/blob/main/CHANGELOG.md"
+Issues = "https://github.com/jandira-tech/jubarte-redlines/issues"
+
+[tool.maturin]
+module-name = "jubarte_redlines._native"
+python-source = "python"
+strip = true
+# The sdist vendors the engine checkout (path dep on ".."); keep sibling
+# adapters, local build output, and app junk out of it.
+exclude = [
+  { path = "wheels/**", format = "sdist" },
+  { path = "dist/**", format = "sdist" },
+  { path = "jubarte-app/**", format = "sdist" },
+  { path = "jubarte-wasm/**", format = "sdist" },
+  { path = "jubarte-rust-inproc/**", format = "sdist" },
+  { path = "../jubarte-app/**", format = "sdist" },
+  { path = "../jubarte-wasm/**", format = "sdist" },
+  { path = "../jubarte-rust-inproc/**", format = "sdist" },
+]

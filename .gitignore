@@ -67,3 +67,9 @@ lcov.info
 # .NET build outputs of the DOCX validator tool — build locally, never track
 tools/validate-docx/bin/
 tools/validate-docx/obj/
+
+# Mini-bench scratch: per-run oracle/jubarte renders (multi-GB, regenerable).
+# Untracked build inputs otherwise trip jubarte-wasm/build-npm.sh's clean-tree
+# check, which reads untracked files.
+tools/mini_bench/work/
+tools/mini_bench/__pycache__/
