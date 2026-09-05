@@ -4604,10 +4604,10 @@ fn calibri_embeds_system_calibri_when_present() {
 }
 
 #[test]
-fn css_font_stack_uses_first_family_verdana() {
-    // verdana_font_demo stores ascii="Verdana, Geneva, sans-serif". Matching
-    // "sansserif" anywhere mapped the run to Arial; Word embeds Verdana
-    // (official ITT ~63).
+fn css_font_stack_unquoted_first_token_is_verdana() {
+    // Word Quartz on verdana_font_demo (no fontTable): ascii=
+    // "Verdana, Geneva, sans-serif" embeds Verdana. It splits on comma
+    // but does not treat the tail as a sans-serif → Arial match.
     let path = std::path::Path::new(
         "/Applications/Microsoft Word.app/Contents/Resources/DFonts/Verdana.ttf",
     );
@@ -4619,17 +4619,43 @@ fn css_font_stack_uses_first_family_verdana() {
              w:hAnsi=\"Verdana, Geneva, sans-serif\"/>\
              <w:sz w:val=\"22\"/></w:rPr>\
            <w:t>VerdanaStack</w:t></w:r></w:p><w:sectPr/>";
-    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Verdana stack");
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert CSS stack");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
         text.contains("/Verdana"),
-        "first family in a CSS stack must embed Verdana; tail {}",
+        "unquoted first token must embed Verdana; tail {}",
         &text[text.len().saturating_sub(320)..]
     );
     assert!(
         !text.contains("/ArialMT") && !text.contains("/LiberationSans"),
-        "Verdana stack must not fall through to Arial; tail {}",
-        &text[text.len().saturating_sub(280)..]
+        "must not fall through to Arial via the sans-serif tail"
+    );
+}
+
+#[test]
+fn css_font_stack_altname_uses_recorded_verdana() {
+    let path = std::path::Path::new(
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts/Verdana.ttf",
+    );
+    if !path.is_file() {
+        return;
+    }
+    let body = "<w:p><w:r>\
+           <w:rPr><w:rFonts w:ascii=\"Verdana, Geneva, sans-serif\" \
+             w:hAnsi=\"Verdana, Geneva, sans-serif\"/>\
+             <w:sz w:val=\"22\"/></w:rPr>\
+           <w:t>VerdanaStack</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_with_font_table(
+        body,
+        "<w:font w:name=\"Verdana, Geneva, sans-serif\">\
+           <w:altName w:val=\"Verdana\"/></w:font>",
+    ))
+    .expect("convert CSS stack with altName");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/Verdana"),
+        "fontTable altName on the opaque list must embed Verdana; tail {}",
+        &text[text.len().saturating_sub(320)..]
     );
 }
 
