@@ -1103,6 +1103,16 @@ mod tests {
     }
 
     #[test]
+    fn resolve_wide_latin_stays_calibri_mini_505() {
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve("Wide Latin", false, false),
+            FaceId::CarlitoRegular,
+            "mini 505 ITT-neg WideLatin overlay; keep Calibri"
+        );
+    }
+
+    #[test]
     fn resolve_empty_family_is_times_new_roman() {
         let fonts = Fonts::new();
         assert_eq!(

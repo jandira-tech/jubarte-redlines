@@ -125,6 +125,7 @@ mod tests {
         assert!(keys.contains(&"dejavusansmono"));
         assert!(keys.contains(&"liberationserif"));
         assert!(keys.contains(&""));
+        assert!(keys.contains(&"widelatin"));
         assert!(keys.contains(&"*"));
         assert_eq!(lookup_physical("Inter").as_deref(), Some("Cambria"));
         assert_eq!(
