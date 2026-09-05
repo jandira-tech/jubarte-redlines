@@ -130,6 +130,26 @@ jubarte convert contract.docx             # independent DOCX → PDF
 Run `jubarte --help` for author/date stamping, `--detail-threshold`, and
 `--powertools-faithful` (classic PowerTools-compatible mode).
 
+### Convert fidelity gate
+
+Word-PDF Jaccard on two sets lives in this checkout, not only in docxide-pdf:
+
+```sh
+python3 scripts/test_convert_sweep.py          # unit tests (no siblings)
+python3 planning/sample50_check.py             # 50-row smoke, ~3 min
+python3 scripts/convert_sweep.py 76            # 76 docxide cases
+python3 scripts/convert_sweep.py 398           # 398 corpus (source + randomized)
+python3 scripts/page1_delta.py ref.pdf out.pdf # first-ink / band-pitch
+```
+
+Fixtures are path-referenced: `../docxide-pdf/tests/fixtures/cases/*` and
+`../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/`. The
+scripts exit 2 with a path if a sibling is missing (CI without those trees
+still runs the unit tests). A row drop of more than 1.0 Jaccard, a mean drop
+of more than 0.2, or a convert failure is a regression — fix it or name every
+such row in the commit. Baselines: `tools/convert_baseline_{76,398}.tsv` and
+`planning/sample50_baseline.json`.
+
 ## Library surface
 
 | API | Purpose |

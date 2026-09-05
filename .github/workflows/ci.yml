@@ -112,3 +112,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  convert-sweep-unit:
+    name: convert-sweep unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 scripts/test_convert_sweep.py
