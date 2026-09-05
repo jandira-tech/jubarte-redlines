@@ -1352,11 +1352,11 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
         style.family = face.to_string();
     } else if slot.contains("minor")
         && let Some(face) = theme.minor.as_deref()
-        && face
-            .to_ascii_lowercase()
-            .replace([' ', '-'], "")
-            .starts_with("aptos")
     {
+        // Honour minorHAnsi for every theme face, not only Aptos. The
+        // Aptos-only gate was a mini-set trade (file_2 / file_41 Cambria
+        // line boxes). Those two will drop until the line-box PR; do not
+        // restore this gate.
         style.family = face.to_string();
     } else if let Some(ascii) = ascii {
         style.family = ascii.to_string();
@@ -9372,6 +9372,65 @@ mod page_count_tests {
     fn page_count_ignores_pages_dictionary() {
         let pdf = b"%PDF-1.4\n/Type /Pages\n/Type /Page\n/Type /Page\n";
         assert_eq!(pdf_page_count(pdf), 2);
+    }
+}
+
+#[cfg(test)]
+mod theme_slot_tests {
+    use super::*;
+
+    fn family_from_rfonts(attrs: &str, theme: &ThemeFonts) -> String {
+        let xml = format!(
+            r#"<?xml version="1.0"?>
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:rFonts {attrs}/>
+            </w:document>"#
+        );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).expect("root");
+        let fonts = first_named(&dom, root, "rFonts").expect("rFonts");
+        let mut style = Defaults::word().run;
+        apply_rfonts(&dom, fonts, &mut style, theme);
+        style.family
+    }
+
+    fn theme_cambria_minor() -> ThemeFonts {
+        ThemeFonts {
+            major: Some("Calibri".into()),
+            minor: Some("Cambria".into()),
+            colors: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn theme_minor_cambria_without_explicit_ascii_sets_family_cambria() {
+        assert_eq!(
+            family_from_rfonts(r#"w:asciiTheme="minorHAnsi""#, &theme_cambria_minor()),
+            "Cambria"
+        );
+    }
+
+    #[test]
+    fn explicit_ascii_beats_theme_slot() {
+        assert_eq!(
+            family_from_rfonts(
+                r#"w:ascii="Calibri" w:asciiTheme="minorHAnsi""#,
+                &theme_cambria_minor()
+            ),
+            "Calibri"
+        );
+    }
+
+    #[test]
+    fn display_cache_plus_major_slot_uses_theme_major() {
+        assert_eq!(
+            family_from_rfonts(
+                r#"w:ascii="Aptos Display" w:asciiTheme="majorHAnsi""#,
+                &theme_cambria_minor()
+            ),
+            "Calibri"
+        );
     }
 }
 

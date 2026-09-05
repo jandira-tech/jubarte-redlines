@@ -5965,18 +5965,16 @@ fn official_table_bookmark_test_eight_ignores_fixed_tblcellmar_left() {
 }
 
 #[test]
-fn official_table_bookmark_end_body_stays_calibri_after_mini_396() {
+fn official_table_bookmark_end_body_embeds_theme_cambria() {
     // Word Quartz paints table_bookmark_end body as Cambria (factory
-    // minorHAnsi → theme minor). Resolving that slot lifted NR mini 394
-    // +0.048 (this fixture +1.61, file_134 +1.28) but dropped redline
-    // file_27_file_28 −2.85 (mini 396). Keep Calibri.
+    // minorHAnsi → theme minor). file_2 / file_41 may drop until line-box.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/table_bookmark_end.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert table_bookmark_end");
     assert_eq!(pdf_page_count(&pdf), 2, "Word table_bookmark_end is 2pp");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        !text.contains("/Cambria"),
-        "factory Cambria minor stays Calibri after mini 396 ITT; tail {}",
+        text.contains("/Cambria"),
+        "factory minorHAnsi must embed Cambria; tail {}",
         &text[text.len().saturating_sub(320)..]
     );
 }
@@ -13343,10 +13341,9 @@ fn docdefaults_minor_hansi_aptos_embeds_liberation_sans() {
 }
 
 #[test]
-fn factory_cambria_minor_stays_calibri_after_mini_396() {
-    // Word Quartz paints factory minorHAnsi → Cambria. Mini 394–396:
-    // NR +0.048 (table_bookmark / file_134) but redline file_27_file_28
-    // −2.85. Keep the Aptos-only gate.
+fn factory_cambria_minor_honours_theme_slot() {
+    // Word Quartz paints factory minorHAnsi → Cambria. The Aptos-only
+    // gate (mini 396) is gone; file_2 / file_41 may drop until line-box.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
            <w:docDefaults><w:rPrDefault><w:rPr>\
@@ -13369,13 +13366,8 @@ fn factory_cambria_minor_stays_calibri_after_mini_396() {
         .expect("convert Cambria minor theme");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        !text.contains("/Cambria"),
-        "factory Cambria minor stays Calibri after mini 396 ITT; tail {}",
-        &text[text.len().saturating_sub(320)..]
-    );
-    assert!(
-        text.contains("/Calibri") || text.contains("/Carlito"),
-        "factory theme body stays Calibri/Carlito; tail {}",
+        text.contains("/Cambria"),
+        "factory minorHAnsi Cambria must embed Cambria; tail {}",
         &text[text.len().saturating_sub(320)..]
     );
 }
