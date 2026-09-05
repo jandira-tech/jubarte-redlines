@@ -841,6 +841,16 @@ pub fn compare_bodies_faithful_with_notes(
         // absorbed from pure-I list residual (bookmark×broken_complex −0.6).
         finalize::strip_list_layout_from_mid_pure_del(dom, root);
     }
+    // Validity, not parity: a w:ins/w:del may not hold a w:hyperlink. Deleting a
+    // whole header/footer swallowed the source's hyperlink into the w:del and Word
+    // refused to open the result. Unconditional and last, so it catches the shape
+    // whichever pass above produced it, and before the renumber below fixes up the
+    // duplicate w:ids the split leaves behind.
+    finalize::hoist_hyperlinks_out_of_revisions(dom, root);
+    // Same class: w:t/w:instrText under w:del must be delText/delInstrText, or Word
+    // offers to repair the file. The schema validator cannot see this, so it has to
+    // be enforced structurally rather than caught by Ring 2.
+    finalize::enforce_deleted_text_kinds(dom, root);
     // Final renumber after wrap_bare / stamped predeletes / row marks — any
     // w:id minted after the earlier fix_up_revision_ids pass would otherwise
     // collide with move ranges or comments once those anchors are present.
