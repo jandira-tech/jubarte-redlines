@@ -30,6 +30,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   resolve to Cambria (Word Quartz). `DejaVu Sans Mono` → Verdana;
   `Liberation Serif` → Times New Roman; empty request → Times New Roman;
   `w:family`/`w:pitch` generics (roman/swiss/modern/fixed) after altName.
+- **`FaceKey` catalogue shim.** Physical family + bold/italic, with lazy
+  `OnceLock` loads so a conversion does not parse all 47 faces up front.
+  `FaceId` remains the call-site type until embedded fonts land.
 
 - **Convert fidelity gate.** `scripts/convert_sweep.py` (wrapper
   `scripts/convert-sweep.sh`) scores `jubarte convert` against Word PDFs on the
