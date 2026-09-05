@@ -323,7 +323,7 @@ fn cargo_toml_declares_the_font_and_image_dependencies() {
 
 #[test]
 fn cargo_lock_is_consistent_with_the_new_dependencies() {
-    let lock = read("Cargo.lock");
+    let lock = read("Cargo.lock").replace("\r\n", "\n");
     for pkg in [
         "name = \"ttf-parser\"",
         "name = \"rustybuzz\"",
