@@ -23,6 +23,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - **Quoted CSS family lists are not Times.** Word splits `w:ascii` on comma
   but does not CSS-unquote, so `"Times New Roman", Times, serif` is unknown
   (Quartz used Cambria) while `Verdana, Geneva, sans-serif` is Verdana.
+- **Theme minor slot for every face.** `minorHAnsi` → theme minor (Cambria
+  included). The Aptos-only gate is gone. `file_2` / `file_41` may drop
+  until the line-box formula lands; explicit `w:ascii` still wins.
 
 - **Convert fidelity gate.** `scripts/convert_sweep.py` (wrapper
   `scripts/convert-sweep.sh`) scores `jubarte convert` against Word PDFs on the
