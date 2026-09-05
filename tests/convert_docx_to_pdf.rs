@@ -1020,8 +1020,7 @@ fn rgb_image_has_light_gray_fill(pdf: &[u8]) -> bool {
                 .unwrap_or(data.len().min(200_000));
             let rgb = &data[..end];
             let mut gray = 0_u32;
-            for pix in rgb.chunks_exact(3) {
-                let [r, g, b] = [pix[0], pix[1], pix[2]];
+            for &[r, g, b] in rgb.as_chunks::<3>().0 {
                 if (200..=235).contains(&r) && r.abs_diff(g) < 16 && g.abs_diff(b) < 16 {
                     gray += 1;
                 }

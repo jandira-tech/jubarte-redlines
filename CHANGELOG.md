@@ -32,6 +32,7 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   that checkout is absent (Actions has no sibling). `deny.toml` ignores
   RUSTSEC-2026-0206 (`rustybuzz` unmaintained) and RUSTSEC-2026-0192
   (`ttf-parser` via rustybuzz) until the FaceKey/harfbuzz swap (plan 2e).
+  Clippy 1.98 `chunks_exact_to_as_chunks` on the WMF gray-fill helper.
 
 ## [0.9.0] - 2026-09-05
 
