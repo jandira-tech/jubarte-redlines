@@ -112,6 +112,42 @@ corpus reports 1294 findings across 54 pairs. The dominant class (495) is
 carry them. `tools/validate-docx/` is also empty in this checkout; the C#
 project lives in the `wt-r2` / `wt-styles` worktrees.
 
+## 5. Ring 3: five corpus redlines Word refuses to open
+
+**Result (2026-09-05, full 207-pair word_based sweep at v0.8.0):**
+`word-open probe: opened=202 failed=5`. VERSIONING.md requires `probe_fail=0`
+before a crates.io publish, so this gate is red.
+
+Each failure is `ERROR -1712: AppleEvent timed out`, which for
+`scripts/word-open-probe.sh` means Word put up a corrupt-file dialog instead of
+opening the document:
+
+- `complex_style_attr_contract_review_suggesting_insertions`
+- `docx_lots_of_comments_double_spacing_bold_demo_id_paraid_overflow`
+- `eigenpal_docx_editor_suggesting_mixed_edits_employee_directory_table_2`
+- `I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you_increase_indent_demo_id_paraid_overflow`
+- `sample_document_word_repair_of_our_output_word_repaired_small_font_size_demo_id_paraid_overflow`
+
+**Triaged so far:** the first is *inherited*, not generated — source
+`complex_style_attr.docx` already carries
+`paragraphProperties="[object Object]"` (a JS stringification artifact) in its
+own `styles.xml`, and we copy `styles.xml` through. Ring 2 flags it as
+`Sch_UndeclaredAttribute`. The other four are untriaged; note the last one is a
+document Word had already repaired once *from our own output*, fed back in.
+
+**Pre-existing:** all five also failed before the M463 / M328d fixes in 0.8.0.
+
+**Harness note.** `scripts/redline-sweep.sh --probe` cannot measure this
+correctly as written. A failing document leaves Word on a modal dialog, so every
+later probe fails too — the first attempt here read 34 opens then 88 phantom
+failures. Recovering with `pkill -9` then relaunches Word into Document
+Recovery, another modal dialog; `*.docx` also matches the `~$name.docx` owner
+files Word drops, each costing a 60s timeout; and after a kill Word needs ~30s
+to cold start, which the probe's own 60s budget has to absorb, cascading into
+all-fail. A correct sweep must quit Word cleanly on failure, clear
+`…/Preferences/AutoRecovery`, skip `~$*`, and **pre-warm Word** before the next
+probe. With that, the corpus reads 202/5 instead of 34/88.
+
 ## Notes
 
 - **Hyperlink `r:id` preservation**: unwrap only anchor-based internal
