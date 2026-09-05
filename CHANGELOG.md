@@ -15,6 +15,53 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-05
+
+Two losslessness fixes in the redline core, and the DOCX → PDF converter that
+0.7.1 prepared but never shipped to crates.io.
+
+### Fixed
+
+- **Redline no longer drops sentence-final punctuation (M463).** The
+  fold that attached a trailing bare `.` EQ run onto the preceding
+  `w:ins`/`w:del` moved a run that belongs to *both* documents into a
+  one-sided revision and then deleted it, so the period left the other
+  side's stream — onto a `w:del` it vanished from the modified document,
+  onto a `w:ins` from the original. 16 corpus pairs stopped reconstructing
+  their own inputs. The whole `fold_boiler_eq_between_ins` pass is removed:
+  keeping only its `INS|EQ|INS` half measured worse (19 vs 18 L0 rows).
+- **Redline no longer rewrites letter case (M328d).** The free-mesh word
+  rehash hashed `text.to_ascii_lowercase()`, so `"Green"` and `"green"`
+  compared Equal — but the emitted EQ run carries only one side's casing,
+  turning `Green highlights…` into `green highlights…`. The extra spurious
+  matches also let two output paragraphs claim the same source atom. The
+  hash is case-sensitive again at all 20 call sites; M328d's unrelated
+  stamped-pair (`file_N.docx`) free-mesh exclusion is kept. Case-insensitive
+  matching is sound only once the emitted run keeps each side's own text.
+
+Ring 1 (`tools/parity_ladder.py sweep`, 207 pairs): L0 reconstruction
+failures 34 → 17 rows; regressions against `042089c` 19 → 2. The two
+survivors are a distinct free-mesh double-consumption defect — see
+KNOWN_ISSUES.md issue 3. 15 of the 17 predate `042089c`.
+
+### Added
+
+- **`jubarte convert` / `convert::docx_to_pdf`.** Emit a real multi-page PDF
+  from DOCX bytes without LibreOffice: paragraphs, lists, tables, JPEG/PNG,
+  headers/footers, and WMF/EMF rasterization. Prepared in 0.7.1, which was
+  tagged but never published — 0.7.0 is the newest version on crates.io, so
+  this is the first release in which `convert` is installable.
+- **`convert::PdfOptions { compress }`** (CLI: `jubarte convert --compress`)
+  — `/FlateDecode` the content streams. Off keeps page content greppable
+  with `strings`; on is substantially smaller.
+- Converter fidelity work against Word: OMML `m:f` `noBar` fractions, tab
+  stop resolution (`w:tabs`, `defaultTabStop`, ISO-Strict `ST_TabJc`),
+  Word's `size >= w:kern/@val / 2` kerning threshold, `GridTable4-Accent5`
+  and `MediumShading` table styles, DrawingML stroke width/colour from
+  `a:ln/@w` and `lnRef`, textbox `w:ind`/`w:spacing` and
+  `relativeFrom=margin`, `w14:reflection` flattening as Word's PDF export
+  does, and small-caps shrinking lowercase only (ECMA-376 17.3.2.5).
+
 ## [0.7.1] - 2026-08-16
 
 Independent DOCX → PDF converter. Redline output is unchanged from 0.7.0.
@@ -266,6 +313,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.8.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.8.0
 [0.7.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.1
 [0.7.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.0
 [0.6.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.6.0
