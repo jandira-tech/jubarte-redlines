@@ -690,7 +690,10 @@ impl Face {
 /// Faces load on first `get` so a conversion that uses three families
 /// does not parse the other forty-four (plan Step 2e).
 pub(crate) struct Fonts {
-    faces: [OnceLock<Face>; 47],
+    /// `OnceLock<Box<Face>>` so the catalogue array is pointer-sized.
+    /// `[OnceLock<Face>; 47]` is 47 inline Faces and overflowed the Windows
+    /// CLI stack (`jubarte convert` in convert_docx_to_pdf).
+    faces: [OnceLock<Box<Face>>; 47],
 }
 
 impl Fonts {
@@ -707,11 +710,15 @@ impl Fonts {
 
     pub(crate) fn get_key(&self, key: &FaceKey) -> &Face {
         let id = Self::id_from_key(key);
-        self.faces[id.index()].get_or_init(|| {
-            system_override(id)
-                .and_then(|path| Face::from_path(id, &path))
-                .unwrap_or_else(|| Face::load(id))
-        })
+        self.faces[id.index()]
+            .get_or_init(|| {
+                Box::new(
+                    system_override(id)
+                        .and_then(|path| Face::from_path(id, &path))
+                        .unwrap_or_else(|| Face::load(id)),
+                )
+            })
+            .as_ref()
     }
 
     fn id_from_key(key: &FaceKey) -> FaceId {
