@@ -42,8 +42,23 @@ pub(crate) enum Op {
         h: f32,
         color: [f32; 3],
     },
+    /// Closed rectangle stroke (Word SmartArt connector bars `re S`).
+    StrokeRect {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        width: f32,
+        color: [f32; 3],
+    },
     FillPoly {
         points: Vec<(f32, f32)>,
+        color: [f32; 3],
+    },
+    /// Closed polygon stroke (Strict01 rightArrow lnRef shade outline).
+    StrokePoly {
+        points: Vec<(f32, f32)>,
+        width: f32,
         color: [f32; 3],
     },
     /// Cubic Bézier stroke (DrawingML curvedConnector). `segments` are
@@ -275,6 +290,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         let page_enc = &encodings[page_idx];
         let mut xobjects = String::new();
         let mut img_n = 0usize;
+        let mut has_watermark = false;
         for op in &page.ops {
             match op {
                 Op::Jpeg {
@@ -300,6 +316,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     objs.push(rgb_xobject(*width, *height, bytes, options.compress));
                     xobjects.push_str(&format!("/Im{img_n} {id} 0 R "));
                 }
+                Op::Watermark { .. } => has_watermark = true,
                 _ => {}
             }
         }
@@ -419,7 +436,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         continue;
                     };
                     stream.push_str(&format!(
-                        "q 1 0 0 1 {x:.2} {y:.2} cm {cos:.4} {sin:.4} {nsin:.4} {cos:.4} 0 0 cm \
+                        "q /WmGs gs 1 0 0 1 {x:.2} {y:.2} cm {cos:.4} {sin:.4} {nsin:.4} {cos:.4} 0 0 cm \
                          BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {dx:.2} {dy:.2} Td {lit} Tj ET Q\n",
                         nsin = -sin,
                         r = color[0],
@@ -451,6 +468,22 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         b = color[2],
                     ));
                 }
+                Op::StrokeRect {
+                    x,
+                    y,
+                    w,
+                    h,
+                    width,
+                    color,
+                } => {
+                    stream.push_str(&format!(
+                        "{lw:.2} w {r:.3} {g:.3} {b:.3} RG {x:.2} {y:.2} {w:.2} {h:.2} re S\n",
+                        lw = width,
+                        r = color[0],
+                        g = color[1],
+                        b = color[2],
+                    ));
+                }
                 Op::FillPoly { points, color } => {
                     if let Some((x0, y0)) = points.first() {
                         stream.push_str(&format!(
@@ -463,6 +496,25 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                             stream.push_str(&format!(" {x:.2} {y:.2} l"));
                         }
                         stream.push_str(" h f\n");
+                    }
+                }
+                Op::StrokePoly {
+                    points,
+                    width,
+                    color,
+                } => {
+                    if let Some((x0, y0)) = points.first() {
+                        stream.push_str(&format!(
+                            "{w:.2} w {r:.3} {g:.3} {b:.3} RG {x0:.2} {y0:.2} m",
+                            w = width,
+                            r = color[0],
+                            g = color[1],
+                            b = color[2],
+                        ));
+                        for (x, y) in points.iter().skip(1) {
+                            stream.push_str(&format!(" {x:.2} {y:.2} l"));
+                        }
+                        stream.push_str(" h S\n");
                     }
                 }
                 Op::Cubic {
@@ -527,11 +579,16 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         };
         let page_id = objs.len() + 1;
         page_ids.push(page_id);
+        let ext_gstate = if has_watermark {
+            " /ExtGState << /WmGs << /Type /ExtGState /ca 0.5 >> >>"
+        } else {
+            ""
+        };
         objs.push(
             format!(
                 "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w:.2} {h:.2}] \
                    /Contents {content_id} 0 R \
-                   /Resources << /Font << {font_res} >> /XObject << {xobjects} >> >>{annots} >>",
+                   /Resources << /Font << {font_res} >> /XObject << {xobjects} >>{ext_gstate} >>{annots} >>",
                 w = page.width,
                 h = page.height,
             )

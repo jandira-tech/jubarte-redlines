@@ -652,3 +652,80 @@ mod hostile_input_tests {
         assert!(rasterize(&d).is_some());
     }
 }
+
+#[cfg(test)]
+mod emf_text_tests {
+    //! Strict01 OLE previews (image2.emf / image3.emf) store the Excel
+    //! grid as EMR_EXTTEXTOUTW digits. Skipping those records leaves
+    //! rules without 1–9/12/15/18. Not the xlsx-Calibri-grid ITT-neg.
+    use super::*;
+
+    fn emf_header(left: i32, top: i32, right: i32, bottom: i32) -> Vec<u8> {
+        let mut d = vec![0u8; 108];
+        d[0..4].copy_from_slice(&1u32.to_le_bytes());
+        d[4..8].copy_from_slice(&108u32.to_le_bytes());
+        d[8..12].copy_from_slice(&left.to_le_bytes());
+        d[12..16].copy_from_slice(&top.to_le_bytes());
+        d[16..20].copy_from_slice(&right.to_le_bytes());
+        d[20..24].copy_from_slice(&bottom.to_le_bytes());
+        d[40..44].copy_from_slice(b" EMF");
+        d
+    }
+
+    fn exttextout_w(d: &mut Vec<u8>, x: i32, y: i32, text: &str) {
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        let n = utf16.len() as u32;
+        let off_string = 76u32;
+        let str_bytes = n as usize * 2;
+        let rec_size = (76 + str_bytes).next_multiple_of(4) as u32;
+        d.extend_from_slice(&84u32.to_le_bytes());
+        d.extend_from_slice(&rec_size.to_le_bytes());
+        d.extend_from_slice(&0i32.to_le_bytes()); // bounds
+        d.extend_from_slice(&0i32.to_le_bytes());
+        d.extend_from_slice(&64i32.to_le_bytes());
+        d.extend_from_slice(&64i32.to_le_bytes());
+        d.extend_from_slice(&1u32.to_le_bytes()); // iGraphicsMode
+        d.extend_from_slice(&0u32.to_le_bytes()); // exScale
+        d.extend_from_slice(&0u32.to_le_bytes()); // eyScale
+        d.extend_from_slice(&x.to_le_bytes());
+        d.extend_from_slice(&y.to_le_bytes());
+        d.extend_from_slice(&n.to_le_bytes());
+        d.extend_from_slice(&off_string.to_le_bytes());
+        d.extend_from_slice(&0u32.to_le_bytes()); // fOptions
+        for _ in 0..4 {
+            d.extend_from_slice(&0i32.to_le_bytes()); // rcl
+        }
+        d.extend_from_slice(&0u32.to_le_bytes()); // offDx
+        for u in utf16 {
+            d.extend_from_slice(&u.to_le_bytes());
+        }
+        while !d.len().is_multiple_of(4) {
+            d.push(0);
+        }
+    }
+
+    fn dark_samples(rgb: &[u8]) -> usize {
+        rgb.chunks(3)
+            .filter(|px| px.iter().any(|&c| c < 200))
+            .count()
+    }
+
+    #[test]
+    fn emf_exttextoutw_stays_unpainted_after_mini_365() {
+        // Strict01 OLE image2.emf stores 1–9/12/15/18 as EXTTEXTOUTW.
+        // 5×7 bitmap digits (mini 365) were Word-shaped but ITT-neg:
+        // Strict01 family −0.0056 / NR mean −0.0006 vs Quartz Calibri.
+        // Not xlsx Calibri grid (also ITT-neg). Keep rules-only raster.
+        let mut d = emf_header(0, 0, 64, 64);
+        exttextout_w(&mut d, 8, 8, "8");
+        d.extend_from_slice(&14u32.to_le_bytes());
+        d.extend_from_slice(&8u32.to_le_bytes());
+        let (_, _, rgb) = rasterize(&d).expect("raster EMF text lock");
+        assert_eq!(
+            dark_samples(&rgb),
+            0,
+            "mini 365 EXTTEXTOUTW bitmap ITT-neg; dark={}",
+            dark_samples(&rgb)
+        );
+    }
+}

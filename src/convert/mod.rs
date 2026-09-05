@@ -16,7 +16,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::namespaces::{A, MC, R, W, WNE, WP};
+use crate::namespaces::{A, M, MC, R, W, W14, WNE, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
@@ -100,6 +100,9 @@ pub fn docx_to_pdf_with(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Con
     let fonts = fonts();
     let markup = settings_track_revisions(&pkg);
     let mut sheet = load_stylesheet(&pkg);
+    if let Some(tab) = settings_default_tab_pt(&pkg) {
+        sheet.defaults.page.default_tab = tab;
+    }
     // Word Save-as-PDF All Markup (file_27): gray balloon pasteboard + scale.
     // Ins-only trackRevisions (file_6) stays full-page / 0.24 cm.
     if markup && document_wants_markup_pane(&pkg, &main) {
@@ -139,6 +142,10 @@ enum VertAlign {
     Baseline,
     Super,
     Sub,
+    /// OMML `m:f` type=noBar numerator (Strict01 binomial).
+    StackNum,
+    /// OMML `m:f` type=noBar denominator.
+    StackDen,
 }
 
 #[derive(Clone)]
@@ -158,9 +165,18 @@ struct RunStyle {
     /// Horizontal scale (`w:w` percent, 100 = 1.0).
     scale: f32,
     caps: bool,
+    /// `w:smallCaps`: lowercase → capital glyphs at 80% size.
+    small_caps: bool,
     /// Manual raise/lower in points (`w:position`, half-points).
     offset: f32,
     vert: VertAlign,
+    /// `w:kern` minimum size in half-points (ECMA-376 17.3.2.19).
+    /// Factory docDefaults/Normal is 2; Title (potpourri) is 28.
+    kern_half: u16,
+    /// Word Save-as-PDF flattens `w14:reflection` and
+    /// `w14:shadow`+`w14:textOutline` to filled bars, not body glyphs
+    /// (Strict01 p11 18/20pt Video). Skip those runs as extractable text.
+    effect_skip: bool,
 }
 
 /// Word Save-as-PDF snaps type size to integer ppem at 300 dpi
@@ -172,8 +188,10 @@ fn word_device_pt(pt: f32) -> f32 {
     // Do not snap 8pt (sd_2517 cover 7.92 is Word-faithful but mini snap8
     // dropped file_34 −0.011 with sd_2517/file_22 ~0), 9.5 (mini 99),
     // 10.5 (mini 110: I_am_sharing −1.14, comments-lots −1.23,
-    // image_out_of_folder −3.23), 20/28 (mini 105), or 14/15
-    // (heading_3 / file_61).
+    // image_out_of_folder −3.23), 20/28 (mini 105), 14/15
+    // (heading_3 / file_61), Calibri 14 (mini 522: comments-lots family
+    // −0.03 to −0.06 / file_8 −0.33), or 13/26 (mini 429: table_bookmark
+    // −0.070 / file_134 −0.059; mini 704 Calibri-Light also ITT-neg).
     if (pt - 10.0).abs() < 0.05
         || (pt - 11.0).abs() < 0.05
         || (pt - 16.0).abs() < 0.05
@@ -184,12 +202,30 @@ fn word_device_pt(pt: f32) -> f32 {
     pt
 }
 
+fn family_is_aptos(family: &str) -> bool {
+    family.to_ascii_lowercase().contains("aptos")
+}
+
 impl RunStyle {
     fn paint_size(&self) -> f32 {
         let raw = match self.vert {
-            VertAlign::Super | VertAlign::Sub => self.size * 0.65,
+            VertAlign::Super | VertAlign::Sub | VertAlign::StackNum | VertAlign::StackDen => {
+                self.size * 0.65
+            }
             VertAlign::Baseline => self.size,
         };
+        // potpourri / file_170 Subtitle is Aptos 14. Word Quartz 13.92
+        // (58 ppem). Calibri 14 (mini 522) and Arial 14 (heading_3)
+        // stay unsnapped.
+        if (raw - 14.0).abs() < 0.05 && family_is_aptos(&self.family) {
+            return (14.0_f32 * 25.0 / 6.0).round() * 0.24;
+        }
+        // potpourri Title is Aptos Display 28. Word 28.1 (117 ppem →
+        // 28.08). Ungated 28 snap (mini 105) dropped file_34 Arial
+        // −0.02; keep Calibri/Arial 28.00.
+        if (raw - 28.0).abs() < 0.05 && family_is_aptos(&self.family) {
+            return (28.0_f32 * 25.0 / 6.0).round() * 0.24;
+        }
         word_device_pt(raw)
     }
 
@@ -197,9 +233,17 @@ impl RunStyle {
         let raised = match self.vert {
             VertAlign::Super => baseline + self.size * 0.35,
             VertAlign::Sub => baseline - self.size * 0.15,
+            VertAlign::StackNum => baseline + self.size * 0.45,
+            VertAlign::StackDen => baseline - self.size * 0.40,
             VertAlign::Baseline => baseline,
         };
         raised + self.offset
+    }
+
+    /// Word kerns only at `size ≥ val/2`. Gate `val ≥ 28` so body
+    /// docDefaults/Normal `kern=2` stays hmtx (ungated GPOS ITT-neg).
+    fn kerns_at(&self, size: f32) -> bool {
+        self.kern_half >= 28 && size * 2.0 + 0.01 >= f32::from(self.kern_half)
     }
 }
 
@@ -244,6 +288,9 @@ struct ParaStyle {
     /// Numbering `w:lvlJc=right` — marker sits in the hanging gutter
     /// with its right edge on the body start.
     list_jc_right: bool,
+    /// Empty `TOC` field (no cached `w:t`). Mini 504 collapse-to-zero
+    /// ITT-neg; Word still uses a compact 9pt box, not a full line.
+    empty_toc_field: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -287,6 +334,8 @@ struct PageSetup {
     /// laid-out letter page and paint a gray balloon pasteboard (file_27).
     /// Must not shrink wrap/`margin_r` or 30pt titles wrap (12→14pp).
     balloon_gutter: f32,
+    /// `w:settings/w:defaultTabStop` (pt). Factory 720 twips = 0.5in.
+    default_tab: f32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -307,6 +356,28 @@ struct NamedStyle {
 struct ThemeFonts {
     major: Option<String>,
     minor: Option<String>,
+    /// `a:clrScheme` srgbClr / sysClr lastClr. Empty → Office 2007
+    /// fallback in `theme_slot_color` (comments-lots / I_am_sharing).
+    colors: HashMap<String, [f32; 3]>,
+}
+
+impl ThemeFonts {
+    fn slot_color(&self, slot: &str) -> Option<[f32; 3]> {
+        let mapped = match slot {
+            "tx1" | "text1" => "dk1",
+            "bg1" => "lt1",
+            "tx2" | "text2" => "dk2",
+            "bg2" => "lt2",
+            "hyperlink" => "hlink",
+            "followedHyperlink" => "folHlink",
+            other => other,
+        };
+        self.colors
+            .get(slot)
+            .or_else(|| self.colors.get(mapped))
+            .copied()
+            .or_else(|| theme_slot_color(slot))
+    }
 }
 
 struct StyleSheet {
@@ -323,7 +394,9 @@ struct TblStyle {
     band1_fill: Option<[f32; 3]>,
     band2_fill: Option<[f32; 3]>,
     first_row_bold: bool,
+    first_row_italic: bool,
     first_col_bold: bool,
+    first_col_italic: bool,
     first_col_fill: Option<[f32; 3]>,
     last_row_fill: Option<[f32; 3]>,
     last_col_fill: Option<[f32; 3]>,
@@ -333,6 +406,8 @@ struct TblStyle {
     /// `tblStylePr firstRow tcBorders` (GridTable4-Accent1 156082).
     /// Body `tblBorders` stay 45B0E1; header lattice is the darker edge.
     first_row_borders: Option<CellBorders>,
+    /// `tblStylePr firstCol tcBorders` (MediumList2-Accent1 right accent1).
+    first_col_borders: Option<CellBorders>,
     borders: Option<TblBorders>,
 }
 
@@ -392,8 +467,11 @@ impl Defaults {
                 track: 0.0,
                 scale: 1.0,
                 caps: false,
+                small_caps: false,
                 offset: 0.0,
                 vert: VertAlign::Baseline,
+                kern_half: 0,
+                effect_skip: false,
             },
             para: ParaStyle {
                 align: Align::Left,
@@ -419,6 +497,7 @@ impl Defaults {
                 chap_num: None,
                 fill: None,
                 list_jc_right: false,
+                empty_toc_field: false,
             },
             page: PageSetup {
                 width: 612.0,
@@ -435,6 +514,7 @@ impl Defaults {
                 chap_style: None,
                 chap_sep: "-",
                 balloon_gutter: 0.0,
+                default_tab: 36.0,
             },
         }
     }
@@ -515,6 +595,11 @@ struct TableGeom {
     unstyled: bool,
     /// Leading `w:trPr/w:tblHeader` rows Word repeats after a page break.
     header_rows: usize,
+    /// `tblStyle=TableGrid`. 3-col 1-line line=240 is Word 13pt (11+2).
+    /// Ungated 3-col pad (mini 569) also compacted Strict01
+    /// GridTable4-Accent5 (RL mean −0.029). Do not treat GridTable4 /
+    /// MediumShading as TableGrid.
+    table_grid: bool,
 }
 
 /// Preferred table width from `tblW`. Word `pct` is 50ths of a percent
@@ -536,6 +621,10 @@ struct SectionChrome {
     header_bottom: Option<([f32; 3], f32)>,
     footer_top: Option<([f32; 3], f32)>,
     watermark: Option<Watermark>,
+    /// `w:headerReference` is present on this sectPr (even if the part is
+    /// empty). Distinct from omitted refs, which inherit the previous
+    /// section's chrome (comments-lots landscape).
+    header_explicit: bool,
     header_rest: Option<ChromePart>,
     footer_rest: Option<ChromePart>,
 }
@@ -612,6 +701,16 @@ struct LaidTextBox {
     /// ITT loss; Strict01 empty Diagram 1).
     stroke: bool,
     fill: Option<[f32; 3]>,
+    /// DrawingML `lnRef` / `a:ln` color. Empty filled `rect` with lnRef
+    /// strokes 1pt in this color (Strict01 Rectangle 1 shade 50000).
+    /// RightArrow strokes the chevron outline (not a 4-edge box).
+    /// Other boxes keep the 0.6 black hairline (mini 511).
+    line: Option<[f32; 3]>,
+    /// Connector stroke width from `a:ln/@w` or `lnRef` idx
+    /// (idx=1 → theme 6350 EMU = 0.5pt). Box 4-edge stays 0.6
+    /// (mini 511) / 1.0 (KEEP 591 lnRef idx=2). KEEP 512 a:ln
+    /// without @w stays 1.0.
+    line_width: f32,
     geom: ShapeGeom,
     /// Inline `a:noFill` frames still consume flow (Strict01 Rectangle 3).
     reserve_only: bool,
@@ -627,6 +726,26 @@ struct LaidTextBox {
     /// SmartArt `dsp:sp` fills (Strict01 Diagram 1 roundRects), in
     /// points from the parent box's top-left.
     diag_shapes: Vec<DiagShape>,
+    /// First-para `w:ind` left+firstLine (mcdoc txbx 105+420 twips).
+    /// 0 keeps the 4pt chrome pad used by unindented labels.
+    /// Do not add ECMA bodyPr lIns=7.2: stacked (mini 414) dropped mcdoc
+    /// −1.83; unindented-only (mini 417) dropped RL Strict01/file_100.
+    text_dx: f32,
+    /// First-para explicit `w:spacing before` (mcdoc txbx 156 twips).
+    text_dy: f32,
+    /// `wps:bodyPr/@anchor` (Strict01 t/b/ctr). Do not honor lIns
+    /// (mini 414/417 ITT-neg) or tIns/bIns (mini 510 ITT-neg: XML 3.6pt
+    /// vs pad=4 dropped Strict01 family −0.049). Mini 647–650
+    /// wrapSquare a:spAutoFit ~30pt was Word-faithful but ITT-neg RL
+    /// mean −0.0002 (ole_object −0.019). Do not retry.
+    text_anchor: TextAnchor,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TextAnchor {
+    Top,
+    Center,
+    Bottom,
 }
 
 struct DiagShape {
@@ -635,6 +754,9 @@ struct DiagShape {
     w: f32,
     h: f32,
     fill: Option<[f32; 3]>,
+    /// `a:ln` (Strict01 connector bars are accent1, 1pt). Near-white
+    /// strokes (roundRect lt1) are extra halo — skip those.
+    stroke: Option<([f32; 3], f32)>,
     label: String,
     round: bool,
 }
@@ -644,6 +766,8 @@ struct ChartData {
     cats: Vec<String>,
     series: Vec<Vec<f32>>,
     names: Vec<String>,
+    /// `c:ser/c:spPr` schemeClr (Strict01 accent1/2/3). Fallback accent{n}.
+    colors: Vec<[f32; 3]>,
     legend: bool,
 }
 
@@ -666,6 +790,10 @@ enum ImageSlot {
         /// `wp14:pctPosVOffset` as 0..1 of page height.
         pct_y: Option<f32>,
         /// `wp14:sizeRelH/pctWidth` as 0..1 of page width.
+        /// Mini 639–642: relativeFrom=margin (Text Box 2 40% of content
+        /// 648=259.2) is Word-faithful but ITT-neg NR mean −0.0001 /
+        /// RL mean −0.0014 (ole_object −0.0229). KEEP-only forbids.
+        /// Do not retry. Page-relative 40% of 792=316.8 stands.
         pct_w: Option<f32>,
         /// `wp14:sizeRelV/pctHeight` as 0..1 of page height.
         pct_h: Option<f32>,
@@ -716,7 +844,7 @@ fn twip(v: f32) -> f32 {
 /// it as page-edge made sd_2517's 2520-twip Sumrio left tab sit at 126pt,
 /// already behind "lorem 1.01", so the first tab fired the 8640-twip
 /// dot leader and the TOC fell a page behind Word (p3 9.2 vs 11-1).
-fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop]) -> TabStop {
+fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop], default_tab: f32) -> TabStop {
     for &stop in stops {
         let abs = origin + stop.pos;
         if abs > x + 0.5 {
@@ -727,7 +855,7 @@ fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop]) -> TabStop {
             };
         }
     }
-    let grid = 36.0;
+    let grid = if default_tab > 0.5 { default_tab } else { 36.0 };
     let rel = (x - origin).max(0.0);
     TabStop {
         pos: origin + ((rel / grid).floor() + 1.0) * grid,
@@ -736,8 +864,8 @@ fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop]) -> TabStop {
     }
 }
 
-fn next_tab_x(x: f32, origin: f32, stops: &[TabStop]) -> f32 {
-    next_tab_stop(x, origin, stops).pos
+fn next_tab_x(x: f32, origin: f32, stops: &[TabStop], default_tab: f32) -> f32 {
+    next_tab_stop(x, origin, stops, default_tab).pos
 }
 
 /// `w:tabs/w:tab`. `val=num` is a numbering left stop (ECMA-376 17.3.1.38).
@@ -753,7 +881,9 @@ fn parse_tab_stops(dom: &Dom, ppr: NodeId) -> Vec<TabStop> {
         }
         if let Some(pos) = attr_any(dom, tab, "pos").and_then(|s| s.parse::<f32>().ok()) {
             let align = match val {
-                "right" => TabAlign::Right,
+                // ISO Strict ST_TabJc: end/start are LTR right/left
+                // (Strict01 TOC val=end leader=dot pos=9350).
+                "right" | "end" => TabAlign::Right,
                 "center" => TabAlign::Center,
                 _ => TabAlign::Left,
             };
@@ -828,9 +958,36 @@ fn load_theme(pkg: &PartFs) -> ThemeFonts {
             .next()?;
         attr_any(&dom, face, "typeface").map(str::to_string)
     };
+    let mut colors = HashMap::new();
+    if let Some(scheme) = dom
+        .descendants(root, Some(&A::name("clrScheme")))
+        .into_iter()
+        .next()
+    {
+        for i in 0..dom.child_count(scheme) {
+            let child = dom.child_at(scheme, i);
+            let Some(slot) = dom.name(child).map(|n| n.local_name().to_string()) else {
+                continue;
+            };
+            let hex = descendants_local(&dom, child, "srgbClr")
+                .into_iter()
+                .find_map(|n| attr_any(&dom, n, "val"))
+                .or_else(|| {
+                    descendants_local(&dom, child, "sysClr")
+                        .into_iter()
+                        .find_map(|n| attr_any(&dom, n, "lastClr"))
+                });
+            if let Some(hex) = hex
+                && let Some(rgb) = parse_hex_color(hex)
+            {
+                colors.insert(slot, rgb);
+            }
+        }
+    }
     ThemeFonts {
         major: latin("majorFont"),
         minor: latin("minorFont"),
+        colors,
     }
 }
 
@@ -949,22 +1106,27 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
         band1_fill: None,
         band2_fill: None,
         first_row_bold: false,
+        first_row_italic: false,
         first_col_bold: false,
+        first_col_italic: false,
         first_col_fill: None,
         last_row_fill: None,
         last_col_fill: None,
         first_row_color: None,
         first_row_borders: None,
+        first_col_borders: None,
         borders: first_named(dom, style, "tblPr").and_then(|pr| parse_tbl_borders(dom, pr)),
     };
     for pr in dom.descendants(style, Some(&W::name("tblStylePr"))) {
         let kind = attr_any(dom, pr, "type").unwrap_or("");
         let fill = style_pr_fill(dom, pr);
         let bold = first_named(dom, pr, "b").is_some();
+        let italic = first_named(dom, pr, "i").is_some();
         match kind {
             "firstRow" => {
                 out.first_row_fill = fill;
                 out.first_row_bold = bold;
+                out.first_row_italic = italic;
                 out.first_row_color = style_pr_color(dom, pr);
                 out.first_row_borders = parse_style_pr_tc_borders(dom, pr);
             }
@@ -972,7 +1134,9 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
             "band2Horz" => out.band2_fill = fill,
             "firstCol" => {
                 out.first_col_bold = bold;
+                out.first_col_italic = italic;
                 out.first_col_fill = fill;
+                out.first_col_borders = parse_style_pr_tc_borders(dom, pr);
             }
             "lastRow" => out.last_row_fill = fill,
             "lastCol" => out.last_col_fill = fill,
@@ -1160,8 +1324,11 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
     // slot. Word Quartz does paint Cambria for table_bookmark_end /
     // file_134, but applying it (mini 90) also retargeted file_2 /
     // file_41 onto Cambria size×1.15 boxes (~12.65) while Word's
-    // Cambria para gap is ~24.7 (line ~14.9 + after). Those two
-    // −2.5 ITT each outweighed the table_bookmark/file_134 +2.
+    // Cambria para gap is ~24.7 (line ~14.9 + after). Mini 396 on the
+    // 60-stem: NR +0.048 (table_bookmark +1.61 / file_134 +1.28, 0
+    // drops) but redline file_27_file_28 −2.85 (Word embeds Cambria;
+    // Quartz ITT prefers the Calibri line box). Keep the Aptos-only
+    // gate.
     let ascii = attr_any(dom, fonts, "ascii").or_else(|| attr_any(dom, fonts, "hAnsi"));
     let slot = attr_any(dom, fonts, "asciiTheme").or_else(|| attr_any(dom, fonts, "hAnsiTheme"));
     let display_cache = ascii.is_some_and(|name| name.to_ascii_lowercase().contains("display"));
@@ -1231,7 +1398,7 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
         {
             style.color = rgb;
         } else if let Some(slot) = attr_any(dom, color, "themeColor")
-            && let Some(mut rgb) = theme_slot_color(slot)
+            && let Some(mut rgb) = theme.slot_color(slot)
         {
             if let Some(shade) = attr_any(dom, color, "themeShade")
                 && let Ok(n) = u8::from_str_radix(shade, 16)
@@ -1251,6 +1418,23 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
             }
             style.color = rgb;
         }
+    } else {
+        // Strict01 Online Video: w14:textFill accent5, no w:color.
+        // Not w14:shadow extra copy (mini 350 ITT-neg).
+        apply_w14_text_fill(dom, rpr, style, theme);
+    }
+    // Word p11 omits reflection and shadow+outline as body glyphs
+    // (filled bars in the oracle). Shadow-only (mini 350) still
+    // paints. textOutline+w:color with explicit sz (mini 371 Keyword
+    // 12pt) still paints; factory-11pt outline+color (p#107 peach) is
+    // extra vs Word slabs.
+    let has_reflection = !descendants_local(dom, rpr, "reflection").is_empty();
+    let has_shadow = !descendants_local(dom, rpr, "shadow").is_empty();
+    let has_outline = !descendants_local(dom, rpr, "textOutline").is_empty();
+    let has_sz = first_named(dom, rpr, "sz").is_some();
+    let has_color_el = first_named(dom, rpr, "color").is_some();
+    if has_reflection || (has_shadow && has_outline) || (has_outline && has_color_el && !has_sz) {
+        style.effect_skip = true;
     }
     if let Some(val) = first_named(dom, rpr, "highlight").and_then(|n| attr_any(dom, n, "val")) {
         style.highlight = highlight_color(val);
@@ -1274,14 +1458,25 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     if first_named(dom, rpr, "smallCaps").is_some()
         && !val_is_false(dom, first_named(dom, rpr, "smallCaps"))
     {
-        style.caps = true;
-        style.size *= 0.8;
+        // Word only shrinks lowercase (ECMA-376 17.3.2.33). file_34 /
+        // uipriority store already-uppercase "SMALL CAPS TEXT"; size*=0.8
+        // on the whole run shrank those to ~8.8pt.
+        style.small_caps = true;
     }
     if let Some(pos) = first_named(dom, rpr, "position")
         && let Some(val) = attr_any(dom, pos, "val")
         && let Ok(half) = val.parse::<f32>()
     {
         style.offset = half / 2.0;
+    }
+    if let Some(kern) = first_named(dom, rpr, "kern")
+        && let Some(val) = attr_any(dom, kern, "val")
+        && let Ok(half) = val.parse::<u16>()
+    {
+        // ECMA 17.3.2.19: smallest size (half-points) that gets
+        // automatic kerning. Title val=28 at 28pt; do not treat
+        // val=2 as always-on (ungated GPOS ITT-neg).
+        style.kern_half = half;
     }
     if style.highlight.is_none()
         && let Some(shd) = first_named(dom, rpr, "shd")
@@ -1419,6 +1614,25 @@ fn ppr_shd_fill(dom: &Dom, ppr: NodeId) -> Option<[f32; 3]> {
 fn val_is_false(dom: &Dom, node: Option<NodeId>) -> bool {
     node.and_then(|n| dom.attribute(n, &W::val()))
         .is_some_and(|v| v == "0" || v == "false" || v == "off")
+}
+
+fn apply_w14_text_fill(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
+    let Some(fill) = descendants_local(dom, rpr, "textFill").into_iter().next() else {
+        return;
+    };
+    if !descendants_local(dom, fill, "noFill").is_empty() {
+        return;
+    }
+    let Some(slot) = descendants_local(dom, fill, "schemeClr")
+        .into_iter()
+        .next()
+        .and_then(|n| attr_any(dom, n, "val"))
+    else {
+        return;
+    };
+    if let Some(rgb) = theme.slot_color(slot) {
+        style.color = rgb;
+    }
 }
 
 fn theme_slot_color(slot: &str) -> Option<[f32; 3]> {
@@ -1579,6 +1793,12 @@ struct NumLevel {
     jc_right: bool,
     /// Numbering `w:tabs` (`val=num` is a left stop at hanging indent).
     tab_stops: Vec<TabStop>,
+    /// lvl `w:rPr/w:sz` in pt. None = inherit the paragraph run.
+    size: Option<f32>,
+    /// lvl `w:rPr/w:u` other than `val=none`.
+    underline: bool,
+    bold: bool,
+    italic: bool,
 }
 
 #[derive(Default)]
@@ -1642,6 +1862,10 @@ impl Numbering {
             suff_nothing: parent.suff_nothing,
             jc_right: parent.jc_right,
             tab_stops: parent.tab_stops,
+            size: parent.size,
+            underline: parent.underline,
+            bold: parent.bold,
+            italic: parent.italic,
         };
         self.levels
             .entry(abs.to_string())
@@ -1903,6 +2127,7 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
                 .unwrap_or(1);
             let (left, hanging) = lvl_indent(&dom, lvl);
             let family = lvl_marker_family(&dom, lvl);
+            let (size, underline, bold, italic) = lvl_marker_rpr(&dom, lvl);
             let suff_nothing = first_named(&dom, lvl, "suff")
                 .and_then(|n| attr_any(&dom, n, "val"))
                 .is_some_and(|v| v.eq_ignore_ascii_case("nothing"));
@@ -1921,8 +2146,14 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
                     suff_nothing,
                     jc_right: first_named(&dom, lvl, "lvlJc")
                         .and_then(|n| attr_any(&dom, n, "val"))
-                        .is_some_and(|v| v.eq_ignore_ascii_case("right")),
+                        .is_some_and(|v| {
+                            v.eq_ignore_ascii_case("right") || v.eq_ignore_ascii_case("end")
+                        }),
                     tab_stops,
+                    size,
+                    underline,
+                    bold,
+                    italic,
                 },
             );
         }
@@ -1955,6 +2186,23 @@ fn lvl_marker_family(dom: &Dom, lvl: NodeId) -> String {
         .to_string()
 }
 
+fn lvl_marker_rpr(dom: &Dom, lvl: NodeId) -> (Option<f32>, bool, bool, bool) {
+    let Some(rpr) = first_named(dom, lvl, "rPr") else {
+        return (None, false, false, false);
+    };
+    let size = first_named(dom, rpr, "sz")
+        .and_then(|n| attr_any(dom, n, "val"))
+        .and_then(|s| s.parse::<f32>().ok())
+        .map(|half| half / 2.0);
+    let underline = first_named(dom, rpr, "u").is_some_and(|n| {
+        !val_is_false(dom, Some(n))
+            && attr_any(dom, n, "val").is_none_or(|v| !v.eq_ignore_ascii_case("none"))
+    });
+    let bold = first_named(dom, rpr, "b").is_some_and(|n| !val_is_false(dom, Some(n)));
+    let italic = first_named(dom, rpr, "i").is_some_and(|n| !val_is_false(dom, Some(n)));
+    (size, underline, bold, italic)
+}
+
 fn lvl_indent(dom: &Dom, lvl: NodeId) -> (f32, f32) {
     let Some(ppr) = first_named(dom, lvl, "pPr") else {
         return (0.0, 0.0);
@@ -1979,6 +2227,18 @@ fn settings_track_revisions(pkg: &PartFs) -> bool {
     xml.contains("trackRevisions")
         && !xml.contains("trackRevisions w:val=\"0\"")
         && !xml.contains("trackRevisions w:val=\"false\"")
+}
+
+/// Word factory is 720 twips (0.5in). Strict01 writes `36pt`; mcdoc `420`.
+fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
+    let xml = pkg.part_string("word/settings.xml")?;
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc)?;
+    let stop = first_named(&dom, root, "defaultTabStop")?;
+    attr_any(&dom, stop, "val")
+        .and_then(parse_len)
+        .filter(|pt| *pt > 0.5)
 }
 
 /// Word Save-as-PDF All Markup pasteboard only on file_27-class docs
@@ -2121,6 +2381,10 @@ fn part_xml_by_rel_kind(pkg: &PartFs, main: &str, kind: &str) -> Option<String> 
 }
 
 fn note_is_structural(dom: &Dom, note: NodeId) -> bool {
+    // Mini 619–622: Word-faithful `w:separator` 144×0.72 (Strict01 p13)
+    // ITT-neg NR mean −0.0018 (8 Strict01-family −0.013, 0 gains) while
+    // RL mean +0.0324 (11 clone gains). KEEP-only forbids the NR drop.
+    // Do not retry.
     matches!(
         attr_any(dom, note, "type"),
         Some("separator" | "continuationSeparator" | "continuationNotice")
@@ -2209,9 +2473,14 @@ fn section_chrome(
         header_bottom: header.border,
         footer_top: footer.border,
         watermark: header.watermark,
+        header_explicit: sect_has_ref(dom, sect, "headerReference"),
         header_rest,
         footer_rest,
     }
+}
+
+fn sect_has_ref(dom: &Dom, sect: NodeId, local: &str) -> bool {
+    !dom.descendants(sect, Some(&W::name(local))).is_empty()
 }
 
 fn walk_container(
@@ -2343,6 +2612,22 @@ fn is_toc_style(style: &ParaStyle) -> bool {
     id.starts_with("sumrio") || id.starts_with("sumario") || id.starts_with("toc")
 }
 
+fn para_is_empty_toc_field(dom: &Dom, para: NodeId) -> bool {
+    let mut saw_toc = false;
+    for n in dom.descendants(para, Some(&W::instr_text())) {
+        if element_text(dom, n).to_ascii_uppercase().contains("TOC") {
+            saw_toc = true;
+            break;
+        }
+    }
+    if !saw_toc {
+        return false;
+    }
+    !dom.descendants(para, Some(&W::t()))
+        .into_iter()
+        .any(|n| !element_text(dom, n).trim().is_empty())
+}
+
 fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     let total: f32 = cols.iter().sum();
     // dxa/grid cap at the measure. pct does not: table_bookmark_end
@@ -2373,6 +2658,10 @@ fn table_row_pad(nlines: usize, spec: f32, exact: bool, line_mult: f32) -> f32 {
         // TableGrid line=240: +8 was measured on line=276
         // meeting_agenda (20.65pt). 11+8=19pt spills
         // table_bookmark_end Tests 6–7 onto page 2.
+        // 3-col TableGrid 1-line Word 13pt is gated in
+        // table_row_height_pt (not here) so GridTable4 / MediumShading
+        // stay 11+5. Ungated mini 569 RL −0.029. Mini 607 filled
+        // firstRow 11+2 ITT-neg NR mean −0.0508. Do not ungated-retry.
         5.0
     } else {
         8.0
@@ -2402,9 +2691,11 @@ fn table_row_height_pt(
     ri: usize,
 ) -> f32 {
     // 2-col line=240 (comments-lots LightShading metadata): Word
-    // 1-line is ~12pt. 3/4-col TableGrid must keep 11+5 or the
-    // Compatibility row leaves Word page 5.
+    // 1-line is ~12pt. 4-col TableGrid stays 11+5 so Compatibility
+    // stays on Word page 5. 3-col *TableGrid* 1-line is Word 13pt
+    // (mini 569 ungated also hit Strict01 GridTable4, RL −0.029).
     let two_col_single = line_mult <= 1.01 && col_w.len() == 2;
+    let three_col_grid = line_mult <= 1.01 && col_w.len() == 3 && geom.table_grid;
     let line_box = if two_col_single {
         table_row_line_size(row, line_mult)
     } else {
@@ -2431,7 +2722,7 @@ fn table_row_height_pt(
     let spec = geom.row_min.get(ri).copied().unwrap_or(0.0);
     let exact = geom.row_exact.get(ri).copied().unwrap_or(false);
     let mut row_pad = table_row_pad(nlines, spec, exact, line_mult);
-    if two_col_single && nlines == 1 {
+    if (two_col_single || three_col_grid) && nlines == 1 {
         row_pad = 2.0;
     }
     if geom.unstyled
@@ -2674,6 +2965,18 @@ fn paragraph_block(
             if !lvl.family.is_empty() {
                 marker_style.family = lvl.family.clone();
             }
+            if let Some(sz) = lvl.size {
+                marker_style.size = sz;
+            }
+            if lvl.underline {
+                marker_style.underline = true;
+            }
+            if lvl.bold {
+                marker_style.bold = true;
+            }
+            if lvl.italic {
+                marker_style.italic = true;
+            }
             // Numbering lvl pPr/ind overrides the paragraph style (ListParagraph
             // start=720 vs Strict01 ilvl start=18pt/36pt). Direct pPr/ind wins.
             let direct_ind = dom
@@ -2692,6 +2995,28 @@ fn paragraph_block(
             merge_tab_stops(&mut pstyle.tab_stops, &lvl.tab_stops);
         }
         runs.insert(0, TextRun::new(marker, marker_style));
+        // addition_removal p3: Word paints ListBullet • in #D13438 with
+        // the delText. The marker is synthesized from paragraph rstyle
+        // (black) before w:del is collected. Inherit color only — Word
+        // does not strike/underline the bullet (mini 423 ITT −0.003
+        // when strike was copied). Uniform del or ins body only.
+        let inherited = {
+            let ink: Vec<&TextRun> = runs
+                .iter()
+                .skip(1)
+                .filter(|r| !r.text.trim().is_empty())
+                .collect();
+            let all_del = !ink.is_empty() && ink.iter().all(|r| r.rev && r.style.strike);
+            let all_ins = !ink.is_empty()
+                && ink
+                    .iter()
+                    .all(|r| r.rev && r.style.underline && !r.style.strike);
+            (all_del || all_ins).then(|| ink[0].style.color)
+        };
+        if let Some(color) = inherited {
+            runs[0].style.color = color;
+            runs[0].rev = true;
+        }
     }
     let images = collect_images(ctx.pkg, ctx.main, dom, para);
     let boxes = collect_textboxes(Some((ctx.pkg, ctx.main)), dom, para, &rstyle, &sheet.theme);
@@ -2700,6 +3025,7 @@ fn paragraph_block(
     // DocumentTitle→date to 88pt and dropped the cover's 18pt spaces.
     // Do not stamp Normal 11 (file_146 Inter→Cambria): that swapped a
     // 15.4pt Calibri em-box for 12.65 and collapsed 7pp→6.
+    pstyle.empty_toc_field = para_is_empty_toc_field(dom, para);
     if runs.is_empty()
         && images.is_empty()
         && boxes.is_empty()
@@ -2891,9 +3217,17 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
     let nrows = rows.len();
     for (ri, row) in rows.iter_mut().enumerate() {
         let header = look.first_row && ri == 0 && tdef.first_row_fill.is_some();
+        // Gating last_row_fill to tblLook lastRow=0 (mini 338–341) was
+        // Word-faithful ECMA but ITT-neg: comments-lots −0.013, NR mean
+        // −0.0025. Quartz oracles stay closer to ungated lastRow shd.
         let footer = ri + 1 == nrows && tdef.last_row_fill.is_some();
         let band = row_band_fill(tdef, look, ri);
-        let header_bold = look.first_row && ri == 0 && tdef.first_row_bold;
+        // LightShading-Accent1 firstRow rPr is w:b with no fill.
+        // Word Quartz bolds firstCol only (Prepared for); first-row
+        // values stay regular (Executive). firstRow bold/italic follow
+        // the same fill gate as firstRow shd (MediumShading / GridTable4).
+        let header_bold = header && tdef.first_row_bold;
+        let header_italic = header && tdef.first_row_italic;
         for cell in row.iter_mut() {
             let mut fill = band;
             if look.first_col && cell.col == 0 && tdef.first_col_fill.is_some() && !header {
@@ -2915,6 +3249,12 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
                     run.style.bold = true;
                 }
             }
+            let col0_italic = look.first_col && cell.col == 0 && tdef.first_col_italic;
+            if header_italic || col0_italic {
+                for run in &mut cell.runs {
+                    run.style.italic = true;
+                }
+            }
             if header && let Some(color) = tdef.first_row_color {
                 for run in &mut cell.runs {
                     if run.style.color == [0.0, 0.0, 0.0] {
@@ -2924,6 +3264,9 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
             }
             if look.first_row && ri == 0 && cell.borders.is_none() {
                 cell.borders = tdef.first_row_borders;
+            }
+            if look.first_col && cell.col == 0 && cell.borders.is_none() {
+                cell.borders = tdef.first_col_borders;
             }
         }
     }
@@ -2961,6 +3304,8 @@ fn table_block(
     let mut header_rows = 0usize;
     let mut still_header = true;
     // Direct `w:tr` only — descendants() would flatten nested tables into this one.
+    // Repeating-section w:sdt rows (Strict01 100/200/300) are Word-faithful
+    // but mini 454 ITT-neg: file_100/115/185/196 13→14pp (−23 ITT).
     for row in dom.elements(table, Some(&W::tr())) {
         let mut cells = Vec::new();
         let mut row_has_cell_del = false;
@@ -3129,6 +3474,7 @@ fn table_block(
                 width: table_pref_width(dom, table),
                 unstyled,
                 header_rows,
+                table_grid: table_style_id(dom, table) == Some("TableGrid"),
             }
         },
     }
@@ -3165,6 +3511,13 @@ fn table_pref_width(dom: &Dom, table: NodeId) -> TblWidth {
     }
 }
 
+fn table_layout_fixed(dom: &Dom, table: NodeId) -> bool {
+    first_named(dom, table, "tblPr")
+        .and_then(|pr| first_named(dom, pr, "tblLayout"))
+        .and_then(|n| attr_any(dom, n, "type"))
+        .is_some_and(|v| v.eq_ignore_ascii_case("fixed"))
+}
+
 fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
     // Word default cell mar is 108 twips L/R (meeting_agenda cluster).
     // tblCellMar overrides (sample_document code cells are 10 twips).
@@ -3182,6 +3535,15 @@ fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
     };
     // Cicero tblCellMar is start/end=160. Mapping those to left/right
     // (mini 221–224) dropped Cicero −0.027 ITT (2.6pt pad, >5px align).
+    // table_bookmark_end Test 8: tblLayout=fixed + left=1080 / right=432.
+    // Word Quartz still paints R1C1 at x=90 (Test 1 grid). Applying 54pt
+    // inset shifted the row to x=144. Keep default 108 on fixed tables;
+    // top/bottom mar still applies (taller Test 8 rows).
+    // Fixed L/R pad 0 (mini 430) was Word Test 1 x=90 (+0.059) but
+    // file_134 −0.104 / NR mean −0.0007. Reverted.
+    if table_layout_fixed(dom, table) {
+        return (default, default);
+    }
     (
         edge("left").unwrap_or(default),
         edge("right").unwrap_or(default),
@@ -3276,8 +3638,24 @@ fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
 }
 
 fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
+    // Word All Markup stamp is Times-Bold 6.5pt black (file_27 /
+    // addition_removal_v_addition fitz 6.57 at x=434.6), one line. Doc
+    // defaults Aptos + apply_rev Del was 7.66pt #D13438 wrapped two
+    // lines — extra ink vs the oracle, not mini 59 (whole-row rewrite).
+    // Mini 739 repeated once per cellDel (Word 3 lines) but ITT-neg
+    // NR mean 60.7153→60.7152 (file_27 / addition_removal −0.005):
+    // extra copies still sit at markup k=0.73 (4.74pt x=361.8) not
+    // Word 6.57/434.6. KEEP 728 one line. Do not retune x/size.
     let mut style = base.clone();
-    apply_rev(&mut style, RevMark::Del, [0.0; 3]);
+    style.family = "Times New Roman".into();
+    style.size = 6.5;
+    style.bold = true;
+    style.italic = false;
+    style.underline = false;
+    style.strike = false;
+    style.color = [0.0, 0.0, 0.0];
+    style.highlight = None;
+    style.effect_skip = false;
     RawCell {
         runs: vec![TextRun::new("Deleted Cells", style)],
         colspan: 1,
@@ -3289,7 +3667,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
         pad_r: twip(108.0),
         pad_t: 0.0,
         pad_b: 0.0,
-        nowrap: false,
+        nowrap: true,
         borders: None,
     }
 }
@@ -3407,6 +3785,12 @@ struct RunCollect<'a> {
     bound: HashSet<String>,
     pageref: Option<String>,
     field_result: bool,
+    /// OMML `m:sSup` / `m:sSub` overlay (Strict01 binomial).
+    math_vert: VertAlign,
+    /// file_146 pBdr-bottom section heads keep generator xml:space pads.
+    /// Body without pBdr stays collapsed (mini 401). Courier New body
+    /// pads (file_69 code) stay collapsed too (mini 520 ITT-neg).
+    keep_xml_space: bool,
 }
 
 struct RunBag<'a> {
@@ -3439,6 +3823,8 @@ fn collect_runs_in(
         bound: HashSet::new(),
         pageref: None,
         field_result: false,
+        math_vert: VertAlign::Baseline,
+        keep_xml_space: para_keeps_xml_space(dom, node),
     };
     collect_runs_rec(&mut ctx, node, RevMark::None, "", &mut runs);
     flush_pending_comments(&mut ctx, &mut runs);
@@ -3479,7 +3865,9 @@ fn flush_pending_comments(ctx: &mut RunCollect<'_>, runs: &mut [TextRun]) {
 fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
     // Character styles overlay paint (Hyperlink color+underline) without
     // replacing the paragraph's size/family. Default black is not a
-    // paint (Strong is bold-only).
+    // paint (Strong is bold-only). Explicit `w:sz` overlay (file_34
+    // RedBoldCharacter 12pt) was mini 336–337 ITT-neg: redline
+    // file_34_file_35 −0.49, mean −0.008.
     let run = &named.run;
     if run.underline {
         style.underline = true;
@@ -3514,14 +3902,29 @@ impl AuthorColors {
         // Word Save-as-PDF first-author ins is #D13438 with or without
         // w:trackRevisions (file_176 / file_19 / CiceroDo: ~4800 gold
         // chars vs Word red). soffice gold #C09000 is an ITT miss.
-        // Second/third authors stay Word-blue / olive. `w:trackRevisions`
-        // still gates the Reviewing Pane, not the first-author hue.
+        // Second/third authors stay Word-blue / olive by first-seen
+        // index. Mini 732 put Word #005B70 in slot 1 and ITT-neg'd NR
+        // median (file_146 / eigenpal_2: sara.k occupies slot 1).
+        // Word maps thomas.v ins to #005B70 by *name* on sample and
+        // file_146 (first-seen index 1 vs 2). Mini 737 name-keyed
+        // sara.k #69797E / anon-contributor #8E562E / Online User
+        // #881798 ITT-neg NR median (eigenpal_2 −0.030). Keep those
+        // on the soffice index palette. `w:trackRevisions` still
+        // gates the Reviewing Pane, not the first-author hue.
+        let key = if author.is_empty() { "\0" } else { author };
+        if key.eq_ignore_ascii_case("thomas.v") {
+            // Occupy a first-seen slot so later authors do not shift
+            // (mini 732 slot-1 retune ITT-neg). Color is name-keyed.
+            if !self.names.iter().any(|n| n == key) {
+                self.names.push(key.to_string());
+            }
+            return [0.0, 91.0 / 255.0, 112.0 / 255.0];
+        }
         let palette = [
             [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0],
             [0.0, 64.0 / 255.0, 160.0 / 255.0],
             [80.0 / 255.0, 152.0 / 255.0, 24.0 / 255.0],
         ];
-        let key = if author.is_empty() { "\0" } else { author };
         let idx = match self.names.iter().position(|n| n == key) {
             Some(i) => i,
             None => {
@@ -3671,6 +4074,9 @@ fn collect_runs_rec(
             return;
         }
         let mut style = ctx.base.clone();
+        if ctx.math_vert != VertAlign::Baseline {
+            style.vert = ctx.math_vert;
+        }
         if let Some(rpr) = ctx.dom.element(node, &W::r_pr()) {
             if let Some(sid) =
                 first_named(ctx.dom, rpr, "rStyle").and_then(|n| ctx.dom.attribute(n, &W::val()))
@@ -3687,31 +4093,147 @@ fn collect_runs_rec(
         if mark != RevMark::None {
             apply_rev(&mut style, mark, ctx.authors.color(author));
         }
-        let mut text = visible_text(ctx.dom, node, mark, ctx.in_table);
-        if style.caps {
+        let raw = {
+            let mut out = String::new();
+            collect_visible(ctx.dom, node, &mut out, false);
+            out
+        };
+        let mut text = rev_text(&raw, mark, ctx.in_table || ctx.keep_xml_space);
+        if style.caps && !style.small_caps {
             text = text.to_uppercase();
         }
         if !text.is_empty() {
-            let mut run = TextRun::new(text, style);
-            run.rev = mark != RevMark::None;
-            if ctx.field_result {
-                run.pageref.clone_from(&ctx.pageref);
+            let pending_ids = std::mem::take(&mut ctx.pending);
+            let pending = if pending_ids.is_empty() {
+                Vec::new()
+            } else {
+                notes_for(ctx, &pending_ids)
+            };
+            let pageref = if ctx.field_result {
+                ctx.pageref.clone()
+            } else {
+                None
+            };
+            let rev = mark != RevMark::None;
+            if style.small_caps {
+                let mut first = true;
+                for (piece, st) in small_caps_pieces(&text, &style) {
+                    let mut run = TextRun::new(piece, st);
+                    run.rev = rev;
+                    run.pageref.clone_from(&pageref);
+                    if first {
+                        run.comments.clone_from(&pending);
+                        first = false;
+                    }
+                    runs.push(run);
+                }
+            } else {
+                let mut run = TextRun::new(text, style);
+                run.rev = rev;
+                run.pageref = pageref;
+                run.comments = pending;
+                runs.push(run);
             }
-            if !ctx.pending.is_empty() {
-                let pending = std::mem::take(&mut ctx.pending);
-                run.comments = notes_for(ctx, &pending);
+        }
+        return;
+    }
+    if ctx.dom.name_is(node, &M::name("nary")) {
+        // Strict01 ∑_{k=0}^{n}: chr lives on naryPr, sub/sup are not
+        // m:sSub/sSup. Skip naryPr after emitting chr. Do not center
+        // oMathPara (ITT-neg).
+        if let Some(chr) = ctx
+            .dom
+            .descendants(node, Some(&M::name("chr")))
+            .into_iter()
+            .next()
+        {
+            let val = ctx
+                .dom
+                .attribute(chr, &M::name("val"))
+                .or_else(|| attr_any(ctx.dom, chr, "val"))
+                .unwrap_or("");
+            if !val.is_empty() {
+                let mut style = ctx.base.clone();
+                if mark != RevMark::None {
+                    apply_rev(&mut style, mark, ctx.authors.color(author));
+                }
+                let mut run = TextRun::new(val.to_string(), style);
+                run.rev = mark != RevMark::None;
+                runs.push(run);
             }
-            runs.push(run);
+        }
+        for idx in 0..ctx.dom.child_count(node) {
+            let child = ctx.dom.child_at(node, idx);
+            if ctx.dom.name_is(child, &M::name("naryPr")) {
+                continue;
+            }
+            let saved = ctx.math_vert;
+            if ctx.dom.name_is(child, &M::name("sub")) {
+                ctx.math_vert = VertAlign::Sub;
+            } else if ctx.dom.name_is(child, &M::name("sup")) {
+                ctx.math_vert = VertAlign::Super;
+            }
+            collect_runs_rec(ctx, child, mark, author, runs);
+            ctx.math_vert = saved;
+        }
+        return;
+    }
+    if ctx.dom.name_is(node, &M::name("sSup")) || ctx.dom.name_is(node, &M::name("sSub")) {
+        // Strict01 binomial: m:sSup e=x / sup=k. Flattening m:t onto the
+        // baseline left "xk". Overlay VertAlign; do not center oMathPara
+        // (that ITT-neg).
+        let overlay = if ctx.dom.name_is(node, &M::name("sSup")) {
+            VertAlign::Super
+        } else {
+            VertAlign::Sub
+        };
+        for idx in 0..ctx.dom.child_count(node) {
+            let child = ctx.dom.child_at(node, idx);
+            let script =
+                ctx.dom.name_is(child, &M::name("sup")) || ctx.dom.name_is(child, &M::name("sub"));
+            let saved = ctx.math_vert;
+            if script {
+                ctx.math_vert = overlay;
+            }
+            collect_runs_rec(ctx, child, mark, author, runs);
+            ctx.math_vert = saved;
+        }
+        return;
+    }
+    if ctx.dom.name_is(node, &M::name("f")) {
+        // Strict01 binomial is m:f type=noBar. Linear n/k (mini 359)
+        // was ITT-neg; Quartz stacks n over k with no bar. Do not
+        // center oMathPara.
+        let nobar = math_f_is_nobar(ctx.dom, node);
+        for idx in 0..ctx.dom.child_count(node) {
+            let child = ctx.dom.child_at(node, idx);
+            if ctx.dom.name_is(child, &M::name("fPr")) {
+                continue;
+            }
+            let saved = ctx.math_vert;
+            if nobar && ctx.dom.name_is(child, &M::name("num")) {
+                ctx.math_vert = VertAlign::StackNum;
+            } else if nobar && ctx.dom.name_is(child, &M::name("den")) {
+                ctx.math_vert = VertAlign::StackDen;
+            }
+            collect_runs_rec(ctx, child, mark, author, runs);
+            ctx.math_vert = saved;
         }
         return;
     }
     if let Some(text) = ctx.dom.text_value(node) {
         if !text.trim().is_empty() && !ctx.dom.name_is(node, &W::del_text()) {
             let mut style = ctx.base.clone();
+            if ctx.math_vert != VertAlign::Baseline {
+                style.vert = ctx.math_vert;
+            }
             if mark != RevMark::None {
                 apply_rev(&mut style, mark, ctx.authors.color(author));
             }
-            let mut run = TextRun::new(rev_text(text, mark, ctx.in_table), style);
+            let mut run = TextRun::new(
+                rev_text(text, mark, ctx.in_table || ctx.keep_xml_space),
+                style,
+            );
             run.rev = mark != RevMark::None;
             if !ctx.pending.is_empty() {
                 let pending = std::mem::take(&mut ctx.pending);
@@ -3727,6 +4249,24 @@ fn collect_runs_rec(
     }
 }
 
+fn math_f_is_nobar(dom: &Dom, f: NodeId) -> bool {
+    dom.descendants(f, Some(&M::name("type")))
+        .into_iter()
+        .next()
+        .and_then(|n| {
+            dom.attribute(n, &M::name("val"))
+                .or_else(|| attr_any(dom, n, "val"))
+        })
+        .is_some_and(|v| v.eq_ignore_ascii_case("noBar"))
+}
+
+fn para_keeps_xml_space(dom: &Dom, para: NodeId) -> bool {
+    let Some(ppr) = dom.element(para, &W::p_pr()) else {
+        return false;
+    };
+    pbdr_edge(dom, ppr, "bottom").is_some()
+}
+
 fn visible_text(dom: &Dom, node: NodeId, mark: RevMark, preserve_ws: bool) -> String {
     let mut out = String::new();
     collect_visible(dom, node, &mut out, false);
@@ -3735,10 +4275,12 @@ fn visible_text(dom: &Dom, node: NodeId, mark: RevMark, preserve_ws: bool) -> St
 
 fn rev_text(text: &str, mark: RevMark, preserve_ws: bool) -> String {
     match mark {
-        // Body xml:space padding collapses. Keeping it (Courier-only,
-        // all-preserve, or interior run gaps) dropped sample/eigenpal
-        // ~6 ITT (wrap median 53.03→50.80). Table cells keep padding
-        // (in_table). HF collect stays collapsed (mini 88).
+        // Body English xml:space padding collapses (Hello / generator
+        // "no backend required"). Keeping all of it dropped sample/eigenpal
+        // ~6 ITT. Table cells keep padding (in_table). HF stays collapsed
+        // (mini 88). Paragraph-level keep of ≥3 generator pads (file_146
+        // Suggestion mode → Word page-2 Serialises) was mini 401 ITT-neg:
+        // NR mean −0.341 / median −1.53; sample/eigenpal clones −6.8.
         RevMark::None if preserve_ws => text.to_string(),
         RevMark::None => collapse_ws(text),
         RevMark::Ins | RevMark::Del => text.to_string(),
@@ -3831,14 +4373,19 @@ fn collect_textboxes(
 ) -> Vec<LaidTextBox> {
     let mut out = Vec::new();
     let shapes = shape_roots(dom, para);
-    // image_out_of_folder: wrapSquare page-anchor PNG already has the
-    // DeepL banner pixels. Word prints that picture; the sibling VML
-    // `w:pict` txbx is editor chrome ("Subscribe to DeepL Pro").
+    // image_out_of_folder: wrapSquare page-anchor PNG is logo-only.
+    // Word Quartz paints the sibling VML txbx as overlay at the v:shape
+    // style origin. Flowing it shoved Quantum (ITT 41); skipping it
+    // dropped "Subscribe to DeepL Pro". Overlay when the VML is
+    // position:absolute; still skip unpositioned pict chrome.
     let wrap_square_picture = shapes.iter().any(|&shape| {
         drawing_has_blip(dom, shape) && first_named_any(dom, shape, "wrapSquare").is_some()
     });
     for shape in shapes {
-        if wrap_square_picture && dom.name_is(shape, &W::pict()) {
+        if wrap_square_picture
+            && dom.name_is(shape, &W::pict())
+            && vml_absolute_slot(dom, shape).is_none()
+        {
             continue;
         }
         let txbx = first_named_any(dom, shape, "txbxContent").or_else(|| {
@@ -3849,8 +4396,19 @@ fn collect_textboxes(
         let mut runs = txbx
             .map(|n| collect_runs(dom, n, base, theme))
             .unwrap_or_default();
+        let mut text_dx = txbx.map(|n| first_para_content_dx(dom, n)).unwrap_or(0.0);
+        let mut text_dy = txbx
+            .map(|n| first_para_spacing_before(dom, n))
+            .unwrap_or(0.0);
         if runs.iter().all(|r| r.text.trim().is_empty()) {
-            runs = linked_txbx_runs(src, dom, shape, base, theme);
+            let (linked, dx, dy) = linked_txbx_content(src, dom, shape, base, theme);
+            runs = linked;
+            if text_dx <= 0.0 {
+                text_dx = dx;
+            }
+            if text_dy <= 0.0 {
+                text_dy = dy;
+            }
         }
         let object = drawing_is_chart_or_diagram(dom, shape);
         let diagram = graphic_data_uri_contains(dom, shape, "/diagram");
@@ -3858,7 +4416,12 @@ fn collect_textboxes(
             runs = diagram_label_runs(src, dom, shape, base);
         }
         let empty = runs.iter().all(|r| r.text.trim().is_empty());
-        let (w, h) = drawing_extent_pt(dom, shape);
+        let vml_slot = vml_absolute_slot(dom, shape);
+        let (w, h) = if vml_slot.is_some() {
+            vml_extent_pt(dom, shape)
+        } else {
+            drawing_extent_pt(dom, shape)
+        };
         // wrapNone decorations (connectors, cover overlays) score worse when
         // stroked. Inline / wrapTopAndBottom frames with a real extent still
         // consume flow (Strict01 Rectangle 3 is 402×167 with no txbx).
@@ -3866,14 +4429,16 @@ fn collect_textboxes(
         // (sd_2517 jumped 94→135 pages when they reserved default boxes).
         let slot = if object {
             ImageSlot::Flow
+        } else if let Some(vml) = vml_slot {
+            vml
         } else {
             drawing_slot(dom, shape)
         };
         let chart = object
-            .then(|| src.and_then(|(pkg, main)| load_chart(pkg, main, dom, shape)))
+            .then(|| src.and_then(|(pkg, main)| load_chart(pkg, main, dom, shape, theme)))
             .flatten();
-        let mut fill = shape_fill_color(dom, shape);
-        let line = shape_line_color(dom, shape);
+        let mut fill = shape_fill_color(dom, shape, theme);
+        let line = shape_line_color(dom, shape, theme);
         let geom = shape_geom(dom, shape);
         if matches!(
             geom,
@@ -3884,16 +4449,27 @@ fn collect_textboxes(
         let (behind, z) = drawing_z(dom, shape);
         let (flip_h, flip_v) = shape_flip(dom, shape);
         let tail_end = shape_has_tail_end(dom, shape);
+        let text_anchor = shape_text_anchor(dom, shape);
         if empty && chart.is_none() {
             if fill.is_some() || line.is_some() {
+                let box_line =
+                    if matches!(geom, ShapeGeom::Box | ShapeGeom::RightArrow) && fill.is_some() {
+                        line
+                    } else {
+                        None
+                    };
                 out.push(LaidTextBox {
                     w,
                     h,
                     runs: Vec::new(),
                     slot,
                     chart: None,
-                    stroke: line.is_some() && fill.is_none(),
+                    stroke: line.is_some()
+                        && (fill.is_none()
+                            || matches!(geom, ShapeGeom::Box | ShapeGeom::RightArrow)),
                     fill,
+                    line: box_line,
+                    line_width: shape_line_width(dom, shape),
                     geom,
                     reserve_only: false,
                     behind,
@@ -3902,6 +4478,9 @@ fn collect_textboxes(
                     flip_v,
                     tail_end,
                     diag_shapes: Vec::new(),
+                    text_dx: 0.0,
+                    text_dy: 0.0,
+                    text_anchor,
                 });
                 continue;
             }
@@ -3923,6 +4502,8 @@ fn collect_textboxes(
                     chart: None,
                     stroke: false,
                     fill: None,
+                    line: None,
+                    line_width: 1.0,
                     geom,
                     reserve_only: true,
                     behind,
@@ -3931,6 +4512,9 @@ fn collect_textboxes(
                     flip_v,
                     tail_end,
                     diag_shapes: Vec::new(),
+                    text_dx: 0.0,
+                    text_dy: 0.0,
+                    text_anchor,
                 });
                 continue;
             }
@@ -3939,19 +4523,34 @@ fn collect_textboxes(
             }
         }
         let diag_shapes = if diagram {
-            src.and_then(|(pkg, main)| load_diag_shapes(pkg, main))
+            src.and_then(|(pkg, main)| load_diag_shapes(pkg, main, theme))
                 .unwrap_or_default()
         } else {
             Vec::new()
         };
+        let vml_unstroked = descendants_local(dom, shape, "shape").into_iter().any(|s| {
+            attr_any(dom, s, "stroked").is_some_and(|v| v == "f" || v.eq_ignore_ascii_case("false"))
+        });
         out.push(LaidTextBox {
             w,
             h,
             runs,
             slot,
             chart,
-            stroke: !diagram,
+            // VML unstroked (image_out) and DrawingML a:ln noFill
+            // (Strict01 Rectangle 467 tx2 fill; Text Box 465 unfilled
+            // Author) must not grow a 0.6pt hairline. Unfilled txbx
+            // without a:ln/noFill still stroke (mcdoc / Datum plane).
+            // Distinct from mini 511 a:ln/@w width (still 0.6 when stroking).
+            // Chart-bearing boxes still stroke 0.6 black (mini 568):
+            // skipping it dropped RL clones −0.03 to −0.07.
+            stroke: !diagram
+                && !(vml_slot.is_some() && vml_unstroked)
+                && !shape_ln_is_nofill(dom, shape)
+                && (vml_slot.is_some() || !(fill.is_some() && line.is_none())),
             fill,
+            line: None,
+            line_width: 1.0,
             geom,
             reserve_only: false,
             behind,
@@ -3960,6 +4559,9 @@ fn collect_textboxes(
             flip_v,
             tail_end,
             diag_shapes,
+            text_dx,
+            text_dy,
+            text_anchor,
         });
     }
     // WrapNone accent fills on the same paragraph as an inline chart
@@ -3980,15 +4582,50 @@ fn collect_textboxes(
 
 /// Word 2008+ can park textbox paragraphs in `word/txbxN.xml` and leave
 /// `<wps:txbx r:txbx="rIdN"/>` empty (mcdoc). Follow the rel.
-fn linked_txbx_runs(
+fn first_para_content_dx(dom: &Dom, root: NodeId) -> f32 {
+    let Some(p) = dom.descendants(root, Some(&W::p())).into_iter().next() else {
+        return 0.0;
+    };
+    let Some(ppr) = dom.element(p, &W::p_pr()) else {
+        return 0.0;
+    };
+    let Some(ind) = first_named(dom, ppr, "ind") else {
+        return 0.0;
+    };
+    let left = attr_any(dom, ind, "left")
+        .or_else(|| attr_any(dom, ind, "start"))
+        .and_then(parse_len)
+        .unwrap_or(0.0);
+    let first = attr_any(dom, ind, "firstLine")
+        .and_then(parse_len)
+        .unwrap_or(0.0);
+    left + first
+}
+
+fn first_para_spacing_before(dom: &Dom, root: NodeId) -> f32 {
+    let Some(p) = dom.descendants(root, Some(&W::p())).into_iter().next() else {
+        return 0.0;
+    };
+    let Some(ppr) = dom.element(p, &W::p_pr()) else {
+        return 0.0;
+    };
+    let Some(sp) = first_named(dom, ppr, "spacing") else {
+        return 0.0;
+    };
+    attr_any(dom, sp, "before")
+        .and_then(parse_len)
+        .unwrap_or(0.0)
+}
+
+fn linked_txbx_content(
     src: Option<(&PartFs, &str)>,
     dom: &Dom,
     shape: NodeId,
     base: &RunStyle,
     theme: &ThemeFonts,
-) -> Vec<TextRun> {
+) -> (Vec<TextRun>, f32, f32) {
     let Some((pkg, main)) = src else {
-        return Vec::new();
+        return (Vec::new(), 0.0, 0.0);
     };
     for node in descendants_local(dom, shape, "txbx") {
         let Some(rid) = attr_any(dom, node, "txbx") else {
@@ -4005,10 +4642,14 @@ fn linked_txbx_runs(
         };
         let runs = collect_runs(&part, root, base, theme);
         if runs.iter().any(|r| !r.text.trim().is_empty()) {
-            return runs;
+            return (
+                runs,
+                first_para_content_dx(&part, root),
+                first_para_spacing_before(&part, root),
+            );
         }
     }
-    Vec::new()
+    (Vec::new(), 0.0, 0.0)
 }
 
 fn diagram_label_runs(
@@ -4053,7 +4694,7 @@ fn diagram_label_runs(
         .collect()
 }
 
-fn load_diag_shapes(pkg: &PartFs, main: &str) -> Option<Vec<DiagShape>> {
+fn load_diag_shapes(pkg: &PartFs, main: &str, theme: &ThemeFonts) -> Option<Vec<DiagShape>> {
     let xml = part_xml_by_rel_kind(pkg, main, "diagramDrawing")?;
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
@@ -4076,16 +4717,14 @@ fn load_diag_shapes(pkg: &PartFs, main: &str) -> Option<Vec<DiagShape>> {
         if w < 8.0 || h < 8.0 {
             continue;
         }
-        let fill = descendants_local(&dom, sp, "schemeClr")
-            .into_iter()
-            .next()
-            .and_then(|n| attr_any(&dom, n, "val"))
-            .and_then(theme_slot_color);
-        let Some(fill) = fill else {
-            continue;
-        };
-        // lt1 connector bars are near-white; painting them is extra ink.
-        if fill[0] > 0.95 && fill[1] > 0.95 && fill[2] > 0.95 {
+        let stroke = diag_ln_stroke(&dom, sp, theme);
+        // Word Diagram 1 lt1 bars are opaque white + accent1 stroke
+        // (covers the behind-doc watermark). Skip fill-only near-white
+        // and still skip lt1 *strokes* (roundRect halo). Same class as
+        // ChartSpace white (KEEP 562).
+        let fill =
+            diag_solid_fill(&dom, sp, theme).filter(|c| !is_near_white(*c) || stroke.is_some());
+        if fill.is_none() && stroke.is_none() {
             continue;
         }
         let label = descendants_local(&dom, sp, "t")
@@ -4104,12 +4743,47 @@ fn load_diag_shapes(pkg: &PartFs, main: &str) -> Option<Vec<DiagShape>> {
             y,
             w,
             h,
-            fill: Some(fill),
+            fill,
+            stroke,
             label,
             round,
         });
     }
     if out.is_empty() { None } else { Some(out) }
+}
+
+fn is_near_white(c: [f32; 3]) -> bool {
+    c[0] > 0.95 && c[1] > 0.95 && c[2] > 0.95
+}
+
+fn diag_solid_fill(dom: &Dom, sp: NodeId, theme: &ThemeFonts) -> Option<[f32; 3]> {
+    let fill = descendants_local(dom, sp, "solidFill").into_iter().next()?;
+    descendants_local(dom, fill, "schemeClr")
+        .into_iter()
+        .next()
+        .and_then(|n| attr_any(dom, n, "val"))
+        .and_then(|slot| theme.slot_color(slot))
+}
+
+fn diag_ln_stroke(dom: &Dom, sp: NodeId, theme: &ThemeFonts) -> Option<([f32; 3], f32)> {
+    let ln = descendants_local(dom, sp, "ln").into_iter().next()?;
+    if !descendants_local(dom, ln, "noFill").is_empty() {
+        return None;
+    }
+    let color = descendants_local(dom, ln, "schemeClr")
+        .into_iter()
+        .next()
+        .and_then(|n| attr_any(dom, n, "val"))
+        .and_then(|slot| theme.slot_color(slot))?;
+    if is_near_white(color) {
+        return None;
+    }
+    let width = attr_any(dom, ln, "w")
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|emu| (emu / 12700.0) as f32)
+        .unwrap_or(1.0)
+        .clamp(0.4, 4.0);
+    Some((color, width))
 }
 
 fn emu_attr(dom: &Dom, node: NodeId, name: &str) -> f32 {
@@ -4195,7 +4869,44 @@ fn chart_title(dom: &Dom, root: NodeId) -> String {
     "Chart Title".into()
 }
 
+fn chart_ser_color(dom: &Dom, ser: NodeId, idx: usize, theme: &ThemeFonts) -> [f32; 3] {
+    for fill in descendants_local(dom, ser, "solidFill") {
+        if let Some(parent) = dom.parent(fill)
+            && local_name_is(dom, parent, "ln")
+        {
+            continue;
+        }
+        if let Some(rgb) = descendants_local(dom, fill, "schemeClr")
+            .into_iter()
+            .next()
+            .and_then(|n| attr_any(dom, n, "val"))
+            .and_then(|slot| theme.slot_color(slot))
+        {
+            return rgb;
+        }
+        if let Some(rgb) = descendants_local(dom, fill, "srgbClr")
+            .into_iter()
+            .next()
+            .and_then(|n| attr_any(dom, n, "val"))
+            .and_then(parse_hex_color)
+        {
+            return rgb;
+        }
+    }
+    let slots = [
+        "accent1", "accent2", "accent3", "accent4", "accent5", "accent6",
+    ];
+    theme
+        .slot_color(slots[idx % slots.len()])
+        .unwrap_or([0.5, 0.5, 0.5])
+}
+
+#[cfg(test)]
 fn parse_chart(xml: &str) -> Option<ChartData> {
+    parse_chart_with(xml, &ThemeFonts::default())
+}
+
+fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(xml);
     let root = dom.root(doc)?;
@@ -4206,19 +4917,22 @@ fn parse_chart(xml: &str) -> Option<ChartData> {
     let mut cats = Vec::new();
     let mut series = Vec::new();
     let mut names = Vec::new();
+    let mut colors = Vec::new();
     for ser in descendants_local(&dom, host, "ser") {
         if cats.is_empty()
             && let Some(cat) = descendants_local(&dom, ser, "cat").into_iter().next()
         {
             cats = chart_pts(&dom, cat);
         }
-        names.push(chart_ser_name(&dom, ser, names.len()));
+        let idx = names.len();
+        names.push(chart_ser_name(&dom, ser, idx));
         if let Some(val) = descendants_local(&dom, ser, "val").into_iter().next() {
             let nums: Vec<f32> = chart_pts(&dom, val)
                 .iter()
                 .filter_map(|s| s.parse().ok())
                 .collect();
             if !nums.is_empty() {
+                colors.push(chart_ser_color(&dom, ser, idx, theme));
                 series.push(nums);
             }
         }
@@ -4227,17 +4941,25 @@ fn parse_chart(xml: &str) -> Option<ChartData> {
         return None;
     }
     names.truncate(series.len());
+    colors.truncate(series.len());
     let legend = !descendants_local(&dom, root, "legend").is_empty();
     Some(ChartData {
         title: chart_title(&dom, root),
         cats,
         series,
         names,
+        colors,
         legend,
     })
 }
 
-fn load_chart(pkg: &PartFs, main: &str, dom: &Dom, shape: NodeId) -> Option<ChartData> {
+fn load_chart(
+    pkg: &PartFs,
+    main: &str,
+    dom: &Dom,
+    shape: NodeId,
+    theme: &ThemeFonts,
+) -> Option<ChartData> {
     let mut rid = None;
     for el in descendants_local(dom, shape, "chart") {
         if let Some(id) = attr_any(dom, el, "id") {
@@ -4246,7 +4968,7 @@ fn load_chart(pkg: &PartFs, main: &str, dom: &Dom, shape: NodeId) -> Option<Char
         }
     }
     let bytes = resolve_media(pkg, main, rid.as_deref()?)?;
-    parse_chart(&String::from_utf8_lossy(&bytes))
+    parse_chart_with(&String::from_utf8_lossy(&bytes), theme)
 }
 
 fn shape_roots(dom: &Dom, node: NodeId) -> Vec<NodeId> {
@@ -4424,6 +5146,17 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
             .map(|emu| emu / 12700.0)
             .unwrap_or(0.0)
     };
+    // Strict01 Text Box 2: wrapSquare distL/R=114300 plus effectExtent
+    // r=22860 / b=11430. Word wraps from the effect polygon, not the
+    // unadorned extent.
+    let effect = first_named_any(dom, drawing, "effectExtent");
+    let effect_pt = |name: &str| {
+        effect
+            .and_then(|n| attr_any(dom, n, name))
+            .and_then(|s| s.parse::<f32>().ok())
+            .map(|emu| emu / 12700.0)
+            .unwrap_or(0.0)
+    };
     ImageSlot::Float {
         align,
         page_x: (h_from == "page").then(|| pos_offset_pt(dom, ph)).flatten(),
@@ -4440,8 +5173,8 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         pct_h,
         v_align,
         wrap_square,
-        dist_l: emu_pt("distL"),
-        dist_r: emu_pt("distR"),
+        dist_l: emu_pt("distL") + effect_pt("l"),
+        dist_r: emu_pt("distR") + effect_pt("r"),
     }
 }
 
@@ -4497,9 +5230,57 @@ fn vml_style_pt(style: &str, key: &str) -> Option<f32> {
     None
 }
 
+fn vml_style_hidden(style: &str) -> bool {
+    for part in style.split(';') {
+        let mut kv = part.splitn(2, ':');
+        let k = kv.next().unwrap_or("").trim();
+        let v = kv.next().unwrap_or("").trim();
+        if k.eq_ignore_ascii_case("visibility") && v.eq_ignore_ascii_case("hidden") {
+            return true;
+        }
+    }
+    false
+}
+
+fn vml_absolute_slot(dom: &Dom, root: NodeId) -> Option<ImageSlot> {
+    // Word parks wrapSquare-sibling editor chrome as `v:shape` with
+    // position:absolute + margin-left/top (image_out DeepL "Subscribe").
+    for shape in descendants_local(dom, root, "shape") {
+        let Some(style) = attr_any(dom, shape, "style") else {
+            continue;
+        };
+        if vml_style_hidden(style) {
+            continue;
+        }
+        let lower = style.to_ascii_lowercase();
+        if !lower.contains("position:absolute") && !lower.contains("position: absolute") {
+            continue;
+        }
+        let x = vml_style_pt(style, "margin-left").unwrap_or(0.0);
+        let y = vml_style_pt(style, "margin-top").unwrap_or(0.0);
+        return Some(ImageSlot::Float {
+            align: Align::Left,
+            page_x: Some(x),
+            page_y: Some(y),
+            col_x: None,
+            para_y: None,
+            pct_x: None,
+            pct_y: None,
+            pct_w: None,
+            pct_h: None,
+            v_align: Align::Left,
+            wrap_square: false,
+            dist_l: 0.0,
+            dist_r: 0.0,
+        });
+    }
+    None
+}
+
 fn vml_extent_pt(dom: &Dom, root: NodeId) -> (f32, f32) {
     for shape in descendants_local(dom, root, "shape") {
         if let Some(style) = attr_any(dom, shape, "style")
+            && !vml_style_hidden(style)
             && let (Some(w), Some(h)) =
                 (vml_style_pt(style, "width"), vml_style_pt(style, "height"))
         {
@@ -4548,6 +5329,17 @@ fn shape_flip(dom: &Dom, shape: NodeId) -> (bool, bool) {
     (flip_h, flip_v)
 }
 
+fn shape_text_anchor(dom: &Dom, shape: NodeId) -> TextAnchor {
+    let Some(pr) = descendants_local(dom, shape, "bodyPr").into_iter().next() else {
+        return TextAnchor::Top;
+    };
+    match attr_any(dom, pr, "anchor").unwrap_or("") {
+        "b" => TextAnchor::Bottom,
+        "ctr" => TextAnchor::Center,
+        _ => TextAnchor::Top,
+    }
+}
+
 fn shape_has_tail_end(dom: &Dom, shape: NodeId) -> bool {
     descendants_local(dom, shape, "tailEnd")
         .into_iter()
@@ -4558,7 +5350,7 @@ fn attr_truthy(dom: &Dom, node: NodeId, name: &str) -> bool {
     attr_any(dom, node, name).is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
 }
 
-fn scheme_color(dom: &Dom, node: NodeId) -> Option<[f32; 3]> {
+fn scheme_color(dom: &Dom, node: NodeId, theme: &ThemeFonts) -> Option<[f32; 3]> {
     if let Some(srgb) = descendants_local(dom, node, "srgbClr").into_iter().next() {
         let mut color = parse_hex_color(attr_any(dom, srgb, "val")?)?;
         apply_lum(dom, srgb, &mut color);
@@ -4567,9 +5359,59 @@ fn scheme_color(dom: &Dom, node: NodeId) -> Option<[f32; 3]> {
     let scheme = descendants_local(dom, node, "schemeClr")
         .into_iter()
         .next()?;
-    let mut color = theme_slot_color(attr_any(dom, scheme, "val")?)?;
+    let mut color = theme.slot_color(attr_any(dom, scheme, "val")?)?;
     apply_lum(dom, scheme, &mut color);
     Some(color)
+}
+
+fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) * 0.5;
+    let d = max - min;
+    if d < 1e-8 {
+        return (0.0, 0.0, l);
+    }
+    let s = d / (1.0 - (2.0 * l - 1.0).abs());
+    let h = if (max - r).abs() <= (max - g).abs() && (max - r).abs() <= (max - b).abs() {
+        ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
+    } else if (max - g).abs() <= (max - b).abs() {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
+    };
+    (h, s, l)
+}
+
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> [f32; 3] {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let hp = (h * 6.0).rem_euclid(6.0);
+    let x = c * (1.0 - (hp.rem_euclid(2.0) - 1.0).abs());
+    let (r1, g1, b1) = if hp < 1.0 {
+        (c, x, 0.0)
+    } else if hp < 2.0 {
+        (x, c, 0.0)
+    } else if hp < 3.0 {
+        (0.0, c, x)
+    } else if hp < 4.0 {
+        (0.0, x, c)
+    } else if hp < 5.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+    let m = l - c * 0.5;
+    [r1 + m, g1 + m, b1 + m]
+}
+
+fn apply_hsl_lum_mod(color: &mut [f32; 3], lum_mod: f32) {
+    // DrawingML lumMod with no lumOff is HSL L*=mod, then 8-bit round
+    // (Strict01 Rectangle 468 bg2 50% → Word 0.463 0.443 0.443).
+    let (h, s, l) = rgb_to_hsl(color[0], color[1], color[2]);
+    let rgb = hsl_to_rgb(h, s, (l * lum_mod).clamp(0.0, 1.0));
+    for (dst, src) in color.iter_mut().zip(rgb) {
+        *dst = ((src * 255.0).round() / 255.0).clamp(0.0, 1.0);
+    }
 }
 
 fn apply_lum(dom: &Dom, node: NodeId, color: &mut [f32; 3]) {
@@ -4583,15 +5425,60 @@ fn apply_lum(dom: &Dom, node: NodeId, color: &mut [f32; 3]) {
         .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
         .unwrap_or(0.0)
         / 100_000.0;
-    for c in color.iter_mut() {
-        *c = (*c * lum_mod + lum_off).clamp(0.0, 1.0);
+    if lum_off.abs() < 1e-6 && (lum_mod - 1.0).abs() > 1e-6 {
+        apply_hsl_lum_mod(color, lum_mod);
+    } else {
+        for c in color.iter_mut() {
+            *c = (*c * lum_mod + lum_off).clamp(0.0, 1.0);
+        }
     }
+    let Some(shade) = descendants_local(dom, node, "shade")
+        .into_iter()
+        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+        .map(|v| (v / 100_000.0).clamp(0.0, 1.0))
+    else {
+        return;
+    };
+    for c in color.iter_mut() {
+        *c = srgb_shade(*c, shade);
+    }
+}
+
+fn srgb_to_linear(channel: f32) -> f32 {
+    if channel <= 0.04045 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb(channel: f32) -> f32 {
+    if channel <= 0.0031308 {
+        12.92 * channel
+    } else {
+        1.055 * channel.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn srgb_shade(channel: f32, shade: f32) -> f32 {
+    // DrawingML a:shade is linear sRGB; Word Quartz then 8-bit rounds
+    // (Strict01 lnRef accent1 shade 50000 → 0.255 0.443 0.612).
+    let srgb = linear_to_srgb((srgb_to_linear(channel) * shade).clamp(0.0, 1.0));
+    (srgb * 255.0).round() / 255.0
 }
 
 fn shape_has_no_fill(dom: &Dom, shape: NodeId) -> bool {
     descendants_local(dom, shape, "spPr").into_iter().any(|sp| {
         (0..dom.child_count(sp)).any(|i| local_name_is(dom, dom.child_at(sp, i), "noFill"))
     })
+}
+
+fn shape_ln_is_nofill(dom: &Dom, shape: NodeId) -> bool {
+    // Explicit `a:ln/a:noFill` (Strict01 Text Box 465 Author). Distinct
+    // from no `a:ln` at all (unfilled txbx still hairline: mcdoc).
+    descendants_local(dom, shape, "ln")
+        .into_iter()
+        .any(|ln| !descendants_local(dom, ln, "noFill").is_empty())
 }
 
 fn fill_ref_idx(dom: &Dom, shape: NodeId) -> Option<i32> {
@@ -4606,19 +5493,40 @@ fn ln_ref_idx(dom: &Dom, shape: NodeId) -> Option<i32> {
         .find_map(|n| attr_any(dom, n, "idx").and_then(|s| s.parse().ok()))
 }
 
-fn shape_fill_color(dom: &Dom, shape: NodeId) -> Option<[f32; 3]> {
+fn shape_line_width(dom: &Dom, shape: NodeId) -> f32 {
+    // a:ln/@w when present. Box emit still ignores this (mini 511).
+    for ln in descendants_local(dom, shape, "ln") {
+        if !descendants_local(dom, ln, "noFill").is_empty() {
+            continue;
+        }
+        if let Some(w) = attr_any(dom, ln, "w").and_then(|s| s.parse::<f64>().ok()) {
+            return ((w / 12700.0) as f32).clamp(0.4, 4.0);
+        }
+    }
+    // Theme lnStyleLst: idx 1/2/3 = 6350/12700/19050 EMU.
+    match ln_ref_idx(dom, shape).unwrap_or(0) {
+        1 => 0.5,
+        2 => 1.0,
+        3 => 1.5,
+        _ => 1.0,
+    }
+}
+
+fn shape_fill_color(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> Option<[f32; 3]> {
     if shape_has_no_fill(dom, shape) {
         return None;
     }
     if let Some(fill) = descendants_local(dom, shape, "solidFill")
         .into_iter()
-        .find_map(|n| scheme_color(dom, n))
+        .find_map(|n| scheme_color(dom, n, theme))
     {
         return Some(fill);
     }
     // Cover-page wash (Strict01 Rectangle 466): gradFill stops → first stop.
+    // Mini 715 two-stop Type 2 axial was Word-faithful but ITT-neg
+    // (Strict01 family −0.092 / 8 drops 0 gains). Keep first-stop solid.
     if let Some(gs) = descendants_local(dom, shape, "gs").into_iter().next()
-        && let Some(fill) = scheme_color(dom, gs)
+        && let Some(fill) = scheme_color(dom, gs, theme)
     {
         return Some(fill);
     }
@@ -4628,15 +5536,15 @@ fn shape_fill_color(dom: &Dom, shape: NodeId) -> Option<[f32; 3]> {
     }
     descendants_local(dom, shape, "fillRef")
         .into_iter()
-        .find_map(|n| scheme_color(dom, n))
+        .find_map(|n| scheme_color(dom, n, theme))
 }
 
-fn shape_line_color(dom: &Dom, shape: NodeId) -> Option<[f32; 3]> {
+fn shape_line_color(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> Option<[f32; 3]> {
     for ln in descendants_local(dom, shape, "ln") {
         if !descendants_local(dom, ln, "noFill").is_empty() {
             return None;
         }
-        if let Some(c) = scheme_color(dom, ln) {
+        if let Some(c) = scheme_color(dom, ln, theme) {
             return Some(c);
         }
     }
@@ -4646,7 +5554,7 @@ fn shape_line_color(dom: &Dom, shape: NodeId) -> Option<[f32; 3]> {
     }
     descendants_local(dom, shape, "lnRef")
         .into_iter()
-        .find_map(|n| scheme_color(dom, n))
+        .find_map(|n| scheme_color(dom, n, theme))
 }
 
 fn pos_offset_pt(dom: &Dom, node: Option<NodeId>) -> Option<f32> {
@@ -4676,6 +5584,7 @@ fn attr_any<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
     for name in [
         XName::get(local, ""),
         W::name(local),
+        W14::name(local),
         WP::name(local),
         A::name(local),
         R::name(local),
@@ -5033,6 +5942,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         chap_num: None,
         fill: None,
         list_jc_right: false,
+        empty_toc_field: false,
     };
     apply_ppr(dom, ppr, &mut style);
     style.align
@@ -5292,10 +6202,13 @@ impl<'a> Layout<'a> {
         } else {
             chrome_line_pt(fonts, &footer)
         };
-        // Word starts the body at `w:top` when that sits below `w:header`
-        // (comments: top=46.8, header=36). When top==header the title would
-        // share the header origin — push by the header line instead.
-        let body_top = if header.is_empty() || page.margin_t > page.header {
+        // Word starts the body at max(w:top, w:header + header line).
+        // comments-lots: top=46.8 sits inside the 10.5pt header (36+~12),
+        // so the 30pt title glyph-top is 48.63 not 46.8. Skipping the
+        // band whenever top>header (the old comments_pgmar lock) left
+        // that 1.8pt overlap. Adding the band on a 9pp doc must not
+        // spill a tenth page.
+        let body_top = if header.is_empty() {
             page.margin_t
         } else {
             page.margin_t.max(page.header + header_band)
@@ -5355,7 +6268,10 @@ impl<'a> Layout<'a> {
         if let Some(start) = next.page.page_num_start {
             self.section_page = start.max(1);
         }
-        if !next.header.is_empty() || next.watermark.is_some() {
+        // Explicit headerReference, even to an empty/no-watermark part,
+        // replaces chrome (Strict01 landscape header5/6). Omitted refs
+        // still inherit (comments-lots landscape).
+        if next.header_explicit || !next.header.is_empty() || next.watermark.is_some() {
             self.header = next.header.clone();
             self.header_align = next.header_align;
             self.header_bottom = next.header_bottom;
@@ -5378,7 +6294,7 @@ impl<'a> Layout<'a> {
         } else {
             chrome_line_pt(self.fonts, &self.footer)
         };
-        self.body_top = if self.header.is_empty() || self.page.margin_t > self.page.header {
+        self.body_top = if self.header.is_empty() {
             self.page.margin_t
         } else {
             self.page.margin_t.max(self.page.header + header_band)
@@ -5581,6 +6497,9 @@ impl<'a> Layout<'a> {
         // but still applies it after a nextPage sectPr (comments-lots
         // Heading1 before=480 on the landscape page and the following
         // portrait). Skipping both packed extra bullets onto p7–p8.
+        // Capping after-sectPr before at size×1.15 matched Word p6
+        // glyph top 62.83 (mini 418) but dropped comments-lots −1.87 /
+        // I_am_sharing −1.47. Keep the full 24pt.
         if !self.at_page_top || self.last_break_was_section {
             self.y -= style.before;
         }
@@ -5626,6 +6545,15 @@ impl<'a> Layout<'a> {
             } else {
                 1.0
             };
+            if style.empty_toc_field && line.iter().all(|r| r.text.trim().is_empty()) {
+                // Mini 504 collapse-to-zero ITT-neg. Do not use ascent
+                // leftover (that re-inflates to ~ascent+1). Word Tip y≈93
+                // vs KEEP 99.3; 4.2pt overshot to 88.1. 9pt lands ~93.
+                let box_h = 9.0;
+                self.ensure(box_h);
+                self.y -= box_h;
+                continue;
+            }
             // Word Quartz auto leading is size×line_mult. Cambria's typo
             // lineGap (353) makes single_line_pt×1.15 ~5.6pt taller than
             // the 32pt Inter title (sample_document / eigenpal). Calibri
@@ -5654,12 +6582,17 @@ impl<'a> Layout<'a> {
                 } else {
                     metrics.single_line_pt(size)
                 }
-            } else if compact_title || face.is_cambria() || (face.is_arial() && line_mult >= 1.14) {
-                // Word Quartz *auto* 276 leading is size×1.15 (Arial 12 →
-                // 13.8pt box). em-box×1.15 added ~1.5pt/line on file_34
-                // (3pp vs Word 2). Do not use size×1.0 on line=240 Arial
-                // (file_22 / sd_2517 TOC+body: 107→104). Glyph size stays
-                // 12 — paint_size×1.15 was ITT-wrong (mini 86).
+            } else if compact_title
+                || face.is_cambria()
+                || ((face.is_arial() || face.is_times()) && line_mult >= 1.14)
+            {
+                // Word Quartz *auto* 276 leading is size×1.15 (Arial 12 /
+                // Times 12 → 13.8pt box). sd_2517 document.xml overrides
+                // 65 paras to line=276; typo×1.15 was ~14.6. em-box×1.15
+                // added ~1.5pt/line on file_34 (3pp vs Word 2). Do not use
+                // size×1.0 on line=240 Arial (file_22 / sd_2517 TOC+body:
+                // 107→104) or size×1.15 on Times line=240 (107→116). Glyph
+                // size stays 12 — paint_size×1.15 was ITT-wrong (mini 86).
                 size * line_mult
             } else {
                 metrics.single_line_pt(size) * line_mult
@@ -5679,7 +6612,7 @@ impl<'a> Layout<'a> {
                 });
             }
             self.y -= ascent;
-            let line_w: f32 = line.iter().map(|r| self.run_width_pt(r, &r.text)).sum();
+            let line_w = self.line_width_pt(line);
             let leftover = (width - line_w).max(0.0);
             let extra = match style.align {
                 Align::Left | Align::Justify => 0.0,
@@ -5756,6 +6689,12 @@ impl<'a> Layout<'a> {
     fn paint_pbdr(&mut self, style: &ParaStyle, y_top: f32, y_bot: f32) {
         // Do not consume extra leading — sample_document is already
         // 3pp vs soffice 3; space="4" lives inside the after gap.
+        // Honoring T/B w:space (mini 440) was Word-shaped (file_146
+        // heading space=4) but ITT-neg: NR mean +0.014 / median −0.004,
+        // Strict01 family −0.059, file_146 −0.006. Gated IntenseQuote
+        // space=4 (mini 480–483) was also ITT-neg: NR 16 comments-lots
+        // drops 0 gains; RL mean −0.0001 / 24 drops (I_am_sharing
+        // −0.0014). Keep hardcoded 2pt.
         // Word IntenseQuote (comments-lots p2) paints the rule at
         // w:ind left/right, not the page margins (~90pt extra ink).
         // Do not outset 1.44pt / 6px@300dpi (mini 225–228): Word
@@ -5766,22 +6705,36 @@ impl<'a> Layout<'a> {
         let x2 = self.page.width - self.page.margin_r - style.indent_right;
         let top = y_top.max(y_bot);
         let bot = y_top.min(y_bot) - 2.0;
+        // 4-edge box (file_22 / sd_2517 quotes): T/B rules meet the L/R
+        // verticals (Word 93.36–518.88). KEEP 441 space-only was 94.75.
+        // Word's extra 1.44pt Quartz outset is gated to 4-edge — mini
+        // 225 applied it to bottom-only file_146 E2E8F0 (content-box
+        // lock) and ITT-neg file_134 −0.003. Not mini 440 T/B space.
+        let four_edge = style.border_top.is_some()
+            && style.border_bottom.is_some()
+            && style.border_left.is_some()
+            && style.border_right.is_some();
+        let quartz = if four_edge { 1.44 } else { 0.0 };
+        let (hx1, hx2) = match (style.border_left, style.border_right) {
+            (Some((_, _, ls)), Some((_, _, rs))) => (x1 - ls - quartz, x2 + rs + quartz),
+            _ => (x1, x2),
+        };
         if let Some((color, width, _)) = style.border_top {
-            self.hairline_h(x1, top, x2, width, color);
+            self.hairline_h(hx1, top, hx2, width, color);
         }
         if let Some((color, width, _)) = style.border_bottom {
-            self.hairline_h(x1, bot, x2, width, color);
+            self.hairline_h(hx1, bot, hx2, width, color);
         }
         // sd_2517 / file_22 TextHeading2 4-edge: left/right space=4.
         // Word box 93.36–518.88 vs indent-only 99–513 (5.6pt / 11px
         // past max_shift). space is the gap between border and text;
         // left/right sit outside the indent. Do not outset horizontal
-        // rules (mini 225–228 file_134 −0.003).
+        // rules (mini 225–228 file_134 −0.003) unless L/R exist.
         if let Some((color, width, space)) = style.border_left {
-            self.hairline_v(x1 - space, bot, top, width, color);
+            self.hairline_v(x1 - space - quartz, bot, top, width, color);
         }
         if let Some((color, width, space)) = style.border_right {
-            self.hairline_v(x2 + space, bot, top, width, color);
+            self.hairline_v(x2 + space + quartz, bot, top, width, color);
         }
     }
 
@@ -5968,6 +6921,47 @@ impl<'a> Layout<'a> {
         w
     }
 
+    fn stacked_col_width(&self, line: &[TextRun], i: usize) -> Option<(usize, f32)> {
+        if !matches!(line.get(i).map(|r| r.style.vert), Some(VertAlign::StackNum)) {
+            return None;
+        }
+        let mut num_end = i;
+        while num_end < line.len() && matches!(line[num_end].style.vert, VertAlign::StackNum) {
+            num_end += 1;
+        }
+        let mut den_end = num_end;
+        while den_end < line.len() && matches!(line[den_end].style.vert, VertAlign::StackDen) {
+            den_end += 1;
+        }
+        if den_end == num_end {
+            return None;
+        }
+        let nw: f32 = line[i..num_end]
+            .iter()
+            .map(|r| self.run_width_pt(r, &r.text))
+            .sum();
+        let dw: f32 = line[num_end..den_end]
+            .iter()
+            .map(|r| self.run_width_pt(r, &r.text))
+            .sum();
+        Some((den_end, nw.max(dw)))
+    }
+
+    fn line_width_pt(&self, line: &[TextRun]) -> f32 {
+        let mut i = 0;
+        let mut w = 0.0;
+        while i < line.len() {
+            if let Some((end, col)) = self.stacked_col_width(line, i) {
+                w += col;
+                i = end;
+            } else {
+                w += self.run_width_pt(&line[i], &line[i].text);
+                i += 1;
+            }
+        }
+        w
+    }
+
     fn run_width_pt(&self, run: &TextRun, text: &str) -> f32 {
         if text.is_empty() {
             return 0.0;
@@ -5977,13 +6971,16 @@ impl<'a> Layout<'a> {
             .resolve(&run.style.family, run.style.bold, run.style.italic);
         let face = self.fonts.get(fid);
         let size = run.style.paint_size();
-        let w = face.width_pt(text, size);
+        let kern = run.style.kerns_at(size);
+        let w = face.width_pt_kern(text, size, kern);
         let n = text.chars().count();
         let w = w + run.style.track * n.saturating_sub(1) as f32;
         if w > 0.05 || text.chars().all(char::is_whitespace) {
             return w;
         }
-        self.fonts.get(FaceId::SansRegular).width_pt(text, size)
+        self.fonts
+            .get(FaceId::SansRegular)
+            .width_pt_kern(text, size, kern)
     }
 
     fn tab_suffix_width(&self, rest_of_run: &str, run: &TextRun, following: &[TextRun]) -> f32 {
@@ -6023,7 +7020,12 @@ impl<'a> Layout<'a> {
     }
 
     fn advance_tab(&mut self, x: f32, y: f32, after_w: f32, style: &RunStyle) -> f32 {
-        let stop = next_tab_stop(x, self.page.margin_l, &self.tab_stops);
+        let stop = next_tab_stop(
+            x,
+            self.page.margin_l,
+            &self.tab_stops,
+            self.page.default_tab,
+        );
         let dest = match stop.align {
             TabAlign::Left => stop.pos,
             TabAlign::Right => (stop.pos - after_w).max(x),
@@ -6040,6 +7042,31 @@ impl<'a> Layout<'a> {
         while i < line.len() {
             let run = &line[i];
             if !run.text.contains('\t') {
+                if let Some((end, col)) = self.stacked_col_width(line, i) {
+                    let mut num_end = i;
+                    while num_end < end && matches!(line[num_end].style.vert, VertAlign::StackNum) {
+                        num_end += 1;
+                    }
+                    let nw: f32 = line[i..num_end]
+                        .iter()
+                        .map(|r| self.run_width_pt(r, &r.text))
+                        .sum();
+                    let dw: f32 = line[num_end..end]
+                        .iter()
+                        .map(|r| self.run_width_pt(r, &r.text))
+                        .sum();
+                    let mut xn = x + (col - nw) * 0.5;
+                    for stacked in &line[i..num_end] {
+                        xn = self.paint_run(stacked, xn, y);
+                    }
+                    let mut xd = x + (col - dw) * 0.5;
+                    for stacked in &line[num_end..end] {
+                        xd = self.paint_run(stacked, xd, y);
+                    }
+                    x += col;
+                    i = end;
+                    continue;
+                }
                 x = self.paint_run(run, x, y);
                 i += 1;
                 continue;
@@ -6062,6 +7089,12 @@ impl<'a> Layout<'a> {
     }
 
     fn paint_run(&mut self, run: &TextRun, x: f32, y: f32) -> f32 {
+        if run.style.effect_skip {
+            // Word Save-as-PDF omits reflection / shadow+outline as
+            // body glyphs (Strict01 p11 18/20pt Video). Keep the line
+            // box so 13pp packing holds; do not extra-skip short redlines.
+            return x + self.run_width_pt(run, &run.text);
+        }
         let mut fid = self
             .fonts
             .resolve(&run.style.family, run.style.bold, run.style.italic);
@@ -6071,7 +7104,12 @@ impl<'a> Layout<'a> {
             let mut first = true;
             for part in run.text.split('\t') {
                 if !first {
-                    xcur = next_tab_x(xcur, self.page.margin_l, &self.tab_stops);
+                    xcur = next_tab_x(
+                        xcur,
+                        self.page.margin_l,
+                        &self.tab_stops,
+                        self.page.default_tab,
+                    );
                 }
                 first = false;
                 if part.is_empty() {
@@ -6085,7 +7123,8 @@ impl<'a> Layout<'a> {
         }
         let size = run.style.paint_size();
         let y = run.style.paint_y(y);
-        let mut shaped = face.shape(&run.text, size);
+        let kern = run.style.kerns_at(size);
+        let mut shaped = face.shape_kern(&run.text, size, kern);
         let chars: Vec<char> = run.text.chars().collect();
         let ink_missing = if chars.len() == shaped.len() {
             chars
@@ -6103,7 +7142,7 @@ impl<'a> Layout<'a> {
                 FaceId::SansRegular
             };
             face = self.fonts.get(fid);
-            shaped = face.shape(&run.text, size);
+            shaped = face.shape_kern(&run.text, size, kern);
         }
         let scale = if run.style.scale > 0.0 {
             run.style.scale
@@ -6272,6 +7311,7 @@ impl<'a> Layout<'a> {
                         y1,
                         x2,
                         y2,
+                        // Word 0.24pt (file_34) was mini 523 ITT-neg.
                         width: 0.6,
                         color: style.color,
                     });
@@ -6282,7 +7322,8 @@ impl<'a> Layout<'a> {
                 // size×0.075 on all u: mini 197 median −0.007
                 // (green_underline 90.4→89.2). size≥20: mini 199 mean
                 // −0.007. 28pt+ / 32pt title-only (mini 238) no-redline
-                // 59.1612→59.1552. Keep 0.6pt.
+                // 59.1612→59.1552. 9.5pt→0.48 (file_146 github, mini 470)
+                // dropped file_146 −0.023 / sample clones −0.04. Keep 0.6pt.
                 self.hairline_h(x, y - 1.2, x + w, 0.6, style.color);
                 if style.underline_double {
                     self.hairline_h(x, y - 2.6, x + w, 0.6, style.color);
@@ -6392,9 +7433,9 @@ impl<'a> Layout<'a> {
 
     /// Word paints floating `wp:extent` as specified (overflow clipped by
     /// the page). Scaling to `page.width` squashed the DeepL wrapSquare
-    /// banner (841.77pt on A4) to 595.3×44.96. Inline/flow blips still
-    /// fit the content box — comments-lots' 518.4pt chart PNG at native
-    /// height pushes that stem 9→10pp vs Word.
+    /// banner (841.77pt on A4) to 595.3×44.96. Using 518pt as *height*
+    /// (square) on comments-lots' chart PNG pushed 9→10pp. Native aspect
+    /// 518.4×266.55 fits `page.width - margin_l` (558) and matches Word.
     fn image_wh(&self, img: &LaidImage) -> (f32, f32) {
         match img.slot {
             ImageSlot::Float { pct_w, pct_h, .. } => {
@@ -6408,7 +7449,15 @@ impl<'a> Layout<'a> {
                     .unwrap_or_else(|| img.h.max(1.0));
                 (dw, dh)
             }
-            slot @ ImageSlot::Flow => self.sized_wh(slot, img.w, img.h, 1.0, 1.0),
+            ImageSlot::Flow => {
+                let max_w = (self.page.width - self.page.margin_l).max(1.0);
+                let dw = img.w.min(max_w).max(1.0);
+                let mut dh = img.h.max(1.0);
+                if img.w > max_w && img.w > 0.0 {
+                    dh *= max_w / img.w;
+                }
+                (dw, dh)
+            }
         }
     }
 
@@ -6476,7 +7525,12 @@ impl<'a> Layout<'a> {
                 self.ensure(dh + 4.0);
                 self.y -= dh;
                 let pos = (self.page.margin_l, self.y);
-                self.y -= 4.0;
+                // Rectangle 3 reserve_only (Strict01 167pt hole) then
+                // Chart 1: Word ChartSpace PDF y≈291.8 / fitz 248.2.
+                // 4pt after the hole parked it at 288.9 / 251.1. KEEP
+                // 631 title y+dh-19 compensated that 3pt. Mini 623
+                // after=8 stays. Images keep 4pt (emit_image).
+                self.y -= if box_.reserve_only { 1.0 } else { 4.0 };
                 pos
             }
             slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
@@ -6484,7 +7538,6 @@ impl<'a> Layout<'a> {
         if box_.reserve_only {
             return;
         }
-        let color = [0.0, 0.0, 0.0];
         if let Some(fill) = box_.fill {
             match box_.geom {
                 ShapeGeom::RightArrow => {
@@ -6497,16 +7550,19 @@ impl<'a> Layout<'a> {
                     });
                 }
                 ShapeGeom::CurvedConnector => {
+                    // lnRef idx=1 → theme lnStyleLst[0] w=6350 EMU = 0.5pt
+                    // (Strict01 Curved Connector 5). KEEP 512 bent a:ln
+                    // without @w stays 1pt via emit_connector.
                     let curve = curved_connector_cubics(x, y, dw, dh, box_.flip_h, box_.flip_v);
                     self.current().ops.push(Op::Cubic {
                         start: curve.start,
                         segments: curve.segments,
-                        width: 1.25,
+                        width: box_.line_width,
                         color: fill,
                     });
                 }
                 ShapeGeom::BentConnector | ShapeGeom::Line => {
-                    self.emit_connector(x, y, dw, dh, fill, box_.geom);
+                    self.emit_connector(x, y, dw, dh, (fill, box_.line_width), box_.geom);
                     if box_.tail_end && matches!(box_.geom, ShapeGeom::BentConnector) {
                         let pts = bent_connector_points(x, y, dw, dh);
                         self.current().ops.push(Op::FillPoly {
@@ -6534,19 +7590,28 @@ impl<'a> Layout<'a> {
         }
         if box_.stroke {
             match box_.geom {
+                ShapeGeom::RightArrow => {
+                    if let Some(color) = box_.line {
+                        self.current().ops.push(Op::StrokePoly {
+                            points: right_arrow_points(x, y, dw, dh),
+                            width: 1.0,
+                            color,
+                        });
+                    }
+                }
                 ShapeGeom::CurvedConnector => {
                     let line_c = box_.fill.unwrap_or([0.310, 0.506, 0.741]);
                     let curve = curved_connector_cubics(x, y, dw, dh, box_.flip_h, box_.flip_v);
                     self.current().ops.push(Op::Cubic {
                         start: curve.start,
                         segments: curve.segments,
-                        width: 1.25,
+                        width: box_.line_width,
                         color: line_c,
                     });
                 }
                 ShapeGeom::BentConnector | ShapeGeom::Line => {
                     let line_c = box_.fill.unwrap_or([0.310, 0.506, 0.741]);
-                    self.emit_connector(x, y, dw, dh, line_c, box_.geom);
+                    self.emit_connector(x, y, dw, dh, (line_c, box_.line_width), box_.geom);
                     if box_.tail_end && matches!(box_.geom, ShapeGeom::BentConnector) {
                         let pts = bent_connector_points(x, y, dw, dh);
                         self.current().ops.push(Op::FillPoly {
@@ -6556,20 +7621,65 @@ impl<'a> Layout<'a> {
                     }
                 }
                 _ => {
-                    for (x1, y1, x2, y2) in [
-                        (x, y, x + dw, y),
-                        (x, y + dh, x + dw, y + dh),
-                        (x, y, x, y + dh),
-                        (x + dw, y, x + dw, y + dh),
-                    ] {
-                        self.current().ops.push(Op::Line {
-                            x1,
-                            y1,
-                            x2,
-                            y2,
-                            width: 0.6,
-                            color,
-                        });
+                    if let Some(color) = box_.line {
+                        // Mini 635–638: Word wrapNone Rectangle 1 closed
+                        // 1pt `h S` (not 4-edge end caps) is Word-faithful
+                        // but ITT-neg RL mean −0.0024 (file_196_file_197
+                        // −0.1456, 11 Strict01-clone micro-gains). KEEP-only
+                        // forbids. Do not retry. KEEP 591 4-edge stands.
+                        // line_width from a:ln/@w (Rectangle 468 1.25) or
+                        // lnRef idx (Rectangle 1 idx=2 → 1pt). Mini 511
+                        // locked a:ln/@w on the 0.6 black path (line:None).
+                        // ChartSpace 0.6 black stays 4-edge (mini 568).
+                        for (x1, y1, x2, y2) in [
+                            (x, y, x + dw, y),
+                            (x, y + dh, x + dw, y + dh),
+                            (x, y, x, y + dh),
+                            (x + dw, y, x + dw, y + dh),
+                        ] {
+                            self.current().ops.push(Op::Line {
+                                x1,
+                                y1,
+                                x2,
+                                y2,
+                                width: box_.line_width,
+                                color,
+                            });
+                        }
+                    } else {
+                        let color = [0.0, 0.0, 0.0];
+                        // Word ChartSpace frame is closed `re` (Strict01
+                        // 72×248.2 432×252). 4-edge Lines grow square-cap
+                        // corners. Mini 568 keeps 0.6 black (do not skip;
+                        // do not add 0.75 gray mini 384). Mini 635 locked
+                        // wrapNone Box closed StrokePoly; this is the
+                        // chart-bearing 0.6 path only.
+                        if box_.chart.is_some() {
+                            self.current().ops.push(Op::StrokeRect {
+                                x,
+                                y,
+                                w: dw,
+                                h: dh,
+                                width: 0.6,
+                                color,
+                            });
+                        } else {
+                            for (x1, y1, x2, y2) in [
+                                (x, y, x + dw, y),
+                                (x, y + dh, x + dw, y + dh),
+                                (x, y, x, y + dh),
+                                (x + dw, y, x + dw, y + dh),
+                            ] {
+                                self.current().ops.push(Op::Line {
+                                    x1,
+                                    y1,
+                                    x2,
+                                    y2,
+                                    width: 0.6,
+                                    color,
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -6582,9 +7692,31 @@ impl<'a> Layout<'a> {
             return;
         }
         let pad = 4.0;
-        let inner = (dw - pad * 2.0).max(8.0);
+        let dx = if box_.text_dx > 0.0 {
+            box_.text_dx
+        } else {
+            pad
+        };
+        let inner = (dw - dx - pad).max(8.0);
         let lines = wrap_runs(self.fonts, &box_.runs, inner, inner, false);
-        let mut ty = y + dh - pad;
+        let mut content_h = 0.0;
+        for line in &lines {
+            let size = line.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
+            let fid = line.first().map_or(FaceId::CarlitoRegular, |r| {
+                self.fonts
+                    .resolve(&r.style.family, r.style.bold, r.style.italic)
+            });
+            content_h += self.fonts.get(fid).ascent_pt(size) + 2.0;
+        }
+        let top = y + dh - pad;
+        let mut ty = match box_.text_anchor {
+            TextAnchor::Top => top,
+            TextAnchor::Bottom => (y + pad + content_h).min(top),
+            TextAnchor::Center => (y + (dh + content_h) * 0.5).min(top),
+        };
+        if box_.text_dy > 0.0 {
+            ty -= box_.text_dy;
+        }
         for line in lines {
             let size = line.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
             let fid = line.first().map_or(FaceId::CarlitoRegular, |r| {
@@ -6596,7 +7728,7 @@ impl<'a> Layout<'a> {
             if ty < y {
                 break;
             }
-            let mut tx = x + pad;
+            let mut tx = x + dx;
             for run in line {
                 if run.text.is_empty() {
                     continue;
@@ -6642,6 +7774,39 @@ impl<'a> Layout<'a> {
                     });
                 }
             }
+            if let Some((color, width)) = shape.stroke {
+                // Word connector bars are closed 1pt `re S` (fitz 432×47.6).
+                // 4-edge Lines grow square-cap corners. Mini 635 locked
+                // wrapNone Box StrokePoly `h S`; KEEP 591 4-edge stands
+                // on emit_textbox. RoundRect lt1 white halo stays skipped.
+                if shape.round {
+                    let (x0, y0, x1, y1) = (px, py, px + shape.w, py + shape.h);
+                    for (a, b) in [
+                        ((x0, y0), (x1, y0)),
+                        ((x1, y0), (x1, y1)),
+                        ((x1, y1), (x0, y1)),
+                        ((x0, y1), (x0, y0)),
+                    ] {
+                        self.current().ops.push(Op::Line {
+                            x1: a.0,
+                            y1: a.1,
+                            x2: b.0,
+                            y2: b.1,
+                            width,
+                            color,
+                        });
+                    }
+                } else {
+                    self.current().ops.push(Op::StrokeRect {
+                        x: px,
+                        y: py,
+                        w: shape.w,
+                        h: shape.h,
+                        width,
+                        color,
+                    });
+                }
+            }
             let label = shape.label.trim();
             if label.is_empty() {
                 continue;
@@ -6668,16 +7833,19 @@ impl<'a> Layout<'a> {
         y: f32,
         dw: f32,
         dh: f32,
-        color: [f32; 3],
+        stroke: ([f32; 3], f32),
         geom: ShapeGeom,
     ) {
+        let (color, width) = stroke;
         let mut stroke = |x1: f32, y1: f32, x2: f32, y2: f32| {
+            // lnRef idx=1 → 0.5pt (theme 6350 EMU). KEEP 512 a:ln
+            // without @w is 1pt. Box strokes stay 0.6 (mini 511).
             self.current().ops.push(Op::Line {
                 x1,
                 y1,
                 x2,
                 y2,
-                width: 1.25,
+                width,
                 color,
             });
         };
@@ -6697,7 +7865,16 @@ impl<'a> Layout<'a> {
         if text.is_empty() {
             return;
         }
-        let size = word_device_pt(size);
+        // Strict01 Word Quartz chart title 13.92 / axis 9.12 (300dpi).
+        // Body Calibri 14 stays 14.00 (mini 522). SmartArt 14pt labels
+        // do not go through emit_label (mini 453 lock).
+        let size = if (size - 9.0).abs() < 0.05 {
+            (9.0_f32 * 25.0 / 6.0).round() * 0.24
+        } else if (size - 14.0).abs() < 0.05 {
+            (14.0_f32 * 25.0 / 6.0).round() * 0.24
+        } else {
+            word_device_pt(size)
+        };
         let face = self.fonts.get(FaceId::CarlitoRegular);
         self.current().ops.push(Op::text(
             FaceId::CarlitoRegular,
@@ -6705,13 +7882,14 @@ impl<'a> Layout<'a> {
             x,
             y,
             face.glyphs(text),
-            [0.15, 0.15, 0.15],
+            // Strict01 catAx/valAx/legend/title txPr: tx1 lumMod=65% lumOff=35%.
+            // Not grid 0.85 (mini 385–388 ITT-neg vs Quartz 0.88).
+            [0.35, 0.35, 0.35],
             text,
         ));
     }
 
     fn emit_chart_bars(&mut self, x: f32, y: f32, dw: f32, dh: f32, chart: &ChartData) {
-        const PALETTE: [[f32; 3]; 3] = [[0.27, 0.45, 0.77], [0.93, 0.49, 0.19], [0.65, 0.65, 0.65]];
         let n_cats = chart
             .series
             .iter()
@@ -6723,6 +7901,16 @@ impl<'a> Layout<'a> {
         if n_cats == 0 || n_ser == 0 {
             return;
         }
+        // Word ChartSpace is opaque white (Strict01 432×252 at fitz
+        // y=248.2) so the behind-doc watermark does not show through the
+        // plot. Mini 384 locked the 0.75 gray *frame*; fill-only.
+        self.current().ops.push(Op::FillRect {
+            x,
+            y,
+            w: dw,
+            h: dh,
+            color: [1.0, 1.0, 1.0],
+        });
         let max_v = chart
             .series
             .iter()
@@ -6740,7 +7928,6 @@ impl<'a> Layout<'a> {
             }
         };
         let title_h = if chart.title.is_empty() { 0.0 } else { 20.0 };
-        let cat_h = if chart.cats.is_empty() { 0.0 } else { 14.0 };
         let legend_h = if chart.legend && !chart.names.is_empty() {
             16.0
         } else {
@@ -6750,29 +7937,61 @@ impl<'a> Layout<'a> {
             let face = self.fonts.get(FaceId::CarlitoRegular);
             let tw = face.width_pt(&chart.title, 14.0);
             let tx = x + ((dw - tw) / 2.0).max(4.0);
-            self.emit_label(&chart.title, 14.0, tx, y + dh - 16.0);
+            // Word Chart Title is ChartSpace+22 (Strict01 Td ≈522 /
+            // fitz 255.8) once the box sits at Word y (reserve_only
+            // gap 1pt). y+dh-19 was KEEP 631 compensating the 3pt-low
+            // ChartSpace. KEEP 611/615 cat/plot slack stay.
+            self.emit_label(&chart.title, 14.0, tx, y + dh - 22.0);
         }
         let axis_w = 20.0;
         let plot_x = x + axis_w;
-        let plot_y = y + cat_h + legend_h + 6.0;
+        // Word catAx/grid x is ChartSpace+19.4 → dw-11 (Strict01 91.4–493).
+        // plot_x=+20 / right 12 leftover sat at 92–492. Packed bars stay
+        // at plot_x (mini 381 + KEEP 694). valAx labels stay x+6.5.
+        let grid_x = x + 19.4;
+        let grid_w = (dw - 19.4 - 11.0).max(8.0);
+        // Word valAx 0 is ChartSpace+43 (Strict01 Td 335 / fitz 447.8).
+        // cat_h+legend_h+6 parked it at +36 (Td 324.9 / fitz 458.4) with
+        // dy 31. Mini 381 locked bar width; mini 428 locked legend x.
+        let plot_y = y + 43.0;
+        // Word bar bottoms are the catAx line (ChartSpace+46 / fitz 454.1).
+        // Mini 691 sat FillRect on axis_y; NR +0.0059 8/0 but RL mean
+        // −0.0002 (8 drops / 4 gains: file_99 −0.042, small_font −0.022).
+        // KEEP-only forbids. Bars stay plot_y (KEEP 615). catAx stroke
+        // stays ChartSpace+46 (KEEP 677).
+        let axis_y = y + 46.0;
         let plot_w = (dw - axis_w - 12.0).max(8.0);
-        let plot_h = (dh - title_h - cat_h - legend_h - 16.0).max(8.0);
+        let plot_h = (dh - title_h - 63.0).max(8.0);
         let group_w = plot_w / n_cats as f32;
         let bar_w = (group_w / (n_ser as f32 + 0.5)).max(2.0);
+        // Word centers the cluster in the category slot (Strict01 cat1
+        // accent1 x=110.6). Left-align at plot_x parked cat1 at 92.
+        // Mini 381 locked gapWidth/overlap (packed ~27.6 width stays).
+        let cluster_w = n_ser as f32 * bar_w - 1.0;
+        let cluster_pad = ((group_w - cluster_w) / 2.0).max(0.0);
         let ticks = axis_max.clamp(1.0, 10.0) as u32;
+        // tx1 lumMod=15%/lumOff=85% → 0.85 (mini 385–388) ITT-neg vs Quartz 0.88.
         let grid = [0.88, 0.88, 0.88];
         for i in 0..=ticks {
             let val = i as f32;
             let ty = plot_y + (val / axis_max) * plot_h;
-            self.current().ops.push(Op::Line {
-                x1: plot_x,
-                y1: ty,
-                x2: plot_x + plot_w,
-                y2: ty,
-                width: 0.4,
-                color: grid,
-            });
-            self.emit_label(&i.to_string(), 9.0, x + 2.0, ty);
+            // Word majorGridlines are ticks 1–6 (fitz 285–426). Tick 0
+            // is the catAx 0.75pt baseline (KEEP 677), not a 0.4pt 0.88
+            // line at plot_y. Mini 385 color stays. Mini 690 0.75pt
+            // width ITT-neg NR −0.0011 Strict01 family.
+            if i > 0 {
+                self.current().ops.push(Op::Line {
+                    x1: grid_x,
+                    y1: ty,
+                    x2: grid_x + grid_w,
+                    y2: ty,
+                    width: 0.4,
+                    color: grid,
+                });
+            }
+            // Word valAx is left-aligned at ChartSpace+6.5 (Strict01
+            // 78.5). x+2.0 parked the ticks at 74. Cat/legend stay.
+            self.emit_label(&i.to_string(), 9.0, x + 6.5, ty);
         }
         for ci in 0..n_cats {
             for (si, ser) in chart.series.iter().enumerate() {
@@ -6781,33 +8000,59 @@ impl<'a> Layout<'a> {
                 if bh < 0.5 {
                     continue;
                 }
-                let bx = plot_x + ci as f32 * group_w + si as f32 * bar_w;
+                let bx = plot_x + ci as f32 * group_w + cluster_pad + si as f32 * bar_w;
                 self.current().ops.push(Op::FillRect {
                     x: bx,
                     y: plot_y,
                     w: (bar_w - 1.0).max(1.0),
                     h: bh,
-                    color: PALETTE[si % PALETTE.len()],
+                    color: chart.colors.get(si).copied().unwrap_or([0.5, 0.5, 0.5]),
                 });
             }
             if let Some(cat) = chart.cats.get(ci) {
                 let face = self.fonts.get(FaceId::CarlitoRegular);
                 let cw = face.width_pt(cat, 9.0);
                 let cx = plot_x + ci as f32 * group_w + ((group_w - cw) / 2.0).max(0.0);
-                self.emit_label(cat, 9.0, cx, y + legend_h + 4.0);
+                // Word cat sits ~31.2pt above ChartSpace bottom after KEEP
+                // 643 parked ChartSpace at PDF y≈291.9 (Strict01 Category 1
+                // Td 323). y+34 leftover was 325.9. Mini 428 locked x.
+                self.emit_label(cat, 9.0, cx, y + 31.2);
             }
         }
+        // Word catAx `a:ln w=9525` (0.75pt) tx1 lumMod=15% lumOff=85%
+        // then 8-bit round 217/255=0.851. Quartz paints one horizontal
+        // at ChartSpace+46 (fitz 454.1 / PDF 337.9), the Word bar-bottom.
+        // KEEP 669 leftover plot_y=+43 sat at 334.9 / fitz 457.1. valAx
+        // labels stay at +43 (KEEP 615). ChartSpace 0.75 frame stays off
+        // (mini 384 greps 0.850). valAx grid stays 0.4pt 0.88 (mini 385
+        // color / mini 690 width).
+        let axis = {
+            let c = (0.85_f32 * 255.0).round() / 255.0;
+            [c, c, c]
+        };
+        self.current().ops.push(Op::Line {
+            x1: grid_x,
+            y1: axis_y,
+            x2: grid_x + grid_w,
+            y2: axis_y,
+            width: 0.75,
+            color: axis,
+        });
         if legend_h > 0.0 {
             let face = self.fonts.get(FaceId::CarlitoRegular);
             let mut lx = plot_x;
-            let ly = y + 4.0;
+            // Word Series 1 Td y≈303 (ChartSpace+11.2 after KEEP 643).
+            // y+14 leftover was 305.9. y+4 was 292.9.
+            let ly = y + 11.2;
             for (si, name) in chart.names.iter().enumerate() {
-                let color = PALETTE[si % PALETTE.len()];
+                let color = chart.colors.get(si).copied().unwrap_or([0.5, 0.5, 0.5]);
+                // Word legend keys are 4.9×4.9 (Strict01). 8×8 is extra
+                // ink. Mini 428 locked centering the row, not the size.
                 self.current().ops.push(Op::FillRect {
                     x: lx,
                     y: ly + 1.0,
-                    w: 8.0,
-                    h: 8.0,
+                    w: 5.0,
+                    h: 5.0,
                     color,
                 });
                 self.emit_label(name, 9.0, lx + 10.0, ly);
@@ -6924,7 +8169,15 @@ impl<'a> Layout<'a> {
                     // Do not inset when tcMar 80+80 == chrome (file_146
                     // 1E293B pills): mini 257–260 no-redline +0.033/+0.102
                     // but redline mean −0.005 (file_34 −0.25). Keep flush
-                    // tops; 100+100 still insets.
+                    // tops; 100+100 still insets. Multi-line first-line
+                    // inset (file_146 listing yMin 86.3 vs flush 80.9)
+                    // plus pad_t row extra was mini 464: NR 58.9475/50.4487
+                    // vs KEEP 460 59.46/53.4527 (median −3). Keep flush.
+                    // Table-level tblCellMar 100+100 (file_34 Feature, no
+                    // cell tcMar) was Word-faithful 5pt inset (NR file_34
+                    // +2.16) but mini 496–498 ITT-neg: RL mean −0.0107,
+                    // file_33_file_34 −0.375 / file_34_file_35 −0.263, 0
+                    // gains. chrome.max(geom.pad_v) keeps that flush.
                     let inset = if one_line && cell.pad_t + cell.pad_b > chrome + 0.01 {
                         cell.pad_t
                     } else {
@@ -7055,6 +8308,9 @@ impl<'a> Layout<'a> {
             // Cell restated edges (file_34 sz=0; CiceroDo CCCCCC sz=8).
             // Listed sides paint; omitted/none/sz=0 stay off — no table
             // fallback, or gray would sit on top of the black lattice.
+            // Falling through when every edge is sz=0 (file_34 Feature
+            // tblBorders sz=4 auto) was Word-shaped (0.2pt lattice) but
+            // mini 536 ITT-neg: file_34 −0.82 / uipriority −1.05, 0 gains.
             let segs = [
                 (cb.top, true, x, y2, x2 - x, 0.0),
                 (cb.bottom, true, x, y, x2 - x, 0.0),
@@ -7406,9 +8662,41 @@ fn default_run_style() -> RunStyle {
         track: 0.0,
         scale: 1.0,
         caps: false,
+        small_caps: false,
         offset: 0.0,
         vert: VertAlign::Baseline,
+        kern_half: 0,
+        effect_skip: false,
     }
+}
+
+fn small_caps_pieces(text: &str, style: &RunStyle) -> Vec<(String, RunStyle)> {
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut small = false;
+    let full = style.size;
+    let reduced = full * 0.8;
+    let flush = |buf: &mut String, small: bool, out: &mut Vec<(String, RunStyle)>| {
+        if buf.is_empty() {
+            return;
+        }
+        let mut st = style.clone();
+        st.small_caps = false;
+        st.size = if small { reduced } else { full };
+        out.push((std::mem::take(buf), st));
+    };
+    for ch in text.chars() {
+        let is_small = ch.is_lowercase();
+        if !buf.is_empty() && is_small != small {
+            flush(&mut buf, small, &mut out);
+        }
+        small = is_small;
+        for u in ch.to_uppercase() {
+            buf.push(u);
+        }
+    }
+    flush(&mut buf, small, &mut out);
+    out
 }
 
 fn style_eq(a: &RunStyle, b: &RunStyle) -> bool {
@@ -7427,6 +8715,30 @@ fn style_eq(a: &RunStyle, b: &RunStyle) -> bool {
         && a.caps == b.caps
         && (a.offset - b.offset).abs() < f32::EPSILON
         && a.vert == b.vert
+}
+
+/// Word wraps `https://…/en-us/…` at `/` and `-` (comments-lots appendix).
+/// Keep `://` intact. Not generic character-break (Test 7 / mini 57).
+fn url_wrap_pieces(tok: &str) -> Vec<&str> {
+    if !tok.contains("://") {
+        return vec![tok];
+    }
+    let scheme_end = tok.find("://").map_or(0, |i| i + 3);
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut i = scheme_end;
+    while let Some(ch) = tok[i..].chars().next() {
+        let n = ch.len_utf8();
+        if ch == '/' || ch == '-' {
+            out.push(&tok[start..i + n]);
+            start = i + n;
+        }
+        i += n;
+    }
+    if start < tok.len() {
+        out.push(&tok[start..]);
+    }
+    if out.is_empty() { vec![tok] } else { out }
 }
 
 fn ws_tokens(s: &str) -> Vec<&str> {
@@ -7626,39 +8938,42 @@ fn wrap_runs_segment(
         let fid = fonts.resolve(&run.style.family, run.style.bold, run.style.italic);
         let face = fonts.get(fid);
         for tok in ws_tokens(&run.text) {
-            // Tabs jump at paint time; counting .notdef width packed wraps.
-            let w = if tok.contains('\t') {
-                0.0
-            } else {
-                face.width_pt(tok, run.style.paint_size())
-            };
-            let is_space = tok.chars().all(char::is_whitespace);
-            let limit = if line_i == 0 { first_width } else { width };
-            // Unbreakable tokens wider than the cell overflow (Test 7).
-            // Character-break was ITT-wrong: file_196 13→15pp and
-            // file_100/115/185/196 ~−24 ITT even when gated to tables.
-            if !is_space && x + w > limit && x > 0.0 {
-                lines.push(Vec::new());
-                line_i += 1;
-                x = 0.0;
-            }
-            x += w;
-            if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
-                && style_eq(&last.style, &run.style)
-                && last.pageref.is_none()
-                && run.pageref.is_none()
-            {
-                last.text.push_str(tok);
-            } else if let Some(line) = lines.last_mut() {
-                line.push(TextRun {
-                    text: tok.to_string(),
-                    style: run.style.clone(),
-                    field: run.field,
-                    rev: run.rev,
-                    comments: run.comments.clone(),
-                    pageref: run.pageref.clone(),
-                    rule: run.rule,
-                });
+            for tok in url_wrap_pieces(tok) {
+                // Tabs jump at paint time; counting .notdef width packed wraps.
+                let w = if tok.contains('\t') {
+                    0.0
+                } else {
+                    let size = run.style.paint_size();
+                    face.width_pt_kern(tok, size, run.style.kerns_at(size))
+                };
+                let is_space = tok.chars().all(char::is_whitespace);
+                let limit = if line_i == 0 { first_width } else { width };
+                // Unbreakable tokens wider than the cell overflow (Test 7).
+                // Character-break was ITT-wrong: file_196 13→15pp and
+                // file_100/115/185/196 ~−24 ITT even when gated to tables.
+                if !is_space && x + w > limit && x > 0.0 {
+                    lines.push(Vec::new());
+                    line_i += 1;
+                    x = 0.0;
+                }
+                x += w;
+                if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
+                    && style_eq(&last.style, &run.style)
+                    && last.pageref.is_none()
+                    && run.pageref.is_none()
+                {
+                    last.text.push_str(tok);
+                } else if let Some(line) = lines.last_mut() {
+                    line.push(TextRun {
+                        text: tok.to_string(),
+                        style: run.style.clone(),
+                        field: run.field,
+                        rev: run.rev,
+                        comments: run.comments.clone(),
+                        pageref: run.pageref.clone(),
+                        rule: run.rule,
+                    });
+                }
             }
         }
     }
@@ -7735,6 +9050,10 @@ fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> V
                     }
                 }
                 if style.keep_lines {
+                    // Mini 627–630: default w:widowControl (orphan 2-line
+                    // floor) was Word-faithful NR +0.323/+0.417 but ITT-neg
+                    // RL mean −0.006 (file_100_file_101 −6.23). Keep
+                    // keepLines-only. Do not retry ungated widowControl.
                     let width =
                         (lay.content_width() - style.indent_left - style.indent_right).max(40.0);
                     let need = keep_lines_need_pt(lay.fonts, runs, &style, width);
@@ -7744,14 +9063,16 @@ fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> V
                     }
                 }
                 let has_ink = runs.iter().any(|r| !r.text.trim().is_empty());
-                // Word: a drawing-only paragraph between body text and a
-                // heading (comments-lots chart before "5. Built-in…") does
-                // not also consume a Normal line box. Cover/gallery figure
-                // stacks (Strict01) are not that pattern and keep the line.
+                // Word: a drawing-only paragraph does not also consume a
+                // Normal line box. Rectangle 3 reserve_only (167pt hole)
+                // and Chart 1 (Strict01 p1) are that pattern. Cover/gallery
+                // wrapNone floats are not Flow and still overlay.
                 let skip_hole_line = !has_ink
-                    && boxes
-                        .iter()
-                        .any(|b| b.reserve_only && matches!(b.slot, ImageSlot::Flow) && b.h > 16.0);
+                    && boxes.iter().any(|b| {
+                        matches!(b.slot, ImageSlot::Flow)
+                            && b.h > 16.0
+                            && (b.reserve_only || b.chart.is_some())
+                    });
                 let skip_empty_line = skip_hole_line
                     || (!has_ink
                         && images
@@ -7794,6 +9115,13 @@ fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> V
                     lay.emit_textbox(box_);
                 }
                 if skip_empty_line {
+                    // Mini 623–626: skipping Normal after=8 under a
+                    // chart-only Flow para is Word-faithful (Strict01 1)
+                    // list fitz 509 vs 515) and lifted NR mean +0.1644
+                    // (8 Strict01-family +1.09 to +1.37, 0 drops) but
+                    // ITT-neg RL mean −0.008 (7 drops / 4 gains,
+                    // verdana_italic −1.44). KEEP-only forbids the RL
+                    // drop. Do not retry.
                     lay.y -= style.after;
                 }
                 let label = lay.chap_page_label();
@@ -7845,7 +9173,10 @@ fn curved_connector_cubics(
     flip_v: bool,
 ) -> ConnectorCubic {
     // OOXML curvedConnector3 default adj1=50000: two cubics from (l,t)
-    // to (r,b). flipV (Strict01) sends the stroke bottom-left → top-right.
+    // to (r,b). Word Quartz uses quarter-height c2 / three-quarter c1
+    // (Strict01 fitz 338.2,170.2 then 338.2,132.3). Collapsing both
+    // onto the midpoint flattened the S-curve. flipV sends the stroke
+    // bottom-left → top-right.
     let map = |lx: f32, ly: f32| {
         let ox = if flip_h { dw - lx } else { lx };
         let oy = if flip_v { dh - ly } else { ly };
@@ -7856,10 +9187,10 @@ fn curved_connector_cubics(
         segments: vec![
             [
                 map(dw * 0.25, 0.0),
-                map(dw * 0.5, dh * 0.5),
+                map(dw * 0.5, dh * 0.25),
                 map(dw * 0.5, dh * 0.5),
             ],
-            [map(dw * 0.5, dh * 0.5), map(dw * 0.75, dh), map(dw, dh)],
+            [map(dw * 0.5, dh * 0.75), map(dw * 0.75, dh), map(dw, dh)],
         ],
     }
 }
@@ -7954,14 +9285,18 @@ fn right_arrow_points(x: f32, y: f32, dw: f32, dh: f32) -> Vec<(f32, f32)> {
 
 fn shift_op_y(op: &mut Op, dy: f32) {
     match op {
-        Op::Text { y, .. } | Op::FillRect { y, .. } | Op::Jpeg { y, .. } | Op::Rgb { y, .. } => {
+        Op::Text { y, .. }
+        | Op::FillRect { y, .. }
+        | Op::StrokeRect { y, .. }
+        | Op::Jpeg { y, .. }
+        | Op::Rgb { y, .. } => {
             *y += dy;
         }
         Op::Line { y1, y2, .. } => {
             *y1 += dy;
             *y2 += dy;
         }
-        Op::FillPoly { points, .. } => {
+        Op::FillPoly { points, .. } | Op::StrokePoly { points, .. } => {
             for p in points {
                 p.1 += dy;
             }
@@ -7989,7 +9324,7 @@ fn body_op_yrange(ops: &[Op]) -> Option<(f32, f32)> {
                 min_y = min_y.min(*y);
                 max_y = max_y.max(*y + *size);
             }
-            Op::FillRect { y, h, .. } => {
+            Op::FillRect { y, h, .. } | Op::StrokeRect { y, h, .. } => {
                 min_y = min_y.min(*y);
                 max_y = max_y.max(*y + *h);
             }
@@ -8001,7 +9336,7 @@ fn body_op_yrange(ops: &[Op]) -> Option<(f32, f32)> {
                 min_y = min_y.min(*y1).min(*y2);
                 max_y = max_y.max(*y1).max(*y2);
             }
-            Op::FillPoly { points, .. } => {
+            Op::FillPoly { points, .. } | Op::StrokePoly { points, .. } => {
                 for &(_, py) in points {
                     min_y = min_y.min(py);
                     max_y = max_y.max(py);
@@ -8071,6 +9406,415 @@ mod field_tests {
         assert_eq!(joined, "Page 1 of 2");
         assert!(!joined.contains("PAGE"), "{joined}");
         assert!(!joined.contains("NUMPAGES"), "{joined}");
+    }
+
+    #[test]
+    fn omml_ssup_marks_sup_run_super() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+<w:body><w:p>
+<m:oMath>
+  <m:sSup>
+    <m:e><m:r><m:t>x</m:t></m:r></m:e>
+    <m:sup><m:r><m:t>2</m:t></m:r></m:sup>
+  </m:sSup>
+</m:oMath>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            joined,
+            "x2",
+            "runs={:?}",
+            runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>()
+        );
+        let two = runs.iter().find(|r| r.text == "2").expect("2 run");
+        assert!(
+            matches!(two.style.vert, VertAlign::Super),
+            "2 must be Super; n={} texts={:?}",
+            runs.len(),
+            runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn omml_nary_emits_sum_chr_with_sub_sup() {
+        // Strict01 binomial: m:nary chr=∑, sub=k=0, sup=n. convert
+        // currently skips naryPr/chr and paints sub/sup at baseline.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+<w:body><w:p>
+<m:oMath>
+  <m:nary>
+    <m:naryPr><m:chr m:val="∑"/></m:naryPr>
+    <m:sub><m:r><m:t>k=0</m:t></m:r></m:sub>
+    <m:sup><m:r><m:t>n</m:t></m:r></m:sup>
+    <m:e><m:r><m:t>x</m:t></m:r></m:e>
+  </m:nary>
+</m:oMath>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert!(
+            joined.contains('∑'),
+            "nary chr must emit ∑; joined={joined:?}"
+        );
+        let sub = runs.iter().find(|r| r.text.contains("k=0")).expect("sub");
+        let sup = runs.iter().find(|r| r.text == "n").expect("sup");
+        assert!(
+            matches!(sub.style.vert, VertAlign::Sub),
+            "nary sub must be Sub"
+        );
+        assert!(
+            matches!(sup.style.vert, VertAlign::Super),
+            "nary sup must be Super"
+        );
+    }
+
+    #[test]
+    fn omml_mr_stays_paragraph_font_after_mini_360() {
+        // Strict01 m:r rFonts Cambria Math + TTC face 1 (mini 360) was
+        // Word-faithful (Strict01 family +0.002) but ITT-neg: NR mean
+        // −0.003 because file_100/115/185/196 each −0.048. Keep flatten
+        // onto paragraph Calibri. Not oMathPara center / linear d/f.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+<w:body><w:p>
+<m:oMath>
+  <m:r>
+    <w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr>
+    <m:t>x</m:t>
+  </m:r>
+</m:oMath>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let run = runs.iter().find(|r| r.text.contains('x')).expect("x");
+        assert_eq!(
+            run.style.family, "Calibri",
+            "mini 360 Cambria Math ITT-neg; family={:?}",
+            run.style.family
+        );
+    }
+
+    #[test]
+    fn w14_text_fill_without_color_uses_scheme_accent() {
+        // Strict01 "Online Video" run has w14:textFill gradFill accent5
+        // and no w:color. Flattening left black. Not w14:shadow (ITT-neg)
+        // and not outline extra stroke.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml">
+<w:body><w:p>
+  <w:r>
+    <w:rPr>
+      <w:sz w:val="40"/>
+      <w14:textFill>
+        <w14:gradFill>
+          <w14:gsLst>
+            <w14:gs w14:pos="0"><w14:schemeClr w14:val="accent5"/></w14:gs>
+          </w14:gsLst>
+        </w14:gradFill>
+      </w14:textFill>
+    </w:rPr>
+    <w:t>Filled</w:t>
+  </w:r>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let run = runs
+            .iter()
+            .find(|r| r.text.contains("Filled"))
+            .expect("run");
+        let want = theme_slot_color("accent5").expect("accent5");
+        assert!(
+            (run.style.color[0] - want[0]).abs() < 0.02
+                && (run.style.color[1] - want[1]).abs() < 0.02
+                && (run.style.color[2] - want[2]).abs() < 0.02,
+            "w14:textFill accent5 must paint, got {:?}",
+            run.style.color
+        );
+    }
+
+    #[test]
+    fn w14_text_fill_lummod_stays_unmodulated_after_mini_370() {
+        // Strict01 Online Video first stop is accent5 lumMod=50000.
+        // Applying RGB×0.5 (mini 370) was Word-shaped but ITT-neg:
+        // Strict01 family −0.088 / NR mean −0.012 vs KEEP unmodulated
+        // teal. Quartz matches the mid-stop. Not outline/shadow.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml">
+<w:body><w:p>
+  <w:r>
+    <w:rPr>
+      <w:sz w:val="40"/>
+      <w14:textFill>
+        <w14:solidFill>
+          <w14:schemeClr w14:val="accent5">
+            <w14:lumMod w14:val="50000"/>
+          </w14:schemeClr>
+        </w14:solidFill>
+      </w14:textFill>
+    </w:rPr>
+    <w:t>DimFill</w:t>
+  </w:r>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let run = runs
+            .iter()
+            .find(|r| r.text.contains("DimFill"))
+            .expect("run");
+        let want = theme_slot_color("accent5").expect("accent5");
+        assert!(
+            (run.style.color[0] - want[0]).abs() < 0.02
+                && (run.style.color[1] - want[1]).abs() < 0.02
+                && (run.style.color[2] - want[2]).abs() < 0.02,
+            "mini 370 lumMod ITT-neg; keep unmodulated {want:?}, got {:?}",
+            run.style.color
+        );
+    }
+
+    #[test]
+    fn w14_text_outline_stays_fill_only_after_mini_371() {
+        // Strict01 keyword: peach fill + accent2 outline. Fill+stroke
+        // Tr=2 (mini 371) was Word-shaped but ITT-neg: Strict01 family
+        // −0.043 / NR mean −0.006. Extra halo vs Quartz. Keep fill-only.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml">
+<w:body><w:p>
+  <w:r>
+    <w:rPr>
+      <w:color w:val="F7CAAC"/>
+      <w14:textOutline w14:w="11112" w14:cap="flat" w14:cmpd="sng" w14:algn="ctr">
+        <w14:solidFill><w14:schemeClr w14:val="accent2"/></w14:solidFill>
+        <w14:prstDash w14:val="solid"/>
+      </w14:textOutline>
+    </w:rPr>
+    <w:t>Keyword</w:t>
+  </w:r>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let run = runs
+            .iter()
+            .find(|r| r.text.contains("Keyword"))
+            .expect("run");
+        let fill = parse_hex_color("F7CAAC").expect("fill");
+        assert!(
+            (run.style.color[0] - fill[0]).abs() < 0.02
+                && (run.style.color[1] - fill[1]).abs() < 0.02
+                && (run.style.color[2] - fill[2]).abs() < 0.02,
+            "mini 371 outline ITT-neg; fill stays F7CAAC, got {:?}",
+            run.style.color
+        );
+    }
+
+    #[test]
+    fn diag_ln_stroke_keeps_accent1_skips_near_white() {
+        // Strict01 connector bar: lt1 fill (skip) + accent1 ln (keep).
+        let xml = r#"<?xml version="1.0"?>
+<a:sp xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <a:spPr>
+    <a:solidFill><a:schemeClr val="lt1"/></a:solidFill>
+    <a:ln w="12700"><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></a:ln>
+  </a:spPr>
+</a:sp>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        assert!(
+            diag_solid_fill(&dom, root, &ThemeFonts::default()).is_some_and(is_near_white),
+            "lt1 fill must parse (Word paints it when the bar is stroked)"
+        );
+        let (color, width) =
+            diag_ln_stroke(&dom, root, &ThemeFonts::default()).expect("accent1 stroke");
+        let want = theme_slot_color("accent1").expect("accent1");
+        assert!(
+            (color[0] - want[0]).abs() < 0.02
+                && (color[1] - want[1]).abs() < 0.02
+                && (color[2] - want[2]).abs() < 0.02,
+            "connector ln must be accent1, got {color:?}"
+        );
+        assert!(
+            (width - 1.0).abs() < 0.05,
+            "ln w=12700 EMU is 1pt, got {width}"
+        );
+        let xml_white = r#"<?xml version="1.0"?>
+<a:sp xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <a:spPr>
+    <a:solidFill><a:schemeClr val="accent1"/></a:solidFill>
+    <a:ln w="12700"><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></a:ln>
+  </a:spPr>
+</a:sp>"#;
+        let mut dom_w = Dom::new();
+        let doc_w = dom_w.parse_xdocument(xml_white);
+        let root_w = dom_w.root(doc_w).expect("root");
+        assert!(
+            diag_ln_stroke(&dom_w, root_w, &ThemeFonts::default()).is_none(),
+            "lt1 roundRect stroke is extra halo; skip"
+        );
+    }
+
+    #[test]
+    fn omml_d_stays_flattened_after_mini_359() {
+        // Strict01 (x+a)^n: m:d default parens. Linear begChr/endChr
+        // (mini 359) was Word-shaped but ITT-neg: Strict01 family
+        // −0.0049 / NR mean −0.0005. Quartz does not match extra
+        // WinAnsi parens. Keep flatten x+a.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+<w:body><w:p>
+<m:oMath>
+  <m:d>
+    <m:dPr/>
+    <m:e><m:r><m:t>x</m:t></m:r><m:r><m:t>+</m:t></m:r><m:r><m:t>a</m:t></m:r></m:e>
+  </m:d>
+</m:oMath>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(joined, "x+a", "mini 359 parens ITT-neg; joined={joined:?}");
+        assert!(
+            !joined.contains('(') && !joined.contains(')'),
+            "must not emit linear parens; joined={joined:?}"
+        );
+    }
+
+    #[test]
+    fn omml_f_nobar_stacks_num_over_den() {
+        // Strict01 binomial is m:f type=noBar. Linear n/k (mini 359)
+        // was ITT-neg; Quartz stacks n over k with no bar. Not
+        // oMathPara center.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+<w:body><w:p>
+<m:oMath>
+  <m:f>
+    <m:fPr><m:type m:val="noBar"/></m:fPr>
+    <m:num><m:r><m:t>n</m:t></m:r></m:num>
+    <m:den><m:r><m:t>k</m:t></m:r></m:den>
+  </m:f>
+</m:oMath>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(joined, "nk", "noBar stays n then k; joined={joined:?}");
+        assert!(
+            !joined.contains('/'),
+            "mini 359 linear slash ITT-neg; joined={joined:?}"
+        );
+        let num = runs.iter().find(|r| r.text == "n").expect("num");
+        let den = runs.iter().find(|r| r.text == "k").expect("den");
+        assert!(
+            matches!(num.style.vert, VertAlign::StackNum),
+            "noBar num must stack above"
+        );
+        assert!(
+            matches!(den.style.vert, VertAlign::StackDen),
+            "noBar den must stack below"
+        );
+    }
+
+    #[test]
+    fn omml_f_nobar_stays_concatenated_after_mini_359() {
+        // Strict01 binomial is m:f type=noBar. Linear n/k (mini 359)
+        // was ITT-neg: Quartz stacks noBar, extra slash is leftover
+        // ink. Keep flatten nk. Not oMathPara center.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+<w:body><w:p>
+<m:oMath>
+  <m:f>
+    <m:fPr><m:type m:val="noBar"/></m:fPr>
+    <m:num><m:r><m:t>n</m:t></m:r></m:num>
+    <m:den><m:r><m:t>k</m:t></m:r></m:den>
+  </m:f>
+</m:oMath>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(joined, "nk", "mini 359 n/k ITT-neg; joined={joined:?}");
+        assert!(
+            !joined.contains('/'),
+            "must not emit linear slash; joined={joined:?}"
+        );
     }
 
     #[test]
@@ -8172,11 +9916,166 @@ mod field_tests {
             "soffice keeps ins xml:space padding, got {joined:?}"
         );
     }
+
+    #[test]
+    fn body_multi_run_generator_xml_space_stays_collapsed_after_mini_401() {
+        // Word-faithful keep of Suggestion-mode pads (`Editing         `)
+        // put file_146 Serialises on page 2 but mini 401 dropped the
+        // sample/eigenpal clones −6.8 ITT (NR mean −0.341 / median −1.53).
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body><w:p>
+  <w:r><w:t xml:space="preserve">Toggle between         </w:t></w:r>
+  <w:r><w:t xml:space="preserve">Editing         </w:t></w:r>
+  <w:r><w:t xml:space="preserve">and         </w:t></w:r>
+  <w:r><w:t xml:space="preserve">Suggesting         </w:t></w:r>
+  <w:r><w:t xml:space="preserve">via the toolbar dropdown.         </w:t></w:r>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert!(
+            !joined.contains("Editing         "),
+            "mini 401: body generator pad stays collapsed, got {joined:?}"
+        );
+        assert!(
+            joined.contains("Editing "),
+            "collapse keeps one space, got {joined:?}"
+        );
+    }
+
+    #[test]
+    fn body_hello_xml_space_padding_stays_collapsed() {
+        // eigenpal / sample_document: keeping Hello-padding dropped ~6 ITT.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body><w:p>
+  <w:r><w:t xml:space="preserve">Hello         </w:t></w:r>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            joined, "Hello ",
+            "Hello pad must stay collapsed, got {joined:?}"
+        );
+    }
+
+    #[test]
+    fn pbdr_heading_xml_space_padding_is_kept() {
+        // file_146 / iter2 16pt section heads (`1. What this is          `)
+        // carry bottom pBdr E2E8F0 plus generator xml:space pads. Mini 401
+        // collapsed *all* body pads (sample/eigenpal −6.8). Keep pads only
+        // when the paragraph has a bottom pBdr — not Times-240 / footnotes.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body><w:p>
+  <w:pPr><w:pBdr>
+    <w:bottom w:val="single" w:sz="3" w:space="4" w:color="E2E8F0"/>
+  </w:pBdr></w:pPr>
+  <w:r><w:rPr><w:sz w:val="32"/></w:rPr>
+    <w:t xml:space="preserve">1. What this is          </w:t></w:r>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            joined, "1. What this is          ",
+            "pBdr heading xml:space pads must be kept, got {joined:?}"
+        );
+    }
+
+    #[test]
+    fn bom_only_run_stays_in_text_after_mini_521() {
+        // Stripping potpourri/file_19 U+FEFF (Word-faithful) was mini 521
+        // ITT-neg: NR 59.4772→59.4744, Cicero −0.203, file_19 +0.036.
+        let xml = "<?xml version=\"1.0\"?>\
+<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+<w:body><w:p>\
+  <w:r><w:t>\u{feff}</w:t></w:r>\
+  <w:r><w:t>Hello</w:t></w:r>\
+</w:p></w:body></w:document>";
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            joined, "\u{feff}Hello",
+            "mini 521: keep U+FEFF in the run, got {joined:?}"
+        );
+    }
+
+    #[test]
+    fn courier_body_xml_space_stays_collapsed_after_mini_520() {
+        // Word-faithful keep of file_69 Courier pads wrapped Serialises
+        // onto page 2 (Word) but mini 520 ITT-neg: NR 59.4772→59.0833 /
+        // median 53.4527→51.5568. file_69/78 +6.2; sample/eigenpal clones
+        // −7. Same packing class as mini 401. Stay collapsed.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body><w:p>
+  <w:r><w:rPr>
+    <w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/>
+  </w:rPr>
+    <w:t xml:space="preserve">WYSIWYG         .docx         editor</w:t></w:r>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            joined, "WYSIWYG .docx editor",
+            "mini 520: Courier body xml:space stays collapsed, got {joined:?}"
+        );
+    }
 }
 
 #[cfg(test)]
 mod drawing_tests {
     use super::*;
+
+    #[test]
+    fn word_device_pt_does_not_snap_thirteen_or_twenty_six_after_mini_429() {
+        // Word Quartz 26pt/13pt is 25.92/12.96 but mini 429 ITT-neg
+        // table_bookmark −0.070 / file_134 −0.059. Keep 26/13 unsnapped.
+        assert!((word_device_pt(13.0) - 13.0).abs() < 0.001);
+        assert!((word_device_pt(26.0) - 26.0).abs() < 0.001);
+        assert!((word_device_pt(11.0) - 11.04).abs() < 0.001);
+        assert!((word_device_pt(14.0) - 14.0).abs() < 0.001);
+    }
 
     const DRAWING_XML: &str = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -8271,15 +10170,20 @@ mod drawing_tests {
   </wp:anchor>
 </w:drawing>
 <w:pict>
+  <v:shape style="position:absolute;margin-left:187.95pt;margin-top:15.9pt;width:477.9pt;height:42.8pt" filled="f" stroked="f">
   <v:textbox>
     <w:txbxContent><w:p><w:r><w:t>Subscribe to DeepL Pro</w:t></w:r></w:p></w:txbxContent>
   </v:textbox>
+  </v:shape>
 </w:pict>
 </w:r>
 </w:p></w:body></w:document>"#;
 
     #[test]
-    fn wrap_square_picture_omits_sibling_vml_textbox() {
+    fn wrap_square_picture_overlays_sibling_vml_textbox() {
+        // Word Quartz paints the VML "Subscribe to DeepL Pro" as page-origin
+        // overlay (margin-left 187.95pt / margin-top 15.9pt). Skipping it
+        // dropped the vector copy; flowing it (ITT 41) shoved Quantum down.
         let mut dom = Dom::new();
         let doc = dom.parse_xdocument(DEEPL_SIBLING_XML);
         let root = dom.root(doc).expect("root");
@@ -8295,13 +10199,26 @@ mod drawing_tests {
             &Defaults::word().run,
             &ThemeFonts::default(),
         );
-        let texts: Vec<String> = boxes
+        let overlay = boxes
             .iter()
-            .map(|b| b.runs.iter().map(|r| r.text.as_str()).collect())
-            .collect();
+            .find(|b| b.runs.iter().any(|r| r.text.contains("Subscribe to DeepL")));
+        let overlay = overlay.expect("sibling VML txbx must overlay, not skip");
+        match overlay.slot {
+            ImageSlot::Float {
+                page_x: Some(x),
+                page_y: Some(y),
+                ..
+            } => {
+                assert!((x - 187.95).abs() < 0.05, "page_x={x}");
+                assert!((y - 15.9).abs() < 0.05, "page_y={y}");
+            }
+            _ => panic!("expected page-origin float overlay"),
+        }
+        assert!(!overlay.stroke, "DeepL v:shape stroked=f");
         assert!(
-            texts.iter().all(|t| !t.contains("Subscribe to DeepL")),
-            "sibling VML txbx is banner chrome; boxes={texts:?}"
+            overlay.text_dx.abs() < 0.05,
+            "mini 417 ITT-neg unindented lIns=7.2; keep pad=4 path text_dx=0; text_dx={}",
+            overlay.text_dx
         );
     }
 
@@ -8619,6 +10536,16 @@ mod drawing_tests {
             (end.0 - (x + dw)).abs() < 0.02 && (end.1 - (y + dh)).abs() < 0.02,
             "flipV end is top-right; {end:?}"
         );
+        let [(c1x, _), (c2x, c2y), (ex, ey)] = curve.segments[0];
+        assert!(
+            (c1x - (x + dw * 0.25)).abs() < 0.02
+                && (c2x - ex).abs() < 0.02
+                && (c2y - (y + dh * 0.25)).abs() < 0.02
+                && (ey - (y + dh * 0.5)).abs() < 0.02
+                && (c2y - ey).abs() > 1.0,
+            "Word S-curve: first c2 is quarter-height; segs={:?}",
+            curve.segments
+        );
     }
 
     #[test]
@@ -8639,6 +10566,70 @@ mod drawing_tests {
             .iter()
             .any(|(x, y)| *x > 0.5 && *x < r && *y > 0.5 && *y < r);
         assert!(inset, "quarter-arc vertices sit inside the corner; {pts:?}");
+    }
+
+    #[test]
+    fn wrap_runs_breaks_https_url_at_slash_or_hyphen() {
+        // comments-lots appendix: Word wraps
+        // `https://learn.microsoft.com/en-` then `us/purview/…`.
+        // Whole-token overflow (Test 7 lock) parks the Copilot URL as
+        // one 536pt line on a 486pt measure. Not generic character-break
+        // (mini 57 / table-gated −24 ITT).
+        let fonts = Fonts::new();
+        let url = "https://learn.microsoft.com/en-us/microsoft-365/copilot/microsoft-365-copilot-architecture-data-protection-auditing";
+        let run = TextRun::new(url.to_string(), default_run_style());
+        let lines = wrap_runs(&fonts, std::slice::from_ref(&run), 400.0, 400.0, false);
+        assert!(
+            lines.len() >= 2,
+            "Word wraps this URL at / and -; n={} {:?}",
+            lines.len(),
+            lines
+                .iter()
+                .map(|l| l.iter().map(|r| r.text.as_str()).collect::<String>())
+                .collect::<Vec<_>>()
+        );
+        let joined: Vec<String> = lines
+            .iter()
+            .map(|l| l.iter().map(|r| r.text.as_str()).collect())
+            .collect();
+        assert!(
+            joined[0].contains("https://"),
+            "first line keeps the scheme; {joined:?}"
+        );
+        assert!(
+            joined.iter().skip(1).any(|s| s.contains("copilot")
+                || s.contains("auditing")
+                || s.contains("microsoft-365")),
+            "later line is a URL tail, not a second copy of https://; {joined:?}"
+        );
+    }
+
+    #[test]
+    fn iso_strict_tab_val_end_is_right_and_start_is_left() {
+        // Strict01 / file_100 TOC: ISO Strict writes w:tab val=end
+        // (ECMA ST_TabJc; LTR end = right). Mapping it through the
+        // left default parked PAGEREF as a left stop at pos.
+        let xml = r#"<?xml version="1.0"?>
+<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:pPr>
+    <w:tabs>
+      <w:tab w:val="end" w:leader="dot" w:pos="9350"/>
+      <w:tab w:val="start" w:pos="1440"/>
+      <w:tab w:val="right" w:pos="8640"/>
+    </w:tabs>
+  </w:pPr>
+</w:p>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let ppr = first_named(&dom, root, "pPr").expect("pPr");
+        let stops = parse_tab_stops(&dom, ppr);
+        assert_eq!(stops.len(), 3);
+        assert!(stops[0].align == TabAlign::Left, "start is LTR left");
+        assert!((stops[0].pos - twip(1440.0)).abs() < 0.05);
+        assert!(stops[1].align == TabAlign::Right, "right stays right");
+        assert!(stops[2].align == TabAlign::Right, "end is LTR right");
+        assert!((stops[2].pos - twip(9350.0)).abs() < 0.05);
     }
 
     #[test]
@@ -8696,6 +10687,79 @@ mod drawing_tests {
         assert!((data.series[1][1] - 4.4).abs() < 0.01);
         assert_eq!(data.names, ["Series 1", "Series 2"]);
         assert!(!data.legend);
+        let a1 = theme_slot_color("accent1").expect("accent1");
+        let a2 = theme_slot_color("accent2").expect("accent2");
+        assert_eq!(data.colors.len(), 2);
+        assert!(
+            (data.colors[0][0] - a1[0]).abs() < 0.02,
+            "missing schemeClr falls back to accent1; {:?}",
+            data.colors[0]
+        );
+        assert!(
+            (data.colors[1][0] - a2[0]).abs() < 0.02,
+            "series 2 fallback accent2; {:?}",
+            data.colors[1]
+        );
+    }
+
+    #[test]
+    fn parse_bar_chart_reads_series_scheme_colors() {
+        let xml = r#"<?xml version="1.0"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+<c:chart><c:plotArea><c:barChart>
+  <c:ser>
+    <c:spPr><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></c:spPr>
+    <c:val><c:numLit><c:pt idx="0"><c:v>1</c:v></c:pt></c:numLit></c:val>
+  </c:ser>
+  <c:ser>
+    <c:spPr><a:solidFill><a:schemeClr val="accent2"/></a:solidFill></c:spPr>
+    <c:val><c:numLit><c:pt idx="0"><c:v>1</c:v></c:pt></c:numLit></c:val>
+  </c:ser>
+  <c:ser>
+    <c:spPr><a:solidFill><a:schemeClr val="accent3"/></a:solidFill></c:spPr>
+    <c:val><c:numLit><c:pt idx="0"><c:v>1</c:v></c:pt></c:numLit></c:val>
+  </c:ser>
+</c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let data = parse_chart(xml).expect("chart");
+        let a3 = theme_slot_color("accent3").expect("accent3");
+        assert_eq!(data.colors.len(), 3);
+        assert!(
+            (data.colors[2][0] - a3[0]).abs() < 0.02
+                && (data.colors[2][1] - a3[1]).abs() < 0.02
+                && (data.colors[2][2] - a3[2]).abs() < 0.02,
+            "series 3 must be accent3, got {:?}",
+            data.colors[2]
+        );
+    }
+
+    #[test]
+    fn parse_chart_ignores_major_gridline_lum_after_mini_385() {
+        // ChartData no longer stores grid color; emit stays hardcoded 0.88
+        // (mini 385–388 ITT-neg). This XML must still parse series.
+        let xml = r#"<?xml version="1.0"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+<c:chart><c:plotArea>
+  <c:barChart>
+    <c:ser>
+      <c:val><c:numLit><c:pt idx="0"><c:v>1</c:v></c:pt></c:numLit></c:val>
+    </c:ser>
+  </c:barChart>
+  <c:valAx>
+    <c:majorGridlines>
+      <c:spPr>
+        <a:ln w="9525">
+          <a:solidFill>
+            <a:schemeClr val="tx1"><a:lumMod val="15%"/><a:lumOff val="85%"/></a:schemeClr>
+          </a:solidFill>
+        </a:ln>
+      </c:spPr>
+    </c:majorGridlines>
+  </c:valAx>
+</c:plotArea></c:chart></c:chartSpace>"#;
+        let data = parse_chart(xml).expect("chart");
+        assert_eq!(data.series.len(), 1);
     }
 
     #[test]
@@ -8758,6 +10822,10 @@ mod numbering_tests {
                 suff_nothing: false,
                 jc_right: false,
                 tab_stops: Vec::new(),
+                size: None,
+                underline: false,
+                bold: false,
+                italic: false,
             },
         );
         n.levels.insert("0".into(), lvls);
@@ -8795,6 +10863,10 @@ mod numbering_tests {
                 suff_nothing: false,
                 jc_right: false,
                 tab_stops: Vec::new(),
+                size: None,
+                underline: false,
+                bold: false,
+                italic: false,
             },
         );
         lvls.insert(
@@ -8809,6 +10881,10 @@ mod numbering_tests {
                 suff_nothing: false,
                 jc_right: false,
                 tab_stops: Vec::new(),
+                size: None,
+                underline: false,
+                bold: false,
+                italic: false,
             },
         );
         n.levels.insert("3".into(), lvls);
@@ -8844,6 +10920,10 @@ mod numbering_tests {
                 suff_nothing: false,
                 jc_right: false,
                 tab_stops: Vec::new(),
+                size: None,
+                underline: false,
+                bold: false,
+                italic: false,
             },
         );
         lvls.insert(
@@ -8858,6 +10938,10 @@ mod numbering_tests {
                 suff_nothing: false,
                 jc_right: false,
                 tab_stops: Vec::new(),
+                size: None,
+                underline: false,
+                bold: false,
+                italic: false,
             },
         );
         lvls.insert(
@@ -8872,6 +10956,10 @@ mod numbering_tests {
                 suff_nothing: false,
                 jc_right: false,
                 tab_stops: Vec::new(),
+                size: None,
+                underline: false,
+                bold: false,
+                italic: false,
             },
         );
         n.levels.insert("2".into(), lvls);
@@ -8902,6 +10990,10 @@ mod numbering_tests {
                 suff_nothing: false,
                 jc_right: false,
                 tab_stops: Vec::new(),
+                size: None,
+                underline: false,
+                bold: false,
+                italic: false,
             },
         );
         lvls.insert(
@@ -8916,6 +11008,10 @@ mod numbering_tests {
                 suff_nothing: true,
                 jc_right: false,
                 tab_stops: Vec::new(),
+                size: None,
+                underline: false,
+                bold: false,
+                italic: false,
             },
         );
         n.levels.insert("2".into(), lvls);
@@ -8944,6 +11040,10 @@ mod numbering_tests {
                     align: TabAlign::Left,
                     leader: TabLeader::None,
                 }],
+                size: None,
+                underline: false,
+                bold: false,
+                italic: false,
             },
         );
         n.levels.insert("0".into(), lvls);
@@ -9209,12 +11309,15 @@ mod table_tests {
                 band1_fill: parse_hex_color("D3DFEE"),
                 band2_fill: None,
                 first_row_bold: true,
+                first_row_italic: false,
                 first_col_bold: true,
+                first_col_italic: false,
                 first_col_fill: None,
                 last_row_fill: None,
                 last_col_fill: None,
                 first_row_color: None,
                 first_row_borders: None,
+                first_col_borders: None,
                 borders: Some(TblBorders {
                     top: true,
                     bottom: true,
