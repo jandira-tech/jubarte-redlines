@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 thread_local! {
     static ACTIVE_FONT_TABLE: RefCell<super::font_table::FontTable> =
@@ -103,6 +103,131 @@ pub(crate) enum FaceId {
     BookAntiquaItalic,
     BookAntiquaBoldItalic,
     Symbol,
+}
+
+/// Physical family + style. Catalogue `FaceId` values map here so call sites
+/// can migrate off the closed enum (plan Step 2e) without a behaviour change.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct FaceKey {
+    pub family: String,
+    pub bold: bool,
+    pub italic: bool,
+}
+
+impl FaceId {
+    fn index(self) -> usize {
+        self as usize
+    }
+
+    pub(crate) fn key(self) -> FaceKey {
+        FaceKey {
+            family: self.logical_family().to_string(),
+            bold: self.is_bold_style(),
+            italic: self.is_italic_style(),
+        }
+    }
+
+    fn logical_family(self) -> &'static str {
+        match self {
+            Self::CarlitoRegular
+            | Self::CarlitoBold
+            | Self::CarlitoItalic
+            | Self::CarlitoBoldItalic => "Calibri",
+            Self::SansRegular | Self::SansBold | Self::SansItalic | Self::SansBoldItalic => "Arial",
+            Self::SerifRegular | Self::SerifBold | Self::SerifItalic | Self::SerifBoldItalic => {
+                "Times New Roman"
+            }
+            Self::MonoRegular | Self::MonoBold | Self::MonoItalic | Self::MonoBoldItalic => {
+                "Courier New"
+            }
+            Self::AptosRegular | Self::AptosBold | Self::AptosItalic | Self::AptosBoldItalic => {
+                "Aptos"
+            }
+            Self::AptosDisplayRegular
+            | Self::AptosDisplayBold
+            | Self::AptosDisplayItalic
+            | Self::AptosDisplayBoldItalic => "Aptos Display",
+            Self::CalibriLightRegular | Self::CalibriLightItalic => "Calibri Light",
+            Self::VerdanaRegular
+            | Self::VerdanaBold
+            | Self::VerdanaItalic
+            | Self::VerdanaBoldItalic => "Verdana",
+            Self::CambriaRegular
+            | Self::CambriaBold
+            | Self::CambriaItalic
+            | Self::CambriaBoldItalic => "Cambria",
+            Self::ConsolasRegular
+            | Self::ConsolasBold
+            | Self::ConsolasItalic
+            | Self::ConsolasBoldItalic => "Consolas",
+            Self::GeorgiaRegular
+            | Self::GeorgiaBold
+            | Self::GeorgiaItalic
+            | Self::GeorgiaBoldItalic => "Georgia",
+            Self::BookAntiquaRegular
+            | Self::BookAntiquaBold
+            | Self::BookAntiquaItalic
+            | Self::BookAntiquaBoldItalic => "Book Antiqua",
+            Self::Symbol => "Symbol",
+        }
+    }
+
+    fn is_bold_style(self) -> bool {
+        matches!(
+            self,
+            Self::CarlitoBold
+                | Self::CarlitoBoldItalic
+                | Self::SansBold
+                | Self::SansBoldItalic
+                | Self::SerifBold
+                | Self::SerifBoldItalic
+                | Self::MonoBold
+                | Self::MonoBoldItalic
+                | Self::AptosBold
+                | Self::AptosBoldItalic
+                | Self::AptosDisplayBold
+                | Self::AptosDisplayBoldItalic
+                | Self::VerdanaBold
+                | Self::VerdanaBoldItalic
+                | Self::CambriaBold
+                | Self::CambriaBoldItalic
+                | Self::ConsolasBold
+                | Self::ConsolasBoldItalic
+                | Self::GeorgiaBold
+                | Self::GeorgiaBoldItalic
+                | Self::BookAntiquaBold
+                | Self::BookAntiquaBoldItalic
+        )
+    }
+
+    fn is_italic_style(self) -> bool {
+        matches!(
+            self,
+            Self::CarlitoItalic
+                | Self::CarlitoBoldItalic
+                | Self::SansItalic
+                | Self::SansBoldItalic
+                | Self::SerifItalic
+                | Self::SerifBoldItalic
+                | Self::MonoItalic
+                | Self::MonoBoldItalic
+                | Self::AptosItalic
+                | Self::AptosBoldItalic
+                | Self::AptosDisplayItalic
+                | Self::AptosDisplayBoldItalic
+                | Self::CalibriLightItalic
+                | Self::VerdanaItalic
+                | Self::VerdanaBoldItalic
+                | Self::CambriaItalic
+                | Self::CambriaBoldItalic
+                | Self::ConsolasItalic
+                | Self::ConsolasBoldItalic
+                | Self::GeorgiaItalic
+                | Self::GeorgiaBoldItalic
+                | Self::BookAntiquaItalic
+                | Self::BookAntiquaBoldItalic
+        )
+    }
 }
 
 impl FaceId {
@@ -561,25 +686,44 @@ impl Face {
     }
 }
 
-/// Catalogue of the bundled faces (one entry per `FaceId::all()` member).
+/// Catalogue of the bundled faces (one slot per `FaceId::all()` member).
+/// Faces load on first `get` so a conversion that uses three families
+/// does not parse the other forty-four (plan Step 2e).
 pub(crate) struct Fonts {
-    faces: HashMap<FaceId, Face>,
+    faces: [OnceLock<Face>; 47],
 }
 
 impl Fonts {
     pub(crate) fn new() -> Self {
-        let mut faces = HashMap::new();
-        for id in FaceId::all() {
-            let face = system_override(id)
-                .and_then(|path| Face::from_path(id, &path))
-                .unwrap_or_else(|| Face::load(id));
-            faces.insert(id, face);
+        debug_assert_eq!(FaceId::all().len(), 47);
+        Self {
+            faces: std::array::from_fn(|_| OnceLock::new()),
         }
-        Self { faces }
     }
 
     pub(crate) fn get(&self, id: FaceId) -> &Face {
-        &self.faces[&id]
+        self.get_key(&id.key())
+    }
+
+    pub(crate) fn get_key(&self, key: &FaceKey) -> &Face {
+        let id = Self::id_from_key(key);
+        self.faces[id.index()].get_or_init(|| {
+            system_override(id)
+                .and_then(|path| Face::from_path(id, &path))
+                .unwrap_or_else(|| Face::load(id))
+        })
+    }
+
+    fn id_from_key(key: &FaceKey) -> FaceId {
+        Self::mapped_face(
+            &key.family
+                .to_ascii_lowercase()
+                .replace([' ', '-'], "")
+                .replace("mt", ""),
+            key.bold,
+            key.italic,
+        )
+        .unwrap_or(FaceId::CambriaRegular)
     }
 
     pub(crate) fn resolve(&self, family: &str, bold: bool, italic: bool) -> FaceId {
@@ -960,6 +1104,39 @@ mod tests {
                 "Symbol overlay must be Word DFonts/Microsoft, not Apple: {s}"
             );
         }
+    }
+
+    #[test]
+    fn faceid_key_is_unique_for_every_catalogue_slot() {
+        let fonts = Fonts::new();
+        let mut seen = HashSet::new();
+        for id in FaceId::all() {
+            let key = id.key();
+            assert!(
+                seen.insert(key.clone()),
+                "duplicate FaceKey for {id:?}: {key:?}"
+            );
+            assert_eq!(
+                fonts.get_key(&key).pdf_name(),
+                fonts.get(id).pdf_name(),
+                "shim get_key must match get({id:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn faceid_key_calibri_bold_italic() {
+        let key = FaceId::CarlitoBoldItalic.key();
+        assert_eq!(key.family, "Calibri");
+        assert!(key.bold && key.italic);
+    }
+
+    #[test]
+    fn fonts_get_is_idempotent() {
+        let fonts = Fonts::new();
+        let a = fonts.get(FaceId::CarlitoRegular) as *const Face;
+        let b = fonts.get(FaceId::CarlitoRegular) as *const Face;
+        assert_eq!(a, b);
     }
 
     #[test]
