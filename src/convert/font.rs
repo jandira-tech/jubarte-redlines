@@ -82,11 +82,15 @@ pub(crate) enum FaceId {
     GeorgiaBold,
     GeorgiaItalic,
     GeorgiaBoldItalic,
+    BookAntiquaRegular,
+    BookAntiquaBold,
+    BookAntiquaItalic,
+    BookAntiquaBoldItalic,
     Symbol,
 }
 
 impl FaceId {
-    pub(crate) fn all() -> [Self; 43] {
+    pub(crate) fn all() -> [Self; 47] {
         [
             Self::CarlitoRegular,
             Self::CarlitoBold,
@@ -130,6 +134,10 @@ impl FaceId {
             Self::GeorgiaBold,
             Self::GeorgiaItalic,
             Self::GeorgiaBoldItalic,
+            Self::BookAntiquaRegular,
+            Self::BookAntiquaBold,
+            Self::BookAntiquaItalic,
+            Self::BookAntiquaBoldItalic,
             Self::Symbol,
         ]
     }
@@ -148,6 +156,13 @@ impl FaceId {
         matches!(
             self,
             Self::SansRegular | Self::SansBold | Self::SansItalic | Self::SansBoldItalic
+        )
+    }
+
+    pub(crate) fn is_times(self) -> bool {
+        matches!(
+            self,
+            Self::SerifRegular | Self::SerifBold | Self::SerifItalic | Self::SerifBoldItalic
         )
     }
 
@@ -227,6 +242,18 @@ impl FaceId {
             Self::GeorgiaBoldItalic => {
                 include_bytes!("../../assets/fonts/LiberationSerif-BoldItalic.ttf")
             }
+            // Word DFonts Book Antiqua / Palatino Linotype overlay these;
+            // Liberation Serif is the fallback when those faces are absent.
+            Self::BookAntiquaRegular => {
+                include_bytes!("../../assets/fonts/LiberationSerif-Regular.ttf")
+            }
+            Self::BookAntiquaBold => include_bytes!("../../assets/fonts/LiberationSerif-Bold.ttf"),
+            Self::BookAntiquaItalic => {
+                include_bytes!("../../assets/fonts/LiberationSerif-Italic.ttf")
+            }
+            Self::BookAntiquaBoldItalic => {
+                include_bytes!("../../assets/fonts/LiberationSerif-BoldItalic.ttf")
+            }
             // System Symbol overlays this; Liberation Sans U+2022 is the
             // fallback when Symbol.ttf is absent.
             Self::Symbol => include_bytes!("../../assets/fonts/LiberationSans-Regular.ttf"),
@@ -277,6 +304,10 @@ impl FaceId {
             Self::GeorgiaBold => "Georgia-Bold",
             Self::GeorgiaItalic => "Georgia-Italic",
             Self::GeorgiaBoldItalic => "Georgia-BoldItalic",
+            Self::BookAntiquaRegular => "BookAntiqua",
+            Self::BookAntiquaBold => "BookAntiqua-Bold",
+            Self::BookAntiquaItalic => "BookAntiqua-Italic",
+            Self::BookAntiquaBoldItalic => "BookAntiqua-BoldItalic",
             Self::Symbol => "Symbol",
         }
     }
@@ -399,7 +430,17 @@ impl Face {
     }
 
     pub(crate) fn width_pt(&self, text: &str, size: f32) -> f32 {
-        self.shape(text, size).into_iter().map(|(_, a)| a).sum()
+        self.shape_kern(text, size, false)
+            .into_iter()
+            .map(|(_, a)| a)
+            .sum()
+    }
+
+    pub(crate) fn width_pt_kern(&self, text: &str, size: f32, kern: bool) -> f32 {
+        self.shape_kern(text, size, kern)
+            .into_iter()
+            .map(|(_, a)| a)
+            .sum()
     }
 
     pub(crate) fn ascent_pt(&self, size: f32) -> f32 {
@@ -425,6 +466,10 @@ impl Face {
 
     /// HarfBuzz-compatible glyph ids + advances in points.
     pub(crate) fn shape(&self, text: &str, size: f32) -> Vec<(u16, f32)> {
+        self.shape_kern(text, size, false)
+    }
+
+    pub(crate) fn shape_kern(&self, text: &str, size: f32, kern: bool) -> Vec<(u16, f32)> {
         let Some(face) = self.buzz.as_ref() else {
             return text
                 .chars()
@@ -435,12 +480,19 @@ impl Face {
         buf.push_str(text);
         // Word Quartz WinAnsi PDFs do not ligate Calibri and place glyphs
         // on hmtx (T=5.38pt), not GPOS/kern (T+e shrinks ~1pt and wipes
-        // official color_sim). Keep 1:1 WinAnsi clusters.
+        // official color_sim). Title `w:kern val=28` (potpourri 28pt)
+        // is the exception: Word "Pot-Pourri" is 108.6 vs hmtx 111.0.
+        // docDefaults/Normal kern=2 stays off.
+        let kern_bit = u32::from(kern);
         let word_pdf = [
             rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"liga"), 0, ..),
             rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"clig"), 0, ..),
             rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"dlig"), 0, ..),
-            rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"kern"), 0, ..),
+            rustybuzz::Feature::new(
+                rustybuzz::ttf_parser::Tag::from_bytes(b"kern"),
+                kern_bit,
+                ..,
+            ),
         ];
         let out = rustybuzz::shape(face, &word_pdf, buf);
         let infos = out.glyph_infos();
@@ -574,6 +626,16 @@ impl Fonts {
                 (true, true) => FaceId::GeorgiaBoldItalic,
             };
         }
+        // file_22 / sd_2517 live period run is Book Antiqua. Folding it
+        // into Carlito (or Times) missed Word Quartz's BookAntiqua embed.
+        if key.contains("bookantiqua") || key.contains("palatino") {
+            return match (bold, italic) {
+                (false, false) => FaceId::BookAntiquaRegular,
+                (true, false) => FaceId::BookAntiquaBold,
+                (false, true) => FaceId::BookAntiquaItalic,
+                (true, true) => FaceId::BookAntiquaBoldItalic,
+            };
+        }
         let sans = key.contains("arial")
             || key.contains("helvetica")
             || key.contains("liberationsans")
@@ -673,6 +735,10 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
         FaceId::GeorgiaBold => &["Georgia Bold.ttf", "georgiab.ttf"],
         FaceId::GeorgiaItalic => &["Georgia Italic.ttf", "georgiai.ttf"],
         FaceId::GeorgiaBoldItalic => &["Georgia Bold Italic.ttf", "georgiaz.ttf"],
+        FaceId::BookAntiquaRegular => &["Book Antiqua.ttf", "pala.ttf"],
+        FaceId::BookAntiquaBold => &["Book Antiqua Bold.ttf", "palab.ttf"],
+        FaceId::BookAntiquaItalic => &["Book Antiqua Italic.ttf", "palai.ttf"],
+        FaceId::BookAntiquaBoldItalic => &["Book Antiqua Bold Italic.ttf", "palabi.ttf"],
         FaceId::Symbol => &["Symbol.ttf", "symbol.ttf"],
     };
     // Deliberately macOS-only: these overrides exist to match the
@@ -754,4 +820,66 @@ fn sanitize_pdf_name(name: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calibri_gpos_kerns_av_at_28pt() {
+        let fonts = Fonts::new();
+        let face = fonts.get(FaceId::CarlitoRegular);
+        let off = face.width_pt_kern("AVAVAV", 28.0, false);
+        let on = face.width_pt_kern("AVAVAV", 28.0, true);
+        assert!(
+            off - on > 0.8,
+            "GPOS kern must tighten AV at 28pt; on={on} off={off}"
+        );
+    }
+
+    #[test]
+    fn calibri_gpos_kern_off_at_body_size_matches_hmtx() {
+        let fonts = Fonts::new();
+        let face = fonts.get(FaceId::CarlitoRegular);
+        let hmtx = face.width_pt("The", 11.0);
+        let shaped = face.width_pt_kern("The", 11.0, false);
+        assert!(
+            (hmtx - shaped).abs() < 0.05,
+            "body kern=false must stay hmtx; hmtx={hmtx} shaped={shaped}"
+        );
+    }
+
+    #[test]
+    fn aptos_twelve_stays_unligated_after_mini_727() {
+        // Word potpourri / file_170 Aptos 12 "flour" is U+FB02. Aptos≥12
+        // liga (mini 727) was ITT-neg: file_170 −0.0036 / potpourri
+        // −0.0002. Quartz prefers f+l. Do not retry.
+        let fonts = Fonts::new();
+        let face = fonts.get(FaceId::AptosRegular);
+        let g = face.shape("fl", 12.0);
+        assert_eq!(g.len(), 2, "mini 727 Aptos 12 liga ITT-neg; glyphs={g:?}");
+    }
+
+    #[test]
+    fn calibri_eleven_does_not_ligate_fl() {
+        let fonts = Fonts::new();
+        let face = fonts.get(FaceId::CarlitoRegular);
+        let g = face.shape("fl", 11.0);
+        assert_eq!(
+            g.len(),
+            2,
+            "Word Quartz WinAnsi Calibri does not ligate; glyphs={g:?}"
+        );
+    }
+
+    #[test]
+    fn aptos_ten_five_does_not_ligate_fl() {
+        // comments-lots / I_am_sharing Aptos 10.56 keeps fi/ff/fl as two
+        // chars (60+ hits, 0 U+FB02). Ungated Aptos liga would ITT-neg.
+        let fonts = Fonts::new();
+        let face = fonts.get(FaceId::AptosRegular);
+        let g = face.shape("fl", 10.5);
+        assert_eq!(g.len(), 2, "Word Aptos 10.5 does not ligate; glyphs={g:?}");
+    }
 }

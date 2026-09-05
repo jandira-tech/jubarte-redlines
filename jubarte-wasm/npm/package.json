@@ -1,6 +1,6 @@
 {
   "name": "jubarte-wasm",
-  "version": "0.7.2",
+  "version": "0.9.0",
   "description": "Word-mode DOCX redline engine (jubarte-redlines) compiled to WebAssembly: compare two DOCX files into a tracked-changes redline, accept/reject revisions, list revisions, render DOCX to PDF. Node and browser builds included, plus compare-only slim builds without the PDF engine.",
   "license": "AGPL-3.0-only",
   "repository": {

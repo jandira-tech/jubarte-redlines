@@ -15,6 +15,127 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-05
+
+Ring 3 is green for the first time: all 207 corpus redlines open in Microsoft
+Word with no warning, error or repair offer (was 202/5).
+
+### Fixed
+
+- **`w:instrText` under `w:del` is now `w:delInstrText`.** This was the cause of
+  every one of the five Ring 3 open failures. Word wants `w:delInstrText` in a
+  deletion for the same reason it wants `w:delText` instead of `w:t`, and offers
+  to repair the file when it does not get it. The shape came from deleting
+  content containing a field — a wholly deleted header or footer carrying
+  `PAGE`/`NUMPAGES` is the usual case — on a path that wraps existing runs in
+  `w:del` rather than rebuilding them. Only 5 of the 207 corpus outputs carried
+  it, and they were exactly the 5 Word rejected.
+
+  **The OpenXmlValidator reported all five as clean.** `w:instrText` is
+  schema-valid in a run whatever the run's parent is; the del/delInstrText
+  correspondence is a semantic rule Word applies at load. A green Ring 2 does
+  not mean Word will open the file.
+
+- **`w:del` no longer swallows `w:hyperlink`.** `w:hyperlink` is not in
+  CT_RunTrackChange's content model, so deleting a whole header/footer produced
+  markup Word rejects. Word's shape is the inverse — the hyperlink stays put and
+  the revision moves inside it — and the revision is now split around each
+  hyperlink, preserving document order and minting fresh `w:id`s.
+
+- **No more bare `<w:sz/>` / `<w:szCs/>` in the merged Normal style.** The
+  style-merge loop created the element and then passed `None`, which strips
+  `w:val` but leaves the element behind. `w:val` is required on CT_HpsMeasure;
+  ECMA-376 spells "no value" as the element's absence.
+
+- **Invalidity inherited from a source is repaired instead of shipped.**
+  Unqualified attributes on `w:` elements (`paragraphProperties="[object
+  Object]"` — wml.xsd is `attributeFormDefault="qualified"`, so these are invalid
+  by construction), `w:shd` with no `w:val` (supplied as `clear`, keeping the
+  author's fill), and `w:highlight` under `w:lvl/w:rPr`. Deletion-or-default
+  only, so a document that was already valid cannot change. Worth stating
+  plainly: **all these sources open fine in Word** — it tolerates their
+  invalidity and rejected our output, so this was never the reason those
+  documents failed. It is repaired anyway, because a source's corruption
+  shipped inside our redline gets blamed on us.
+
+### Added
+
+- `finalize::enforce_deleted_text_kinds`, `finalize::hoist_hyperlinks_out_of_revisions`
+  and `finalize::repair_inherited_invalidity`, each run both at the end of the
+  body pipeline and in the package-level validity sweep — headers and footers
+  deleted wholesale never reach the body finalize path, which is why the three
+  defects above survived there.
+- `tools/validate-docx/` is **committed** for the first time. Ring 2 could not
+  run in a fresh checkout: the C# project existed only in a sibling worktree and
+  was on no remote. It now also reports the part URI and XPath of each finding,
+  so a Ring 2 result names a location instead of only a rule. The ratchet keys
+  on the first two columns and is unaffected.
+
+### Changed
+
+- `tools/validity_baseline.tsv` re-blessed: 1183 findings / 46 pairs / 60 keys,
+  from 1294 / 54 / 74. The previous bless keyed stems as `<stem>.ours`, which
+  `scripts/redline-sweep.sh` never emits, so the ratchet compared two disjoint
+  key sets and reported 74 regressions plus 75 fixes on an unchanged corpus.
+
+### Known
+
+- **Ring 1 is red and was already red before this release**: `parity_ladder.py
+  sweep` reports 41 NEW findings (4 at L0) against the checked-in baseline on an
+  unmodified tree. This release introduces none of them — the identical 41 appear
+  when the same sweep runs against a binary built without these changes — and
+  fixes one. They are not blessed away, because L0 is the losslessness contract
+  and hiding those rows is the one thing the ladder exists to prevent.
+- The `w:Unid` leak (KNOWN_ISSUES 4) is narrowed but still open: 12 of 207
+  outputs, 0 of 199 sources.
+
+## [0.8.0] - 2026-09-05
+
+Two losslessness fixes in the redline core, and the DOCX → PDF converter that
+0.7.1 prepared but never shipped to crates.io.
+
+### Fixed
+
+- **Redline no longer drops sentence-final punctuation (M463).** The
+  fold that attached a trailing bare `.` EQ run onto the preceding
+  `w:ins`/`w:del` moved a run that belongs to *both* documents into a
+  one-sided revision and then deleted it, so the period left the other
+  side's stream — onto a `w:del` it vanished from the modified document,
+  onto a `w:ins` from the original. 16 corpus pairs stopped reconstructing
+  their own inputs. The whole `fold_boiler_eq_between_ins` pass is removed:
+  keeping only its `INS|EQ|INS` half measured worse (19 vs 18 L0 rows).
+- **Redline no longer rewrites letter case (M328d).** The free-mesh word
+  rehash hashed `text.to_ascii_lowercase()`, so `"Green"` and `"green"`
+  compared Equal — but the emitted EQ run carries only one side's casing,
+  turning `Green highlights…` into `green highlights…`. The extra spurious
+  matches also let two output paragraphs claim the same source atom. The
+  hash is case-sensitive again at all 20 call sites; M328d's unrelated
+  stamped-pair (`file_N.docx`) free-mesh exclusion is kept. Case-insensitive
+  matching is sound only once the emitted run keeps each side's own text.
+
+Ring 1 (`tools/parity_ladder.py sweep`, 207 pairs): L0 reconstruction
+failures 34 → 17 rows; regressions against `042089c` 19 → 2. The two
+survivors are a distinct free-mesh double-consumption defect — see
+KNOWN_ISSUES.md issue 3. 15 of the 17 predate `042089c`.
+
+### Added
+
+- **`jubarte convert` / `convert::docx_to_pdf`.** Emit a real multi-page PDF
+  from DOCX bytes without LibreOffice: paragraphs, lists, tables, JPEG/PNG,
+  headers/footers, and WMF/EMF rasterization. Prepared in 0.7.1, which was
+  tagged but never published — 0.7.0 is the newest version on crates.io, so
+  this is the first release in which `convert` is installable.
+- **`convert::PdfOptions { compress }`** (CLI: `jubarte convert --compress`)
+  — `/FlateDecode` the content streams. Off keeps page content greppable
+  with `strings`; on is substantially smaller.
+- Converter fidelity work against Word: OMML `m:f` `noBar` fractions, tab
+  stop resolution (`w:tabs`, `defaultTabStop`, ISO-Strict `ST_TabJc`),
+  Word's `size >= w:kern/@val / 2` kerning threshold, `GridTable4-Accent5`
+  and `MediumShading` table styles, DrawingML stroke width/colour from
+  `a:ln/@w` and `lnRef`, textbox `w:ind`/`w:spacing` and
+  `relativeFrom=margin`, `w14:reflection` flattening as Word's PDF export
+  does, and small-caps shrinking lowercase only (ECMA-376 17.3.2.5).
+
 ## [0.7.1] - 2026-08-16
 
 Independent DOCX → PDF converter. Redline output is unchanged from 0.7.0.
@@ -266,6 +387,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.8.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.8.0
 [0.7.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.1
 [0.7.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.0
 [0.6.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.6.0

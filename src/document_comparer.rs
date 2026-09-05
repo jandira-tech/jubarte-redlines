@@ -2956,7 +2956,19 @@ fn merge_normal_style_rpr(
     // tripping Word's repair. Insert after the last existing predecessor so
     // the new/updated sz/szCs land in their schema slot.
     for (name, v) in [("sz", &sz), ("szCs", &sz_cs)] {
-        let e = match dom.element(rpr, &W::name(name)) {
+        let existing = dom.element(rpr, &W::name(name));
+        // CT_HpsMeasure makes w:val REQUIRED. Creating the element and then
+        // passing None stripped the attribute but left `<w:szCs/>` behind —
+        // not "no size", but XML Word refuses to open (Sch_MissRequiredAttribute
+        // at styles.xml w:style[1]/w:rPr/w:szCs). ECMA-376 spells "no value"
+        // here as the element's absence, so that is what we write.
+        let Some(val) = v.as_deref() else {
+            if let Some(e) = existing {
+                dom.remove(e);
+            }
+            continue;
+        };
+        let e = match existing {
             Some(e) => e,
             None => {
                 let e = dom.new_element(W::name(name));
@@ -2964,7 +2976,7 @@ fn merge_normal_style_rpr(
                 e
             }
         };
-        dom.set_attribute_value(e, &W::val(), v.as_deref());
+        dom.set_attribute_value(e, &W::val(), Some(val));
     }
     // M461 generalized by file_198 — Word's live Normal is B's FULL
     // effective rPr: every stored B child survives (color, lang — not just
@@ -5607,6 +5619,15 @@ fn compare_documents_impl(
             if let Some(vr) = vd.root(doc) {
                 crate::comparer::finalize::normalize_universal_measures(&mut vd, vr);
                 crate::comparer::finalize::fix_strict_validity_artifacts(&mut vd, vr);
+                // Invalidity we inherit rather than create: a source whose own
+                // styles/numbering Word already rejects would otherwise ship inside
+                // our redline and be blamed on us.
+                crate::comparer::finalize::repair_inherited_invalidity(&mut vd, vr);
+                // Headers and footers deleted wholesale never pass through the body
+                // finalize pipeline, so this is where their w:del/w:hyperlink
+                // inversion gets fixed.
+                crate::comparer::finalize::hoist_hyperlinks_out_of_revisions(&mut vd, vr);
+                crate::comparer::finalize::enforce_deleted_text_kinds(&mut vd, vr);
                 crate::comparer::finalize::remove_powertools_scratch_markup(&mut vd, vr);
                 out.set_part(&part, vd.serialize_element(vr).into_bytes());
             }

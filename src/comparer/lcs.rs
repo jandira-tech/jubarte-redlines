@@ -1947,14 +1947,13 @@ fn token_jaccard(
 
 /// Rehash word units by concatenated `w:t` text only (ignore rPr). Used so
 /// residual short×short LCS can Equal shared tokens across format demos.
+/// M328d's optional ASCII case-fold was removed: hashing the lowercased text
+/// made "Green"×"green" compare Equal, but the emitted EQ run carries only one
+/// side's casing, so the redline stopped reconstructing its own input, and the
+/// spurious matches let two paragraphs claim the same A-side atom. Matching
+/// case-insensitively is sound only once the emitted run keeps each side's
+/// original text.
 fn rehash_words_by_text_content(dom: &Dom, units: &mut [ComparisonUnit]) {
-    rehash_words_by_text_content_opts(dom, units, false);
-}
-
-/// Text-content rehash; optional ASCII case-fold for free-mesh paths where Word
-/// matches "Sample"×"sample" (M328d). Keep case-sensitive for residual peels
-/// that share stamped filenames / exact casing (file_197 confetti).
-fn rehash_words_by_text_content_opts(dom: &Dom, units: &mut [ComparisonUnit], case_fold: bool) {
     use crate::util::sha1::{sha1_fingerprint, sha1_hex};
     for u in units.iter_mut() {
         if let ComparisonUnit::Word(w) = u {
@@ -1965,12 +1964,7 @@ fn rehash_words_by_text_content_opts(dom: &Dom, units: &mut [ComparisonUnit], ca
                 }
             }
             if !text.is_empty() {
-                let key = if case_fold {
-                    text.to_ascii_lowercase()
-                } else {
-                    text
-                };
-                w.sha1_hash = sha1_hex(&key);
+                w.sha1_hash = sha1_hex(&text);
                 // keep the cached fingerprints in sync with the mutated hash
                 w.sha1_key = sha1_fingerprint(&w.sha1_hash);
                 w.sha1_key128 = crate::util::sha1::sha1_fingerprint128(&w.sha1_hash);
@@ -5490,8 +5484,8 @@ pub fn detect_unrelated_sources_word_mode(
                         && !right.is_empty()
                         && left.len().saturating_mul(right.len()) <= 100_000
                     {
-                        rehash_words_by_text_content_opts(dom, &mut left, true);
-                        rehash_words_by_text_content_opts(dom, &mut right, true);
+                        rehash_words_by_text_content(dom, &mut left);
+                        rehash_words_by_text_content(dom, &mut right);
                         let mut residual_settings = settings.clone();
                         residual_settings.detail_threshold = 0.0;
                         out.extend(lcs(dom, left, right, &residual_settings));
@@ -5772,8 +5766,8 @@ pub fn detect_unrelated_sources_word_mode(
         let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
         if !left.is_empty() && !right.is_empty() && left.len().saturating_mul(right.len()) <= 50_000
         {
-            rehash_words_by_text_content_opts(dom, &mut left, true);
-            rehash_words_by_text_content_opts(dom, &mut right, true);
+            rehash_words_by_text_content(dom, &mut left);
+            rehash_words_by_text_content(dom, &mut right);
             let mut residual_settings = settings.clone();
             residual_settings.detail_threshold = 0.0;
             return Some(lcs(dom, left, right, &residual_settings));
@@ -6015,8 +6009,8 @@ pub fn detect_unrelated_sources_word_mode(
                 && !right.is_empty()
                 && left.len().saturating_mul(right.len()) <= 100_000
             {
-                rehash_words_by_text_content_opts(dom, &mut left, true);
-                rehash_words_by_text_content_opts(dom, &mut right, true);
+                rehash_words_by_text_content(dom, &mut left);
+                rehash_words_by_text_content(dom, &mut right);
                 let mut residual_settings = settings.clone();
                 residual_settings.detail_threshold = 0.0;
                 out.extend(lcs(dom, left, right, &residual_settings));
@@ -6099,8 +6093,8 @@ pub fn detect_unrelated_sources_word_mode(
                     && !right.is_empty()
                     && left.len().saturating_mul(right.len()) <= 50_000
                 {
-                    rehash_words_by_text_content_opts(dom, &mut left, true);
-                    rehash_words_by_text_content_opts(dom, &mut right, true);
+                    rehash_words_by_text_content(dom, &mut left);
+                    rehash_words_by_text_content(dom, &mut right);
                     let mut residual_settings = settings.clone();
                     residual_settings.detail_threshold = 0.0;
                     out.extend(lcs(dom, left, right, &residual_settings));
@@ -6363,8 +6357,8 @@ pub fn detect_unrelated_sources_word_mode(
                 for i in 0..z {
                     let mut left: Vec<ComparisonUnit> = group_contents(&left_c[i]);
                     let mut right: Vec<ComparisonUnit> = group_contents(&right_c[i]);
-                    rehash_words_by_text_content_opts(dom, &mut left, true);
-                    rehash_words_by_text_content_opts(dom, &mut right, true);
+                    rehash_words_by_text_content(dom, &mut left);
+                    rehash_words_by_text_content(dom, &mut right);
                     if left.is_empty() && right.is_empty() {
                         continue;
                     }
@@ -6489,8 +6483,8 @@ pub fn detect_unrelated_sources_word_mode(
                         && !right.is_empty()
                         && left.len().saturating_mul(right.len()) <= 600_000
                     {
-                        rehash_words_by_text_content_opts(dom, &mut left, true);
-                        rehash_words_by_text_content_opts(dom, &mut right, true);
+                        rehash_words_by_text_content(dom, &mut left);
+                        rehash_words_by_text_content(dom, &mut right);
                         out.extend(lcs(dom, left, right, &residual_settings));
                         return Some(out);
                     }
@@ -6523,8 +6517,8 @@ pub fn detect_unrelated_sources_word_mode(
                     for i in 0..z {
                         let mut left: Vec<ComparisonUnit> = group_contents(&left_c[i]);
                         let mut right: Vec<ComparisonUnit> = group_contents(&right_c[i]);
-                        rehash_words_by_text_content_opts(dom, &mut left, true);
-                        rehash_words_by_text_content_opts(dom, &mut right, true);
+                        rehash_words_by_text_content(dom, &mut left);
+                        rehash_words_by_text_content(dom, &mut right);
                         if left.is_empty() && right.is_empty() {
                             continue;
                         }
@@ -6553,8 +6547,8 @@ pub fn detect_unrelated_sources_word_mode(
                         let mut right: Vec<ComparisonUnit> =
                             right_res.iter().flat_map(group_contents).collect();
                         if left.len().saturating_mul(right.len()) <= 600_000 {
-                            rehash_words_by_text_content_opts(dom, &mut left, true);
-                            rehash_words_by_text_content_opts(dom, &mut right, true);
+                            rehash_words_by_text_content(dom, &mut left);
+                            rehash_words_by_text_content(dom, &mut right);
                             out.extend(lcs(dom, left, right, &residual_settings));
                             if !out.is_empty() {
                                 return Some(out);
@@ -6613,8 +6607,8 @@ pub fn detect_unrelated_sources_word_mode(
                     && !right.is_empty()
                     && left.len().saturating_mul(right.len()) <= 600_000
                 {
-                    rehash_words_by_text_content_opts(dom, &mut left, true);
-                    rehash_words_by_text_content_opts(dom, &mut right, true);
+                    rehash_words_by_text_content(dom, &mut left);
+                    rehash_words_by_text_content(dom, &mut right);
                     out.extend(lcs(dom, left, right, &residual_settings));
                     return Some(out);
                 }
@@ -6646,8 +6640,8 @@ pub fn detect_unrelated_sources_word_mode(
                 && left.len().saturating_mul(right.len()) <= 600_000
             {
                 // M328d: case-fold free-mesh rehash so "Sample"×"sample" match.
-                rehash_words_by_text_content_opts(dom, &mut left, true);
-                rehash_words_by_text_content_opts(dom, &mut right, true);
+                rehash_words_by_text_content(dom, &mut left);
+                rehash_words_by_text_content(dom, &mut right);
                 let mut residual_settings = settings.clone();
                 // Parallel A)/B)/C) demos mesh long section labels so 0.005 is
                 // enough (M324). Short OOXML property testers share only short

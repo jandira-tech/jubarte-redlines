@@ -10983,210 +10983,6 @@ fn split_leading_this(text: &str) -> Option<(String, String)> {
     Some((text[..end].to_string(), text[end..].to_string()))
 }
 
-/// M463 (right_align p2 ~90.8 residual): free-mesh left bare EQ ` text ` between
-/// consecutive ins (`All` | ` text ` | `in this document `). Word folds into
-/// one ins `All text in this document `. Also attaches trailing bare `.` EQ
-/// onto the preceding ins/del text (Word: `margin.` / `italic.`).
-///
-/// Gates: bare EQ alnum content is a single boiler token (after trim); neighbors
-/// are both `w:ins`. Trailing period fold only when body ends with bare `.`.
-pub fn fold_boiler_eq_between_ins(dom: &mut Dom, root: NodeId) {
-    const BOILER: &[&str] = &[
-        "text", "the", "and", "for", "are", "was", "you", "all", "can", "her", "his", "its", "our",
-        "out", "this", "that", "with", "from", "have", "will", "been", "were", "they", "them",
-        "than", "then", "when", "what", "page", "more", "most", "some", "such",
-    ];
-    let Some(body) = dom.element(root, &W::body()) else {
-        return;
-    };
-    let kids: Vec<NodeId> = dom
-        .elements(body, None)
-        .into_iter()
-        .filter(|&k| !dom.name_is(k, &W::sect_pr()))
-        .collect();
-    for &p in &kids {
-        if !dom.name_is(p, &W::p()) || !para_is_mixed_revision(dom, p) {
-            continue;
-        }
-        // Iterate until no more folds (left-to-right).
-        loop {
-            let body_kids: Vec<NodeId> = dom
-                .elements(p, None)
-                .into_iter()
-                .filter(|&c| !dom.name_is(c, &W::p_pr()))
-                .collect();
-            let mut folded = false;
-            for i in 1..body_kids.len().saturating_sub(1) {
-                let left = body_kids[i - 1];
-                let mid = body_kids[i];
-                let right = body_kids[i + 1];
-                if !dom.name_is(left, &W::ins())
-                    || !dom.name_is(right, &W::ins())
-                    || !dom.name_is(mid, &W::r())
-                {
-                    continue;
-                }
-                // Bare mid must not be inside a revision wrapper.
-                let mut mid_t = String::new();
-                for tn in dom.descendants(mid, Some(&W::t())) {
-                    mid_t.push_str(&dom.value_str(tn));
-                }
-                let mid_trim = mid_t.trim();
-                if mid_trim.is_empty() {
-                    continue;
-                }
-                // Single boiler word only (spaces allowed around it; no other punct).
-                let non_space: String = mid_trim.chars().filter(|c| !c.is_whitespace()).collect();
-                if non_space.is_empty() || !non_space.chars().all(|c| c.is_alphanumeric()) {
-                    continue;
-                }
-                if !BOILER.contains(&non_space.to_ascii_lowercase().as_str()) {
-                    continue;
-                }
-                // Collect left/right ins text.
-                let mut left_text = String::new();
-                for t in dom.descendants(left, Some(&W::t())) {
-                    left_text.push_str(&dom.value_str(t));
-                }
-                let mut right_text = String::new();
-                for t in dom.descendants(right, Some(&W::t())) {
-                    right_text.push_str(&dom.value_str(t));
-                }
-                // Compose: left + mid (preserve mid spaces) + right.
-                // Ensure a space boundary if left doesn't end with space and mid
-                // doesn't start with space.
-                let mut combined = left_text;
-                if !combined.is_empty()
-                    && !combined.ends_with(|c: char| c.is_whitespace())
-                    && !mid_t.starts_with(|c: char| c.is_whitespace())
-                {
-                    combined.push(' ');
-                }
-                combined.push_str(&mid_t);
-                if !combined.ends_with(|c: char| c.is_whitespace())
-                    && !right_text.is_empty()
-                    && !right_text.starts_with(|c: char| c.is_whitespace())
-                {
-                    combined.push(' ');
-                }
-                combined.push_str(&right_text);
-
-                // Rewrite left ins text, remove mid and right.
-                // Clear left's runs' text and set one t node.
-                let left_runs: Vec<NodeId> = dom.elements(left, Some(&W::r())).to_vec();
-                for r in &left_runs {
-                    // remove existing t nodes under r
-                    let ts: Vec<NodeId> = dom.elements(*r, Some(&W::t())).to_vec();
-                    for t in ts {
-                        if dom.parent(t).is_some() {
-                            dom.remove(t);
-                        }
-                    }
-                }
-                let r0 = if let Some(&r) = left_runs.first() {
-                    r
-                } else {
-                    let r = dom.new_element(W::r());
-                    dom.add(left, r);
-                    r
-                };
-                // drop extra runs under left
-                for r in left_runs.iter().skip(1) {
-                    if dom.parent(*r).is_some() {
-                        dom.remove(*r);
-                    }
-                }
-                let t = dom.new_element(W::t());
-                if combined.starts_with(' ') || combined.ends_with(' ') || combined.contains(' ') {
-                    dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
-                }
-                dom.add_text(t, &combined);
-                dom.add(r0, t);
-                if dom.parent(mid).is_some() {
-                    dom.remove(mid);
-                }
-                if dom.parent(right).is_some() {
-                    dom.remove(right);
-                }
-                folded = true;
-                break;
-            }
-            if !folded {
-                break;
-            }
-        }
-
-        // Trailing bare period EQ → append to last ins/del text.
-        let body_kids: Vec<NodeId> = dom
-            .elements(p, None)
-            .into_iter()
-            .filter(|&c| !dom.name_is(c, &W::p_pr()))
-            .collect();
-        if body_kids.len() < 2 {
-            continue;
-        }
-        let last = *body_kids.last().unwrap();
-        if !dom.name_is(last, &W::r()) {
-            continue;
-        }
-        let mut last_t = String::new();
-        for tn in dom.descendants(last, Some(&W::t())) {
-            last_t.push_str(&dom.value_str(tn));
-        }
-        if last_t.trim() != "." {
-            continue;
-        }
-        // M466 (file_168 × file_169, 100 → 89.7): a period run carrying a
-        // tracked format change (rPrChange, e.g. strike+bold heading residual)
-        // is NOT a bare EQ — Word keeps it live; merging it into the del text
-        // would drop the format-change record.
-        if !dom
-            .descendants(last, Some(&W::name("rPrChange")))
-            .is_empty()
-        {
-            continue;
-        }
-        let prev = body_kids[body_kids.len() - 2];
-        let prev_name = dom.name(prev);
-        if prev_name != Some(W::ins()) && prev_name != Some(W::del()) {
-            continue;
-        }
-        let text_tag = if prev_name == Some(W::del()) {
-            W::del_text()
-        } else {
-            W::t()
-        };
-        // Append '.' to last text node under prev.
-        let texts = dom.descendants(prev, Some(&text_tag));
-        if let Some(&tn) = texts.last() {
-            let mut cur = dom.value_str(tn).into_owned();
-            if !cur.ends_with('.') {
-                cur.push('.');
-                if let Some(parent) = dom.parent(tn) {
-                    dom.remove(tn);
-                    let t = if prev_name == Some(W::del()) {
-                        dom.new_element(W::del_text())
-                    } else {
-                        dom.new_element(W::t())
-                    };
-                    if cur.starts_with(' ') || cur.ends_with(' ') || cur.contains(' ') {
-                        dom.set_attribute_value(
-                            t,
-                            &XNamespace::xml().name("space"),
-                            Some("preserve"),
-                        );
-                    }
-                    dom.add_text(t, &cur);
-                    dom.add(parent, t);
-                }
-            }
-        }
-        if dom.parent(last).is_some() {
-            dom.remove(last);
-        }
-    }
-}
-
 /// M464 (center_bold ~83.6 residual): Word free-meshes trailing ` for <word>`
 /// from a mid-body MIX ins onto the following MIX as `EQ[ for ]|INS[<word> ]`,
 /// trimming the following del's trailing ` for`. Engine left
@@ -11394,4 +11190,205 @@ fn rewrite_rev_text(dom: &mut Dom, rev: NodeId, new_text: &str, is_del: bool) {
     }
     dom.add_text(t, new_text);
     dom.add(r0, t);
+}
+
+/// `w:hyperlink` is not in CT_RunTrackChange's content model: a `w:ins`/`w:del`
+/// holds runs, not a hyperlink wrapper. Deleting a whole header or footer wrapped
+/// the source's hyperlink inside the `w:del` and produced XML Word refuses to open
+/// — `Sch_InvalidElementContentExpectingComplex` at `/w:ftr/w:p/w:del`, which was
+/// two of the five Ring 3 open failures (eigenpal…table_2 and
+/// sample_document_word_repair…small_font_size).
+///
+/// Word's shape is the inverse: the hyperlink stays where it is and the revision
+/// moves inside it. So `<del>a b <hyperlink>c</hyperlink> d</del>` becomes
+/// `<del>a b</del><hyperlink><del>c</del></hyperlink><del>d</del>` — document
+/// order preserved, the revision's own author/date carried onto each piece, and no
+/// content gained or lost. Each piece gets a fresh `w:id` so the split never mints
+/// duplicates.
+///
+/// Runs to fixpoint because a hoisted hyperlink can itself contain a nested
+/// revision that wraps another hyperlink.
+///
+/// Allocates its own `w:id`s from one past the highest already in `root`, so it is
+/// correct standalone — on the main body the later `fix_up_revision_ids` renumbers
+/// everything anyway, but the package-level validity sweep runs this over parts
+/// (headers, footers) that never reach that pass.
+pub fn hoist_hyperlinks_out_of_revisions(dom: &mut Dom, root: NodeId) {
+    let rev_names = [W::name("ins"), W::name("del")];
+    let hyperlink = W::hyperlink();
+    let mut next_id = dom
+        .descendants_and_self(root, None)
+        .into_iter()
+        .filter_map(|n| dom.attribute(n, &W::id()).and_then(|v| v.parse::<u32>().ok()))
+        .max()
+        .unwrap_or(0)
+        + 1;
+    // Bounded: each pass strictly reduces the number of hyperlinks that have a
+    // revision ancestor, so this cannot spin on a pathological document.
+    for _ in 0..16 {
+        let targets: Vec<NodeId> = rev_names
+            .iter()
+            .flat_map(|n| dom.descendants(root, Some(n)))
+            .filter(|&rev| !dom.elements(rev, Some(&hyperlink)).is_empty())
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        for rev in targets {
+            split_revision_around_hyperlinks(dom, rev, &mut next_id);
+        }
+    }
+}
+
+/// One step of [`hoist_hyperlinks_out_of_revisions`]: replace `rev` in its parent
+/// with the alternating sequence of same-shaped revisions and hyperlinks.
+fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u32) {
+    let Some(rev_name) = dom.name(rev) else { return };
+    let hyperlink = W::hyperlink();
+    let attrs = dom.attributes(rev);
+    let children = dom.nodes(rev);
+
+    // Clone `rev`'s element identity (name + attributes) for one of the pieces.
+    let w_id = W::id();
+    let like_rev = |dom: &mut Dom, next_id: &mut u32| -> NodeId {
+        let e = dom.new_element(rev_name.clone());
+        for (name, value) in &attrs {
+            dom.set_attribute_value(e, name, Some(value));
+        }
+        dom.set_attribute_value(e, &w_id, Some(&next_id.to_string()));
+        *next_id += 1;
+        e
+    };
+
+    let mut pending: Option<NodeId> = None; // open revision collecting plain children
+    for child in children {
+        dom.remove(child);
+        if dom.name(child).as_ref() == Some(&hyperlink) {
+            pending = None;
+            // The hyperlink keeps its place; the revision moves inside it, wrapping
+            // whatever the hyperlink held.
+            let inner_children = dom.nodes(child);
+            if !inner_children.is_empty() {
+                let inner = like_rev(dom, next_id);
+                for ic in inner_children {
+                    dom.remove(ic);
+                    dom.add(inner, ic);
+                }
+                dom.add(child, inner);
+            }
+            dom.add_before_self(rev, child);
+            continue;
+        }
+        let target = match pending {
+            Some(p) => p,
+            None => {
+                let p = like_rev(dom, next_id);
+                dom.add_before_self(rev, p);
+                pending = Some(p);
+                p
+            }
+        };
+        dom.add(target, child);
+    }
+    dom.remove(rev);
+}
+
+/// Repair invalidity we did not create but would otherwise ship.
+///
+/// We copy styles.xml, numbering.xml and the header/footer parts through from the
+/// source, so a source that is already invalid makes *our* output the file Word
+/// refuses to open. Three of the five Ring 3 open failures were exactly this — the
+/// defect is in the input, but the user is handed our redline. Each rule below is
+/// deletion-or-default only: it removes markup that cannot legally be where it is,
+/// or supplies the schema's own neutral value. None of them can change a document
+/// that was already valid.
+///
+/// 1. **Unqualified attributes on `w:` elements.** wml.xsd is
+///    `attributeFormDefault="qualified"`, so every WordprocessingML attribute is
+///    `w:`-prefixed and an unqualified one is invalid by construction. Seen as
+///    `paragraphProperties="[object Object]"` on `w:style` — a JS stringification
+///    artifact from whatever produced the source. Namespace declarations and
+///    attributes in any other namespace (`xml:space`, `mc:Ignorable`, `r:id`) are
+///    untouched.
+/// 2. **`w:shd` with no `w:val`.** CT_Shd makes `w:val` required. A source writing
+///    `<w:shd w:fill="1F4E79"/>` means "this fill, no pattern", which is spelled
+///    `w:val="clear"` — so that is what we supply, keeping the author's fill.
+/// 3. **`w:highlight` under `w:lvl/w:rPr`.** The numbering symbol's run properties
+///    do not accept it. Sources carry `<w:highlight w:val="none"/>` there, which
+///    asserts nothing, so dropping it costs no formatting.
+pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
+    for el in dom.descendants_and_self(root, None) {
+        let Some(name) = dom.name(el) else { continue };
+        if name.namespace_name() != W::URI {
+            continue;
+        }
+        for (attr, _) in dom.attributes(el) {
+            if attr.namespace_name().is_empty()
+                && !dom.is_namespace_declaration(&attr)
+                && attr.local_name() != "xmlns"
+            {
+                dom.set_attribute_value(el, &attr, None);
+            }
+        }
+    }
+    for shd in dom.descendants_and_self(root, Some(&W::name("shd"))) {
+        if dom.attribute(shd, &W::val()).is_none() {
+            dom.set_attribute_value(shd, &W::val(), Some("clear"));
+        }
+    }
+    let lvl = W::name("lvl");
+    let r_pr = W::r_pr();
+    for hl in dom.descendants(root, Some(&W::name("highlight"))) {
+        let in_numbering_symbol = dom
+            .parent(hl)
+            .filter(|&p| dom.name(p).as_ref() == Some(&r_pr))
+            .and_then(|p| dom.parent(p))
+            .is_some_and(|g| dom.name(g).as_ref() == Some(&lvl));
+        if in_numbering_symbol {
+            dom.remove(hl);
+        }
+    }
+}
+
+/// Enforce the deleted-text invariant everywhere, not just on runs that happened
+/// to go through [`convert_run_text_to_del_text`].
+///
+/// Inside `w:del`, `w:t` must be `w:delText` and `w:instrText` must be
+/// `w:delInstrText`. Word enforces this at load and offers to repair the file when
+/// it is violated; the OpenXmlValidator does **not** flag it, because `w:instrText`
+/// is schema-valid in a run no matter what the run's parent is. That blind spot is
+/// why this survived a clean Ring 2 sweep and still failed Ring 3: all five
+/// corpus documents Word refused to open carried `w:instrText` under a `w:del`,
+/// and only seven documents in the 207-pair corpus carry it at all.
+///
+/// The shape comes from deleting content that contains a field — a wholly deleted
+/// header or footer with a `PAGE`/`NUMPAGES` field is the usual way — on a path
+/// that wraps existing runs in `w:del` rather than rebuilding them.
+///
+/// `w:moveFrom` is deliberately excluded: Word Compare keeps plain `w:t` inside it
+/// (see [`convert_run_text_to_del_text`]'s callers), so "renaming" there would
+/// introduce the very mismatch this pass exists to remove.
+pub fn enforce_deleted_text_kinds(dom: &mut Dom, root: NodeId) {
+    fn walk(dom: &mut Dom, node: NodeId) {
+        for c in dom.nodes(node) {
+            if !dom.is_element(c) {
+                continue;
+            }
+            match dom.name(c).as_ref() {
+                // A nested revision owns its own text kind — an insertion inside a
+                // deletion still holds live `w:t`.
+                Some(n)
+                    if n == &W::ins() || n == &W::name("moveFrom") || n == &W::name("moveTo") =>
+                {
+                    continue;
+                }
+                Some(n) if n == &W::t() => dom.set_name(c, W::del_text()),
+                Some(n) if n == &W::instr_text() => dom.set_name(c, W::name("delInstrText")),
+                _ => walk(dom, c),
+            }
+        }
+    }
+    for del in dom.descendants(root, Some(&W::del())) {
+        walk(dom, del);
+    }
 }
