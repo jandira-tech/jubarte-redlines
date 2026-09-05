@@ -12,6 +12,7 @@ mod font;
 mod font_table;
 mod metafile;
 mod pdf;
+mod word_subst;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};

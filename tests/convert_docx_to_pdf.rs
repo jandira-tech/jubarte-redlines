@@ -234,8 +234,8 @@ fn font_table_altname_unknown_family_embeds_cambria() {
     let pdf_fallback = docx_to_pdf(&without).expect("convert no table");
     let fallback = String::from_utf8_lossy(&pdf_fallback);
     assert!(
-        fallback.contains("Carlito") || fallback.contains("Calibri"),
-        "unknown family without a font table stays the Calibri substitute"
+        fallback.contains("Cambria"),
+        "unknown family without a font table uses the evidence-table Cambria row"
     );
 }
 
