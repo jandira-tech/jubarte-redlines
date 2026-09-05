@@ -50,6 +50,34 @@ Synthetic coverage: `tests/m146_wholedoc_replacement_no_fold.rs`.
 - `m32_word_alignment.rs::w23c_repeated_paragraph_real_word_never_bridges`
 - `m42c_eigenpal_pkg.rs::eigenpal_batch_starts_with_ins_and_has_mixed_table`
 
+## 3. Free-mesh double-consumption — one A-side atom claimed by two paragraphs
+
+**Symptom (Ring 1, L0-original):** the del-stream no longer reconstructs A —
+a word appears twice where A has it once. `parity_ladder.py sweep` reports
+`recon len 114 vs src 110` with `Thistexttext` for
+`right_aligned_italic_demo_… × right_alignment_demo_…_2`, and `ThistextThistext`
+(`106 vs 98`) for `center_aligned_bold_text_… × center_alignment_demo_…_2`.
+
+**Mechanism:** the free-mesh splits A's paragraph across two output paragraphs
+and lets both claim the same source atom as EQ. For the right-align pair, A's
+`This text is right-aligned and italic.` yields
+
+```
+P1: EQ"This " INS"document demonstrates right " EQ"text " INS"alignment."
+P2: INS"All" EQ" text " INS"in this document " EQ"is " DEL"right-" …
+```
+
+`text` is EQ in both P1 and P2, so the original stream counts it twice. A
+correct mesh must consume each A atom exactly once across the whole body.
+
+**Not** the M463 fold or the M328d case-fold — both of those are fixed (see
+CHANGELOG 0.8.0); this survives them and needs its own bisect over the range
+after `c2547f4a`.
+
+**Status:** open. 17 L0 rows remain corpus-wide; 15 of them predate `042089c`
+(2026-07-24), so losslessness has been partially broken for some time. These
+two are the only L0 regressions still outstanding against that build.
+
 ## Notes
 
 - **Hyperlink `r:id` preservation**: unwrap only anchor-based internal

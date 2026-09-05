@@ -816,9 +816,14 @@ pub fn compare_bodies_faithful_with_notes(
         // residual A del still wholesale against B body2). M459 thrash guards
         // via shared_sig/min_sig ≥ 0.35 + eligible-token LCS.
         finalize::free_mesh_wholesale_body_mix(dom, root);
-        // M463: fold bare boiler EQ (` text `) between consecutive ins and
-        // attach trailing bare `.` onto last ins/del (right_align p2 Word shape).
-        finalize::fold_boiler_eq_between_ins(dom, root);
+        // M463 (fold bare boiler EQ between consecutive ins, and attach a
+        // trailing bare `.` onto the last ins/del) is deliberately absent: it
+        // moved a shared EQ run's text into a one-sided w:ins/w:del and then
+        // deleted the run, so the text left the other side's stream entirely.
+        // A redline must reconstruct both inputs — del-stream == A, ins-stream
+        // == B — and the fold broke that on 19 corpus pairs (sentence-final
+        // `.` silently dropped). Reassigning an EQ atom to one side is only
+        // lossless if the other side still carries it.
         // M464: peel trailing ` for <word>` from MIX ins onto following MIX as
         // EQ for + INS word (center_bold p2/p3 residual).
         finalize::peel_trailing_for_word_onto_next_mix(dom, root);
