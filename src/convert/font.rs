@@ -745,16 +745,25 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
     // Word-on-macOS oracles this converter is calibrated against. On other
     // platforms no override is found and the bundled metric-compatible
     // faces are used.
-    // Do not scan `/System/Library/Fonts`: Apple's `Symbol.ttf` is not Word
-    // SymbolMT, and GitHub macOS runners have it. Arial/Verdana/Georgia live
-    // in Supplemental; Calibri/Cambria/Aptos live in DFonts.
+    // Arial/Verdana/Georgia live in Supplemental; Calibri/Cambria/Aptos in
+    // DFonts. Symbol is DFonts/Microsoft only: Apple's `Symbol.ttf` (system
+    // or Supplemental on GitHub macOS runners) is not Word SymbolMT.
+    const WORD_DIRS: &[&str] = &[
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
+        "/Library/Fonts/Microsoft",
+    ];
     const DIRS: &[&str] = &[
         "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
         "/Library/Fonts/Microsoft",
         "/System/Library/Fonts/Supplemental",
         "/Library/Fonts",
     ];
-    for dir in DIRS {
+    let dirs = if id == FaceId::Symbol {
+        WORD_DIRS
+    } else {
+        DIRS
+    };
+    for dir in dirs {
         for name in names {
             let path = Path::new(dir).join(name);
             if path.is_file() {
@@ -833,8 +842,8 @@ mod tests {
         if let Some(path) = system_override(FaceId::Symbol) {
             let s = path.to_string_lossy();
             assert!(
-                !s.contains("/System/Library/Fonts/Symbol"),
-                "Apple Symbol.ttf is not Word SymbolMT: {s}"
+                s.contains("DFonts") || s.contains("Microsoft"),
+                "Symbol overlay must be Word DFonts/Microsoft, not Apple: {s}"
             );
         }
     }
