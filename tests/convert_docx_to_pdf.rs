@@ -15,6 +15,19 @@ use zip::write::SimpleFileOptions;
 const BIN: &str = env!("CARGO_BIN_EXE_jubarte");
 const FIXTURE: &str = "tests/fixtures/redline/original.docx";
 
+/// Sibling `neurotic_docx_bench` fixtures exist locally, not in GitHub Actions.
+macro_rules! sibling_bytes {
+    ($path:expr) => {{
+        match ::std::fs::read($path) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                ::std::eprintln!("skip: sibling fixture missing ({})", $path);
+                return;
+            }
+        }
+    }};
+}
+
 fn minimal_docx(paragraphs: &[&str], table: Option<&[&[&str]]>) -> Vec<u8> {
     let mut body = String::new();
     for para in paragraphs {
@@ -1237,8 +1250,7 @@ fn official_mcdoc_hello_does_not_stack_lins_on_firstline_after_mini_414() {
     // Calibri letter-aligned scored worse than the 7pt offset. Keep
     // firstLine-only; default lIns stays gated to unindented boxes.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/mcdoc.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official mcdoc.docx")).expect("convert mcdoc");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert mcdoc");
     assert_eq!(pdf_page_count(&pdf), 1, "mcdoc is one page");
     let (x, y) = pdf_literal_td_xy(&pdf, "hello").expect("hello Td");
     assert!(
@@ -1255,8 +1267,7 @@ fn official_image_out_subscribe_stays_pad4_after_mini_417() {
     // mean −0.024 (Strict01 clones −0.30, file_100 family −0.20). Keep
     // pad=4 (x≈191.95).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/image_out_of_folder.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official image_out_of_folder"))
-        .expect("convert image_out_of_folder");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert image_out_of_folder");
     let (x, y) = pdf_literal_td_xy(&pdf, "Subscribe").expect("Subscribe Td");
     assert!(
         x > 189.0 && x < 193.5,
@@ -1270,8 +1281,7 @@ fn official_mcdoc_hello_honors_textbox_spacing_before() {
     // mcdoc txbx1.xml: w:spacing before=156 twips (7.8pt). Word Quartz
     // hello yMin≈85; pad-only baseline Td y=755 (glyph top≈76).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/mcdoc.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official mcdoc.docx")).expect("convert mcdoc");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert mcdoc");
     assert_eq!(pdf_page_count(&pdf), 1, "mcdoc is one page");
     let (x, y) = pdf_literal_td_xy(&pdf, "hello").expect("hello Td");
     assert!(x > 225.0, "firstLine KEEP: hello x≈238; x={x}");
@@ -1286,8 +1296,7 @@ fn official_mcdoc_hello_honors_textbox_first_line_indent() {
     // mcdoc txbx1.xml: w:ind left=105 firstLine=420 (26.25pt). Word Quartz
     // paints hello at x≈238. Flattening to pad=4pt parked it at x≈208.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/mcdoc.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official mcdoc.docx")).expect("convert mcdoc");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert mcdoc");
     assert_eq!(pdf_page_count(&pdf), 1, "mcdoc is one page");
     let (x, _) = pdf_literal_td_xy(&pdf, "hello").expect("hello Td");
     assert!(
@@ -1302,8 +1311,7 @@ fn official_mcdoc_paints_the_hello_textbox() {
     // wrapNone wps:txbx inside mc:AlternateContent. Convert emits only
     // the paragraph end-mark (no 0.60 w box).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/mcdoc.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official mcdoc.docx")).expect("convert mcdoc");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert mcdoc");
     assert_eq!(pdf_page_count(&pdf), 1, "mcdoc is one A4 page");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
@@ -1853,8 +1861,7 @@ fn official_strict01_upper_roman_stays_body_aligned_after_mini_705() {
     // Word p11 I. x0=84.45 x1=90. Mini 705 hanging-start alignment dropped
     // NR mean −0.0001 (Strict01 family −0.0006, 0 gains). Keep ~100.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let i_xs: Vec<f32> = pages
@@ -2110,8 +2117,7 @@ fn official_file_146_en_dash_stays_concatenated_after_mini_endash() {
     // Word p5 wants dash 88 / body 104. mini 205–208 hanging dropped
     // redline mean −0.0047; keep concatenated E at ~96.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let hay = String::from_utf8_lossy(&pdf);
     let dashes = pdf_cm_tj_xy(&hay, "\\226");
@@ -2184,7 +2190,7 @@ fn list_bullet_symbol_rfonts_embeds_symbol_not_body_aptos() {
 #[test]
 fn official_comments_lots_embeds_symbol_for_list_bullets() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let bytes = std::fs::read(path).expect("official comments-lots");
+    let bytes = sibling_bytes!(path);
     let pdf = docx_to_pdf(&bytes).expect("convert comments-lots");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
@@ -2240,8 +2246,7 @@ fn symbol_pua_bullet_stays_winansi_bullet_after_mini_108() {
 #[test]
 fn official_potpourri_symbol_bullet_stays_winansi_after_mini_108() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official potpourri"))
-        .expect("convert official potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
@@ -2403,8 +2408,7 @@ fn official_potpourri_list_number_continues_without_nest() {
     // Word p0: 1.Preheat 2.Whisk 3.Sift 4.Add 5.Bake, all marker@72
     // body@90. We restarted Sift/Add as nested 1. 2. at 90/108.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official potpourri")).expect("convert potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let pages = pdf_content_streams(&pdf);
     let lines = pdf_line_xs_in(&pages[0]);
@@ -2433,8 +2437,7 @@ fn missing_ilvl_on_decimal_list_still_paints_nested_markers() {
 fn official_potpourri_nested_list_indents_child_items() {
     // Kept name: Word p0 is 1-5 at 72/90, not a nested Sift/Add.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official potpourri")).expect("convert potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert potpourri");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "potpourri must emit a page");
     let pairs = hanging_list_pair_count(&pdf_line_xs_in(&pages[0]));
@@ -2490,8 +2493,7 @@ fn official_potpourri_two_digit_listnumber_still_hangs() {
     // paints marker@72 body@90 like Word. Do not retry those, pnum, or
     // mini-739 stamp x/size as a new class.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official potpourri")).expect("convert potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let lines = pdf_line_xs_grouped(&pdf);
     let pairs = hanging_list_pair_count(&lines);
@@ -2560,8 +2562,7 @@ fn official_comments_lots_positioning_thesis_is_word_tall() {
     // 2..=3) never fires; Word's box is ~69pt and Prepared-for starts
     // 22pt lower than we paint (align max_shift is 5px).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
-        .expect("convert official comments-lots");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
     assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
     let hs = pdf_fill_hs(&pdf, 0.851, 0.918, 0.969);
     let cell_h = hs.iter().copied().fold(0.0_f32, f32::max);
@@ -2574,8 +2575,7 @@ fn official_comments_lots_positioning_thesis_is_word_tall() {
 #[test]
 fn official_comments_lots_stays_nine_pages() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
-        .expect("convert official comments-lots");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
     assert_eq!(
         pdf_page_count(&pdf),
         9,
@@ -2608,8 +2608,7 @@ fn official_comments_lots_png_uses_word_extent() {
     // tall. Using 518pt as *height* (square) pushed 9→10pp; native
     // aspect 518.4×266.55 is unused. Stay 9pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
-        .expect("convert official comments-lots");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
     assert_eq!(pdf_page_count(&pdf), 9, "must stay Word 9pp");
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
@@ -2626,8 +2625,7 @@ fn official_comments_lots_title_sits_below_header_ink() {
     // 30pt title at 46.8 and overlapped. max(top, header+header_band)
     // is 48.6. Official comments-lots stays 9pp (mini 528–531 KEEP).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
-        .expect("convert official comments-lots");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
     assert_eq!(pdf_page_count(&pdf), 9, "must stay Word 9pp");
     let title_y = pdf_tf_ys(&pdf, "30.00 Tf")
         .into_iter()
@@ -2696,8 +2694,7 @@ fn official_comments_lots_lightshading_rows_use_body_line_box() {
     // table_row_height_pt used 11.0+5=16pt. Wrapped TableGrid headers
     // still need the 8pt chrome (Compatibility stays on Word page 5).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
-        .expect("convert official comments-lots");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
     let hay = String::from_utf8_lossy(&pdf);
     let hs: Vec<f32> = pdf_fill_boxes_in(&hay, 0.827, 0.875, 0.933)
         .into_iter()
@@ -2722,8 +2719,7 @@ fn official_file_27_stays_twelve_pages() {
     // "Deleted Cells" and dropped addition* ~5 ITT — those docs have
     // 1-row / MediumShading fully-deleted tables Word still paints.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_27.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_27"))
-        .expect("convert official file_27");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_27");
     let boxes = pdf_mediaboxes(&pdf);
     let n = pdf_page_count(&pdf);
     assert_eq!(n, 12, "Word file_27 is 12pp; got {n} boxes={boxes:?}");
@@ -2773,8 +2769,7 @@ fn cell_del_stamp_is_times_six_point_five_black() {
 #[test]
 fn official_file_27_deleted_cells_stamp_is_times() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_27.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_27"))
-        .expect("convert official file_27");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_27");
     let blob = String::from_utf8_lossy(&pdf);
     assert!(
         blob.contains("Times") || blob.contains("LiberationSerif"),
@@ -2813,8 +2808,7 @@ fn cell_del_stamp_stays_one_line_after_mini_739() {
 #[test]
 fn official_file_27_deleted_cells_stamp_stays_one_after_mini_739() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_27.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_27"))
-        .expect("convert official file_27");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_27");
     let painted = pdf_winansi_text(&pdf);
     let n = painted.matches("Deleted Cells").count();
     assert_eq!(
@@ -2829,8 +2823,7 @@ fn official_uipriority_stays_two_pages() {
     // table_row_pad (8pt), so each of the 5 Feature-table rows was
     // ~31pt instead of ~23pt and Summary spilled onto page 3.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/word_tolerated_misplaced_uipriority.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official uipriority"))
-        .expect("convert official uipriority");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official uipriority");
     let n = pdf_page_count(&pdf);
     assert_eq!(n, 2, "Word uipriority is 2pp; got {n}");
 }
@@ -2841,8 +2834,7 @@ fn official_uipriority_lists_heading_stays_on_page_one() {
     // Heading1). is_word_heading_style missed those so Calibri typo×1.15
     // extra ~3pt/heading left "5. Lists" on page 2; Word paints it on p1.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/word_tolerated_misplaced_uipriority.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official uipriority"))
-        .expect("convert official uipriority");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official uipriority");
     let pages = pdf_content_streams(&pdf);
     assert_eq!(pages.len(), 2, "Word uipriority is 2pp");
     let p1 = pdf_winansi_text(pages[0].as_bytes());
@@ -2862,8 +2854,7 @@ fn official_file_34_summary_stays_on_page_two() {
     // Word is 2pp. Arial 12 size×1.15 lands 2pp but mini 86 ITT-wrong
     // (file_34 −0.86, heading_3_center 97→94). Keep typo; allow Word+1.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
-        .expect("convert official file_34");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let pages = pdf_content_streams(&pdf);
     assert!(
         pages.len() <= 3,
@@ -2883,8 +2874,7 @@ fn official_file_34_matches_word_two_pages() {
     // ~3pt per Title wrap) so "Text alignment options" spilled onto
     // page 3. Glyph size stays 12pt — Arial paint_size×1.15 was ITT-wrong.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
-        .expect("convert official file_34");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let pages = pdf_content_streams(&pdf);
     assert_eq!(
         pages.len(),
@@ -2954,8 +2944,7 @@ fn table_cell_jc_center_centers_header_text() {
 #[test]
 fn official_file_34_table_header_feature_is_centered() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
-        .expect("convert official file_34");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     assert_eq!(pdf_page_count(&pdf), 2, "Word file_34 is 2pp");
     let pages = pdf_content_streams(&pdf);
     let p2 = &pages[1];
@@ -2974,8 +2963,7 @@ fn official_file_34_heading1_to_body_uses_word_calibri_line_box() {
     // per heading and leaves file_34 / uipriority ~1 para low of Word
     // (p2 leftover char-style vs Word "5. Lists").
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
-        .expect("convert official file_34");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let h1 = distinct_tf_ys(&pdf, "16.08 Tf");
     let body = distinct_tf_ys(&pdf, "12.00 Tf");
     assert!(
@@ -3005,8 +2993,7 @@ fn official_file_34_omits_factory_calibri_trailing_space() {
     // currently appends a synthetic 11.04 Calibri space after every
     // non-empty paragraph (~58 extra glyphs). Word has zero Calibri 11.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
-        .expect("convert official file_34");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
         !pdf_has_factory_calibri_11(&hay),
@@ -3019,8 +3006,7 @@ fn official_sd_2517_omits_factory_calibri_trailing_space() {
     // Word sd_2517 body is Times/Arial. The same 11.04 Calibri trailer
     // is extra ink on every paragraph of the 107pp fixture.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official sd_2517"))
-        .expect("convert official sd_2517");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official sd_2517");
     let pages = pdf_content_streams(&pdf);
     assert_eq!(pages.len(), 107, "Word sd_2517 is 107pp");
     let body = pages.get(6).expect("article page");
@@ -3036,8 +3022,7 @@ fn official_cicero_stays_five_pages_after_mini_92() {
     // matched that pairing and dropped Cicero −0.10 ITT (0 better).
     // Keep 20pt rows / West on page 1; do not grow past Word's 5pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Redline_CiceroDo_v_plate_30.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Cicero"))
-        .expect("convert official Cicero");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Cicero");
     assert_eq!(pdf_page_count(&pdf), 5, "Word Cicero is 5pp");
 }
 
@@ -3222,8 +3207,7 @@ fn official_comments_lots_page_five_has_the_capability_table() {
     // plus the chart. Heading1 keepNext + a drawing-only chart para (no
     // extra Normal line) keep that pairing on 9 pages.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
-        .expect("convert official comments-lots");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
     let rules = pdf_page_rule_counts(&pdf);
     assert!(
         rules.len() >= 5,
@@ -3240,10 +3224,9 @@ fn comments_fixture_fits_oracle_page_count() {
     // docx_lots_of_comments / I_am_sharing / addition* : soffice is 9pp, we
     // emit 10. Shared leftover is Appendix A+B pushed by extra inter-para
     // space (Word uses max(after, before); we were summing).
-    let bytes = std::fs::read(
-        "../neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments.docx",
-    )
-    .expect("comments fixture");
+    let bytes = sibling_bytes!(
+        "../neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments.docx"
+    );
     let pdf = docx_to_pdf(&bytes).expect("convert comments");
     assert_eq!(
         pdf_page_count(&pdf),
@@ -3259,10 +3242,9 @@ fn comments_addition_matches_oracle_page_count() {
     // 10 because TableGrid wrapped rows drop the +8pt cell chrome, so the
     // inserted capability matrix finishes on page 10 instead of spilling
     // its last three rows. comments itself stays 9 — page 9 is almost empty.
-    let bytes = std::fs::read(
-        "../neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition.docx",
-    )
-    .expect("comments addition fixture");
+    let bytes = sibling_bytes!(
+        "../neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments_addition.docx"
+    );
     let pdf = docx_to_pdf(&bytes).expect("convert comments addition");
     assert_eq!(
         pdf_page_count(&pdf),
@@ -3302,8 +3284,7 @@ fn official_heading_2_style_follows_word_inter_para_grid() {
     // docDefaults, next before=18 after=4 line=240. Word yMin gap is 39.12.
     // Summing after+before opened ~48pt and dropped the 80–89 Calibri pack.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/heading_2_style_demo_id_paraid_overflow.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("heading 2 demo")).expect("convert heading 2 demo");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert heading 2 demo");
     let ys = distinct_tf_ys(&pdf, "16.08 Tf");
     assert!(
         ys.len() >= 3,
@@ -3322,8 +3303,7 @@ fn official_heading_1_style_follows_word_inter_para_grid() {
     // heading_1_style_demo: first after=10, next before=20. Word yMin gap
     // 46.32. Summing made ~55pt.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/heading_1_style_demo_id_paraid_overflow.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("heading 1 demo")).expect("convert heading 1 demo");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert heading 1 demo");
     let ys = distinct_tf_ys(&pdf, "20.00 Tf");
     assert!(ys.len() >= 2, "Heading1 lines must paint; ys={ys:?}");
     let gap = ys[0] - ys[1];
@@ -3375,8 +3355,7 @@ fn official_potpourri_heading1_stays_summed_after_mini_h1max() {
     // Word p1 Heading1 20pt y=566.4. Max (mini 209–212) dropped
     // potpourri −1.13 and file_170 −2.31. Keep summed y=558.3; 5pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official potpourri"))
-        .expect("convert official potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let pages = pdf_content_streams(&pdf);
     let ys: Vec<f32> = pdf_tf_xy(pages[0].as_bytes(), "20.00 Tf")
@@ -3580,8 +3559,7 @@ fn official_potpourri_symbol_bullet_keeps_gutter_space() {
     // is empty (Apples still at 90). Non-Symbol bullets already append
     // ` `. Do not map PUA→U+00B7 (mini 108 ITT-wrong).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official potpourri")).expect("convert potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let pages = pdf_content_streams(&pdf);
     let pts = pdf_tf_xy(pages[0].as_bytes(), "12.00 Tf");
@@ -3711,8 +3689,7 @@ fn hyperlink_ten_point_five_underline_stays_six_after_mini_721() {
 #[test]
 fn official_comments_lots_hyperlink_underline_stays_six_after_mini_721() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
-        .expect("convert official comments-lots");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
     assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 9, "need p9");
@@ -3732,8 +3709,7 @@ fn official_strict01_hyperlink_underline_stays_six() {
     // Word EricWhite.com is 0.7pt. Thinning Calibri 11 0563C1 to 0.2 would
     // miss that. Keep 0.6 on size>10.6.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 11, "need p11");
     let p11 = &pages[10];
@@ -3838,8 +3814,7 @@ fn toc_hyperlink_stays_paragraph_black_like_word_quartz() {
 fn official_potpourri_hyperlink_paints_styled_teal() {
     // Word Quartz p2: "reference page" is its own teal span (#467886).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official potpourri"))
-        .expect("convert official potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
@@ -3948,8 +3923,7 @@ fn official_sample_iter2_github_underline_stops_before_cell_edge() {
     // Word p1 right-cell hyperlink underline is 374.9–488.9. Ours ran
     // to clip_right 540 through generator xml:space padding.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sample_document_word_repair_of_our_output_iter2_word_repaired_2.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official sample_iter2"))
-        .expect("convert sample_iter2");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert sample_iter2");
     assert_eq!(pdf_page_count(&pdf), 7, "Word sample_iter2 is 7pp");
     let pages = pdf_content_streams(&pdf);
     let boxes = pdf_fill_boxes_in(&pages[0], 0.145, 0.388, 0.922);
@@ -4255,8 +4229,7 @@ fn official_sd_2517_cover_tracked_eight_pt_starts_near_word() {
     // Word cover 8pt (sz=16, spacing=24, jc=center) starts at x=235.1.
     // Ours measured without track so the same line started at 251.3.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official sd_2517")).expect("convert sd_2517");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert sd_2517");
     assert_eq!(pdf_page_count(&pdf), 107, "Word sd_2517 is 107pp");
     let pages = pdf_content_streams(&pdf);
     let xs: Vec<f32> = pdf_tf_xy(pages[0].as_bytes(), "8.00 Tf")
@@ -4320,8 +4293,7 @@ fn ten_point_five_stays_unsnapped_after_mini_110() {
 #[test]
 fn official_i_am_sharing_body_stays_ten_point_five_after_mini_110() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official I_am_sharing"))
-        .expect("convert official I_am_sharing");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official I_am_sharing");
     assert_eq!(pdf_page_count(&pdf), 9, "Word I_am_sharing is 9pp");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
@@ -4414,8 +4386,7 @@ fn calibri_light_thirteen_pt_stays_unsnapped_after_mini_704() {
 fn official_strict01_heading2_stays_thirteen_after_mini_704() {
     // Word Heading 2 is 12.96. Mini 704 Light-only snap dropped RL mean.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
@@ -4533,7 +4504,7 @@ fn css_font_stack_uses_first_family_verdana() {
 #[test]
 fn official_verdana_demo_embeds_verdana_not_arial() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/verdana_font_demo_id_paraid_overflow.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("verdana demo")).expect("convert verdana");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert verdana");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
         text.contains("/Verdana"),
@@ -4769,8 +4740,7 @@ fn official_potpourri_heading_embeds_aptos_display() {
         return;
     }
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official potpourri"))
-        .expect("convert official potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official potpourri");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
         text.contains("/AptosDisplay"),
@@ -4836,8 +4806,7 @@ fn official_strict01_title_embeds_calibri_light() {
         return;
     }
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
         text.contains("/Calibri-Light"),
@@ -5005,8 +4974,7 @@ fn official_sd_2517_cover_paints_title_page_empty_eighteen_pt() {
     // Word cover is 7× Arial 18pt (title, 3 spaces, date, 2 spaces).
     // Factory Calibri 11 on empty TitlePage dropped 3 of those spaces.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official sd_2517"))
-        .expect("convert official sd_2517");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official sd_2517");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "sd_2517 must emit pages");
     let p1 = &pages[0];
@@ -5025,10 +4993,9 @@ fn official_sd_2517_cover_paints_title_page_empty_eighteen_pt() {
 
 #[test]
 fn sd_2517_matches_oracle_page_count() {
-    let bytes = std::fs::read(
-        "../neurotic_docx_bench/corpus/word_based/docx_source/sd_2517_localized_heading_styles.docx",
-    )
-    .expect("sd_2517 fixture");
+    let bytes = sibling_bytes!(
+        "../neurotic_docx_bench/corpus/word_based/docx_source/sd_2517_localized_heading_styles.docx"
+    );
     let pdf = docx_to_pdf(&bytes).expect("convert sd_2517");
     let n = pdf_page_count(&pdf);
     assert_eq!(
@@ -5043,10 +5010,9 @@ fn sd_2517_official_word_track_toc_has_dot_leaders() {
     // (not TOC). TOC is its own lowerRoman section (i–iv) in both. Word
     // paints Sumrio right-tab leader dots + webHidden PAGEREFs; skipping
     // webHidden dropped both and the 107-page pairing drifted on p2–p5.
-    let bytes = std::fs::read(
-        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx",
-    )
-    .expect("official sd_2517 fixture");
+    let bytes = sibling_bytes!(
+        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx"
+    );
     let pdf = docx_to_pdf(&bytes).expect("convert official sd_2517");
     let n = pdf_page_count(&pdf);
     assert_eq!(
@@ -5070,10 +5036,9 @@ fn sd_2517_official_word_track_is_107_pages() {
     // Word Quartz oracle is 107. Body page-breaks after a full page skip
     // one page (ch1 1-4, ch13 13-9). Do not regress to 111 by treating
     // every empty w:br type=page as a skip.
-    let bytes = std::fs::read(
-        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx",
-    )
-    .expect("official sd_2517 fixture");
+    let bytes = sibling_bytes!(
+        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx"
+    );
     let pdf = docx_to_pdf(&bytes).expect("convert official sd_2517");
     let n = pdf_page_count(&pdf);
     assert_eq!(
@@ -5088,10 +5053,9 @@ fn official_sd_2517_toc_page_three_reaches_article_eleven() {
     // w:tab pos as page-edge, so the 2520-twip left tab sits at 126pt
     // and is already behind "lorem 1.01"; the first tab fires the
     // 8640-twip dot leader. Extra title wraps put 11-1 on p4 (ITT 39).
-    let bytes = std::fs::read(
-        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx",
-    )
-    .expect("official sd_2517 fixture");
+    let bytes = sibling_bytes!(
+        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx"
+    );
     let pdf = docx_to_pdf(&bytes).expect("convert official sd_2517");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 3, "expected 107pp, got {}", pages.len());
@@ -5180,10 +5144,9 @@ fn official_sd_2517_toc_missing_pagerefs_paint_error_bookmark_not_defined() {
     // Word p3 wraps PAGEREF _Toc218523836/_Toc218523837 as
     // "Error! Bookmark not defined." (lorem 9.01–9.02). Cached 9-1
     // packs an extra TOC row so our p4 started at 11.03 vs Word 11.02.
-    let bytes = std::fs::read(
-        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx",
-    )
-    .expect("official sd_2517 fixture");
+    let bytes = sibling_bytes!(
+        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx"
+    );
     let pdf = docx_to_pdf(&bytes).expect("convert official sd_2517");
     let n = pdf_page_count(&pdf);
     assert_eq!(
@@ -5213,10 +5176,9 @@ fn official_sd_2517_sumrio1_wraps_doloret_like_word() {
     // Sumrio1 hanging first line ignored w:right=720 and packed
     // "dolor'et" onto line 1 (x2≈487). Word wraps it so the hanging
     // continuation (x≈216) starts with dolor'et.
-    let bytes = std::fs::read(
-        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx",
-    )
-    .expect("official sd_2517 fixture");
+    let bytes = sibling_bytes!(
+        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx"
+    );
     let pdf = docx_to_pdf(&bytes).expect("convert official sd_2517");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 3, "expected 107pp, got {}", pages.len());
@@ -5388,8 +5350,7 @@ fn official_image_out_of_folder_overlays_deepl_textbox() {
     // VML "Subscribe to DeepL Pro" as overlay at ~188×16pt. Flowing that
     // txbx (ITT 41) shoved Quantum down; skipping it dropped the copy.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/image_out_of_folder.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official image_out_of_folder"))
-        .expect("convert image_out_of_folder");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert image_out_of_folder");
     let painted = pdf_winansi_text(&pdf);
     assert!(
         painted.contains("Subscribe to DeepL"),
@@ -5420,8 +5381,7 @@ fn official_image_out_of_folder_banner_uses_xml_extent() {
     // on A4 (595.3pt). Word paints that overflow (visible left 595×63.5);
     // page-width clamp squashed it to 595.3×44.96.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/image_out_of_folder.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official image_out_of_folder"))
-        .expect("convert image_out_of_folder");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert image_out_of_folder");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
         text.contains("841.77 0 0 63.57"),
@@ -5579,8 +5539,7 @@ fn official_table_bookmark_test_two_fourth_col_sits_at_word_540() {
     // Word Test 2 (8.33in): four 150pt columns, R1C4 at x=540. Capping
     // 12000 twips to the 432pt measure packed C4 at ~419 (span 324).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/table_bookmark_end.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official table_bookmark_end"))
-        .expect("convert table_bookmark_end");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert table_bookmark_end");
     assert_eq!(pdf_page_count(&pdf), 2, "Word table_bookmark_end is 2pp");
     let pages = pdf_content_streams(&pdf);
     let mut grouped: Vec<(f32, Vec<f32>)> = Vec::new();
@@ -5616,8 +5575,7 @@ fn official_table_bookmark_keeps_unsnapped_13_and_26_after_mini_429() {
     // snapping (mini 429) dropped table_bookmark −0.070 / file_134
     // −0.059 / NR mean 59.451→59.449. Keep 26.00/13.00.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/table_bookmark_end.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official table_bookmark_end"))
-        .expect("convert table_bookmark_end");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert table_bookmark_end");
     assert_eq!(pdf_page_count(&pdf), 2, "Word table_bookmark_end is 2pp");
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
@@ -5639,8 +5597,7 @@ fn official_table_bookmark_end_keeps_seven_tests_on_page_one() {
     // shrank it and the empty Normal after each table ate a line, so
     // Test 7 spilled.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/table_bookmark_end.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official table_bookmark_end"))
-        .expect("convert table_bookmark_end");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert table_bookmark_end");
     let n = pdf_page_count(&pdf);
     assert_eq!(n, 2, "Word table_bookmark_end is 2pp; got {n}");
     let pages = pdf_content_streams(&pdf);
@@ -5752,8 +5709,7 @@ fn official_table_bookmark_test_one_is_thirteen_after_gated_569() {
     // Test 1 is 3-col TableGrid line=240, 1-line cells. Word 13pt (11+2).
     // Ungated mini 569 compacted Strict01 GridTable4 too (RL −0.029).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/table_bookmark_end.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official table_bookmark_end"))
-        .expect("convert table_bookmark_end");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert table_bookmark_end");
     assert_eq!(pdf_page_count(&pdf), 2, "Word table_bookmark_end is 2pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -5776,8 +5732,7 @@ fn official_table_bookmark_test_one_keeps_default_108_after_mini_430() {
     // table_bookmark_end) but dropped file_134 −0.104 / NR mean −0.0007.
     // Keep default 108 (x=95.4). Test 8 left=1080 still ignored (mini 402).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/table_bookmark_end.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official table_bookmark_end"))
-        .expect("convert table_bookmark_end");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert table_bookmark_end");
     assert_eq!(pdf_page_count(&pdf), 2, "Word table_bookmark_end is 2pp");
     let pages = pdf_content_streams(&pdf);
     let mut grouped: Vec<(f32, Vec<f32>)> = Vec::new();
@@ -5815,8 +5770,7 @@ fn official_table_bookmark_test_eight_ignores_fixed_tblcellmar_left() {
     // the whole row to x=144 (align max_shift 5px). Keep default 108 twips
     // on fixed tables; top/bottom mar still applies.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/table_bookmark_end.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official table_bookmark_end"))
-        .expect("convert table_bookmark_end");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert table_bookmark_end");
     assert_eq!(pdf_page_count(&pdf), 2, "Word table_bookmark_end is 2pp");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 2, "expected page 2 for Test 8");
@@ -5859,8 +5813,7 @@ fn official_table_bookmark_end_body_stays_calibri_after_mini_396() {
     // +0.048 (this fixture +1.61, file_134 +1.28) but dropped redline
     // file_27_file_28 −2.85 (mini 396). Keep Calibri.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/table_bookmark_end.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official table_bookmark_end"))
-        .expect("convert table_bookmark_end");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert table_bookmark_end");
     assert_eq!(pdf_page_count(&pdf), 2, "Word table_bookmark_end is 2pp");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
@@ -5916,10 +5869,9 @@ fn table_jc_center_is_not_left_stuck() {
 fn sample_document_stays_three_pages() {
     // Joining cell paras with \\n plus full xml:space padding used to make
     // this 4 vs soffice 3. Collapse_ws stays; only the cell join changes.
-    let bytes = std::fs::read(
-        "../neurotic_docx_bench/corpus/word_based/docx_source/sample_document_really_repaired_word_repaired.docx",
-    )
-    .expect("sample_document fixture");
+    let bytes = sibling_bytes!(
+        "../neurotic_docx_bench/corpus/word_based/docx_source/sample_document_really_repaired_word_repaired.docx"
+    );
     let pdf = docx_to_pdf(&bytes).expect("convert sample_document");
     assert_eq!(
         pdf_page_count(&pdf),
@@ -5996,10 +5948,9 @@ fn footer_xml_space_padding_stays_collapsed_after_mini_88() {
 fn official_sample_npm_package_sits_after_label() {
     // Word p1 npm badge: npm at ~80, @eigenpal at ~133. Collapsed
     // padding parked the package at npm+2.
-    let bytes = std::fs::read(
-        "../neurotic_docx_bench/corpus/word_based/docx_source/sample_document_really_repaired_word_repaired.docx",
-    )
-    .expect("sample_document fixture");
+    let bytes = sibling_bytes!(
+        "../neurotic_docx_bench/corpus/word_based/docx_source/sample_document_really_repaired_word_repaired.docx"
+    );
     let pdf = docx_to_pdf(&bytes).expect("convert sample_document");
     let pages = pdf_content_streams(&pdf);
     let p1 = pages[0].as_bytes();
@@ -6069,8 +6020,7 @@ fn courier_sz19_stays_nine_point_five_after_mini_99() {
 #[test]
 fn official_file_146_courier_stays_nine_point_five_after_mini_99() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     let text = String::from_utf8_lossy(&pdf);
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     assert!(
@@ -6113,8 +6063,7 @@ fn official_file_146_cambria_body_uses_word_auto_leading() {
     // Body baselines currently sit ~11.36pt apart (size×1 + 1pt remainder),
     // packing "Serialises to w:ins" onto page 1 (Word starts it on page 2).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_146"))
-        .expect("convert official file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let hay = String::from_utf8_lossy(&pdf);
     let mut ys: Vec<f32> = pdf_device_xy(hay.as_ref(), "46 Tf")
@@ -6142,8 +6091,7 @@ fn official_file_146_cambria_body_uses_word_auto_leading() {
 #[test]
 fn official_file_146_stays_seven_pages_after_mini_114() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
 }
 
@@ -6153,8 +6101,7 @@ fn official_file_146_serialises_heading_stays_on_page_one_after_mini_401() {
     // xml:space (mini 401) matched that wrap (file_146 +1.27) but dropped
     // sample/eigenpal clones −6.8 ITT. Packed p1 + 7pp is the KEEP lock.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 2, "expected >=2 pages, got {}", pages.len());
@@ -6222,8 +6169,7 @@ fn official_file_146_footer_numpages_does_not_open_a_hole() {
     // @@N@@ then patched to "7"; advancing x by the mark (~45pt) left a
     // hole so middot sat at 333 vs Word 298 (7 at 291).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let hay = String::from_utf8_lossy(&pdf);
     let footer_seven = pdf_tj_xy(&hay, "7")
@@ -6602,8 +6548,7 @@ fn official_comments_lots_section_heading_keeps_full_before_after_mini_418() {
     // but ITT-neg: comments-lots −1.87 / I_am_sharing −1.47 / NR mean
     // 59.425→59.351. Skipping entirely packed p7–p8. Keep full 24pt.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
-        .expect("convert official comments-lots");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
     assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
     let boxes = pdf_mediaboxes(&pdf);
     let land = boxes
@@ -6626,8 +6571,7 @@ fn official_comments_lots_appendix_url_wraps_at_delimiter() {
     // stay inside the 504pt measure (x≲558). Whole-token overflow
     // paints a 536pt line starting at x=72 (end ≈608).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
-        .expect("convert official comments-lots");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
     assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 9, "need page 9; n={}", pages.len());
@@ -6785,8 +6729,7 @@ fn official_addition_removal_page_one_thesis_is_compact() {
     // 11×1.15, at which point the pad disappears for both. Ignored rather
     // than deleted or retuned so the discrepancy stays on the record.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments_addition_removal_redline_removal_v_addition.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official addition_removal"))
-        .expect("convert addition_removal");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert addition_removal");
     let blue = pdf_fill_hs(&pdf, 0.851, 0.918, 0.969);
     let cell_h = blue.iter().copied().fold(0.0_f32, f32::max);
     assert!(
@@ -6850,8 +6793,7 @@ fn official_addition_removal_capability_matrix_stays_four_columns() {
     // ghost grid wrapped the last header into a hairline column so
     // "2. Evidence" leaked onto page 3 (ITT 36).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments_addition_removal_redline_removal_v_addition.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official addition_removal"))
-        .expect("convert addition_removal");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert addition_removal");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 3, "expected 12pp, got {}", pages.len());
     let xs = pdf_vertical_rule_xs(pages[2].as_bytes());
@@ -6953,8 +6895,7 @@ fn official_addition_removal_page_three_has_capability_matrix() {
     // that table, so p3 started at the remnant “AI assistance / Bottom
     // line” row and ITT pairing collapsed (36).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments_addition_removal_redline_removal_v_addition.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official addition_removal"))
-        .expect("convert addition_removal");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert addition_removal");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 3, "expected 12pp, got {}", pages.len());
     let p3 = pdf_winansi_text(pages[2].as_bytes());
@@ -6970,8 +6911,7 @@ fn official_addition_removal_paints_deleted_cells_label() {
     // stamp for the three w:cellDel cells. Mini 59 rewrote every
     // trPr/del row to that label and dropped addition* −5 ITT.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments_addition_removal_redline_removal_v_addition.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official addition_removal"))
-        .expect("convert addition_removal");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert addition_removal");
     let painted = pdf_winansi_text(&pdf);
     assert!(
         painted.contains("Deleted Cells"),
@@ -7702,8 +7642,7 @@ fn outline_heading_before_autospacing_keeps_dummy_twips_after_mini_492() {
 #[test]
 fn official_i_am_sharing_executive_stays_black_after_mini_112() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official I_am_sharing"))
-        .expect("convert official I_am_sharing");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official I_am_sharing");
     assert_eq!(pdf_page_count(&pdf), 9, "Word I_am_sharing is 9pp");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
@@ -7842,8 +7781,7 @@ fn official_comments_lots_addition_medium_shading_header_stays_sixteen_after_min
     // LightShading 2-col 1F4E79 already uses pad=2 (~12pt); do not require
     // every 1F4E79 rect to be 16.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments_addition.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots-addition"))
-        .expect("convert official comments-lots-addition");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots-addition");
     assert_eq!(
         pdf_page_count(&pdf),
         11,
@@ -7974,8 +7912,7 @@ fn grid_table4_firstrow_header_text_is_white() {
 #[test]
 fn official_potpourri_gridtable_header_region_is_white() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official potpourri"))
-        .expect("convert official potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
@@ -8253,8 +8190,7 @@ fn official_potpourri_gridtable_firstrow_borders_are_dark() {
     // hairlines). Ours strokes header with body 45B0E1 only. Paint-only
     // — potpourri stays 5pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official potpourri"))
-        .expect("convert official potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let hair = accent_dark_hairlines(&pdf);
     assert!(
@@ -8294,8 +8230,7 @@ fn grid_table4_firstrow_shared_vertical_stays_stacked_after_mini_sharededge() {
 #[test]
 fn official_potpourri_gridtable_shared_vertical_stays_stacked_after_mini_sharededge() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official potpourri"))
-        .expect("convert official potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let keys = accent_dark_vertical_keys(&accent_dark_hairlines(&pdf));
     assert!(
@@ -8387,8 +8322,7 @@ fn grid_table4_band_inner_fill_matches_cell_height() {
 #[test]
 fn official_potpourri_gridtable_band_inner_is_cell_height() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official potpourri"))
-        .expect("convert official potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let fills = c1e4f5_cell_fills(&pdf);
     assert!(
@@ -8562,8 +8496,7 @@ fn official_file_146_e2e8f0_rules_are_word_hairline() {
     // Word file_146 E2E8F0 bottoms are 0.24pt (70.56–541.44 × 0.24).
     // Ours were 72×468 × 0.40. Keep 7pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let bars = pdf_fill_rects(&pdf, 0.886, 0.910, 0.941);
     let hs: Vec<f32> = bars
@@ -8799,8 +8732,7 @@ fn official_file_146_e2e8f0_stays_content_box_after_mini_outset() {
     // mini 225–228 Quartz 1.44pt outset: no-redline 59.1522/53.4543 vs
     // KEEP 59.1523/53.4544. Keep 72×468; 7pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let hay = String::from_utf8_lossy(&pdf);
     let boxes = pdf_fill_boxes_in(&hay, 0.886, 0.910, 0.941);
@@ -8862,8 +8794,7 @@ fn official_file_146_e2e8f0_rule_count_stays_after_mini_pbdrskip() {
     // Word file_146 E2E8F0 sc count is 17. Skipping empty/del pBdr
     // (mini 217–220) was redline ITT-neg. Keep ~40 rules; 7pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let n = pdf_fill_rects(&pdf, 0.886, 0.910, 0.941)
         .iter()
@@ -9109,8 +9040,7 @@ fn official_comments_lots_intensequote_rule_follows_indent() {
     // 936/936 on 54pt margins). Ours painted 54–558, ~90pt of extra
     // accent1 ink on every comments-lots family stem.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
-        .expect("convert comments-lots");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert comments-lots");
     assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 2, "comments-lots p2 holds IntenseQuote");
@@ -9269,10 +9199,9 @@ fn page_and_numpages_paint_when_field_has_no_cached_result() {
 fn official_i_am_sharing_footer_paints_page_n_of_n() {
     // Official Word footer is "Page 1 of 9". The field result slots are
     // empty; we painted "Page  of" on every page (ITT ~48).
-    let bytes = std::fs::read(
-        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you.docx",
-    )
-    .expect("official I_am_sharing fixture");
+    let bytes = sibling_bytes!(
+        "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you.docx"
+    );
     let pdf = docx_to_pdf(&bytes).expect("convert I_am_sharing");
     let pairs = footer_page_of_total(&pdf);
     assert!(
@@ -9669,8 +9598,7 @@ fn titlepg_uses_first_header_on_page_one_then_default() {
 #[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official header_no_rels"))
-        .expect("convert header_no_rels");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert header_no_rels");
     assert_eq!(pdf_page_count(&pdf), 3, "Word header_no_rels is 3pp");
     let pages = pdf_content_streams(&pdf);
     let p1 = pdf_winansi_text(pages[0].as_bytes());
@@ -10272,8 +10200,7 @@ fn official_strict01_landscape_cover_has_no_confidential_watermark() {
     // Word p5 cover (landscape) has no 0.753 CONFIDENTIAL paths. convert
     // inherited header2 onto every section. 13pp held.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 13, "need 13 page streams; n={}", pages.len());
@@ -10409,8 +10336,7 @@ fn cambria_title_font_ascent_is_thousand_unit() {
 fn official_file_146_title_box_sits_on_top_margin() {
     // Word Quartz: Cambria-Bold 31.92 title bbox y=65.20 (top=1300).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let top = pdf_title_box_top(&pdf, "31.92 Tf", "Cambria-Bold", 792.0).expect("file_146 title");
     assert!(
@@ -10777,8 +10703,7 @@ fn official_strict01_endnote_body_stays_without_note_ref_after_mini_663() {
     // w:endnoteRef ITT-neg NR −0.0002 / 8 Strict01 drops. Mini 487
     // in-body / mini 619 separator stay.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let painted = pdf_winansi_text(&pdf);
     assert!(
@@ -10897,8 +10822,7 @@ fn official_potpourri_stays_five_pages_without_footnote_ink_after_mini_94() {
     // Word p1 y≈708 has "Footnote one…". Painting it (mini 94) was
     // ITT-wrong. Keep 5pp and no footnote-body literals.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official potpourri"))
-        .expect("convert official potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page streams");
@@ -10915,7 +10839,7 @@ fn official_strict01_matches_word_thirteen_pages() {
     // landscape, 4 portrait. The shipped converter emits 11 (3+5+3) —
     // pagefair then zeros the unpaired pages (score ~33).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let docx = std::fs::read(path).expect("official Strict01.docx");
+    let docx = sibling_bytes!(path);
     let pdf = docx_to_pdf(&docx).expect("convert official Strict01");
     let boxes = pdf_mediaboxes(&pdf);
     let n = pdf_page_count(&pdf);
@@ -10936,8 +10860,7 @@ fn official_strict01_long_video_para_stays_orphan_after_mini_627() {
     // p2. Mini 627–630 widowControl lifted it (Word-faithful) but
     // ITT-neg RL mean −0.006 (file_100_file_101 −6.23). Do not retry.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let p1 = pdf_winansi_text(pages[0].as_bytes());
@@ -10952,8 +10875,7 @@ fn official_strict01_endnote_separator_stays_unpainted_after_mini_619() {
     // Word p13 paints w:separator as 144×0.72 black. Mini 619–622 ITT-neg
     // NR mean −0.0018 (8 Strict01-family drops, 0 gains). Do not retry.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let last = pages.last().expect("page 13");
@@ -11090,8 +11012,7 @@ fn official_file_22_cover_keeps_empty_title_paras_after_mini_393() {
     // those line boxes. Keep y~577 cluster, 107pp. Not Times line=240,
     // not xml:space, not 6.11.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_22.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_22")).expect("convert file_22");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_22");
     assert_eq!(pdf_page_count(&pdf), 107, "Word file_22 is 107pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -11486,8 +11407,7 @@ fn official_file_146_second_signoff_table_is_on_page_seven() {
     // signature lines (not after=320 — mini 300 RL −0.010) overflow
     // table 2. Keep 7pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let pages = pdf_content_streams(&pdf);
     assert_eq!(pages.len(), 7, "Word file_146 is 7 content streams");
@@ -11566,8 +11486,7 @@ fn tblcellmar_start_end_stays_default_after_mini_marse() {
 #[test]
 fn official_file_146_code_import_uses_cell_tcmar() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let pages = pdf_content_streams(&pdf);
     let xs = pdf_tf_xs(pages[0].as_bytes(), "9.50 Tf");
@@ -11793,8 +11712,7 @@ fn official_file_146_pills_stay_flush_after_mini_pill80() {
     // Word p1 1E293B inner is pad_t below outer. mini 257–260 inset
     // dropped redline mean −0.005. Keep flush; 7pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let pages = pdf_content_streams(&pdf);
     let mut found = false;
@@ -11838,8 +11756,7 @@ fn official_sample_iter2_thomas_v_ins_is_word_teal() {
     // slot-1 retune ITT-neg NR median (sara.k occupies slot 1 on
     // file_146). Name-keyed teal. Del stays #D13438 (mini 239).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sample_document_word_repair_of_our_output_iter2_word_repaired_2.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official sample_iter2"))
-        .expect("convert sample_iter2");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert sample_iter2");
     assert_eq!(pdf_page_count(&pdf), 7, "Word sample_iter2 is 7pp");
     let pages = pdf_content_streams(&pdf);
     let joined = pages.join("\n");
@@ -11855,8 +11772,7 @@ fn official_sample_iter2_npm_row_uses_cell_tcmar_top() {
     // 5.04pt below the cell top (tcMar 100/100). Ours was 20.65 with
     // the inner fill flush to the cell top.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sample_document_word_repair_of_our_output_iter2_word_repaired_2.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official sample_iter2"))
-        .expect("convert sample_iter2");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert sample_iter2");
     assert_eq!(pdf_page_count(&pdf), 7, "Word sample_iter2 is 7pp");
     let pages = pdf_content_streams(&pdf);
     let boxes = pdf_fill_boxes_in(&pages[0], 0.973, 0.980, 0.988);
@@ -12248,8 +12164,7 @@ fn rev_bar_stays_split_across_empty_spacer_after_mini_emptymerge() {
 #[test]
 fn official_cicerodo_p2_has_a_tall_change_bar() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Redline_CiceroDo_v_plate_30.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official CiceroDo")).expect("convert CiceroDo");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert CiceroDo");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 2, "Word CiceroDo is 5pp");
     let hs = pdf_vertical_rule_hs(pages[1].as_bytes());
@@ -12263,8 +12178,7 @@ fn official_cicerodo_p2_has_a_tall_change_bar() {
 #[test]
 fn official_file_146_rev_bar_is_half_inch() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     let pages = pdf_content_streams(&pdf);
     let xs = pdf_vertical_rule_xs(pages[0].as_bytes());
     assert!(
@@ -12304,8 +12218,7 @@ fn rev_bar_is_word_quartz_filled_rect() {
 #[test]
 fn official_file_146_rev_bar_is_filled_hairline() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let pages = pdf_content_streams(&pdf);
     let bars: Vec<_> = pdf_fill_boxes_in(&pages[0], 0.0, 0.0, 0.0)
@@ -12474,8 +12387,7 @@ fn official_file_146_title_ins_underline_stays_hairline_after_mini_ul32() {
     // Word title ins bar is 2.4pt; 28pt+ scaling was ITT-neg on mean
     // (mini 238). Keep 0.6pt; file_146 stays 7pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_146")).expect("convert file_146");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let pages = pdf_content_streams(&pdf);
     let boxes = pdf_fill_boxes_in(&pages[0], 0.820, 0.204, 0.220);
@@ -12494,8 +12406,7 @@ fn official_file_146_title_ins_underline_stays_hairline_after_mini_ul32() {
 fn official_file_176_ins_is_word_red_not_soffice_gold() {
     // Word file_176 (~4800 ins chars) is #D13438 with trackRevisions off.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_176.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_176")).expect("convert file_176");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_176");
     let hay = String::from_utf8_lossy(&pdf);
     let gold = hay.matches("0.753 0.565 0.000").count();
     let red = hay.matches("0.820 0.204 0.220").count();
@@ -12648,8 +12559,7 @@ fn official_eigenpal_2_median_leftovers_stay_locked_catalog() {
     // 271 RL file_146 −0.73), extra name-keys (mini 737 median −0.010).
     // Do not retry those as a new class. KEEP 733 thomas.v teal stands.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/eigenpal_docx_editor_suggesting_mixed_edits_2.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official eigenpal_2"))
-        .expect("convert eigenpal_2");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert eigenpal_2");
     assert_eq!(pdf_page_count(&pdf), 3, "Word eigenpal_2 is 3pp");
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
@@ -13719,8 +13629,7 @@ fn empty_page_break_after_table_does_not_skip_a_blank() {
 #[test]
 fn official_file_78_stays_three_pages() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_78.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_78"))
-        .expect("convert official file_78");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_78");
     assert_eq!(
         pdf_page_count(&pdf),
         3,
@@ -13733,8 +13642,7 @@ fn official_file_196_stays_thirteen_pages() {
     // leftover in (0,22) after a cover/table extra-skipped this redline
     // stem (−10 ITT). Word is 13pp; do not invent a blank.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_196.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_196"))
-        .expect("convert official file_196");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_196");
     assert_eq!(
         pdf_page_count(&pdf),
         13,
@@ -13746,8 +13654,7 @@ fn official_file_196_stays_thirteen_pages() {
 fn official_file_22_is_107_pages() {
     // Same TextHeading leftover skips as sd_2517 (Word 107, PAGEREF 1-8).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_22.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_22"))
-        .expect("convert official file_22");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_22");
     let n = pdf_page_count(&pdf);
     assert_eq!(
         n, 107,
@@ -13760,8 +13667,7 @@ fn official_file_22_toc_lorem_105_is_page_one_eight() {
     // Word Quartz Times 12 / line=240 body is ~13.92pt. Typo 12.71 packed
     // chapter 1 so TOC 1.05 painted 1-5. Word is 1-8.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_22.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_22"))
-        .expect("convert official file_22");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_22");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 2, "expected TOC p2, got {}", pages.len());
     let toc = pdf_winansi_text(pages[1].as_bytes());
@@ -14128,8 +14034,7 @@ fn toc_dot_leader_stops_a_space_before_the_page_number() {
 fn official_sd_2517_toc_one_three_not_jammed_into_dots() {
     // Word p2 `sed adipiscing… ...... 1-3`; ours jammed `.....1-3`.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official sd_2517")).expect("convert sd_2517");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert sd_2517");
     assert_eq!(pdf_page_count(&pdf), 107, "Word sd_2517 is 107pp");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 2, "TOC is page 2");
@@ -14549,8 +14454,7 @@ fn official_potpourri_yellow_stays_three_bands_after_mini_hlmerge() {
     // Word n=1 yellow per decorated page (w≈246). Merging (mini 245–248)
     // dropped potpourri 44.6245→44.6233. Keep three per-run fills; 5pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official potpourri"))
-        .expect("convert official potpourri");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let pages = pdf_content_streams(&pdf);
     let mut decorated = 0usize;
@@ -14615,8 +14519,7 @@ fn official_file_71_has_no_green_paragraph_band() {
     // Control stem at 99. 92D050 is rPr shd (glyph box, size×1.2≈13.25).
     // A content-wide band (w>400) is ITT-wrong (mini 116: 99→76).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_71.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_71"))
-        .expect("convert official file_71");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_71");
     let wide = pdf_fill_ws(&pdf, 0.573, 0.816, 0.314);
     assert!(
         wide.iter().all(|&w| w < 400.0),
@@ -14653,8 +14556,7 @@ fn official_file_34_highlighted_style_paints_yellow_band() {
     // highlight on "Yellow highlight" is glyph-wide (w<100) and must
     // not satisfy this. Paint-only — file_34 stays Word+1 pages.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
-        .expect("convert official file_34");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let hs = pdf_fill_hs(&pdf, 1.0, 1.0, 0.0);
     assert!(
         !hs.is_empty(),
@@ -14673,8 +14575,7 @@ fn official_strict01_video_para_paints_orange_band() {
     // Direct pPr shd fill=ED7D31 on the Online Video paragraph. Word
     // paints the paragraph extents; do not change Strict01's 13pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let hs = pdf_fill_hs(&pdf, 0.929, 0.490, 0.192);
     assert!(
         !hs.is_empty(),
@@ -14898,8 +14799,7 @@ fn shipped_docx_to_pdf_places_comment_on_range_page() {
 #[test]
 fn shipped_docx_to_pdf_migrates_word_based_comments() {
     let path = "../neurotic_docx_bench/corpus/word_based/docx_source/comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("word_based comments.docx"))
-        .expect("convert word_based comments");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert word_based comments");
     assert!(pdf.starts_with(b"%PDF"));
     assert!(pdf_page_count(&pdf) >= 1);
     let notes = pdf_notes(&pdf);
@@ -14990,8 +14890,7 @@ fn del_list_bullet_marker_uses_del_ink() {
 #[test]
 fn official_addition_removal_stays_eleven_pages() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments_addition_removal.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official addition_removal"))
-        .expect("convert official addition_removal");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official addition_removal");
     assert_eq!(pdf_page_count(&pdf), 11, "Word addition_removal is 11pp");
 }
 
@@ -15262,8 +15161,7 @@ fn official_strict01_cover_wash_uses_page_size_rel() {
     // Word p5 landscape wash is wp14:sizeRel 95%×95% of 792×612 (~752×581).
     // Extent-only is the leftover 581×752 portrait box.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     // Rectangle 466 first stop: accent1 lumMod=20% lumOff=80%.
     // Office 2013 5B9BD5 → 0.871 0.922 0.967 (was 4F81BD 0.862 0.901 0.948).
     let rects = pdf_fill_rects(&pdf, 0.871, 0.922, 0.967);
@@ -15325,8 +15223,7 @@ fn gradfill_two_stop_stays_first_stop_after_mini_715() {
 #[test]
 fn official_strict01_cover_wash_stays_flat_first_stop_after_mini_715() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
         !hay.contains("/ShadingType 2"),
@@ -15344,8 +15241,7 @@ fn official_strict01_clipart_is_on_word_page_three() {
     // Word p2 is body text; p3 is the WMF clipart + "Two". Extra p1 flow
     // (no Rectangle 3 hole) parked the picture on p2 and left p3 empty.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 3, "need page streams; n={}", pages.len());
@@ -15411,8 +15307,7 @@ fn numbering_start_indent_nests_ilvl_past_listparagraph() {
 #[test]
 fn official_strict01_nested_list_indents_ilvl() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
     let lines = pdf_line_xs_in(&pages[0]);
@@ -15434,8 +15329,7 @@ fn official_strict01_bottom_legend_stays_left_packed_after_mini_428() {
     // Strict01 family −0.0022 / clones −0.0023 / NR mean 59.451→59.4507
     // / 0 gains. Quartz ITT stays closer to left-packed plot_x ~102.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let (x, _) = pdf_literal_td_xy(&pdf, "Series 1").expect("legend Series 1");
     assert!(
@@ -15450,8 +15344,7 @@ fn official_strict01_chart_labels_use_tx1_lum() {
     // convert hardcodes emit_label 0.15. Not grid 0.85 (mini 385–388),
     // not chartSpace frame (mini 384), not gapWidth (mini 381).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
     let p1 = &pages[0];
@@ -15474,8 +15367,7 @@ fn official_strict01_valax_labels_sit_at_word_x() {
     // already match. Not legend center (mini 428), not axis max 0–6
     // extra ticks, not 9.12 snap (KEEP 550).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -15498,8 +15390,7 @@ fn official_strict01_valax_ticks_use_word_plot_dy() {
     // locked bar *width*; mini 428 locked legend *x*; KEEP 611 locked
     // cat/legend y. Plot origin/height is unused.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -15539,8 +15430,7 @@ fn official_strict01_cat_labels_sit_at_word_y() {
     // legend *x* (left-packed ~102), not cat/legend y. Not gapWidth
     // (mini 381), not chartSpace frame (mini 384).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let (cx, cy) = pdf_literal_td_xy(&pdf, "Category 1").expect("cat Category 1");
     let (lx, ly) = pdf_literal_td_xy(&pdf, "Series 1").expect("legend Series 1");
@@ -15573,8 +15463,7 @@ fn official_strict01_cat_labels_follow_word_chartspace_y() {
     // 305.9 (fitz 457.4 / 477.4). Word is 323 / 303 (fitz 459.8 / 479.5).
     // Mini 428 x, mini 381 bars, mini 384 frame stay.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let (cx, cy) = pdf_literal_td_xy(&pdf, "Category 1").expect("cat Category 1");
     let (lx, ly) = pdf_literal_td_xy(&pdf, "Series 1").expect("legend Series 1");
@@ -15603,8 +15492,7 @@ fn official_strict01_chart_gridlines_stay_088_after_mini_385() {
     // Quartz matches hardcoded 0.88. Keep 0.40 w 0.880. Mini 690 Word
     // 0.75pt width ITT-neg. Not chartSpace frame (mini 384).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
     let p1 = &pages[0];
@@ -15627,8 +15515,7 @@ fn official_strict01_chart_gridlines_stay_040_after_mini_690() {
     // 60.644, 8 Strict01-family drops −0.007/−0.009, 0 gains. KEEP-only
     // forbids. Mini 385 color 0.88 stays. Mini 384 frame stays off.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
     let p1 = &pages[0];
@@ -15651,8 +15538,7 @@ fn official_strict01_valax_zero_has_no_gridline() {
     // line at plot_y. Mini 385 color / mini 690 width stay 0.4pt 0.88.
     // Mini 384 frame stays off.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -15700,8 +15586,7 @@ fn official_strict01_chart_space_stays_unframed_after_mini_384() {
     // redline clones dropped (file_115_file_116 −0.019). Extra stroke vs
     // Quartz. Keep no frame. Not gapWidth (mini 381).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
     let p1 = &pages[0];
@@ -15720,8 +15605,7 @@ fn official_strict01_catax_baseline_matches_word_stroke() {
     // ChartSpace 0.75 frame (mini 384, 72×248 432×252 `re`, grep 0.850);
     // valAx majorGridlines (mini 385, stay 0.4pt 0.88); gapWidth (mini 381).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -15783,8 +15667,7 @@ fn official_strict01_catax_baseline_follows_word_y() {
     // PDF 337.9), same y as the Word bar bottoms. valAx labels stay at
     // +43 (KEEP 615). Mini 384 frame, mini 385 grid, mini 381 bars stay.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -15834,8 +15717,7 @@ fn official_strict01_catax_span_matches_word_x() {
     // 0.75/0.851, mini 381 packed bars at plot_x=92, KEEP 694 cluster
     // pad stay. Not ChartSpace frame (mini 384) or grid 0.75 (mini 690).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let p1 = &pages[0];
@@ -15883,8 +15765,7 @@ fn official_strict01_chart_bars_stay_plot_y_after_mini_691() {
     // / 4 gains: file_99 −0.042, small_font −0.022). KEEP-only forbids.
     // valAx labels stay +43 (KEEP 615). Mini 381 packed width stays.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let p1 = &pages[0];
@@ -15937,8 +15818,7 @@ fn official_strict01_chart_bar_clusters_center_in_category() {
     // locked gapWidth/overlap (bar *width* ~27.6). Cluster pad is unused.
     // Packed width / plot_y / catAx y stay.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let p1 = &pages[0];
@@ -15971,8 +15851,7 @@ fn official_strict01_chart_bars_stay_packed_after_mini_381() {
     // Strict01 family −0.023 / clones −0.048 / NR mean −0.005. Quartz
     // matches packed group/(n+0.5) ≈ 27.6pt bars. Keep packed.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
     let bars = pdf_fill_boxes_in(&pages[0], 0.357, 0.608, 0.835);
@@ -15997,8 +15876,7 @@ fn official_strict01_chart_series3_is_accent3_not_gray() {
     // theme1.xml Office 2013 accent3 is A5A5A5 (Word Quartz 0.647).
     // Hardcoded Office 2007 9BBB59 / PALETTE 0.65 are both wrong.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
     let p1 = &pages[0];
@@ -16022,8 +15900,7 @@ fn official_strict01_chart_series3_is_accent3_not_gray() {
 #[test]
 fn official_strict01_chart_paints_bottom_legend() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
         text.contains("Series 1") || text.contains("(Series 1)"),
@@ -16038,8 +15915,7 @@ fn official_strict01_chart_legend_swatches_match_word_size() {
     // centering the legend; swatch size is unused. Packed bars stay
     // ~27.6 (mini 381). 13pp / white ChartSpace (KEEP 562) held.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -16074,8 +15950,7 @@ fn official_strict01_theme_accent1_is_office_2013() {
     // (`theme_color_accent1_paints_office_blue`). Mini 112 365F91 is
     // 4F81BD+shade BF on comments-lots — not this knob.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -16104,8 +15979,7 @@ fn official_strict01_wrapnone_rect_strokes_lnref_shade() {
     // not lnRef. Mini 511 locked a:ln/@w on boxes. RightArrow chevron
     // outline is a sibling test (not a 4-edge box around the arrow).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -16142,8 +16016,7 @@ fn official_strict01_wrapnone_rect_shade_stays_four_edge_after_mini_635() {
     // KEEP 591 4-edge 1pt shade stands. ChartSpace 0.6 (mini 568) and
     // RightArrow chevron StrokePoly (KEEP 595) stay.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let p1 = &pages[0];
@@ -16179,8 +16052,7 @@ fn official_strict01_textbox2_sizerel_stays_page_after_mini_639() {
     // ITT-neg NR −0.0001 / RL −0.0014 (ole_object −0.0229). KEEP-only
     // forbids. Do not retry. Mini 511 locked 0.75 stroke.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let p7 = &pages[6];
@@ -16205,8 +16077,7 @@ fn official_strict01_textbox2_autofit_stays_page_height_after_mini_647() {
     // KEEP-only forbids. Do not retry. Mini 639 width page % 316.8
     // and sizeRelV 122.4 stand. Mini 511/414/510 stay.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let p7 = &pages[6];
@@ -16236,8 +16107,7 @@ fn official_strict01_cover_frame_uses_xml_line_width() {
     // Mini 511 locked a:ln/@w on the 0.6 black path (line:None, Text
     // Box 2 / ChartSpace). KEEP 591 Rectangle 1 lnRef idx=2 stays 1pt.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let p5 = &pages[4];
@@ -16260,8 +16130,7 @@ fn official_strict01_cover_frame_uses_hsl_lum_mod() {
     // 8-bit rounds to 0.463 0.443 0.443. KEEP 651 width 1.25 stays.
     // Cover wash accent1 lumMod+lumOff stays sRGB (0.871 0.922 0.967).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let p5 = &pages[4];
@@ -16283,8 +16152,7 @@ fn official_strict01_right_arrow_strokes_chevron_lnref_shade() {
     // 91.3×25.2). Convert fills the chevron but skip-strokes RightArrow
     // (KEEP 591 gated Box-only). A 4-edge box around the chevron is T-ink.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -16316,8 +16184,7 @@ fn official_strict01_page1_accent_fill_stays_above_the_chart() {
     // wrapNone Rectangle 1 / Right Arrow sit in the 167pt hole above the
     // chart. Without the hole they paint on top of Chart Title.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1 stream");
     let p1 = &pages[0];
@@ -16356,8 +16223,7 @@ fn official_strict01_chart_title_does_not_eat_an_extra_line() {
     // (PDF Td y≈502 vs ≈522). Hole Rectangle 3 already skip_hole_line.
     // Do not skip body Calibri 14 (mini 522) or SmartArt 14 (mini 453).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let y = pdf_literal_td_y(&pdf, "Chart Title").expect("Chart Title Td");
     assert!(
@@ -16372,8 +16238,7 @@ fn official_strict01_chart_title_sits_at_word_inset() {
     // ~2pt high (fitz 253.8). KEEP 611/615 plot_y/cat/legend stay put.
     // Mini 554 extra-line lock (y>515) still holds.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let y = pdf_literal_td_y(&pdf, "Chart Title").expect("Chart Title Td");
     assert!(
@@ -16389,8 +16254,7 @@ fn official_strict01_chartspace_paints_opaque_white_fill() {
     // Mini 384 locked the 0.75 gray *frame*; the fill is unused. Do not
     // stroke. 13pp held.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -16421,8 +16285,7 @@ fn official_strict01_chartspace_sits_at_word_y() {
     // so Td stays 522. Mini 384/568 frame/hairline, mini 623 after=8,
     // KEEP 611/615 cat/plot slack stay. Not spAutoFit (mini 639).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let whites: Vec<(f32, f32, f32, f32)> = pdf_fill_boxes_in(&pages[0], 1.0, 1.0, 1.0)
@@ -16451,8 +16314,7 @@ fn official_strict01_chart_stays_black_hairline_after_mini_568() {
     // clones −0.03 to −0.07 / mean −0.001. Keep the hairline. Do not
     // add the 0.75 gray (mini 384). White fill (KEEP 562) stays.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -16484,8 +16346,7 @@ fn official_strict01_chartspace_hairline_is_closed_rect() {
     // 0.6 black (do not skip; do not add 0.75 gray). Mini 635 locked
     // wrapNone Box closed StrokePoly. ChartSpace-only StrokeRect.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -16517,8 +16378,7 @@ fn official_strict01_chartspace_hairline_stays_black_after_mini_726() {
     // Mini 384 locked adding 0.75 gray; mini 568 locked skipping 0.6.
     // Do not retry ChartSpace gray/0.75/skip.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -16547,8 +16407,7 @@ fn official_strict01_right_arrow_is_a_chevron() {
     // Word rightArrow is a filled chevron (pointed head). Two FillRects
     // (shaft + square head) paint a T and wipe page-1 edge_iou.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
     assert!(
@@ -16562,8 +16421,7 @@ fn official_strict01_right_arrow_is_a_chevron() {
 fn official_strict01_curved_connector_is_a_cubic() {
     // Word curvedConnector3 (flipV) is two cubics, not a 3-segment polyline.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
     assert!(
@@ -16581,8 +16439,7 @@ fn official_strict01_curved_connector_uses_s_curve_controls() {
     // becomes a flattened elbow. Width is a sibling test (lnRef idx=1
     // is 0.5pt). Not legend center (mini 428).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -16605,8 +16462,7 @@ fn official_strict01_curved_connector_is_half_pt() {
     // KEEP 512 is bentConnector with explicit a:ln (no @w) at 1pt, not
     // this idx=1 mapping. Mini 511 locked Box a:ln/@w at 0.6.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -16630,8 +16486,7 @@ fn official_strict01_bent_connector_has_a_triangle_head() {
     // Word bentConnector3 tailEnd=triangle is a second filled polygon on page 1
     // (the first is the rightArrow chevron).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
     let n = pages[0].matches(" h f").count();
@@ -16649,8 +16504,7 @@ fn official_strict01_bent_connector_is_half_pt() {
     // with explicit a:ln (no @w) at 1pt — not this idx=1 mapping.
     // CurvedConnector idx=1 is already 0.5 (KEEP 599, `c` not `l S`).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
@@ -16691,8 +16545,7 @@ fn official_file_34_paints_wavy_underline() {
     // Word `w:u val="wave"` is a sine-like stroke. A straight Line under
     // "wavy underline" wipes file_34 edge_iou on the formatting line.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
-        .expect("convert official file_34");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page 1");
     assert!(
@@ -16708,8 +16561,7 @@ fn official_file_34_single_underlines_are_filled_not_stroked() {
     // `l S` (~68 strokes) fought that ink-union. Wave on the same page
     // stays stroked (official_file_34_paints_wavy_underline).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official file_34"))
-        .expect("convert official file_34");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let hair: Vec<_> = pdf_fill_rects(&pdf, 0.0, 0.0, 0.0)
         .into_iter()
         .filter(|(w, h)| *h > 0.0 && *h < 1.6 && *w > 40.0)
@@ -16951,8 +16803,7 @@ fn ms_gothic_ballot_box_stays_unpainted_after_mini_372() {
 fn official_strict01_checkbox_stays_unpainted_after_mini_372() {
     // Two live ☐ (MS Gothic). Aptos GID 0427 (mini 372) was ITT-neg.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let cids = pdf_cid_hex_tjs(&pdf);
     let ballots = cids.iter().filter(|h| *h == "0427").count();
@@ -16997,8 +16848,7 @@ fn official_strict01_checkbox_stays_without_stroke_square_after_mini_720() {
     // Word p3/p4 MS-Gothic ☐ at 72×11.04. Mini 372 Aptos and mini 720
     // StrokeRect were both ITT-neg extra ink. Keep gid-0 skip.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let cids = pdf_cid_hex_tjs(&pdf);
     let ballots = cids.iter().filter(|h| *h == "0427").count();
@@ -17135,8 +16985,7 @@ fn official_strict01_w14_effect_paras_stay_unpainted_as_body() {
     // (shadow+outline) and 20pt Calibri Online Video (reflection+gradFill)
     // are omitted as body glyphs. CONFIDENTIAL watermark stays. 13pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
@@ -17448,8 +17297,7 @@ fn official_strict01_author_box_skips_nofill_ln_hairline() {
     // around Eric White; convert painted 360.36×186.93 0.6 black 4-edge.
     // ChartSpace 0.6 on page 1 stays (mini 568).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need pages");
@@ -17542,8 +17390,7 @@ fn official_strict01_diagram_paints_accent1_roundrects() {
     // Word SmartArt on page 13 is three accent1-filled roundRects
     // (Item 1/2/3). convert currently dumps the labels with no fills.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert_eq!(pages.len(), 13, "Word Strict01 is 13pp");
     let last = pages.last().expect("page 13");
@@ -17561,8 +17408,7 @@ fn official_strict01_diagram_connector_bars_stroke_accent1() {
     // White fills are KEEP (opaque bars). The accent1 strokes stay.
     // Not roundRect white halo, not extra body copies.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert_eq!(pages.len(), 13, "Word Strict01 is 13pp");
     let last = pages.last().expect("page 13");
@@ -17583,8 +17429,7 @@ fn official_strict01_diagram_connector_bars_paint_opaque_white() {
     // roundRect lt1 *stroke* halo (diag_ln_stroke). Not 24pt Item
     // (mini 453).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let last = pages.last().expect("page 13");
@@ -17607,8 +17452,7 @@ fn official_strict01_diagram_connector_bars_use_closed_rect_stroke() {
     // grow square-cap corners. Distinct from mini 635 wrapNone Box
     // StrokePoly `h S` (KEEP 591 4-edge shade stands on page 1).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let last = pages.last().expect("page 13");
@@ -17644,8 +17488,7 @@ fn official_strict01_diagram_roundrects_are_polygons() {
     // Word roundRect adj=16667 (r = min(w,h)/6). Sharp `re` boxes wipe
     // p13 edge_iou at the 9pt corners.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert_eq!(pages.len(), 13, "Word Strict01 is 13pp");
     let last = pages.last().expect("page 13");
@@ -17674,8 +17517,7 @@ fn official_strict01_diagram_roundrects_stay_polygon_after_mini_689() {
     // forbids. Keep the 20-line polygon fill. White 1pt roundRect stroke
     // stays skipped (KEEP 587 extra-halo). Connector `re S` KEEP 685.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let last = pages.last().expect("page 13");
@@ -17713,8 +17555,7 @@ fn official_strict01_diagram_item_stays_fourteen_pt_after_mini_453() {
     // family −0.016 / clones −0.016, 0 gains. Quartz raster vs 24pt
     // vector. Keep hardcoded 14pt.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     let pages = pdf_content_streams(&pdf);
     assert_eq!(pages.len(), 13, "Word Strict01 is 13pp");
     let last = pages.last().expect("page 13");
@@ -17737,8 +17578,7 @@ fn official_strict01_diagram_item_stays_pad_twelve_after_mini_665() {
     // ITT-neg RL mean −0.0005 (9 clone drops / 3 gains, small_font
     // −0.015). KEEP-only forbids. Mini 453 14pt / 414 textbox lIns stay.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official Strict01"))
-        .expect("convert official Strict01");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let (x, _y) = pdf_literal_td_xy(&pdf, "Item 1").expect("Item 1");
     assert!(
@@ -17980,8 +17820,7 @@ fn official_file_27_markup_gutter_and_red_ins() {
     // left ~415pt, 0.949 gray pasteboard on the right (~188×578). Shrinking
     // wrap via margin_r += 144 wrapped the 30pt title and blew 12→14pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_27.docx";
-    let pdf =
-        docx_to_pdf(&std::fs::read(path).expect("official file_27")).expect("convert file_27");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_27");
     assert_eq!(pdf_page_count(&pdf), 12, "Word file_27 is 12pp");
     let boxes = pdf_mediaboxes(&pdf);
     assert!(
@@ -18028,8 +17867,7 @@ fn track_revisions_few_dels_do_not_paint_balloon_pane() {
 fn official_comments_lots_has_no_markup_pane() {
     // comments-lots has no trackRevisions; Word stays 0.24 cm / no pasteboard.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&std::fs::read(path).expect("official comments-lots"))
-        .expect("convert comments-lots");
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert comments-lots");
     assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
     let hs = pdf_fill_hs(&pdf, 0.949, 0.949, 0.949);
     assert!(

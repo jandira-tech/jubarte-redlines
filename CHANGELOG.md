@@ -25,6 +25,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   76 mean Jaccard **13.74** (median 8.86), 398 mean Jaccard **53.10**
   (median 43.50). No converter behaviour change in this commit.
 
+### Fixed
+
+- **CI on GitHub Actions.** `cargo fmt` wraps two `finalize.rs` lines; tests
+  that `std::fs::read` sibling `../neurotic_docx_bench` fixtures now skip when
+  that checkout is absent (Actions has no sibling). `deny.toml` ignores
+  RUSTSEC-2026-0206 (`rustybuzz` unmaintained) and RUSTSEC-2026-0192
+  (`ttf-parser` via rustybuzz) until the FaceKey/harfbuzz swap (plan 2e).
+
 ## [0.9.0] - 2026-09-05
 
 Ring 3 is green for the first time: all 207 corpus redlines open in Microsoft
