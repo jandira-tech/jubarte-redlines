@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Word-for-Mac Quartz substitutions when the requested family is not in the
+# catalogue and fontTable.xml has no altName. Keys match mapped_face
+# normalisation (lowercase, spaces/hyphens stripped). key="*" is the
+# unknown-family last resort.
+
+[[row]]
+key = "inter"
+physical = "Cambria"
+stems = ["source_randomized__file_146", "source__sample_document_word_repair_of_our_output_iter2_word_repaired_2"]
+
+[[row]]
+key = "dejavusansmono"
+physical = "Verdana"
+stems = ["fontTable altName harvest: DejaVu Sans Mono -> Verdana"]
+
+[[row]]
+key = "liberationserif"
+physical = "Times New Roman"
+stems = ["Liberation Serif; Hiragino Mincho ProN W3 also observed, language-keyed, not in the 47-face catalogue"]
+
+[[row]]
+key = ""
+physical = "Times New Roman"
+stems = ["none docDefaults n=5 Jaccard 4.3"]
+
+[[row]]
+key = "*"
+physical = "Cambria"
+stems = ["quoted CSS list \"Times New Roman\", Times, serif; unknown family without altName"]

@@ -26,6 +26,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - **Theme minor slot for every face.** `minorHAnsi` → theme minor (Cambria
   included). The Aptos-only gate is gone. `file_2` / `file_41` may drop
   until the line-box formula lands; explicit `w:ascii` still wins.
+- **Word-substitution evidence table.** Unknown / quoted CSS-list families
+  resolve to Cambria (Word Quartz). `DejaVu Sans Mono` → Verdana;
+  `Liberation Serif` → Times New Roman; empty request → Times New Roman;
+  `w:family`/`w:pitch` generics (roman/swiss/modern/fixed) after altName.
 
 - **Convert fidelity gate.** `scripts/convert_sweep.py` (wrapper
   `scripts/convert-sweep.sh`) scores `jubarte convert` against Word PDFs on the

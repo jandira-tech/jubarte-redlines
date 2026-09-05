@@ -587,8 +587,9 @@ impl Fonts {
     }
 
     /// Resolve `family` using Word's font table. Installed faces win;
-    /// otherwise `w:altName` is tried (cycle-guarded). Unknown names still
-    /// fall through to Carlito, matching today's `resolve`.
+    /// otherwise `w:altName`, then the Word-substitution evidence table,
+    /// then `w:family`/`w:pitch` generics. Unknown names use the evidence
+    /// table's Cambria row (plan Step 2d).
     pub(crate) fn resolve_in(
         &self,
         family: &str,
@@ -633,12 +634,34 @@ impl Fonts {
         }
         let visit_key = primary.to_ascii_lowercase();
         if !visited.insert(visit_key) {
-            return Self::carlito(bold, italic);
+            return Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic);
         }
         if let Some(alt) = table.alt_name(primary) {
             return self.resolve_walk(alt, bold, italic, table, visited);
         }
-        Self::carlito(bold, italic)
+        if let Some(physical) = super::word_subst::lookup_physical(primary) {
+            return Self::face_from_physical(&physical, bold, italic);
+        }
+        if let Some(entry) = table.get(primary) {
+            let generic = super::word_subst::generic_physical(entry.family, entry.pitch);
+            if !generic.is_empty() {
+                return Self::face_from_physical(generic, bold, italic);
+            }
+        }
+        Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic)
+    }
+
+    fn face_from_physical(physical: &str, bold: bool, italic: bool) -> FaceId {
+        let key = physical
+            .to_ascii_lowercase()
+            .replace([' ', '-'], "")
+            .replace("mt", "");
+        Self::mapped_face(&key, bold, italic).unwrap_or(match (bold, italic) {
+            (false, false) => FaceId::CambriaRegular,
+            (true, false) => FaceId::CambriaBold,
+            (false, true) => FaceId::CambriaItalic,
+            (true, true) => FaceId::CambriaBoldItalic,
+        })
     }
 }
 
@@ -671,7 +694,7 @@ impl Fonts {
             || key.contains("menlo")
             || key.contains("cousine")
             || key.contains("nimbusmono")
-            || key.ends_with("mono");
+            || (key.ends_with("mono") && !key.contains("dejavu"));
         let aptos_display = key.starts_with("aptosdisplay")
             || (key.starts_with("aptos") && key.contains("display"));
         let aptos = key.starts_with("aptos") && !aptos_display;
@@ -1037,8 +1060,8 @@ mod tests {
         );
         assert_eq!(
             id,
-            FaceId::CarlitoRegular,
-            "unknown quoted list falls to Carlito until the evidence table (PR4)"
+            FaceId::CambriaRegular,
+            "unknown quoted CSS list is the evidence-table unknown row (Cambria)"
         );
         assert_eq!(
             fonts.resolve("Verdana, Geneva, sans-serif", false, false),
@@ -1061,6 +1084,77 @@ mod tests {
     }
 
     #[test]
+    fn resolve_dejavu_sans_mono_follows_word_subst_verdana() {
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve("DejaVu Sans Mono", false, false),
+            FaceId::VerdanaRegular,
+            "Word Quartz substituted Verdana, not Courier, for DejaVu Sans Mono"
+        );
+    }
+
+    #[test]
+    fn resolve_unknown_family_is_cambria_not_calibri() {
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve("DefinitelyNotAFont", false, false),
+            FaceId::CambriaRegular
+        );
+    }
+
+    #[test]
+    fn resolve_empty_family_is_times_new_roman() {
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve("", false, false),
+            FaceId::SerifRegular,
+            "no docDefaults font: Word used Times New Roman"
+        );
+    }
+
+    #[test]
+    fn resolve_font_table_swiss_generic_is_arial() {
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="SomeSwiss"><w:family w:val="swiss"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("SomeSwiss", false, false, &table),
+            FaceId::SansRegular
+        );
+    }
+
+    #[test]
+    fn resolve_font_table_roman_generic_is_times() {
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="SomeRoman"><w:family w:val="roman"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("SomeRoman", false, false, &table),
+            FaceId::SerifRegular
+        );
+    }
+
+    #[test]
+    fn resolve_font_table_fixed_pitch_is_courier() {
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="SomeFixed"><w:pitch w:val="fixed"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("SomeFixed", false, false, &table),
+            FaceId::MonoRegular
+        );
+    }
+
+    #[test]
     fn resolve_altname_cycle_falls_back() {
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -1071,7 +1165,8 @@ mod tests {
         let fonts = Fonts::new();
         assert_eq!(
             fonts.resolve_in("GhostA", false, false, &table),
-            FaceId::CarlitoRegular
+            FaceId::CambriaRegular,
+            "altName cycle uses the unknown-family evidence row"
         );
     }
 }
