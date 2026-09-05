@@ -745,11 +745,13 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
     // Word-on-macOS oracles this converter is calibrated against. On other
     // platforms no override is found and the bundled metric-compatible
     // faces are used.
+    // Do not scan `/System/Library/Fonts`: Apple's `Symbol.ttf` is not Word
+    // SymbolMT, and GitHub macOS runners have it. Arial/Verdana/Georgia live
+    // in Supplemental; Calibri/Cambria/Aptos live in DFonts.
     const DIRS: &[&str] = &[
         "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
         "/Library/Fonts/Microsoft",
         "/System/Library/Fonts/Supplemental",
-        "/System/Library/Fonts",
         "/Library/Fonts",
     ];
     for dir in DIRS {
@@ -825,6 +827,17 @@ fn sanitize_pdf_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apple_system_symbol_is_not_the_word_overlay() {
+        if let Some(path) = system_override(FaceId::Symbol) {
+            let s = path.to_string_lossy();
+            assert!(
+                !s.contains("/System/Library/Fonts/Symbol"),
+                "Apple Symbol.ttf is not Word SymbolMT: {s}"
+            );
+        }
+    }
 
     #[test]
     fn calibri_gpos_kerns_av_at_28pt() {

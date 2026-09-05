@@ -36,6 +36,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   Convert tests that look for `/Calibri` in the PDF also accept bundled
   `/Carlito` (Actions has no Word DFonts). Aptos/Calibri wrap-width oracles
   skip when Word DFonts are absent (PDF still names the logical face).
+  Font overlay no longer scans `/System/Library/Fonts` (Apple Symbol ≠ Word
+  SymbolMT; GitHub macOS runners have it).
 
 ## [0.9.0] - 2026-09-05
 

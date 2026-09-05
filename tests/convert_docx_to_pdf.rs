@@ -2180,7 +2180,7 @@ fn list_bullet_symbol_rfonts_embeds_symbol_not_body_aptos() {
     .expect("convert Symbol bullet");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("/Symbol") || text.contains("SymbolMT") || text.contains("/LiberationSans"),
+        pdf_has_symbol_face(&text),
         "Word paints ListBullet in Symbol, not body Aptos; tail {}",
         &text[text.len().saturating_sub(280)..]
     );
@@ -2236,7 +2236,7 @@ fn symbol_pua_bullet_stays_winansi_bullet_after_mini_108() {
         &text[text.len().saturating_sub(320)..]
     );
     assert!(
-        text.contains("/Symbol") || text.contains("SymbolMT") || text.contains("/LiberationSans"),
+        pdf_has_symbol_face(&text),
         "Symbol PUA ListBullet must embed SymbolMT (U+F0B7), not Aptos 0x95; tail {}",
         &text[text.len().saturating_sub(320)..]
     );
@@ -3010,11 +3010,27 @@ fn word_dfonts_available() -> bool {
     std::path::Path::new("/Applications/Microsoft Word.app/Contents/Resources/DFonts").is_dir()
 }
 
+/// ListBullet `rFonts=Symbol`. Word DFonts → `/Symbol` / `SymbolMT`; bundled
+/// fallback → `/Symbol` (Liberation Sans bytes); GitHub macOS may overlay
+/// `/System/Library/Fonts/Symbol.ttf` whose PostScript name is not `/Symbol`.
+fn pdf_has_symbol_face(hay: &str) -> bool {
+    let h = hay.to_ascii_lowercase();
+    h.contains("symbol") || h.contains("liberationsans")
+}
+
 #[test]
 fn pdf_has_named_accepts_carlito_substitute() {
     assert!(pdf_has_named("/Carlito-Bold 46 Tf", "Calibri-Bold"));
     assert!(pdf_has_named("/Calibri-Bold 46 Tf", "Calibri-Bold"));
     assert!(!pdf_has_named("/Carlito 46 Tf", "Calibri-Bold"));
+}
+
+#[test]
+fn pdf_has_symbol_face_accepts_apple_ps_name() {
+    assert!(pdf_has_symbol_face("/Symbol 11.04 Tf"));
+    assert!(pdf_has_symbol_face("/Apple-Symbols 46 Tf"));
+    assert!(pdf_has_symbol_face("SymbolMT"));
+    assert!(!pdf_has_symbol_face("/Aptos 11.04 Tf"));
 }
 
 #[test]
