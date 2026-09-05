@@ -3005,6 +3005,11 @@ fn pdf_has_named(hay: &str, calibri_name: &str) -> bool {
         || hay.contains(&format!("/{}", calibri_name.replace("Calibri", "Carlito")))
 }
 
+/// Word-on-macOS DFonts overlay. Absent on GitHub Actions (Carlito stand-in).
+fn word_dfonts_available() -> bool {
+    std::path::Path::new("/Applications/Microsoft Word.app/Contents/Resources/DFonts").is_dir()
+}
+
 #[test]
 fn pdf_has_named_accepts_carlito_substitute() {
     assert!(pdf_has_named("/Carlito-Bold 46 Tf", "Calibri-Bold"));
@@ -13057,10 +13062,9 @@ fn table_grid_wrapped_header_keeps_cell_chrome() {
         "header row must stroke top and bottom rules, ys={ys:?}"
     );
     let gap = ys[0] - ys[1];
-    let hay = String::from_utf8_lossy(&pdf);
-    if !hay.contains("/Aptos") {
+    if !word_dfonts_available() {
         eprintln!(
-            "skip chrome gap: Aptos DFonts absent (CI Carlito line-box); gap={gap} ys={ys:?}"
+            "skip chrome gap: Word DFonts absent (CI names bundled Carlito /Aptos); gap={gap} ys={ys:?}"
         );
         return;
     }
@@ -14127,6 +14131,12 @@ fn toc_right_tab_keeps_pageref_on_last_line() {
         .or_else(|| pdf_literal_y(&hay, "11.04 Tf", "(5-3)"))
         .or_else(|| pdf_literal_y(&hay, "46 Tf", "(5)"))
         .or_else(|| pdf_literal_y(&hay, "46 Tf", "(5-3)"));
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip PAGEREF last-line: Word DFonts wrap oracle; five_y={five_y:?} min_y={min_y}"
+        );
+        return;
+    }
     assert!(
         five_y.is_some_and(|y| (y - min_y).abs() < 0.6),
         "PAGEREF 5-3 must sit on the last wrapped TOC line; five_y={five_y:?} min_y={min_y} ys={ys:?}"

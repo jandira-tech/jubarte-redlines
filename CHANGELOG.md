@@ -34,7 +34,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   (`ttf-parser` via rustybuzz) until the FaceKey/harfbuzz swap (plan 2e).
   Clippy 1.98 `chunks_exact_to_as_chunks` on the WMF gray-fill helper.
   Convert tests that look for `/Calibri` in the PDF also accept bundled
-  `/Carlito` (Actions has no Word DFonts).
+  `/Carlito` (Actions has no Word DFonts). Aptos/Calibri wrap-width oracles
+  skip when Word DFonts are absent (PDF still names the logical face).
 
 ## [0.9.0] - 2026-09-05
 
