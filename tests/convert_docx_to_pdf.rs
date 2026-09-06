@@ -12904,6 +12904,39 @@ fn header_table_paints_tbl_borders() {
 }
 
 #[test]
+fn mirror_margins_swap_left_and_right_on_even_pages() {
+    // xml leftover: w:mirrorMargins swaps pgMar left/right on even pages.
+    // Odd page keeps left=72; even page uses the original right=216 as left.
+    let body = "<w:p><w:r><w:t>PageOneMX</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         <w:p><w:r><w:t>PageTwoMX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"4320\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "<w:mirrorMargins/>"))
+        .expect("convert mirrorMargins");
+    assert_eq!(pdf_page_count(&pdf), 2, "two body pages");
+    let pages = pdf_content_streams(&pdf);
+    let p1 = pdf_winansi_text(pages[0].as_bytes());
+    let p2 = pdf_winansi_text(pages[1].as_bytes());
+    assert!(
+        p1.contains("PageOneMX") && p2.contains("PageTwoMX"),
+        "both pages must paint; p1={p1} p2={p2}"
+    );
+    let x1 = pdf_tf_xs(pages[0].as_bytes(), "11.04 Tf");
+    let x2 = pdf_tf_xs(pages[1].as_bytes(), "11.04 Tf");
+    assert!(
+        x1.iter().any(|x| (60.0..90.0).contains(x)),
+        "odd page keeps left=72pt; x1={x1:?}"
+    );
+    assert!(
+        x2.iter().any(|x| (200.0..230.0).contains(x)),
+        "even page swaps in right=216pt as left; x2={x2:?}"
+    );
+}
+
+#[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert header_no_rels");
