@@ -780,6 +780,8 @@ struct SectionChrome {
     footer_odd: Option<ChromePart>,
     header_images: Vec<LaidImage>,
     footer_images: Vec<LaidImage>,
+    header_tables: Vec<ChromeTable>,
+    footer_tables: Vec<ChromeTable>,
 }
 
 #[derive(Clone)]
@@ -3421,6 +3423,8 @@ fn section_chrome(
         footer_odd,
         header_images: header.start.images,
         footer_images: footer.start.images,
+        header_tables: header.start.tables,
+        footer_tables: footer.start.tables,
     }
 }
 
@@ -7096,6 +7100,8 @@ struct HfChrome {
     footer_odd: Option<ChromePart>,
     header_images: Vec<LaidImage>,
     footer_images: Vec<LaidImage>,
+    header_tables: Vec<ChromeTable>,
+    footer_tables: Vec<ChromeTable>,
 }
 
 fn first_section_hf(
@@ -7134,6 +7140,8 @@ fn first_section_hf(
         footer_odd,
         header_images: header.start.images,
         footer_images: footer.start.images,
+        header_tables: header.start.tables,
+        footer_tables: footer.start.tables,
     }
 }
 
@@ -7144,6 +7152,7 @@ struct ChromePart {
     align: Align,
     watermark: Option<Watermark>,
     images: Vec<LaidImage>,
+    tables: Vec<ChromeTable>,
 }
 
 fn empty_chrome() -> ChromePart {
@@ -7153,6 +7162,7 @@ fn empty_chrome() -> ChromePart {
         align: Align::Left,
         watermark: None,
         images: Vec::new(),
+        tables: Vec::new(),
     }
 }
 
@@ -7168,7 +7178,67 @@ struct PickedHf {
 }
 
 fn chrome_present(part: &ChromePart) -> bool {
-    !part.runs.is_empty() || part.watermark.is_some() || !part.images.is_empty()
+    !part.runs.is_empty()
+        || part.watermark.is_some()
+        || !part.images.is_empty()
+        || !part.tables.is_empty()
+}
+
+#[derive(Clone)]
+struct ChromeTable {
+    w: f32,
+    h: f32,
+    color: [f32; 3],
+    width: f32,
+    top: bool,
+    bottom: bool,
+    left: bool,
+    right: bool,
+}
+
+fn hf_table_width_pt(dom: &Dom, table: NodeId) -> f32 {
+    match table_pref_width(dom, table) {
+        TblWidth::Dxa(w) if w > 1.0 => w,
+        _ => {
+            let mut w = 0.0;
+            if let Some(grid) = direct_named(dom, table, "tblGrid") {
+                for col in dom.elements(grid, Some(&W::name("gridCol"))) {
+                    w += attr_any(dom, col, "w")
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .map(twip)
+                        .unwrap_or(0.0);
+                }
+            }
+            if w > 1.0 { w } else { 144.0 }
+        }
+    }
+}
+
+fn collect_hf_tables(dom: &Dom, root: NodeId) -> Vec<ChromeTable> {
+    let mut out = Vec::new();
+    for tbl in dom.descendants(root, Some(&W::tbl())) {
+        let Some(pr) = first_named(dom, tbl, "tblPr") else {
+            continue;
+        };
+        let Some(borders) = parse_tbl_borders(dom, pr) else {
+            continue;
+        };
+        if !(borders.top || borders.bottom || borders.left || borders.right) {
+            continue;
+        }
+        let rows = dom.elements(tbl, Some(&W::tr())).len().max(1) as f32;
+        out.push(ChromeTable {
+            w: hf_table_width_pt(dom, tbl),
+            h: 16.0 * rows,
+            color: borders.color,
+            width: borders.width,
+            top: borders.top,
+            bottom: borders.bottom,
+            left: borders.left,
+            right: borders.right,
+        });
+    }
+    out
 }
 
 fn pick_section_hf(
@@ -7282,6 +7352,7 @@ fn load_chrome_part(
         align,
         watermark: parse_header_watermark(&part_dom, root),
         images,
+        tables: collect_hf_tables(&part_dom, root),
     }
 }
 
@@ -7676,6 +7747,8 @@ struct Layout<'a> {
     footer_odd: Option<ChromePart>,
     header_images: Vec<LaidImage>,
     footer_images: Vec<LaidImage>,
+    header_tables: Vec<ChromeTable>,
+    footer_tables: Vec<ChromeTable>,
     placed_comments: HashSet<String>,
     /// Word clips table-cell ink at the cell’s right edge (file_146
     /// github underline ran ~46pt past the table when xml:space
@@ -7796,6 +7869,8 @@ impl<'a> Layout<'a> {
             footer_odd: hf.footer_odd,
             header_images: hf.header_images,
             footer_images: hf.footer_images,
+            header_tables: hf.header_tables,
+            footer_tables: hf.footer_tables,
             placed_comments: HashSet::new(),
             clip_right: None,
             last_style_id: String::new(),
@@ -7835,6 +7910,7 @@ impl<'a> Layout<'a> {
             || !next.header.is_empty()
             || next.watermark.is_some()
             || !next.header_images.is_empty()
+            || !next.header_tables.is_empty()
         {
             self.header = next.header.clone();
             self.header_align = next.header_align;
@@ -7845,6 +7921,7 @@ impl<'a> Layout<'a> {
             self.header_even = next.header_even.clone();
             self.header_odd = next.header_odd.clone();
             self.header_images.clone_from(&next.header_images);
+            self.header_tables.clone_from(&next.header_tables);
         }
         if !next.footer.is_empty() {
             self.footer = next.footer.clone();
@@ -7854,6 +7931,7 @@ impl<'a> Layout<'a> {
             self.footer_even = next.footer_even.clone();
             self.footer_odd = next.footer_odd.clone();
             self.footer_images.clone_from(&next.footer_images);
+            self.footer_tables.clone_from(&next.footer_tables);
         }
         let header_band = if self.header.is_empty() {
             0.0
@@ -7874,12 +7952,14 @@ impl<'a> Layout<'a> {
             self.header_align = part.align;
             self.header_bottom = part.border;
             self.header_images = part.images;
+            self.header_tables = part.tables;
         }
         if let Some(part) = self.footer_rest.take() {
             self.footer = part.runs;
             self.footer_align = part.align;
             self.footer_top = part.border;
             self.footer_images = part.images;
+            self.footer_tables = part.tables;
         }
     }
 
@@ -7888,6 +7968,7 @@ impl<'a> Layout<'a> {
         self.header_align = part.align;
         self.header_bottom = part.border;
         self.header_images.clone_from(&part.images);
+        self.header_tables.clone_from(&part.tables);
     }
 
     fn apply_footer_part(&mut self, part: &ChromePart) {
@@ -7895,6 +7976,7 @@ impl<'a> Layout<'a> {
         self.footer_align = part.align;
         self.footer_top = part.border;
         self.footer_images.clone_from(&part.images);
+        self.footer_tables.clone_from(&part.tables);
     }
 
     fn select_parity_chrome(&mut self) {
@@ -9463,6 +9545,29 @@ impl<'a> Layout<'a> {
                 width: 0.75,
                 color: [0.6, 0.6, 0.6],
             }),
+        }
+    }
+
+    fn emit_chrome_table(&mut self, table: &ChromeTable, in_header: bool) {
+        let x = self.page.margin_l;
+        let y = if in_header {
+            self.page.height - self.page.header.max(10.0) - table.h
+        } else {
+            self.page.footer.max(10.0)
+        };
+        let x2 = x + table.w;
+        let y2 = y + table.h;
+        if table.top {
+            self.hairline_h(x, y2, x2, table.width, table.color);
+        }
+        if table.bottom {
+            self.hairline_h(x, y, x2, table.width, table.color);
+        }
+        if table.left {
+            self.hairline_v(x, y, y2, table.width, table.color);
+        }
+        if table.right {
+            self.hairline_v(x2, y, y2, table.width, table.color);
         }
     }
 
@@ -11725,6 +11830,12 @@ impl<'a> Layout<'a> {
                 self.emit_chrome_image(img, true);
             }
         }
+        if !self.header_tables.is_empty() {
+            let tables = self.header_tables.clone();
+            for table in &tables {
+                self.emit_chrome_table(table, true);
+            }
+        }
         if !self.header.is_empty() {
             let header = self.resolve_fields(&self.header.clone(), page_no);
             let one = chrome_one_line_pt(self.fonts, &header);
@@ -11763,6 +11874,12 @@ impl<'a> Layout<'a> {
             let images = self.footer_images.clone();
             for img in &images {
                 self.emit_chrome_image(img, false);
+            }
+        }
+        if !self.footer_tables.is_empty() {
+            let tables = self.footer_tables.clone();
+            for table in &tables {
+                self.emit_chrome_table(table, false);
             }
         }
         if !self.footer.is_empty() {
