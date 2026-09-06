@@ -16004,6 +16004,36 @@ fn docdefaults_minor_hansi_aptos_embeds_liberation_sans() {
 }
 
 #[test]
+fn east_asia_theme_slot_embeds_ea_face_for_cjk() {
+    // xml 3.2 ckpt 2: hint=eastAsia + eastAsiaTheme uses a:ea, not latin.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+             <w:name w:val=\"Normal\"/>\
+           </w:style>\
+         </w:styles>";
+    let theme = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+           <a:themeElements><a:fontScheme name=\"Office\">\
+             <a:majorFont><a:latin typeface=\"Calibri\"/></a:majorFont>\
+             <a:minorFont><a:latin typeface=\"Calibri\"/>\
+               <a:ea typeface=\"Verdana\"/></a:minorFont>\
+           </a:fontScheme></a:themeElements>\
+         </a:theme>";
+    let body = "<w:p><w:r><w:rPr>\
+         <w:rFonts w:ascii=\"Calibri\" w:eastAsiaTheme=\"minorEastAsia\" w:hint=\"eastAsia\"/>\
+         </w:rPr><w:t>HelloEA</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles_and_theme(body, styles, theme))
+        .expect("convert eastAsia theme");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/Verdana") || text.contains("/LiberationSans"),
+        "hint=eastAsia + eastAsiaTheme must embed a:ea Verdana (Liberation Sans when DFonts absent); tail {}",
+        &text[text.len().saturating_sub(320)..]
+    );
+}
+
+#[test]
 fn factory_cambria_minor_honours_theme_slot() {
     // Word Quartz paints factory minorHAnsi → Cambria. The Aptos-only
     // gate (mini 396) is gone; file_2 / file_41 may drop until line-box.

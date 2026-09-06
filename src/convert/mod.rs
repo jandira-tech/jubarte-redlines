@@ -179,6 +179,14 @@ enum Align {
     Justify,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum FontHint {
+    #[default]
+    Default,
+    EastAsia,
+    Complex,
+}
+
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum VertAlign {
     #[default]
@@ -194,6 +202,11 @@ enum VertAlign {
 #[derive(Clone)]
 struct RunStyle {
     family: String,
+    /// `w:eastAsia` / `eastAsiaTheme` face for CJK (xml 3.2 ckpt 2).
+    family_ea: Option<String>,
+    /// `w:cs` / `cstheme` face for complex script.
+    family_cs: Option<String>,
+    hint: FontHint,
     size: f32,
     bold: bool,
     italic: bool,
@@ -421,6 +434,10 @@ struct NamedStyle {
 struct ThemeFonts {
     major: Option<String>,
     minor: Option<String>,
+    major_ea: Option<String>,
+    minor_ea: Option<String>,
+    major_cs: Option<String>,
+    minor_cs: Option<String>,
     /// `a:clrScheme` srgbClr / sysClr lastClr. Empty → Office 2007
     /// fallback in `theme_slot_color` (comments-lots / I_am_sharing).
     colors: HashMap<String, [f32; 3]>,
@@ -520,6 +537,9 @@ impl Defaults {
         Self {
             run: RunStyle {
                 family: "Calibri".into(),
+                family_ea: None,
+                family_cs: None,
+                hint: FontHint::Default,
                 size: 11.0,
                 bold: false,
                 italic: false,
@@ -1349,18 +1369,22 @@ fn load_theme(pkg: &PartFs) -> ThemeFonts {
     else {
         return ThemeFonts::default();
     };
+    parse_theme_xml(&xml)
+}
+
+fn parse_theme_xml(xml: &str) -> ThemeFonts {
     let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
+    let doc = dom.parse_xdocument(xml);
     let Some(root) = dom.root(doc) else {
         return ThemeFonts::default();
     };
-    let latin = |parent_local: &str| -> Option<String> {
+    let typeface = |parent_local: &str, child_local: &str| -> Option<String> {
         let parent = dom
             .descendants(root, Some(&A::name(parent_local)))
             .into_iter()
             .next()?;
         let face = dom
-            .descendants(parent, Some(&A::name("latin")))
+            .descendants(parent, Some(&A::name(child_local)))
             .into_iter()
             .next()?;
         attr_any(&dom, face, "typeface").map(str::to_string)
@@ -1392,8 +1416,12 @@ fn load_theme(pkg: &PartFs) -> ThemeFonts {
         }
     }
     ThemeFonts {
-        major: latin("majorFont"),
-        minor: latin("minorFont"),
+        major: typeface("majorFont", "latin"),
+        minor: typeface("minorFont", "latin"),
+        major_ea: typeface("majorFont", "ea"),
+        minor_ea: typeface("minorFont", "ea"),
+        major_cs: typeface("majorFont", "cs"),
+        minor_cs: typeface("minorFont", "cs"),
         colors,
     }
 }
@@ -1736,6 +1764,27 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
     // drops) but redline file_27_file_28 −2.85 (Word embeds Cambria;
     // Quartz ITT prefers the Calibri line box). Keep the Aptos-only
     // gate.
+    let east_asia = attr_any(dom, fonts, "eastAsia");
+    let east_asia_slot = attr_any(dom, fonts, "eastAsiaTheme");
+    if let Some(name) = east_asia {
+        style.family_ea = Some(name.to_string());
+    } else if let Some(face) = east_asia_slot.and_then(|slot| theme_script_face(theme, slot)) {
+        style.family_ea = Some(face);
+    }
+    let cs = attr_any(dom, fonts, "cs");
+    let cs_slot = attr_any(dom, fonts, "cstheme").or_else(|| attr_any(dom, fonts, "csTheme"));
+    if let Some(name) = cs {
+        style.family_cs = Some(name.to_string());
+    } else if let Some(face) = cs_slot.and_then(|slot| theme_script_face(theme, slot)) {
+        style.family_cs = Some(face);
+    }
+    if let Some(hint) = attr_any(dom, fonts, "hint") {
+        style.hint = match hint {
+            "eastAsia" => FontHint::EastAsia,
+            "cs" => FontHint::Complex,
+            _ => FontHint::Default,
+        };
+    }
     let ascii = attr_any(dom, fonts, "ascii").or_else(|| attr_any(dom, fonts, "hAnsi"));
     let slot = attr_any(dom, fonts, "asciiTheme").or_else(|| attr_any(dom, fonts, "hAnsiTheme"));
     let display_cache = ascii.is_some_and(|name| name.to_ascii_lowercase().contains("display"));
@@ -1764,6 +1813,45 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
     } else if let Some(ascii) = ascii {
         style.family = ascii.to_string();
     }
+}
+
+fn theme_script_face(theme: &ThemeFonts, slot: &str) -> Option<String> {
+    let slot = slot.to_ascii_lowercase();
+    if slot.contains("majoreastasia") {
+        theme.major_ea.clone()
+    } else if slot.contains("minoreastasia") {
+        theme.minor_ea.clone()
+    } else if slot.contains("majorcs") || slot.contains("majorbidi") {
+        theme.major_cs.clone()
+    } else if slot.contains("minorcs") || slot.contains("minorbidi") {
+        theme.minor_cs.clone()
+    } else {
+        None
+    }
+}
+
+fn is_cjk(c: char) -> bool {
+    matches!(
+        c,
+        '\u{3000}'..='\u{9FFF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{FF00}'..='\u{FFEF}'
+            | '\u{20000}'..='\u{2FA1F}'
+    )
+}
+
+fn paint_family<'a>(style: &'a RunStyle, text: &str) -> &'a str {
+    if let Some(ea) = style.family_ea.as_deref()
+        && (style.hint == FontHint::EastAsia || text.chars().any(is_cjk))
+    {
+        return ea;
+    }
+    if let Some(cs) = style.family_cs.as_deref()
+        && style.hint == FontHint::Complex
+    {
+        return cs;
+    }
+    &style.family
 }
 
 fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
@@ -8225,9 +8313,11 @@ impl<'a> Layout<'a> {
         if text.is_empty() {
             return 0.0;
         }
-        let fid = self
-            .fonts
-            .resolve(&run.style.family, run.style.bold, run.style.italic);
+        let fid = self.fonts.resolve(
+            paint_family(&run.style, text),
+            run.style.bold,
+            run.style.italic,
+        );
         let face = self.fonts.get(fid);
         let size = run.style.paint_size();
         let kern = run.style.kerns_at(size);
@@ -8354,9 +8444,11 @@ impl<'a> Layout<'a> {
             // box so 13pp packing holds; do not extra-skip short redlines.
             return x + self.run_width_pt(run, &run.text);
         }
-        let mut fid = self
-            .fonts
-            .resolve(&run.style.family, run.style.bold, run.style.italic);
+        let mut fid = self.fonts.resolve(
+            paint_family(&run.style, &run.text),
+            run.style.bold,
+            run.style.italic,
+        );
         let mut face = self.fonts.get(fid);
         if run.text.contains('\t') {
             let mut xcur = x;
@@ -11307,6 +11399,9 @@ fn patch_numpages(fonts: &Fonts, pages: &mut [Page]) {
 fn default_run_style() -> RunStyle {
     RunStyle {
         family: "Calibri".into(),
+        family_ea: None,
+        family_cs: None,
+        hint: FontHint::Default,
         size: 11.0,
         bold: false,
         italic: false,
@@ -11583,14 +11678,18 @@ fn wrap_runs_segment(
         ));
     }
     for run in runs {
-        let fid = fonts.resolve(&run.style.family, run.style.bold, run.style.italic);
-        let face = fonts.get(fid);
         for tok in ws_tokens(&run.text) {
             for tok in url_wrap_pieces(tok) {
                 // Tabs jump at paint time; counting .notdef width packed wraps.
                 let w = if tok.contains('\t') {
                     0.0
                 } else {
+                    let fid = fonts.resolve(
+                        paint_family(&run.style, tok),
+                        run.style.bold,
+                        run.style.italic,
+                    );
+                    let face = fonts.get(fid);
                     let size = run.style.paint_size();
                     face.width_pt_kern(tok, size, run.style.kerns_at(size))
                 };
@@ -14548,6 +14647,10 @@ mod theme_slot_tests {
     use super::*;
 
     fn family_from_rfonts(attrs: &str, theme: &ThemeFonts) -> String {
+        style_from_rfonts(attrs, theme).family
+    }
+
+    fn style_from_rfonts(attrs: &str, theme: &ThemeFonts) -> RunStyle {
         let xml = format!(
             r#"<?xml version="1.0"?>
             <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -14560,14 +14663,14 @@ mod theme_slot_tests {
         let fonts = first_named(&dom, root, "rFonts").expect("rFonts");
         let mut style = Defaults::word().run;
         apply_rfonts(&dom, fonts, &mut style, theme);
-        style.family
+        style
     }
 
     fn theme_cambria_minor() -> ThemeFonts {
         ThemeFonts {
             major: Some("Calibri".into()),
             minor: Some("Cambria".into()),
-            colors: HashMap::new(),
+            ..ThemeFonts::default()
         }
     }
 
@@ -14599,6 +14702,66 @@ mod theme_slot_tests {
             ),
             "Calibri"
         );
+    }
+
+    fn theme_with_east_asia() -> ThemeFonts {
+        ThemeFonts {
+            major: Some("Calibri".into()),
+            minor: Some("Cambria".into()),
+            minor_ea: Some("Verdana".into()),
+            major_ea: Some("Georgia".into()),
+            minor_cs: Some("Times New Roman".into()),
+            ..ThemeFonts::default()
+        }
+    }
+
+    #[test]
+    fn east_asia_theme_slot_sets_family_ea() {
+        let style = style_from_rfonts(
+            r#"w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorEastAsia""#,
+            &theme_with_east_asia(),
+        );
+        assert_eq!(style.family, "Cambria");
+        assert_eq!(
+            style.family_ea.as_deref(),
+            Some("Verdana"),
+            "eastAsiaTheme=minorEastAsia must not stay on the latin slot"
+        );
+    }
+
+    #[test]
+    fn explicit_east_asia_beats_theme_slot() {
+        let style = style_from_rfonts(
+            r#"w:eastAsia="MS Mincho" w:eastAsiaTheme="minorEastAsia""#,
+            &theme_with_east_asia(),
+        );
+        assert_eq!(style.family_ea.as_deref(), Some("MS Mincho"));
+    }
+
+    #[test]
+    fn hint_east_asia_is_recorded() {
+        let style = style_from_rfonts(r#"w:hint="eastAsia""#, &theme_with_east_asia());
+        assert_eq!(style.hint, FontHint::EastAsia);
+    }
+
+    #[test]
+    fn load_theme_reads_minor_east_asia_typeface() {
+        let xml = r#"<?xml version="1.0"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <a:themeElements><a:fontScheme name="Office">
+    <a:majorFont><a:latin typeface="Calibri"/><a:ea typeface="Georgia"/></a:majorFont>
+    <a:minorFont><a:latin typeface="Cambria"/><a:ea typeface="Verdana"/><a:cs typeface="Times New Roman"/></a:minorFont>
+  </a:fontScheme></a:themeElements>
+</a:theme>"#;
+        let theme = parse_theme_xml(xml);
+        assert_eq!(theme.minor.as_deref(), Some("Cambria"));
+        assert_eq!(
+            theme.minor_ea.as_deref(),
+            Some("Verdana"),
+            "a:ea on minorFont is xml 3.2 ckpt 2"
+        );
+        assert_eq!(theme.major_ea.as_deref(), Some("Georgia"));
+        assert_eq!(theme.minor_cs.as_deref(), Some("Times New Roman"));
     }
 }
 
