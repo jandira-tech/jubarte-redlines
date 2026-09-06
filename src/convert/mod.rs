@@ -1126,6 +1126,8 @@ enum ShapeGeom {
     Parallelogram,
     Trapezoid,
     Chevron,
+    Plus,
+    HomePlate,
 }
 
 enum ImageKind {
@@ -6009,6 +6011,8 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "parallelogram" => ShapeGeom::Parallelogram,
         "trapezoid" => ShapeGeom::Trapezoid,
         "chevron" => ShapeGeom::Chevron,
+        "plus" => ShapeGeom::Plus,
+        "homePlate" => ShapeGeom::HomePlate,
         _ => ShapeGeom::Box,
     }
 }
@@ -8677,6 +8681,18 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Plus => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: plus_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::HomePlate => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: home_plate_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8718,6 +8734,8 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Parallelogram
                 | ShapeGeom::Trapezoid
                 | ShapeGeom::Chevron
+                | ShapeGeom::Plus
+                | ShapeGeom::HomePlate
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -8728,6 +8746,8 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Parallelogram => parallelogram_points(x, y, dw, dh),
                             ShapeGeom::Trapezoid => trapezoid_points(x, y, dw, dh),
                             ShapeGeom::Chevron => chevron_points(x, y, dw, dh),
+                            ShapeGeom::Plus => plus_points(x, y, dw, dh),
+                            ShapeGeom::HomePlate => home_plate_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -10553,6 +10573,38 @@ fn chevron_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     ]
 }
 
+fn plus_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML plus adj=25000: x1 = ss*adj/100000 (arm inset from each edge).
+    let x1 = preset_ss(w, h) * 25_000.0 / 100_000.0;
+    vec![
+        (x, y + h - x1),
+        (x + x1, y + h - x1),
+        (x + x1, y + h),
+        (x + w - x1, y + h),
+        (x + w - x1, y + h - x1),
+        (x + w, y + h - x1),
+        (x + w, y + x1),
+        (x + w - x1, y + x1),
+        (x + w - x1, y),
+        (x + x1, y),
+        (x + x1, y + x1),
+        (x, y + x1),
+    ]
+}
+
+fn home_plate_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML homePlate adj=50000: dx1 = ss*adj/100000, x1 = r-dx1.
+    let dx1 = preset_ss(w, h) * 50_000.0 / 100_000.0;
+    let x1 = w - dx1;
+    vec![
+        (x, y + h),
+        (x + x1, y + h),
+        (x + w, y + h * 0.5),
+        (x + x1, y),
+        (x, y),
+    ]
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -12173,6 +12225,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn plus_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="plus"/>
+        <a:solidFill><a:srgbClr val="0000FF"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=plus must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn bent_connector_reads_triangle_tail_end() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -12308,6 +12399,14 @@ mod drawing_tests {
         assert_eq!(pts.len(), 4);
         assert!((pts[1].0 - 10.0).abs() < 0.01 && (pts[1].1 - 40.0).abs() < 0.01);
         assert!((pts[3].0 - 90.0).abs() < 0.01 && pts[3].1.abs() < 0.01);
+    }
+
+    #[test]
+    fn plus_points_use_ooxml_default_arm() {
+        let pts = plus_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 12);
+        assert!((pts[2].0 - 25.0).abs() < 0.01 && (pts[2].1 - 100.0).abs() < 0.01);
+        assert!((pts[5].0 - 100.0).abs() < 0.01 && (pts[5].1 - 75.0).abs() < 0.01);
     }
 
     #[test]
