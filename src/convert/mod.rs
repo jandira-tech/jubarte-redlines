@@ -1209,6 +1209,7 @@ enum ShapeGeom {
     FlowChartMagneticDisk,
     FlowChartMagneticDrum,
     FlowChartMagneticTape,
+    FlowChartMultidocument,
 }
 
 enum ImageKind {
@@ -6177,6 +6178,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "flowChartMagneticDisk" => ShapeGeom::FlowChartMagneticDisk,
         "flowChartMagneticDrum" => ShapeGeom::FlowChartMagneticDrum,
         "flowChartMagneticTape" => ShapeGeom::FlowChartMagneticTape,
+        "flowChartMultidocument" => ShapeGeom::FlowChartMultidocument,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9494,6 +9496,14 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::FlowChartMultidocument => {
+                    for points in flow_chart_multidocument_sheets(x, y, dw, dh) {
+                        self.current().ops.push(Op::FillPoly {
+                            points,
+                            color: fill,
+                        });
+                    }
+                }
             }
         }
         if box_.stroke {
@@ -9531,6 +9541,17 @@ impl<'a> Layout<'a> {
                 ShapeGeom::Cube => {
                     if let Some(color) = box_.line {
                         for points in cube_faces(x, y, dw, dh) {
+                            self.current().ops.push(Op::StrokePoly {
+                                points,
+                                width: box_.line_width,
+                                color,
+                            });
+                        }
+                    }
+                }
+                ShapeGeom::FlowChartMultidocument => {
+                    if let Some(color) = box_.line {
+                        for points in flow_chart_multidocument_sheets(x, y, dw, dh) {
                             self.current().ops.push(Op::StrokePoly {
                                 points,
                                 width: box_.line_width,
@@ -12762,6 +12783,52 @@ fn double_wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     sample_cubic(p3, (x7, py(y6)), (x6, py(y5)), p4, 6, &mut pts);
     sample_cubic(p4, (x4, py(y6)), (x3, py(y5)), p5, 6, &mut pts);
     pts
+}
+
+fn flow_chart_multidocument_sheets(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 3] {
+    // OOXML flowChartMultidocument in 21600 space: three stacked
+    // document sheets (back, mid, front). Front cubic hangs below b.
+    let sx = |ox: f32| x + w * ox / 21_600.0;
+    let sy = |oy: f32| y + h - h * oy / 21_600.0;
+    let p = |ox: f32, oy: f32| (sx(ox), sy(oy));
+    let mut back = vec![p(2972.0, 1815.0), p(2972.0, 0.0), p(21_600.0, 0.0)];
+    let b0 = p(21_600.0, 14_392.0);
+    back.push(b0);
+    sample_cubic(
+        b0,
+        p(20_800.0, 14_392.0),
+        p(20_000.0, 14_467.0),
+        p(20_000.0, 14_467.0),
+        6,
+        &mut back,
+    );
+    back.push(p(20_000.0, 1815.0));
+    let mut mid = vec![p(1532.0, 3675.0), p(1532.0, 1815.0), p(20_000.0, 1815.0)];
+    let m0 = p(20_000.0, 16_252.0);
+    mid.push(m0);
+    sample_cubic(
+        m0,
+        p(19_298.0, 16_252.0),
+        p(18_595.0, 16_352.0),
+        p(18_595.0, 16_352.0),
+        6,
+        &mut mid,
+    );
+    mid.push(p(18_595.0, 3675.0));
+    let f0 = p(0.0, 20_782.0);
+    let f1 = p(18_595.0, 18_022.0);
+    let mut front = vec![f0];
+    sample_cubic(
+        f0,
+        p(9298.0, 23_542.0),
+        p(9298.0, 18_022.0),
+        f1,
+        8,
+        &mut front,
+    );
+    front.push(p(18_595.0, 3675.0));
+    front.push(p(0.0, 3675.0));
+    [back, mid, front]
 }
 
 fn flow_chart_magnetic_tape_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
@@ -17336,6 +17403,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn flow_chart_multidocument_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="flowChartMultidocument"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=flowChartMultidocument must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -20531,6 +20637,29 @@ mod drawing_tests {
             !pts.iter()
                 .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
             "must not include bbox top-left; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn flow_chart_multidocument_front_sheet_has_hanging_cubic() {
+        let sheets = flow_chart_multidocument_sheets(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(sheets.len(), 3);
+        let pts = &sheets[2];
+        assert!(pts.len() >= 8, "{}", pts.len());
+        let start = pts[0];
+        let y_start = 100.0 - 100.0 * 20_782.0 / 21_600.0;
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - y_start).abs() < 0.5,
+            "front starts (l, 20782/21600); {start:?}"
+        );
+        assert!(
+            pts.iter().any(|(_, py)| *py < 1.0),
+            "front cubic wave reaches near b; {pts:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 86.09).abs() < 0.5 && (*py - 16.56).abs() < 1.0),
+            "front cubic ends (18595, 18022); {pts:?}"
         );
     }
 
