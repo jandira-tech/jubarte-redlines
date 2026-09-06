@@ -13207,6 +13207,50 @@ fn two_column_section_with_column_break_paints_side_by_side() {
 }
 
 #[test]
+fn hyphen_and_underscore_tab_leaders_fill_the_gap() {
+    // xml leftover: w:tab/@w:leader hyphen / underscore (ST_TabTlc).
+    // Dot leaders already ship; these two were mapped to none.
+    let body = "<w:p>\
+           <w:pPr><w:tabs>\
+             <w:tab w:val=\"left\" w:leader=\"hyphen\" w:pos=\"4320\"/>\
+           </w:tabs></w:pPr>\
+           <w:r><w:t>LeadHx</w:t></w:r><w:r><w:tab/></w:r>\
+           <w:r><w:t>EndHx</w:t></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:pPr><w:tabs>\
+             <w:tab w:val=\"left\" w:leader=\"underscore\" w:pos=\"4320\"/>\
+           </w:tabs></w:pPr>\
+           <w:r><w:t>LeadUx</w:t></w:r><w:r><w:tab/></w:r>\
+           <w:r><w:t>EndUx</w:t></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("convert tab leaders");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("LeadHx") && text.contains("EndHx"),
+        "hyphen-leader run must paint; text={text}"
+    );
+    assert!(
+        text.contains("LeadUx") && text.contains("EndUx"),
+        "underscore-leader run must paint; text={text}"
+    );
+    let hyphens = text.chars().filter(|c| *c == '-').count();
+    let unders = text.chars().filter(|c| *c == '_').count();
+    assert!(
+        hyphens >= 8,
+        "hyphen leader must fill the tab gap; hyphens={hyphens} text={text}"
+    );
+    assert!(
+        unders >= 8,
+        "underscore leader must fill the tab gap; unders={unders} text={text}"
+    );
+}
+
+#[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert header_no_rels");

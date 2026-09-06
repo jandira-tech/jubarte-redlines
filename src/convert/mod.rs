@@ -372,6 +372,8 @@ enum TabAlign {
 enum TabLeader {
     None,
     Dot,
+    Hyphen,
+    Underscore,
 }
 
 #[derive(Clone, Copy)]
@@ -1382,6 +1384,8 @@ fn parse_tab_stops(dom: &Dom, ppr: NodeId) -> Vec<TabStop> {
             };
             let leader = match attr_any(dom, tab, "leader").unwrap_or("") {
                 "dot" | "middleDot" => TabLeader::Dot,
+                "hyphen" => TabLeader::Hyphen,
+                "underscore" => TabLeader::Underscore,
                 _ => TabLeader::None,
             };
             stops.push(TabStop {
@@ -9220,11 +9224,11 @@ impl<'a> Layout<'a> {
         w
     }
 
-    fn paint_tab_leader(&mut self, x0: f32, x1: f32, y: f32, style: &RunStyle) {
+    fn paint_tab_leader(&mut self, x0: f32, x1: f32, y: f32, style: &RunStyle, mark: &str) {
         let fid = self.fonts.resolve(&style.family, style.bold, style.italic);
         let face = self.fonts.get(fid);
         let size = style.paint_size();
-        let dw = face.width_pt(".", size);
+        let dw = face.width_pt(mark, size);
         if dw < 0.4 {
             return;
         }
@@ -9240,8 +9244,8 @@ impl<'a> Layout<'a> {
         if n == 0 {
             return;
         }
-        let dots = TextRun::new(".".repeat(n), style.clone());
-        self.paint_run(&dots, x0 + pad, y);
+        let fill = TextRun::new(mark.repeat(n), style.clone());
+        self.paint_run(&fill, x0 + pad, y);
     }
 
     fn advance_tab(&mut self, x: f32, y: f32, after_w: f32, style: &RunStyle) -> f32 {
@@ -9251,8 +9255,16 @@ impl<'a> Layout<'a> {
             TabAlign::Right => (stop.pos - after_w).max(x),
             TabAlign::Center => (stop.pos - after_w * 0.5).max(x),
         };
-        if dest > x + 1.0 && stop.leader == TabLeader::Dot {
-            self.paint_tab_leader(x, dest, y, style);
+        if dest > x + 1.0 {
+            let mark = match stop.leader {
+                TabLeader::None => None,
+                TabLeader::Dot => Some("."),
+                TabLeader::Hyphen => Some("-"),
+                TabLeader::Underscore => Some("_"),
+            };
+            if let Some(mark) = mark {
+                self.paint_tab_leader(x, dest, y, style, mark);
+            }
         }
         dest.max(x)
     }
