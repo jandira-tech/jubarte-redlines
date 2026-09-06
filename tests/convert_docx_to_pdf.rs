@@ -884,6 +884,113 @@ fn inline_extent_is_written_to_pdf_cm() {
 }
 
 #[test]
+fn inline_picture_para_does_not_add_a_text_line_box() {
+    // xml 3.4 ckpt 3 / case12: a drawing-only inline picture is the
+    // paragraph's line box (cy), not a Normal text line plus the picture
+    // (that extra line is the 55 px drop).
+    let drawing = blip(
+        "914400",
+        "914400",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>Title</w:t></w:r></w:p>\
+         <w:p><w:r>{drawing}</w:r></w:p>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("convert inline picture para");
+    let hay = String::from_utf8_lossy(&pdf);
+    let title = pdf_device_xy(hay.as_ref(), "67 Tf")
+        .into_iter()
+        .next()
+        .expect("Title 16pt");
+    let after = pdf_device_xy(hay.as_ref(), "46 Tf")
+        .into_iter()
+        .next()
+        .expect("After 11pt");
+    let gap = title.1 - after.1;
+    assert!(
+        (80.0..115.0).contains(&gap),
+        "image-only para is 72pt plus spacing, not an extra text line; gap={gap} title={title:?} after={after:?}"
+    );
+}
+
+#[test]
+fn src_rect_left_crop_scales_full_image_into_extent() {
+    // xml 3.4 ckpt 3 / case78: a:srcRect l=50000 (50% from the left).
+    // Paint the full source scaled to 2× extent width and clip to extent.
+    let drawing = "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+           <wp:extent cx=\"137160\" cy=\"137160\"/>\
+           <wp:docPr id=\"1\" name=\"Picture 0\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+             <pic:pic><pic:blipFill>\
+               <a:blip r:embed=\"rIdImg\"/>\
+               <a:srcRect l=\"50000\" t=\"0\" r=\"0\" b=\"0\"/>\
+             </pic:blipFill></pic:pic>\
+           </a:graphicData></a:graphic>\
+         </wp:inline></w:drawing>";
+    let pdf = docx_to_pdf(&drawing_docx(&format!(
+        "<w:p><w:r>{drawing}</w:r></w:p><w:sectPr/>"
+    )))
+    .expect("convert srcRect");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("21.60 0 0 10.80") || text.contains("21.60 0 0 21.60"),
+        "50% left crop doubles the painted width vs 10.80pt extent; snippet {}",
+        text.split("/Im")
+            .nth(1)
+            .unwrap_or(&text[text.len().saturating_sub(240)..])
+    );
+    assert!(
+        text.contains(" re W n") || text.contains(" re W\nn"),
+        "srcRect must clip to the extent; snippet {}",
+        text.split("/Im")
+            .nth(1)
+            .unwrap_or(&text[text.len().saturating_sub(240)..])
+    );
+}
+
+/// 2×2 RGBA PNG: opaque red on top, fully transparent on the bottom.
+const ALPHA_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xB6, 0x0D,
+    0x24, 0x00, 0x00, 0x00, 0x11, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0xF8, 0xCF, 0xC0, 0xF0,
+    0x1F, 0x84, 0x19, 0x60, 0x00, 0x00, 0x35, 0xDC, 0x03, 0xFD, 0xD7, 0xE8, 0x87, 0x1A, 0x00, 0x00,
+    0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
+#[test]
+fn png_alpha_emits_smask() {
+    // xml 3.4 ckpt 3 / case12: PNG alpha is a DeviceGray /SMask, not dropped.
+    let drawing = blip(
+        "137160",
+        "137160",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let pdf = docx_to_pdf(&drawing_docx_media(
+        &format!("<w:p><w:r>{drawing}</w:r></w:p><w:sectPr/>"),
+        "dot.png",
+        ALPHA_PNG,
+    ))
+    .expect("convert png alpha");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/SMask"),
+        "PNG alpha must emit /SMask; tail {}",
+        &text[text.len().saturating_sub(400)..]
+    );
+    assert!(
+        text.contains("/DeviceGray"),
+        "SMask is DeviceGray; tail {}",
+        &text[text.len().saturating_sub(400)..]
+    );
+}
+
+#[test]
 fn page_float_blip_keeps_xml_extent_when_wider_than_page() {
     // image_out_of_folder DeepL banner: 10690522×807396 EMU = 841.77×63.57
     // on A4 (595.3pt). Word paints the overflow (clipped by the page);

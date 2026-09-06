@@ -78,6 +78,7 @@ pub(crate) enum Op {
         height: u32,
         bytes: Vec<u8>,
         components: u8,
+        crop: Option<[f32; 4]>,
     },
     Rgb {
         x: f32,
@@ -87,6 +88,8 @@ pub(crate) enum Op {
         width: u32,
         height: u32,
         bytes: Vec<u8>,
+        alpha: Option<Vec<u8>>,
+        crop: Option<[f32; 4]>,
     },
     /// Behind-doc Word watermark (header SDT gallery=Watermarks).
     Watermark {
@@ -309,11 +312,17 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     width,
                     height,
                     bytes,
+                    alpha,
                     ..
                 } => {
                     img_n += 1;
+                    let smask = alpha.as_ref().map(|plane| {
+                        let sid = objs.len() + 1;
+                        objs.push(gray_xobject(*width, *height, plane, options.compress));
+                        sid
+                    });
                     let id = objs.len() + 1;
-                    objs.push(rgb_xobject(*width, *height, bytes, options.compress));
+                    objs.push(rgb_xobject(*width, *height, bytes, options.compress, smask));
                     xobjects.push_str(&format!("/Im{img_n} {id} 0 R "));
                 }
                 Op::Watermark { .. } => has_watermark = true,
@@ -539,17 +548,14 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     }
                     stream.push_str(" S\n");
                 }
-                Op::Jpeg { x, y, dw, dh, .. } => {
-                    img_counter += 1;
-                    stream.push_str(&format!(
-                        "q {dw:.2} 0 0 {dh:.2} {x:.2} {y:.2} cm /Im{img_counter} Do Q\n"
-                    ));
+                Op::Jpeg {
+                    x, y, dw, dh, crop, ..
                 }
-                Op::Rgb { x, y, dw, dh, .. } => {
+                | Op::Rgb {
+                    x, y, dw, dh, crop, ..
+                } => {
                     img_counter += 1;
-                    stream.push_str(&format!(
-                        "q {dw:.2} 0 0 {dh:.2} {x:.2} {y:.2} cm /Im{img_counter} Do Q\n"
-                    ));
+                    stream.push_str(&paint_image(*x, *y, *dw, *dh, *crop, img_counter));
                 }
             }
         }
@@ -750,11 +756,20 @@ fn jpeg_xobject(width: u32, height: u32, bytes: &[u8], components: u8) -> Vec<u8
     out
 }
 
-fn rgb_xobject(width: u32, height: u32, bytes: &[u8], compress: bool) -> Vec<u8> {
+fn rgb_xobject(
+    width: u32,
+    height: u32,
+    bytes: &[u8],
+    compress: bool,
+    smask: Option<usize>,
+) -> Vec<u8> {
     let (bytes, filter) = deflate(bytes, compress);
+    let smask_e = smask
+        .map(|id| format!(" /SMask {id} 0 R"))
+        .unwrap_or_default();
     let mut out = format!(
         "<< /Type /XObject /Subtype /Image /Width {width} /Height {height} \
-           /ColorSpace /DeviceRGB /BitsPerComponent 8{filter} \
+           /ColorSpace /DeviceRGB /BitsPerComponent 8{filter}{smask_e} \
            /Length {} >>\nstream\n",
         bytes.len()
     )
@@ -762,6 +777,39 @@ fn rgb_xobject(width: u32, height: u32, bytes: &[u8], compress: bool) -> Vec<u8>
     out.extend_from_slice(&bytes);
     out.extend_from_slice(b"\nendstream");
     out
+}
+
+fn gray_xobject(width: u32, height: u32, bytes: &[u8], compress: bool) -> Vec<u8> {
+    let (bytes, filter) = deflate(bytes, compress);
+    let mut out = format!(
+        "<< /Type /XObject /Subtype /Image /Width {width} /Height {height} \
+           /ColorSpace /DeviceGray /BitsPerComponent 8{filter} \
+           /Length {} >>\nstream\n",
+        bytes.len()
+    )
+    .into_bytes();
+    out.extend_from_slice(&bytes);
+    out.extend_from_slice(b"\nendstream");
+    out
+}
+
+/// `a:srcRect` l/t/r/b as 0..1. Scale the full image so the uncropped
+/// window fills `dw×dh`, then clip to the extent.
+fn paint_image(x: f32, y: f32, dw: f32, dh: f32, crop: Option<[f32; 4]>, n: usize) -> String {
+    match crop {
+        Some([l, t, r, b]) if l + r + t + b > 0.001 => {
+            let fw = (1.0 - l - r).max(0.001);
+            let fh = (1.0 - t - b).max(0.001);
+            let sx = dw / fw;
+            let sy = dh / fh;
+            let x0 = x - sx * l;
+            let y0 = y - sy * b;
+            format!(
+                "q {x:.2} {y:.2} {dw:.2} {dh:.2} re W n {sx:.2} 0 0 {sy:.2} {x0:.2} {y0:.2} cm /Im{n} Do Q\n"
+            )
+        }
+        _ => format!("q {dw:.2} 0 0 {dh:.2} {x:.2} {y:.2} cm /Im{n} Do Q\n"),
+    }
 }
 
 fn text_annot_obj(note: &PdfComment) -> Vec<u8> {
