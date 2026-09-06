@@ -739,6 +739,50 @@ fn drawing_docx_media(body: &str, media_name: &str, media: &[u8]) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+/// Image rel points at a missing part (plan.md Step 10 E).
+fn drawing_docx_broken_rel(body: &str) -> Vec<u8> {
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+           xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+           xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+           xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+           xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+         <w:body>{body}</w:body></w:document>"
+    );
+    let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        </Types>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/>\
+        </Relationships>";
+    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdImg\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" \
+          Target=\"media/missing.png\"/>\
+        </Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(content_types.as_bytes()).unwrap();
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(rels.as_bytes()).unwrap();
+    zip.start_file("word/document.xml", opts).unwrap();
+    zip.write_all(document.as_bytes()).unwrap();
+    zip.start_file("word/_rels/document.xml.rels", opts)
+        .unwrap();
+    zip.write_all(doc_rels.as_bytes()).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
 fn chart_docx(body: &str, chart_xml: &str) -> Vec<u8> {
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
@@ -1306,6 +1350,34 @@ fn undecodable_inline_blip_still_reserves_flow() {
         pdf_page_count(&pdf),
         2,
         "WMF/EMF inline extent must still push following text to page 2"
+    );
+}
+
+#[test]
+fn missing_blip_rel_paints_small_placeholder_not_full_extent() {
+    // plan.md Step 10 E: missing image Target is Word's 1in placeholder,
+    // not the wp:extent reservation (7800000 EMU ≈ 614pt would force page 2).
+    let drawing = blip(
+        "2000000",
+        "7800000",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let pdf = docx_to_pdf(&drawing_docx_broken_rel(&format!(
+        "<w:p><w:r><w:t>Before</w:t></w:r><w:r>{drawing}</w:r></w:p>\
+         <w:p><w:r><w:t>AfterPic</w:t></w:r></w:p><w:sectPr/>"
+    )))
+    .expect("convert broken media rel");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        1,
+        "missing rel must not reserve the 614pt extent"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("72.00 72.00 re S"),
+        "Word missing-picture placeholder is a 1in stroked box; tail {}",
+        &hay[hay.len().saturating_sub(400)..]
     );
 }
 
