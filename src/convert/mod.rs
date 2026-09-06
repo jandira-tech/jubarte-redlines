@@ -642,6 +642,9 @@ struct TextRun {
     footnote_id: Option<String>,
     /// `w:footnoteRef` auto-mark inside `footnotes.xml`.
     note_ref: bool,
+    /// Footer/header paragraph `w:spacing/@w:after` carried on the
+    /// `HF_LINE_BREAK` after that para (plan.md Step 10 G).
+    para_gap: f32,
 }
 
 impl TextRun {
@@ -656,6 +659,7 @@ impl TextRun {
             rule: None,
             footnote_id: None,
             note_ref: false,
+            para_gap: 0.0,
         }
     }
 
@@ -7147,6 +7151,7 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts)
     // One footer/header <w:p> is one painted line. Flattening sd_2517's
     // "Smith Family Trust" + PAGE into one run list produced Trust106.
     let mut runs = Vec::new();
+    let mut prev_after = 0.0;
     for para in dom.descendants(node, Some(&W::p())) {
         if hf_para_is_shape_text(dom, para) {
             continue;
@@ -7158,23 +7163,37 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts)
             continue;
         }
         if !runs.is_empty() {
-            runs.push(TextRun::new(HF_LINE_BREAK, base.clone()));
+            let mut br = TextRun::new(HF_LINE_BREAK, base.clone());
+            br.para_gap = prev_after;
+            runs.push(br);
         }
         runs.extend(line);
+        prev_after = hf_para_after(dom, para);
     }
     runs
 }
 
-fn hf_lines(runs: &[TextRun]) -> Vec<Vec<TextRun>> {
-    let mut lines = vec![Vec::new()];
+fn hf_para_after(dom: &Dom, para: NodeId) -> f32 {
+    dom.element(para, &W::p_pr())
+        .and_then(|ppr| first_named(dom, ppr, "spacing"))
+        .and_then(|sp| attr_any(dom, sp, "after"))
+        .and_then(parse_len)
+        .unwrap_or(0.0)
+}
+
+fn hf_styled_lines(runs: &[TextRun]) -> Vec<(Vec<TextRun>, f32)> {
+    let mut lines = vec![(Vec::new(), 0.0)];
     for run in runs {
         if run.text == HF_LINE_BREAK {
-            lines.push(Vec::new());
+            if let Some(last) = lines.last_mut() {
+                last.1 = run.para_gap;
+            }
+            lines.push((Vec::new(), 0.0));
         } else if let Some(line) = lines.last_mut() {
-            line.push(run.clone());
+            line.0.push(run.clone());
         }
     }
-    lines.retain(|line| line.iter().any(|r| !r.text.trim().is_empty()));
+    lines.retain(|(line, _)| line.iter().any(|r| !r.text.trim().is_empty()));
     lines
 }
 
@@ -7226,6 +7245,7 @@ fn collect_hf_rec(
                         rule: None,
                         footnote_id: None,
                         note_ref: false,
+                        para_gap: 0.0,
                     });
                 }
                 *scan = FieldScan::default();
@@ -7268,6 +7288,7 @@ fn collect_hf_rec(
                     rule: None,
                     footnote_id: None,
                     note_ref: false,
+                    para_gap: 0.0,
                 });
                 scan.emitted = true;
             }
@@ -7362,7 +7383,15 @@ fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
 }
 
 fn chrome_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
-    chrome_one_line_pt(fonts, runs) * hf_lines(runs).len().max(1) as f32
+    let lines = hf_styled_lines(runs);
+    let one = chrome_one_line_pt(fonts, runs);
+    let n = lines.len().max(1) as f32;
+    let gaps: f32 = lines
+        .iter()
+        .take(lines.len().saturating_sub(1))
+        .map(|(_, gap)| *gap)
+        .sum();
+    one * n + gaps
 }
 
 impl<'a> Layout<'a> {
@@ -11249,7 +11278,6 @@ impl<'a> Layout<'a> {
         }
         if !self.header.is_empty() {
             let header = self.resolve_fields(&self.header.clone(), page_no);
-            let lines = hf_lines(&header);
             let one = chrome_one_line_pt(self.fonts, &header);
             let size = header
                 .iter()
@@ -11265,9 +11293,10 @@ impl<'a> Layout<'a> {
             );
             let ascent = self.fonts.get(fid).ascent_pt(size);
             let mut y = self.page.height - self.page.header.max(10.0) - ascent;
-            for (i, line) in lines.iter().enumerate() {
+            let header_lines = hf_styled_lines(&header);
+            for (i, (line, _)) in header_lines.iter().enumerate() {
                 if i > 0 {
-                    y -= one;
+                    y -= one + header_lines[i - 1].1;
                 }
                 self.draw_line_of_runs(line, y, self.header_align);
             }
@@ -11283,7 +11312,7 @@ impl<'a> Layout<'a> {
         }
         if !self.footer.is_empty() {
             let footer = self.resolve_fields(&self.footer.clone(), page_no);
-            let lines = hf_lines(&footer);
+            let lines = hf_styled_lines(&footer);
             let one = chrome_one_line_pt(self.fonts, &footer);
             let n = lines.len();
             let size = footer
@@ -11302,16 +11331,24 @@ impl<'a> Layout<'a> {
             // (comments-lots Word top y=743). Using it as the baseline
             // sat the cap-height 7pt high (Td 36).
             let base = self.page.footer.max(12.0) + self.fonts.get(fid).descent_pt(size);
+            let above: f32 = lines
+                .iter()
+                .take(n.saturating_sub(1))
+                .map(|(_, gap)| one + *gap)
+                .sum();
             if let Some((color, width)) = self.footer_top {
-                let top = base + n.saturating_sub(1) as f32 * one + 10.0;
+                let top = base + above + 10.0;
                 // mini 244 chrome outset ITT-neg; keep content box.
                 let x1 = self.page.margin_l;
                 let x2 = self.page.width - self.page.margin_r;
                 self.hairline_h(x1, top, x2, width, color);
             }
-            for (i, line) in lines.iter().enumerate() {
-                let y = base + (n.saturating_sub(1).saturating_sub(i)) as f32 * one;
+            let mut y = base;
+            for (i, (line, _)) in lines.iter().enumerate().rev() {
                 self.draw_line_of_runs(line, y, self.footer_align);
+                if i > 0 {
+                    y += one + lines[i - 1].1;
+                }
             }
         }
         self.paint_pg_borders();
