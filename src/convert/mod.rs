@@ -763,6 +763,8 @@ struct LaidImage {
     slot: ImageSlot,
     behind: bool,
     z: u32,
+    /// `a:srcRect` l/t/r/b as 0..1 of the source (xml 3.4 ckpt 3).
+    crop: Option<[f32; 4]>,
 }
 
 struct LaidTextBox {
@@ -1061,6 +1063,8 @@ enum ImageKind {
         width: u32,
         height: u32,
         bytes: Vec<u8>,
+        /// PNG alpha, one byte per pixel; PDF `/SMask`.
+        alpha: Option<Vec<u8>>,
     },
     /// WMF/EMF/OLE preview: keep the drawing extent in flow even if we
     /// cannot rasterize the bytes (Strict01 cliparts are placeable WMF).
@@ -3081,20 +3085,6 @@ fn keep_next_follow_pt(fonts: &Fonts, avail: f32, block: &Block) -> f32 {
         }
         Block::PageBreak { .. } => 0.0,
     }
-}
-
-fn para_has_ink(block: &Block) -> bool {
-    matches!(
-        block,
-        Block::Paragraph { runs, .. } if runs.iter().any(|r| !r.text.trim().is_empty())
-    )
-}
-
-fn para_is_heading(block: &Block) -> bool {
-    matches!(
-        block,
-        Block::Paragraph { style, .. } if style.style_id.starts_with("Heading")
-    )
 }
 
 fn block_is_blank(block: &Block) -> bool {
@@ -5429,6 +5419,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     slot,
                     behind,
                     z,
+                    crop: src_rect_frac(dom, drawing),
                 });
             }
         }
@@ -5458,6 +5449,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     slot: ImageSlot::Flow,
                     behind: false,
                     z: 0,
+                    crop: None,
                 });
             }
         }
@@ -5467,6 +5459,26 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
 }
 
 /// EMU → PDF points. `wp:extent` / `a:ext` store `cx`/`cy` with no namespace.
+/// `a:srcRect` attributes are thousandths of a percent (100000 = 100%).
+fn src_rect_frac(dom: &Dom, drawing: NodeId) -> Option<[f32; 4]> {
+    let n = first_named_any(dom, drawing, "srcRect")?;
+    let p = |k: &str| {
+        attr_any(dom, n, k)
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(0.0)
+            / 100_000.0
+    };
+    let l = p("l").clamp(0.0, 1.0);
+    let t = p("t").clamp(0.0, 1.0);
+    let r = p("r").clamp(0.0, 1.0);
+    let b = p("b").clamp(0.0, 1.0);
+    if l + r + t + b < 0.001 {
+        None
+    } else {
+        Some([l, t, r, b])
+    }
+}
+
 fn drawing_extent_pt(dom: &Dom, drawing: NodeId) -> (f32, f32) {
     let ext = first_named_any(dom, drawing, "extent").or_else(|| {
         dom.descendants(drawing, Some(&A::name("ext")))
@@ -6035,6 +6047,7 @@ fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {
             width,
             height,
             bytes: rgb,
+            alpha: None,
         });
     }
     if bytes.len() > 3
@@ -6050,11 +6063,28 @@ fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {
         });
     }
     let img = image::load_from_memory(&bytes).ok()?;
+    if img.color().has_alpha() {
+        let rgba = img.to_rgba8();
+        let (width, height) = (rgba.width(), rgba.height());
+        let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+        let mut alpha = Vec::with_capacity((width * height) as usize);
+        for px in rgba.pixels() {
+            rgb.extend_from_slice(&px.0[..3]);
+            alpha.push(px.0[3]);
+        }
+        return Some(ImageKind::Rgb {
+            width,
+            height,
+            bytes: rgb,
+            alpha: Some(alpha),
+        });
+    }
     let rgb = img.to_rgb8();
     Some(ImageKind::Rgb {
         width: rgb.width(),
         height: rgb.height(),
         bytes: rgb.into_raw(),
+        alpha: None,
     })
 }
 
@@ -7930,11 +7960,13 @@ impl<'a> Layout<'a> {
                 height: *height,
                 bytes: bytes.clone(),
                 components: *components,
+                crop: img.crop,
             }),
             ImageKind::Rgb {
                 width,
                 height,
                 bytes,
+                alpha,
             } => self.current().ops.push(Op::Rgb {
                 x,
                 y,
@@ -7943,6 +7975,8 @@ impl<'a> Layout<'a> {
                 width: *width,
                 height: *height,
                 bytes: bytes.clone(),
+                alpha: alpha.clone(),
+                crop: img.crop,
             }),
             ImageKind::Reserve => {}
         }
@@ -9593,10 +9627,7 @@ fn layout(
                     || (!has_ink
                         && images
                             .iter()
-                            .any(|im| matches!(im.slot, ImageSlot::Flow) && im.h > 8.0)
-                        && i > 0
-                        && para_has_ink(&blocks[i - 1])
-                        && blocks.get(i + 1).is_some_and(para_is_heading));
+                            .any(|im| matches!(im.slot, ImageSlot::Flow) && im.h > 8.0));
                 // table_bookmark_end: Word's required empty <w:p> after a
                 // table does not keep a Normal line box when the next
                 // block is Heading2 (Tests 1–7 stay on page 1). Keep
