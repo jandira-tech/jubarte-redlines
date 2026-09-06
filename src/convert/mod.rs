@@ -1183,6 +1183,7 @@ enum ShapeGeom {
     Star10,
     Star12,
     Star16,
+    Star24,
 }
 
 enum ImageKind {
@@ -6123,6 +6124,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "star10" => ShapeGeom::Star10,
         "star12" => ShapeGeom::Star12,
         "star16" => ShapeGeom::Star16,
+        "star24" => ShapeGeom::Star24,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9162,6 +9164,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Star24 => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: star24_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9346,6 +9354,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Star10
                 | ShapeGeom::Star12
                 | ShapeGeom::Star16
+                | ShapeGeom::Star24
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9413,6 +9422,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Star10 => star10_points(x, y, dw, dh),
                             ShapeGeom::Star12 => star12_points(x, y, dw, dh),
                             ShapeGeom::Star16 => star16_points(x, y, dw, dh),
+                            ShapeGeom::Star24 => star24_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11916,6 +11926,132 @@ fn star16_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
         (x + sx2, py(sy6)),
         (x + x1, py(y4)),
         (x + sx1, py(sy5)),
+    ]
+}
+
+fn star24_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML star24 adj=37500: 24 tips + 24 inner vertices.
+    let a = 37_500.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let dx1 = hc * ooxml_ang_rad(900_000.0).cos();
+    let dx2 = hc * ooxml_ang_rad(1_800_000.0).cos();
+    let dx3 = hc * ooxml_ang_rad(2_700_000.0).cos();
+    let dx4 = w * 0.25;
+    let dx5 = hc * ooxml_ang_rad(4_500_000.0).cos();
+    let dy1 = vc * ooxml_ang_rad(4_500_000.0).sin();
+    let dy2 = vc * ooxml_ang_rad(3_600_000.0).sin();
+    let dy3 = vc * ooxml_ang_rad(2_700_000.0).sin();
+    let dy4 = h * 0.25;
+    let dy5 = vc * ooxml_ang_rad(900_000.0).sin();
+    let x1 = hc - dx1;
+    let x2 = hc - dx2;
+    let x3 = hc - dx3;
+    let x4 = hc - dx4;
+    let x5 = hc - dx5;
+    let x6 = hc + dx5;
+    let x7 = hc + dx4;
+    let x8 = hc + dx3;
+    let x9 = hc + dx2;
+    let x10 = hc + dx1;
+    let y1 = vc - dy1;
+    let y2 = vc - dy2;
+    let y3 = vc - dy3;
+    let y4 = vc - dy4;
+    let y5 = vc - dy5;
+    let y6 = vc + dy5;
+    let y7 = vc + dy4;
+    let y8 = vc + dy3;
+    let y9 = vc + dy2;
+    let y10 = vc + dy1;
+    let iwd2 = hc * a / 50_000.0;
+    let ihd2 = vc * a / 50_000.0;
+    let sdx1 = iwd2 * 99_144.0 / 100_000.0;
+    let sdx2 = iwd2 * 92_388.0 / 100_000.0;
+    let sdx3 = iwd2 * 79_335.0 / 100_000.0;
+    let sdx4 = iwd2 * 60_876.0 / 100_000.0;
+    let sdx5 = iwd2 * 38_268.0 / 100_000.0;
+    let sdx6 = iwd2 * 13_053.0 / 100_000.0;
+    let sdy1 = ihd2 * 99_144.0 / 100_000.0;
+    let sdy2 = ihd2 * 92_388.0 / 100_000.0;
+    let sdy3 = ihd2 * 79_335.0 / 100_000.0;
+    let sdy4 = ihd2 * 60_876.0 / 100_000.0;
+    let sdy5 = ihd2 * 38_268.0 / 100_000.0;
+    let sdy6 = ihd2 * 13_053.0 / 100_000.0;
+    let sx1 = hc - sdx1;
+    let sx2 = hc - sdx2;
+    let sx3 = hc - sdx3;
+    let sx4 = hc - sdx4;
+    let sx5 = hc - sdx5;
+    let sx6 = hc - sdx6;
+    let sx7 = hc + sdx6;
+    let sx8 = hc + sdx5;
+    let sx9 = hc + sdx4;
+    let sx10 = hc + sdx3;
+    let sx11 = hc + sdx2;
+    let sx12 = hc + sdx1;
+    let sy1 = vc - sdy1;
+    let sy2 = vc - sdy2;
+    let sy3 = vc - sdy3;
+    let sy4 = vc - sdy4;
+    let sy5 = vc - sdy5;
+    let sy6 = vc - sdy6;
+    let sy7 = vc + sdy6;
+    let sy8 = vc + sdy5;
+    let sy9 = vc + sdy4;
+    let sy10 = vc + sdy3;
+    let sy11 = vc + sdy2;
+    let sy12 = vc + sdy1;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x, py(vc)),
+        (x + sx1, py(sy6)),
+        (x + x1, py(y5)),
+        (x + sx2, py(sy5)),
+        (x + x2, py(y4)),
+        (x + sx3, py(sy4)),
+        (x + x3, py(y3)),
+        (x + sx4, py(sy3)),
+        (x + x4, py(y2)),
+        (x + sx5, py(sy2)),
+        (x + x5, py(y1)),
+        (x + sx6, py(sy1)),
+        (x + hc, py(0.0)),
+        (x + sx7, py(sy1)),
+        (x + x6, py(y1)),
+        (x + sx8, py(sy2)),
+        (x + x7, py(y2)),
+        (x + sx9, py(sy3)),
+        (x + x8, py(y3)),
+        (x + sx10, py(sy4)),
+        (x + x9, py(y4)),
+        (x + sx11, py(sy5)),
+        (x + x10, py(y5)),
+        (x + sx12, py(sy6)),
+        (x + w, py(vc)),
+        (x + sx12, py(sy7)),
+        (x + x10, py(y6)),
+        (x + sx11, py(sy8)),
+        (x + x9, py(y7)),
+        (x + sx10, py(sy9)),
+        (x + x8, py(y8)),
+        (x + sx9, py(sy10)),
+        (x + x7, py(y9)),
+        (x + sx8, py(sy11)),
+        (x + x6, py(y10)),
+        (x + sx7, py(sy12)),
+        (x + hc, py(h)),
+        (x + sx6, py(sy12)),
+        (x + x5, py(y10)),
+        (x + sx5, py(sy11)),
+        (x + x4, py(y9)),
+        (x + sx4, py(sy10)),
+        (x + x3, py(y8)),
+        (x + sx3, py(sy9)),
+        (x + x2, py(y7)),
+        (x + sx2, py(sy8)),
+        (x + x1, py(y6)),
+        (x + sx1, py(sy7)),
     ]
 }
 
@@ -15198,6 +15334,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn star24_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="star24"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=star24 must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -17063,6 +17238,32 @@ mod drawing_tests {
         let top = pts[8];
         let right = pts[16];
         let bottom = pts[24];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 50.0).abs() < 0.05,
+            "start is (l,vc); {start:?}"
+        );
+        assert!(
+            (top.0 - 50.0).abs() < 0.05 && (top.1 - 100.0).abs() < 0.05,
+            "top tip is (hc,t); {top:?}"
+        );
+        assert!(
+            (right.0 - 100.0).abs() < 0.05 && (right.1 - 50.0).abs() < 0.05,
+            "right tip is (r,vc); {right:?}"
+        );
+        assert!(
+            (bottom.0 - 50.0).abs() < 0.05 && bottom.1.abs() < 0.05,
+            "bottom tip is (hc,b); {bottom:?}"
+        );
+    }
+
+    #[test]
+    fn star24_points_have_twenty_four_tips() {
+        let pts = star24_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 48);
+        let start = pts[0];
+        let top = pts[12];
+        let right = pts[24];
+        let bottom = pts[36];
         assert!(
             start.0.abs() < 0.05 && (start.1 - 50.0).abs() < 0.05,
             "start is (l,vc); {start:?}"
