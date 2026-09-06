@@ -5643,6 +5643,43 @@ fn latent_title_subtitle_heading2_to_4_use_word_2007_run_props() {
 }
 
 #[test]
+fn latent_heading5_and_6_use_theme_major_italic_and_regular() {
+    // xml_parts_plan latent built-ins continue past Heading4: omitted
+    // Heading5 is Cambria 11pt italic; Heading6 is Cambria 11pt regular.
+    // Size matches docDefaults, so the italic face is the distinctive Tf.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+             <w:name w:val=\"Normal\"/>\
+           </w:style>\
+         </w:styles>";
+    let theme = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+           <a:themeElements><a:fontScheme name=\"Office\">\
+             <a:majorFont><a:latin typeface=\"Cambria\"/></a:majorFont>\
+             <a:minorFont><a:latin typeface=\"Calibri\"/></a:minorFont>\
+           </a:fontScheme></a:themeElements>\
+         </a:theme>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"Heading5\"/></w:pPr>\
+           <w:r><w:t>LatentH5X</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pStyle w:val=\"Heading6\"/></w:pPr>\
+           <w:r><w:t>LatentH6X</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles_and_theme(body, styles, theme))
+        .expect("convert latent Heading5/6");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/Cambria-Italic"),
+        "Word 2007 latent Heading5 is theme major italic; tail {}",
+        &text[text.len().saturating_sub(320)..]
+    );
+    assert!(
+        text.contains("/Cambria ") || text.contains("/Cambria\n") || text.contains("/Cambria>>"),
+        "Word 2007 latent Heading6 is theme major regular; tail {}",
+        &text[text.len().saturating_sub(320)..]
+    );
+}
+
+#[test]
 fn heading1_aptos_display_ascii_uses_theme_major_calibri() {
     // I_am_sharing Heading1 stores ascii="Aptos Display" *and*
     // asciiTheme=majorHAnsi (Calibri). Word Quartz paints Calibri-Bold
