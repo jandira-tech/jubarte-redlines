@@ -1171,6 +1171,7 @@ enum ShapeGeom {
     BracketPair,
     Snip1Rect,
     Round1Rect,
+    Snip2SameRect,
 }
 
 enum ImageKind {
@@ -6099,6 +6100,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "bracketPair" => ShapeGeom::BracketPair,
         "snip1Rect" => ShapeGeom::Snip1Rect,
         "round1Rect" => ShapeGeom::Round1Rect,
+        "snip2SameRect" => ShapeGeom::Snip2SameRect,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9066,6 +9068,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Snip2SameRect => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: snip2_same_rect_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9238,6 +9246,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::BracketPair
                 | ShapeGeom::Snip1Rect
                 | ShapeGeom::Round1Rect
+                | ShapeGeom::Snip2SameRect
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9291,6 +9300,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::BracketPair => bracket_pair_points(x, y, dw, dh),
                             ShapeGeom::Snip1Rect => snip1_rect_points(x, y, dw, dh),
                             ShapeGeom::Round1Rect => round1_rect_points(x, y, dw, dh),
+                            ShapeGeom::Snip2SameRect => snip2_same_rect_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -12165,6 +12175,21 @@ fn round1_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     pts.push(map(w, h));
     pts.push(map(0.0, h));
     pts
+}
+
+fn snip2_same_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML snip2SameRect adj1=16667 adj2=0: both top corners cut;
+    // bottom corners stay square.
+    let tx1 = (preset_ss(w, h) * 16_667.0 / 100_000.0).max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    vec![
+        map(tx1, 0.0),
+        map(w - tx1, 0.0),
+        map(w, tx1),
+        map(w, h),
+        map(0.0, h),
+        map(0.0, tx1),
+    ]
 }
 
 fn wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
@@ -15566,6 +15591,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn snip2_same_rect_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="snip2SameRect"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=snip2SameRect must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn wave_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -16419,6 +16483,37 @@ mod drawing_tests {
             pts.iter()
                 .any(|(px, py)| *px > 90.0 && *py > 90.0 && *px < 100.0 && *py < 100.0),
             "arc samples sit inside the top-right corner; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn snip2_same_rect_points_cut_both_top_corners() {
+        let pts = snip2_same_rect_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 6, "{pts:?}");
+        let start = pts[0];
+        assert!(
+            (start.0 - 16.667).abs() < 0.05 && (start.1 - 100.0).abs() < 0.05,
+            "moveTo (tx1,t) is PDF top edge after left snip; {start:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
+            "must not include the snipped top-left corner; {pts:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && (*py - 100.0).abs() < 0.05),
+            "must not include the snipped top-right corner; {pts:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && (*py - 83.333).abs() < 0.05),
+            "left snip lands on the left edge at tx1; {pts:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
+            "bottom-left stays square (adj2=0); {pts:?}"
         );
     }
 
