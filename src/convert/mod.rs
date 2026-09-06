@@ -1154,6 +1154,7 @@ enum ShapeGeom {
     Gear6,
     SmileyFace,
     Gear9,
+    Teardrop,
 }
 
 enum ImageKind {
@@ -6065,6 +6066,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "gear6" => ShapeGeom::Gear6,
         "smileyFace" => ShapeGeom::SmileyFace,
         "gear9" => ShapeGeom::Gear9,
+        "teardrop" => ShapeGeom::Teardrop,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8928,6 +8930,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Teardrop => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: teardrop_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9073,6 +9081,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::CircularArrow
                 | ShapeGeom::Gear6
                 | ShapeGeom::Gear9
+                | ShapeGeom::Teardrop
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9108,6 +9117,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::CircularArrow => circular_arrow_points(x, y, dw, dh),
                             ShapeGeom::Gear6 => gear6_points(x, y, dw, dh),
                             ShapeGeom::Gear9 => gear9_points(x, y, dw, dh),
+                            ShapeGeom::Teardrop => teardrop_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11667,6 +11677,56 @@ fn gear6_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
 
 fn gear9_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     gear_points(x, y, w, h, 9, 10_000.0)
+}
+
+fn teardrop_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML teardrop adj=100000: 3/4 ellipse + two quads to the top-right tip.
+    const CD4: f32 = 5_400_000.0;
+    const CD2: f32 = 10_800_000.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let wd2 = (w * 0.5).max(0.5);
+    let hd2 = (h * 0.5).max(0.5);
+    let a = 100_000.0;
+    let r2 = std::f32::consts::SQRT_2;
+    let tw = wd2 * r2;
+    let th = hd2 * r2;
+    let sw = tw * a / 100_000.0;
+    let sh = th * a / 100_000.0;
+    let a45 = ooxml_ang_rad(2_700_000.0);
+    let x1 = hc + sw * a45.cos();
+    let y1 = vc - sh * a45.sin();
+    let x2 = (hc + x1) * 0.5;
+    let y2 = (vc + y1) * 0.5;
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut cur = (0.0, vc);
+    let mut pts = vec![map(cur.0, cur.1)];
+    ooxml_arc_to_y_down(&mut cur, wd2, hd2, CD2, CD4, &mut pts, map);
+    sample_quad_y_down(&mut cur, (x2, 0.0), (x1, y1), 8, &mut pts, map);
+    sample_quad_y_down(&mut cur, (w, y2), (w, vc), 8, &mut pts, map);
+    ooxml_arc_to_y_down(&mut cur, wd2, hd2, 0.0, CD4, &mut pts, map);
+    ooxml_arc_to_y_down(&mut cur, wd2, hd2, CD4, CD4, &mut pts, map);
+    pts
+}
+
+fn sample_quad_y_down(
+    cur: &mut (f32, f32),
+    ctrl: (f32, f32),
+    end: (f32, f32),
+    steps: i32,
+    pts: &mut Vec<(f32, f32)>,
+    map: impl Fn(f32, f32) -> (f32, f32),
+) {
+    let p0 = *cur;
+    for i in 1..=steps {
+        let t = i as f32 / steps as f32;
+        let u = 1.0 - t;
+        *cur = (
+            u * u * p0.0 + 2.0 * u * t * ctrl.0 + t * t * end.0,
+            u * u * p0.1 + 2.0 * u * t * ctrl.1 + t * t * end.1,
+        );
+        pts.push(map(cur.0, cur.1));
+    }
 }
 
 fn smiley_eye_points(x: f32, y: f32, w: f32, h: f32, left: bool) -> Vec<(f32, f32)> {
@@ -14359,6 +14419,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn teardrop_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="teardrop"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=teardrop must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -14834,6 +14933,22 @@ mod drawing_tests {
             !pts.iter()
                 .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
             "gear9 must not include the bbox corner; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn teardrop_points_tip_at_top_right() {
+        let pts = teardrop_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() > 16, "teardrop is arcs+quads, not a box; {pts:?}");
+        let tip = pts.iter().any(|(px, py)| *px > 95.0 && *py > 95.0);
+        assert!(
+            tip,
+            "adj=100000 tip is OOXML (r,t) → PDF top-right; {pts:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
+            "teardrop must not include the bbox corner; {pts:?}"
         );
     }
 
