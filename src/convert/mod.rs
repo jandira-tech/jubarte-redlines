@@ -1156,6 +1156,7 @@ enum ShapeGeom {
     Gear9,
     Teardrop,
     NoSmoking,
+    Plaque,
 }
 
 enum ImageKind {
@@ -6069,6 +6070,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "gear9" => ShapeGeom::Gear9,
         "teardrop" => ShapeGeom::Teardrop,
         "noSmoking" => ShapeGeom::NoSmoking,
+        "plaque" => ShapeGeom::Plaque,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8944,6 +8946,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Plaque => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: plaque_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9091,6 +9099,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Gear9
                 | ShapeGeom::Teardrop
                 | ShapeGeom::NoSmoking
+                | ShapeGeom::Plaque
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9128,6 +9137,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Gear9 => gear9_points(x, y, dw, dh),
                             ShapeGeom::Teardrop => teardrop_points(x, y, dw, dh),
                             ShapeGeom::NoSmoking => no_smoking_points(x, y, dw, dh),
+                            ShapeGeom::Plaque => plaque_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11717,6 +11727,28 @@ fn no_smoking_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     pts.push((nwx - hx, nwy - hy));
     pts.push((sex - hx, sey - hy));
     pts.push((sex + hx, sey + hy));
+    pts
+}
+
+fn plaque_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML plaque adj=16667: square with concave quarter-circles at corners.
+    const CD4: f32 = 5_400_000.0;
+    const CD2: f32 = 10_800_000.0;
+    const CD3_4: f32 = 16_200_000.0;
+    let r = (preset_ss(w, h) * 16_667.0 / 100_000.0).max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut cur = (0.0, r);
+    let mut pts = vec![map(cur.0, cur.1)];
+    ooxml_arc_to_y_down(&mut cur, r, r, CD4, -CD4, &mut pts, map);
+    cur = (w - r, 0.0);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, r, r, CD2, -CD4, &mut pts, map);
+    cur = (w, h - r);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, r, r, CD3_4, -CD4, &mut pts, map);
+    cur = (r, h);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, r, r, 0.0, -CD4, &mut pts, map);
     pts
 }
 
@@ -14538,6 +14570,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn plaque_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="plaque"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=plaque must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -15048,6 +15119,26 @@ mod drawing_tests {
                 .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
             "noSmoking must not include the bbox corner; {pts:?}"
         );
+    }
+
+    #[test]
+    fn plaque_points_cut_concave_corners() {
+        let pts = plaque_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() > 12, "plaque is four inward arcs; {pts:?}");
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
+            "plaque must not include the bbox corner; {pts:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && (*py - 100.0).abs() < 0.05),
+            "plaque must not include the opposite bbox corner; {pts:?}"
+        );
+        let near_left = pts
+            .iter()
+            .any(|(px, py)| px.abs() < 0.5 && *py > 10.0 && *py < 90.0);
+        assert!(near_left, "left edge after the top-left bite; {pts:?}");
     }
 
     #[test]
