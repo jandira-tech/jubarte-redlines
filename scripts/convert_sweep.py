@@ -331,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         jobs, jubarte=args.jubarte, scorer=args.scorer, workers=args.workers
     )
     out = args.out
-    if out is None and args.set != "both":
+    if out is None and args.set != "both" and args.compare is None:
         out = JUBARTE / "tools" / f"convert_baseline_{args.set}.tsv"
     if out is not None:
         write_tsv(rows, out)

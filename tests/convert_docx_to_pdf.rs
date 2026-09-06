@@ -159,12 +159,84 @@ fn minimal_docx_with_settings(body: &str, settings: &str) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+fn minimal_docx_with_font_table(body: &str, font_table: &str) -> Vec<u8> {
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:body>{body}</w:body></w:document>"
+    );
+    let fonts_xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:fonts xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         {font_table}</w:fonts>"
+    );
+    let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        <Override PartName=\"/word/fontTable.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml\"/>\
+        </Types>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/>\
+        </Relationships>";
+    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdFonts\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable\" \
+          Target=\"fontTable.xml\"/>\
+        </Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(content_types.as_bytes()).unwrap();
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(rels.as_bytes()).unwrap();
+    zip.start_file("word/document.xml", opts).unwrap();
+    zip.write_all(document.as_bytes()).unwrap();
+    zip.start_file("word/_rels/document.xml.rels", opts)
+        .unwrap();
+    zip.write_all(doc_rels.as_bytes()).unwrap();
+    zip.start_file("word/fontTable.xml", opts).unwrap();
+    zip.write_all(fonts_xml.as_bytes()).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
 #[test]
 fn iso_strict_fixture_converts_to_pdf() {
     let bytes = std::fs::read("tests/fixtures/strict/Strict01.docx").expect("strict fixture");
     let pdf = docx_to_pdf(&bytes).expect("strict convert");
     assert!(pdf.starts_with(b"%PDF"));
     assert!(pdf_page_count(&pdf) >= 1);
+}
+
+#[test]
+fn font_table_altname_unknown_family_embeds_cambria() {
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"SomeRare\" w:hAnsi=\"SomeRare\"/></w:rPr>\
+                <w:t>Hello</w:t></w:r></w:p><w:sectPr/>";
+    let with_alt = minimal_docx_with_font_table(
+        body,
+        "<w:font w:name=\"SomeRare\"><w:altName w:val=\"Cambria\"/></w:font>",
+    );
+    let pdf = docx_to_pdf(&with_alt).expect("convert altName");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("Cambria"),
+        "altName Cambria must be the physical face; pdf head {:?}",
+        text.chars().take(200).collect::<String>()
+    );
+    let without = minimal_docx_body(body);
+    let pdf_fallback = docx_to_pdf(&without).expect("convert no table");
+    let fallback = String::from_utf8_lossy(&pdf_fallback);
+    assert!(
+        fallback.contains("Carlito") || fallback.contains("Calibri"),
+        "unknown family without a font table stays the Calibri substitute"
+    );
 }
 
 #[test]
