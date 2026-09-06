@@ -8,6 +8,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, OnceLock};
@@ -25,6 +26,154 @@ pub(crate) fn with_font_table<T>(table: super::font_table::FontTable, f: impl Fn
         slot.replace(prev);
         out
     })
+}
+
+thread_local! {
+    static FONT_REPORT: RefCell<Option<Vec<FontReportEntry>>> = const { RefCell::new(None) };
+}
+
+/// Collect distinct [`FontReportEntry`] rows produced by `Fonts::resolve`
+/// inside `f` (plan Step 2f).
+pub(crate) fn with_font_report<T>(f: impl FnOnce() -> T) -> (T, Vec<FontReportEntry>) {
+    FONT_REPORT.with(|slot| {
+        let prev = slot.replace(Some(Vec::new()));
+        let out = f();
+        let report = slot.replace(prev).unwrap_or_default();
+        (out, report)
+    })
+}
+
+fn record_font_resolution(entry: FontReportEntry) {
+    FONT_REPORT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(report) = slot.as_mut() else {
+            return;
+        };
+        if report.iter().any(|existing| {
+            existing.requested == entry.requested
+                && existing.bold == entry.bold
+                && existing.italic == entry.italic
+        }) {
+            return;
+        }
+        report.push(entry);
+    });
+}
+
+/// Which resolve step produced the physical face (plan Step 2f).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FontStep {
+    /// Document-embedded `.odttf` for this family + style.
+    Embedded,
+    /// Requested family is installed (or in the catalogue overlay).
+    Explicit,
+    /// `w:altName` from `fontTable.xml`.
+    AltName,
+    /// Theme slot with no explicit `w:ascii` (reserved; apply_rfonts today
+    /// writes the slot name before resolve).
+    Theme,
+    /// Word-substitution evidence table (plan Step 2d).
+    WordSubstitution,
+    /// Bundled metric-compatible face; the requested family is not on disk.
+    OpenFallback,
+    /// `w:family` / `w:pitch` generic (roman / swiss / modern / fixed).
+    Generic,
+    /// Unknown family; evidence-table last resort (Cambria).
+    Unknown,
+}
+
+impl FontStep {
+    /// Stable JSON / CLI token for this step.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Embedded => "embedded",
+            Self::Explicit => "explicit",
+            Self::AltName => "altName",
+            Self::Theme => "theme",
+            Self::WordSubstitution => "word_substitution",
+            Self::OpenFallback => "open_fallback",
+            Self::Generic => "generic",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl fmt::Display for FontStep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// One distinct requested family + style from a conversion (plan Step 2f).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontReportEntry {
+    /// Family string the run asked for (opaque; quotes/commas preserved).
+    pub requested: String,
+    /// Which resolve step selected the physical face.
+    pub step: FontStep,
+    /// Physical face actually used (PDF PostScript name).
+    pub physical: String,
+    /// Requested bold.
+    pub bold: bool,
+    /// Requested italic.
+    pub italic: bool,
+    /// True when the physical face does not provide the requested style.
+    pub synthetic: bool,
+}
+
+impl FontReportEntry {
+    /// One JSON object matching `{requested, step, physical, bold, italic, synthetic}`.
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        format!(
+            "{{\"requested\":{},\"step\":{},\"physical\":{},\"bold\":{},\"italic\":{},\"synthetic\":{}}}",
+            json_string(&self.requested),
+            json_string(self.step.as_str()),
+            json_string(&self.physical),
+            json_bool(self.bold),
+            json_bool(self.italic),
+            json_bool(self.synthetic),
+        )
+    }
+}
+
+/// JSON array of [`FontReportEntry::to_json`] objects.
+#[must_use]
+pub fn font_report_json(entries: &[FontReportEntry]) -> String {
+    let mut out = String::from("[");
+    for (i, entry) in entries.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&entry.to_json());
+    }
+    out.push(']');
+    out
+}
+
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn json_bool(v: bool) -> &'static str {
+    if v { "true" } else { "false" }
 }
 
 /// Word Quartz Save-as-PDF writes a small `Tc` at 300dpi body sizes so
@@ -862,18 +1011,60 @@ impl Fonts {
     }
 
     pub(crate) fn resolve(&self, family: &str, bold: bool, italic: bool) -> FaceRef {
+        let (face, entry) =
+            ACTIVE_FONT_TABLE.with(|slot| self.classify_in(family, bold, italic, &slot.borrow()));
+        record_font_resolution(entry);
+        face
+    }
+
+    /// Resolve `family` and classify the step without recording a report row.
+    pub(crate) fn classify_in(
+        &self,
+        family: &str,
+        bold: bool,
+        italic: bool,
+        table: &super::font_table::FontTable,
+    ) -> (FaceRef, FontReportEntry) {
         let primary = family_token(family);
         if let Some(idx) = self.embedded_index(primary, bold, italic) {
-            return FaceRef::Embedded(idx);
+            let face = FaceRef::Embedded(idx);
+            let exact = self.extra_index.contains_key(&FaceKey {
+                family: primary.to_ascii_lowercase(),
+                bold,
+                italic,
+            });
+            return (
+                face,
+                FontReportEntry {
+                    requested: family.to_string(),
+                    step: FontStep::Embedded,
+                    physical: self.get(face).pdf_name().to_string(),
+                    bold,
+                    italic,
+                    synthetic: (bold || italic) && !exact,
+                },
+            );
         }
-        ACTIVE_FONT_TABLE
-            .with(|slot| FaceRef::Catalogue(self.resolve_in(family, bold, italic, &slot.borrow())))
+        let (id, step) = self.resolve_in_step(family, bold, italic, table);
+        let face = FaceRef::Catalogue(id);
+        (
+            face,
+            FontReportEntry {
+                requested: family.to_string(),
+                step,
+                physical: self.get(face).pdf_name().to_string(),
+                bold,
+                italic,
+                synthetic: (bold && !id.is_bold_style()) || (italic && !id.is_italic_style()),
+            },
+        )
     }
 
     /// Resolve `family` using Word's font table. Installed faces win;
     /// otherwise `w:altName`, then the Word-substitution evidence table,
     /// then `w:family`/`w:pitch` generics. Unknown names use the evidence
     /// table's Cambria row (plan Step 2d).
+    #[cfg(test)]
     pub(crate) fn resolve_in(
         &self,
         family: &str,
@@ -881,6 +1072,16 @@ impl Fonts {
         italic: bool,
         table: &super::font_table::FontTable,
     ) -> FaceId {
+        self.resolve_in_step(family, bold, italic, table).0
+    }
+
+    fn resolve_in_step(
+        &self,
+        family: &str,
+        bold: bool,
+        italic: bool,
+        table: &super::font_table::FontTable,
+    ) -> (FaceId, FontStep) {
         let mut visited = HashSet::new();
         self.resolve_walk(family, bold, italic, table, &mut visited)
     }
@@ -892,7 +1093,7 @@ impl Fonts {
         italic: bool,
         table: &super::font_table::FontTable,
         visited: &mut HashSet<String>,
-    ) -> FaceId {
+    ) -> (FaceId, FontStep) {
         // Word splits rFonts on comma but does not CSS-unquote. Evidence
         // (Quartz PDFs): `Verdana, Geneva, sans-serif` → Verdana;
         // `"Times New Roman", Times, serif` → Cambria, because the first
@@ -905,26 +1106,47 @@ impl Fonts {
                 .replace([' ', '-'], "")
                 .replace("mt", "");
             if let Some(id) = Self::mapped_face(&key, bold, italic) {
-                return id;
+                return (id, Self::catalogue_step(id));
             }
         }
         let visit_key = primary.to_ascii_lowercase();
         if !visited.insert(visit_key) {
-            return Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic);
+            return (
+                Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
+                FontStep::Unknown,
+            );
         }
         if let Some(alt) = table.alt_name(primary) {
-            return self.resolve_walk(alt, bold, italic, table, visited);
+            let (id, _) = self.resolve_walk(alt, bold, italic, table, visited);
+            return (id, FontStep::AltName);
         }
         if let Some(physical) = super::word_subst::lookup_physical(primary) {
-            return Self::face_from_physical(&physical, bold, italic);
+            return (
+                Self::face_from_physical(&physical, bold, italic),
+                FontStep::WordSubstitution,
+            );
         }
         if let Some(entry) = table.get(primary) {
             let generic = super::word_subst::generic_physical(entry.family, entry.pitch);
             if !generic.is_empty() {
-                return Self::face_from_physical(generic, bold, italic);
+                return (
+                    Self::face_from_physical(generic, bold, italic),
+                    FontStep::Generic,
+                );
             }
         }
-        Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic)
+        (
+            Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
+            FontStep::Unknown,
+        )
+    }
+
+    fn catalogue_step(id: FaceId) -> FontStep {
+        if system_override(id).is_some() {
+            FontStep::Explicit
+        } else {
+            FontStep::OpenFallback
+        }
     }
 
     fn face_from_physical(physical: &str, bold: bool, italic: bool) -> FaceId {
@@ -1619,5 +1841,180 @@ mod tests {
             "embedded physical PostScript name must be a PDF font; snippet={}",
             text.chars().take(800).collect::<String>()
         );
+    }
+
+    fn simple_docx_with_ascii_font(family: &str) -> Vec<u8> {
+        use std::io::{Cursor, Write};
+        let mut buf = Vec::new();
+        {
+            let mut z = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let opt = zip::write::SimpleFileOptions::default();
+            z.start_file("[Content_Types].xml", opt).unwrap();
+            z.write_all(
+                br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#,
+            )
+            .unwrap();
+            z.start_file("_rels/.rels", opt).unwrap();
+            z.write_all(
+                br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdM" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+            )
+            .unwrap();
+            z.start_file("word/document.xml", opt).unwrap();
+            let doc = format!(
+                r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:rFonts w:ascii="{family}" w:hAnsi="{family}"/></w:rPr><w:t>HELLO</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>"#
+            );
+            z.write_all(doc.as_bytes()).unwrap();
+            z.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn docx_to_pdf_report_includes_requested_unknown_family() {
+        let docx = simple_docx_with_ascii_font("DefinitelyNotAFont");
+        let out = super::super::docx_to_pdf_report(&docx, super::super::PdfOptions::default())
+            .expect("convert");
+        assert!(out.pdf.starts_with(b"%PDF"));
+        let row = out
+            .font_report
+            .iter()
+            .find(|e| e.requested == "DefinitelyNotAFont")
+            .expect("unknown family must appear in the report");
+        assert_eq!(row.step, FontStep::Unknown);
+        let json = font_report_json(&out.font_report);
+        assert!(json.starts_with('['), "{json}");
+        assert!(json.contains("\"step\":\"unknown\""), "{json}");
+    }
+
+    #[test]
+    fn classify_unknown_family_is_unknown_step() {
+        let fonts = Fonts::new();
+        let table = super::super::font_table::FontTable::default();
+        let (_, entry) = fonts.classify_in("DefinitelyNotAFont", false, false, &table);
+        assert_eq!(entry.step, FontStep::Unknown);
+        assert_eq!(entry.requested, "DefinitelyNotAFont");
+        assert!(!entry.physical.is_empty());
+        assert!(!entry.synthetic);
+    }
+
+    #[test]
+    fn classify_dejavu_sans_mono_is_word_substitution() {
+        let fonts = Fonts::new();
+        let table = super::super::font_table::FontTable::default();
+        let (_, entry) = fonts.classify_in("DejaVu Sans Mono", false, false, &table);
+        assert_eq!(entry.step, FontStep::WordSubstitution);
+        assert_eq!(entry.requested, "DejaVu Sans Mono");
+    }
+
+    #[test]
+    fn classify_empty_family_is_word_substitution() {
+        let fonts = Fonts::new();
+        let table = super::super::font_table::FontTable::default();
+        let (face, entry) = fonts.classify_in("", false, false, &table);
+        assert_eq!(entry.step, FontStep::WordSubstitution);
+        assert_eq!(face, FaceId::SerifRegular);
+    }
+
+    #[test]
+    fn classify_quoted_css_list_is_unknown() {
+        let fonts = Fonts::new();
+        let table = super::super::font_table::FontTable::default();
+        let (_, entry) =
+            fonts.classify_in(r#""Times New Roman", Times, serif"#, false, false, &table);
+        assert_eq!(entry.step, FontStep::Unknown);
+        assert_eq!(entry.requested, r#""Times New Roman", Times, serif"#);
+    }
+
+    #[test]
+    fn classify_altname_step_is_altname() {
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="SomeRare"><w:altName w:val="Cambria"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        let (_, entry) = fonts.classify_in("SomeRare", false, false, &table);
+        assert_eq!(entry.step, FontStep::AltName);
+        assert_eq!(entry.requested, "SomeRare");
+    }
+
+    #[test]
+    fn classify_swiss_generic_step_is_generic() {
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="SomeSwiss"><w:family w:val="swiss"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        let (_, entry) = fonts.classify_in("SomeSwiss", false, false, &table);
+        assert_eq!(entry.step, FontStep::Generic);
+    }
+
+    #[test]
+    fn classify_calibri_is_explicit_or_open_fallback() {
+        let fonts = Fonts::new();
+        let table = super::super::font_table::FontTable::default();
+        let (_, entry) = fonts.classify_in("Calibri", false, false, &table);
+        assert!(
+            matches!(entry.step, FontStep::Explicit | FontStep::OpenFallback),
+            "Calibri must be installed or bundled, got {:?}",
+            entry.step
+        );
+        assert!(!entry.physical.is_empty());
+    }
+
+    #[test]
+    fn classify_embedded_unknown_family_is_embedded_step() {
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded(
+            "Press Start 2P",
+            false,
+            false,
+            FaceId::MonoRegular.bytes().to_vec(),
+        );
+        let table = super::super::font_table::FontTable::default();
+        let (_, regular) = fonts.classify_in("Press Start 2P", false, false, &table);
+        assert_eq!(regular.step, FontStep::Embedded);
+        assert_eq!(regular.physical, "LiberationMono");
+        assert!(!regular.synthetic);
+        let (_, bold) = fonts.classify_in("Press Start 2P", true, false, &table);
+        assert_eq!(bold.step, FontStep::Embedded);
+        assert!(bold.synthetic, "missing bold embed is synthetic");
+    }
+
+    #[test]
+    fn font_report_json_shape() {
+        let entry = FontReportEntry {
+            requested: r#"Calibri "body""#.to_string(),
+            step: FontStep::Explicit,
+            physical: "Calibri".to_string(),
+            bold: false,
+            italic: true,
+            synthetic: false,
+        };
+        let json = font_report_json(std::slice::from_ref(&entry));
+        assert_eq!(
+            json,
+            r#"[{"requested":"Calibri \"body\"","step":"explicit","physical":"Calibri","bold":false,"italic":true,"synthetic":false}]"#
+        );
+    }
+
+    #[test]
+    fn with_font_report_records_distinct_requests_only() {
+        let fonts = Fonts::new();
+        let ((), report) = with_font_report(|| {
+            let _ = fonts.resolve("DefinitelyNotAFont", false, false);
+            let _ = fonts.resolve("DefinitelyNotAFont", false, false);
+            let _ = fonts.resolve("Calibri", true, false);
+        });
+        assert_eq!(
+            report.len(),
+            2,
+            "same requested+style must collapse: {report:?}"
+        );
+        assert_eq!(report[0].requested, "DefinitelyNotAFont");
+        assert_eq!(report[0].step, FontStep::Unknown);
+        assert_eq!(report[1].requested, "Calibri");
+        assert!(report[1].bold);
     }
 }
