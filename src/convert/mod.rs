@@ -2953,8 +2953,9 @@ fn collect_blocks(
         authors: RefCell::new(AuthorColors::default()),
         comments,
     };
-    walk_container(&ctx, dom, body, &mut numbering, &mut blocks);
-    append_endnotes(&ctx, dom, body, &mut numbering, &mut blocks);
+    let mut endnotes = EndnoteBag::load(pkg, main);
+    walk_container(&ctx, dom, body, &mut numbering, &mut blocks, &mut endnotes);
+    endnotes.emit_remaining(&ctx, &mut numbering, &mut blocks);
     blocks
 }
 
@@ -3058,65 +3059,118 @@ fn note_is_structural(dom: &Dom, note: NodeId) -> bool {
     )
 }
 
-fn referenced_note_ids(dom: &Dom, root: NodeId, local: &str) -> HashSet<String> {
-    dom.descendants(root, Some(&W::name(local)))
-        .into_iter()
-        .filter_map(|n| attr_any(dom, n, "id").map(str::to_string))
-        .collect()
+/// Endnotes collected during the body walk so `endnotePr/@w:pos=sectEnd`
+/// can flush at the section boundary (plan.md Step 10 F). `docEnd` (the
+/// default when pos is omitted) still emits after the last body block.
+struct EndnoteBag {
+    ndom: Dom,
+    by_id: HashMap<String, NodeId>,
+    pending: Vec<String>,
+    seen: HashSet<String>,
 }
 
-fn append_endnotes(
+impl EndnoteBag {
+    fn load(pkg: &PartFs, main: &str) -> Self {
+        let mut bag = Self {
+            ndom: Dom::new(),
+            by_id: HashMap::new(),
+            pending: Vec::new(),
+            seen: HashSet::new(),
+        };
+        let Some(xml) = part_xml_by_rel_kind(pkg, main, "endnotes") else {
+            return bag;
+        };
+        let doc = bag.ndom.parse_xdocument(&xml);
+        let Some(root) = bag.ndom.root(doc) else {
+            return bag;
+        };
+        for note in bag.ndom.descendants(root, Some(&W::endnote())) {
+            if note_is_structural(&bag.ndom, note) {
+                continue;
+            }
+            if let Some(id) = attr_any(&bag.ndom, note, "id") {
+                bag.by_id.insert(id.to_string(), note);
+            }
+        }
+        bag
+    }
+
+    fn observe_para(&mut self, dom: &Dom, para: NodeId) {
+        for n in dom.descendants(para, Some(&W::name("endnoteReference"))) {
+            let Some(id) = attr_any(dom, n, "id") else {
+                continue;
+            };
+            if self.seen.insert(id.to_string()) {
+                self.pending.push(id.to_string());
+            }
+        }
+    }
+
+    fn flush_if_sect_end(
+        &mut self,
+        ctx: &WalkCtx<'_>,
+        body_dom: &Dom,
+        sect: NodeId,
+        numbering: &mut Numbering,
+        blocks: &mut Vec<Block>,
+    ) {
+        if endnote_pos_is_sect_end(body_dom, sect) {
+            self.emit(ctx, numbering, blocks);
+        }
+    }
+
+    fn emit_remaining(
+        &mut self,
+        ctx: &WalkCtx<'_>,
+        numbering: &mut Numbering,
+        blocks: &mut Vec<Block>,
+    ) {
+        self.emit(ctx, numbering, blocks);
+    }
+
+    fn emit(&mut self, ctx: &WalkCtx<'_>, numbering: &mut Numbering, blocks: &mut Vec<Block>) {
+        let ids = std::mem::take(&mut self.pending);
+        for id in ids {
+            let Some(&note) = self.by_id.get(&id) else {
+                continue;
+            };
+            // Word `docEnd` continues on the last body page when the notes
+            // fit (Strict01 p13 is SmartArt + endnote). A hard break here
+            // turned that into 14 pages once the diagram reserved flow.
+            push_endnote_blocks(ctx, &self.ndom, note, numbering, blocks);
+        }
+    }
+}
+
+fn endnote_pos_is_sect_end(dom: &Dom, sect: NodeId) -> bool {
+    first_named(dom, sect, "endnotePr")
+        .and_then(|pr| first_named(dom, pr, "pos"))
+        .and_then(|n| attr_any(dom, n, "val"))
+        .is_some_and(|v| v == "sectEnd")
+}
+
+fn push_endnote_blocks(
     ctx: &WalkCtx<'_>,
-    body_dom: &Dom,
-    body: NodeId,
+    ndom: &Dom,
+    note: NodeId,
     numbering: &mut Numbering,
     blocks: &mut Vec<Block>,
 ) {
-    let Some(xml) = part_xml_by_rel_kind(ctx.pkg, ctx.main, "endnotes") else {
-        return;
-    };
-    let wanted = referenced_note_ids(body_dom, body, "endnoteReference");
-    if wanted.is_empty() {
-        return;
-    }
-    let mut ndom = Dom::new();
-    let doc = ndom.parse_xdocument(&xml);
-    let Some(root) = ndom.root(doc) else {
-        return;
-    };
-    let mut notes = Vec::new();
-    for note in ndom.descendants(root, Some(&W::endnote())) {
-        if note_is_structural(&ndom, note) {
-            continue;
-        }
-        let id = attr_any(&ndom, note, "id").unwrap_or("");
-        if wanted.contains(id) {
-            notes.push(note);
-        }
-    }
-    if notes.is_empty() {
-        return;
-    }
-    // Word `docEnd` continues on the last body page when the notes fit
-    // (Strict01 p13 is SmartArt + endnote). A hard break here turned that
-    // into 14 pages once the diagram reserved flow.
-    for note in notes {
-        for i in 0..ndom.child_count(note) {
-            let child = ndom.child_at(note, i);
-            if ndom.name_is(child, &W::p()) {
-                blocks.push(paragraph_block(ctx, &ndom, child, false, numbering));
-            } else if ndom.name_is(child, &W::tbl()) {
-                let block = table_block(
-                    &ndom,
-                    child,
-                    ctx.sheet,
-                    numbering,
-                    &mut ctx.authors.borrow_mut(),
-                    &ctx.comments,
-                );
-                if !block_is_blank(&block) {
-                    blocks.push(block);
-                }
+    for i in 0..ndom.child_count(note) {
+        let child = ndom.child_at(note, i);
+        if ndom.name_is(child, &W::p()) {
+            blocks.push(paragraph_block(ctx, ndom, child, false, numbering));
+        } else if ndom.name_is(child, &W::tbl()) {
+            let block = table_block(
+                ndom,
+                child,
+                ctx.sheet,
+                numbering,
+                &mut ctx.authors.borrow_mut(),
+                &ctx.comments,
+            );
+            if !block_is_blank(&block) {
+                blocks.push(block);
             }
         }
     }
@@ -3253,6 +3307,7 @@ fn walk_container(
     node: NodeId,
     numbering: &mut Numbering,
     blocks: &mut Vec<Block>,
+    endnotes: &mut EndnoteBag,
 ) {
     for idx in 0..dom.child_count(node) {
         let child = dom.child_at(node, idx);
@@ -3267,10 +3322,14 @@ fn walk_container(
             let sect_here = para_sect_pr(dom, child);
             let sect_br = sect_here
                 .is_some_and(|s| !is_final_sect(ctx.sects, s) && sect_starts_new_page(dom, s));
+            endnotes.observe_para(dom, child);
             let block = paragraph_block(ctx, dom, child, false, numbering);
             let blank = block_is_blank(&block);
             if !blank || (!page_br && !sect_br) {
                 blocks.push(block);
+            }
+            if let Some(s) = sect_here.filter(|s| !is_final_sect(ctx.sects, *s)) {
+                endnotes.flush_if_sect_end(ctx, dom, s, numbering, blocks);
             }
             if page_br || sect_br {
                 let next = if sect_br {
@@ -3306,14 +3365,14 @@ fn walk_container(
             {
                 blocks.push(Block::PageBreak { next: None });
             }
-            walk_container(ctx, dom, content, numbering, blocks);
-        } else if dom.name_is(child, &W::sect_pr())
-            && !is_final_sect(ctx.sects, child)
-            && sect_starts_new_page(dom, child)
-        {
-            let next = next_sect_pr(ctx.sects, child)
-                .map(|s| section_chrome(ctx.pkg, ctx.main, dom, s, ctx.sheet));
-            blocks.push(Block::PageBreak { next });
+            walk_container(ctx, dom, content, numbering, blocks, endnotes);
+        } else if dom.name_is(child, &W::sect_pr()) && !is_final_sect(ctx.sects, child) {
+            endnotes.flush_if_sect_end(ctx, dom, child, numbering, blocks);
+            if sect_starts_new_page(dom, child) {
+                let next = next_sect_pr(ctx.sects, child)
+                    .map(|s| section_chrome(ctx.pkg, ctx.main, dom, s, ctx.sheet));
+                blocks.push(Block::PageBreak { next });
+            }
         }
     }
 }
