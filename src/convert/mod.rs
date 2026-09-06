@@ -1192,6 +1192,7 @@ enum ShapeGeom {
     FlowChartPunchedCard,
     FlowChartPreparation,
     FlowChartExtract,
+    FlowChartMerge,
 }
 
 enum ImageKind {
@@ -6141,6 +6142,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "flowChartPunchedCard" => ShapeGeom::FlowChartPunchedCard,
         "flowChartPreparation" => ShapeGeom::FlowChartPreparation,
         "flowChartExtract" => ShapeGeom::FlowChartExtract,
+        "flowChartMerge" => ShapeGeom::FlowChartMerge,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9234,6 +9236,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::FlowChartMerge => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: flow_chart_merge_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9427,6 +9435,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::FlowChartPunchedCard
                 | ShapeGeom::FlowChartPreparation
                 | ShapeGeom::FlowChartExtract
+                | ShapeGeom::FlowChartMerge
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9513,6 +9522,7 @@ impl<'a> Layout<'a> {
                                 flow_chart_preparation_points(x, y, dw, dh)
                             }
                             ShapeGeom::FlowChartExtract => flow_chart_extract_points(x, y, dw, dh),
+                            ShapeGeom::FlowChartMerge => flow_chart_merge_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -12397,6 +12407,12 @@ fn flow_chart_extract_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> 
     // OOXML flowChartExtract in 2×2 space: up-pointing triangle.
     let py = |yd: f32| y + h - yd;
     vec![(x, py(h)), (x + w * 0.5, py(0.0)), (x + w, py(h))]
+}
+
+fn flow_chart_merge_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML flowChartMerge in 2×2 space: down-pointing triangle.
+    let py = |yd: f32| y + h - yd;
+    vec![(x, py(0.0)), (x + w, py(0.0)), (x + w * 0.5, py(h))]
 }
 
 fn cube_faces(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 3] {
@@ -16029,6 +16045,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn flow_chart_merge_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="flowChartMerge"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=flowChartMerge must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -18112,6 +18167,27 @@ mod drawing_tests {
             (pts[2].0 - 100.0).abs() < 0.05 && pts[2].1.abs() < 0.05,
             "end is bottom-right; {:?}",
             pts[2]
+        );
+    }
+
+    #[test]
+    fn flow_chart_merge_is_a_down_triangle() {
+        let pts = flow_chart_merge_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 3);
+        assert!(
+            pts[0].0.abs() < 0.05 && (pts[0].1 - 100.0).abs() < 0.05,
+            "start is top-left; {:?}",
+            pts[0]
+        );
+        assert!(
+            (pts[2].0 - 50.0).abs() < 0.05 && pts[2].1.abs() < 0.05,
+            "tip is (hc,b); {:?}",
+            pts[2]
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
+            "must not include the bbox corner; {pts:?}"
         );
     }
 
