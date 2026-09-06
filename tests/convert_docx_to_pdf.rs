@@ -12862,6 +12862,48 @@ fn header_inline_image_paints_in_the_header_band() {
 }
 
 #[test]
+fn header_table_paints_tbl_borders() {
+    // xml leftover: tables in headers. Cell text already flattens via
+    // collect_hf_runs; tblBorders must still paint in the chrome band.
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:tbl><w:tblPr>\
+             <w:tblW w:w=\"2880\" w:type=\"dxa\"/>\
+             <w:tblBorders>\
+               <w:top w:val=\"single\" w:sz=\"12\" w:color=\"FF0000\"/>\
+               <w:left w:val=\"single\" w:sz=\"12\" w:color=\"FF0000\"/>\
+               <w:bottom w:val=\"single\" w:sz=\"12\" w:color=\"FF0000\"/>\
+               <w:right w:val=\"single\" w:sz=\"12\" w:color=\"FF0000\"/>\
+             </w:tblBorders>\
+           </w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"2880\"/></w:tblGrid>\
+           <w:tr><w:tc><w:p><w:r><w:t>HdrTblX</w:t></w:r></w:p></w:tc></w:tr>\
+           </w:tbl></w:hdr>";
+    let body = "<w:p><w:r><w:t>HdrTblBodyX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", header.to_string())],
+    ))
+    .expect("convert header table");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("HdrTblX") && text.contains("HdrTblBodyX"),
+        "header cell and body must paint; text={text:?}"
+    );
+    let bars = pdf_fill_rects(&pdf, 1.0, 0.0, 0.0);
+    assert!(
+        bars.len() >= 2,
+        "header tblBorders FF0000 must paint at least two edges; bars={bars:?}"
+    );
+}
+
+#[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert header_no_rels");
