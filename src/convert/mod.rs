@@ -784,6 +784,17 @@ struct SectionChrome {
     footer_tables: Vec<ChromeTable>,
     /// `w:mirrorMargins` (xml leftover).
     mirror_margins: bool,
+    /// `w:characterSpacingControl` (xml leftover, document-level).
+    character_spacing: CharacterSpacing,
+}
+
+/// ECMA-376 17.15.1.18 / ST_CharacterSpacing. Omitted = `doNotCompress`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CharacterSpacing {
+    #[default]
+    DoNotCompress,
+    CompressPunctuation,
+    CompressPunctuationAndKana,
 }
 
 #[derive(Clone)]
@@ -3027,6 +3038,50 @@ fn settings_mirror_margins(pkg: &PartFs) -> bool {
         && !xml.contains("mirrorMargins w:val=\"false\"")
 }
 
+/// `w:characterSpacingControl/@w:val`. Longer token first: `compressPunctuation`
+/// is a prefix of `compressPunctuationAndJapaneseKana`.
+fn settings_character_spacing(pkg: &PartFs) -> CharacterSpacing {
+    let Some(xml) = pkg.part_string("word/settings.xml") else {
+        return CharacterSpacing::DoNotCompress;
+    };
+    if xml.contains("compressPunctuationAndJapaneseKana") {
+        CharacterSpacing::CompressPunctuationAndKana
+    } else if xml.contains("compressPunctuation") {
+        CharacterSpacing::CompressPunctuation
+    } else {
+        CharacterSpacing::DoNotCompress
+    }
+}
+
+/// Full-width CJK punctuation whose extra half-em Word trims under
+/// `compressPunctuation` / `compressPunctuationAndJapaneseKana`
+/// (ECMA-376 17.15.1.18; CSS `text-justify-trim`).
+fn is_fullwidth_punctuation(c: char) -> bool {
+    matches!(
+        c,
+        '\u{3000}'
+            | '\u{3001}'..='\u{3002}'
+            | '\u{3008}'..='\u{3011}'
+            | '\u{3014}'..='\u{301B}'
+            | '\u{30FB}'
+            | '\u{FF01}'..='\u{FF0F}'
+            | '\u{FF1A}'..='\u{FF20}'
+            | '\u{FF3B}'..='\u{FF40}'
+            | '\u{FF5B}'..='\u{FF5E}'
+    )
+}
+
+fn character_spacing_scale(mode: CharacterSpacing, ch: char) -> f32 {
+    match mode {
+        CharacterSpacing::CompressPunctuation | CharacterSpacing::CompressPunctuationAndKana
+            if is_fullwidth_punctuation(ch) =>
+        {
+            0.5
+        }
+        _ => 1.0,
+    }
+}
+
 /// Word factory is 720 twips (0.5in). Strict01 writes `36pt`; mcdoc `420`.
 fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
     let xml = pkg.part_string("word/settings.xml")?;
@@ -3438,6 +3493,7 @@ fn section_chrome(
         header_tables: header.start.tables,
         footer_tables: footer.start.tables,
         mirror_margins: settings_mirror_margins(pkg),
+        character_spacing: settings_character_spacing(pkg),
     }
 }
 
@@ -7116,6 +7172,7 @@ struct HfChrome {
     header_tables: Vec<ChromeTable>,
     footer_tables: Vec<ChromeTable>,
     mirror_margins: bool,
+    character_spacing: CharacterSpacing,
 }
 
 fn first_section_hf(
@@ -7157,6 +7214,7 @@ fn first_section_hf(
         header_tables: header.start.tables,
         footer_tables: footer.start.tables,
         mirror_margins: settings_mirror_margins(pkg),
+        character_spacing: settings_character_spacing(pkg),
     }
 }
 
@@ -7765,6 +7823,7 @@ struct Layout<'a> {
     header_tables: Vec<ChromeTable>,
     footer_tables: Vec<ChromeTable>,
     mirror_margins: bool,
+    character_spacing: CharacterSpacing,
     margin_l0: f32,
     margin_r0: f32,
     placed_comments: HashSet<String>,
@@ -7890,6 +7949,7 @@ impl<'a> Layout<'a> {
             header_tables: hf.header_tables,
             footer_tables: hf.footer_tables,
             mirror_margins: hf.mirror_margins,
+            character_spacing: hf.character_spacing,
             margin_l0: page.margin_l,
             margin_r0: page.margin_r,
             placed_comments: HashSet::new(),
@@ -7914,6 +7974,7 @@ impl<'a> Layout<'a> {
         let (w, h) = (next.page.width, next.page.height);
         self.page = next.page;
         self.mirror_margins = next.mirror_margins;
+        self.character_spacing = next.character_spacing;
         self.margin_l0 = next.page.margin_l;
         self.margin_r0 = next.page.margin_r;
         if !self.page_has_body {
@@ -8959,6 +9020,23 @@ impl<'a> Layout<'a> {
         w
     }
 
+    fn spaced_glyph_advances(&self, text: &str, shaped: &[(u16, f32)]) -> Vec<f32> {
+        let chars: Vec<char> = text.chars().collect();
+        let paired = chars.len() == shaped.len();
+        shaped
+            .iter()
+            .enumerate()
+            .map(|(i, (_, adv))| {
+                let sp = if paired {
+                    character_spacing_scale(self.character_spacing, chars[i])
+                } else {
+                    1.0
+                };
+                *adv * sp
+            })
+            .collect()
+    }
+
     fn run_width_pt(&self, run: &TextRun, text: &str) -> f32 {
         if text.is_empty() {
             return 0.0;
@@ -8971,15 +9049,19 @@ impl<'a> Layout<'a> {
         let face = self.fonts.get(fid);
         let size = run.style.paint_size();
         let kern = run.style.kerns_at(size);
-        let w = face.width_pt_kern(text, size, kern);
-        let n = text.chars().count();
-        let w = w + run.style.track * n.saturating_sub(1) as f32;
+        let shaped = face.shape_kern(text, size, kern);
+        let advs = self.spaced_glyph_advances(text, &shaped);
+        let w: f32 =
+            advs.iter().sum::<f32>() + run.style.track * shaped.len().saturating_sub(1) as f32;
         if w > 0.05 || text.chars().all(char::is_whitespace) {
             return w;
         }
-        self.fonts
+        let shaped = self
+            .fonts
             .get(FaceId::SansRegular)
-            .width_pt_kern(text, size, kern)
+            .shape_kern(text, size, kern);
+        let advs = self.spaced_glyph_advances(text, &shaped);
+        advs.iter().sum::<f32>()
     }
 
     fn tab_suffix_width(&self, rest_of_run: &str, run: &TextRun, following: &[TextRun]) -> f32 {
@@ -9150,7 +9232,8 @@ impl<'a> Layout<'a> {
         } else {
             1.0
         };
-        let w: f32 = shaped.iter().map(|(_, a)| *a * scale).sum::<f32>()
+        let advs = self.spaced_glyph_advances(&run.text, &shaped);
+        let w: f32 = advs.iter().map(|a| *a * scale).sum::<f32>()
             + run.style.track * shaped.len().saturating_sub(1) as f32;
         let w = self.clip_width(x, w);
         if w <= 0.0 {
@@ -9174,7 +9257,7 @@ impl<'a> Layout<'a> {
             } else if ink_n >= shaped.len() {
                 w
             } else {
-                let adv: f32 = shaped.iter().take(ink_n).map(|(_, a)| *a * scale).sum();
+                let adv: f32 = advs.iter().take(ink_n).map(|a| *a * scale).sum();
                 adv + run.style.track * ink_n.saturating_sub(1) as f32
             }
         };
@@ -9206,8 +9289,8 @@ impl<'a> Layout<'a> {
             self.pageref_ops.push((page_i, op_i, name.to_string()));
         } else {
             let mut gx = x;
-            for (i, (gid, adv)) in shaped.iter().enumerate() {
-                let adv_pt = *adv * scale + run.style.track;
+            for (i, (gid, _)) in shaped.iter().enumerate() {
+                let adv_pt = advs[i] * scale + run.style.track;
                 if self.past_clip(gx) {
                     break;
                 }
@@ -15396,6 +15479,39 @@ fn body_op_yrange(ops: &[Op]) -> Option<(f32, f32)> {
         }
     }
     (min_y.is_finite() && max_y.is_finite()).then_some((min_y, max_y))
+}
+
+#[cfg(test)]
+mod character_spacing_tests {
+    use super::{CharacterSpacing, character_spacing_scale, is_fullwidth_punctuation};
+
+    #[test]
+    fn fullwidth_punct_is_half_under_compress_modes() {
+        assert!(is_fullwidth_punctuation('、'));
+        assert!(is_fullwidth_punctuation('。'));
+        assert!(!is_fullwidth_punctuation('A'));
+        assert!(!is_fullwidth_punctuation('あ'));
+        assert_eq!(
+            character_spacing_scale(CharacterSpacing::DoNotCompress, '、'),
+            1.0
+        );
+        assert_eq!(
+            character_spacing_scale(CharacterSpacing::CompressPunctuation, '、'),
+            0.5
+        );
+        assert_eq!(
+            character_spacing_scale(CharacterSpacing::CompressPunctuation, 'A'),
+            1.0
+        );
+        assert_eq!(
+            character_spacing_scale(CharacterSpacing::CompressPunctuationAndKana, '、'),
+            0.5
+        );
+        assert_eq!(
+            character_spacing_scale(CharacterSpacing::CompressPunctuationAndKana, 'あ'),
+            1.0
+        );
+    }
 }
 
 #[cfg(test)]
