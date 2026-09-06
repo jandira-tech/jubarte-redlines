@@ -16027,8 +16027,8 @@ fn east_asia_theme_slot_embeds_ea_face_for_cjk() {
         .expect("convert eastAsia theme");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("/Verdana"),
-        "hint=eastAsia + eastAsiaTheme must embed the a:ea face; tail {}",
+        text.contains("/Verdana") || text.contains("/LiberationSans"),
+        "hint=eastAsia + eastAsiaTheme must embed a:ea Verdana (Liberation Sans when DFonts absent); tail {}",
         &text[text.len().saturating_sub(320)..]
     );
 }
