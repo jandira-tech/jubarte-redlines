@@ -1143,6 +1143,9 @@ enum ShapeGeom {
     Cube,
     FoldedCorner,
     Can,
+    Cloud,
+    Pie,
+    LeftRightArrow,
 }
 
 enum ImageKind {
@@ -6019,7 +6022,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         }
         "straightConnector1" | "line" => ShapeGeom::Line,
         "roundRect" => ShapeGeom::RoundRect,
-        "ellipse" => ShapeGeom::Ellipse,
+        "ellipse" | "circle" => ShapeGeom::Ellipse,
         "triangle" => ShapeGeom::Triangle,
         "diamond" => ShapeGeom::Diamond,
         "hexagon" => ShapeGeom::Hexagon,
@@ -6043,6 +6046,9 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "cube" => ShapeGeom::Cube,
         "foldedCorner" => ShapeGeom::FoldedCorner,
         "can" => ShapeGeom::Can,
+        "cloud" => ShapeGeom::Cloud,
+        "pie" => ShapeGeom::Pie,
+        "leftRightArrow" => ShapeGeom::LeftRightArrow,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8825,6 +8831,24 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Cloud => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: cloud_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::Pie => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: pie_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::LeftRightArrow => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: left_right_arrow_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8919,6 +8943,9 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::FlowChartTerminator
                 | ShapeGeom::Heptagon
                 | ShapeGeom::Star6
+                | ShapeGeom::Cloud
+                | ShapeGeom::Pie
+                | ShapeGeom::LeftRightArrow
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -8945,6 +8972,9 @@ impl<'a> Layout<'a> {
                             }
                             ShapeGeom::Heptagon => heptagon_points(x, y, dw, dh),
                             ShapeGeom::Star6 => star6_points(x, y, dw, dh),
+                            ShapeGeom::Cloud => cloud_points(x, y, dw, dh),
+                            ShapeGeom::Pie => pie_points(x, y, dw, dh),
+                            ShapeGeom::LeftRightArrow => left_right_arrow_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11214,6 +11244,88 @@ fn can_lid_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     ellipse_points(x, y + h - 2.0 * y1, w, 2.0 * y1)
 }
 
+fn ooxml_arc_to_y_down(
+    cur: &mut (f32, f32),
+    wr: f32,
+    hr: f32,
+    st_ang: f32,
+    sw_ang: f32,
+    pts: &mut Vec<(f32, f32)>,
+    map: impl Fn(f32, f32) -> (f32, f32),
+) {
+    let st = ooxml_ang_rad(st_ang);
+    let sw = ooxml_ang_rad(sw_ang);
+    let cx = cur.0 - wr * st.cos();
+    let cy = cur.1 - hr * st.sin();
+    let n = ((sw.abs() / std::f32::consts::FRAC_PI_2).ceil() as i32 * 4).max(4);
+    for i in 1..=n {
+        let a = st + sw * i as f32 / n as f32;
+        *cur = (cx + wr * a.cos(), cy + hr * a.sin());
+        pts.push(map(cur.0, cur.1));
+    }
+}
+
+fn cloud_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML cloud path w=h=43200: 11 arcTo lobes, then close.
+    const PW: f32 = 43_200.0;
+    let map = |ox: f32, oy: f32| (x + ox * w / PW, y + h - oy * h / PW);
+    let mut cur = (3_900.0, 14_370.0);
+    let mut pts = vec![map(cur.0, cur.1)];
+    const ARCS: [(f32, f32, f32, f32); 11] = [
+        (6_753.0, 9_190.0, -11_429_249.0, 7_426_832.0),
+        (5_333.0, 7_267.0, -8_646_143.0, 5_396_714.0),
+        (4_365.0, 5_945.0, -8_748_475.0, 5_983_381.0),
+        (4_857.0, 6_595.0, -7_859_164.0, 7_034_504.0),
+        (5_333.0, 7_273.0, -4_722_533.0, 6_541_615.0),
+        (6_775.0, 9_220.0, -2_776_035.0, 7_816_140.0),
+        (5_785.0, 7_867.0, 37_501.0, 6_842_000.0),
+        (6_752.0, 9_215.0, 1_347_096.0, 6_910_353.0),
+        (7_720.0, 10_543.0, 3_974_558.0, 4_542_661.0),
+        (4_360.0, 5_918.0, -16_496_525.0, 8_804_134.0),
+        (4_345.0, 5_945.0, -14_809_710.0, 9_151_131.0),
+    ];
+    for (wr, hr, st, sw) in ARCS {
+        ooxml_arc_to_y_down(&mut cur, wr, hr, st, sw, &mut pts, map);
+    }
+    pts
+}
+
+fn pie_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML pie adj1=0 adj2=16200000: 270° wedge from 3 o'clock clockwise.
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut cur = (w, vc);
+    let mut pts = vec![map(cur.0, cur.1)];
+    ooxml_arc_to_y_down(&mut cur, hc, vc, 0.0, 16_200_000.0, &mut pts, map);
+    pts.push(map(hc, vc));
+    pts
+}
+
+fn left_right_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML leftRightArrow adj1=adj2=50000.
+    let ss = preset_ss(w, h);
+    let x2 = ss * 50_000.0 / 100_000.0;
+    let x3 = w - x2;
+    let dy = h * 50_000.0 / 200_000.0;
+    let vc = h * 0.5;
+    let y1 = vc - dy;
+    let y2 = vc + dy;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x, py(vc)),
+        (x + x2, py(0.0)),
+        (x + x2, py(y1)),
+        (x + x3, py(y1)),
+        (x + x3, py(0.0)),
+        (x + w, py(vc)),
+        (x + x3, py(h)),
+        (x + x3, py(y2)),
+        (x + x2, py(y2)),
+        (x + x2, py(h)),
+    ]
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -13419,6 +13531,162 @@ mod drawing_tests {
     }
 
     #[test]
+    fn cloud_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="cloud"/>
+        <a:solidFill><a:srgbClr val="5B9BD5"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=cloud must not collapse to Box"
+        );
+    }
+
+    #[test]
+    fn pie_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="pie"/>
+        <a:solidFill><a:srgbClr val="ED7D31"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=pie must not collapse to Box"
+        );
+    }
+
+    #[test]
+    fn left_right_arrow_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="900000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="leftRightArrow"/>
+        <a:solidFill><a:srgbClr val="4472C4"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=leftRightArrow must not collapse to Box"
+        );
+    }
+
+    #[test]
+    fn circle_prst_maps_to_ellipse() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="circle"/>
+        <a:solidFill><a:srgbClr val="70AD47"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            matches!(boxes[0].geom, ShapeGeom::Ellipse),
+            "prst=circle must map to Ellipse, not Box"
+        );
+    }
+
+    #[test]
     fn bent_connector_reads_triangle_tail_end() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -13698,6 +13966,44 @@ mod drawing_tests {
             (nx * nx + ny * ny - 1.0).abs() < 0.05
         });
         assert!(on_lid, "lid vertices on the top ellipse; {lid:?}");
+    }
+
+    #[test]
+    fn cloud_points_are_lobed_not_a_rect() {
+        let pts = cloud_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 40, "{}", pts.len());
+        assert!((pts[0].0 - 9.028).abs() < 0.05 && (pts[0].1 - 66.736).abs() < 0.05);
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
+            "cloud must not include the bbox corner; {pts:?}"
+        );
+        let min_x = pts.iter().map(|p| p.0).fold(f32::MAX, f32::min);
+        let max_x = pts.iter().map(|p| p.0).fold(f32::MIN, f32::max);
+        assert!(min_x < 5.0 && max_x > 90.0, "span {min_x}..{max_x}");
+    }
+
+    #[test]
+    fn pie_points_are_a_three_quarter_wedge() {
+        let pts = pie_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 8, "{}", pts.len());
+        assert!((pts[0].0 - 100.0).abs() < 0.05 && (pts[0].1 - 50.0).abs() < 0.05);
+        let last = pts[pts.len() - 1];
+        assert!((last.0 - 50.0).abs() < 0.05 && (last.1 - 50.0).abs() < 0.05);
+        let end = pts[pts.len() - 2];
+        assert!(
+            (end.0 - 50.0).abs() < 1.0 && (end.1 - 100.0).abs() < 1.0,
+            "270° lands at top center; {end:?}"
+        );
+    }
+
+    #[test]
+    fn left_right_arrow_points_have_two_tips() {
+        let pts = left_right_arrow_points(0.0, 0.0, 100.0, 40.0);
+        assert_eq!(pts.len(), 10);
+        assert!(pts[0].0.abs() < 0.05 && (pts[0].1 - 20.0).abs() < 0.05);
+        assert!((pts[5].0 - 100.0).abs() < 0.05 && (pts[5].1 - 20.0).abs() < 0.05);
+        assert!((pts[1].0 - 20.0).abs() < 0.05 && (pts[1].1 - 40.0).abs() < 0.05);
     }
 
     #[test]
