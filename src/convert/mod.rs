@@ -405,6 +405,12 @@ struct PageSetup {
     col_count: u8,
     /// `w:cols/@w:space` between equal-width columns (pt).
     col_space: f32,
+    /// Count of explicit `w:col` children when `equalWidth=0`.
+    col_custom: u8,
+    /// Custom column widths (pt). Unused slots are 0.
+    col_w: [f32; 4],
+    /// Space after each custom column (pt).
+    col_gap: [f32; 4],
 }
 
 #[derive(Clone, Copy)]
@@ -621,6 +627,9 @@ impl Defaults {
                 borders: PageBorders::default(),
                 col_count: 1,
                 col_space: 36.0,
+                col_custom: 0,
+                col_w: [0.0; 4],
+                col_gap: [0.0; 4],
             },
         }
     }
@@ -2448,6 +2457,32 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             .max(1);
         if let Some(sp) = attr_any(dom, cols, "space").and_then(parse_len) {
             page.col_space = sp;
+        }
+        let equal = !matches!(
+            attr_any(dom, cols, "equalWidth").unwrap_or("1"),
+            "0" | "false" | "off"
+        );
+        if !equal {
+            let mut n = 0u8;
+            let mut widths = [0.0_f32; 4];
+            let mut gaps = [0.0_f32; 4];
+            for col in descendants_local(dom, cols, "col") {
+                let i = n as usize;
+                if i >= 4 {
+                    break;
+                }
+                widths[i] = attr_any(dom, col, "w").and_then(parse_len).unwrap_or(0.0);
+                gaps[i] = attr_any(dom, col, "space")
+                    .and_then(parse_len)
+                    .unwrap_or(page.col_space);
+                n += 1;
+            }
+            if n > 0 {
+                page.col_custom = n;
+                page.col_count = n;
+                page.col_w = widths;
+                page.col_gap = gaps;
+            }
         }
     }
     page
@@ -8363,17 +8398,47 @@ impl<'a> Layout<'a> {
         }
     }
 
+    fn col_width_at(&self, i: u8) -> f32 {
+        let i = i as usize;
+        if self.page.col_custom > 0 {
+            self.page
+                .col_w
+                .get(i)
+                .copied()
+                .filter(|w| *w > 0.0)
+                .unwrap_or(40.0)
+        } else {
+            let n = f32::from(self.page.col_count.max(1));
+            let gaps = self.page.col_space * (n - 1.0);
+            ((self.page.width - self.page.margin_l - self.page.margin_r - gaps) / n).max(40.0)
+        }
+    }
+
+    fn col_gap_at(&self, i: u8) -> f32 {
+        if self.page.col_custom > 0 {
+            self.page
+                .col_gap
+                .get(i as usize)
+                .copied()
+                .unwrap_or(self.page.col_space)
+        } else {
+            self.page.col_space
+        }
+    }
+
     fn col_width(&self) -> f32 {
-        let n = f32::from(self.page.col_count.max(1));
-        let gaps = self.page.col_space * (n - 1.0);
-        ((self.page.width - self.page.margin_l - self.page.margin_r - gaps) / n).max(40.0)
+        self.col_width_at(self.col_i)
     }
 
     fn flow_left(&self) -> f32 {
         if self.page.col_count <= 1 {
             self.page.margin_l
         } else {
-            self.page.margin_l + (self.col_width() + self.page.col_space) * f32::from(self.col_i)
+            let mut x = self.page.margin_l;
+            for i in 0..self.col_i {
+                x += self.col_width_at(i) + self.col_gap_at(i);
+            }
+            x
         }
     }
 
