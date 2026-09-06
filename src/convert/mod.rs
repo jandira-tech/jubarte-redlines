@@ -882,6 +882,117 @@ enum ImageSlot {
     },
 }
 
+/// Page/emit context for `resolve_anchor` (xml 3.4 ckpt 1). PDF y is
+/// bottom-up; `para_top` / `line_top` are already in PDF space.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct PlaceCtx {
+    page_w: f32,
+    page_h: f32,
+    margin_l: f32,
+    margin_r: f32,
+    margin_t: f32,
+    margin_b: f32,
+    column_x: f32,
+    para_top: f32,
+    line_top: f32,
+    cursor_x: f32,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum WrapMode {
+    None,
+    Square {
+        dist_l: f32,
+        dist_r: f32,
+        dist_t: f32,
+        dist_b: f32,
+    },
+    TopBottom,
+}
+
+#[cfg(test)]
+struct Placement {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    wrap: WrapMode,
+}
+
+/// Word `wp:anchor` inputs for `resolve_anchor` (ckpt 1; not XML yet).
+#[cfg(test)]
+struct AnchorSpec<'a> {
+    w: f32,
+    h: f32,
+    h_from: &'a str,
+    h_align: Align,
+    h_off: Option<f32>,
+    v_from: &'a str,
+    v_align: Align,
+    v_off: Option<f32>,
+    wrap: WrapMode,
+}
+
+/// Word ECMA-376 §20.4.2 anchor matrix. `h_from`/`v_from` are
+/// `wp:positionH/V/@relativeFrom`. Offsets are points. Result `y` is
+/// the PDF bottom of the box. Ckpt 1: unit-tested, not wired to emit.
+#[cfg(test)]
+fn resolve_anchor(ctx: &PlaceCtx, spec: &AnchorSpec<'_>) -> Placement {
+    let w = spec.w;
+    let h = spec.h;
+    let content_w = (ctx.page_w - ctx.margin_l - ctx.margin_r).max(0.0);
+    let (origin_x, avail_x) = match spec.h_from {
+        "page" => (0.0, ctx.page_w),
+        "margin" | "leftMargin" | "insideMargin" => (ctx.margin_l, content_w),
+        "column" => (
+            ctx.column_x,
+            (ctx.page_w - ctx.margin_r - ctx.column_x).max(0.0),
+        ),
+        "character" => (
+            ctx.cursor_x,
+            (ctx.page_w - ctx.margin_r - ctx.cursor_x).max(0.0),
+        ),
+        "rightMargin" | "outsideMargin" => (ctx.page_w - ctx.margin_r - w, content_w),
+        _ => (ctx.margin_l, content_w),
+    };
+    let x = if let Some(off) = spec.h_off {
+        origin_x + off
+    } else {
+        match spec.h_align {
+            Align::Right => origin_x + (avail_x - w).max(0.0),
+            Align::Center => origin_x + ((avail_x - w) * 0.5).max(0.0),
+            Align::Left | Align::Justify => origin_x,
+        }
+    };
+    let y = if let Some(off) = spec.v_off {
+        match spec.v_from {
+            "page" => (ctx.page_h - off - h).max(0.0),
+            "margin" | "topMargin" | "insideMargin" => {
+                (ctx.page_h - ctx.margin_t - off - h).max(ctx.margin_b)
+            }
+            "paragraph" => (ctx.para_top - off - h).max(ctx.margin_b),
+            "line" => (ctx.line_top - off - h).max(ctx.margin_b),
+            "bottomMargin" | "outsideMargin" => ctx.margin_b + off,
+            _ => (ctx.para_top - off - h).max(ctx.margin_b),
+        }
+    } else {
+        match spec.v_align {
+            Align::Center => ((ctx.page_h - h) * 0.5).max(0.0),
+            Align::Right => ctx.margin_b,
+            Align::Left | Align::Justify => (ctx.page_h - ctx.margin_t - h).max(ctx.margin_b),
+        }
+    };
+    Placement {
+        x,
+        y,
+        w,
+        h,
+        wrap: spec.wrap,
+    }
+}
+
 #[derive(Clone, Copy)]
 enum ShapeGeom {
     Box,
@@ -10426,6 +10537,122 @@ mod field_tests {
 #[cfg(test)]
 mod drawing_tests {
     use super::*;
+
+    fn letter_ctx() -> PlaceCtx {
+        PlaceCtx {
+            page_w: 612.0,
+            page_h: 792.0,
+            margin_l: 72.0,
+            margin_r: 72.0,
+            margin_t: 72.0,
+            margin_b: 72.0,
+            column_x: 72.0,
+            para_top: 700.0,
+            line_top: 688.0,
+            cursor_x: 90.0,
+        }
+    }
+
+    #[test]
+    fn resolve_anchor_page_offset_is_from_page_origin() {
+        let p = resolve_anchor(
+            &letter_ctx(),
+            &AnchorSpec {
+                w: 144.0,
+                h: 72.0,
+                h_from: "page",
+                h_align: Align::Left,
+                h_off: Some(72.0),
+                v_from: "page",
+                v_align: Align::Left,
+                v_off: Some(72.0),
+                wrap: WrapMode::None,
+            },
+        );
+        assert!((p.x - 72.0).abs() < 0.01, "x={}", p.x);
+        assert!((p.y - (792.0 - 72.0 - 72.0)).abs() < 0.01, "y={}", p.y);
+        assert!((p.w - 144.0).abs() < 0.01);
+        assert!((p.h - 72.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn resolve_anchor_margin_right_align_sits_at_right_margin() {
+        let p = resolve_anchor(
+            &letter_ctx(),
+            &AnchorSpec {
+                w: 144.0,
+                h: 50.0,
+                h_from: "margin",
+                h_align: Align::Right,
+                h_off: None,
+                v_from: "margin",
+                v_align: Align::Left,
+                v_off: Some(0.0),
+                wrap: WrapMode::Square {
+                    dist_l: 9.0,
+                    dist_r: 9.0,
+                    dist_t: 0.0,
+                    dist_b: 0.0,
+                },
+            },
+        );
+        assert!((p.x - 396.0).abs() < 0.01, "612-72-144=396, got x={}", p.x);
+        assert!((p.y - (792.0 - 72.0 - 50.0)).abs() < 0.01, "y={}", p.y);
+        assert_eq!(
+            p.wrap,
+            WrapMode::Square {
+                dist_l: 9.0,
+                dist_r: 9.0,
+                dist_t: 0.0,
+                dist_b: 0.0,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_anchor_paragraph_offset_uses_para_top_not_page() {
+        let p = resolve_anchor(
+            &letter_ctx(),
+            &AnchorSpec {
+                w: 100.0,
+                h: 40.0,
+                h_from: "column",
+                h_align: Align::Left,
+                h_off: Some(0.0),
+                v_from: "paragraph",
+                v_align: Align::Left,
+                v_off: Some(0.0),
+                wrap: WrapMode::None,
+            },
+        );
+        assert!((p.x - 72.0).abs() < 0.01, "x={}", p.x);
+        assert!(
+            (p.y - 660.0).abs() < 0.01,
+            "para_top 700 - h 40 = 660, got y={}",
+            p.y
+        );
+    }
+
+    #[test]
+    fn resolve_anchor_character_uses_cursor_x() {
+        let p = resolve_anchor(
+            &letter_ctx(),
+            &AnchorSpec {
+                w: 20.0,
+                h: 20.0,
+                h_from: "character",
+                h_align: Align::Left,
+                h_off: Some(0.0),
+                v_from: "line",
+                v_align: Align::Left,
+                v_off: Some(0.0),
+                wrap: WrapMode::TopBottom,
+            },
+        );
+        assert!((p.x - 90.0).abs() < 0.01, "x={}", p.x);
+        assert!((p.y - (688.0 - 20.0)).abs() < 0.01, "y={}", p.y);
+        assert_eq!(p.wrap, WrapMode::TopBottom);
+    }
 
     #[test]
     fn word_device_pt_does_not_snap_thirteen_or_twenty_six_after_mini_429() {
