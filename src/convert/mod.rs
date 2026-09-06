@@ -1146,6 +1146,8 @@ enum ShapeGeom {
     Cloud,
     Pie,
     LeftRightArrow,
+    QuadArrow,
+    LightningBolt,
 }
 
 enum ImageKind {
@@ -6049,6 +6051,8 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "cloud" => ShapeGeom::Cloud,
         "pie" => ShapeGeom::Pie,
         "leftRightArrow" => ShapeGeom::LeftRightArrow,
+        "quadArrow" => ShapeGeom::QuadArrow,
+        "lightningBolt" => ShapeGeom::LightningBolt,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8849,6 +8853,18 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::QuadArrow => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: quad_arrow_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::LightningBolt => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: lightning_bolt_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8946,6 +8962,8 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Cloud
                 | ShapeGeom::Pie
                 | ShapeGeom::LeftRightArrow
+                | ShapeGeom::QuadArrow
+                | ShapeGeom::LightningBolt
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -8975,6 +8993,8 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Cloud => cloud_points(x, y, dw, dh),
                             ShapeGeom::Pie => pie_points(x, y, dw, dh),
                             ShapeGeom::LeftRightArrow => left_right_arrow_points(x, y, dw, dh),
+                            ShapeGeom::QuadArrow => quad_arrow_points(x, y, dw, dh),
+                            ShapeGeom::LightningBolt => lightning_bolt_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11326,6 +11346,75 @@ fn left_right_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     ]
 }
 
+fn quad_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML quadArrow adj1=adj2=adj3=22500.
+    let ss = preset_ss(w, h);
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let x1 = ss * 22_500.0 / 100_000.0;
+    let dx2 = ss * 22_500.0 / 100_000.0;
+    let dx3 = ss * 22_500.0 / 200_000.0;
+    let x2 = hc - dx2;
+    let x3 = hc - dx3;
+    let x4 = hc + dx3;
+    let x5 = hc + dx2;
+    let x6 = w - x1;
+    let y2 = vc - dx2;
+    let y3 = vc - dx3;
+    let y4 = vc + dx3;
+    let y5 = vc + dx2;
+    let y6 = h - x1;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x, py(vc)),
+        (x + x1, py(y2)),
+        (x + x1, py(y3)),
+        (x + x3, py(y3)),
+        (x + x3, py(x1)),
+        (x + x2, py(x1)),
+        (x + hc, py(0.0)),
+        (x + x5, py(x1)),
+        (x + x4, py(x1)),
+        (x + x4, py(y3)),
+        (x + x6, py(y3)),
+        (x + x6, py(y2)),
+        (x + w, py(vc)),
+        (x + x6, py(y5)),
+        (x + x6, py(y4)),
+        (x + x4, py(y4)),
+        (x + x4, py(y6)),
+        (x + x5, py(y6)),
+        (x + hc, py(h)),
+        (x + x2, py(y6)),
+        (x + x3, py(y6)),
+        (x + x3, py(y4)),
+        (x + x1, py(y4)),
+        (x + x1, py(y5)),
+    ]
+}
+
+fn lightning_bolt_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML lightningBolt path w=h=21600.
+    const PW: f32 = 21_600.0;
+    let map = |ox: f32, oy: f32| (x + ox * w / PW, y + h - oy * h / PW);
+    [
+        (8_472.0, 0.0),
+        (12_860.0, 6_080.0),
+        (11_050.0, 6_797.0),
+        (16_577.0, 12_007.0),
+        (14_767.0, 12_877.0),
+        (21_600.0, 21_600.0),
+        (10_012.0, 14_915.0),
+        (12_222.0, 13_987.0),
+        (5_022.0, 9_705.0),
+        (7_602.0, 8_382.0),
+        (0.0, 3_890.0),
+    ]
+    .into_iter()
+    .map(|(ox, oy)| map(ox, oy))
+    .collect()
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -13648,6 +13737,84 @@ mod drawing_tests {
     }
 
     #[test]
+    fn quad_arrow_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="quadArrow"/>
+        <a:solidFill><a:srgbClr val="4472C4"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=quadArrow must not collapse to Box"
+        );
+    }
+
+    #[test]
+    fn lightning_bolt_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="lightningBolt"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=lightningBolt must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -14004,6 +14171,25 @@ mod drawing_tests {
         assert!(pts[0].0.abs() < 0.05 && (pts[0].1 - 20.0).abs() < 0.05);
         assert!((pts[5].0 - 100.0).abs() < 0.05 && (pts[5].1 - 20.0).abs() < 0.05);
         assert!((pts[1].0 - 20.0).abs() < 0.05 && (pts[1].1 - 40.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn quad_arrow_points_have_four_tips() {
+        let pts = quad_arrow_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 24);
+        assert!(pts[0].0.abs() < 0.05 && (pts[0].1 - 50.0).abs() < 0.05);
+        assert!((pts[6].0 - 50.0).abs() < 0.05 && (pts[6].1 - 100.0).abs() < 0.05);
+        assert!((pts[12].0 - 100.0).abs() < 0.05 && (pts[12].1 - 50.0).abs() < 0.05);
+        assert!((pts[18].0 - 50.0).abs() < 0.05 && pts[18].1.abs() < 0.05);
+    }
+
+    #[test]
+    fn lightning_bolt_points_are_a_zigzag() {
+        let pts = lightning_bolt_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 11);
+        assert!((pts[0].0 - 39.222).abs() < 0.05 && (pts[0].1 - 100.0).abs() < 0.05);
+        assert!((pts[5].0 - 100.0).abs() < 0.05 && pts[5].1.abs() < 0.05);
+        assert!(pts[10].0.abs() < 0.05 && (pts[10].1 - 81.991).abs() < 0.05);
     }
 
     #[test]
