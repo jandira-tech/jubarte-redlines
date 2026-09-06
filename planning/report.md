@@ -688,3 +688,100 @@ font or geometry data already present in the package (theme slot gate, font tabl
 table `tcW` / `tblInd` / `trHeight` and the compat-mode edge rule); drawing placement is
 fourth. `settings.xml` matters first through the table edge rule (compat mode), not
 through any of its other 40 flags.
+
+## 16. Post-stack measurement (2026-09-06)
+
+Scored on this machine after stacked convert PRs through `c:radarChart` (#108 /
+`8be8344`) plus the Step 8 audit (#109 / `ab27d3f`, no engine change). Binary
+`target/release/jubarte` rebuilt from that checkout. Scorer:
+`neurotic_docx_bench` `docxide-metrics`. Same Jaccard / SSIM / text-boundary
+definitions as section 1. Convert failures: 0 on sample50, 0 on the 76, 0 on
+the 398.
+
+Mean Jaccard **rose** on every gate (sample50 +6.07, 76 +14.53, 398 +3.28).
+Row drops >1.0 Jaccard are named below; they are not silently blessed. Do not
+treat green CI on the stack as this measurement.
+
+| set | n | baseline J mean / median | now J mean / median | Δ mean | SSIM now mean / median | TB now mean / median | convert failures |
+|---|---|---|---|---|---|---|---|
+| sample50 (`planning/sample50_check.py`) | 50 | 37.57 / — | 43.63 / — | +6.07 | — | — | 0 |
+| docxide-pdf 76 fixtures | 76 | 13.74 / 8.86 | 28.27 / 20.62 | +14.53 | 45.19 / 44.43 | 51.54 / 53.86 | 0 |
+| neurotic 398 corpus | 398 | 53.10 / — | 56.38 / 66.57 | +3.28 | 72.53 / 89.27 | 88.89 / 100.0 | 0 |
+
+sample50 still uses the 2026-09-05 `planning/sample50_baseline.json` ratchet
+(not `--bless`ed). 76 vs `tools/convert_baseline_76.tsv`. 398 vs
+`tools/convert_baseline_398.tsv`.
+
+### sample50 rows that dropped >1.0 Jaccard
+
+| id | set | base | now | Δ |
+|---|---|---|---|---|
+| source__eigenpal_docx_editor_suggesting_mixed_edits | corpus | 17.9 | 8.2 | −9.6 |
+| source__docx_lots_of_comments_addition_redline_addition_v_re | corpus | 29.3 | 21.2 | −8.1 |
+| source_randomized__file_93 | corpus | 25.3 | 15.6 | −9.6 |
+| source_randomized__file_9 | corpus | 30.0 | 21.8 | −8.1 |
+| source_randomized__file_48 | corpus | 48.8 | 31.3 | −17.5 |
+| case7 | docxide | 9.8 | 8.3 | −1.5 |
+| case5 | docxide | 29.3 | 8.0 | −21.3 |
+
+### 76-set rows that dropped >1.0 Jaccard
+
+case5 29.3→8.0 (−21.3); case4 16.6→7.6 (−9.0); case10 14.4→7.3 (−7.1);
+case33 6.9→4.7 (−2.2); case42 26.9→24.7 (−2.2); case39 13.8→11.7 (−2.0);
+case56 15.9→13.9 (−2.0); case7 9.8→8.3 (−1.5). case13 (205 pp, fast-gate
+skiplist) is **not** a drop: 7.53→29.25, pages 205/205.
+
+### 398-set rows that dropped >1.0 Jaccard (68)
+
+Worst: `source__mcdoc` 68.28→12.82 (−55.47). Full stem list from
+`scripts/convert_sweep.py 398 --compare tools/convert_baseline_398.tsv`:
+
+source__I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you,
+source__contract_review_suggesting_insertions, source__docx_lots_of_comments,
+source__docx_lots_of_comments_addition, source__docx_lots_of_comments_addition_redline,
+source__docx_lots_of_comments_addition_redline_addition_v_removal,
+source__docx_lots_of_comments_addition_removal,
+source__docx_lots_of_comments_addition_removal_redline,
+source__docx_lots_of_comments_addition_removal_redline_removal_v_addition,
+source__eigenpal_docx_editor_suggesting_mixed_edits,
+source__eigenpal_docx_editor_suggesting_mixed_edits_2,
+source__heading_3_center_italic_id_paraid_overflow,
+source__heading_3_style_demo_id_paraid_overflow,
+source__heading_3_style_demo_id_paraid_overflow_2,
+source__heading_4_right_italic_id_paraid_overflow,
+source__heading_4_style_demo_id_paraid_overflow,
+source__heading_4_style_demo_id_paraid_overflow_2,
+source__helvetica_font_demo_style_default_missing, source__image_out_of_folder,
+source__mcdoc, source__potpourritest, source__quarterly_performance_report_table,
+source__sample_document_afterword_repaired_word_repaired,
+source__sample_document_really_repaired_word_repaired,
+source__sample_document_word_repair_of_our_output_iter2_word_repaired,
+source__sample_document_word_repair_of_our_output_iter2_word_repaired_2,
+source__sample_document_word_repair_of_our_output_word_repaired,
+source__sample_document_word_repair_of_our_output_word_repaired_2,
+source__sd_2517_localized_heading_styles, source__word_tolerated_duplicate_ppr,
+source__word_tolerated_misplaced_uipriority, source_randomized__file_111,
+source_randomized__file_117, source_randomized__file_120,
+source_randomized__file_131, source_randomized__file_139,
+source_randomized__file_14, source_randomized__file_143,
+source_randomized__file_145, source_randomized__file_146,
+source_randomized__file_16, source_randomized__file_166,
+source_randomized__file_168, source_randomized__file_170,
+source_randomized__file_175, source_randomized__file_176,
+source_randomized__file_188, source_randomized__file_19,
+source_randomized__file_195, source_randomized__file_22,
+source_randomized__file_27, source_randomized__file_33,
+source_randomized__file_34, source_randomized__file_40,
+source_randomized__file_48, source_randomized__file_52,
+source_randomized__file_53, source_randomized__file_55,
+source_randomized__file_57, source_randomized__file_6,
+source_randomized__file_64, source_randomized__file_69,
+source_randomized__file_74, source_randomized__file_78,
+source_randomized__file_8, source_randomized__file_9,
+source_randomized__file_93, source_randomized__file_94.
+
+### Parked (still unshipped)
+
+SmartArt layout algorithms, comment-balloon / print-with-markup (case63/64),
+hyphenation, `lastRenderedPageBreak` as layout input, cluster H (sd_2517 /
+file_22 / Redline_CiceroDo as a chase). Sibling 0c/0f wording stays outward-facing.
