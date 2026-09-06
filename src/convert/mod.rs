@@ -875,12 +875,18 @@ enum ImageSlot {
         pct_h: Option<f32>,
         /// `wp:positionV/align` when there is no posOffset/pct (page center).
         v_align: Align,
-        /// `wp:wrapSquare` — body wraps beside the float (not wrapNone overlay).
+        /// `wp:wrapSquare` / wrapTight / wrapThrough — body wraps beside.
         wrap_square: bool,
+        /// `wp:wrapTopAndBottom` — body only above and below the band.
+        wrap_top_bottom: bool,
         /// `wp:anchor/@distL` in points (114300 EMU = 9pt).
         dist_l: f32,
         /// `wp:anchor/@distR` in points.
         dist_r: f32,
+        /// `wp:anchor/@distT` plus `effectExtent/@t`.
+        dist_t: f32,
+        /// `wp:anchor/@distB` plus `effectExtent/@b`.
+        dist_b: f32,
     },
 }
 
@@ -909,6 +915,7 @@ enum WrapMode {
         dist_t: f32,
         dist_b: f32,
     },
+    TopBottom,
 }
 
 struct Placement {
@@ -998,8 +1005,11 @@ fn spec_from_float(w: f32, h: f32, slot: ImageSlot) -> Option<AnchorSpec<'static
         para_y,
         v_align,
         wrap_square,
+        wrap_top_bottom,
         dist_l,
         dist_r,
+        dist_t,
+        dist_b,
         ..
     } = slot
     else {
@@ -1019,12 +1029,14 @@ fn spec_from_float(w: f32, h: f32, slot: ImageSlot) -> Option<AnchorSpec<'static
     } else {
         ("margin", None)
     };
-    let wrap = if wrap_square {
+    let wrap = if wrap_top_bottom {
+        WrapMode::TopBottom
+    } else if wrap_square {
         WrapMode::Square {
             dist_l,
             dist_r,
-            dist_t: 0.0,
-            dist_b: 0.0,
+            dist_t,
+            dist_b,
         }
     } else {
         WrapMode::None
@@ -3818,8 +3830,11 @@ fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
         pct_h: None,
         v_align: Align::Left,
         wrap_square: true,
+        wrap_top_bottom: false,
         dist_l: dist("leftFromText"),
         dist_r: dist("rightFromText"),
+        dist_t: dist("topFromText"),
+        dist_b: dist("bottomFromText"),
     })
 }
 
@@ -5515,9 +5530,7 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
     if first_named_any(dom, drawing, "anchor").is_none() {
         return ImageSlot::Flow;
     }
-    if first_named_any(dom, drawing, "wrapTopAndBottom").is_some() {
-        return ImageSlot::Flow;
-    }
+    let wrap_top_bottom = first_named_any(dom, drawing, "wrapTopAndBottom").is_some();
     let ph = first_named_any(dom, drawing, "positionH");
     let pv = first_named_any(dom, drawing, "positionV");
     let h_from = ph
@@ -5545,7 +5558,9 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         _ => Align::Left,
     };
     let (pct_w, pct_h) = size_rel_pct(dom, drawing);
-    let wrap_square = first_named_any(dom, drawing, "wrapSquare").is_some();
+    let wrap_square = first_named_any(dom, drawing, "wrapSquare").is_some()
+        || first_named_any(dom, drawing, "wrapTight").is_some()
+        || first_named_any(dom, drawing, "wrapThrough").is_some();
     let anchor = first_named_any(dom, drawing, "anchor");
     let emu_pt = |name: &str| {
         anchor
@@ -5581,8 +5596,11 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         pct_h,
         v_align,
         wrap_square,
+        wrap_top_bottom,
         dist_l: emu_pt("distL") + effect_pt("l"),
         dist_r: emu_pt("distR") + effect_pt("r"),
+        dist_t: emu_pt("distT") + effect_pt("t"),
+        dist_b: emu_pt("distB") + effect_pt("b"),
     }
 }
 
@@ -5708,8 +5726,11 @@ fn vml_absolute_slot(dom: &Dom, root: NodeId) -> Option<ImageSlot> {
             pct_h: None,
             v_align,
             wrap_square: matches!(wrap.as_str(), "square" | "tight" | "through"),
+            wrap_top_bottom: matches!(wrap.as_str(), "topandbottom" | "top-and-bottom"),
             dist_l: vml_style_pt(style, "mso-wrap-distance-left").unwrap_or(0.0),
             dist_r: vml_style_pt(style, "mso-wrap-distance-right").unwrap_or(0.0),
+            dist_t: vml_style_pt(style, "mso-wrap-distance-top").unwrap_or(0.0),
+            dist_b: vml_style_pt(style, "mso-wrap-distance-bottom").unwrap_or(0.0),
         });
     }
     None
@@ -6935,7 +6956,21 @@ impl<'a> Layout<'a> {
         self.page.width - self.page.margin_l - self.page.margin_r
     }
 
-    /// wrapSquare bothSides: body measure shrinks by the float + distL/distR.
+    fn wrap_band_hits_line(&self, slot: ImageSlot, w: f32, h: f32) -> bool {
+        let ImageSlot::Float { dist_t, dist_b, .. } = slot else {
+            return false;
+        };
+        let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
+        let (_, fy) = self.float_xy(dw, dh.max(1.0), slot);
+        let top = fy + dh + dist_t;
+        let bot = fy - dist_b;
+        let line_top = self.y;
+        let line_bot = self.y - 20.0;
+        line_bot < top && line_top > bot
+    }
+
+    /// wrapSquare bothSides: body measure shrinks by the float + distL/distR
+    /// on lines whose vertical band intersects the float (xml 3.4 ckpt 4).
     /// Full-width page banners (image_out 841pt) have no side room — skip.
     fn wrap_square_inset(&self, images: &[LaidImage], boxes: &[LaidTextBox]) -> (f32, f32) {
         let mut left = 0.0_f32;
@@ -6953,6 +6988,9 @@ impl<'a> Layout<'a> {
                 return;
             };
             if !wrap_square {
+                return;
+            }
+            if !self.wrap_band_hits_line(slot, w, h) {
                 return;
             }
             let (dw, _) = self.sized_wh(slot, w, h, 1.0, 1.0);
@@ -6987,6 +7025,107 @@ impl<'a> Layout<'a> {
         (left, right)
     }
 
+    /// wrapTopAndBottom: if this line intersects the float, jump to just
+    /// below it so body continues under the object, not beside it.
+    fn apply_top_bottom_wrap(&mut self, images: &[LaidImage], boxes: &[LaidTextBox]) {
+        let mut jump = self.y;
+        let mut hit = false;
+        let mut consider = |slot: ImageSlot, w: f32, h: f32| {
+            let ImageSlot::Float {
+                wrap_top_bottom,
+                dist_b,
+                ..
+            } = slot
+            else {
+                return;
+            };
+            if !wrap_top_bottom {
+                return;
+            }
+            if !self.wrap_band_hits_line(slot, w, h) {
+                return;
+            }
+            let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
+            let (_, fy) = self.float_xy(dw, dh.max(1.0), slot);
+            hit = true;
+            jump = jump.min(fy - dist_b);
+        };
+        for img in images {
+            consider(img.slot, img.w, img.h);
+        }
+        for box_ in boxes {
+            consider(box_.slot, box_.w, box_.h);
+        }
+        if hit {
+            self.y = jump;
+            self.at_page_top = false;
+            self.suppress_space_before = false;
+        }
+    }
+
+    fn wrap_band_remaining(&self, images: &[LaidImage], boxes: &[LaidTextBox]) -> f32 {
+        let mut rem = 0.0_f32;
+        let mut consider = |slot: ImageSlot, w: f32, h: f32| {
+            let ImageSlot::Float {
+                wrap_square,
+                dist_b,
+                ..
+            } = slot
+            else {
+                return;
+            };
+            if !wrap_square || !self.wrap_band_hits_line(slot, w, h) {
+                return;
+            }
+            let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
+            let (_, fy) = self.float_xy(dw, dh.max(1.0), slot);
+            rem = rem.max((self.y - (fy - dist_b)).max(0.0));
+        };
+        for img in images {
+            consider(img.slot, img.w, img.h);
+        }
+        for box_ in boxes {
+            consider(box_.slot, box_.w, box_.h);
+        }
+        rem
+    }
+
+    fn reflow_past_float(
+        &self,
+        lines: Vec<Vec<TextRun>>,
+        style: &ParaStyle,
+        full_width: f32,
+        inset_h: f32,
+    ) -> Vec<Vec<TextRun>> {
+        if lines.len() <= 1 || inset_h <= 0.5 {
+            return lines;
+        }
+        let mut used = 0.0;
+        let mut n = 0usize;
+        for line in &lines {
+            let size = line.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
+            let face = line.first().map_or(FaceId::CarlitoRegular.into(), |r| {
+                self.fonts
+                    .resolve(&r.style.family, r.style.bold, r.style.italic)
+            });
+            let lh = para_line_box(self.fonts.get(face), size, style);
+            if n > 0 && used + lh > inset_h {
+                break;
+            }
+            used += lh;
+            n += 1;
+        }
+        if n >= lines.len() {
+            return lines;
+        }
+        let mut out = lines[..n].to_vec();
+        let rest: Vec<TextRun> = lines[n..].iter().flatten().cloned().collect();
+        if rest.iter().any(|r| !r.text.trim().is_empty()) {
+            out.extend(wrap_runs(self.fonts, &rest, full_width, full_width, false));
+        }
+        out
+    }
+
     fn emit_runs(
         &mut self,
         runs: &[TextRun],
@@ -6994,6 +7133,7 @@ impl<'a> Layout<'a> {
         list: bool,
         wrap_left: f32,
         wrap_right: f32,
+        inset_h: f32,
     ) {
         let rewritten = apply_missing_pagerefs(runs, &self.known_bookmarks);
         let runs = rewritten.as_slice();
@@ -7024,7 +7164,14 @@ impl<'a> Layout<'a> {
         // wrapSquare distL/distR shrink the remaining measure so text does
         // not run under the float (Strict01 / ole / image_out).
         let width = (self.content_width() - indent - style.indent_right - wrap_right).max(40.0);
-        let lines = self.wrap_para_runs(body, style, indent, marker.is_some(), width, list);
+        let full_width = (self.content_width() - indent - style.indent_right).max(40.0);
+        let mut lines = self.wrap_para_runs(body, style, indent, marker.is_some(), width, list);
+        if inset_h > 0.5
+            && wrap_right > 0.5
+            && self.tab_stops.iter().all(|t| t.align != TabAlign::Right)
+        {
+            lines = self.reflow_past_float(lines, style, full_width, inset_h);
+        }
         for (line_i, line) in lines.iter().enumerate() {
             // Layout uses the authored point size so line boxes stay on
             // the Word heading/body grid. Tf/advances use paint_size()
@@ -8016,7 +8163,7 @@ impl<'a> Layout<'a> {
                 let spec = spec_from_float(sized_w, sized_h, slot).expect("float slot");
                 let p = resolve_anchor(&self.place_ctx(), &spec);
                 match p.wrap {
-                    WrapMode::None | WrapMode::Square { .. } => {}
+                    WrapMode::None | WrapMode::Square { .. } | WrapMode::TopBottom => {}
                 }
                 (p.x, p.y, p.w, p.h)
             }
@@ -9652,8 +9799,10 @@ fn layout(
                     if lay.side_float.is_some_and(|sf| lay.y <= sf.bottom + 0.5) {
                         lay.side_float = None;
                     }
+                    lay.apply_top_bottom_wrap(images, boxes);
                     let (wrap_left, wrap_right) = lay.wrap_square_inset(images, boxes);
-                    lay.emit_runs(runs, &style, *list, wrap_left, wrap_right);
+                    let inset_h = lay.wrap_band_remaining(images, boxes);
+                    lay.emit_runs(runs, &style, *list, wrap_left, wrap_right, inset_h);
                 } else if !lay.at_page_top || !lay.suppress_space_before {
                     lay.y -= style.before;
                     lay.at_page_top = false;
@@ -10871,6 +11020,76 @@ mod drawing_tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn wrap_tight_anchor_is_square() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor distL="114300" distR="114300">
+    <wp:positionH relativeFrom="margin"><wp:align>right</wp:align></wp:positionH>
+    <wp:positionV relativeFrom="margin"><wp:align>top</wp:align></wp:positionV>
+    <wp:extent cx="1828800" cy="1828800"/>
+    <wp:wrapTight wrapText="bothSides"/>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let drawing = dom
+            .descendants(root, Some(&W::drawing()))
+            .into_iter()
+            .next()
+            .expect("drawing");
+        match drawing_slot(&dom, drawing) {
+            ImageSlot::Float {
+                wrap_square,
+                wrap_top_bottom,
+                ..
+            } => {
+                assert!(wrap_square, "wrapTight ≈ Square");
+                assert!(!wrap_top_bottom);
+            }
+            _ => panic!("wrapTight must be a float, not Flow"),
+        }
+    }
+
+    #[test]
+    fn wrap_top_and_bottom_anchor_is_float_not_flow() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor>
+    <wp:positionH relativeFrom="margin"><wp:align>right</wp:align></wp:positionH>
+    <wp:positionV relativeFrom="margin"><wp:align>top</wp:align></wp:positionV>
+    <wp:extent cx="1828800" cy="914400"/>
+    <wp:wrapTopAndBottom/>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let drawing = dom
+            .descendants(root, Some(&W::drawing()))
+            .into_iter()
+            .next()
+            .expect("drawing");
+        match drawing_slot(&dom, drawing) {
+            ImageSlot::Float {
+                wrap_square,
+                wrap_top_bottom,
+                align,
+                ..
+            } => {
+                assert!(!wrap_square);
+                assert!(wrap_top_bottom);
+                assert!(matches!(align, Align::Right));
+            }
+            _ => panic!("wrapTopAndBottom must overlay, not consume Flow"),
+        }
     }
 
     /// image_out_of_folder: DeepL parks the banner PNG in `wp:wrapSquare`

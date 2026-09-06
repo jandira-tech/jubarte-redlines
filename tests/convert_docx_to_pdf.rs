@@ -1351,6 +1351,115 @@ fn wrap_square_effect_extent_l_adds_to_dist_l() {
 }
 
 #[test]
+fn wrap_tight_approximates_square() {
+    // xml 3.4 ckpt 4: wrapTight / wrapThrough use the Square inset.
+    let img = blip(
+        "1828800",
+        "1828800",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"margin\"><wp:align>right</wp:align></wp:positionH>\
+           <wp:positionV relativeFrom=\"margin\"><wp:align>top</wp:align></wp:positionV>\
+           <wp:wrapTight wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let words = "alpha ".repeat(40);
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r>{img}</w:r><w:r><w:t>{words}</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("convert wrapTight");
+    let xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    assert!(
+        xs.iter().any(|x| (70.0..90.0).contains(x)),
+        "body still starts at the left margin; xs={xs:?}"
+    );
+    assert!(
+        xs.iter().all(|x| *x < 392.0),
+        "wrapTight is Square: text stays left of the 144pt right float; xs={xs:?}"
+    );
+}
+
+#[test]
+fn wrap_square_below_the_float_uses_full_measure() {
+    // xml 3.4 ckpt 4 / case41: Square insets only while the line intersects
+    // the float's vertical band. Below it, body uses the full measure.
+    let img = blip(
+        "1828800",
+        "457200",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"margin\"><wp:align>right</wp:align></wp:positionH>\
+           <wp:positionV relativeFrom=\"margin\"><wp:align>top</wp:align></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let words = "alpha ".repeat(80);
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r>{img}</w:r><w:r><w:t>{words}</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("convert wrapSquare below");
+    let xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    assert!(
+        xs.iter().any(|x| (70.0..90.0).contains(x)),
+        "body still starts at the left margin; xs={xs:?}"
+    );
+    assert!(
+        xs.iter().any(|x| *x < 392.0 && *x > 70.0),
+        "lines beside the 36pt float still wrap; xs={xs:?}"
+    );
+    assert!(
+        xs.iter().any(|x| *x >= 392.0),
+        "lines below the float use the full measure; xs={xs:?}"
+    );
+}
+
+#[test]
+fn wrap_top_and_bottom_jumps_below_a_right_float() {
+    // xml 3.4 ckpt 4: wrapTopAndBottom is not in-flow on the left. The
+    // picture sits on the right and body starts below its band.
+    let img = blip(
+        "1828800",
+        "914400",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"margin\"><wp:align>right</wp:align></wp:positionH>\
+           <wp:positionV relativeFrom=\"margin\"><wp:align>top</wp:align></wp:positionV>\
+           <wp:wrapTopAndBottom/>",
+        "</wp:anchor>",
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r>{img}</w:r><w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("convert wrapTopAndBottom");
+    let hay = String::from_utf8_lossy(&pdf);
+    let after = pdf_device_xy(hay.as_ref(), "67 Tf")
+        .into_iter()
+        .next()
+        .expect("After 16pt");
+    assert!(
+        after.0 < 90.0,
+        "body is full-measure left, not squeezed beside; after={after:?}"
+    );
+    assert!(
+        after.1 < 700.0,
+        "wrapTopAndBottom jumps below the 72pt top float; after={after:?}"
+    );
+    assert!(
+        hay.contains("396.") || hay.contains("395.") || hay.contains(" 396 "),
+        "right-aligned float is not in-flow at the left margin; snippet {}",
+        hay.split("/Im")
+            .nth(1)
+            .unwrap_or(&hay[hay.len().saturating_sub(200)..])
+    );
+}
+
+#[test]
 fn linked_txbx_part_paints_textbox_text() {
     // mcdoc stores "hello" in word/txbx1.xml, referenced by
     // `<wps:txbx r:txbx="rId6"/>` with no inline txbxContent.
