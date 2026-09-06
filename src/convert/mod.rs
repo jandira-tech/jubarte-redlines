@@ -399,6 +399,10 @@ struct PageSetup {
     default_tab: f32,
     /// `w:sectPr/w:pgBorders` (plan Step 7 / case68).
     borders: PageBorders,
+    /// `w:cols/@w:num`. 1 = single column (Word default).
+    col_count: u8,
+    /// `w:cols/@w:space` between equal-width columns (pt).
+    col_space: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -613,6 +617,8 @@ impl Defaults {
                 balloon_gutter: 0.0,
                 default_tab: 36.0,
                 borders: PageBorders::default(),
+                col_count: 1,
+                col_space: 36.0,
             },
         }
     }
@@ -697,6 +703,8 @@ enum Block {
     /// `next` is the following section's geometry + chrome (sd_2517 later
     /// sections are 1800-twip with their own footer; first is 2160/vAlign).
     PageBreak { next: Option<Box<SectionChrome>> },
+    /// `w:br type=column` — next newspaper column on this page (xml leftover).
+    ColumnBreak,
 }
 
 /// One paragraph of a `w:footnote` (plan Step 7).
@@ -2429,6 +2437,15 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
     if let Some(pb) = first_named(dom, sect, "pgBorders") {
         page.borders = parse_pg_borders(dom, pb);
     }
+    if let Some(cols) = first_named(dom, sect, "cols") {
+        page.col_count = attr_any(dom, cols, "num")
+            .and_then(|s| s.parse::<u8>().ok())
+            .unwrap_or(1)
+            .max(1);
+        if let Some(sp) = attr_any(dom, cols, "space").and_then(parse_len) {
+            page.col_space = sp;
+        }
+    }
     page
 }
 
@@ -3522,7 +3539,7 @@ fn visit_runs_mut_inner(blocks: &mut [Block], f: &mut impl FnMut(&mut TextRun)) 
                     }
                 }
             }
-            Block::PageBreak { .. } => {}
+            Block::PageBreak { .. } | Block::ColumnBreak => {}
         }
     }
 }
@@ -3584,6 +3601,7 @@ fn walk_container(
                 blocks.push(Block::PageBreak { next: None });
             }
             let page_br = para_has_page_break(dom, child);
+            let column_br = para_has_column_break(dom, child);
             // The document-final sectPr is page setup, not a break — even
             // when it is the last child of an SDT (`has_later_content` on
             // that container is false while the body continues).
@@ -3593,7 +3611,7 @@ fn walk_container(
             endnotes.observe_para(dom, child);
             let block = paragraph_block(ctx, dom, child, false, numbering);
             let blank = block_is_blank(&block);
-            if !blank || (!page_br && !sect_br) {
+            if !blank || (!page_br && !sect_br && !column_br) {
                 blocks.push(block);
             }
             if let Some(s) = sect_here.filter(|s| !is_final_sect(ctx.sects, *s)) {
@@ -3608,6 +3626,8 @@ fn walk_container(
                     None
                 };
                 blocks.push(Block::PageBreak { next });
+            } else if column_br {
+                blocks.push(Block::ColumnBreak);
             }
         } else if dom.name_is(child, &W::tbl()) {
             let block = table_block(
@@ -3661,6 +3681,15 @@ fn para_has_page_break(dom: &Dom, para: NodeId) -> bool {
     false
 }
 
+fn para_has_column_break(dom: &Dom, para: NodeId) -> bool {
+    for br in dom.descendants(para, Some(&W::name("br"))) {
+        if dom.attribute(br, &W::name("type")) == Some("column") {
+            return true;
+        }
+    }
+    false
+}
+
 fn sect_starts_new_page(dom: &Dom, sect: NodeId) -> bool {
     !matches!(
         first_named(dom, sect, "type").and_then(|n| dom.attribute(n, &W::val())),
@@ -3671,7 +3700,7 @@ fn sect_starts_new_page(dom: &Dom, sect: NodeId) -> bool {
 fn block_para_style(block: &Block) -> Option<&ParaStyle> {
     match block {
         Block::Paragraph { style, .. } => Some(style),
-        Block::Table { .. } | Block::PageBreak { .. } => None,
+        Block::Table { .. } | Block::PageBreak { .. } | Block::ColumnBreak => None,
     }
 }
 
@@ -3909,7 +3938,7 @@ fn keep_next_follow_pt(fonts: &Fonts, avail: f32, block: &Block) -> f32 {
             };
             style.before + sz * line_mult
         }
-        Block::PageBreak { .. } => 0.0,
+        Block::PageBreak { .. } | Block::ColumnBreak => 0.0,
     }
 }
 
@@ -3922,7 +3951,7 @@ fn block_is_blank(block: &Block) -> bool {
             ..
         } => images.is_empty() && boxes.is_empty() && runs.iter().all(|r| r.text.trim().is_empty()),
         Block::Table { rows, .. } => rows.is_empty(),
-        Block::PageBreak { .. } => true,
+        Block::PageBreak { .. } | Block::ColumnBreak => true,
     }
 }
 
@@ -5620,10 +5649,10 @@ fn collect_visible(dom: &Dom, node: NodeId, out: &mut String, in_del: bool) {
     }
     if !in_del && (dom.name_is(node, &W::name("tab")) || dom.name_is(node, &W::name("br"))) {
         if dom.name_is(node, &W::name("br")) {
-            let page = dom
+            let skip = dom
                 .attribute(node, &W::name("type"))
-                .is_some_and(|k| k == "page" || k == "oddPage" || k == "evenPage");
-            if !page {
+                .is_some_and(|k| k == "page" || k == "oddPage" || k == "evenPage" || k == "column");
+            if !skip {
                 out.push('\n');
             }
         } else {
@@ -7899,6 +7928,8 @@ struct Layout<'a> {
     mirror_margins: bool,
     character_spacing: CharacterSpacing,
     page_background: Option<[f32; 3]>,
+    /// Current newspaper column (0-based) when `page.col_count` > 1.
+    col_i: u8,
     margin_l0: f32,
     margin_r0: f32,
     placed_comments: HashSet<String>,
@@ -8026,6 +8057,7 @@ impl<'a> Layout<'a> {
             mirror_margins: hf.mirror_margins,
             character_spacing: hf.character_spacing,
             page_background: hf.page_background,
+            col_i: 0,
             margin_l0: page.margin_l,
             margin_r0: page.margin_r,
             placed_comments: HashSet::new(),
@@ -8194,6 +8226,7 @@ impl<'a> Layout<'a> {
         self.patch_chap_page();
         self.section_page = self.section_page.saturating_add(1);
         self.pages.push(self.fresh_page());
+        self.col_i = 0;
         self.y = self.page.height - self.body_top;
         self.page_has_body = false;
         self.at_page_top = true;
@@ -8275,6 +8308,7 @@ impl<'a> Layout<'a> {
             self.select_parity_chrome();
             self.apply_mirror_margins();
             self.pages.push(self.fresh_page());
+            self.col_i = 0;
             self.y = self.page.height - self.body_top;
             self.page_has_body = false;
             self.at_page_top = true;
@@ -8301,7 +8335,11 @@ impl<'a> Layout<'a> {
         }
         let floor = self.body_floor;
         if self.y - need < floor {
-            self.new_page();
+            if self.page.col_count > 1 && self.col_i + 1 < self.page.col_count {
+                self.column_break();
+            } else {
+                self.new_page();
+            }
         }
         // new_page clears page_has_body. Callers always place ink after
         // ensure; if we leave the flag false a following sectPr reuses this
@@ -8309,8 +8347,38 @@ impl<'a> Layout<'a> {
         self.page_has_body = true;
     }
 
+    fn column_break(&mut self) {
+        let n = self.page.col_count.max(1);
+        if self.col_i + 1 < n {
+            self.col_i += 1;
+            self.y = self.page.height - self.body_top;
+            self.at_page_top = true;
+            self.page_has_body = true;
+        } else {
+            self.new_page();
+        }
+    }
+
+    fn col_width(&self) -> f32 {
+        let n = f32::from(self.page.col_count.max(1));
+        let gaps = self.page.col_space * (n - 1.0);
+        ((self.page.width - self.page.margin_l - self.page.margin_r - gaps) / n).max(40.0)
+    }
+
+    fn flow_left(&self) -> f32 {
+        if self.page.col_count <= 1 {
+            self.page.margin_l
+        } else {
+            self.page.margin_l + (self.col_width() + self.page.col_space) * f32::from(self.col_i)
+        }
+    }
+
     fn content_width(&self) -> f32 {
-        self.page.width - self.page.margin_l - self.page.margin_r
+        if self.page.col_count <= 1 {
+            self.page.width - self.page.margin_l - self.page.margin_r
+        } else {
+            self.col_width()
+        }
     }
 
     fn chrome_floor(&self) -> f32 {
@@ -8471,7 +8539,7 @@ impl<'a> Layout<'a> {
                 let line_box = para_line_box(metrics, size, &para.style);
                 let ascent = metrics.ascent_pt(size);
                 y -= ascent;
-                self.paint_line_with_tabs(line, self.page.margin_l + indent, y);
+                self.paint_line_with_tabs(line, self.flow_left() + indent, y);
                 y -= (line_box - ascent).max(1.0);
             }
             y -= para.style.after;
@@ -8734,7 +8802,7 @@ impl<'a> Layout<'a> {
             }
             self.ensure(line_box.max(ascent + 2.0));
             if let Some(fill) = style.fill {
-                let fx = self.page.margin_l + style.indent_left;
+                let fx = self.flow_left() + style.indent_left;
                 let fw = (self.content_width() - style.indent_left - style.indent_right).max(1.0);
                 let fy = self.y - line_box;
                 self.current().ops.push(Op::FillRect {
@@ -8765,17 +8833,17 @@ impl<'a> Layout<'a> {
             } else {
                 0.0
             };
-            let x = self.page.margin_l + indent + extra + first_extra;
+            let x = self.flow_left() + indent + extra + first_extra;
             let baseline = self.y;
             if line_i == 0
                 && let Some(mark) = marker
             {
                 let mx = if style.list_jc_right {
                     let mw = self.run_width_pt(mark, &mark.text);
-                    let body_x = self.page.margin_l + indent + extra;
-                    (body_x - mw).max(self.page.margin_l + extra)
+                    let body_x = self.flow_left() + indent + extra;
+                    (body_x - mw).max(self.flow_left() + extra)
                 } else {
-                    self.page.margin_l + indent - hanging + extra
+                    self.flow_left() + indent - hanging + extra
                 };
                 self.paint_run(mark, mx, baseline);
             }
@@ -9177,12 +9245,7 @@ impl<'a> Layout<'a> {
     }
 
     fn advance_tab(&mut self, x: f32, y: f32, after_w: f32, style: &RunStyle) -> f32 {
-        let stop = next_tab_stop(
-            x,
-            self.page.margin_l,
-            &self.tab_stops,
-            self.page.default_tab,
-        );
+        let stop = next_tab_stop(x, self.flow_left(), &self.tab_stops, self.page.default_tab);
         let dest = match stop.align {
             TabAlign::Left => stop.pos,
             TabAlign::Right => (stop.pos - after_w).max(x),
@@ -9265,7 +9328,7 @@ impl<'a> Layout<'a> {
                 if !first {
                     xcur = next_tab_x(
                         xcur,
-                        self.page.margin_l,
+                        self.flow_left(),
                         &self.tab_stops,
                         self.page.default_tab,
                     );
@@ -12825,6 +12888,7 @@ fn layout(
                 geom,
             } => lay.emit_table(cols, rows, style, *borders, geom),
             Block::PageBreak { next } => lay.hard_page_break(next.as_deref()),
+            Block::ColumnBreak => lay.column_break(),
         }
     }
     if lay.pages.iter().all(|p| p.ops.is_empty()) {
@@ -23127,7 +23191,9 @@ mod table_tests {
                     "inner tbl is a nested Block, not flattened rows"
                 );
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } => panic!("expected table"),
+            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+                panic!("expected table")
+            }
         }
     }
 
@@ -23173,7 +23239,9 @@ mod table_tests {
             Block::Table { rows, .. } => {
                 assert_eq!(rows.len(), 2, "Word still paints deleted TableGrid");
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } => panic!("expected table"),
+            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+                panic!("expected table")
+            }
         }
     }
 
@@ -23215,7 +23283,9 @@ mod table_tests {
                     style.line_mult
                 );
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } => panic!("expected table"),
+            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+                panic!("expected table")
+            }
         }
     }
 
@@ -23282,7 +23352,9 @@ mod table_tests {
                 assert_eq!(six.rowspan, 2);
                 assert_eq!(rows[2].len(), 2, "continue cell is not a new origin");
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } => panic!("expected table"),
+            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+                panic!("expected table")
+            }
         }
     }
 
@@ -23323,7 +23395,9 @@ mod table_tests {
                 assert!((fill[1] - 0xEA as f32 / 255.0).abs() < 0.01);
                 assert!((fill[2] - 0xF7 as f32 / 255.0).abs() < 0.01);
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } => panic!("expected table"),
+            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+                panic!("expected table")
+            }
         }
     }
 
@@ -23431,7 +23505,9 @@ mod table_tests {
                 assert!(b.top && b.bottom && !b.left && !b.inside_v);
                 assert!((style.line_mult - 1.0).abs() < 0.02);
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } => panic!("expected table"),
+            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+                panic!("expected table")
+            }
         }
     }
 
