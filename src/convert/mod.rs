@@ -1186,6 +1186,7 @@ enum ShapeGeom {
     Star24,
     Star32,
     FlowChartDocument,
+    FlowChartOffpageConnector,
 }
 
 enum ImageKind {
@@ -6129,6 +6130,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "star24" => ShapeGeom::Star24,
         "star32" => ShapeGeom::Star32,
         "flowChartDocument" => ShapeGeom::FlowChartDocument,
+        "flowChartOffpageConnector" => ShapeGeom::FlowChartOffpageConnector,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9186,6 +9188,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::FlowChartOffpageConnector => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: flow_chart_offpage_connector_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9373,6 +9381,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Star24
                 | ShapeGeom::Star32
                 | ShapeGeom::FlowChartDocument
+                | ShapeGeom::FlowChartOffpageConnector
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9444,6 +9453,9 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Star32 => star32_points(x, y, dw, dh),
                             ShapeGeom::FlowChartDocument => {
                                 flow_chart_document_points(x, y, dw, dh)
+                            }
+                            ShapeGeom::FlowChartOffpageConnector => {
+                                flow_chart_offpage_connector_points(x, y, dw, dh)
                             }
                             _ => round_rect_points(x, y, dw, dh),
                         };
@@ -12258,6 +12270,20 @@ fn flow_chart_document_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
     let mut pts = vec![p0, p1, p2];
     sample_cubic(p2, (x + hc, py(y1)), (x + hc, py(y3)), p3, 8, &mut pts);
     pts
+}
+
+fn flow_chart_offpage_connector_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML flowChartOffpageConnector in 10×10 space: rectangle with a
+    // downward V at the bottom (y1 = 4/5 h).
+    let y1 = h * 0.8;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x, py(0.0)),
+        (x + w, py(0.0)),
+        (x + w, py(y1)),
+        (x + w * 0.5, py(h)),
+        (x, py(y1)),
+    ]
 }
 
 fn cube_faces(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 3] {
@@ -15656,6 +15682,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn flow_chart_offpage_connector_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="flowChartOffpageConnector"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=flowChartOffpageConnector must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -17613,6 +17678,27 @@ mod drawing_tests {
         assert!(
             pts.iter().any(|(_, py)| *py < 5.0),
             "bottom cubic hangs below y1; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn flow_chart_offpage_connector_points_have_a_bottom_tip() {
+        let pts = flow_chart_offpage_connector_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 5);
+        let start = pts[0];
+        let tip = pts[3];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 100.0).abs() < 0.05,
+            "start is top-left; {start:?}"
+        );
+        assert!(
+            (tip.0 - 50.0).abs() < 0.05 && tip.1.abs() < 0.05,
+            "bottom tip is (hc,b); {tip:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
+            "must not include the bbox corner; {pts:?}"
         );
     }
 
