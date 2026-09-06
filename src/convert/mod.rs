@@ -2443,6 +2443,9 @@ struct Numbering {
     counters: HashMap<(String, u32), u32>,
     /// `w:num/w:lvlOverride/w:startOverride` (or nested `lvl/start`).
     starts: HashMap<(String, u32), u32>,
+    /// `w:lvlRestart/@w:val` keyed by (abstractNumId, ilvl). Missing is
+    /// Word's default (restart after any shallower level). 0 = never.
+    restarts: HashMap<(String, u32), u32>,
 }
 
 impl Numbering {
@@ -2519,8 +2522,16 @@ impl Numbering {
         let Some(lvl) = self.ensure_level(&abs, resolved) else {
             return String::new();
         };
-        self.counters
-            .retain(|(id, level), _| !(id == num_id && *level > resolved));
+        self.counters.retain(|(id, level), _| {
+            if id != num_id || *level <= resolved {
+                return true;
+            }
+            match self.restarts.get(&(abs.clone(), *level)) {
+                Some(0) => true,
+                Some(n) => *n != resolved,
+                None => false,
+            }
+        });
         let start = self
             .starts
             .get(&(num_id.to_string(), resolved))
@@ -2776,6 +2787,12 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
             let tab_stops = first_named(&dom, lvl, "pPr")
                 .map(|ppr| parse_tab_stops(&dom, ppr))
                 .unwrap_or_default();
+            if let Some(v) = first_named(&dom, lvl, "lvlRestart")
+                .and_then(|n| attr_any(&dom, n, "val"))
+                .and_then(|s| s.parse().ok())
+            {
+                numbering.restarts.insert((aid.to_string(), ilvl), v);
+            }
             lvls.insert(
                 ilvl,
                 NumLevel {
