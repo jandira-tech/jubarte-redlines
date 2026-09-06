@@ -2441,6 +2441,8 @@ struct Numbering {
     instances: HashMap<String, String>,
     levels: HashMap<String, HashMap<u32, NumLevel>>,
     counters: HashMap<(String, u32), u32>,
+    /// `w:num/w:lvlOverride/w:startOverride` (or nested `lvl/start`).
+    starts: HashMap<(String, u32), u32>,
 }
 
 impl Numbering {
@@ -2519,7 +2521,12 @@ impl Numbering {
         };
         self.counters
             .retain(|(id, level), _| !(id == num_id && *level > resolved));
-        let start = lvl.start.max(1);
+        let start = self
+            .starts
+            .get(&(num_id.to_string(), resolved))
+            .copied()
+            .unwrap_or(lvl.start)
+            .max(1);
         let cur = *self
             .counters
             .entry((num_id.to_string(), resolved))
@@ -2804,6 +2811,23 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
             continue;
         };
         numbering.instances.insert(nid.to_string(), aid.to_string());
+        for ov in dom.descendants(num, Some(&W::name("lvlOverride"))) {
+            let ilvl = attr_any(&dom, ov, "ilvl")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let start = first_named(&dom, ov, "startOverride")
+                .and_then(|n| attr_any(&dom, n, "val"))
+                .and_then(|s| s.parse().ok())
+                .or_else(|| {
+                    first_named(&dom, ov, "lvl")
+                        .and_then(|lvl| first_named(&dom, lvl, "start"))
+                        .and_then(|n| attr_any(&dom, n, "val"))
+                        .and_then(|s| s.parse().ok())
+                });
+            if let Some(start) = start {
+                numbering.starts.insert((nid.to_string(), ilvl), start);
+            }
+        }
     }
     numbering
 }

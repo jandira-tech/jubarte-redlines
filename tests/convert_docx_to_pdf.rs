@@ -442,6 +442,49 @@ fn numbered_list_revision_keeps_single_counter_after_mini_310() {
 }
 
 #[test]
+fn numbering_start_override_restarts_the_second_instance() {
+    // xml_parts_plan numbering leftovers: w:lvlOverride/w:startOverride
+    // on a second w:num sharing the abstract. Without it, CharlieOV
+    // paints as 1. (abstract start) instead of Word's 5.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"360\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+          <w:num w:numId=\"2\"><w:abstractNumId w:val=\"0\"/>\
+            <w:lvlOverride w:ilvl=\"0\"><w:startOverride w:val=\"5\"/></w:lvlOverride>\
+          </w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>AlphaOV</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>BravoOV</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"2\"/></w:numPr></w:pPr>\
+           <w:r><w:t>CharlieOV</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"2\"/></w:numPr></w:pPr>\
+           <w:r><w:t>DeltaOV</w:t></w:r></w:p><w:sectPr/>";
+    let pdf =
+        docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("convert startOverride list");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("AlphaOV") && text.contains("CharlieOV") && text.contains("DeltaOV"),
+        "list bodies must paint; text={text:?}"
+    );
+    let five = text.find("5.").expect("startOverride 5 must paint");
+    let six = text
+        .find("6.")
+        .expect("second item of overridden instance is 6.");
+    let charlie = text.find("CharlieOV").expect("CharlieOV");
+    assert!(
+        five < charlie && charlie < six,
+        "numId=2 starts at 5 not abstract 1; text={text:?}"
+    );
+}
+
+#[test]
 fn tbl_header_repeats_on_overflow_page() {
     // file_34 / uipriority: `w:trPr/w:tblHeader` is Word's repeating
     // header. Without it, overflow pages lose Feature/Description.
