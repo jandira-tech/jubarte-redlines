@@ -284,20 +284,6 @@ impl PartialEq<FaceId> for FaceRef {
     }
 }
 
-impl FaceRef {
-    pub(crate) fn is_arial(self) -> bool {
-        matches!(self, Self::Catalogue(id) if id.is_arial())
-    }
-
-    pub(crate) fn is_cambria(self) -> bool {
-        matches!(self, Self::Catalogue(id) if id.is_cambria())
-    }
-
-    pub(crate) fn is_times(self) -> bool {
-        matches!(self, Self::Catalogue(id) if id.is_times())
-    }
-}
-
 impl FaceId {
     fn index(self) -> usize {
         self as usize
@@ -465,30 +451,6 @@ impl FaceId {
             Self::BookAntiquaBoldItalic,
             Self::Symbol,
         ]
-    }
-
-    pub(crate) fn is_cambria(self) -> bool {
-        matches!(
-            self,
-            Self::CambriaRegular
-                | Self::CambriaBold
-                | Self::CambriaItalic
-                | Self::CambriaBoldItalic
-        )
-    }
-
-    pub(crate) fn is_arial(self) -> bool {
-        matches!(
-            self,
-            Self::SansRegular | Self::SansBold | Self::SansItalic | Self::SansBoldItalic
-        )
-    }
-
-    pub(crate) fn is_times(self) -> bool {
-        matches!(
-            self,
-            Self::SerifRegular | Self::SerifBold | Self::SerifItalic | Self::SerifBoldItalic
-        )
     }
 
     pub(crate) fn bytes(self) -> &'static [u8] {
