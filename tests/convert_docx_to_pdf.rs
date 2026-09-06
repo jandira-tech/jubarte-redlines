@@ -6691,8 +6691,16 @@ fn heading_before_applies_after_section_break() {
         .into_iter()
         .fold(f32::NEG_INFINITY, f32::max);
     assert!(
-        page_y - section_y >= 20.0,
-        "Heading1 before=24pt must apply after nextPage sectPr, not after a page break; section_y={section_y} page_y={page_y}"
+        section_y < 690.0,
+        "Heading1 before=24pt must apply after nextPage sectPr; section_y={section_y}"
+    );
+    assert!(
+        page_y < 690.0,
+        "Heading1 before=24pt must apply after a hard page break; page_y={page_y}"
+    );
+    assert!(
+        (section_y - page_y).abs() < 2.0,
+        "sectPr and w:br page must apply the same before; section_y={section_y} page_y={page_y}"
     );
 }
 
@@ -11183,26 +11191,104 @@ fn official_file_22_cover_keeps_empty_title_paras_after_mini_393() {
     );
 }
 
+fn letter_body_sect() -> &'static str {
+    "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+       <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+}
+
+fn heading16(before_twips: u32, text: &str) -> String {
+    format!(
+        "<w:p><w:pPr><w:spacing w:before=\"{before_twips}\"/></w:pPr>\
+           <w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>{text}</w:t></w:r></w:p>"
+    )
+}
+
+fn heading16_y(docx: &[u8]) -> f32 {
+    let pdf = docx_to_pdf(docx).expect("convert");
+    pdf_tf_ys(&pdf, "16.08 Tf")
+        .into_iter()
+        .fold(f32::NEG_INFINITY, f32::max)
+}
+
+fn page_top_16pt_y() -> f32 {
+    heading16_y(&minimal_docx_body(&format!(
+        "{}{}",
+        heading16(0, "Head"),
+        letter_body_sect()
+    )))
+}
+
 #[test]
-fn space_before_is_dropped_at_top_of_a_new_page() {
-    // Word/soffice suppress w:spacing before at the top of a page.
-    // Heading1 in the comments cluster is before=480 twips; applying it
-    // after a page break stacks ~24pt × N headings and spills a page.
-    let body = "<w:p><w:r><w:t>FirstPage</w:t></w:r></w:p>\
-         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
-         <w:p><w:pPr><w:spacing w:before=\"480\"/></w:pPr>\
-           <w:r><w:rPr><w:sz w:val=\"22\"/></w:rPr><w:t>TopHead</w:t></w:r></w:p>\
-         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
-           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
-    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert");
-    let ys = pdf_tf_ys(&pdf, "11.04 Tf");
-    assert!(ys.len() >= 2, "both pages must paint; ys={ys:?}");
-    let min_y = ys.iter().copied().fold(f32::INFINITY, f32::min);
-    // Letter 792, top margin 72: first baseline ~ 792-72-ascent ≈ 705.
-    // A 24pt before would push the new-page heading below 690.
+fn space_before_applies_at_document_start() {
+    // Finding C: Word applies w:spacing before on the first paragraph of
+    // the document. at_page_top used to mean "y is at the margin" and
+    // dropped the 480 twips (24pt) Heading1 offset on 42/76 fixtures.
+    let with = heading16_y(&minimal_docx_body(&format!(
+        "{}{}",
+        heading16(480, "FirstHead"),
+        letter_body_sect()
+    )));
+    let top = page_top_16pt_y();
     assert!(
-        min_y > 698.0,
-        "space-before must not push a page-top heading down; min_y={min_y} ys={ys:?}"
+        top - with >= 20.0,
+        "document-start space-before=24pt must apply; top={top} with={with}"
+    );
+}
+
+#[test]
+fn space_before_suppressed_on_overflow_page() {
+    // Word suppresses before only when the paragraph arrived by automatic
+    // pagination. 700pt after on page 1 forces the next para onto a new page.
+    let body = format!(
+        "<w:p><w:pPr><w:spacing w:after=\"14000\"/></w:pPr>\
+           <w:r><w:t>FirstPage</w:t></w:r></w:p>\
+         {}{}",
+        heading16(480, "OverflowHead"),
+        letter_body_sect()
+    );
+    let y = heading16_y(&minimal_docx_body(&body));
+    let top = page_top_16pt_y();
+    assert!(
+        (y - top).abs() < 2.0,
+        "overflow page-top must suppress space-before; y={y} top={top}"
+    );
+}
+
+#[test]
+fn space_before_applies_after_hard_page_break() {
+    // Word applies before after w:br type=page unless suppressSpBfAfterPgBrk.
+    let body = format!(
+        "<w:p><w:r><w:t>FirstPage</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         {}{}",
+        heading16(480, "TopHead"),
+        letter_body_sect()
+    );
+    let y = heading16_y(&minimal_docx_body(&body));
+    let top = page_top_16pt_y();
+    assert!(
+        top - y >= 20.0,
+        "hard page break must keep space-before=24pt; top={top} y={y}"
+    );
+}
+
+#[test]
+fn space_before_suppressed_after_hard_break_when_compat_set() {
+    let body = format!(
+        "<w:p><w:r><w:t>FirstPage</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         {}{}",
+        heading16(480, "TopHead"),
+        letter_body_sect()
+    );
+    let y = heading16_y(&minimal_docx_with_settings(
+        &body,
+        "<w:compat><w:suppressSpBfAfterPgBrk/></w:compat>",
+    ));
+    let top = page_top_16pt_y();
+    assert!(
+        (y - top).abs() < 2.0,
+        "suppressSpBfAfterPgBrk must drop before after a hard break; y={y} top={top}"
     );
 }
 

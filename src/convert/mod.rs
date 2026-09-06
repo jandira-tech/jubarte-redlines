@@ -140,7 +140,13 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
         let page = load_page_setup(&dom, body, &sheet.defaults.page);
         let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
         let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, &fonts);
-        let pages = layout(&fonts, &page, &hf, &blocks);
+        let pages = layout(
+            &fonts,
+            &page,
+            &hf,
+            &blocks,
+            settings_suppress_sp_bf_after_pg_brk(&pkg),
+        );
         Ok(pdf::emit(&fonts, &pages, options))
     })
 }
@@ -2257,6 +2263,17 @@ fn settings_track_revisions(pkg: &PartFs) -> bool {
     xml.contains("trackRevisions")
         && !xml.contains("trackRevisions w:val=\"0\"")
         && !xml.contains("trackRevisions w:val=\"false\"")
+}
+
+/// Word `w:compat/w:suppressSpBfAfterPgBrk`: drop space-before after a
+/// hard `w:br type=page`. Absent (the default) keeps the before.
+fn settings_suppress_sp_bf_after_pg_brk(pkg: &PartFs) -> bool {
+    let Some(xml) = pkg.part_string("word/settings.xml") else {
+        return false;
+    };
+    xml.contains("suppressSpBfAfterPgBrk")
+        && !xml.contains("suppressSpBfAfterPgBrk w:val=\"0\"")
+        && !xml.contains("suppressSpBfAfterPgBrk w:val=\"false\"")
 }
 
 /// Word factory is 720 twips (0.5in). Strict01 writes `36pt`; mcdoc `420`.
@@ -6177,6 +6194,11 @@ struct Layout<'a> {
     page_has_body: bool,
     chrome_end: usize,
     at_page_top: bool,
+    /// True only when this page top was reached by overflow (or a hard
+    /// page break under `suppressSpBfAfterPgBrk`). Document start, sectPr,
+    /// and a plain `w:br type=page` keep space-before (plan Step 3).
+    suppress_space_before: bool,
+    suppress_sp_bf_after_pg_brk: bool,
     last_break_was_section: bool,
     tab_stops: Vec<TabStop>,
     section_page: u32,
@@ -6219,7 +6241,12 @@ fn chrome_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
 }
 
 impl<'a> Layout<'a> {
-    fn new(fonts: &'a Fonts, page: PageSetup, hf: HfChrome) -> Self {
+    fn new(
+        fonts: &'a Fonts,
+        page: PageSetup,
+        hf: HfChrome,
+        suppress_sp_bf_after_pg_brk: bool,
+    ) -> Self {
         let header = hf.header;
         let footer = hf.footer;
         let header_band = if header.is_empty() {
@@ -6265,6 +6292,8 @@ impl<'a> Layout<'a> {
             page_has_body: false,
             chrome_end: 0,
             at_page_top: true,
+            suppress_space_before: false,
+            suppress_sp_bf_after_pg_brk,
             last_break_was_section: false,
             tab_stops: Vec::new(),
             section_page: page.page_num_start.unwrap_or(1),
@@ -6366,6 +6395,7 @@ impl<'a> Layout<'a> {
         self.y = self.page.height - self.body_top;
         self.page_has_body = false;
         self.at_page_top = true;
+        self.suppress_space_before = true;
         // Overflow is not a section start — Word suppresses before here.
         self.last_break_was_section = false;
         self.promote_rest_chrome();
@@ -6440,12 +6470,18 @@ impl<'a> Layout<'a> {
             self.y = self.page.height - self.body_top;
             self.page_has_body = false;
             self.at_page_top = true;
+            self.suppress_space_before = if next.is_some() {
+                false
+            } else {
+                self.suppress_sp_bf_after_pg_brk
+            };
             self.chrome();
             self.chrome_end = self.current().ops.len();
         } else if let Some(sec) = next {
             self.apply_section(sec);
             self.y = self.page.height - self.body_top;
             self.at_page_top = true;
+            self.suppress_space_before = false;
         }
         self.last_break_was_section = next.is_some();
     }
@@ -6523,17 +6559,15 @@ impl<'a> Layout<'a> {
         self.last_style_id.clone_from(&style.style_id);
         self.page_has_body = true;
         self.tab_stops.clone_from(&style.tab_stops);
-        // Word suppresses Spacing Before at the top of an overflow page,
-        // but still applies it after a nextPage sectPr (comments-lots
-        // Heading1 before=480 on the landscape page and the following
-        // portrait). Skipping both packed extra bullets onto p7–p8.
-        // Capping after-sectPr before at size×1.15 matched Word p6
-        // glyph top 62.83 (mini 418) but dropped comments-lots −1.87 /
-        // I_am_sharing −1.47. Keep the full 24pt.
-        if !self.at_page_top || self.last_break_was_section {
+        // Word suppresses Spacing Before only when the paragraph arrived
+        // at the page top by overflow (plan Step 3 / Finding C). Document
+        // start, nextPage sectPr, and a hard page break still apply it
+        // unless `suppressSpBfAfterPgBrk` is set.
+        if !self.at_page_top || !self.suppress_space_before {
             self.y -= style.before;
         }
         self.at_page_top = false;
+        self.suppress_space_before = false;
         let y_top = self.y;
         let hanging = if style.indent_first < 0.0 {
             -style.indent_first
@@ -9013,8 +9047,14 @@ fn wrap_runs_segment(
     lines
 }
 
-fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> Vec<Page> {
-    let mut lay = Layout::new(fonts, *page, hf.clone());
+fn layout(
+    fonts: &Fonts,
+    page: &PageSetup,
+    hf: &HfChrome,
+    blocks: &[Block],
+    suppress_sp_bf_after_pg_brk: bool,
+) -> Vec<Page> {
+    let mut lay = Layout::new(fonts, *page, hf.clone(), suppress_sp_bf_after_pg_brk);
     lay.known_bookmarks = document_bookmark_names(blocks);
     if blocks.is_empty() {
         lay.current().ops.push(Op::text(
@@ -9134,9 +9174,10 @@ fn layout(fonts: &Fonts, page: &PageSetup, hf: &HfChrome, blocks: &[Block]) -> V
                 } else if has_ink || (images.is_empty() && boxes.is_empty()) || !skip_empty_line {
                     let (wrap_left, wrap_right) = lay.wrap_square_inset(images, boxes);
                     lay.emit_runs(runs, &style, *list, compact_title, wrap_left, wrap_right);
-                } else if !lay.at_page_top {
+                } else if !lay.at_page_top || !lay.suppress_space_before {
                     lay.y -= style.before;
                     lay.at_page_top = false;
+                    lay.suppress_space_before = false;
                 }
                 for img in images {
                     lay.emit_image(img);
@@ -11873,6 +11914,7 @@ mod comments_spacing_tests {
                 boxes: Vec::new(),
                 bookmarks: Vec::new(),
             }],
+            false,
         );
         let xs: Vec<f32> = pages[0]
             .ops
@@ -11927,6 +11969,7 @@ mod comments_spacing_tests {
                 boxes: Vec::new(),
                 bookmarks: Vec::new(),
             }],
+            false,
         );
         let ys: Vec<i32> = pages[0]
             .ops
