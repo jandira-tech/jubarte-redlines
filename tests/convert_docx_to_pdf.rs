@@ -785,6 +785,73 @@ fn chart_docx(body: &str, chart_xml: &str) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+fn footnote_docx(body: &str, footnotes_xml: &str) -> Vec<u8> {
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+           xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+         <w:body>{body}</w:body></w:document>"
+    );
+    let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        <Override PartName=\"/word/footnotes.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml\"/>\
+        </Types>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/>\
+        </Relationships>";
+    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdFootnotes\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes\" \
+          Target=\"footnotes.xml\"/>\
+        </Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(content_types.as_bytes()).unwrap();
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(rels.as_bytes()).unwrap();
+    zip.start_file("word/document.xml", opts).unwrap();
+    zip.write_all(document.as_bytes()).unwrap();
+    zip.start_file("word/_rels/document.xml.rels", opts)
+        .unwrap();
+    zip.write_all(doc_rels.as_bytes()).unwrap();
+    zip.start_file("word/footnotes.xml", opts).unwrap();
+    zip.write_all(footnotes_xml.as_bytes()).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
+fn sample_footnote_parts() -> (String, String) {
+    // Unique 16pt QxBody / 10pt ZzNote so WinAnsi concat and Tf ys split.
+    let body = "<w:p><w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>QxBody</w:t></w:r>\
+         <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr>\
+           <w:footnoteReference w:id=\"1\"/></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>"
+        .to_string();
+    let notes = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:footnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>\
+           <w:footnote w:type=\"continuationSeparator\" w:id=\"0\">\
+             <w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>\
+           <w:footnote w:id=\"1\"><w:p>\
+             <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr><w:footnoteRef/></w:r>\
+             <w:r><w:rPr><w:sz w:val=\"20\"/></w:rPr><w:t xml:space=\"preserve\"> ZzNote</w:t></w:r>\
+           </w:p></w:footnote>\
+         </w:footnotes>"
+        .to_string();
+    (body, notes)
+}
+
 fn diagram_docx(body: &str, data_xml: &str) -> Vec<u8> {
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
@@ -9217,6 +9284,92 @@ fn pg_borders_text_offset_sits_outside_the_margin() {
 }
 
 #[test]
+fn footnote_note_text_paints_at_page_bottom() {
+    // plan Step 7 / case18,74,75,76: footnotes.xml text is reserved at
+    // the page bottom, not dropped, and sits below the body line.
+    let (body, notes) = sample_footnote_parts();
+    let pdf = docx_to_pdf(&footnote_docx(&body, &notes)).expect("convert footnote");
+    let painted = pdf_winansi_text(&pdf);
+    assert!(
+        painted.contains("QxBody"),
+        "body run must paint; painted={painted}"
+    );
+    assert!(
+        painted.contains("ZzNote"),
+        "footnote text must paint at page bottom; painted={painted}"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    let body_y = pdf_cm_tj_xy(&hay, "Q")
+        .first()
+        .map(|p| p.1)
+        .or_else(|| pdf_literal_y(&hay, "16.08 Tf", "QxBody"))
+        .or_else(|| pdf_tf_ys(&pdf, "16.08 Tf").into_iter().next())
+        .expect("16pt body y");
+    let note_y = pdf_literal_y(&hay, "10.08 Tf", "ZzNote")
+        .or_else(|| pdf_literal_y(&hay, "10 Tf", "ZzNote"))
+        .or_else(|| pdf_cm_tj_xy(&hay, "Z").first().map(|p| p.1))
+        .or_else(|| pdf_tf_ys(&pdf, "10.08 Tf").into_iter().next())
+        .expect("note y");
+    assert!(
+        body_y > 650.0,
+        "body stays in the top band (letter 792, margin 72); body_y={body_y}"
+    );
+    assert!(
+        note_y < 150.0,
+        "note sits in the bottom margin band; note_y={note_y} body_y={body_y}"
+    );
+    assert!(
+        body_y - note_y > 400.0,
+        "note must not sit on the body line; body_y={body_y} note_y={note_y}"
+    );
+}
+
+#[test]
+fn footnote_separator_is_a_short_rule_above_the_note() {
+    // Word's footnote separator is a ~2in (144pt) 0.5pt rule above the notes.
+    let (body, notes) = sample_footnote_parts();
+    let pdf = docx_to_pdf(&footnote_docx(&body, &notes)).expect("convert footnote sep");
+    let hay = String::from_utf8_lossy(&pdf);
+    let note_y = pdf_literal_y(&hay, "10.08 Tf", "ZzNote")
+        .or_else(|| pdf_literal_y(&hay, "10 Tf", "ZzNote"))
+        .or_else(|| pdf_cm_tj_xy(&hay, "Z").first().map(|p| p.1))
+        .or_else(|| pdf_tf_ys(&pdf, "10.08 Tf").into_iter().next())
+        .expect("note Z");
+    let rules: Vec<_> = pdf_fill_boxes_in(&hay, 0.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(_, _, w, h)| *w > 80.0 && *w < 180.0 && *h < 2.0)
+        .collect();
+    assert!(
+        rules
+            .iter()
+            .any(|(_, y, w, _)| *w > 100.0 && *y > note_y && *y < note_y + 40.0),
+        "144pt separator above the note (note_y={note_y}); rules={rules:?}"
+    );
+}
+
+#[test]
+fn footnote_reference_is_a_superscript_digit() {
+    let (body, notes) = sample_footnote_parts();
+    let pdf = docx_to_pdf(&footnote_docx(&body, &notes)).expect("convert footnote ref");
+    let hay = String::from_utf8_lossy(&pdf);
+    let painted = pdf_winansi_text(&pdf);
+    assert!(
+        painted.contains('1'),
+        "body footnoteReference paints 1; painted={painted}"
+    );
+    let body_y = pdf_cm_tj_xy(&hay, "Q")
+        .first()
+        .map(|p| p.1)
+        .expect("body Q");
+    let ones = pdf_cm_tj_xy(&hay, "1");
+    assert!(
+        ones.iter()
+            .any(|(_, y)| (*y - body_y).abs() < 20.0 && *y >= body_y - 0.5),
+        "body footnote mark sits on/above the 16pt baseline; body_y={body_y} ones={ones:?}"
+    );
+}
+
+#[test]
 fn body_pbdr_bottom_paints_a_rule() {
     // sample_document / eigenpal: 14 heading paras carry
     // `<w:pBdr><w:bottom … color="E2E8F0"/>`. Header chrome already
@@ -11539,9 +11692,9 @@ fn endnote_reference_stays_unpainted_after_mini_487() {
 
 #[test]
 fn footnotes_stay_unpainted_after_mini_94() {
-    // Word paints potpourri / file_170 footnote bodies in the bottom
-    // margin. Mini 94 did that and dropped potpourri −0.15 / file_170
-    // −0.23 ITT (0 better). Keep footnotes.xml silent.
+    // plan Step 7 retires mini 94: Word paints footnote bodies in the
+    // bottom margin. Naive paint without reservation was ITT-wrong;
+    // reserved floor + separator is the Word rule.
     let body = "<w:p><w:r><w:t>BodyLine</w:t></w:r>\
            <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr>\
              <w:footnoteReference w:id=\"1\"/></w:r></w:p>\
@@ -11555,15 +11708,16 @@ fn footnotes_stay_unpainted_after_mini_94() {
     assert_eq!(pdf_page_count(&pdf), 1, "short body stays one page");
     let painted = pdf_winansi_text(&pdf);
     assert!(
-        !painted.contains("Footnote one lives here"),
-        "footnote bodies stay unpainted after mini 94 ITT; painted={painted}"
+        painted.contains("Footnote one lives here"),
+        "plan Step 7: footnote bodies paint at page bottom; painted={painted}"
     );
 }
 
 #[test]
 fn footnote_reference_stays_unpainted_after_mini_102() {
-    // Word paints a superscript "1" at w:footnoteReference. Doing that
-    // (mini 102) dropped potpourri −0.014 and file_170 −0.016; 0 better.
+    // plan Step 7 retires mini 102: Word paints the superscript marker.
+    // Naive paint without a bottom reservation was ITT-wrong; with
+    // reserved floor + separator the marker is required.
     let body = "<w:p><w:r><w:t>SeeNoteHere.</w:t></w:r>\
            <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr>\
              <w:footnoteReference w:id=\"1\"/></w:r></w:p>\
@@ -11577,25 +11731,21 @@ fn footnote_reference_stays_unpainted_after_mini_102() {
         "body must paint; painted={painted}"
     );
     assert!(
-        !painted.contains('1'),
-        "in-text footnote marker is ITT-wrong after mini 102; painted={painted}"
+        painted.contains('1'),
+        "plan Step 7: in-text footnote marker paints; painted={painted}"
     );
 }
 
 #[test]
 fn official_potpourri_stays_five_pages_without_footnote_ink_after_mini_94() {
-    // Word p1 y≈708 has "Footnote one…". Painting it (mini 94) was
-    // ITT-wrong. Keep 5pp and no footnote-body literals.
+    // Word p1 paints "Footnote one…". Mini 94 painted without reserving
+    // the bottom band (ITT-wrong). Plan Step 7 paints with reservation;
+    // keep Word's 5pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official potpourri");
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let pages = pdf_content_streams(&pdf);
     assert!(!pages.is_empty(), "need page streams");
-    let p1 = pdf_winansi_text(pages[0].as_bytes());
-    assert!(
-        !p1.contains("Footnote one") && !p1.contains("introductory paragraph"),
-        "potpourri footnote body stays unpainted after mini 94; p1={p1}"
-    );
 }
 
 #[test]

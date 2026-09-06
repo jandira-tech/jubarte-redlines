@@ -139,7 +139,12 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
         }
         let page = load_page_setup(&dom, body, &sheet.defaults.page);
         let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, &fonts);
+        let mut blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, &fonts);
+        let display = number_footnote_refs(&mut blocks);
+        let footnotes = FootnoteCatalog {
+            notes: load_footnotes(&pkg, &main, &sheet),
+            display,
+        };
         let pages = layout(
             &fonts,
             &page,
@@ -147,6 +152,7 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
             &blocks,
             settings_suppress_sp_bf_after_pg_brk(&pkg),
             settings_compat_mode(&pkg),
+            footnotes,
         );
         Ok(pdf::emit(&fonts, &pages, options))
     })
@@ -607,6 +613,10 @@ struct TextRun {
     pageref: Option<String>,
     /// Empty cell-para `w:pBdr` bottom (file_146 Sign-off signature rule).
     rule: Option<([f32; 3], f32)>,
+    /// Body `w:footnoteReference/@w:id`.
+    footnote_id: Option<String>,
+    /// `w:footnoteRef` auto-mark inside `footnotes.xml`.
+    note_ref: bool,
 }
 
 impl TextRun {
@@ -619,7 +629,15 @@ impl TextRun {
             rev: false,
             comments: Vec::new(),
             rule: None,
+            footnote_id: None,
+            note_ref: false,
         }
+    }
+
+    fn with_text(&self, text: impl Into<String>) -> Self {
+        let mut run = self.clone();
+        run.text = text.into();
+        run
     }
 }
 
@@ -645,6 +663,25 @@ enum Block {
     /// sections are 1800-twip with their own footer; first is 2160/vAlign).
     PageBreak { next: Option<SectionChrome> },
 }
+
+/// One paragraph of a `w:footnote` (plan Step 7).
+#[derive(Clone)]
+struct FootnotePara {
+    runs: Vec<TextRun>,
+    style: ParaStyle,
+}
+
+#[derive(Clone, Default)]
+struct FootnoteCatalog {
+    notes: HashMap<String, Vec<FootnotePara>>,
+    display: HashMap<String, String>,
+}
+
+/// Word footnote separator: 0.5pt rule, 2in (144pt), 12pt gap above notes
+/// (`docxide-pdf` `draw_note_separator` / `render_page_footnotes`).
+const FOOTNOTE_SEP_PT: f32 = 0.5;
+const FOOTNOTE_SEP_W: f32 = 144.0;
+const FOOTNOTE_SEP_GAP: f32 = 12.0;
 
 struct TableGeom {
     row_min: Vec<f32>,
@@ -2792,6 +2829,103 @@ fn append_endnotes(
     }
 }
 
+fn load_footnotes(
+    pkg: &PartFs,
+    main: &str,
+    sheet: &StyleSheet,
+) -> HashMap<String, Vec<FootnotePara>> {
+    let Some(xml) = part_xml_by_rel_kind(pkg, main, "footnotes") else {
+        return HashMap::new();
+    };
+    let mut ndom = Dom::new();
+    let doc = ndom.parse_xdocument(&xml);
+    let Some(root) = ndom.root(doc) else {
+        return HashMap::new();
+    };
+    let comments = load_comments(pkg, main);
+    let sects: Vec<NodeId> = Vec::new();
+    let ctx = WalkCtx {
+        pkg,
+        main,
+        sheet,
+        sects: &sects,
+        authors: RefCell::new(AuthorColors::default()),
+        comments,
+    };
+    let mut numbering = load_numbering(pkg);
+    let mut out = HashMap::new();
+    for note in ndom.descendants(root, Some(&W::footnote())) {
+        if note_is_structural(&ndom, note) {
+            continue;
+        }
+        let id = attr_any(&ndom, note, "id").unwrap_or("").to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let mut paras = Vec::new();
+        for i in 0..ndom.child_count(note) {
+            let child = ndom.child_at(note, i);
+            if ndom.name_is(child, &W::p()) {
+                let block = paragraph_block(&ctx, &ndom, child, false, &mut numbering);
+                if let Block::Paragraph { runs, style, .. } = block {
+                    paras.push(FootnotePara { runs, style });
+                }
+            }
+        }
+        if !paras.is_empty() {
+            out.insert(id, paras);
+        }
+    }
+    out
+}
+
+fn number_footnote_refs(blocks: &mut [Block]) -> HashMap<String, String> {
+    let mut display = HashMap::new();
+    let mut n = 1u32;
+    visit_runs_mut(blocks, |run| {
+        let Some(id) = run.footnote_id.as_deref() else {
+            return;
+        };
+        let label = display.entry(id.to_string()).or_insert_with(|| {
+            let s = n.to_string();
+            n += 1;
+            s
+        });
+        run.text.clone_from(label);
+        run.style.vert = VertAlign::Super;
+    });
+    display
+}
+
+fn visit_runs_mut(blocks: &mut [Block], mut f: impl FnMut(&mut TextRun)) {
+    visit_runs_mut_inner(blocks, &mut f);
+}
+
+fn visit_runs_mut_inner(blocks: &mut [Block], f: &mut impl FnMut(&mut TextRun)) {
+    for block in blocks {
+        match block {
+            Block::Paragraph { runs, .. } => {
+                for run in runs {
+                    f(run);
+                }
+            }
+            Block::Table { rows, .. } => {
+                for row in rows {
+                    for cell in row {
+                        for para in &mut cell.paras {
+                            for run in &mut para.runs {
+                                f(run);
+                            }
+                        }
+                        visit_runs_mut_inner(&mut cell.nested, f);
+                    }
+                }
+            }
+            Block::PageBreak { .. } => {}
+        }
+    }
+}
+
 fn section_chrome(
     pkg: &PartFs,
     main: &str,
@@ -4553,6 +4687,33 @@ fn collect_runs_rec(
         }
         if mark != RevMark::None {
             apply_rev(&mut style, mark, ctx.authors.color(author));
+        }
+        let mut footnote_id = None;
+        let mut note_ref = false;
+        for idx in 0..ctx.dom.child_count(node) {
+            let child = ctx.dom.child_at(node, idx);
+            if ctx.dom.name_is(child, &W::name("footnoteReference")) {
+                footnote_id = attr_any(ctx.dom, child, "id").map(str::to_string);
+            }
+            if ctx.dom.name_is(child, &W::name("footnoteRef")) {
+                note_ref = true;
+            }
+        }
+        if footnote_id.is_some() || note_ref {
+            style.vert = VertAlign::Super;
+            let pending_ids = std::mem::take(&mut ctx.pending);
+            let pending = if pending_ids.is_empty() {
+                Vec::new()
+            } else {
+                notes_for(ctx, &pending_ids)
+            };
+            let mut run = TextRun::new("1", style);
+            run.rev = mark != RevMark::None;
+            run.comments = pending;
+            run.footnote_id = footnote_id;
+            run.note_ref = note_ref;
+            runs.push(run);
+            return;
         }
         let raw = {
             let mut out = String::new();
@@ -6612,6 +6773,8 @@ fn collect_hf_rec(
                         comments: Vec::new(),
                         pageref: None,
                         rule: None,
+                        footnote_id: None,
+                        note_ref: false,
                     });
                 }
                 *scan = FieldScan::default();
@@ -6652,6 +6815,8 @@ fn collect_hf_rec(
                     comments: Vec::new(),
                     pageref: None,
                     rule: None,
+                    footnote_id: None,
+                    note_ref: false,
                 });
                 scan.emitted = true;
             }
@@ -6726,6 +6891,8 @@ struct Layout<'a> {
     /// Bookmark names present in the DOCX (before layout pages exist).
     /// Missing PAGEREF wraps Word's Error! string; live names patch later.
     known_bookmarks: HashSet<String>,
+    footnotes: FootnoteCatalog,
+    page_fn_ids: Vec<String>,
 }
 
 fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
@@ -6818,6 +6985,8 @@ impl<'a> Layout<'a> {
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
             known_bookmarks: HashSet::new(),
+            footnotes: FootnoteCatalog::default(),
+            page_fn_ids: Vec::new(),
         };
         lay.chrome();
         lay.chrome_end = lay.current().ops.len();
@@ -6860,17 +7029,12 @@ impl<'a> Layout<'a> {
         } else {
             chrome_line_pt(self.fonts, &self.header)
         };
-        let footer_band = if self.footer.is_empty() {
-            0.0
-        } else {
-            chrome_line_pt(self.fonts, &self.footer)
-        };
         self.body_top = if self.header.is_empty() {
             self.page.margin_t
         } else {
             self.page.margin_t.max(self.page.header + header_band)
         };
-        self.body_floor = self.page.margin_b.max(self.page.footer + footer_band);
+        self.refresh_body_floor();
     }
 
     fn promote_rest_chrome(&mut self) {
@@ -6901,6 +7065,7 @@ impl<'a> Layout<'a> {
         if self.pages.len() == 1 {
             self.center_first_page_body();
         }
+        self.paint_page_footnotes();
         self.patch_chap_page();
         self.section_page = self.section_page.saturating_add(1);
         self.pages.push(self.fresh_page());
@@ -6911,6 +7076,7 @@ impl<'a> Layout<'a> {
         // Overflow is not a section start — Word suppresses before here.
         self.last_break_was_section = false;
         self.promote_rest_chrome();
+        self.refresh_body_floor();
         self.chrome();
         self.chrome_end = self.current().ops.len();
     }
@@ -6968,6 +7134,7 @@ impl<'a> Layout<'a> {
             if self.pages.len() == 1 {
                 self.center_first_page_body();
             }
+            self.paint_page_footnotes();
             self.patch_chap_page();
             if let Some(sec) = next {
                 self.apply_section(sec);
@@ -6987,6 +7154,7 @@ impl<'a> Layout<'a> {
             } else {
                 self.suppress_sp_bf_after_pg_brk
             };
+            self.refresh_body_floor();
             self.chrome();
             self.chrome_end = self.current().ops.len();
         } else if let Some(sec) = next {
@@ -7014,6 +7182,172 @@ impl<'a> Layout<'a> {
 
     fn content_width(&self) -> f32 {
         self.page.width - self.page.margin_l - self.page.margin_r
+    }
+
+    fn chrome_floor(&self) -> f32 {
+        let footer_band = if self.footer.is_empty() {
+            0.0
+        } else {
+            chrome_line_pt(self.fonts, &self.footer)
+        };
+        self.page.margin_b.max(self.page.footer + footer_band)
+    }
+
+    fn footnote_block_h(&self) -> f32 {
+        if self.page_fn_ids.is_empty() {
+            return 0.0;
+        }
+        let width = self.content_width();
+        FOOTNOTE_SEP_GAP
+            + self
+                .page_fn_ids
+                .iter()
+                .map(|id| self.note_height(id, width))
+                .sum::<f32>()
+    }
+
+    fn refresh_body_floor(&mut self) {
+        self.body_floor = self.chrome_floor() + self.footnote_block_h();
+    }
+
+    fn note_height(&self, id: &str, width: f32) -> f32 {
+        let Some(paras) = self.footnotes.notes.get(id) else {
+            return 10.0;
+        };
+        let mut h = 0.0_f32;
+        for (i, para) in paras.iter().enumerate() {
+            if i > 0 {
+                h += para.style.before;
+            }
+            let size = para
+                .runs
+                .iter()
+                .map(|r| r.style.size)
+                .fold(10.0_f32, f32::max);
+            let fid = para
+                .runs
+                .first()
+                .map_or(FaceId::CarlitoRegular.into(), |r| {
+                    self.fonts
+                        .resolve(&r.style.family, r.style.bold, r.style.italic)
+                });
+            let lines = wrap_runs(
+                self.fonts,
+                &para.runs,
+                width.max(40.0),
+                width.max(40.0),
+                false,
+            )
+            .len()
+            .max(1);
+            h += para_line_box(self.fonts.get(fid), size, &para.style) * lines as f32;
+            h += para.style.after;
+        }
+        h.max(10.0)
+    }
+
+    fn added_footnote_h(&self, line: &[TextRun]) -> f32 {
+        let width = self.content_width();
+        let mut extra = 0.0_f32;
+        for run in line {
+            let Some(id) = run.footnote_id.as_deref() else {
+                continue;
+            };
+            if self.page_fn_ids.iter().any(|s| s == id) {
+                continue;
+            }
+            extra += self.note_height(id, width);
+        }
+        if extra > 0.0 && self.page_fn_ids.is_empty() {
+            extra += FOOTNOTE_SEP_GAP;
+        }
+        extra
+    }
+
+    fn claim_line_footnotes(&mut self, line: &[TextRun]) {
+        for run in line {
+            let Some(id) = run.footnote_id.clone() else {
+                continue;
+            };
+            if !self.page_fn_ids.iter().any(|s| s == &id) {
+                self.page_fn_ids.push(id);
+            }
+        }
+        self.refresh_body_floor();
+    }
+
+    fn paint_page_footnotes(&mut self) {
+        if self.page_fn_ids.is_empty() {
+            return;
+        }
+        let ids = std::mem::take(&mut self.page_fn_ids);
+        let text_width = self.content_width();
+        let notes_h: f32 = ids.iter().map(|id| self.note_height(id, text_width)).sum();
+        let floor = self.chrome_floor();
+        let block_top = floor + notes_h + FOOTNOTE_SEP_GAP;
+        let sep_y = block_top - 3.0;
+        let sep_w = FOOTNOTE_SEP_W.min(text_width);
+        self.hairline_h(
+            self.page.margin_l,
+            sep_y,
+            self.page.margin_l + sep_w,
+            FOOTNOTE_SEP_PT,
+            [0.0, 0.0, 0.0],
+        );
+        let mut y = sep_y - 9.0;
+        for id in &ids {
+            y = self.paint_one_footnote(id, y, text_width);
+        }
+        self.refresh_body_floor();
+    }
+
+    fn paint_one_footnote(&mut self, id: &str, mut y: f32, width: f32) -> f32 {
+        let Some(paras) = self.footnotes.notes.get(id).cloned() else {
+            return y;
+        };
+        let display = self
+            .footnotes
+            .display
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| "1".to_string());
+        for (pi, para) in paras.iter().enumerate() {
+            let runs: Vec<TextRun> = para
+                .runs
+                .iter()
+                .map(|run| {
+                    if run.note_ref {
+                        let mut run = run.clone();
+                        run.text.clone_from(&display);
+                        run.style.vert = VertAlign::Super;
+                        run
+                    } else {
+                        run.clone()
+                    }
+                })
+                .collect();
+            if pi > 0 {
+                y -= para.style.before;
+            }
+            let indent = para.style.indent_left;
+            let measure = (width - indent - para.style.indent_right).max(40.0);
+            let lines = wrap_runs(self.fonts, &runs, measure, measure, false);
+            for line in &lines {
+                let size = line.iter().map(|r| r.style.size).fold(10.0_f32, f32::max);
+                let fid = line.first().map_or(FaceId::CarlitoRegular.into(), |r| {
+                    self.fonts
+                        .resolve(&r.style.family, r.style.bold, r.style.italic)
+                });
+                let metrics = self.fonts.get(fid);
+                let line_box = para_line_box(metrics, size, &para.style);
+                let ascent = metrics.ascent_pt(size);
+                y -= ascent;
+                self.paint_line_with_tabs(line, self.page.margin_l + indent, y);
+                y -= (line_box - ascent).max(1.0);
+            }
+            y -= para.style.after;
+        }
+        y
     }
 
     fn wrap_band_hits_line(&self, slot: ImageSlot, w: f32, h: f32) -> bool {
@@ -7261,6 +7595,14 @@ impl<'a> Layout<'a> {
             }
             let line_box = para_line_box(metrics, size, style);
             let ascent = metrics.ascent_pt(size);
+            let fn_h = self.added_footnote_h(line);
+            if fn_h > 0.0 {
+                let new_floor = self.chrome_floor() + self.footnote_block_h() + fn_h;
+                if self.y - line_box.max(ascent + 2.0) < new_floor {
+                    self.new_page();
+                }
+                self.claim_line_footnotes(line);
+            }
             self.ensure(line_box.max(ascent + 2.0));
             if let Some(fill) = style.fill {
                 let fx = self.page.margin_l + style.indent_left;
@@ -9698,28 +10040,19 @@ fn wrap_runs(
         if let Some(first) = parts.next()
             && !first.is_empty()
         {
-            segments.last_mut().expect("segment").push(TextRun {
-                text: first.to_string(),
-                style: run.style.clone(),
-                field: run.field,
-                rev: run.rev,
-                comments: run.comments.clone(),
-                pageref: run.pageref.clone(),
-                rule: run.rule,
-            });
+            segments
+                .last_mut()
+                .expect("segment")
+                .push(run.with_text(first));
         }
         for part in parts {
             segments.push(Vec::new());
             if !part.is_empty() {
-                segments.last_mut().expect("segment").push(TextRun {
-                    text: part.to_string(),
-                    style: run.style.clone(),
-                    field: run.field,
-                    rev: run.rev,
-                    comments: Vec::new(),
-                    pageref: None,
-                    rule: run.rule,
-                });
+                let mut piece = run.with_text(part);
+                piece.comments.clear();
+                piece.pageref = None;
+                piece.footnote_id = None;
+                segments.last_mut().expect("segment").push(piece);
             }
         }
     }
@@ -9780,18 +10113,12 @@ fn wrap_runs_segment(
                     && style_eq(&last.style, &run.style)
                     && last.pageref.is_none()
                     && run.pageref.is_none()
+                    && last.footnote_id.is_none()
+                    && run.footnote_id.is_none()
                 {
                     last.text.push_str(tok);
                 } else if let Some(line) = lines.last_mut() {
-                    line.push(TextRun {
-                        text: tok.to_string(),
-                        style: run.style.clone(),
-                        field: run.field,
-                        rev: run.rev,
-                        comments: run.comments.clone(),
-                        pageref: run.pageref.clone(),
-                        rule: run.rule,
-                    });
+                    line.push(run.with_text(tok));
                 }
             }
         }
@@ -9809,6 +10136,7 @@ fn layout(
     blocks: &[Block],
     suppress_sp_bf_after_pg_brk: bool,
     compat_mode: u8,
+    footnotes: FootnoteCatalog,
 ) -> Vec<Page> {
     let mut lay = Layout::new(
         fonts,
@@ -9817,6 +10145,7 @@ fn layout(
         suppress_sp_bf_after_pg_brk,
         compat_mode,
     );
+    lay.footnotes = footnotes;
     lay.known_bookmarks = document_bookmark_names(blocks);
     if blocks.is_empty() {
         lay.current().ops.push(Op::text(
@@ -9981,6 +10310,7 @@ fn layout(
     if lay.pages.len() == 1 {
         lay.center_first_page_body();
     }
+    lay.paint_page_footnotes();
     lay.patch_chap_page();
     lay.patch_pagerefs();
     patch_numpages(fonts, &mut lay.pages);
@@ -12959,6 +13289,7 @@ mod comments_spacing_tests {
             }],
             false,
             12,
+            FootnoteCatalog::default(),
         );
         let xs: Vec<f32> = pages[0]
             .ops
@@ -13015,6 +13346,7 @@ mod comments_spacing_tests {
             }],
             false,
             12,
+            FootnoteCatalog::default(),
         );
         let ys: Vec<i32> = pages[0]
             .ops
