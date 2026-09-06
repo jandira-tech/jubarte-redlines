@@ -1178,6 +1178,7 @@ enum ShapeGeom {
     Ribbon,
     Ribbon2,
     LeftRightCircularArrow,
+    Star7,
 }
 
 enum ImageKind {
@@ -6113,6 +6114,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "ribbon" => ShapeGeom::Ribbon,
         "ribbon2" => ShapeGeom::Ribbon2,
         "leftRightCircularArrow" => ShapeGeom::LeftRightCircularArrow,
+        "star7" => ShapeGeom::Star7,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9122,6 +9124,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Star7 => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: star7_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9301,6 +9309,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Ribbon
                 | ShapeGeom::Ribbon2
                 | ShapeGeom::LeftRightCircularArrow
+                | ShapeGeom::Star7
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9363,6 +9372,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::LeftRightCircularArrow => {
                                 left_right_circular_arrow_points(x, y, dw, dh)
                             }
+                            ShapeGeom::Star7 => star7_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11547,6 +11557,68 @@ fn star6_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
         (x + sx2, py(sy2)),
         (x + x1, py(y2)),
         (x + sx1, py(vc)),
+    ]
+}
+
+fn star7_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML star7 adj=34601 hf=102572 vf=105210: 7 tips + 7 inner vertices.
+    let a = 34_601.0;
+    let hf = 102_572.0;
+    let vf = 105_210.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let swd2 = (w * 0.5) * hf / 100_000.0;
+    let shd2 = (h * 0.5) * vf / 100_000.0;
+    let svc = vc * vf / 100_000.0;
+    let dx1 = swd2 * 97_493.0 / 100_000.0;
+    let dx2 = swd2 * 78_183.0 / 100_000.0;
+    let dx3 = swd2 * 43_388.0 / 100_000.0;
+    let dy1 = shd2 * 62_349.0 / 100_000.0;
+    let dy2 = shd2 * 22_252.0 / 100_000.0;
+    let dy3 = shd2 * 90_097.0 / 100_000.0;
+    let x1 = hc - dx1;
+    let x2 = hc - dx2;
+    let x3 = hc - dx3;
+    let x4 = hc + dx3;
+    let x5 = hc + dx2;
+    let x6 = hc + dx1;
+    let y1 = svc - dy1;
+    let y2v = svc + dy2;
+    let y3 = svc + dy3;
+    let iwd2 = swd2 * a / 50_000.0;
+    let ihd2 = shd2 * a / 50_000.0;
+    let sdx1 = iwd2 * 97_493.0 / 100_000.0;
+    let sdx2 = iwd2 * 78_183.0 / 100_000.0;
+    let sdx3 = iwd2 * 43_388.0 / 100_000.0;
+    let sx1 = hc - sdx1;
+    let sx2 = hc - sdx2;
+    let sx3 = hc - sdx3;
+    let sx4 = hc + sdx3;
+    let sx5 = hc + sdx2;
+    let sx6 = hc + sdx1;
+    let sdy1 = ihd2 * 90_097.0 / 100_000.0;
+    let sdy2 = ihd2 * 22_252.0 / 100_000.0;
+    let sdy3 = ihd2 * 62_349.0 / 100_000.0;
+    let sy1 = svc - sdy1;
+    let sy2 = svc - sdy2;
+    let sy3 = svc + sdy3;
+    let sy4 = svc + ihd2;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x + x1, py(y2v)),
+        (x + sx1, py(sy2)),
+        (x + x2, py(y1)),
+        (x + sx3, py(sy1)),
+        (x + hc, py(0.0)),
+        (x + sx4, py(sy1)),
+        (x + x5, py(y1)),
+        (x + sx6, py(sy2)),
+        (x + x6, py(y2v)),
+        (x + sx5, py(sy3)),
+        (x + x4, py(y3)),
+        (x + hc, py(sy4)),
+        (x + x3, py(y3)),
+        (x + sx2, py(sy3)),
     ]
 }
 
@@ -14634,6 +14706,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn star7_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="star7"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=star7 must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -16394,6 +16505,25 @@ mod drawing_tests {
         assert!((pts[2].0 - 50.0).abs() < 0.05 && (pts[2].1 - 100.0).abs() < 0.05);
         assert!((pts[8].0 - 50.0).abs() < 0.05 && pts[8].1.abs() < 0.05);
         assert!(pts[0].0.abs() < 0.05 && (pts[4].0 - 100.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn star7_points_have_seven_tips() {
+        let pts = star7_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 14);
+        let top = pts[4];
+        assert!(
+            (top.0 - 50.0).abs() < 0.05 && (top.1 - 100.0).abs() < 0.05,
+            "top tip is (hc,t); {top:?}"
+        );
+        assert!(
+            pts[0].0.abs() < 0.2,
+            "leftmost outer vertex on the left edge; {pts:?}"
+        );
+        assert!(
+            (pts[8].0 - 100.0).abs() < 0.2,
+            "rightmost outer vertex on the right edge; {pts:?}"
+        );
     }
 
     #[test]
