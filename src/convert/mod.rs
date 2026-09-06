@@ -1170,6 +1170,7 @@ enum ShapeGeom {
     BracePair,
     BracketPair,
     Snip1Rect,
+    Round1Rect,
 }
 
 enum ImageKind {
@@ -6097,6 +6098,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "bracePair" => ShapeGeom::BracePair,
         "bracketPair" => ShapeGeom::BracketPair,
         "snip1Rect" => ShapeGeom::Snip1Rect,
+        "round1Rect" => ShapeGeom::Round1Rect,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9058,6 +9060,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Round1Rect => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: round1_rect_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9229,6 +9237,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::BracePair
                 | ShapeGeom::BracketPair
                 | ShapeGeom::Snip1Rect
+                | ShapeGeom::Round1Rect
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9281,6 +9290,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::BracePair => brace_pair_points(x, y, dw, dh),
                             ShapeGeom::BracketPair => bracket_pair_points(x, y, dw, dh),
                             ShapeGeom::Snip1Rect => snip1_rect_points(x, y, dw, dh),
+                            ShapeGeom::Round1Rect => round1_rect_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -12139,6 +12149,22 @@ fn snip1_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
         map(w, h),
         map(0.0, h),
     ]
+}
+
+fn round1_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML round1Rect adj=16667: rectangle with a 90° arc at top-right.
+    const CD4: f32 = 5_400_000.0;
+    const CD3_4: f32 = 16_200_000.0;
+    let dx1 = (preset_ss(w, h) * 16_667.0 / 100_000.0).max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut cur = (0.0, 0.0);
+    let mut pts = vec![map(cur.0, cur.1)];
+    cur = (w - dx1, 0.0);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, dx1, dx1, CD3_4, CD4, &mut pts, map);
+    pts.push(map(w, h));
+    pts.push(map(0.0, h));
+    pts
 }
 
 fn wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
@@ -15501,6 +15527,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn round1_rect_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="round1Rect"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=round1Rect must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn wave_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -16328,6 +16393,32 @@ mod drawing_tests {
             pts.iter()
                 .any(|(px, py)| (*px - 100.0).abs() < 0.05 && (*py - 83.333).abs() < 0.05),
             "snip lands on the right edge at dx1; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn round1_rect_points_round_the_top_right_corner() {
+        let pts = round1_rect_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 8, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 100.0).abs() < 0.05,
+            "moveTo (l,t) is PDF top-left; {start:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && (*py - 100.0).abs() < 0.05),
+            "must not include the sharp top-right corner; {pts:?}"
+        );
+        let last = *pts.last().expect("end");
+        assert!(
+            last.0.abs() < 0.05 && last.1.abs() < 0.05,
+            "close vertex is PDF bottom-left; {last:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| *px > 90.0 && *py > 90.0 && *px < 100.0 && *py < 100.0),
+            "arc samples sit inside the top-right corner; {pts:?}"
         );
     }
 
