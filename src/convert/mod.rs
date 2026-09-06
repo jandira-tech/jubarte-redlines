@@ -1265,6 +1265,9 @@ enum ImageKind {
     /// WMF/EMF/OLE preview: keep the drawing extent in flow even if we
     /// cannot rasterize the bytes (Strict01 cliparts are placeable WMF).
     Reserve,
+    /// Missing image relationship Target: Word's 1in placeholder box
+    /// (plan.md Step 10 E), not the `wp:extent` reservation.
+    Broken,
 }
 
 fn twip(v: f32) -> f32 {
@@ -5987,19 +5990,29 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
         let slot = drawing_slot(dom, drawing);
         let (behind, z) = drawing_z(dom, drawing);
         for blip in dom.descendants(drawing, Some(&A::name("blip"))) {
-            if let Some(rid) = attr_any(dom, blip, "embed")
-                && let Some(bytes) = resolve_media(pkg, main, rid)
-            {
-                let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);
-                out.push(LaidImage {
-                    w,
-                    h,
-                    kind,
-                    slot,
-                    behind,
-                    z,
-                    crop: src_rect_frac(dom, drawing),
-                });
+            if let Some(rid) = attr_any(dom, blip, "embed") {
+                if let Some(bytes) = resolve_media(pkg, main, rid) {
+                    let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);
+                    out.push(LaidImage {
+                        w,
+                        h,
+                        kind,
+                        slot,
+                        behind,
+                        z,
+                        crop: src_rect_frac(dom, drawing),
+                    });
+                } else {
+                    out.push(LaidImage {
+                        w: 72.0,
+                        h: 72.0,
+                        kind: ImageKind::Broken,
+                        slot,
+                        behind,
+                        z,
+                        crop: None,
+                    });
+                }
             }
         }
     }
@@ -8970,6 +8983,14 @@ impl<'a> Layout<'a> {
                 crop: img.crop,
             }),
             ImageKind::Reserve => {}
+            ImageKind::Broken => self.current().ops.push(Op::StrokeRect {
+                x,
+                y,
+                w: dw,
+                h: dh,
+                width: 0.75,
+                color: [0.6, 0.6, 0.6],
+            }),
         }
     }
 
