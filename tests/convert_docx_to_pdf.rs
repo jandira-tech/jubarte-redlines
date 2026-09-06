@@ -12770,6 +12770,97 @@ fn even_and_odd_headers_use_even_ref_on_even_pages() {
     );
 }
 
+fn header_image_docx() -> Vec<u8> {
+    // xml leftover: images in headers. The blip lives on header1.xml.rels,
+    // not document.xml.rels; collect_hf_runs currently skips w:drawing.
+    let document = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+           xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+         <w:body><w:p><w:r><w:t>HdrImgBodyX</w:t></w:r></w:p>\
+           <w:sectPr>\
+             <w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+             <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+               w:header=\"720\" w:footer=\"720\"/></w:sectPr>\
+         </w:body></w:document>";
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+           xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+           xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+           xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+           xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+           <w:p><w:r><w:drawing><wp:inline>\
+             <wp:extent cx=\"914400\" cy=\"914400\"/>\
+             <wp:docPr id=\"1\" name=\"Picture 1\"/>\
+             <a:graphic><a:graphicData \
+               uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+               <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+             </a:graphicData></a:graphic>\
+           </wp:inline></w:drawing></w:r></w:p></w:hdr>";
+    let types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Default Extension=\"png\" ContentType=\"image/png\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        <Override PartName=\"/word/header1.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>\
+        </Types>";
+    let pkg_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/>\
+        </Relationships>";
+    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdH1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" \
+          Target=\"header1.xml\"/>\
+        </Relationships>";
+    let hdr_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdImg\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" \
+          Target=\"media/dot.png\"/>\
+        </Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(types.as_bytes()).unwrap();
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(pkg_rels.as_bytes()).unwrap();
+    zip.start_file("word/document.xml", opts).unwrap();
+    zip.write_all(document.as_bytes()).unwrap();
+    zip.start_file("word/_rels/document.xml.rels", opts)
+        .unwrap();
+    zip.write_all(doc_rels.as_bytes()).unwrap();
+    zip.start_file("word/header1.xml", opts).unwrap();
+    zip.write_all(header.as_bytes()).unwrap();
+    zip.start_file("word/_rels/header1.xml.rels", opts).unwrap();
+    zip.write_all(hdr_rels.as_bytes()).unwrap();
+    zip.start_file("word/media/dot.png", opts).unwrap();
+    zip.write_all(TINY_PNG).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
+#[test]
+fn header_inline_image_paints_in_the_header_band() {
+    let pdf = docx_to_pdf(&header_image_docx()).expect("convert header image");
+    let body = pdf_winansi_text(&pdf);
+    assert!(
+        body.contains("HdrImgBodyX"),
+        "body must still paint; text={body:?}"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("/Subtype /Image") && hay.contains("/Width 1"),
+        "header blip must embed as a 1×1 image XObject; tail {}",
+        &hay[hay.len().saturating_sub(320)..]
+    );
+}
+
 #[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";
