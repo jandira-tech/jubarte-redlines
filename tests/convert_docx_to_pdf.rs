@@ -9598,6 +9598,40 @@ fn flow_chart_terminator_prst_fills_a_polygon_not_a_rect() {
 }
 
 #[test]
+fn heptagon_prst_fills_a_polygon_not_a_rect() {
+    let body = preset_shape_body("heptagon");
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert heptagon");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        pdf_has_filled_polygon(&hay),
+        "heptagon must fill a polygon (h f), not only re rects; tail {}",
+        &hay[hay.len().saturating_sub(400)..]
+    );
+    let rects = pdf_fill_boxes_in(&hay, 1.0, 0.0, 0.0);
+    assert!(
+        !rects.iter().any(|(_, _, w, h)| *w > 100.0 && *h > 50.0),
+        "must not fill the extent as a rectangle; rects={rects:?}"
+    );
+}
+
+#[test]
+fn star6_prst_fills_a_polygon_not_a_rect() {
+    let body = preset_shape_body("star6");
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert star6");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        pdf_has_filled_polygon(&hay),
+        "star6 must fill a polygon (h f), not only re rects; tail {}",
+        &hay[hay.len().saturating_sub(400)..]
+    );
+    let rects = pdf_fill_boxes_in(&hay, 1.0, 0.0, 0.0);
+    assert!(
+        !rects.iter().any(|(_, _, w, h)| *w > 100.0 && *h > 50.0),
+        "must not fill the extent as a rectangle; rects={rects:?}"
+    );
+}
+
+#[test]
 fn body_pbdr_bottom_paints_a_rule() {
     // sample_document / eigenpal: 14 heading paras carry
     // `<w:pBdr><w:bottom … color="E2E8F0"/>`. Header chrome already

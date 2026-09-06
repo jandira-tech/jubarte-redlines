@@ -1138,6 +1138,8 @@ enum ShapeGeom {
     Donut,
     Frame,
     FlowChartTerminator,
+    Heptagon,
+    Star6,
 }
 
 enum ImageKind {
@@ -6033,6 +6035,8 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "donut" => ShapeGeom::Donut,
         "frame" => ShapeGeom::Frame,
         "flowChartTerminator" => ShapeGeom::FlowChartTerminator,
+        "heptagon" => ShapeGeom::Heptagon,
+        "star6" => ShapeGeom::Star6,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8775,6 +8779,18 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Heptagon => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: heptagon_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::Star6 => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: star6_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8828,6 +8844,8 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Donut
                 | ShapeGeom::Frame
                 | ShapeGeom::FlowChartTerminator
+                | ShapeGeom::Heptagon
+                | ShapeGeom::Star6
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -8852,6 +8870,8 @@ impl<'a> Layout<'a> {
                             ShapeGeom::FlowChartTerminator => {
                                 flow_chart_terminator_points(x, y, dw, dh)
                             }
+                            ShapeGeom::Heptagon => heptagon_points(x, y, dw, dh),
+                            ShapeGeom::Star6 => star6_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -10966,6 +10986,79 @@ fn flow_chart_terminator_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32
     pts
 }
 
+fn heptagon_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML heptagon hf=102572 vf=105210.
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let swd2 = (w * 0.5) * 102_572.0 / 100_000.0;
+    let shd2 = (h * 0.5) * 105_210.0 / 100_000.0;
+    let svc = vc * 105_210.0 / 100_000.0;
+    let dx1 = swd2 * 97_493.0 / 100_000.0;
+    let dx2 = swd2 * 78_183.0 / 100_000.0;
+    let dx3 = swd2 * 43_388.0 / 100_000.0;
+    let dy1 = shd2 * 62_349.0 / 100_000.0;
+    let dy2 = shd2 * 22_252.0 / 100_000.0;
+    let dy3 = shd2 * 90_097.0 / 100_000.0;
+    let x1 = hc - dx1;
+    let x2 = hc - dx2;
+    let x3 = hc - dx3;
+    let x4 = hc + dx3;
+    let x5 = hc + dx2;
+    let x6 = hc + dx1;
+    let y1 = svc - dy1;
+    let y2 = svc + dy2;
+    let y3 = svc + dy3;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x + x1, py(y2)),
+        (x + x2, py(y1)),
+        (x + hc, py(0.0)),
+        (x + x5, py(y1)),
+        (x + x6, py(y2)),
+        (x + x4, py(y3)),
+        (x + x3, py(y3)),
+    ]
+}
+
+fn star6_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML star6 adj=28868 hf=115470; Cos 30°, Sin 60°.
+    let a = 28_868.0;
+    let hf = 115_470.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let hd4 = h * 0.25;
+    let swd2 = (w * 0.5) * hf / 100_000.0;
+    let dx1 = swd2 * ooxml_ang_rad(1_800_000.0).cos();
+    let x1 = hc - dx1;
+    let x2 = hc + dx1;
+    let y2 = vc + hd4;
+    let iwd2 = swd2 * a / 50_000.0;
+    let ihd2 = (h * 0.5) * a / 50_000.0;
+    let sdx2 = iwd2 * 0.5;
+    let sx1 = hc - iwd2;
+    let sx2 = hc - sdx2;
+    let sx3 = hc + sdx2;
+    let sx4 = hc + iwd2;
+    let sdy1 = ihd2 * ooxml_ang_rad(3_600_000.0).sin();
+    let sy1 = vc - sdy1;
+    let sy2 = vc + sdy1;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x + x1, py(hd4)),
+        (x + sx2, py(sy1)),
+        (x + hc, py(0.0)),
+        (x + sx3, py(sy1)),
+        (x + x2, py(hd4)),
+        (x + sx4, py(vc)),
+        (x + x2, py(y2)),
+        (x + sx3, py(sy2)),
+        (x + hc, py(h)),
+        (x + sx2, py(sy2)),
+        (x + x1, py(y2)),
+        (x + sx1, py(vc)),
+    ]
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -12976,6 +13069,84 @@ mod drawing_tests {
     }
 
     #[test]
+    fn heptagon_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="heptagon"/>
+        <a:solidFill><a:srgbClr val="7030A0"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=heptagon must not collapse to Box"
+        );
+    }
+
+    #[test]
+    fn star6_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="star6"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=star6 must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn bent_connector_reads_triangle_tail_end() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -13198,6 +13369,23 @@ mod drawing_tests {
             left.0.abs() < 0.05 && (left.1 - 20.0).abs() < 1.0,
             "{left:?}"
         );
+    }
+
+    #[test]
+    fn heptagon_points_have_seven_vertices_apex_top() {
+        let pts = heptagon_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 7);
+        assert!((pts[2].0 - 50.0).abs() < 0.05 && (pts[2].1 - 100.0).abs() < 0.05);
+        assert!(pts[5].1.abs() < 0.05 && pts[6].1.abs() < 0.05);
+    }
+
+    #[test]
+    fn star6_points_have_six_tips() {
+        let pts = star6_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 12);
+        assert!((pts[2].0 - 50.0).abs() < 0.05 && (pts[2].1 - 100.0).abs() < 0.05);
+        assert!((pts[8].0 - 50.0).abs() < 0.05 && pts[8].1.abs() < 0.05);
+        assert!(pts[0].0.abs() < 0.05 && (pts[4].0 - 100.0).abs() < 0.05);
     }
 
     #[test]
