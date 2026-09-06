@@ -894,6 +894,12 @@ struct DiagShape {
     round: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChartKind {
+    Bar,
+    Pie,
+}
+
 struct ChartData {
     title: String,
     cats: Vec<String>,
@@ -902,6 +908,7 @@ struct ChartData {
     /// `c:ser/c:spPr` schemeClr (Strict01 accent1/2/3). Fallback accent{n}.
     colors: Vec<[f32; 3]>,
     legend: bool,
+    kind: ChartKind,
 }
 
 /// Inline / wrapTopAndBottom images consume flow; wrapSquare anchors overlay.
@@ -5623,9 +5630,11 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(xml);
     let root = dom.root(doc)?;
-    let host = descendants_local(&dom, root, "barChart")
+    let is_pie = !descendants_local(&dom, root, "pieChart").is_empty();
+    let host = descendants_local(&dom, root, "pieChart")
         .into_iter()
         .next()
+        .or_else(|| descendants_local(&dom, root, "barChart").into_iter().next())
         .unwrap_or(root);
     let mut cats = Vec::new();
     let mut series = Vec::new();
@@ -5655,6 +5664,18 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
     }
     names.truncate(series.len());
     colors.truncate(series.len());
+    if is_pie && let Some(vals) = series.first() {
+        let slots = [
+            "accent1", "accent2", "accent3", "accent4", "accent5", "accent6",
+        ];
+        colors = (0..vals.len())
+            .map(|i| {
+                theme
+                    .slot_color(slots[i % slots.len()])
+                    .unwrap_or([0.5, 0.5, 0.5])
+            })
+            .collect();
+    }
     let legend = !descendants_local(&dom, root, "legend").is_empty();
     Some(ChartData {
         title: chart_title(&dom, root),
@@ -5663,6 +5684,11 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
         names,
         colors,
         legend,
+        kind: if is_pie {
+            ChartKind::Pie
+        } else {
+            ChartKind::Bar
+        },
     })
 }
 
@@ -9922,7 +9948,10 @@ impl<'a> Layout<'a> {
             }
         }
         if let Some(chart) = &box_.chart {
-            self.emit_chart_bars(x, y, dw, dh, chart);
+            match chart.kind {
+                ChartKind::Pie => self.emit_chart_pie(x, y, dw, dh, chart),
+                ChartKind::Bar => self.emit_chart_bars(x, y, dw, dh, chart),
+            }
         }
         if !box_.diag_shapes.is_empty() {
             self.emit_diag_shapes(x, y, dh, &box_.diag_shapes);
@@ -10124,6 +10153,64 @@ impl<'a> Layout<'a> {
             [0.35, 0.35, 0.35],
             text,
         ));
+    }
+
+    fn emit_chart_pie(&mut self, x: f32, y: f32, dw: f32, dh: f32, chart: &ChartData) {
+        self.current().ops.push(Op::FillRect {
+            x,
+            y,
+            w: dw,
+            h: dh,
+            color: [1.0, 1.0, 1.0],
+        });
+        let slices = chart.series.first().cloned().unwrap_or_default();
+        let sum = slices.iter().copied().sum::<f32>().max(1.0);
+        if !chart.title.is_empty() {
+            let face = self.fonts.get(FaceId::CarlitoRegular);
+            let tw = face.width_pt(&chart.title, 14.0);
+            let tx = x + ((dw - tw) / 2.0).max(4.0);
+            self.emit_label(&chart.title, 14.0, tx, y + dh - 22.0);
+        }
+        let title_h = if chart.title.is_empty() { 0.0 } else { 20.0 };
+        let legend_h = if chart.legend && !chart.cats.is_empty() {
+            16.0
+        } else {
+            0.0
+        };
+        let plot_y = y + legend_h + 8.0;
+        let plot_h = (dh - title_h - legend_h - 12.0).max(8.0);
+        let side = plot_h.min(dw - 16.0).max(8.0);
+        let px = x + ((dw - side) / 2.0).max(4.0);
+        let mut st = 16_200_000.0;
+        const FULL: f32 = 21_600_000.0;
+        for (i, val) in slices.iter().enumerate() {
+            let sw = (*val / sum) * FULL;
+            if sw.abs() < 1.0 {
+                continue;
+            }
+            self.current().ops.push(Op::FillPoly {
+                points: pie_chart_wedge_points(px, plot_y, side, side, st, sw),
+                color: chart.colors.get(i).copied().unwrap_or([0.5, 0.5, 0.5]),
+            });
+            st += sw;
+        }
+        if legend_h > 0.0 {
+            let face = self.fonts.get(FaceId::CarlitoRegular);
+            let mut lx = x + 12.0;
+            let ly = y + 11.2;
+            for (i, name) in chart.cats.iter().enumerate() {
+                let color = chart.colors.get(i).copied().unwrap_or([0.5, 0.5, 0.5]);
+                self.current().ops.push(Op::FillRect {
+                    x: lx,
+                    y: ly + 1.0,
+                    w: 5.0,
+                    h: 5.0,
+                    color,
+                });
+                self.emit_label(name, 9.0, lx + 10.0, ly);
+                lx += 10.0 + face.width_pt(name, 9.0) + 14.0;
+            }
+        }
     }
 
     fn emit_chart_bars(&mut self, x: f32, y: f32, dw: f32, dh: f32, chart: &ChartData) {
@@ -13177,6 +13264,27 @@ fn cloud_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     for (wr, hr, st, sw) in ARCS {
         ooxml_arc_to_y_down(&mut cur, wr, hr, st, sw, &mut pts, map);
     }
+    pts
+}
+
+fn pie_chart_wedge_points(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    st_ang: f32,
+    sw_ang: f32,
+) -> Vec<(f32, f32)> {
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let wr = hc.max(0.5);
+    let hr = vc.max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let st = ooxml_ang_rad(st_ang);
+    let mut cur = (hc + wr * st.cos(), vc + hr * st.sin());
+    let mut pts = vec![map(cur.0, cur.1)];
+    ooxml_arc_to_y_down(&mut cur, wr, hr, st_ang, sw_ang, &mut pts, map);
+    pts.push(map(hc, vc));
     pts
 }
 
@@ -20839,6 +20947,56 @@ mod drawing_tests {
         assert!(
             (pts[0].1 - (y + dh * 0.75)).abs() < 0.02 && (pts[6].1 - (y + dh * 0.25)).abs() < 0.02,
             "shaft is the middle 50%; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn parse_pie_chart_kind_is_pie() {
+        let xml = r#"<?xml version="1.0"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart><c:plotArea><c:pieChart>
+  <c:ser>
+    <c:cat><c:strLit>
+      <c:pt idx="0"><c:v>A</c:v></c:pt>
+      <c:pt idx="1"><c:v>B</c:v></c:pt>
+    </c:strLit></c:cat>
+    <c:val><c:numLit>
+      <c:pt idx="0"><c:v>1</c:v></c:pt>
+      <c:pt idx="1"><c:v>3</c:v></c:pt>
+    </c:numLit></c:val>
+  </c:ser>
+</c:pieChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let data = parse_chart(xml).expect("pie");
+        assert_eq!(
+            data.kind,
+            ChartKind::Pie,
+            "c:pieChart must not parse as Bar"
+        );
+        assert_eq!(data.series.len(), 1);
+        assert!((data.series[0][0] - 1.0).abs() < 0.01);
+        assert!((data.series[0][1] - 3.0).abs() < 0.01);
+        assert_eq!(data.cats, ["A", "B"]);
+    }
+
+    #[test]
+    fn pie_chart_wedge_points_first_slice_is_a_quarter() {
+        // 1 of 4 → 90° clockwise from 12 o'clock (stAng=3cd4, swAng=cd4).
+        let pts = pie_chart_wedge_points(0.0, 0.0, 100.0, 100.0, 16_200_000.0, 5_400_000.0);
+        assert!(pts.len() >= 6, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            (start.0 - 50.0).abs() < 0.5 && (start.1 - 100.0).abs() < 0.5,
+            "start is 12 o'clock; {start:?}"
+        );
+        let last = *pts.last().expect("center");
+        assert!(
+            (last.0 - 50.0).abs() < 0.05 && (last.1 - 50.0).abs() < 0.05,
+            "closes through centre; {last:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 100.0).abs() < 1.0 && (*py - 50.0).abs() < 1.0),
+            "90° clockwise lands at 3 o'clock; {pts:?}"
         );
     }
 
