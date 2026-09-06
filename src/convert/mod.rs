@@ -1140,6 +1140,9 @@ enum ShapeGeom {
     FlowChartTerminator,
     Heptagon,
     Star6,
+    Cube,
+    FoldedCorner,
+    Can,
 }
 
 enum ImageKind {
@@ -6037,6 +6040,9 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "flowChartTerminator" => ShapeGeom::FlowChartTerminator,
         "heptagon" => ShapeGeom::Heptagon,
         "star6" => ShapeGeom::Star6,
+        "cube" => ShapeGeom::Cube,
+        "foldedCorner" => ShapeGeom::FoldedCorner,
+        "can" => ShapeGeom::Can,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8791,6 +8797,34 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Cube => {
+                    for points in cube_faces(x, y, dw, dh) {
+                        self.current().ops.push(Op::FillPoly {
+                            points,
+                            color: fill,
+                        });
+                    }
+                }
+                ShapeGeom::FoldedCorner => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: folded_corner_body_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                    self.current().ops.push(Op::FillPoly {
+                        points: folded_corner_fold_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::Can => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: can_body_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                    self.current().ops.push(Op::FillPoly {
+                        points: can_lid_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8822,6 +8856,45 @@ impl<'a> Layout<'a> {
                         self.current().ops.push(Op::FillPoly {
                             points: arrowhead_triangle(pts[2], pts[3]).to_vec(),
                             color: line_c,
+                        });
+                    }
+                }
+                ShapeGeom::Cube => {
+                    if let Some(color) = box_.line {
+                        for points in cube_faces(x, y, dw, dh) {
+                            self.current().ops.push(Op::StrokePoly {
+                                points,
+                                width: box_.line_width,
+                                color,
+                            });
+                        }
+                    }
+                }
+                ShapeGeom::FoldedCorner => {
+                    if let Some(color) = box_.line {
+                        self.current().ops.push(Op::StrokePoly {
+                            points: folded_corner_body_points(x, y, dw, dh),
+                            width: box_.line_width,
+                            color,
+                        });
+                        self.current().ops.push(Op::StrokePoly {
+                            points: folded_corner_fold_points(x, y, dw, dh),
+                            width: box_.line_width,
+                            color,
+                        });
+                    }
+                }
+                ShapeGeom::Can => {
+                    if let Some(color) = box_.line {
+                        self.current().ops.push(Op::StrokePoly {
+                            points: can_body_points(x, y, dw, dh),
+                            width: box_.line_width,
+                            color,
+                        });
+                        self.current().ops.push(Op::StrokePoly {
+                            points: can_lid_points(x, y, dw, dh),
+                            width: box_.line_width,
+                            color,
                         });
                     }
                 }
@@ -11059,6 +11132,88 @@ fn star6_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     ]
 }
 
+fn cube_faces(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 3] {
+    // OOXML cube adj=25000: y1=ss*adj/100000, x4=r-y1.
+    let y1 = preset_ss(w, h) * 25_000.0 / 100_000.0;
+    let x4 = w - y1;
+    let py = |yd: f32| y + h - yd;
+    [
+        vec![(x, py(y1)), (x + x4, py(y1)), (x + x4, py(h)), (x, py(h))],
+        vec![
+            (x + x4, py(y1)),
+            (x + w, py(0.0)),
+            (x + w, py(h - y1)),
+            (x + x4, py(h)),
+        ],
+        vec![
+            (x, py(y1)),
+            (x + y1, py(0.0)),
+            (x + w, py(0.0)),
+            (x + x4, py(y1)),
+        ],
+    ]
+}
+
+fn folded_corner_body_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML foldedCorner adj=16667: dy2=ss*adj/100000, x1=r-dy2, y2=b-dy2.
+    let dy2 = preset_ss(w, h) * 16_667.0 / 100_000.0;
+    let x1 = w - dy2;
+    let y2 = h - dy2;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x, py(0.0)),
+        (x + w, py(0.0)),
+        (x + w, py(y2)),
+        (x + x1, py(h)),
+        (x, py(h)),
+    ]
+}
+
+fn folded_corner_fold_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    let dy2 = preset_ss(w, h) * 16_667.0 / 100_000.0;
+    let dy1 = dy2 / 5.0;
+    let x1 = w - dy2;
+    let x2 = x1 + dy1;
+    let y2 = h - dy2;
+    let y1 = y2 + dy1;
+    let py = |yd: f32| y + h - yd;
+    vec![(x + x1, py(h)), (x + x2, py(y1)), (x + w, py(y2))]
+}
+
+fn ellipse_arc(
+    pts: &mut Vec<(f32, f32)>,
+    center: (f32, f32),
+    radii: (f32, f32),
+    deg0: f32,
+    deg1: f32,
+    steps: i32,
+) {
+    for i in 1..=steps {
+        let t = i as f32 / steps as f32;
+        let a = (deg0 + (deg1 - deg0) * t).to_radians();
+        pts.push((center.0 + radii.0 * a.cos(), center.1 + radii.1 * a.sin()));
+    }
+}
+
+fn can_body_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML can adj=25000: y1=ss*adj/200000 lid half-height.
+    let y1 = (preset_ss(w, h) * 25_000.0 / 200_000.0).max(0.5);
+    let cx = x + w * 0.5;
+    let rx = (w * 0.5).max(0.5);
+    let top_cy = y + h - y1;
+    let bot_cy = y + y1;
+    let mut pts = vec![(x, top_cy)];
+    ellipse_arc(&mut pts, (cx, top_cy), (rx, y1), 180.0, 360.0, 8);
+    pts.push((x + w, bot_cy));
+    ellipse_arc(&mut pts, (cx, bot_cy), (rx, y1), 0.0, -180.0, 8);
+    pts
+}
+
+fn can_lid_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    let y1 = (preset_ss(w, h) * 25_000.0 / 200_000.0).max(0.5);
+    ellipse_points(x, y + h - 2.0 * y1, w, 2.0 * y1)
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -13147,6 +13302,123 @@ mod drawing_tests {
     }
 
     #[test]
+    fn cube_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="cube"/>
+        <a:solidFill><a:srgbClr val="5B9BD5"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=cube must not collapse to Box"
+        );
+    }
+
+    #[test]
+    fn folded_corner_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="foldedCorner"/>
+        <a:solidFill><a:srgbClr val="ED7D31"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=foldedCorner must not collapse to Box"
+        );
+    }
+
+    #[test]
+    fn can_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="can"/>
+        <a:solidFill><a:srgbClr val="70AD47"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=can must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn bent_connector_reads_triangle_tail_end() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -13386,6 +13658,46 @@ mod drawing_tests {
         assert!((pts[2].0 - 50.0).abs() < 0.05 && (pts[2].1 - 100.0).abs() < 0.05);
         assert!((pts[8].0 - 50.0).abs() < 0.05 && pts[8].1.abs() < 0.05);
         assert!(pts[0].0.abs() < 0.05 && (pts[4].0 - 100.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn cube_faces_are_three_isometric_quads() {
+        let [front, right, top] = cube_faces(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(front.len(), 4);
+        assert!((front[0].0).abs() < 0.05 && (front[0].1 - 75.0).abs() < 0.05);
+        assert!((front[2].0 - 75.0).abs() < 0.05 && front[2].1.abs() < 0.05);
+        assert!((right[1].0 - 100.0).abs() < 0.05 && (right[1].1 - 100.0).abs() < 0.05);
+        assert!((top[1].0 - 25.0).abs() < 0.05 && (top[1].1 - 100.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn folded_corner_cuts_the_bottom_right() {
+        let body = folded_corner_body_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(body.len(), 5);
+        assert!(
+            !body
+                .iter()
+                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
+            "fold must remove the bbox corner; {body:?}"
+        );
+        let fold = folded_corner_fold_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(fold.len(), 3);
+        assert!((fold[0].0 - 83.333).abs() < 0.05 && fold[0].1.abs() < 0.05);
+    }
+
+    #[test]
+    fn can_body_has_lid_and_base_ellipses() {
+        let pts = can_body_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 16, "{}", pts.len());
+        assert!(pts[0].0.abs() < 0.05 && (pts[0].1 - 87.5).abs() < 0.05);
+        let lid = can_lid_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(lid.len(), 24);
+        let on_lid = lid.iter().all(|(px, py)| {
+            let nx = (*px - 50.0) / 50.0;
+            let ny = (*py - 87.5) / 12.5;
+            (nx * nx + ny * ny - 1.0).abs() < 0.05
+        });
+        assert!(on_lid, "lid vertices on the top ellipse; {lid:?}");
     }
 
     #[test]
