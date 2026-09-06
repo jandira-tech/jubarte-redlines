@@ -1188,6 +1188,7 @@ enum ShapeGeom {
     FlowChartDocument,
     FlowChartOffpageConnector,
     FlowChartDelay,
+    FlowChartManualInput,
 }
 
 enum ImageKind {
@@ -6133,6 +6134,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "flowChartDocument" => ShapeGeom::FlowChartDocument,
         "flowChartOffpageConnector" => ShapeGeom::FlowChartOffpageConnector,
         "flowChartDelay" => ShapeGeom::FlowChartDelay,
+        "flowChartManualInput" => ShapeGeom::FlowChartManualInput,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9202,6 +9204,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::FlowChartManualInput => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: flow_chart_manual_input_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9391,6 +9399,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::FlowChartDocument
                 | ShapeGeom::FlowChartOffpageConnector
                 | ShapeGeom::FlowChartDelay
+                | ShapeGeom::FlowChartManualInput
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9467,6 +9476,9 @@ impl<'a> Layout<'a> {
                                 flow_chart_offpage_connector_points(x, y, dw, dh)
                             }
                             ShapeGeom::FlowChartDelay => flow_chart_delay_points(x, y, dw, dh),
+                            ShapeGeom::FlowChartManualInput => {
+                                flow_chart_manual_input_points(x, y, dw, dh)
+                            }
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -12309,6 +12321,17 @@ fn flow_chart_delay_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     ooxml_arc_to_y_down(&mut cur, wr, hr, ST, SW, &mut pts, map);
     pts.push(map(0.0, h));
     pts
+}
+
+fn flow_chart_manual_input_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML flowChartManualInput in 5×5 space: slanted top (l,hd5)→(r,t).
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x, py(h * 0.2)),
+        (x + w, py(0.0)),
+        (x + w, py(h)),
+        (x, py(h)),
+    ]
 }
 
 fn cube_faces(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 3] {
@@ -15785,6 +15808,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn flow_chart_manual_input_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="flowChartManualInput"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=flowChartManualInput must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -17784,6 +17846,27 @@ mod drawing_tests {
             !pts.iter()
                 .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
             "must not include the bbox corner; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn flow_chart_manual_input_has_a_slanted_top() {
+        let pts = flow_chart_manual_input_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 4);
+        let start = pts[0];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 80.0).abs() < 0.05,
+            "start is (l, hd5); {start:?}"
+        );
+        assert!(
+            (pts[1].0 - 100.0).abs() < 0.05 && (pts[1].1 - 100.0).abs() < 0.05,
+            "top-right is (r,t); {:?}",
+            pts[1]
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
+            "must not include the bbox top-left; {pts:?}"
         );
     }
 
