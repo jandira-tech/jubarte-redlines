@@ -1148,6 +1148,7 @@ enum ShapeGeom {
     LeftRightArrow,
     QuadArrow,
     LightningBolt,
+    Sun,
 }
 
 enum ImageKind {
@@ -6053,6 +6054,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "leftRightArrow" => ShapeGeom::LeftRightArrow,
         "quadArrow" => ShapeGeom::QuadArrow,
         "lightningBolt" => ShapeGeom::LightningBolt,
+        "sun" => ShapeGeom::Sun,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8865,6 +8867,18 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Sun => {
+                    for points in sun_ray_points(x, y, dw, dh) {
+                        self.current().ops.push(Op::FillPoly {
+                            points,
+                            color: fill,
+                        });
+                    }
+                    self.current().ops.push(Op::FillPoly {
+                        points: sun_disk_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8933,6 +8947,22 @@ impl<'a> Layout<'a> {
                         });
                         self.current().ops.push(Op::StrokePoly {
                             points: can_lid_points(x, y, dw, dh),
+                            width: box_.line_width,
+                            color,
+                        });
+                    }
+                }
+                ShapeGeom::Sun => {
+                    if let Some(color) = box_.line {
+                        for points in sun_ray_points(x, y, dw, dh) {
+                            self.current().ops.push(Op::StrokePoly {
+                                points,
+                                width: box_.line_width,
+                                color,
+                            });
+                        }
+                        self.current().ops.push(Op::StrokePoly {
+                            points: sun_disk_points(x, y, dw, dh),
                             width: box_.line_width,
                             color,
                         });
@@ -11415,6 +11445,64 @@ fn lightning_bolt_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     .collect()
 }
 
+fn sun_ray_points(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 8] {
+    // OOXML sun adj=25000: eight triangular rays.
+    let a = 25_000.0;
+    let g0 = 50_000.0 - a;
+    let g1 = g0 * 30_274.0 / 32_768.0;
+    let g2 = g0 * 12_540.0 / 32_768.0;
+    let g5 = 50_000.0 - g1;
+    let g6 = 50_000.0 - g2;
+    let g10 = g5 * 3.0 / 4.0;
+    let g11 = g6 * 3.0 / 4.0;
+    let g12 = g10 + 3_662.0;
+    let g13 = g11 + 3_662.0;
+    let g14 = g11 + 12_500.0;
+    let g15 = 100_000.0 - g10;
+    let g16 = 100_000.0 - g12;
+    let g17 = 100_000.0 - g13;
+    let g18 = 100_000.0 - g14;
+    let ox1 = w * 18_436.0 / 21_600.0;
+    let oy1 = h * 3_163.0 / 21_600.0;
+    let ox2 = w * 3_163.0 / 21_600.0;
+    let oy2 = h * 18_436.0 / 21_600.0;
+    let x10 = w * g10 / 100_000.0;
+    let x12 = w * g12 / 100_000.0;
+    let x13 = w * g13 / 100_000.0;
+    let x14 = w * g14 / 100_000.0;
+    let x15 = w * g15 / 100_000.0;
+    let x16 = w * g16 / 100_000.0;
+    let x17 = w * g17 / 100_000.0;
+    let x18 = w * g18 / 100_000.0;
+    let y10 = h * g10 / 100_000.0;
+    let y12 = h * g12 / 100_000.0;
+    let y13 = h * g13 / 100_000.0;
+    let y14 = h * g14 / 100_000.0;
+    let y15 = h * g15 / 100_000.0;
+    let y16 = h * g16 / 100_000.0;
+    let y17 = h * g17 / 100_000.0;
+    let y18 = h * g18 / 100_000.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let py = |yd: f32| y + h - yd;
+    [
+        vec![(x + w, py(vc)), (x + x15, py(y18)), (x + x15, py(y14))],
+        vec![(x + ox1, py(oy1)), (x + x16, py(y13)), (x + x17, py(y12))],
+        vec![(x + hc, py(0.0)), (x + x18, py(y10)), (x + x14, py(y10))],
+        vec![(x + ox2, py(oy1)), (x + x13, py(y12)), (x + x12, py(y13))],
+        vec![(x, py(vc)), (x + x10, py(y14)), (x + x10, py(y18))],
+        vec![(x + ox2, py(oy2)), (x + x12, py(y17)), (x + x13, py(y16))],
+        vec![(x + hc, py(h)), (x + x14, py(y15)), (x + x18, py(y15))],
+        vec![(x + ox1, py(oy2)), (x + x17, py(y16)), (x + x16, py(y17))],
+    ]
+}
+
+fn sun_disk_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    let wr = w * 25_000.0 / 100_000.0;
+    let hr = h * 25_000.0 / 100_000.0;
+    ellipse_points(x + w * 0.5 - wr, y + h * 0.5 - hr, wr * 2.0, hr * 2.0)
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -13815,6 +13903,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn sun_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="sun"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=sun must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -14190,6 +14317,22 @@ mod drawing_tests {
         assert!((pts[0].0 - 39.222).abs() < 0.05 && (pts[0].1 - 100.0).abs() < 0.05);
         assert!((pts[5].0 - 100.0).abs() < 0.05 && pts[5].1.abs() < 0.05);
         assert!(pts[10].0.abs() < 0.05 && (pts[10].1 - 81.991).abs() < 0.05);
+    }
+
+    #[test]
+    fn sun_rays_have_eight_tips_and_a_disk() {
+        let rays = sun_ray_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(rays.len(), 8);
+        assert!((rays[0][0].0 - 100.0).abs() < 0.05 && (rays[0][0].1 - 50.0).abs() < 0.05);
+        assert!(rays[4][0].0.abs() < 0.05 && (rays[4][0].1 - 50.0).abs() < 0.05);
+        let disk = sun_disk_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(disk.len(), 24);
+        let on_disk = disk.iter().all(|(px, py)| {
+            let nx = (*px - 50.0) / 25.0;
+            let ny = (*py - 50.0) / 25.0;
+            (nx * nx + ny * ny - 1.0).abs() < 0.05
+        });
+        assert!(on_disk, "sun disk sits on the inner oval; {disk:?}");
     }
 
     #[test]
