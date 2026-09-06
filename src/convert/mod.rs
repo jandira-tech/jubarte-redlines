@@ -900,6 +900,7 @@ enum ChartKind {
     Pie,
     Line,
     Area,
+    Scatter,
 }
 
 struct ChartData {
@@ -5635,6 +5636,7 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
     let is_pie = !descendants_local(&dom, root, "pieChart").is_empty();
     let is_line = !descendants_local(&dom, root, "lineChart").is_empty();
     let is_area = !descendants_local(&dom, root, "areaChart").is_empty();
+    let is_scatter = !descendants_local(&dom, root, "scatterChart").is_empty();
     let host = descendants_local(&dom, root, "pieChart")
         .into_iter()
         .next()
@@ -5648,6 +5650,11 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
                 .into_iter()
                 .next()
         })
+        .or_else(|| {
+            descendants_local(&dom, root, "scatterChart")
+                .into_iter()
+                .next()
+        })
         .or_else(|| descendants_local(&dom, root, "barChart").into_iter().next())
         .unwrap_or(root);
     let mut cats = Vec::new();
@@ -5655,14 +5662,20 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
     let mut names = Vec::new();
     let mut colors = Vec::new();
     for ser in descendants_local(&dom, host, "ser") {
-        if cats.is_empty()
-            && let Some(cat) = descendants_local(&dom, ser, "cat").into_iter().next()
-        {
-            cats = chart_pts(&dom, cat);
+        if cats.is_empty() {
+            if let Some(cat) = descendants_local(&dom, ser, "cat").into_iter().next() {
+                cats = chart_pts(&dom, cat);
+            } else if let Some(xval) = descendants_local(&dom, ser, "xVal").into_iter().next() {
+                cats = chart_pts(&dom, xval);
+            }
         }
         let idx = names.len();
         names.push(chart_ser_name(&dom, ser, idx));
-        if let Some(val) = descendants_local(&dom, ser, "val").into_iter().next() {
+        let val = descendants_local(&dom, ser, "yVal")
+            .into_iter()
+            .next()
+            .or_else(|| descendants_local(&dom, ser, "val").into_iter().next());
+        if let Some(val) = val {
             let nums: Vec<f32> = chart_pts(&dom, val)
                 .iter()
                 .filter_map(|s| s.parse().ok())
@@ -5704,6 +5717,8 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
             ChartKind::Line
         } else if is_area {
             ChartKind::Area
+        } else if is_scatter {
+            ChartKind::Scatter
         } else {
             ChartKind::Bar
         },
@@ -9970,6 +9985,7 @@ impl<'a> Layout<'a> {
                 ChartKind::Pie => self.emit_chart_pie(x, y, dw, dh, chart),
                 ChartKind::Line => self.emit_chart_line(x, y, dw, dh, chart),
                 ChartKind::Area => self.emit_chart_area(x, y, dw, dh, chart),
+                ChartKind::Scatter => self.emit_chart_scatter(x, y, dw, dh, chart),
                 ChartKind::Bar => self.emit_chart_bars(x, y, dw, dh, chart),
             }
         }
@@ -10173,6 +10189,42 @@ impl<'a> Layout<'a> {
             [0.35, 0.35, 0.35],
             text,
         ));
+    }
+
+    fn emit_chart_scatter(&mut self, x: f32, y: f32, dw: f32, dh: f32, chart: &ChartData) {
+        self.current().ops.push(Op::FillRect {
+            x,
+            y,
+            w: dw,
+            h: dh,
+            color: [1.0, 1.0, 1.0],
+        });
+        if !chart.title.is_empty() {
+            let face = self.fonts.get(FaceId::CarlitoRegular);
+            let tw = face.width_pt(&chart.title, 14.0);
+            let tx = x + ((dw - tw) / 2.0).max(4.0);
+            self.emit_label(&chart.title, 14.0, tx, y + dh - 22.0);
+        }
+        let xs: Vec<f32> = chart.cats.iter().filter_map(|s| s.parse().ok()).collect();
+        let ys = chart.series.first().cloned().unwrap_or_default();
+        let plot_x = x + 20.0;
+        let plot_y = y + 43.0;
+        let plot_w = (dw - 32.0).max(8.0);
+        let plot_h = (dh - 80.0).max(8.0);
+        let color = chart.colors.first().copied().unwrap_or([0.5, 0.5, 0.5]);
+        let pts = scatter_chart_marker_points(plot_x, plot_y, plot_w, plot_h, &xs, &ys);
+        for (mx, my) in pts {
+            let s = 3.0;
+            self.current().ops.push(Op::FillPoly {
+                points: vec![
+                    (mx - s, my - s),
+                    (mx + s, my - s),
+                    (mx + s, my + s),
+                    (mx - s, my + s),
+                ],
+                color,
+            });
+        }
     }
 
     fn emit_chart_area(&mut self, x: f32, y: f32, dw: f32, dh: f32, chart: &ChartData) {
@@ -13376,6 +13428,22 @@ fn cloud_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
         ooxml_arc_to_y_down(&mut cur, wr, hr, st, sw, &mut pts, map);
     }
     pts
+}
+
+fn scatter_chart_marker_points(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    xs: &[f32],
+    ys: &[f32],
+) -> Vec<(f32, f32)> {
+    let x_max = xs.iter().copied().fold(0.0_f32, f32::max).max(1.0);
+    let y_max = ys.iter().copied().fold(0.0_f32, f32::max).max(1.0);
+    xs.iter()
+        .zip(ys)
+        .map(|(xv, yv)| (x + (xv.max(0.0) / x_max) * w, y + (yv.max(0.0) / y_max) * h))
+        .collect()
 }
 
 fn area_chart_fill_points(
@@ -21101,6 +21169,45 @@ mod drawing_tests {
         assert!(
             (pts[0].1 - (y + dh * 0.75)).abs() < 0.02 && (pts[6].1 - (y + dh * 0.25)).abs() < 0.02,
             "shaft is the middle 50%; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn parse_scatter_chart_kind_is_scatter() {
+        let xml = r#"<?xml version="1.0"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart><c:plotArea><c:scatterChart>
+  <c:ser>
+    <c:xVal><c:numLit>
+      <c:pt idx="0"><c:v>1</c:v></c:pt>
+      <c:pt idx="1"><c:v>3</c:v></c:pt>
+    </c:numLit></c:xVal>
+    <c:yVal><c:numLit>
+      <c:pt idx="0"><c:v>2</c:v></c:pt>
+      <c:pt idx="1"><c:v>4</c:v></c:pt>
+    </c:numLit></c:yVal>
+  </c:ser>
+</c:scatterChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let data = parse_chart(xml).expect("c:scatterChart must parse");
+        assert_eq!(
+            data.kind,
+            ChartKind::Scatter,
+            "c:scatterChart must not parse as Bar"
+        );
+        assert_eq!(data.cats, ["1", "3"]);
+        assert_eq!(data.series.len(), 1);
+        assert!((data.series[0][0] - 2.0).abs() < 0.01);
+        assert!((data.series[0][1] - 4.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn scatter_chart_marker_points_map_xy() {
+        let pts = scatter_chart_marker_points(0.0, 0.0, 100.0, 40.0, &[0.0, 4.0], &[0.0, 4.0]);
+        assert_eq!(pts.len(), 2, "{pts:?}");
+        assert!(pts[0].0.abs() < 0.05 && pts[0].1.abs() < 0.05, "{pts:?}");
+        assert!(
+            (pts[1].0 - 100.0).abs() < 0.05 && (pts[1].1 - 40.0).abs() < 0.05,
+            "{pts:?}"
         );
     }
 
