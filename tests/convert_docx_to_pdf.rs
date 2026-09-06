@@ -9785,6 +9785,23 @@ fn flow_chart_offpage_connector_prst_fills_a_polygon_not_a_rect() {
 }
 
 #[test]
+fn flow_chart_delay_prst_fills_a_polygon_not_a_rect() {
+    let body = preset_shape_body("flowChartDelay");
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert flowChartDelay");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        pdf_has_filled_polygon(&hay),
+        "flowChartDelay must fill a polygon (h f), not only re rects; tail {}",
+        &hay[hay.len().saturating_sub(400)..]
+    );
+    let rects = pdf_fill_boxes_in(&hay, 1.0, 0.0, 0.0);
+    assert!(
+        !rects.iter().any(|(_, _, w, h)| *w > 100.0 && *h > 50.0),
+        "must not fill the extent as a rectangle; rects={rects:?}"
+    );
+}
+
+#[test]
 fn cube_prst_fills_a_polygon_not_a_rect() {
     let body = preset_shape_body("cube");
     let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert cube");
