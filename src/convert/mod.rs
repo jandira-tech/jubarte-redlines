@@ -2446,6 +2446,8 @@ struct Numbering {
     /// `w:lvlRestart/@w:val` keyed by (abstractNumId, ilvl). Missing is
     /// Word's default (restart after any shallower level). 0 = never.
     restarts: HashMap<(String, u32), u32>,
+    /// `w:isLgl` on a level: every `%n` slot paints as Arabic.
+    is_lgl: HashSet<(String, u32)>,
 }
 
 impl Numbering {
@@ -2601,7 +2603,10 @@ impl Numbering {
                 .map_or(lvl.fmt, |l| l.fmt);
             // Word `Section 1.01`: decimalZero lvlText uses decimal for
             // parent slots, not the parent's cardinalText (`Article One`).
-            let fmt = if lvl.fmt == NumFmt::DecimalZero && i != ilvl {
+            // w:isLgl on this level forces every slot to Arabic (I.1 → 1.1).
+            let fmt = if self.is_lgl.contains(&(abs.to_string(), ilvl))
+                || (lvl.fmt == NumFmt::DecimalZero && i != ilvl)
+            {
                 NumFmt::Decimal
             } else {
                 fmt
@@ -2792,6 +2797,9 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
                 .and_then(|s| s.parse().ok())
             {
                 numbering.restarts.insert((aid.to_string(), ilvl), v);
+            }
+            if first_named(&dom, lvl, "isLgl").is_some_and(|n| !val_is_false(&dom, Some(n))) {
+                numbering.is_lgl.insert((aid.to_string(), ilvl));
             }
             lvls.insert(
                 ilvl,
