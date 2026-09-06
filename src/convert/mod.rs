@@ -528,7 +528,13 @@ struct TblLook {
     no_h_band: bool,
 }
 
-type RawStyle = (Option<String>, Option<NodeId>, Option<NodeId>);
+struct RawStyle {
+    based: Option<String>,
+    ppr: Option<NodeId>,
+    rpr: Option<NodeId>,
+    /// `w:link` counterpart (paragraph ↔ character). ECMA-376 17.7.4.6.
+    link: Option<String>,
+}
 
 struct Defaults {
     run: RunStyle,
@@ -1573,7 +1579,17 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             .and_then(|n| dom.attribute(n, &W::val()).map(str::to_string));
         let ppr = dom.element(style, &W::p_pr());
         let rpr = dom.element(style, &W::r_pr());
-        raw.insert(sid.to_string(), (based, ppr, rpr));
+        let link = first_named(&dom, style, "link")
+            .and_then(|n| dom.attribute(n, &W::val()).map(str::to_string));
+        raw.insert(
+            sid.to_string(),
+            RawStyle {
+                based,
+                ppr,
+                rpr,
+                link,
+            },
+        );
     }
     let mut by_id = HashMap::new();
     let ids: Vec<String> = raw.keys().cloned().collect();
@@ -1771,21 +1787,48 @@ fn resolve_named(
     if depth > 12 {
         return (defaults.para.clone(), defaults.run.clone());
     }
-    let Some((based, ppr, rpr)) = raw.get(id) else {
+    let Some(raw_style) = raw.get(id) else {
         return (defaults.para.clone(), defaults.run.clone());
     };
-    let (mut para, mut run) = if let Some(base) = based {
+    let (mut para, mut run) = if let Some(base) = raw_style.based.as_deref() {
         resolve_named(dom, raw, defaults, theme, base, depth + 1)
     } else {
         (defaults.para.clone(), defaults.run.clone())
     };
-    if let Some(node) = ppr {
-        apply_ppr(dom, *node, &mut para);
+    if let Some(node) = raw_style.ppr {
+        apply_ppr(dom, node, &mut para);
     }
-    if let Some(node) = rpr {
-        apply_rpr(dom, *node, &mut run, theme);
+    if let Some(node) = raw_style.rpr {
+        apply_rpr(dom, node, &mut run, theme);
+    }
+    if let Some(link_id) = raw_style.link.as_deref() {
+        apply_linked_char_rpr(dom, raw, theme, link_id, depth + 1, &mut run);
     }
     (para, run)
+}
+
+/// Apply the linked character style's `basedOn` + `rPr` only. Do not follow
+/// that style's `w:link` (paragraph ↔ character pairs would recurse).
+fn apply_linked_char_rpr(
+    dom: &Dom,
+    raw: &std::collections::HashMap<String, RawStyle>,
+    theme: &ThemeFonts,
+    link_id: &str,
+    depth: u8,
+    run: &mut RunStyle,
+) {
+    if depth > 12 {
+        return;
+    }
+    let Some(linked) = raw.get(link_id) else {
+        return;
+    };
+    if let Some(base) = linked.based.as_deref() {
+        apply_linked_char_rpr(dom, raw, theme, base, depth + 1, run);
+    }
+    if let Some(node) = linked.rpr {
+        apply_rpr(dom, node, run, theme);
+    }
 }
 
 fn first_named(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {
@@ -4187,16 +4230,16 @@ fn resolve_num_pr(
     if depth > 12 {
         return (None, 0);
     }
-    let Some((based, ppr, _)) = raw.get(id) else {
+    let Some(raw_style) = raw.get(id) else {
         return (None, 0);
     };
-    if let Some(ppr) = ppr {
-        let (nid, ilvl) = num_pr(dom, *ppr);
+    if let Some(ppr) = raw_style.ppr {
+        let (nid, ilvl) = num_pr(dom, ppr);
         if nid.is_some() {
             return (nid, ilvl);
         }
     }
-    if let Some(base) = based {
+    if let Some(base) = raw_style.based.as_deref() {
         return resolve_num_pr(dom, raw, base, depth + 1);
     }
     (None, 0)
