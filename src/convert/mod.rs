@@ -376,6 +376,25 @@ struct PageSetup {
     balloon_gutter: f32,
     /// `w:settings/w:defaultTabStop` (pt). Factory 720 twips = 0.5in.
     default_tab: f32,
+    /// `w:sectPr/w:pgBorders` (plan Step 7 / case68).
+    borders: PageBorders,
+}
+
+#[derive(Clone, Copy)]
+struct PageBorder {
+    color: [f32; 3],
+    width: f32,
+    space: f32,
+}
+
+#[derive(Clone, Copy, Default)]
+struct PageBorders {
+    top: Option<PageBorder>,
+    left: Option<PageBorder>,
+    bottom: Option<PageBorder>,
+    right: Option<PageBorder>,
+    /// `w:pgBorders/@w:offsetFrom` — `page` vs `text`.
+    from_page: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -556,6 +575,7 @@ impl Defaults {
                 chap_sep: "-",
                 balloon_gutter: 0.0,
                 default_tab: 36.0,
+                borders: PageBorders::default(),
             },
         }
     }
@@ -2007,7 +2027,47 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             _ => "-",
         };
     }
+    page.borders = PageBorders::default();
+    if let Some(pb) = first_named(dom, sect, "pgBorders") {
+        page.borders = parse_pg_borders(dom, pb);
+    }
     page
+}
+
+fn parse_pg_borders(dom: &Dom, pb: NodeId) -> PageBorders {
+    let from_page = attr_any(dom, pb, "offsetFrom").unwrap_or("page") != "text";
+    let edge = |name: &str| -> Option<PageBorder> {
+        let el = first_named(dom, pb, name)?;
+        let val = attr_any(dom, el, "val").unwrap_or("single");
+        if val == "nil" || val == "none" {
+            return None;
+        }
+        let color = attr_any(dom, el, "color")
+            .and_then(parse_hex_color)
+            .unwrap_or([0.0, 0.0, 0.0]);
+        let width = attr_any(dom, el, "sz")
+            .and_then(|s| s.parse::<f32>().ok())
+            .map(|eighths| {
+                let pt = eighths / 8.0;
+                if pt < 0.5 { 0.24 } else { pt }
+            })
+            .unwrap_or(0.6);
+        let space = attr_any(dom, el, "space")
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(24.0);
+        Some(PageBorder {
+            color,
+            width,
+            space,
+        })
+    };
+    PageBorders {
+        top: edge("top"),
+        left: edge("left"),
+        bottom: edge("bottom"),
+        right: edge("right"),
+        from_page,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -9206,6 +9266,74 @@ impl<'a> Layout<'a> {
                 let y = base + (n.saturating_sub(1).saturating_sub(i)) as f32 * one;
                 self.draw_line_of_runs(line, y, self.footer_align);
             }
+        }
+        self.paint_pg_borders();
+    }
+
+    fn paint_pg_borders(&mut self) {
+        let b = self.page.borders;
+        if b.top.is_none() && b.left.is_none() && b.bottom.is_none() && b.right.is_none() {
+            return;
+        }
+        let pw = self.page.width;
+        let ph = self.page.height;
+        let ml = self.page.margin_l;
+        let mr = self.page.margin_r;
+        let mt = self.page.margin_t;
+        let mb = self.page.margin_b;
+        let edge_x = |space: f32, left: bool| {
+            if b.from_page {
+                if left { space } else { pw - space }
+            } else if left {
+                (ml - space).max(0.0)
+            } else {
+                (pw - mr + space).min(pw)
+            }
+        };
+        let edge_y = |space: f32, top: bool| {
+            if b.from_page {
+                if top { ph - space } else { space }
+            } else if top {
+                (ph - mt + space).min(ph)
+            } else {
+                (mb - space).max(0.0)
+            }
+        };
+        let left = b
+            .left
+            .or(b.top)
+            .or(b.bottom)
+            .map(|e| edge_x(e.space, true))
+            .unwrap_or(0.0);
+        let right = b
+            .right
+            .or(b.top)
+            .or(b.bottom)
+            .map(|e| edge_x(e.space, false))
+            .unwrap_or(pw);
+        let top = b
+            .top
+            .or(b.left)
+            .or(b.right)
+            .map(|e| edge_y(e.space, true))
+            .unwrap_or(ph);
+        let bot = b
+            .bottom
+            .or(b.left)
+            .or(b.right)
+            .map(|e| edge_y(e.space, false))
+            .unwrap_or(0.0);
+        if let Some(e) = b.top {
+            self.hairline_h(left, edge_y(e.space, true), right, e.width, e.color);
+        }
+        if let Some(e) = b.bottom {
+            self.hairline_h(left, edge_y(e.space, false), right, e.width, e.color);
+        }
+        if let Some(e) = b.left {
+            self.hairline_v(edge_x(e.space, true), bot, top, e.width, e.color);
+        }
+        if let Some(e) = b.right {
+            self.hairline_v(edge_x(e.space, false), bot, top, e.width, e.color);
         }
     }
 
