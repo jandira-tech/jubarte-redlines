@@ -1152,6 +1152,7 @@ enum ShapeGeom {
     Moon,
     CircularArrow,
     Gear6,
+    SmileyFace,
 }
 
 enum ImageKind {
@@ -6061,6 +6062,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "moon" => ShapeGeom::Moon,
         "circularArrow" => ShapeGeom::CircularArrow,
         "gear6" => ShapeGeom::Gear6,
+        "smileyFace" => ShapeGeom::SmileyFace,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8903,6 +8905,21 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::SmileyFace => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: ellipse_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                    let eye = [0.0, 0.0, 0.0];
+                    self.current().ops.push(Op::FillPoly {
+                        points: smiley_eye_points(x, y, dw, dh, true),
+                        color: eye,
+                    });
+                    self.current().ops.push(Op::FillPoly {
+                        points: smiley_eye_points(x, y, dw, dh, false),
+                        color: eye,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8987,6 +9004,32 @@ impl<'a> Layout<'a> {
                         }
                         self.current().ops.push(Op::StrokePoly {
                             points: sun_disk_points(x, y, dw, dh),
+                            width: box_.line_width,
+                            color,
+                        });
+                    }
+                }
+                ShapeGeom::SmileyFace => {
+                    if let Some(color) = box_.line {
+                        self.current().ops.push(Op::StrokePoly {
+                            points: ellipse_points(x, y, dw, dh),
+                            width: box_.line_width,
+                            color,
+                        });
+                        self.current().ops.push(Op::StrokePoly {
+                            points: smiley_eye_points(x, y, dw, dh, true),
+                            width: box_.line_width,
+                            color,
+                        });
+                        self.current().ops.push(Op::StrokePoly {
+                            points: smiley_eye_points(x, y, dw, dh, false),
+                            width: box_.line_width,
+                            color,
+                        });
+                        let mouth = smiley_mouth_cubic(x, y, dw, dh);
+                        self.current().ops.push(Op::Cubic {
+                            start: mouth.start,
+                            segments: mouth.segments,
                             width: box_.line_width,
                             color,
                         });
@@ -11609,6 +11652,62 @@ fn gear6_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     pts
 }
 
+fn smiley_eye_points(x: f32, y: f32, w: f32, h: f32, left: bool) -> Vec<(f32, f32)> {
+    // OOXML smileyFace adj=4653: eyes at x2/x3,y1 with wr=hr=1125/21600.
+    let wr = w * 1_125.0 / 21_600.0;
+    let hr = h * 1_125.0 / 21_600.0;
+    let y1 = h * 7_570.0 / 21_600.0;
+    let ox = if left {
+        w * 6_215.0 / 21_600.0
+    } else {
+        w * 13_135.0 / 21_600.0
+    };
+    let py = |yd: f32| y + h - yd;
+    ellipse_points(x + ox, py(y1) - hr, wr * 2.0, hr * 2.0)
+}
+
+fn smiley_mouth_cubic(x: f32, y: f32, w: f32, h: f32) -> ConnectorCubic {
+    // OOXML smileyFace P2: M x1,y2 Q hc,y5 x4,y2 (open stroke, adj=4653).
+    // x1 uses the spec denominator 21699, not 21600.
+    let a = 4_653.0;
+    let x1 = w * 4_969.0 / 21_699.0;
+    let x4 = w * 16_640.0 / 21_600.0;
+    let y3 = h * 16_515.0 / 21_600.0;
+    let dy2 = h * a / 100_000.0;
+    let y2 = y3 - dy2;
+    let y4 = y3 + dy2;
+    let dy3 = h * a / 50_000.0;
+    let y5 = y4 + dy3;
+    let hc = w * 0.5;
+    let py = |yd: f32| y + h - yd;
+    let p0 = (x + x1, py(y2));
+    let p1 = (x + hc, py(y5));
+    let p2 = (x + x4, py(y2));
+    let two_thirds = 2.0 / 3.0;
+    let c1 = (
+        p0.0 + two_thirds * (p1.0 - p0.0),
+        p0.1 + two_thirds * (p1.1 - p0.1),
+    );
+    let c2 = (
+        p2.0 + two_thirds * (p1.0 - p2.0),
+        p2.1 + two_thirds * (p1.1 - p2.1),
+    );
+    ConnectorCubic {
+        start: p0,
+        segments: vec![[c1, c2, p2]],
+    }
+}
+
+#[cfg(test)]
+fn smiley_mouth_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    let mouth = smiley_mouth_cubic(x, y, w, h);
+    let mut pts = vec![mouth.start];
+    for [c1, c2, end] in mouth.segments {
+        sample_cubic(mouth.start, c1, c2, end, 8, &mut pts);
+    }
+    pts
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -14165,6 +14264,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn smiley_face_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="smileyFace"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=smileyFace must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -14617,6 +14755,41 @@ mod drawing_tests {
             !pts.iter()
                 .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
             "gear6 must not include the bbox corner; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn smiley_eye_points_are_symmetric_off_center_ellipses() {
+        // MoveTo (x2,y1) + arc stAng=cd2 → eye centre is (x2+wR, y1), not (x2, y1).
+        let left = smiley_eye_points(0.0, 0.0, 100.0, 100.0, true);
+        let right = smiley_eye_points(0.0, 0.0, 100.0, 100.0, false);
+        assert_eq!(left.len(), 24);
+        assert_eq!(right.len(), 24);
+        let mean_x = |pts: &[(f32, f32)]| pts.iter().map(|p| p.0).sum::<f32>() / pts.len() as f32;
+        let lcx = mean_x(&left);
+        let rcx = mean_x(&right);
+        assert!(
+            (lcx - 33.98).abs() < 0.3,
+            "left eye cx {lcx} (expect x2+wR)"
+        );
+        assert!(
+            (rcx - 66.02).abs() < 0.3,
+            "right eye cx {rcx} (expect x3+wR)"
+        );
+        assert!((lcx + rcx - 100.0).abs() < 0.2, "eyes must be symmetric");
+    }
+
+    #[test]
+    fn smiley_mouth_points_dip_below_the_corners() {
+        let pts = smiley_mouth_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 9);
+        let start = pts[0];
+        let end = *pts.last().expect("end");
+        let mid = pts[pts.len() / 2];
+        assert!(start.0 < 30.0 && end.0 > 70.0, "span {start:?}..{end:?}");
+        assert!(
+            mid.1 < start.1 - 2.0 && mid.1 < end.1 - 2.0,
+            "smile must dip in PDF y-up; {pts:?}"
         );
     }
 
