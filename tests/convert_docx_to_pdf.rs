@@ -4124,7 +4124,9 @@ fn adjacent_para_spacing_is_max_not_sum() {
     assert!(ys.len() >= 2, "both lines must paint; ys={ys:?}");
     let gap = ys[0] - ys[1];
     assert!(
-        (48.0..=58.0).contains(&gap),
+        // DFonts Cambria ~51; Ubuntu paints Cambria from Liberation
+        // Serif (47.47). Sum of after+before is ~87 — keep that out.
+        (46.0..=58.0).contains(&gap),
         "Word max(after,before)=36pt plus the 11pt line is ~51pt, not ~87pt sum; gap={gap} ys={ys:?}"
     );
 }
