@@ -12554,6 +12554,10 @@ fn hf_docx(body: &str, rels: &[(&str, &str, &str)], parts: &[(&str, String)]) ->
     for (name, _) in parts {
         let kind = if name.contains("header") {
             "header"
+        } else if name.contains("footer") {
+            "footer"
+        } else if name.contains("settings") {
+            "settings"
         } else {
             "footer"
         };
@@ -12711,6 +12715,58 @@ fn titlepg_uses_first_header_on_page_one_then_default() {
     assert!(
         !p2.contains("FirstHdr"),
         "later pages must not keep type=first; p2={p2}"
+    );
+}
+
+#[test]
+fn even_and_odd_headers_use_even_ref_on_even_pages() {
+    // xml_parts_plan: w:evenAndOddHeaders + type=even headerReference.
+    // Without the setting, Word paints type=default on every page.
+    let body = "<w:p><w:r><w:t>PageOneBody</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         <w:p><w:r><w:t>PageTwoBody</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         <w:p><w:r><w:t>PageThreeBody</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:headerReference w:type=\"even\" r:id=\"rIdH2\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let settings = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:evenAndOddHeaders/>\
+         </w:settings>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdH2", "header", "header2.xml"),
+            ("rIdSet", "settings", "settings.xml"),
+        ],
+        &[
+            ("word/header1.xml", hf_part("hdr", 22, "OddHdrX")),
+            ("word/header2.xml", hf_part("hdr", 22, "EvenHdrX")),
+            ("word/settings.xml", settings.to_string()),
+        ],
+    ))
+    .expect("convert evenAndOddHeaders");
+    assert_eq!(pdf_page_count(&pdf), 3, "three body pages");
+    let pages = pdf_content_streams(&pdf);
+    let p1 = pdf_winansi_text(pages[0].as_bytes());
+    let p2 = pdf_winansi_text(pages[1].as_bytes());
+    let p3 = pdf_winansi_text(pages[2].as_bytes());
+    assert!(
+        p1.contains("OddHdrX") && !p1.contains("EvenHdrX"),
+        "odd page 1 uses type=default; p1={p1}"
+    );
+    assert!(
+        p2.contains("EvenHdrX") && !p2.contains("OddHdrX"),
+        "even page 2 uses type=even; p2={p2}"
+    );
+    assert!(
+        p3.contains("OddHdrX") && !p3.contains("EvenHdrX"),
+        "odd page 3 uses type=default again; p3={p3}"
     );
 }
 
