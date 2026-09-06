@@ -1184,6 +1184,7 @@ enum ShapeGeom {
     Star12,
     Star16,
     Star24,
+    Star32,
 }
 
 enum ImageKind {
@@ -6125,6 +6126,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "star12" => ShapeGeom::Star12,
         "star16" => ShapeGeom::Star16,
         "star24" => ShapeGeom::Star24,
+        "star32" => ShapeGeom::Star32,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9170,6 +9172,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Star32 => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: star32_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9355,6 +9363,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Star12
                 | ShapeGeom::Star16
                 | ShapeGeom::Star24
+                | ShapeGeom::Star32
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9423,6 +9432,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Star12 => star12_points(x, y, dw, dh),
                             ShapeGeom::Star16 => star16_points(x, y, dw, dh),
                             ShapeGeom::Star24 => star24_points(x, y, dw, dh),
+                            ShapeGeom::Star32 => star32_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -12052,6 +12062,172 @@ fn star24_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
         (x + sx2, py(sy8)),
         (x + x1, py(y6)),
         (x + sx1, py(sy7)),
+    ]
+}
+
+fn star32_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML star32 adj=37500: 32 tips + 32 inner vertices.
+    let a = 37_500.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let dx1 = hc * 98_079.0 / 100_000.0;
+    let dx2 = hc * 92_388.0 / 100_000.0;
+    let dx3 = hc * 83_147.0 / 100_000.0;
+    let dx4 = hc * ooxml_ang_rad(2_700_000.0).cos();
+    let dx5 = hc * 55_557.0 / 100_000.0;
+    let dx6 = hc * 38_268.0 / 100_000.0;
+    let dx7 = hc * 19_509.0 / 100_000.0;
+    let dy1 = vc * 98_079.0 / 100_000.0;
+    let dy2 = vc * 92_388.0 / 100_000.0;
+    let dy3 = vc * 83_147.0 / 100_000.0;
+    let dy4 = vc * ooxml_ang_rad(2_700_000.0).sin();
+    let dy5 = vc * 55_557.0 / 100_000.0;
+    let dy6 = vc * 38_268.0 / 100_000.0;
+    let dy7 = vc * 19_509.0 / 100_000.0;
+    let x1 = hc - dx1;
+    let x2 = hc - dx2;
+    let x3 = hc - dx3;
+    let x4 = hc - dx4;
+    let x5 = hc - dx5;
+    let x6 = hc - dx6;
+    let x7 = hc - dx7;
+    let x8 = hc + dx7;
+    let x9 = hc + dx6;
+    let x10 = hc + dx5;
+    let x11 = hc + dx4;
+    let x12 = hc + dx3;
+    let x13 = hc + dx2;
+    let x14 = hc + dx1;
+    let y1 = vc - dy1;
+    let y2 = vc - dy2;
+    let y3 = vc - dy3;
+    let y4 = vc - dy4;
+    let y5 = vc - dy5;
+    let y6 = vc - dy6;
+    let y7 = vc - dy7;
+    let y8 = vc + dy7;
+    let y9 = vc + dy6;
+    let y10 = vc + dy5;
+    let y11 = vc + dy4;
+    let y12 = vc + dy3;
+    let y13 = vc + dy2;
+    let y14 = vc + dy1;
+    let iwd2 = hc * a / 50_000.0;
+    let ihd2 = vc * a / 50_000.0;
+    let sdx1 = iwd2 * 99_518.0 / 100_000.0;
+    let sdx2 = iwd2 * 95_694.0 / 100_000.0;
+    let sdx3 = iwd2 * 88_192.0 / 100_000.0;
+    let sdx4 = iwd2 * 77_301.0 / 100_000.0;
+    let sdx5 = iwd2 * 63_439.0 / 100_000.0;
+    let sdx6 = iwd2 * 47_140.0 / 100_000.0;
+    let sdx7 = iwd2 * 29_028.0 / 100_000.0;
+    let sdx8 = iwd2 * 9_802.0 / 100_000.0;
+    let sdy1 = ihd2 * 99_518.0 / 100_000.0;
+    let sdy2 = ihd2 * 95_694.0 / 100_000.0;
+    let sdy3 = ihd2 * 88_192.0 / 100_000.0;
+    let sdy4 = ihd2 * 77_301.0 / 100_000.0;
+    let sdy5 = ihd2 * 63_439.0 / 100_000.0;
+    let sdy6 = ihd2 * 47_140.0 / 100_000.0;
+    let sdy7 = ihd2 * 29_028.0 / 100_000.0;
+    let sdy8 = ihd2 * 9_802.0 / 100_000.0;
+    let sx1 = hc - sdx1;
+    let sx2 = hc - sdx2;
+    let sx3 = hc - sdx3;
+    let sx4 = hc - sdx4;
+    let sx5 = hc - sdx5;
+    let sx6 = hc - sdx6;
+    let sx7 = hc - sdx7;
+    let sx8 = hc - sdx8;
+    let sx9 = hc + sdx8;
+    let sx10 = hc + sdx7;
+    let sx11 = hc + sdx6;
+    let sx12 = hc + sdx5;
+    let sx13 = hc + sdx4;
+    let sx14 = hc + sdx3;
+    let sx15 = hc + sdx2;
+    let sx16 = hc + sdx1;
+    let sy1 = vc - sdy1;
+    let sy2 = vc - sdy2;
+    let sy3 = vc - sdy3;
+    let sy4 = vc - sdy4;
+    let sy5 = vc - sdy5;
+    let sy6 = vc - sdy6;
+    let sy7 = vc - sdy7;
+    let sy8 = vc - sdy8;
+    let sy9 = vc + sdy8;
+    let sy10 = vc + sdy7;
+    let sy11 = vc + sdy6;
+    let sy12 = vc + sdy5;
+    let sy13 = vc + sdy4;
+    let sy14 = vc + sdy3;
+    let sy15 = vc + sdy2;
+    let sy16 = vc + sdy1;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x, py(vc)),
+        (x + sx1, py(sy8)),
+        (x + x1, py(y7)),
+        (x + sx2, py(sy7)),
+        (x + x2, py(y6)),
+        (x + sx3, py(sy6)),
+        (x + x3, py(y5)),
+        (x + sx4, py(sy5)),
+        (x + x4, py(y4)),
+        (x + sx5, py(sy4)),
+        (x + x5, py(y3)),
+        (x + sx6, py(sy3)),
+        (x + x6, py(y2)),
+        (x + sx7, py(sy2)),
+        (x + x7, py(y1)),
+        (x + sx8, py(sy1)),
+        (x + hc, py(0.0)),
+        (x + sx9, py(sy1)),
+        (x + x8, py(y1)),
+        (x + sx10, py(sy2)),
+        (x + x9, py(y2)),
+        (x + sx11, py(sy3)),
+        (x + x10, py(y3)),
+        (x + sx12, py(sy4)),
+        (x + x11, py(y4)),
+        (x + sx13, py(sy5)),
+        (x + x12, py(y5)),
+        (x + sx14, py(sy6)),
+        (x + x13, py(y6)),
+        (x + sx15, py(sy7)),
+        (x + x14, py(y7)),
+        (x + sx16, py(sy8)),
+        (x + w, py(vc)),
+        (x + sx16, py(sy9)),
+        (x + x14, py(y8)),
+        (x + sx15, py(sy10)),
+        (x + x13, py(y9)),
+        (x + sx14, py(sy11)),
+        (x + x12, py(y10)),
+        (x + sx13, py(sy12)),
+        (x + x11, py(y11)),
+        (x + sx12, py(sy13)),
+        (x + x10, py(y12)),
+        (x + sx11, py(sy14)),
+        (x + x9, py(y13)),
+        (x + sx10, py(sy15)),
+        (x + x8, py(y14)),
+        (x + sx9, py(sy16)),
+        (x + hc, py(h)),
+        (x + sx8, py(sy16)),
+        (x + x7, py(y14)),
+        (x + sx7, py(sy15)),
+        (x + x6, py(y13)),
+        (x + sx6, py(sy14)),
+        (x + x5, py(y12)),
+        (x + sx5, py(sy13)),
+        (x + x4, py(y11)),
+        (x + sx4, py(sy12)),
+        (x + x3, py(y10)),
+        (x + sx3, py(sy11)),
+        (x + x2, py(y9)),
+        (x + sx2, py(sy10)),
+        (x + x1, py(y8)),
+        (x + sx1, py(sy9)),
     ]
 }
 
@@ -15373,6 +15549,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn star32_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="star32"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=star32 must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -17264,6 +17479,32 @@ mod drawing_tests {
         let top = pts[12];
         let right = pts[24];
         let bottom = pts[36];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 50.0).abs() < 0.05,
+            "start is (l,vc); {start:?}"
+        );
+        assert!(
+            (top.0 - 50.0).abs() < 0.05 && (top.1 - 100.0).abs() < 0.05,
+            "top tip is (hc,t); {top:?}"
+        );
+        assert!(
+            (right.0 - 100.0).abs() < 0.05 && (right.1 - 50.0).abs() < 0.05,
+            "right tip is (r,vc); {right:?}"
+        );
+        assert!(
+            (bottom.0 - 50.0).abs() < 0.05 && bottom.1.abs() < 0.05,
+            "bottom tip is (hc,b); {bottom:?}"
+        );
+    }
+
+    #[test]
+    fn star32_points_have_thirty_two_tips() {
+        let pts = star32_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 64);
+        let start = pts[0];
+        let top = pts[16];
+        let right = pts[32];
+        let bottom = pts[48];
         assert!(
             start.0.abs() < 0.05 && (start.1 - 50.0).abs() < 0.05,
             "start is (l,vc); {start:?}"
