@@ -9142,6 +9142,81 @@ fn header_pbdr_bottom_paints_a_rule() {
 }
 
 #[test]
+fn pg_borders_page_offset_paints_a_red_frame() {
+    // plan Step 7 / case68: w:pgBorders is a rectangle at space from the
+    // page edge (offsetFrom=page), width from w:sz eighths.
+    let body = "<w:p><w:r><w:t>Bordered</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+           <w:pgBorders w:offsetFrom=\"page\">\
+             <w:top w:val=\"single\" w:sz=\"24\" w:space=\"24\" w:color=\"FF0000\"/>\
+             <w:left w:val=\"single\" w:sz=\"24\" w:space=\"24\" w:color=\"FF0000\"/>\
+             <w:bottom w:val=\"single\" w:sz=\"24\" w:space=\"24\" w:color=\"FF0000\"/>\
+             <w:right w:val=\"single\" w:sz=\"24\" w:space=\"24\" w:color=\"FF0000\"/>\
+           </w:pgBorders></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert pgBorders");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("1.000 0.000 0.000 rg"),
+        "pgBorders must fill red; tail {}",
+        &hay[hay.len().saturating_sub(400)..]
+    );
+    let boxes = pdf_fill_boxes_in(&hay, 1.0, 0.0, 0.0);
+    let horiz: Vec<_> = boxes
+        .iter()
+        .copied()
+        .filter(|(_, _, w, h)| *w > 400.0 && *h < 6.0)
+        .collect();
+    let vert: Vec<_> = boxes
+        .iter()
+        .copied()
+        .filter(|(_, _, w, h)| *w < 6.0 && *h > 400.0)
+        .collect();
+    assert!(
+        horiz.len() >= 2,
+        "top and bottom page borders; boxes={boxes:?}"
+    );
+    assert!(
+        vert.len() >= 2,
+        "left and right page borders; boxes={boxes:?}"
+    );
+    assert!(
+        horiz.iter().any(|(_, y, _, _)| *y > 750.0),
+        "top border sits near page_h - space (768); horiz={horiz:?}"
+    );
+    assert!(
+        vert.iter().any(|(x, _, _, _)| *x < 30.0),
+        "left border sits near space (24); vert={vert:?}"
+    );
+}
+
+#[test]
+fn pg_borders_text_offset_sits_outside_the_margin() {
+    // offsetFrom=text: border is space points outside the text margin.
+    let body = "<w:p><w:r><w:t>TextOff</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+           <w:pgBorders w:offsetFrom=\"text\">\
+             <w:left w:val=\"single\" w:sz=\"24\" w:space=\"24\" w:color=\"0000FF\"/>\
+           </w:pgBorders></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert pgBorders text");
+    let hay = String::from_utf8_lossy(&pdf);
+    let verts: Vec<_> = pdf_fill_boxes_in(&hay, 0.0, 0.0, 1.0)
+        .into_iter()
+        .filter(|(_, _, w, h)| *w < 6.0 && *h > 400.0)
+        .collect();
+    assert!(
+        !verts.is_empty(),
+        "text-offset left border; verts={verts:?}"
+    );
+    let x = verts[0].0;
+    assert!(
+        (40.0..60.0).contains(&x),
+        "margin 72 - space 24 = 48 (hairline centered); x={x} verts={verts:?}"
+    );
+}
+
+#[test]
 fn body_pbdr_bottom_paints_a_rule() {
     // sample_document / eigenpal: 14 heading paras carry
     // `<w:pBdr><w:bottom … color="E2E8F0"/>`. Header chrome already
