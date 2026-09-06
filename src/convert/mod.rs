@@ -1175,6 +1175,7 @@ enum ShapeGeom {
     Round2SameRect,
     Snip2DiagRect,
     Round2DiagRect,
+    Ribbon,
 }
 
 enum ImageKind {
@@ -6107,6 +6108,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "round2SameRect" => ShapeGeom::Round2SameRect,
         "snip2DiagRect" => ShapeGeom::Snip2DiagRect,
         "round2DiagRect" => ShapeGeom::Round2DiagRect,
+        "ribbon" => ShapeGeom::Ribbon,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9098,6 +9100,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Ribbon => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: ribbon_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9274,6 +9282,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Round2SameRect
                 | ShapeGeom::Snip2DiagRect
                 | ShapeGeom::Round2DiagRect
+                | ShapeGeom::Ribbon
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9331,6 +9340,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Round2SameRect => round2_same_rect_points(x, y, dw, dh),
                             ShapeGeom::Snip2DiagRect => snip2_diag_rect_points(x, y, dw, dh),
                             ShapeGeom::Round2DiagRect => round2_diag_rect_points(x, y, dw, dh),
+                            ShapeGeom::Ribbon => ribbon_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -12275,6 +12285,62 @@ fn round2_diag_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     cur = (0.0, x1);
     pts.push(map(cur.0, cur.1));
     ooxml_arc_to_y_down(&mut cur, x1, x1, CD2, CD4, &mut pts, map);
+    pts
+}
+
+fn ribbon_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML ribbon adj1=16667 adj2=50000: down-pointing banner with
+    // mid-height notches. First fill path only (folds later).
+    const CD4: f32 = 5_400_000.0;
+    const CD2: f32 = 10_800_000.0;
+    const CD3_4: f32 = 16_200_000.0;
+    let wd8 = w / 8.0;
+    let wd32 = (w / 32.0).max(0.5);
+    let hc = w * 0.5;
+    let dx2 = w * 50_000.0 / 200_000.0;
+    let x2 = hc - dx2;
+    let x9 = hc + dx2;
+    let x3 = x2 + wd32;
+    let x8 = x9 - wd32;
+    let x5 = x2 + wd8;
+    let x6 = x9 - wd8;
+    let x4 = x5 - wd32;
+    let x7 = x6 + wd32;
+    let x10 = w - wd8;
+    let y1 = h * 16_667.0 / 200_000.0;
+    let y2 = h * 16_667.0 / 100_000.0;
+    let y4 = h - y2;
+    let y3 = y4 * 0.5;
+    let hr = (h * 16_667.0 / 400_000.0).max(0.5);
+    let y5 = h - hr;
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut cur = (0.0, 0.0);
+    let mut pts = vec![map(cur.0, cur.1)];
+    cur = (x4, 0.0);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, wd32, hr, CD3_4, CD2, &mut pts, map);
+    cur = (x3, y1);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, wd32, hr, CD3_4, -CD2, &mut pts, map);
+    cur = (x8, y2);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, wd32, hr, CD4, -CD2, &mut pts, map);
+    cur = (x7, y1);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, wd32, hr, CD4, CD2, &mut pts, map);
+    pts.push(map(w, 0.0));
+    pts.push(map(x10, y3));
+    pts.push(map(w, y4));
+    pts.push(map(x9, y4));
+    cur = (x9, y5);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, wd32, hr, 0.0, CD4, &mut pts, map);
+    cur = (x3, h);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, wd32, hr, CD4, CD4, &mut pts, map);
+    pts.push(map(x2, y4));
+    pts.push(map(0.0, y4));
+    pts.push(map(wd8, y3));
     pts
 }
 
@@ -15833,6 +15899,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn ribbon_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="ribbon"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=ribbon must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn wave_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -16805,6 +16910,27 @@ mod drawing_tests {
             !pts.iter()
                 .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
             "must not include the sharp bottom-right corner; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn ribbon_points_have_mid_height_notches() {
+        let pts = ribbon_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 20, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 100.0).abs() < 0.05,
+            "moveTo (l,t) is PDF top-left; {start:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 12.5).abs() < 0.2 && (*py - 58.333).abs() < 0.5),
+            "left notch at (wd8, y3); {pts:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 87.5).abs() < 0.2 && (*py - 58.333).abs() < 0.5),
+            "right notch at (x10, y3); {pts:?}"
         );
     }
 
