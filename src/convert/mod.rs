@@ -3846,6 +3846,15 @@ fn apply_latent_ppr(style_id: &str, para: &mut ParaStyle, run: &mut RunStyle, th
             run.size = 11.0;
             run.family = major;
         }
+        "Heading5" => {
+            run.italic = true;
+            run.size = 11.0;
+            run.family = major;
+        }
+        "Heading6" => {
+            run.size = 11.0;
+            run.family = major;
+        }
         _ => {}
     }
 }
