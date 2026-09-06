@@ -1271,6 +1271,21 @@ fn twip(v: f32) -> f32 {
     v / 20.0
 }
 
+/// Word Save-as-PDF A4 is 595.2×841.92 pt for `pgSz` 11906×16838 twips
+/// (plan.md Step 10 I). Linear twip/20 is 595.3×841.9.
+fn word_pgsz_pt(raw: &str, pt: f32) -> f32 {
+    let Ok(twips) = raw.trim().parse::<f32>() else {
+        return pt;
+    };
+    if (twips - 11906.0).abs() < 0.5 {
+        595.2
+    } else if (twips - 16838.0).abs() < 0.5 {
+        841.92
+    } else {
+        pt
+    }
+}
+
 /// Explicit `w:tabs` first, then Word's 720-twip (0.5in) factory grid.
 /// `w:tab/@w:pos` is from the left margin (ECMA-376 17.3.1.38). Treating
 /// it as page-edge made sd_2517's 2520-twip Sumrio left tab sit at 126pt,
@@ -2277,11 +2292,11 @@ fn load_page_setup(dom: &Dom, body: NodeId, fallback: &PageSetup) -> PageSetup {
 fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
     let mut page = *fallback;
     if let Some(sz) = first_named(dom, sect, "pgSz") {
-        if let Some(w) = attr_any(dom, sz, "w").and_then(parse_len) {
-            page.width = w;
+        if let Some(raw) = attr_any(dom, sz, "w").and_then(|s| parse_len(s).map(|pt| (s, pt))) {
+            page.width = word_pgsz_pt(raw.0, raw.1);
         }
-        if let Some(h) = attr_any(dom, sz, "h").and_then(parse_len) {
-            page.height = h;
+        if let Some(raw) = attr_any(dom, sz, "h").and_then(|s| parse_len(s).map(|pt| (s, pt))) {
+            page.height = word_pgsz_pt(raw.0, raw.1);
         }
         if let Some(orient) = attr_any(dom, sz, "orient")
             && orient == "landscape"
