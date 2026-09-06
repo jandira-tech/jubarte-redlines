@@ -1176,6 +1176,7 @@ enum ShapeGeom {
     Snip2DiagRect,
     Round2DiagRect,
     Ribbon,
+    Ribbon2,
 }
 
 enum ImageKind {
@@ -6109,6 +6110,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "snip2DiagRect" => ShapeGeom::Snip2DiagRect,
         "round2DiagRect" => ShapeGeom::Round2DiagRect,
         "ribbon" => ShapeGeom::Ribbon,
+        "ribbon2" => ShapeGeom::Ribbon2,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9106,6 +9108,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Ribbon2 => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: ribbon2_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9283,6 +9291,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Snip2DiagRect
                 | ShapeGeom::Round2DiagRect
                 | ShapeGeom::Ribbon
+                | ShapeGeom::Ribbon2
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9341,6 +9350,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Snip2DiagRect => snip2_diag_rect_points(x, y, dw, dh),
                             ShapeGeom::Round2DiagRect => round2_diag_rect_points(x, y, dw, dh),
                             ShapeGeom::Ribbon => ribbon_points(x, y, dw, dh),
+                            ShapeGeom::Ribbon2 => ribbon2_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -12342,6 +12352,14 @@ fn ribbon_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     pts.push(map(0.0, y4));
     pts.push(map(wd8, y3));
     pts
+}
+
+fn ribbon2_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML ribbon2: vertical mirror of ribbon (up-pointing banner).
+    ribbon_points(x, y, w, h)
+        .into_iter()
+        .map(|(px, py)| (px, y + h - (py - y)))
+        .collect()
 }
 
 fn wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
@@ -15938,6 +15956,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn ribbon2_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="ribbon2"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=ribbon2 must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn wave_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -16930,6 +16987,28 @@ mod drawing_tests {
         assert!(
             pts.iter()
                 .any(|(px, py)| (*px - 87.5).abs() < 0.2 && (*py - 58.333).abs() < 0.5),
+            "right notch at (x10, y3); {pts:?}"
+        );
+    }
+
+    #[test]
+    fn ribbon2_points_are_a_vertical_mirror() {
+        // Start is PDF bottom-left (0,0); notches sit below mid-height.
+        let pts = ribbon2_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 20, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            start.0.abs() < 0.05 && start.1.abs() < 0.05,
+            "moveTo (l,b) is PDF bottom-left; {start:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 12.5).abs() < 0.2 && (*py - 41.667).abs() < 0.5),
+            "left notch at (wd8, y3); {pts:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 87.5).abs() < 0.2 && (*py - 41.667).abs() < 0.5),
             "right notch at (x10, y3); {pts:?}"
         );
     }
