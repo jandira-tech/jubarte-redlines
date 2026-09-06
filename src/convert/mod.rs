@@ -1134,6 +1134,10 @@ enum ShapeGeom {
     Star5,
     RtTriangle,
     UpDownArrow,
+    Heart,
+    Donut,
+    Frame,
+    FlowChartTerminator,
 }
 
 enum ImageKind {
@@ -6025,7 +6029,12 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "star5" => ShapeGeom::Star5,
         "rtTriangle" => ShapeGeom::RtTriangle,
         "upDownArrow" => ShapeGeom::UpDownArrow,
+        "heart" => ShapeGeom::Heart,
+        "donut" => ShapeGeom::Donut,
+        "frame" => ShapeGeom::Frame,
+        "flowChartTerminator" => ShapeGeom::FlowChartTerminator,
         "flowChartDecision" => ShapeGeom::Diamond,
+        "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
     }
 }
@@ -8742,6 +8751,30 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Heart => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: heart_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::Donut => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: donut_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::Frame => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: frame_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::FlowChartTerminator => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: flow_chart_terminator_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8791,6 +8824,10 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Star5
                 | ShapeGeom::RtTriangle
                 | ShapeGeom::UpDownArrow
+                | ShapeGeom::Heart
+                | ShapeGeom::Donut
+                | ShapeGeom::Frame
+                | ShapeGeom::FlowChartTerminator
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -8809,6 +8846,12 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Star5 => star5_points(x, y, dw, dh),
                             ShapeGeom::RtTriangle => rt_triangle_points(x, y, dw, dh),
                             ShapeGeom::UpDownArrow => up_down_arrow_points(x, y, dw, dh),
+                            ShapeGeom::Heart => heart_points(x, y, dw, dh),
+                            ShapeGeom::Donut => donut_points(x, y, dw, dh),
+                            ShapeGeom::Frame => frame_points(x, y, dw, dh),
+                            ShapeGeom::FlowChartTerminator => {
+                                flow_chart_terminator_points(x, y, dw, dh)
+                            }
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -10820,6 +10863,109 @@ fn up_down_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     ]
 }
 
+fn sample_cubic(
+    p0: (f32, f32),
+    p1: (f32, f32),
+    p2: (f32, f32),
+    p3: (f32, f32),
+    steps: i32,
+    out: &mut Vec<(f32, f32)>,
+) {
+    for i in 1..=steps {
+        let t = i as f32 / steps as f32;
+        let u = 1.0 - t;
+        let uu = u * u;
+        let tt = t * t;
+        out.push((
+            uu * u * p0.0 + 3.0 * uu * t * p1.0 + 3.0 * u * tt * p2.0 + tt * t * p3.0,
+            uu * u * p0.1 + 3.0 * uu * t * p1.1 + 3.0 * u * tt * p2.1 + tt * t * p3.1,
+        ));
+    }
+}
+
+fn heart_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML heart: M hc,hd4 C x3,y1 x4,hd4 hc,b C x1,hd4 x2,y1 hc,hd4.
+    // y1 = t − hd3 sits above the box; PDF y-up flips OOXML y-down.
+    let hc = x + w * 0.5;
+    let dx1 = w * 49.0 / 48.0;
+    let dx2 = w * 10.0 / 48.0;
+    let x1 = hc - dx1;
+    let x2 = hc - dx2;
+    let x3 = hc + dx2;
+    let x4 = hc + dx1;
+    let py = |yd: f32| y + h - yd;
+    let hd4 = h * 0.25;
+    let y1 = -h / 3.0;
+    let start = (hc, py(hd4));
+    let bottom = (hc, py(h));
+    let mut pts = vec![start];
+    sample_cubic(start, (x3, py(y1)), (x4, py(hd4)), bottom, 8, &mut pts);
+    sample_cubic(bottom, (x1, py(hd4)), (x2, py(y1)), start, 8, &mut pts);
+    pts
+}
+
+fn donut_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML donut adj=25000: outer ellipse, inner ellipse reverse (one contour).
+    const STEPS: i32 = 24;
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let rx = (w * 0.5).max(0.5);
+    let ry = (h * 0.5).max(0.5);
+    let dr = preset_ss(w, h) * 25_000.0 / 100_000.0;
+    let irx = (rx - dr).max(0.5);
+    let iry = (ry - dr).max(0.5);
+    let mut pts = Vec::with_capacity(STEPS as usize * 2);
+    for i in 0..STEPS {
+        let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
+        pts.push((cx + rx * a.cos(), cy + ry * a.sin()));
+    }
+    for i in (0..STEPS).rev() {
+        let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
+        pts.push((cx + irx * a.cos(), cy + iry * a.sin()));
+    }
+    pts
+}
+
+fn frame_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML frame adj1=12500: outer rect with inner rect cut.
+    let x1 = preset_ss(w, h) * 12_500.0 / 100_000.0;
+    vec![
+        (x, y),
+        (x + w, y),
+        (x + w, y + h),
+        (x, y + h),
+        (x, y + x1),
+        (x + x1, y + x1),
+        (x + x1, y + h - x1),
+        (x + w - x1, y + h - x1),
+        (x + w - x1, y + x1),
+        (x + x1, y + x1),
+        (x, y + x1),
+    ]
+}
+
+fn flow_chart_terminator_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML flowChartTerminator in 21600 space: stadium, rx=3475, ry=10800.
+    const STEPS: i32 = 8;
+    let rx = w * 3475.0 / 21_600.0;
+    let ry = h * 0.5;
+    let cy = y + ry;
+    let mut pts = vec![(x + rx, y + h), (x + w - rx, y + h)];
+    let rcx = x + w - rx;
+    for i in 1..=STEPS {
+        let t = i as f32 / STEPS as f32;
+        let a = std::f32::consts::FRAC_PI_2 * (1.0 - 2.0 * t);
+        pts.push((rcx + rx * a.cos(), cy + ry * a.sin()));
+    }
+    let lcx = x + rx;
+    for i in 1..=STEPS {
+        let t = i as f32 / STEPS as f32;
+        let a = -std::f32::consts::FRAC_PI_2 - std::f32::consts::PI * t;
+        pts.push((lcx + rx * a.cos(), cy + ry * a.sin()));
+    }
+    pts
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -12674,6 +12820,162 @@ mod drawing_tests {
     }
 
     #[test]
+    fn heart_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="heart"/>
+        <a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=heart must not collapse to Box"
+        );
+    }
+
+    #[test]
+    fn donut_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="donut"/>
+        <a:solidFill><a:srgbClr val="00AAFF"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=donut must not collapse to Box"
+        );
+    }
+
+    #[test]
+    fn frame_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="frame"/>
+        <a:solidFill><a:srgbClr val="333333"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=frame must not collapse to Box"
+        );
+    }
+
+    #[test]
+    fn flow_chart_terminator_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="900000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="flowChartTerminator"/>
+        <a:solidFill><a:srgbClr val="0070C0"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=flowChartTerminator must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn bent_connector_reads_triangle_tail_end() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -12845,6 +13147,57 @@ mod drawing_tests {
         let x1 = 29.289;
         assert!((pts[1].0 - x1).abs() < 0.02 && (pts[1].1 - 100.0).abs() < 0.02);
         assert!((pts[3].0 - 100.0).abs() < 0.02 && (pts[3].1 - (100.0 - x1)).abs() < 0.02);
+    }
+
+    #[test]
+    fn heart_points_cleft_and_bottom_tip() {
+        let pts = heart_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 16, "{}", pts.len());
+        assert!((pts[0].0 - 50.0).abs() < 0.05 && (pts[0].1 - 75.0).abs() < 0.05);
+        assert!((pts[8].0 - 50.0).abs() < 0.05 && pts[8].1.abs() < 0.05);
+        assert!(
+            !pts.iter().any(|(x, y)| (x.abs() < 0.05 && y.abs() < 0.05)
+                || ((x - 100.0).abs() < 0.05 && y.abs() < 0.05)),
+            "heart must not include bbox corners; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn donut_points_have_inner_and_outer_radii() {
+        let pts = donut_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 48);
+        assert!((pts[0].0 - 100.0).abs() < 0.05 && (pts[0].1 - 50.0).abs() < 0.05);
+        let inner = pts[47];
+        assert!((inner.0 - 75.0).abs() < 0.05 && (inner.1 - 50.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn frame_points_cut_an_inner_rect() {
+        let pts = frame_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 11);
+        assert!(pts[0].0.abs() < 0.01 && pts[0].1.abs() < 0.01);
+        assert!((pts[5].0 - 12.5).abs() < 0.01 && (pts[5].1 - 12.5).abs() < 0.01);
+        assert!((pts[7].0 - 87.5).abs() < 0.01 && (pts[7].1 - 87.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn terminator_points_omit_bbox_corners() {
+        let pts = flow_chart_terminator_points(0.0, 0.0, 100.0, 40.0);
+        assert!(pts.len() >= 16, "{}", pts.len());
+        let rx = 100.0 * 3475.0 / 21_600.0;
+        assert!((pts[0].0 - rx).abs() < 0.05 && (pts[0].1 - 40.0).abs() < 0.05);
+        assert!(
+            !pts.iter().any(|(x, y)| x.abs() < 0.05 && y.abs() < 0.05),
+            "stadium must not include the bbox corner; {pts:?}"
+        );
+        let left = pts
+            .iter()
+            .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+            .unwrap();
+        assert!(
+            left.0.abs() < 0.05 && (left.1 - 20.0).abs() < 1.0,
+            "{left:?}"
+        );
     }
 
     #[test]
