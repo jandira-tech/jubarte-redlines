@@ -13104,6 +13104,77 @@ fn display_background_shape_paints_document_background() {
     );
 }
 
+fn linked_para_styles(with_link: bool) -> String {
+    let link = if with_link {
+        "<w:link w:val=\"LinkedChar\"/>"
+    } else {
+        ""
+    };
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:style w:type=\"paragraph\" w:styleId=\"LinkedPara\">\
+             <w:name w:val=\"Linked Para\"/>\
+             {link}\
+           </w:style>\
+           <w:style w:type=\"character\" w:styleId=\"LinkedChar\">\
+             <w:name w:val=\"Linked Char\"/>\
+             <w:link w:val=\"LinkedPara\"/>\
+             <w:rPr>\
+               <w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+               <w:b/>\
+               <w:sz w:val=\"48\"/>\
+               <w:color w:val=\"FF0000\"/>\
+             </w:rPr>\
+           </w:style>\
+         </w:styles>"
+    )
+}
+
+#[test]
+fn paragraph_style_link_applies_linked_character_run_props() {
+    // xml leftover: styles.xml w:link (ECMA-376 17.7.4.6). A paragraph
+    // style with no rPr still takes the linked character style's face,
+    // size, bold, and color. rStyle overlay stays paint-only (KEEP).
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"LinkedPara\"/></w:pPr>\
+         <w:r><w:t>LinkCharX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let linked = docx_to_pdf(&docx_with_styles(body, &linked_para_styles(true)))
+        .expect("convert linked paragraph style");
+    let unlinked = docx_to_pdf(&docx_with_styles(body, &linked_para_styles(false)))
+        .expect("convert unlinked paragraph style");
+    let linked_text = pdf_winansi_text(&linked);
+    let hay = String::from_utf8_lossy(&linked);
+    assert!(
+        linked_text.contains("LinkCharX"),
+        "linked pStyle must paint the run; text={linked_text}"
+    );
+    assert!(
+        hay.contains("24.00 Tf") || hay.contains("24 Tf"),
+        "linked character sz=48 must paint 24pt; tail {}",
+        &hay[hay.len().saturating_sub(280)..]
+    );
+    assert!(
+        hay.contains("1.000 0.000 0.000 rg"),
+        "linked character color FF0000 must paint red; tail {}",
+        &hay[hay.len().saturating_sub(280)..]
+    );
+    assert!(
+        hay.contains("/Arial") || hay.contains("/LiberationSans"),
+        "linked character Arial must embed (Liberation Sans when DFonts absent); tail {}",
+        &hay[hay.len().saturating_sub(280)..]
+    );
+    let plain = String::from_utf8_lossy(&unlinked);
+    assert!(
+        !plain.contains("24.00 Tf") && !plain.contains("24 Tf"),
+        "without w:link the empty paragraph style must not take 24pt; tail {}",
+        &plain[plain.len().saturating_sub(280)..]
+    );
+}
+
 #[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";
