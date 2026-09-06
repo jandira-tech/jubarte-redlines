@@ -13412,6 +13412,57 @@ fn referenced_endnote_is_painted() {
 }
 
 #[test]
+fn endnote_pr_sect_end_paints_notes_before_next_section() {
+    // plan.md Step 10 F: w:endnotePr/w:pos=sectEnd dumps notes at the
+    // section boundary, not after the whole body (docEnd). Separator
+    // and in-body markers stay unpainted (mini 619 / 487 KEEP).
+    let body = "<w:p><w:r><w:t>SectOneX</w:t></w:r>\
+           <w:r><w:endnoteReference w:id=\"1\"/></w:r></w:p>\
+         <w:p><w:pPr><w:sectPr>\
+           <w:type w:val=\"continuous\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/>\
+           <w:endnotePr><w:pos w:val=\"sectEnd\"/></w:endnotePr>\
+         </w:sectPr></w:pPr></w:p>\
+         <w:p><w:r><w:t>SectTwoX</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let notes = "<w:endnote w:type=\"separator\" w:id=\"-1\">\
+           <w:p><w:r><w:separator/></w:r></w:p></w:endnote>\
+         <w:endnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p/></w:endnote>\
+         <w:endnote w:id=\"1\"><w:p><w:r><w:t>NoteAtEndX</w:t></w:r></w:p></w:endnote>";
+    let pdf = docx_to_pdf(&endnotes_docx(body, notes)).expect("convert sectEnd endnotes");
+    let painted = pdf_winansi_text(&pdf);
+    assert!(
+        painted.contains("NoteAtEndX"),
+        "endnote body must paint; painted={painted}"
+    );
+    assert!(
+        painted.contains("SectTwoX"),
+        "section-two body must paint; painted={painted}"
+    );
+    let note_at = painted
+        .find("NoteAtEndX")
+        .expect("NoteAtEndX in paint stream");
+    let two_at = painted.find("SectTwoX").expect("SectTwoX in paint stream");
+    assert!(
+        note_at < two_at,
+        "sectEnd paints the note before the next section; painted={painted}"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    let hair: Vec<(f32, f32, f32, f32)> = pdf_fill_boxes_in(&hay, 0.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(_, _, w, h)| (*w - 144.0).abs() < 2.0 && (*h - 0.72).abs() < 0.15)
+        .collect();
+    assert!(
+        hair.is_empty(),
+        "mini 619 separator stays unpainted; hair={hair:?}"
+    );
+}
+
+#[test]
 fn endnote_ref_in_note_body_stays_unpainted_after_mini_663() {
     // Word Strict01 p13 paints w:endnoteRef as lowerRoman "i" in the
     // note body. Mini 663–664 did that and ITT-neg'd NR mean −0.0002
