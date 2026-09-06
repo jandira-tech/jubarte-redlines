@@ -64,9 +64,19 @@ fn mini_word(line: &str) -> bool {
     false
 }
 
-/// Markdown pipe-table rows keyed by `file:line`.
-fn audit_rows(body: &str) -> HashMap<String, (char, String)> {
-    let mut rows = HashMap::new();
+struct AuditRow {
+    file: String,
+    symbol: String,
+    class: char,
+    disposition: String,
+}
+
+/// Markdown pipe-table rows keyed by `file:line`, plus the raw rows.
+/// Line numbers are informational: stacked convert PRs insert above a
+/// site and bitrot exact keys. Disposition cells store the source excerpt.
+fn audit_table(body: &str) -> (HashMap<String, (char, String)>, Vec<AuditRow>) {
+    let mut by_line = HashMap::new();
+    let mut rows = Vec::new();
     for line in body.lines() {
         let line = line.trim();
         if !line.starts_with('|') || line.contains("---") {
@@ -81,13 +91,38 @@ fn audit_rows(body: &str) -> HashMap<String, (char, String)> {
         }
         let file = cells[0];
         let line_no = cells[1];
+        let symbol = cells[2].trim().to_string();
         let class = cells[3].chars().next().unwrap_or('?').to_ascii_lowercase();
         let disposition = cells[4].to_string();
         if file.starts_with("src/") && line_no.chars().all(|c| c.is_ascii_digit()) {
-            rows.insert(format!("{file}:{line_no}"), (class, disposition));
+            by_line.insert(format!("{file}:{line_no}"), (class, disposition.clone()));
+            rows.push(AuditRow {
+                file: file.to_string(),
+                symbol,
+                class,
+                disposition,
+            });
         }
     }
-    rows
+    (by_line, rows)
+}
+
+fn excerpt_hit<'a>(rows: &'a [AuditRow], file: &str, excerpt: &str) -> Option<&'a AuditRow> {
+    if excerpt.is_empty() {
+        return None;
+    }
+    rows.iter().find(|row| {
+        if row.file != file {
+            return false;
+        }
+        if row.disposition.contains(excerpt) {
+            return true;
+        }
+        // Comments get a parenthetical in a later PR; the table symbol
+        // still names the site (Aptos-only gate after #111).
+        let sym = row.symbol.trim();
+        !sym.is_empty() && excerpt.contains(sym)
+    })
 }
 
 #[test]
@@ -104,11 +139,17 @@ fn tuning_audit_covers_every_mini_comment_site() {
         path.is_file() && !body.is_empty(),
         "TUNING_AUDIT.md must exist at crate root (plan Step 8)"
     );
-    let rows = audit_rows(&body);
+    let (by_line, rows) = audit_table(&body);
     let mut missing = Vec::new();
     for (file, line, excerpt) in &sites {
         let key = format!("{file}:{line}");
-        match rows.get(&key) {
+        let hit = by_line
+            .get(&key)
+            .map(|(class, disp)| (*class, disp.as_str()))
+            .or_else(|| {
+                excerpt_hit(&rows, file, excerpt).map(|row| (row.class, row.disposition.as_str()))
+            });
+        match hit {
             None => missing.push(format!("{key}  {excerpt}")),
             Some((class, disp)) => {
                 assert!(
@@ -125,6 +166,23 @@ fn tuning_audit_covers_every_mini_comment_site() {
         missing.len(),
         missing.join("\n")
     );
+}
+
+#[test]
+fn tuning_audit_excerpt_covers_shifted_line() {
+    // Stacked convert PRs insert above a mini site; file:line keys go stale.
+    let body = "\
+| file | line | symbol | class | disposition |\n\
+|---|---|---|---|\n\
+| src/convert/mod.rs | 1 | mini 0 | b | KEEP. // unique-shifted-excerpt |\n";
+    let (by_line, rows) = audit_table(body);
+    assert!(
+        !by_line.contains_key("src/convert/mod.rs:99"),
+        "shifted line must not hit the stale file:line key"
+    );
+    let hit = excerpt_hit(&rows, "src/convert/mod.rs", "// unique-shifted-excerpt")
+        .expect("disposition stores the source excerpt");
+    assert_eq!(hit.class, 'b');
 }
 
 #[test]
