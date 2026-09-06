@@ -1167,6 +1167,7 @@ enum ShapeGeom {
     RightBracket,
     LeftBrace,
     RightBrace,
+    BracePair,
 }
 
 enum ImageKind {
@@ -6091,6 +6092,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "rightBracket" => ShapeGeom::RightBracket,
         "leftBrace" => ShapeGeom::LeftBrace,
         "rightBrace" => ShapeGeom::RightBrace,
+        "bracePair" => ShapeGeom::BracePair,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9034,6 +9036,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::BracePair => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: brace_pair_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9202,6 +9210,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::RightBracket
                 | ShapeGeom::LeftBrace
                 | ShapeGeom::RightBrace
+                | ShapeGeom::BracePair
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9251,6 +9260,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::RightBracket => right_bracket_points(x, y, dw, dh),
                             ShapeGeom::LeftBrace => left_brace_points(x, y, dw, dh),
                             ShapeGeom::RightBrace => right_brace_points(x, y, dw, dh),
+                            ShapeGeom::BracePair => brace_pair_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -12033,6 +12043,43 @@ fn right_brace_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
         .into_iter()
         .map(|(px, py)| (x + w - (px - x), py))
         .collect()
+}
+
+fn brace_pair_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML bracePair adj=8333: "{ }" as one closed fill path.
+    const CD4: f32 = 5_400_000.0;
+    const CD2: f32 = 10_800_000.0;
+    const CD3_4: f32 = 16_200_000.0;
+    let x1 = (preset_ss(w, h) * 8_333.0 / 100_000.0).max(0.5);
+    let x2 = x1 * 2.0;
+    let x3 = w - x2;
+    let x4 = w - x1;
+    let vc = h * 0.5;
+    let y2 = vc - x1;
+    let y3 = vc + x1;
+    let y4 = h - x1;
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut cur = (x2, h);
+    let mut pts = vec![map(cur.0, cur.1)];
+    ooxml_arc_to_y_down(&mut cur, x1, x1, CD4, CD4, &mut pts, map);
+    cur = (x1, y3);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, x1, x1, 0.0, -CD4, &mut pts, map);
+    ooxml_arc_to_y_down(&mut cur, x1, x1, CD4, -CD4, &mut pts, map);
+    cur = (x1, x1);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, x1, x1, CD2, CD4, &mut pts, map);
+    cur = (x3, 0.0);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, x1, x1, CD3_4, CD4, &mut pts, map);
+    cur = (x4, y2);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, x1, x1, CD2, -CD4, &mut pts, map);
+    ooxml_arc_to_y_down(&mut cur, x1, x1, CD3_4, -CD4, &mut pts, map);
+    cur = (x4, y4);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, x1, x1, 0.0, CD4, &mut pts, map);
+    pts
 }
 
 fn wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
@@ -15278,6 +15325,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn brace_pair_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="bracePair"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=bracePair must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn wave_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -16042,6 +16128,27 @@ mod drawing_tests {
             pts.iter()
                 .any(|(px, py)| *px > 99.0 && (*py - 50.0).abs() < 2.0),
             "mid cusp sits on the right edge; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn brace_pair_points_have_left_and_right_cusps() {
+        let pts = brace_pair_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 24, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            (start.0 - 16.667).abs() < 0.05 && start.1.abs() < 0.05,
+            "moveTo (x2,b) is PDF bottom inset; {start:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| *px < 1.0 && (*py - 50.0).abs() < 2.0),
+            "left cusp on the left edge; {pts:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| *px > 99.0 && (*py - 50.0).abs() < 2.0),
+            "right cusp on the right edge; {pts:?}"
         );
     }
 
