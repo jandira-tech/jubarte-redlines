@@ -24,6 +24,8 @@ use crate::xmllinq::{Dom, NodeId, XName};
 
 use font::{FaceId, Fonts};
 
+pub use font::{FontReportEntry, FontStep, font_report_json};
+
 #[cfg(test)]
 fn fonts() -> &'static Fonts {
     use std::sync::LazyLock;
@@ -70,6 +72,16 @@ pub struct PdfOptions {
     pub compress: bool,
 }
 
+/// Rendered PDF plus the distinct font resolutions for this document.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConvertedPdf {
+    /// Rendered PDF (`%PDF` header).
+    pub pdf: Vec<u8>,
+    /// Per-document font report (plan Step 2f): one row per distinct
+    /// requested family + style.
+    pub font_report: Vec<FontReportEntry>,
+}
+
 /// Render a DOCX package to PDF with the default options.
 pub fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, ConvertError> {
     docx_to_pdf_with(docx, PdfOptions::default())
@@ -77,6 +89,19 @@ pub fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, ConvertError> {
 
 /// Render a DOCX package to PDF, choosing how streams are written.
 pub fn docx_to_pdf_with(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, ConvertError> {
+    Ok(docx_to_pdf_report(docx, options)?.pdf)
+}
+
+/// Render a DOCX package to PDF and return the font-resolution report.
+pub fn docx_to_pdf_report(docx: &[u8], options: PdfOptions) -> Result<ConvertedPdf, ConvertError> {
+    let (result, font_report) = font::with_font_report(|| docx_to_pdf_inner(docx, options));
+    Ok(ConvertedPdf {
+        pdf: result?,
+        font_report,
+    })
+}
+
+fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, ConvertError> {
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
     let pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;

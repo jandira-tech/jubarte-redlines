@@ -169,6 +169,10 @@ enum Command {
         /// cannot be read with `strings` or `grep`.
         #[arg(long)]
         compress: bool,
+        /// Write a JSON font-resolution report (`[{requested, step, physical,
+        /// bold, italic, synthetic}, …]`) for this document (plan Step 2f).
+        #[arg(long, value_name = "FILE")]
+        font_report: Option<PathBuf>,
     },
 }
 
@@ -205,21 +209,30 @@ fn run_convert(
     output: Option<&Path>,
     force: bool,
     compress: bool,
+    font_report: Option<&Path>,
 ) -> Result<(), String> {
     let output = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| file.with_extension("pdf"));
     ensure_writable(&output, force)?;
+    if let Some(report) = font_report {
+        ensure_writable(report, force)?;
+    }
     let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
     let options = jubarte::convert::PdfOptions { compress };
-    let pdf = jubarte::convert::docx_to_pdf_with(&bytes, options)
+    let converted = jubarte::convert::docx_to_pdf_report(&bytes, options)
         .map_err(|e| format!("convert failed: {e}"))?;
-    std::fs::write(&output, &pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
-    let pages = jubarte::convert::pdf_page_count(&pdf);
+    std::fs::write(&output, &converted.pdf)
+        .map_err(|e| format!("writing {}: {e}", output.display()))?;
+    if let Some(report) = font_report {
+        let json = jubarte::convert::font_report_json(&converted.font_report);
+        std::fs::write(report, json).map_err(|e| format!("writing {}: {e}", report.display()))?;
+    }
+    let pages = jubarte::convert::pdf_page_count(&converted.pdf);
     println!(
         "wrote {} ({} bytes, {pages} page{})",
         output.display(),
-        pdf.len(),
+        converted.pdf.len(),
         if pages == 1 { "" } else { "s" }
     );
     Ok(())
@@ -397,8 +410,15 @@ fn main() -> ExitCode {
             output,
             force,
             compress,
+            font_report,
         }) => {
-            return exit_code(run_convert(&file, output.as_deref(), force, compress));
+            return exit_code(run_convert(
+                &file,
+                output.as_deref(),
+                force,
+                compress,
+                font_report.as_deref(),
+            ));
         }
         None => {}
     }
@@ -646,5 +666,81 @@ mod tests {
             Some(Command::Revisions { file, .. }) => assert_eq!(file, PathBuf::from("b.docx")),
             other => panic!("expected revisions subcommand, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn convert_subcommand_parses_font_report() {
+        let cli = Cli::try_parse_from([
+            "jubarte",
+            "convert",
+            "in.docx",
+            "--font-report",
+            "out.json",
+            "-o",
+            "out.pdf",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Convert {
+                file,
+                output,
+                font_report,
+                compress,
+                force,
+            }) => {
+                assert_eq!(file, PathBuf::from("in.docx"));
+                assert_eq!(output.as_deref(), Some(Path::new("out.pdf")));
+                assert_eq!(font_report.as_deref(), Some(Path::new("out.json")));
+                assert!(!compress && !force);
+            }
+            other => panic!("expected convert subcommand, got {other:?}"),
+        }
+    }
+
+    fn tiny_docx_bytes(family: &str) -> Vec<u8> {
+        use std::io::{Cursor, Write};
+        let mut buf = Vec::new();
+        {
+            let mut z = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let opt = zip::write::SimpleFileOptions::default();
+            z.start_file("[Content_Types].xml", opt).unwrap();
+            z.write_all(
+                br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#,
+            )
+            .unwrap();
+            z.start_file("_rels/.rels", opt).unwrap();
+            z.write_all(
+                br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdM" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+            )
+            .unwrap();
+            z.start_file("word/document.xml", opt).unwrap();
+            let doc = format!(
+                r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:rFonts w:ascii="{family}" w:hAnsi="{family}"/></w:rPr><w:t>HELLO</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>"#
+            );
+            z.write_all(doc.as_bytes()).unwrap();
+            z.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn convert_font_report_writes_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let docx = dir.path().join("in.docx");
+        let pdf = dir.path().join("out.pdf");
+        let report = dir.path().join("fonts.json");
+        std::fs::write(&docx, tiny_docx_bytes("DefinitelyNotAFont")).expect("docx");
+        run_convert(&docx, Some(&pdf), false, false, Some(&report)).expect("convert");
+        assert!(pdf.exists());
+        let json = std::fs::read_to_string(&report).expect("report");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+        let rows = v.as_array().expect("array");
+        assert!(
+            rows.iter().any(|row| {
+                row.get("requested").and_then(|x| x.as_str()) == Some("DefinitelyNotAFont")
+                    && row.get("step").and_then(|x| x.as_str()) == Some("unknown")
+            }),
+            "report missing unknown family: {json}"
+        );
     }
 }
