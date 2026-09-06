@@ -898,6 +898,7 @@ struct DiagShape {
 enum ChartKind {
     Bar,
     Pie,
+    Line,
 }
 
 struct ChartData {
@@ -5631,9 +5632,15 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
     let doc = dom.parse_xdocument(xml);
     let root = dom.root(doc)?;
     let is_pie = !descendants_local(&dom, root, "pieChart").is_empty();
+    let is_line = !descendants_local(&dom, root, "lineChart").is_empty();
     let host = descendants_local(&dom, root, "pieChart")
         .into_iter()
         .next()
+        .or_else(|| {
+            descendants_local(&dom, root, "lineChart")
+                .into_iter()
+                .next()
+        })
         .or_else(|| descendants_local(&dom, root, "barChart").into_iter().next())
         .unwrap_or(root);
     let mut cats = Vec::new();
@@ -5686,6 +5693,8 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
         legend,
         kind: if is_pie {
             ChartKind::Pie
+        } else if is_line {
+            ChartKind::Line
         } else {
             ChartKind::Bar
         },
@@ -9950,6 +9959,7 @@ impl<'a> Layout<'a> {
         if let Some(chart) = &box_.chart {
             match chart.kind {
                 ChartKind::Pie => self.emit_chart_pie(x, y, dw, dh, chart),
+                ChartKind::Line => self.emit_chart_line(x, y, dw, dh, chart),
                 ChartKind::Bar => self.emit_chart_bars(x, y, dw, dh, chart),
             }
         }
@@ -10153,6 +10163,55 @@ impl<'a> Layout<'a> {
             [0.35, 0.35, 0.35],
             text,
         ));
+    }
+
+    fn emit_chart_line(&mut self, x: f32, y: f32, dw: f32, dh: f32, chart: &ChartData) {
+        self.current().ops.push(Op::FillRect {
+            x,
+            y,
+            w: dw,
+            h: dh,
+            color: [1.0, 1.0, 1.0],
+        });
+        if !chart.title.is_empty() {
+            let face = self.fonts.get(FaceId::CarlitoRegular);
+            let tw = face.width_pt(&chart.title, 14.0);
+            let tx = x + ((dw - tw) / 2.0).max(4.0);
+            self.emit_label(&chart.title, 14.0, tx, y + dh - 22.0);
+        }
+        let max_v = chart
+            .series
+            .iter()
+            .flatten()
+            .copied()
+            .fold(0.0_f32, f32::max)
+            .max(1.0);
+        let axis_max = {
+            let ceil = max_v.ceil();
+            if (max_v - ceil).abs() < 0.05 {
+                (ceil + 1.0).max(1.0)
+            } else {
+                ceil.max(1.0)
+            }
+        };
+        let plot_x = x + 20.0;
+        let plot_y = y + 43.0;
+        let plot_w = (dw - 32.0).max(8.0);
+        let plot_h = (dh - 80.0).max(8.0);
+        for (si, ser) in chart.series.iter().enumerate() {
+            let color = chart.colors.get(si).copied().unwrap_or([0.5, 0.5, 0.5]);
+            let pts = line_chart_polyline_points(plot_x, plot_y, plot_w, plot_h, ser, axis_max);
+            for pair in pts.windows(2) {
+                self.current().ops.push(Op::Line {
+                    x1: pair[0].0,
+                    y1: pair[0].1,
+                    x2: pair[1].0,
+                    y2: pair[1].1,
+                    width: 1.5,
+                    color,
+                });
+            }
+        }
     }
 
     fn emit_chart_pie(&mut self, x: f32, y: f32, dw: f32, dh: f32, chart: &ChartData) {
@@ -13265,6 +13324,30 @@ fn cloud_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
         ooxml_arc_to_y_down(&mut cur, wr, hr, st, sw, &mut pts, map);
     }
     pts
+}
+
+fn line_chart_polyline_points(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    values: &[f32],
+    axis_max: f32,
+) -> Vec<(f32, f32)> {
+    let n = values.len() as f32;
+    if n < 1.0 {
+        return Vec::new();
+    }
+    let axis_max = axis_max.max(1.0);
+    values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let px = x + (i as f32 + 0.5) / n * w;
+            let py = y + (v.max(0.0) / axis_max) * h;
+            (px, py)
+        })
+        .collect()
 }
 
 fn pie_chart_wedge_points(
@@ -20947,6 +21030,47 @@ mod drawing_tests {
         assert!(
             (pts[0].1 - (y + dh * 0.75)).abs() < 0.02 && (pts[6].1 - (y + dh * 0.25)).abs() < 0.02,
             "shaft is the middle 50%; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn parse_line_chart_kind_is_line() {
+        let xml = r#"<?xml version="1.0"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart><c:plotArea><c:lineChart>
+  <c:ser>
+    <c:cat><c:strLit>
+      <c:pt idx="0"><c:v>A</c:v></c:pt>
+      <c:pt idx="1"><c:v>B</c:v></c:pt>
+    </c:strLit></c:cat>
+    <c:val><c:numLit>
+      <c:pt idx="0"><c:v>1</c:v></c:pt>
+      <c:pt idx="1"><c:v>3</c:v></c:pt>
+    </c:numLit></c:val>
+  </c:ser>
+</c:lineChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let data = parse_chart(xml).expect("line");
+        assert_eq!(
+            data.kind,
+            ChartKind::Line,
+            "c:lineChart must not parse as Bar"
+        );
+        assert_eq!(data.series.len(), 1);
+        assert!((data.series[0][0] - 1.0).abs() < 0.01);
+        assert!((data.series[0][1] - 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn line_chart_polyline_points_follow_values() {
+        let pts = line_chart_polyline_points(0.0, 0.0, 100.0, 40.0, &[0.0, 4.0], 4.0);
+        assert_eq!(pts.len(), 2, "{pts:?}");
+        assert!(
+            (pts[0].0 - 25.0).abs() < 0.05 && pts[0].1.abs() < 0.05,
+            "{pts:?}"
+        );
+        assert!(
+            (pts[1].0 - 75.0).abs() < 0.05 && (pts[1].1 - 40.0).abs() < 0.05,
+            "{pts:?}"
         );
     }
 
