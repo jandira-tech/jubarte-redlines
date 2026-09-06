@@ -207,6 +207,58 @@ mod tests {
     }
 
     #[test]
+    fn font_table_parses_every_embedded_face_slot() {
+        let table = parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                         xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                 <w:font w:name="Embedded">
+                   <w:embedRegular r:id="rIdRegular" w:fontKey="regular-key"/>
+                   <w:embedBold r:id="rIdBold" w:fontKey="bold-key"/>
+                   <w:embedItalic r:id="rIdItalic" w:fontKey="italic-key"/>
+                   <w:embedBoldItalic r:id="rIdBoldItalic" w:fontKey="bold-italic-key"/>
+                 </w:font>
+               </w:fonts>"#,
+        );
+        let entry = table.get("Embedded").expect("embedded font row");
+        assert_eq!(
+            entry.embedded,
+            [
+                Some(("rIdRegular".into(), "regular-key".into())),
+                Some(("rIdBold".into(), "bold-key".into())),
+                Some(("rIdItalic".into(), "italic-key".into())),
+                Some(("rIdBoldItalic".into(), "bold-italic-key".into())),
+            ]
+        );
+    }
+
+    #[test]
+    fn font_table_ignores_invalid_rows_and_defaults_invalid_metadata() {
+        let table = parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                         xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                         xmlns:x="urn:not-wordprocessingml">
+                 <w:font><w:altName w:val="Cambria"/></w:font>
+                 <x:font w:name="WrongNamespace"><w:altName w:val="Cambria"/></x:font>
+                 <w:font w:name="Malformed">
+                   <w:altName w:val=""/>
+                   <w:family w:val="unknown"/>
+                   <w:pitch w:val="unknown"/>
+                   <w:panose1 w:val="not-a-panose"/>
+                   <w:embedRegular w:fontKey="key-without-rid"/>
+                 </w:font>
+               </w:fonts>"#,
+        );
+
+        assert!(table.get("WrongNamespace").is_none());
+        let entry = table.get("Malformed").expect("valid named row");
+        assert!(table.alt_name("Malformed").is_none());
+        assert_eq!(entry.family, FontFamilyClass::Auto);
+        assert_eq!(entry.pitch, Pitch::Default);
+        assert_eq!(entry.panose, None);
+        assert_eq!(entry.embedded, [None, None, None, None]);
+    }
+
+    #[test]
     fn font_table_empty_xml_is_empty() {
         assert!(parse_font_table_xml("<w:fonts/>").get("x").is_none());
     }

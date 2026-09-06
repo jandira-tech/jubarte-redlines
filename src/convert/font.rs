@@ -1017,4 +1017,65 @@ mod tests {
             FaceId::CarlitoRegular
         );
     }
+
+    #[test]
+    fn resolve_follows_altname_chain_and_preserves_style() {
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="GhostA"><w:altName w:val="GhostB"/></w:font>
+                 <w:font w:name="GhostB"><w:altName w:val="Cambria"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        for (bold, italic, expected) in [
+            (false, false, FaceId::CambriaRegular),
+            (true, false, FaceId::CambriaBold),
+            (false, true, FaceId::CambriaItalic),
+            (true, true, FaceId::CambriaBoldItalic),
+        ] {
+            assert_eq!(
+                fonts.resolve_in("ghosta", bold, italic, &table),
+                expected,
+                "style must survive a case-insensitive multi-hop altName lookup"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_font_table_scope_restores_outer_table() {
+        let outer = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="SomeRare"><w:altName w:val="Cambria"/></w:font>
+               </w:fonts>"#,
+        );
+        let inner = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="SomeRare"><w:altName w:val="Consolas"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+
+        with_font_table(outer, || {
+            assert_eq!(
+                fonts.resolve("SomeRare", false, false),
+                FaceId::CambriaRegular
+            );
+            with_font_table(inner, || {
+                assert_eq!(
+                    fonts.resolve("SomeRare", false, false),
+                    FaceId::ConsolasRegular
+                );
+            });
+            assert_eq!(
+                fonts.resolve("SomeRare", false, false),
+                FaceId::CambriaRegular,
+                "leaving an inner conversion must restore the outer font table"
+            );
+        });
+        assert_eq!(
+            fonts.resolve("SomeRare", false, false),
+            FaceId::CarlitoRegular,
+            "leaving all conversion scopes must restore the default table"
+        );
+    }
 }
