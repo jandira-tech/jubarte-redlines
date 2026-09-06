@@ -22,7 +22,7 @@ use crate::namespaces::{A, M, MC, R, W, W14, WNE, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
-use font::{FaceId, Fonts};
+use font::{Face, FaceId, Fonts};
 
 pub use font::{FontReportEntry, FontStep, font_report_json};
 
@@ -292,6 +292,9 @@ struct ParaStyle {
     /// `w:spacing w:lineRule="exact"` in points. Word uses this as the
     /// line box (sd_2517 Ttulo1 line=400 → 20pt), not size×(line/11).
     line_exact: Option<f32>,
+    /// `w:spacing w:lineRule="atLeast"` in points. Word uses
+    /// max(natural face line, this spec).
+    line_at_least: Option<f32>,
     indent_left: f32,
     indent_right: f32,
     indent_first: f32,
@@ -515,6 +518,7 @@ impl Defaults {
                 before: 0.0,
                 line_mult: 276.0 / 240.0,
                 line_exact: None,
+                line_at_least: None,
                 indent_left: 0.0,
                 indent_right: 0.0,
                 indent_first: 0.0,
@@ -1560,11 +1564,8 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
                 } else {
                     style.line_exact = None;
                     if rule == "atLeast" {
-                        // max(spec, natural) + line_mult=1 packed Cicero
-                        // 5→4pp (mini 92: keep 5). Flooring the box at
-                        // spec (mini 203) dropped image_out_of_folder
-                        // / file_48 −1.68 each. Keep spec/11 as mult.
-                        style.line_mult = (twip(v) / 11.0).max(0.8);
+                        style.line_at_least = Some(twip(v));
+                        style.line_mult = 1.0;
                     } else {
                         style.line_mult = v / 240.0;
                     }
@@ -2652,6 +2653,26 @@ fn leftover_break_heading(style_id: &str) -> bool {
     style_id.to_ascii_lowercase().starts_with("textheading")
 }
 
+/// Word auto line box: face line spacing × (`w:line`/240). Exact is
+/// `w:line`/20 pt. atLeast is max(natural, spec). Headings and TOC
+/// use the same formula (plan Step 4 / Finding D).
+fn para_line_box(metrics: &Face, size: f32, style: &ParaStyle) -> f32 {
+    let size = if size > 0.0 { size } else { 11.0 };
+    let natural = metrics.single_line_pt(size);
+    if let Some(exact) = style.line_exact {
+        exact
+    } else if let Some(at_least) = style.line_at_least {
+        natural.max(at_least)
+    } else {
+        let m = if style.line_mult > 0.0 {
+            style.line_mult
+        } else {
+            1.0
+        };
+        natural * m
+    }
+}
+
 fn is_toc_style(style: &ParaStyle) -> bool {
     // Word built-in toc 1..9 (`TOC1` / localized `Sumrio2`). Not
     // DocumentTOC (exact 20pt title) and not body Times.
@@ -2839,14 +2860,10 @@ fn keep_lines_need_pt(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle, width:
         return 0.0;
     }
     let size = runs.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
-    let line_h = style.line_exact.unwrap_or_else(|| {
-        let m = if style.line_mult > 0.0 {
-            style.line_mult
-        } else {
-            1.0
-        };
-        size * m
+    let face = runs.first().map_or(FaceId::CarlitoRegular.into(), |r| {
+        fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
     });
+    let line_h = para_line_box(fonts.get(face), size, style);
     line_h * lines.len() as f32
 }
 
@@ -2907,31 +2924,6 @@ fn block_is_blank(block: &Block) -> bool {
         Block::Table { rows, .. } => rows.is_empty(),
         Block::PageBreak { .. } => true,
     }
-}
-
-fn is_short_table_title(runs: &[TextRun]) -> bool {
-    let mut n = 0usize;
-    for run in runs {
-        if run.text.contains('\n') {
-            return false;
-        }
-        n += run.text.chars().count();
-        if n > 80 {
-            return false;
-        }
-    }
-    n > 0
-}
-
-fn blank_run_then_table(blocks: &[Block], start: usize) -> bool {
-    let mut j = start;
-    while j < blocks.len()
-        && matches!(&blocks[j], Block::Paragraph { .. })
-        && block_is_blank(&blocks[j])
-    {
-        j += 1;
-    }
-    matches!(blocks.get(j), Some(Block::Table { .. }))
 }
 
 fn para_base(dom: &Dom, para: NodeId, sheet: &StyleSheet, in_table: bool) -> (ParaStyle, RunStyle) {
@@ -5971,6 +5963,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         before: 0.0,
         line_mult: 1.0,
         line_exact: None,
+        line_at_least: None,
         indent_left: 0.0,
         indent_right: 0.0,
         indent_first: 0.0,
@@ -6549,7 +6542,6 @@ impl<'a> Layout<'a> {
         runs: &[TextRun],
         style: &ParaStyle,
         list: bool,
-        compact_title: bool,
         wrap_left: f32,
         wrap_right: f32,
     ) {
@@ -6600,15 +6592,6 @@ impl<'a> Layout<'a> {
                 FaceId::CarlitoRegular.into()
             };
             let metrics = self.fonts.get(face);
-            // Title before blank+table: Word auto line is size*1.15.
-            // em-box*1.15 is +2.8pt and drops the grid. Do not shrink
-            // empty spacers (they already match soffice ~25.4pt) or
-            // general body (sd_2517 / Strict01 pairing).
-            let line_mult = if style.line_mult > 0.0 {
-                style.line_mult
-            } else {
-                1.0
-            };
             if style.empty_toc_field && line.iter().all(|r| r.text.trim().is_empty()) {
                 // Mini 504 collapse-to-zero ITT-neg. Do not use ascent
                 // leftover (that re-inflates to ~ascent+1). Word Tip y≈93
@@ -6618,49 +6601,7 @@ impl<'a> Layout<'a> {
                 self.y -= box_h;
                 continue;
             }
-            // Word Quartz auto leading is size×line_mult. Cambria's typo
-            // lineGap (353) makes single_line_pt×1.15 ~5.6pt taller than
-            // the 32pt Inter title (sample_document / eigenpal). Calibri
-            // single_line ≈ em, so other faces keep the em-box path.
-            // Title/Arial size×1.15 was ITT-wrong: mini 74 dropped
-            // blue_centered_title 95→88; mini 75 dropped file_170 −2.5.
-            // TOC (Sumrio/toc N): Word Times 12 / line=240 is size×1.15
-            // (13.80; Quartz 13.92). Body Times stays typo 12.71 —
-            // size×1.15 on Normal still blows file_22 107→116 after
-            // leftover skip / live PAGEREF. Arial 12 size×1.15 matches
-            // Word 13.8 / file_34 2pp
-            // but mini 86 dropped heading_3_center 97→94, file_34 −0.86,
-            // uipriority −1.40. Keep typo×line_mult.
-            let line_box = if let Some(exact) = style.line_exact {
-                exact
-            } else if is_toc_style(style) {
-                size * line_mult.max(1.15)
-            } else if is_word_heading_style(style) && line_mult >= 1.14 {
-                // Calibri/Carlito typo lineGap already encodes ~122% leading
-                // (2500/2048). Auto 276 (×1.15) on top of that was +3pt per
-                // Heading1/2 so file_34 / uipriority sat ~1 para low of Word.
-                // Arial Heading2 (heading_2_style_demo, Word gap 39.12) still
-                // wants typo×1.15 — size×1.15 drops that grid to 36.4.
-                if face.is_arial() {
-                    metrics.single_line_pt(size) * line_mult
-                } else {
-                    metrics.single_line_pt(size)
-                }
-            } else if compact_title
-                || face.is_cambria()
-                || ((face.is_arial() || face.is_times()) && line_mult >= 1.14)
-            {
-                // Word Quartz *auto* 276 leading is size×1.15 (Arial 12 /
-                // Times 12 → 13.8pt box). sd_2517 document.xml overrides
-                // 65 paras to line=276; typo×1.15 was ~14.6. em-box×1.15
-                // added ~1.5pt/line on file_34 (3pp vs Word 2). Do not use
-                // size×1.0 on line=240 Arial (file_22 / sd_2517 TOC+body:
-                // 107→104) or size×1.15 on Times line=240 (107→116). Glyph
-                // size stays 12 — paint_size×1.15 was ITT-wrong (mini 86).
-                size * line_mult
-            } else {
-                metrics.single_line_pt(size) * line_mult
-            };
+            let line_box = para_line_box(metrics, size, style);
             let ascent = metrics.ascent_pt(size);
             self.ensure(line_box.max(ascent + 2.0));
             if let Some(fill) = style.fill {
@@ -9098,14 +9039,6 @@ fn layout(
                 {
                     style.before = 0.0;
                 }
-                // Compact the title line (not the blanks). Soffice empty
-                // <w:p/> is already ~25.4pt = em-box*1.15+after; shrinking
-                // those overshoots hr/q1 (two blanks). The extra ~2.8pt is
-                // the title's em-box vs size*1.15.
-                let compact_title = !block_is_blank(block)
-                    && is_short_table_title(runs)
-                    && i + 1 < blocks.len()
-                    && blank_run_then_table(blocks, i + 1);
                 if style.keep_next {
                     let sz = runs.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
                     let follow = blocks
@@ -9173,7 +9106,7 @@ fn layout(
                     }
                 } else if has_ink || (images.is_empty() && boxes.is_empty()) || !skip_empty_line {
                     let (wrap_left, wrap_right) = lay.wrap_square_inset(images, boxes);
-                    lay.emit_runs(runs, &style, *list, compact_title, wrap_left, wrap_right);
+                    lay.emit_runs(runs, &style, *list, wrap_left, wrap_right);
                 } else if !lay.at_page_top || !lay.suppress_space_before {
                     lay.y -= style.before;
                     lay.at_page_top = false;
@@ -12219,5 +12152,46 @@ mod comments_spacing_tests {
             return runs.first().map(|r| r.style.family.clone());
         }
         None
+    }
+
+    #[test]
+    fn para_line_box_is_face_metrics_times_multiplier_for_every_family() {
+        let fonts = fonts();
+        let mut style = super::Defaults::word().para;
+        style.line_mult = 276.0 / 240.0;
+        style.line_exact = None;
+        style.line_at_least = None;
+        style.style_id = "Heading1".into();
+        for family in ["Calibri", "Arial", "Times New Roman", "Cambria", "Georgia"] {
+            let id = fonts.resolve(family, false, false);
+            let face = fonts.get(id);
+            let want = face.single_line_pt(12.0) * style.line_mult;
+            let got = super::para_line_box(face, 12.0, &style);
+            assert!(
+                (got - want).abs() < 0.01,
+                "{family}: got {got} want {want} (no per-face/heading special case)"
+            );
+        }
+    }
+
+    #[test]
+    fn para_line_box_exact_is_spec_not_metrics() {
+        let fonts = fonts();
+        let mut style = super::Defaults::word().para;
+        style.line_exact = Some(20.0);
+        let face = fonts.get(FaceId::CarlitoRegular);
+        assert!((super::para_line_box(face, 16.0, &style) - 20.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn para_line_box_at_least_is_max_of_natural_and_spec() {
+        let fonts = fonts();
+        let mut style = super::Defaults::word().para;
+        style.line_mult = 1.0;
+        style.line_at_least = Some(30.0);
+        let face = fonts.get(FaceId::CarlitoRegular);
+        let natural = face.single_line_pt(11.0);
+        assert!(natural < 30.0, "precondition natural={natural}");
+        assert!((super::para_line_box(face, 11.0, &style) - 30.0).abs() < 0.01);
     }
 }

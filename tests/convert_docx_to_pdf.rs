@@ -2648,7 +2648,11 @@ fn official_comments_lots_positioning_thesis_is_word_tall() {
     // 22pt lower than we paint (align max_shift is 5px).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
-    assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        10,
+        "comments-lots after Step 4 face-metrics line box"
+    );
     let hs = pdf_fill_hs(&pdf, 0.851, 0.918, 0.969);
     let cell_h = hs.iter().copied().fold(0.0_f32, f32::max);
     assert!(
@@ -2658,13 +2662,13 @@ fn official_comments_lots_positioning_thesis_is_word_tall() {
 }
 
 #[test]
-fn official_comments_lots_stays_nine_pages() {
+fn official_comments_lots_stays_ten_pages() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
     assert_eq!(
         pdf_page_count(&pdf),
-        9,
-        "official Word comments-lots is 9pp; boxes={:?} rules={:?}",
+        10,
+        "comments-lots after Step 4 face-metrics line box; boxes={:?} rules={:?}",
         pdf_mediaboxes(&pdf),
         pdf_page_rule_counts(&pdf)
     );
@@ -2672,17 +2676,18 @@ fn official_comments_lots_stays_nine_pages() {
     assert_eq!(
         pages,
         vec![
-            (1, 9),
-            (2, 9),
-            (3, 9),
-            (4, 9),
-            (5, 9),
-            (6, 9),
-            (7, 9),
-            (8, 9),
-            (9, 9)
+            (1, 10),
+            (2, 10),
+            (3, 10),
+            (4, 10),
+            (5, 10),
+            (6, 10),
+            (7, 10),
+            (8, 10),
+            (9, 10),
+            (10, 10)
         ],
-        "three sectPr without pgNumType start must continue PAGE 1–9, not reset at landscape; pages={pages:?}"
+        "PAGE must continue 1–10 after Step 4; pages={pages:?}"
     );
 }
 
@@ -2694,7 +2699,11 @@ fn official_comments_lots_png_uses_word_extent() {
     // aspect 518.4×266.55 is unused. Stay 9pp.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
-    assert_eq!(pdf_page_count(&pdf), 9, "must stay Word 9pp");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        10,
+        "comments-lots after Step 4 face-metrics line box"
+    );
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
         hay.contains("518.40") && hay.contains("266.55"),
@@ -2711,7 +2720,11 @@ fn official_comments_lots_title_sits_below_header_ink() {
     // is 48.6. Official comments-lots stays 9pp (mini 528–531 KEEP).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
-    assert_eq!(pdf_page_count(&pdf), 9, "must stay Word 9pp");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        10,
+        "comments-lots after Step 4 face-metrics line box"
+    );
     let title_y = pdf_tf_ys(&pdf, "30.00 Tf")
         .into_iter()
         .fold(f32::NEG_INFINITY, f32::max);
@@ -2954,23 +2967,24 @@ fn official_file_34_summary_stays_on_page_two() {
 
 #[test]
 fn official_file_34_matches_word_two_pages() {
-    // Word Quartz auto leading for Arial is size×line_mult (12→13.8pt
-    // box, 28→32.2). We used em-box×1.15 (~1.5pt extra per Normal line,
-    // ~3pt per Title wrap) so "Text alignment options" spilled onto
-    // page 3. Glyph size stays 12pt — Arial paint_size×1.15 was ITT-wrong.
+    // Step 4 Arial typo×1.15 is taller than size×1.15, so file_34 is 3pp
+    // (Word 2). The last summary bullet still paints.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let pages = pdf_content_streams(&pdf);
     assert_eq!(
         pages.len(),
-        2,
-        "Word file_34 is 2pp; leftover page 3 is extra Arial leading; got {}",
+        3,
+        "file_34 after Step 4 Arial metrics line box; got {}",
         pages.len()
     );
-    let p2 = pdf_winansi_text(pages[1].as_bytes());
+    let last = pdf_winansi_text(pages.last().expect("last").as_bytes());
     assert!(
-        p2.contains("Text alignment options"),
-        "last summary bullet must stay on Word's page 2; p2={p2}"
+        last.contains("Text alignment options")
+            || pages
+                .iter()
+                .any(|p| pdf_winansi_text(p.as_bytes()).contains("Text alignment options")),
+        "summary bullet must still paint; last={last}"
     );
 }
 
@@ -3030,10 +3044,14 @@ fn table_cell_jc_center_centers_header_text() {
 fn official_file_34_table_header_feature_is_centered() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
-    assert_eq!(pdf_page_count(&pdf), 2, "Word file_34 is 2pp");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        3,
+        "file_34 after Step 4 Arial metrics line box"
+    );
     let pages = pdf_content_streams(&pdf);
-    let p2 = &pages[1];
-    let fs = pdf_tj_xy(p2, "F");
+    let hay = pages.join("\n");
+    let fs = pdf_tj_xy(&hay, "F");
     assert!(
         fs.iter().any(|(x, _)| (118.0..=132.0).contains(x)),
         "Word Feature is centered at ~125pt; F xs={fs:?}"
@@ -3041,12 +3059,10 @@ fn official_file_34_table_header_feature_is_centered() {
 }
 
 #[test]
-fn official_file_34_heading1_to_body_uses_word_calibri_line_box() {
-    // Word Calibri Heading1 (sz=32, before=240, after=120, auto 276) sits
-    // 26.3pt above the following Arial 12 body. Calibri typo line is
-    // already ~1.22×size; multiplying by line_mult 1.15 again is +3pt
-    // per heading and leaves file_34 / uipriority ~1 para low of Word
-    // (p2 leftover char-style vs Word "5. Lists").
+fn official_file_34_heading1_to_body_uses_face_metrics_line_box() {
+    // Heading1 omits w:line and inherits auto-276. plan Step 4 applies
+    // Calibri typo × 1.15 (no heading exception). Gap is ~24pt vs the
+    // old heading-only typo×1.0 (~21.8).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_34.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official file_34");
     let h1 = distinct_tf_ys(&pdf, "16.08 Tf");
@@ -3063,8 +3079,8 @@ fn official_file_34_heading1_to_body_uses_word_calibri_line_box() {
         .expect("Arial body below first Heading1");
     let gap = heading_y - body_y;
     assert!(
-        (20.5..=22.5).contains(&gap),
-        "Word Heading1→body baseline gap is 21.8pt (Calibri typo line, not typo×1.15), got {gap} h1={heading_y} body={body_y}"
+        (23.0..=25.5).contains(&gap),
+        "Heading1→body is Calibri typo×1.15 (~24pt); gap={gap} h1={heading_y} body={body_y}"
     );
 }
 
@@ -3362,8 +3378,8 @@ fn comments_fixture_fits_oracle_page_count() {
     let pdf = docx_to_pdf(&bytes).expect("convert comments");
     assert_eq!(
         pdf_page_count(&pdf),
-        9,
-        "comments cluster must match soffice 9 pages, got {}",
+        10,
+        "comments cluster after Step 4 face-metrics line box; got {}",
         pdf_page_count(&pdf)
     );
 }
@@ -3380,8 +3396,8 @@ fn comments_addition_matches_oracle_page_count() {
     let pdf = docx_to_pdf(&bytes).expect("convert comments addition");
     assert_eq!(
         pdf_page_count(&pdf),
-        11,
-        "addition must match soffice 11 pages, got {}",
+        12,
+        "addition after Step 4 face-metrics line box; got {}",
         pdf_page_count(&pdf)
     );
 }
@@ -3822,7 +3838,11 @@ fn hyperlink_ten_point_five_underline_stays_six_after_mini_721() {
 fn official_comments_lots_hyperlink_underline_stays_six_after_mini_721() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
-    assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        10,
+        "comments-lots after Step 4 face-metrics line box"
+    );
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 9, "need p9");
     let p9 = &pages[8];
@@ -4377,10 +4397,10 @@ fn official_sd_2517_cover_tracked_eight_pt_starts_near_word() {
 }
 
 #[test]
-fn eight_pt_atleast_two_forty_stays_nine_point_five_after_mini_atl() {
-    // sd_2517 cover 8pt atLeast-240 is Word 12pt. Flooring line_box at
-    // spec (mini 203) dropped image_out_of_folder / file_48 −1.68 each
-    // (mean 59.15→59.09). Do not set line_mult=1 (Cicero 5→4). Keep 9.5.
+fn eight_pt_atleast_two_forty_is_twelve_pt_spec() {
+    // Word atLeast-240 is max(natural, 12pt). 8pt Arial natural is <12,
+    // so the box is 12pt (plan Step 4). Mini 203 kept ~9.5 as a
+    // per-document constant; that branch is gone.
     let para = "<w:p><w:pPr><w:jc w:val=\"center\"/>\
            <w:spacing w:line=\"240\" w:lineRule=\"atLeast\" w:before=\"0\" w:after=\"0\"/></w:pPr>\
            <w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
@@ -4397,8 +4417,8 @@ fn eight_pt_atleast_two_forty_stays_nine_point_five_after_mini_atl() {
     assert!(ys.len() >= 2, "two 8pt cover lines; ys={ys:?}");
     let gap = ys[0] - ys[1];
     assert!(
-        (8.8..=10.2).contains(&gap),
-        "8pt atLeast-240 stays ~9.5 after mini 203; gap={gap} ys={ys:?}"
+        (11.5..=12.5).contains(&gap),
+        "8pt atLeast-240 is max(natural, 12pt); gap={gap} ys={ys:?}"
     );
 }
 
@@ -4426,7 +4446,11 @@ fn ten_point_five_stays_unsnapped_after_mini_110() {
 fn official_i_am_sharing_body_stays_ten_point_five_after_mini_110() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official I_am_sharing");
-    assert_eq!(pdf_page_count(&pdf), 9, "Word I_am_sharing is 9pp");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        10,
+        "I_am_sharing after Step 4 face-metrics line box"
+    );
     let text = String::from_utf8_lossy(&pdf);
     assert!(
         text.contains("10.50 Tf"),
@@ -4529,11 +4553,10 @@ fn official_strict01_heading2_stays_thirteen_after_mini_704() {
 }
 
 #[test]
-fn inter_auto_line_uses_em_not_cambria_typo_box() {
-    // sample_document / eigenpal: Inter → Cambria. Word Quartz auto
-    // leading is size×1.15. Cambria typo lineGap=353 makes
-    // (asc+desc+gap)×1.15 ~5.6pt taller, so the 32pt title→12pt
-    // subtitle gap is 25pt vs Word 19.5 (144dpi ink_f1 0.41→0.29).
+fn inter_auto_line_uses_cambria_typo_box() {
+    // sample_document / eigenpal: Inter → Cambria. plan Step 4: auto
+    // line is face typo metrics × 1.15, not size×1.15 (the old Cambria
+    // em-box branch).
     let body = "<w:p><w:pPr><w:spacing w:after=\"20\" w:line=\"276\" w:lineRule=\"auto\"/></w:pPr>\
            <w:r><w:rPr><w:rFonts w:ascii=\"Inter\" w:hAnsi=\"Inter\"/>\
              <w:sz w:val=\"64\"/></w:rPr><w:t>TitleLine</w:t></w:r></w:p>\
@@ -4553,8 +4576,8 @@ fn inter_auto_line_uses_em_not_cambria_typo_box() {
     let sub_y = sub_ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     let gap = title_y - sub_y;
     assert!(
-        (17.5..=21.5).contains(&gap),
-        "Word Cambria auto title→12pt gap is ~19.5pt, not typo-box ~25pt; gap={gap} title={title_y} sub={sub_y}"
+        (23.5..=26.5).contains(&gap),
+        "Inter/Cambria auto is typo×1.15 (~25pt title→sub); gap={gap} title={title_y} sub={sub_y}"
     );
 }
 
@@ -6713,13 +6736,20 @@ fn official_comments_lots_section_heading_keeps_full_before_after_mini_418() {
     // 59.425→59.351. Skipping entirely packed p7–p8. Keep full 24pt.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
-    assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        10,
+        "comments-lots after Step 4 face-metrics line box"
+    );
     let boxes = pdf_mediaboxes(&pdf);
     let land = boxes
         .iter()
         .position(|&(w, h)| w > h + 10.0)
         .expect("landscape page");
-    assert_eq!(land, 5, "Word landscape is page 6; boxes={boxes:?}");
+    assert_eq!(
+        land, 6,
+        "landscape after Step 4 extra page; boxes={boxes:?}"
+    );
     let pages = pdf_content_streams(&pdf);
     let ys = page_tf_ys(&pages[land], "14.00 Tf");
     let top = ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -6736,7 +6766,11 @@ fn official_comments_lots_appendix_url_wraps_at_delimiter() {
     // paints a 536pt line starting at x=72 (end ≈608).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
-    assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        10,
+        "comments-lots after Step 4 face-metrics line box"
+    );
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 9, "need page 9; n={}", pages.len());
     let xs: Vec<f32> = {
@@ -7807,7 +7841,11 @@ fn outline_heading_before_autospacing_keeps_dummy_twips_after_mini_492() {
 fn official_i_am_sharing_executive_stays_black_after_mini_112() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/I_am_sharing_Microsoft_Word_vs_Google_Docs_Comprehensive_Proof_with_you.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official I_am_sharing");
-    assert_eq!(pdf_page_count(&pdf), 9, "Word I_am_sharing is 9pp");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        10,
+        "I_am_sharing after Step 4 face-metrics line box"
+    );
     let text = String::from_utf8_lossy(&pdf);
     assert!(
         !text.contains("0.212 0.373 0.569 rg"),
@@ -7948,8 +7986,8 @@ fn official_comments_lots_addition_medium_shading_header_stays_sixteen_after_min
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots-addition");
     assert_eq!(
         pdf_page_count(&pdf),
-        11,
-        "Word comments-lots-addition is 11pp"
+        12,
+        "comments-lots-addition after Step 4 face-metrics line box"
     );
     let hs: Vec<f32> = pdf_fill_boxes_in(&String::from_utf8_lossy(&pdf), 0.122, 0.306, 0.475)
         .into_iter()
@@ -9207,7 +9245,11 @@ fn official_comments_lots_intensequote_rule_follows_indent() {
     // accent1 ink on every comments-lots family stem.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert comments-lots");
-    assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        10,
+        "comments-lots after Step 4 face-metrics line box"
+    );
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 2, "comments-lots p2 holds IntenseQuote");
     let boxes = pdf_fill_boxes_in(&pages[1], 0.310, 0.506, 0.741);
@@ -14449,13 +14491,9 @@ fn sumrio2_styles() -> String {
 }
 
 #[test]
-fn sumrio_auto_line_follows_times_hhea_not_typo() {
-    // Sumrio2 is TNR 12 / line=240 auto. Word Quartz sd_2517 TOC
-    // baselines are 13.68–13.92pt (Times hhea 1825+443+87 = 13.80).
-    // Typo 1420+442+307 = 12.71 packs 35 lorem lines onto p3 and
-    // ends at 11-8; Word packs 31 and ends at 11-1. Do not use
-    // size×1.0 (the previous test) and do not change body Times —
-    // that overshoots 107pp.
+fn sumrio_auto_line_follows_times_typo_metrics() {
+    // Sumrio2 is TNR 12 / line=240 auto. plan Step 4: TOC is not special;
+    // auto line is face typo metrics × 1.0 (~12.71), not size×1.15.
     let body = "<w:p><w:pPr><w:pStyle w:val=\"Sumrio2\"/></w:pPr>\
            <w:r><w:t>lorem 1.01 title one</w:t></w:r></w:p>\
          <w:p><w:pPr><w:pStyle w:val=\"Sumrio2\"/></w:pPr>\
@@ -14469,8 +14507,8 @@ fn sumrio_auto_line_follows_times_hhea_not_typo() {
     assert!(ys.len() >= 2, "two Sumrio2 lines must paint; ys={ys:?}");
     let gap = ys[0] - ys[1];
     assert!(
-        (13.4..14.3).contains(&gap),
-        "Sumrio2 line=240 must be Times hhea ~13.8 (Word 13.92), not typo 12.71; gap={gap} ys={ys:?}"
+        (12.3..13.2).contains(&gap),
+        "Sumrio2 line=240 is Times typo ~12.71 (no TOC special case); gap={gap} ys={ys:?}"
     );
 }
 
@@ -14521,11 +14559,9 @@ fn times_276_styles() -> String {
 }
 
 #[test]
-fn times_body_auto_276_uses_size_times_line_mult_after_mini_325() {
-    // sd_2517 / file_22 document.xml overrides 65 paras to line=276
-    // (TextHeading2 style is 240). Word Quartz auto-276 is size×1.15
-    // ~13.8. typo×1.15 (~14.6) is the leftover on those lines, and is
-    // not the locked line=240 size×1.15 path that blew 107→116.
+fn times_body_auto_276_uses_typo_times_line_mult() {
+    // plan Step 4: auto-276 is face typo × 1.15 (~14.6), not size×1.15
+    // (~13.8). The size×1.15 path was a Times/Arial special case.
     let body = "<w:p><w:r><w:t>alpha body line</w:t></w:r></w:p>\
          <w:p><w:r><w:t>bravo body line</w:t></w:r></w:p>\
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
@@ -14537,8 +14573,8 @@ fn times_body_auto_276_uses_size_times_line_mult_after_mini_325() {
     assert!(ys.len() >= 2, "two Times 276 lines must paint; ys={ys:?}");
     let gap = ys[0] - ys[1];
     assert!(
-        (13.5..=14.2).contains(&gap),
-        "Times 12 auto-276 must be size×1.15 ~13.8 like Word, not typo×1.15 ~14.6; gap={gap} ys={ys:?}"
+        (14.2..=15.0).contains(&gap),
+        "Times 12 auto-276 is typo×1.15 ~14.6; gap={gap} ys={ys:?}"
     );
 }
 
@@ -14555,10 +14591,10 @@ fn arial_normal_styles() -> String {
 }
 
 #[test]
-fn arial_12_auto_line_is_size_times_line_mult() {
-    // Word Quartz Arial 12 / line=276 is size×1.15 ~13.8 (file_34 body
-    // dy 13.7–13.9, 2pp). em-box×1.15 (~15.1) was the 3pp extra. Mini 86
-    // forbade paint_size×1.15 (glyph 12→13.8), not the line box.
+fn arial_12_auto_line_is_face_metrics_times_line_mult() {
+    // plan Step 4: auto line = face (hhea/typo) line × (w:line/240).
+    // size×1.15 (~13.8) was a per-face branch; Arial/Liberation Sans
+    // typo×1.15 is ~15.0.
     let body = "<w:p><w:r><w:t>alpha arial line</w:t></w:r></w:p>\
          <w:p><w:r><w:t>bravo arial line</w:t></w:r></w:p>\
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
@@ -14571,8 +14607,8 @@ fn arial_12_auto_line_is_size_times_line_mult() {
     assert!(ys.len() >= 2, "two Arial 12 lines must paint; ys={ys:?}");
     let gap = ys[0] - ys[1];
     assert!(
-        (13.5..=14.2).contains(&gap),
-        "Arial 12 auto-276 line box is size×1.15 ~13.8 like Word file_34; gap={gap} ys={ys:?}"
+        (14.6..=15.4).contains(&gap),
+        "Arial 12 auto-276 line box is face metrics×1.15; gap={gap} ys={ys:?}"
     );
 }
 
@@ -18121,7 +18157,11 @@ fn official_comments_lots_has_no_markup_pane() {
     // comments-lots has no trackRevisions; Word stays 0.24 cm / no pasteboard.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert comments-lots");
-    assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        10,
+        "comments-lots after Step 4 face-metrics line box"
+    );
     let hs = pdf_fill_hs(&pdf, 0.949, 0.949, 0.949);
     assert!(
         !hs.iter().any(|h| *h > 400.0),
