@@ -1182,6 +1182,7 @@ enum ShapeGeom {
     Star8,
     Star10,
     Star12,
+    Star16,
 }
 
 enum ImageKind {
@@ -6121,6 +6122,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "star8" => ShapeGeom::Star8,
         "star10" => ShapeGeom::Star10,
         "star12" => ShapeGeom::Star12,
+        "star16" => ShapeGeom::Star16,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9154,6 +9156,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Star16 => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: star16_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9337,6 +9345,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Star8
                 | ShapeGeom::Star10
                 | ShapeGeom::Star12
+                | ShapeGeom::Star16
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9403,6 +9412,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Star8 => star8_points(x, y, dw, dh),
                             ShapeGeom::Star10 => star10_points(x, y, dw, dh),
                             ShapeGeom::Star12 => star12_points(x, y, dw, dh),
+                            ShapeGeom::Star16 => star16_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11820,6 +11830,92 @@ fn star12_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
         (x + sx2, py(sy5)),
         (x + x1, py(y3)),
         (x + sx1, py(sy4)),
+    ]
+}
+
+fn star16_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML star16 adj=37500: 16 tips + 16 inner vertices.
+    let a = 37_500.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let dx1 = hc * 92_388.0 / 100_000.0;
+    let dx2 = hc * 70_711.0 / 100_000.0;
+    let dx3 = hc * 38_268.0 / 100_000.0;
+    let dy1 = vc * 92_388.0 / 100_000.0;
+    let dy2 = vc * 70_711.0 / 100_000.0;
+    let dy3 = vc * 38_268.0 / 100_000.0;
+    let x1 = hc - dx1;
+    let x2 = hc - dx2;
+    let x3 = hc - dx3;
+    let x4 = hc + dx3;
+    let x5 = hc + dx2;
+    let x6 = hc + dx1;
+    let y1 = vc - dy1;
+    let y2 = vc - dy2;
+    let y3 = vc - dy3;
+    let y4 = vc + dy3;
+    let y5 = vc + dy2;
+    let y6 = vc + dy1;
+    let iwd2 = hc * a / 50_000.0;
+    let ihd2 = vc * a / 50_000.0;
+    let sdx1 = iwd2 * 98_079.0 / 100_000.0;
+    let sdx2 = iwd2 * 83_147.0 / 100_000.0;
+    let sdx3 = iwd2 * 55_557.0 / 100_000.0;
+    let sdx4 = iwd2 * 19_509.0 / 100_000.0;
+    let sdy1 = ihd2 * 98_079.0 / 100_000.0;
+    let sdy2 = ihd2 * 83_147.0 / 100_000.0;
+    let sdy3 = ihd2 * 55_557.0 / 100_000.0;
+    let sdy4 = ihd2 * 19_509.0 / 100_000.0;
+    let sx1 = hc - sdx1;
+    let sx2 = hc - sdx2;
+    let sx3 = hc - sdx3;
+    let sx4 = hc - sdx4;
+    let sx5 = hc + sdx4;
+    let sx6 = hc + sdx3;
+    let sx7 = hc + sdx2;
+    let sx8 = hc + sdx1;
+    let sy1 = vc - sdy1;
+    let sy2 = vc - sdy2;
+    let sy3 = vc - sdy3;
+    let sy4 = vc - sdy4;
+    let sy5 = vc + sdy4;
+    let sy6 = vc + sdy3;
+    let sy7 = vc + sdy2;
+    let sy8 = vc + sdy1;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x, py(vc)),
+        (x + sx1, py(sy4)),
+        (x + x1, py(y3)),
+        (x + sx2, py(sy3)),
+        (x + x2, py(y2)),
+        (x + sx3, py(sy2)),
+        (x + x3, py(y1)),
+        (x + sx4, py(sy1)),
+        (x + hc, py(0.0)),
+        (x + sx5, py(sy1)),
+        (x + x4, py(y1)),
+        (x + sx6, py(sy2)),
+        (x + x5, py(y2)),
+        (x + sx7, py(sy3)),
+        (x + x6, py(y3)),
+        (x + sx8, py(sy4)),
+        (x + w, py(vc)),
+        (x + sx8, py(sy5)),
+        (x + x6, py(y4)),
+        (x + sx7, py(sy6)),
+        (x + x5, py(y5)),
+        (x + sx6, py(sy7)),
+        (x + x4, py(y6)),
+        (x + sx5, py(sy8)),
+        (x + hc, py(h)),
+        (x + sx4, py(sy8)),
+        (x + x3, py(y6)),
+        (x + sx3, py(sy7)),
+        (x + x2, py(y5)),
+        (x + sx2, py(sy6)),
+        (x + x1, py(y4)),
+        (x + sx1, py(sy5)),
     ]
 }
 
@@ -15063,6 +15159,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn star16_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="star16"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=star16 must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -16902,6 +17037,32 @@ mod drawing_tests {
         let top = pts[6];
         let right = pts[12];
         let bottom = pts[18];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 50.0).abs() < 0.05,
+            "start is (l,vc); {start:?}"
+        );
+        assert!(
+            (top.0 - 50.0).abs() < 0.05 && (top.1 - 100.0).abs() < 0.05,
+            "top tip is (hc,t); {top:?}"
+        );
+        assert!(
+            (right.0 - 100.0).abs() < 0.05 && (right.1 - 50.0).abs() < 0.05,
+            "right tip is (r,vc); {right:?}"
+        );
+        assert!(
+            (bottom.0 - 50.0).abs() < 0.05 && bottom.1.abs() < 0.05,
+            "bottom tip is (hc,b); {bottom:?}"
+        );
+    }
+
+    #[test]
+    fn star16_points_have_sixteen_tips() {
+        let pts = star16_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 32);
+        let start = pts[0];
+        let top = pts[8];
+        let right = pts[16];
+        let bottom = pts[24];
         assert!(
             start.0.abs() < 0.05 && (start.1 - 50.0).abs() < 0.05,
             "start is (l,vc); {start:?}"
