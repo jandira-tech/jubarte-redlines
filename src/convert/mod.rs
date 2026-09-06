@@ -782,6 +782,8 @@ struct SectionChrome {
     footer_images: Vec<LaidImage>,
     header_tables: Vec<ChromeTable>,
     footer_tables: Vec<ChromeTable>,
+    /// `w:mirrorMargins` (xml leftover).
+    mirror_margins: bool,
 }
 
 #[derive(Clone)]
@@ -3015,6 +3017,16 @@ fn settings_even_and_odd_headers(pkg: &PartFs) -> bool {
         && !xml.contains("evenAndOddHeaders w:val=\"false\"")
 }
 
+/// `w:mirrorMargins`: swap pgMar left/right on even page numbers.
+fn settings_mirror_margins(pkg: &PartFs) -> bool {
+    let Some(xml) = pkg.part_string("word/settings.xml") else {
+        return false;
+    };
+    xml.contains("mirrorMargins")
+        && !xml.contains("mirrorMargins w:val=\"0\"")
+        && !xml.contains("mirrorMargins w:val=\"false\"")
+}
+
 /// Word factory is 720 twips (0.5in). Strict01 writes `36pt`; mcdoc `420`.
 fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
     let xml = pkg.part_string("word/settings.xml")?;
@@ -3425,6 +3437,7 @@ fn section_chrome(
         footer_images: footer.start.images,
         header_tables: header.start.tables,
         footer_tables: footer.start.tables,
+        mirror_margins: settings_mirror_margins(pkg),
     }
 }
 
@@ -7102,6 +7115,7 @@ struct HfChrome {
     footer_images: Vec<LaidImage>,
     header_tables: Vec<ChromeTable>,
     footer_tables: Vec<ChromeTable>,
+    mirror_margins: bool,
 }
 
 fn first_section_hf(
@@ -7142,6 +7156,7 @@ fn first_section_hf(
         footer_images: footer.start.images,
         header_tables: header.start.tables,
         footer_tables: footer.start.tables,
+        mirror_margins: settings_mirror_margins(pkg),
     }
 }
 
@@ -7749,6 +7764,9 @@ struct Layout<'a> {
     footer_images: Vec<LaidImage>,
     header_tables: Vec<ChromeTable>,
     footer_tables: Vec<ChromeTable>,
+    mirror_margins: bool,
+    margin_l0: f32,
+    margin_r0: f32,
     placed_comments: HashSet<String>,
     /// Word clips table-cell ink at the cell’s right edge (file_146
     /// github underline ran ~46pt past the table when xml:space
@@ -7871,6 +7889,9 @@ impl<'a> Layout<'a> {
             footer_images: hf.footer_images,
             header_tables: hf.header_tables,
             footer_tables: hf.footer_tables,
+            mirror_margins: hf.mirror_margins,
+            margin_l0: page.margin_l,
+            margin_r0: page.margin_r,
             placed_comments: HashSet::new(),
             clip_right: None,
             last_style_id: String::new(),
@@ -7883,6 +7904,7 @@ impl<'a> Layout<'a> {
             footnotes: FootnoteCatalog::default(),
             page_fn_ids: Vec::new(),
         };
+        lay.apply_mirror_margins();
         lay.chrome();
         lay.chrome_end = lay.current().ops.len();
         lay
@@ -7891,6 +7913,9 @@ impl<'a> Layout<'a> {
     fn apply_section(&mut self, next: &SectionChrome) {
         let (w, h) = (next.page.width, next.page.height);
         self.page = next.page;
+        self.mirror_margins = next.mirror_margins;
+        self.margin_l0 = next.page.margin_l;
+        self.margin_r0 = next.page.margin_r;
         if !self.page_has_body {
             let cur = self.current();
             cur.width = w;
@@ -8000,6 +8025,19 @@ impl<'a> Layout<'a> {
         }
     }
 
+    fn apply_mirror_margins(&mut self) {
+        if !self.mirror_margins {
+            return;
+        }
+        if self.section_page.is_multiple_of(2) {
+            self.page.margin_l = self.margin_r0;
+            self.page.margin_r = self.margin_l0;
+        } else {
+            self.page.margin_l = self.margin_l0;
+            self.page.margin_r = self.margin_r0;
+        }
+    }
+
     fn current(&mut self) -> &mut Page {
         let idx = self.pages.len() - 1;
         &mut self.pages[idx]
@@ -8027,6 +8065,7 @@ impl<'a> Layout<'a> {
         self.last_break_was_section = false;
         self.promote_rest_chrome();
         self.select_parity_chrome();
+        self.apply_mirror_margins();
         self.refresh_body_floor();
         self.chrome();
         self.chrome_end = self.current().ops.len();
@@ -8097,6 +8136,7 @@ impl<'a> Layout<'a> {
                 self.promote_rest_chrome();
             }
             self.select_parity_chrome();
+            self.apply_mirror_margins();
             self.pages.push(self.fresh_page());
             self.y = self.page.height - self.body_top;
             self.page_has_body = false;
