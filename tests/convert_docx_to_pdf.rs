@@ -1382,6 +1382,61 @@ fn missing_blip_rel_paints_small_placeholder_not_full_extent() {
 }
 
 #[test]
+fn multiline_footer_after_spacing_raises_the_block() {
+    // plan.md Step 10 G: Word honours footer paragraph after; jubarte
+    // stacked only chrome_one_line_pt so a 3-line footer sat 19pt low
+    // (complex_style_attr / file_30 Jbest @(0,-39)).
+    let footer = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:pPr><w:spacing w:after=\"200\"/></w:pPr>\
+             <w:r><w:t>LineA</w:t></w:r></w:p>\
+           <w:p><w:pPr><w:spacing w:after=\"200\"/></w:pPr>\
+             <w:r><w:t>LineB</w:t></w:r></w:p>\
+           <w:p><w:r><w:t>LineC</w:t></w:r></w:p></w:ftr>";
+    let body = "<w:p><w:r><w:t>BodyZ</w:t></w:r></w:p>\
+         <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer.to_string())],
+    ))
+    .expect("convert 3-line footer");
+    let hay = String::from_utf8_lossy(&pdf);
+    let footer_y = |lit: &str| {
+        pdf_cm_tj_xy(&hay, lit)
+            .into_iter()
+            .chain(pdf_tj_xy(&hay, lit))
+            .find(|(_, y)| *y > 1.0)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{lit} footer y; tail {}",
+                    &hay[hay.len().saturating_sub(500)..]
+                )
+            })
+            .1
+    };
+    let ya = footer_y("LineA");
+    let yb = footer_y("LineB");
+    let yc = footer_y("LineC");
+    assert!(
+        ya > yb && yb > yc,
+        "footer story flows down toward the page edge; ya={ya} yb={yb} yc={yc}"
+    );
+    assert!(
+        yc < 50.0,
+        "last line stays at w:footer from the page bottom; yc={yc}"
+    );
+    assert!(
+        ya - yc > 40.0,
+        "two 10pt after gaps must raise LineA ~20pt beyond two line boxes; ya={ya} yc={yc} gap={}",
+        ya - yc
+    );
+}
+
+#[test]
 fn floating_anchors_do_not_force_a_second_page() {
     // Two ~393pt wrapSquare anchors would overflow a letter page if stacked in
     // flow (anchor_images failure mode). Overlays stay on one page.
