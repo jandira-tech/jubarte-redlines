@@ -1206,6 +1206,7 @@ enum ShapeGeom {
     FlowChartSummingJunction,
     FlowChartInternalStorage,
     FlowChartPredefinedProcess,
+    FlowChartMagneticDisk,
 }
 
 enum ImageKind {
@@ -6171,6 +6172,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "flowChartSummingJunction" => ShapeGeom::FlowChartSummingJunction,
         "flowChartInternalStorage" => ShapeGeom::FlowChartInternalStorage,
         "flowChartPredefinedProcess" => ShapeGeom::FlowChartPredefinedProcess,
+        "flowChartMagneticDisk" => ShapeGeom::FlowChartMagneticDisk,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9444,6 +9446,25 @@ impl<'a> Layout<'a> {
                         });
                     }
                 }
+                ShapeGeom::FlowChartMagneticDisk => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: flow_chart_magnetic_disk_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                    if let Some(color) = box_.line {
+                        let lid = flow_chart_magnetic_disk_lid_points(x, y, dw, dh);
+                        for pair in lid.windows(2) {
+                            self.current().ops.push(Op::Line {
+                                x1: pair[0].0,
+                                y1: pair[0].1,
+                                x2: pair[1].0,
+                                y2: pair[1].1,
+                                width: box_.line_width,
+                                color,
+                            });
+                        }
+                    }
+                }
             }
         }
         if box_.stroke {
@@ -9651,6 +9672,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::FlowChartSummingJunction
                 | ShapeGeom::FlowChartInternalStorage
                 | ShapeGeom::FlowChartPredefinedProcess
+                | ShapeGeom::FlowChartMagneticDisk
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9764,6 +9786,9 @@ impl<'a> Layout<'a> {
                             }
                             ShapeGeom::FlowChartPredefinedProcess => {
                                 flow_chart_predefined_process_points(x, y, dw, dh)
+                            }
+                            ShapeGeom::FlowChartMagneticDisk => {
+                                flow_chart_magnetic_disk_points(x, y, dw, dh)
                             }
                             _ => round_rect_points(x, y, dw, dh),
                         };
@@ -12699,6 +12724,34 @@ fn double_wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     pts.push(p3);
     sample_cubic(p3, (x7, py(y6)), (x6, py(y5)), p4, 6, &mut pts);
     sample_cubic(p4, (x4, py(y6)), (x3, py(y5)), p5, 6, &mut pts);
+    pts
+}
+
+fn flow_chart_magnetic_disk_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML flowChartMagneticDisk in 6×6 space: cylinder body.
+    // Top arc stAng=cd2 swAng=cd2, bottom arc stAng=0 swAng=cd2.
+    const CD2: f32 = 10_800_000.0;
+    let wr = (w * 0.5).max(0.5);
+    let hr = (h / 6.0).max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut pts = vec![map(0.0, h / 6.0)];
+    let mut cur = (0.0, h / 6.0);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, CD2, CD2, &mut pts, map);
+    pts.push(map(w, h * 5.0 / 6.0));
+    cur = (w, h * 5.0 / 6.0);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, 0.0, CD2, &mut pts, map);
+    pts
+}
+
+fn flow_chart_magnetic_disk_lid_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // Fill=none lid front: M (r, hd6) arcTo wr=wd2 hr=hd6 stAng=0 swAng=cd2.
+    const CD2: f32 = 10_800_000.0;
+    let wr = (w * 0.5).max(0.5);
+    let hr = (h / 6.0).max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut pts = vec![map(w, h / 6.0)];
+    let mut cur = (w, h / 6.0);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, 0.0, CD2, &mut pts, map);
     pts
 }
 
@@ -17077,6 +17130,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn flow_chart_magnetic_disk_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="flowChartMagneticDisk"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=flowChartMagneticDisk must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -20181,6 +20273,45 @@ mod drawing_tests {
             pts.iter()
                 .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
             "bottom-right; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn flow_chart_magnetic_disk_points_are_a_cylinder() {
+        let pts = flow_chart_magnetic_disk_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 8, "{}", pts.len());
+        let start = pts[0];
+        let y_eq = 100.0 - 100.0 / 6.0;
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - y_eq).abs() < 0.2,
+            "start is (l, hd6) PDF; {start:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 50.0).abs() < 2.0 && (*py - 100.0).abs() < 2.0),
+            "top ellipse crest (hc,t); {pts:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 50.0).abs() < 2.0 && py.abs() < 2.0),
+            "bottom ellipse lower rim (hc,b); {pts:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
+            "must not include sharp top-left; {pts:?}"
+        );
+        let lid = flow_chart_magnetic_disk_lid_points(0.0, 0.0, 100.0, 100.0);
+        assert!(lid.len() >= 5, "{}", lid.len());
+        let lid0 = lid[0];
+        assert!(
+            (lid0.0 - 100.0).abs() < 0.05 && (lid0.1 - y_eq).abs() < 0.2,
+            "lid starts (r, hd6); {lid0:?}"
+        );
+        assert!(
+            lid.iter()
+                .any(|(px, py)| (*px - 50.0).abs() < 2.0 && (*py - 200.0 / 3.0).abs() < 2.0),
+            "lid through lower rim of top ellipse; {lid:?}"
         );
     }
 
