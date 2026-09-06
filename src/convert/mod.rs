@@ -2448,6 +2448,10 @@ struct Numbering {
     restarts: HashMap<(String, u32), u32>,
     /// `w:isLgl` on a level: every `%n` slot paints as Arabic.
     is_lgl: HashSet<(String, u32)>,
+    /// `w:numPicBullet/@w:numPicBulletId` → image bytes.
+    pic_bytes: HashMap<u32, Vec<u8>>,
+    /// `(abstractNumId, ilvl)` → `lvlPicBulletId`.
+    lvl_pic: HashMap<(String, u32), u32>,
 }
 
 impl Numbering {
@@ -2553,6 +2557,14 @@ impl Numbering {
         self.counters
             .get(&(num_id.to_string(), ilvl))
             .map(|v| v.saturating_sub(1).max(1))
+    }
+
+    fn pic_image(&self, num_id: &str, ilvl: u32) -> Option<ImageKind> {
+        let abs = self.instances.get(num_id)?;
+        let resolved = self.resolve_ilvl(abs, ilvl);
+        let pic_id = *self.lvl_pic.get(&(abs.clone(), resolved))?;
+        let bytes = self.pic_bytes.get(&pic_id)?.clone();
+        decode_image(bytes)
     }
 
     fn render(&self, abs: &str, num_id: &str, ilvl: u32, lvl: &NumLevel, this: u32) -> String {
@@ -2763,6 +2775,24 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
     let Some(root) = dom.root(doc) else {
         return numbering;
     };
+    for bullet in dom.descendants(root, Some(&W::name("numPicBullet"))) {
+        let Some(id) = attr_any(&dom, bullet, "numPicBulletId").and_then(|s| s.parse().ok()) else {
+            continue;
+        };
+        let rid = descendants_local(&dom, bullet, "imagedata")
+            .into_iter()
+            .find_map(|n| attr_any(&dom, n, "id"))
+            .or_else(|| {
+                descendants_local(&dom, bullet, "blip")
+                    .into_iter()
+                    .find_map(|n| attr_any(&dom, n, "embed"))
+            });
+        if let Some(rid) = rid
+            && let Some(bytes) = resolve_media(pkg, "word/numbering.xml", rid)
+        {
+            numbering.pic_bytes.insert(id, bytes);
+        }
+    }
     for abs in dom.descendants(root, Some(&W::name("abstractNum"))) {
         let Some(aid) = attr_any(&dom, abs, "abstractNumId") else {
             continue;
@@ -2800,6 +2830,12 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
             }
             if first_named(&dom, lvl, "isLgl").is_some_and(|n| !val_is_false(&dom, Some(n))) {
                 numbering.is_lgl.insert((aid.to_string(), ilvl));
+            }
+            if let Some(pic) = first_named(&dom, lvl, "lvlPicBulletId")
+                .and_then(|n| attr_any(&dom, n, "val"))
+                .and_then(|s| s.parse().ok())
+            {
+                numbering.lvl_pic.insert((aid.to_string(), ilvl), pic);
             }
             lvls.insert(
                 ilvl,
@@ -3770,6 +3806,7 @@ fn paragraph_block(
     let sheet = ctx.sheet;
     let (mut pstyle, rstyle) = para_base(dom, para, sheet, None);
     let (marker, num_id, ilvl) = list_marker(dom, para, sheet, numbering);
+    let pic = numbering.pic_image(&num_id, ilvl);
     if pstyle.outline_lvl.is_some() && !num_id.is_empty() {
         pstyle.chap_num = numbering.last_used(&num_id, ilvl).map(|n| n.to_string());
     }
@@ -3821,7 +3858,9 @@ fn paragraph_block(
             pstyle.list_jc_right = lvl.jc_right;
             merge_tab_stops(&mut pstyle.tab_stops, &lvl.tab_stops);
         }
-        runs.insert(0, TextRun::new(marker, marker_style));
+        if pic.is_none() {
+            runs.insert(0, TextRun::new(marker, marker_style));
+        }
         // addition_removal p3: Word paints ListBullet • in #D13438 with
         // the delText. The marker is synthesized from paragraph rstyle
         // (black) before w:del is collected. Inherit color only — Word
@@ -3840,12 +3879,29 @@ fn paragraph_block(
                     .all(|r| r.rev && r.style.underline && !r.style.strike);
             (all_del || all_ins).then(|| ink[0].style.color)
         };
-        if let Some(color) = inherited {
+        if pic.is_none()
+            && let Some(color) = inherited
+        {
             runs[0].style.color = color;
             runs[0].rev = true;
         }
     }
-    let images = collect_images(ctx.pkg, ctx.main, dom, para);
+    let mut images = collect_images(ctx.pkg, ctx.main, dom, para);
+    if let Some(kind) = pic {
+        let size = rstyle.size.max(8.0);
+        images.insert(
+            0,
+            LaidImage {
+                w: size,
+                h: size,
+                kind,
+                slot: ImageSlot::Flow,
+                behind: false,
+                z: 0,
+                crop: None,
+            },
+        );
+    }
     let boxes = collect_textboxes(Some((ctx.pkg, ctx.main)), dom, para, &rstyle, &sheet.theme);
     // Word paints empty TitlePage/DocumentTitle with the style's rPr
     // (Arial 18 / exact 20 / after 24). Factory Calibri 11 stretched
