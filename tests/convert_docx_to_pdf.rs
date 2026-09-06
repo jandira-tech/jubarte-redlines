@@ -16029,8 +16029,8 @@ fn jpan_script_font_embeds_over_generic_ea() {
         .expect("convert Jpan script font");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("/Georgia"),
-        "ja-JP + script=Jpan must embed Georgia, not generic a:ea Verdana; tail {}",
+        text.contains("/Georgia") || text.contains("/LiberationSerif"),
+        "ja-JP + script=Jpan must embed Georgia (Liberation Serif when DFonts absent); tail {}",
         &text[text.len().saturating_sub(320)..]
     );
 }
