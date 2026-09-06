@@ -608,18 +608,28 @@ impl Fonts {
         table: &super::font_table::FontTable,
         visited: &mut HashSet<String>,
     ) -> FaceId {
-        let primary = family
-            .split(',')
-            .next()
-            .unwrap_or(family)
-            .trim()
-            .trim_matches(|c| c == '"' || c == '\'');
-        let key = primary
-            .to_ascii_lowercase()
-            .replace([' ', '-'], "")
-            .replace("mt", "");
-        if let Some(id) = Self::mapped_face(&key, bold, italic) {
-            return id;
+        // Word splits rFonts on comma but does not CSS-unquote. Evidence
+        // (Quartz PDFs): `Verdana, Geneva, sans-serif` → Verdana;
+        // `"Times New Roman", Times, serif` → Cambria, because the first
+        // token still carries the quote characters and is not TNR.
+        let (token, listed) = match family.split_once(',') {
+            Some((first, _)) => (first.trim(), true),
+            None => (family.trim(), false),
+        };
+        let primary = if listed {
+            token
+        } else {
+            strip_outer_quotes(token)
+        };
+        let quoted = primary.starts_with('"') || primary.starts_with('\'');
+        if !quoted {
+            let key = primary
+                .to_ascii_lowercase()
+                .replace([' ', '-'], "")
+                .replace("mt", "");
+            if let Some(id) = Self::mapped_face(&key, bold, italic) {
+                return id;
+            }
         }
         let visit_key = primary.to_ascii_lowercase();
         if !visited.insert(visit_key) {
@@ -630,7 +640,20 @@ impl Fonts {
         }
         Self::carlito(bold, italic)
     }
+}
 
+fn strip_outer_quotes(s: &str) -> &str {
+    let t = s.trim();
+    let bytes = t.as_bytes();
+    match (bytes.first(), bytes.last()) {
+        (Some(b'"'), Some(b'"')) | (Some(b'\''), Some(b'\'')) if bytes.len() >= 2 => {
+            t[1..t.len() - 1].trim()
+        }
+        _ => t,
+    }
+}
+
+impl Fonts {
     fn carlito(bold: bool, italic: bool) -> FaceId {
         match (bold, italic) {
             (false, false) => FaceId::CarlitoRegular,
@@ -1000,6 +1023,40 @@ mod tests {
             fonts.resolve_in("Calibri", false, false, &table),
             FaceId::CarlitoRegular,
             "installed Calibri (Carlito) wins over altName Cambria"
+        );
+    }
+
+    #[test]
+    fn resolve_keeps_quoted_css_list_intact() {
+        let fonts = Fonts::new();
+        let id = fonts.resolve(r#""Times New Roman", Times, serif"#, false, false);
+        assert_ne!(
+            id,
+            FaceId::SerifRegular,
+            "quoted first token is not Times New Roman; Word Quartz used Cambria"
+        );
+        assert_eq!(
+            id,
+            FaceId::CarlitoRegular,
+            "unknown quoted list falls to Carlito until the evidence table (PR4)"
+        );
+        assert_eq!(
+            fonts.resolve("Verdana, Geneva, sans-serif", false, false),
+            FaceId::VerdanaRegular,
+            "unquoted first token Verdana is installed"
+        );
+    }
+
+    #[test]
+    fn resolve_quoted_cambria_still_finds_cambria() {
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve(r#""Cambria""#, false, false),
+            FaceId::CambriaRegular
+        );
+        assert_eq!(
+            fonts.resolve("Cambria", false, false),
+            FaceId::CambriaRegular
         );
     }
 

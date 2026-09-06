@@ -20,6 +20,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - **`word/fontTable.xml` altName.** Unknown requested families now follow
   Word's recorded `w:altName` (installed faces still win). Calibri stays the
   Carlito catalogue slot so an altName on Calibri cannot steal Cambria.
+- **Quoted CSS family lists are not Times.** Word splits `w:ascii` on comma
+  but does not CSS-unquote, so `"Times New Roman", Times, serif` is unknown
+  (Quartz used Cambria) while `Verdana, Geneva, sans-serif` is Verdana.
 
 - **Convert fidelity gate.** `scripts/convert_sweep.py` (wrapper
   `scripts/convert-sweep.sh`) scores `jubarte convert` against Word PDFs on the
