@@ -2990,8 +2990,9 @@ fn official_file_34_matches_word_two_pages() {
 
 #[test]
 fn table_cell_jc_center_centers_header_text() {
-    // file_34 / uipriority: header cells `w:jc center`. Word Feature sits
-    // at x=125.3 in a 150pt col (pad 9pt). We always painted at pad_l=81.
+    // file_34 / uipriority: header cells `w:jc center`. After the Word
+    // mode<15 edge pull (tblCellMar left=180 twips), Feature sits at
+    // ~116pt in a 150pt col. Unpulled it was 125.3; pad_l-only was 81.
     let body = "<w:tbl>\
          <w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/>\
            <w:tblCellMar>\
@@ -3034,9 +3035,11 @@ fn table_cell_jc_center_centers_header_text() {
         .min_by(|a, b| a.partial_cmp(b).unwrap());
     let feature_x = feature.or_else(|| xs.iter().copied().min_by(|a, b| a.partial_cmp(b).unwrap()));
     let feature_x = feature_x.expect("Feature F");
+    // mode<15 pulls by tblCellMar left=180 twips (9pt), so the centered
+    // header moves with the table: 125.3 − 9 ≈ 116.3.
     assert!(
-        (118.0..=132.0).contains(&feature_x),
-        "Word centers Feature in the first col at ~125pt, not pad_l 81; x={feature_x} xs={xs:?}"
+        (110.0..=122.0).contains(&feature_x),
+        "Word centers Feature in the pulled first col at ~116pt, not unpulled 125; x={feature_x} xs={xs:?}"
     );
 }
 
@@ -3764,10 +3767,12 @@ fn fixed_width_table_is_not_stretched_to_the_page() {
          </w:tr></w:tbl><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert table");
     let text = String::from_utf8_lossy(&pdf);
+    let rules = pdf_vertical_rule_xs(&pdf);
+    let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    // mode<15: border at margin − 108 twips, so 72 − 5.4 + 300 = 366.6.
     assert!(
-        text.contains("372.00") || text.contains("371.75") || text.contains("371.50"),
-        "300pt table ends at 72+300=372 (fill hairline centered on the edge); stream tail {}",
-        &text[text.len().saturating_sub(240)..]
+        (365.5..=367.5).contains(&right),
+        "300pt table ends at 366.6 after Word cell-mar pull, not 372; rules={rules:?}"
     );
     assert!(
         !text.contains("540.00"),
@@ -5687,11 +5692,8 @@ fn tblw_dxa_eight_inch_overflows_the_page() {
     );
 }
 
-#[test]
-fn tbl_ind_stays_ignored_after_mini_tblind() {
-    // mini 233: applying dxa tblInd (file_146 ±4/5 twips) dropped
-    // no-redline mean −0.0025 / median −0.011. Keep indent 0.
-    let body = "<w:tbl><w:tblPr>\
+fn tblind_table_body() -> &'static str {
+    "<w:tbl><w:tblPr>\
            <w:tblInd w:w=\"1440\" w:type=\"dxa\"/>\
            <w:tblBorders>\
              <w:top w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
@@ -5702,16 +5704,33 @@ fn tbl_ind_stays_ignored_after_mini_tblind() {
            <w:tblGrid><w:gridCol w:w=\"2880\"/></w:tblGrid>\
            <w:tr><w:tc><w:p><w:r><w:t>Indented</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
-           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
-    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert tblInd lock");
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+}
+
+#[test]
+fn tbl_ind_mode12_sits_at_indent_minus_cell_margin() {
+    // Word compat < 15: border at margin + tblInd - left cell mar (108 twips).
+    // 72 + 72 - 5.4 = 138.6.
+    let pdf = docx_to_pdf(&minimal_docx_body(tblind_table_body())).expect("convert tblInd");
     let rules = pdf_vertical_rule_xs(&pdf);
     assert!(
-        rules.iter().any(|x| *x > 70.0 && *x < 74.0),
-        "mini tblind was ITT-neg; keep table at margin 72, not +72pt; rules={rules:?}"
+        rules.iter().any(|x| (137.5..=139.5).contains(x)),
+        "mode 12 tblInd 1440 twips must pull left by 108 twips; rules={rules:?}"
     );
+}
+
+#[test]
+fn tbl_ind_mode15_sits_at_indent_without_cell_margin() {
+    // Word 2013+ (mode 15): border at margin + tblInd (no cell-mar pull).
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(
+        tblind_table_body(),
+        r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#,
+    ))
+    .expect("convert tblInd mode15");
+    let rules = pdf_vertical_rule_xs(&pdf);
     assert!(
-        !rules.iter().any(|x| *x > 140.0 && *x < 148.0),
-        "mini tblind was ITT-neg; must not honor 1440-twip tblInd; rules={rules:?}"
+        rules.iter().any(|x| (143.0..=145.0).contains(x)),
+        "mode 15 tblInd 1440 twips stays at margin+indent; rules={rules:?}"
     );
 }
 
@@ -5909,9 +5928,9 @@ fn official_table_bookmark_test_one_is_thirteen_after_gated_569() {
 #[test]
 fn official_table_bookmark_test_one_keeps_default_108_after_mini_430() {
     // Test 1 is tblLayout=fixed with no tblCellMar. Word Quartz paints
-    // R1C1 at x=90. Fixed L/R pad 0 (mini 430) matched that (+0.059 on
-    // table_bookmark_end) but dropped file_134 −0.104 / NR mean −0.0007.
-    // Keep default 108 (x=95.4). Test 8 left=1080 still ignored (mini 402).
+    // R1C1 at x=90 (margin) because mode<15 pulls the table left by the
+    // default 108-twip cell mar. Mini 430 pad=0 matched x=90 without the
+    // pull and dropped file_134 −0.104. Keep the Word edge rule.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/table_bookmark_end.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert table_bookmark_end");
     assert_eq!(pdf_page_count(&pdf), 2, "Word table_bookmark_end is 2pp");
@@ -5939,8 +5958,8 @@ fn official_table_bookmark_test_one_keeps_default_108_after_mini_430() {
     });
     let cells = test1.expect("Test 1 100pt-grid row on page 1");
     assert!(
-        cells[0] > 93.0 && cells[0] < 98.0,
-        "mini 430 ITT-neg x=90; keep default-108 x=95.4; cells={cells:?}"
+        (cells[0] - 90.0).abs() < 1.5,
+        "Word Test 1 R1C1 is x=90 after 108-twip pull, not unpulled 95.4; cells={cells:?}"
     );
 }
 
@@ -11448,7 +11467,8 @@ fn table_tr_height_at_least_single_line_matches_soffice_row() {
 fn table_default_cell_left_is_word_108_twips() {
     // Median lock: meeting_agenda / q1_sales / employee_directory / …
     // no tblStyle, no tblCellMar. Word default tcMar left is 108 twips
-    // (5.4pt). Soffice paints "Time" at x≈77.2; we inset only 4pt (x=76).
+    // (5.4pt). Mode < 15 pulls the table left by that mar so cell text
+    // lines up with body at the margin (plan xml 3.3 ckpt 1).
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
            <w:docDefaults><w:pPrDefault><w:pPr>\
@@ -11491,13 +11511,26 @@ fn table_default_cell_left_is_word_108_twips() {
         (title_x - 72.0).abs() < 1.0,
         "title stays at the left margin; xs={xs:?}"
     );
+    let mut starts = Vec::new();
+    let mut sorted = xs.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    for x in sorted {
+        if starts.last().is_none_or(|prev| x - prev > 20.0) {
+            starts.push(x);
+        }
+    }
     assert!(
-        xs.iter().any(|x| (76.8..=78.0).contains(x)),
-        "default left cell mar is 108 twips (x≈77.4), not 4pt (x=76); xs={xs:?}"
+        starts.iter().any(|x| (*x - 72.0).abs() < 1.2),
+        "mode<15 pulls the table left by 108 twips so cell text aligns with body; starts={starts:?} xs={xs:?}"
     );
     assert!(
-        xs.iter().all(|x| (*x - 76.0).abs() > 0.15),
-        "must not still paint the old 4pt inset; xs={xs:?}"
+        starts.iter().all(|x| (*x - 77.4).abs() > 1.0),
+        "must not still start a cell at the unpulled 108-twip inset 77.4; starts={starts:?}"
+    );
+    let rules = pdf_vertical_rule_xs(&pdf);
+    assert!(
+        rules.iter().any(|x| (65.4..=67.8).contains(x)),
+        "mode<15 left border sits at margin − 108 twips (66.6); rules={rules:?}"
     );
 }
 
@@ -11764,8 +11797,8 @@ fn tblcellmar_start_end_stays_default_after_mini_marse() {
     assert!(!xs.is_empty(), "PadCell must paint; xs={xs:?}");
     let x = xs.iter().copied().fold(f32::INFINITY, f32::min);
     assert!(
-        (74.0..82.0).contains(&x),
-        "mini marse was Cicero ITT-neg; keep default 108 twips (x=77); x={x} xs={xs:?}"
+        (x - 72.0).abs() < 1.2,
+        "start/end stay ignored; default 108 twips pulls cell text to the body edge; x={x} xs={xs:?}"
     );
 }
 
@@ -12981,9 +13014,10 @@ fn tblw_pct_sixty_stretches_narrow_grid() {
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert pct table");
     let xs = pdf_vertical_rule_xs(&pdf);
+    // 60% of 468 is 280.8; mode<15 right edge is 72 − 5.4 + 280.8 = 347.4.
     assert!(
-        xs.iter().any(|x| (350.0..=356.0).contains(x)),
-        "60% of 468pt content is 280.8pt so right edge is 352.8, not grid 272; xs={xs:?}"
+        xs.iter().any(|x| (346.0..=349.0).contains(x)),
+        "60% table right edge is 347.4 after Word cell-mar pull, not 352.8; xs={xs:?}"
     );
     assert!(
         xs.iter().all(|x| (*x - 272.0).abs() > 1.0),

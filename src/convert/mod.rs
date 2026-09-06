@@ -146,6 +146,7 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
             &hf,
             &blocks,
             settings_suppress_sp_bf_after_pg_brk(&pkg),
+            settings_compat_mode(&pkg),
         );
         Ok(pdf::emit(&fonts, &pages, options))
     })
@@ -640,6 +641,10 @@ struct TableGeom {
     /// GridTable4-Accent5 (RL mean −0.029). Do not treat GridTable4 /
     /// MediumShading as TableGrid.
     table_grid: bool,
+    /// `w:tblInd` in points (0 if absent).
+    tbl_ind: f32,
+    /// Table-level left cell margin used by the Word edge rule.
+    mar_l: f32,
 }
 
 /// Preferred table width from `tblW`. Word `pct` is 50ths of a percent
@@ -2277,6 +2282,27 @@ fn settings_suppress_sp_bf_after_pg_brk(pkg: &PartFs) -> bool {
         && !xml.contains("suppressSpBfAfterPgBrk w:val=\"false\"")
 }
 
+/// `w:compatSetting name="compatibilityMode"`. Absent → 12 (Word 2007),
+/// which uses the pre-2013 table-edge rule (plan xml 3.3).
+fn settings_compat_mode(pkg: &PartFs) -> u8 {
+    let Some(xml) = pkg.part_string("word/settings.xml") else {
+        return 12;
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return 12;
+    };
+    for node in descendants_local(&dom, root, "compatSetting") {
+        if attr_any(&dom, node, "name") == Some("compatibilityMode")
+            && let Some(mode) = attr_any(&dom, node, "val").and_then(|s| s.parse().ok())
+        {
+            return mode;
+        }
+    }
+    12
+}
+
 /// Word factory is 720 twips (0.5in). Strict01 writes `36pt`; mcdoc `420`.
 fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
     let xml = pkg.part_string("word/settings.xml")?;
@@ -3514,6 +3540,8 @@ fn table_block(
                 unstyled,
                 header_rows,
                 table_grid: table_style_id(dom, table) == Some("TableGrid"),
+                tbl_ind: table_ind(dom, table),
+                mar_l: tbl_pad_l,
             }
         },
     }
@@ -3529,6 +3557,19 @@ fn row_height_spec(dom: &Dom, row: NodeId) -> (f32, bool) {
     let val = attr_any(dom, th, "val").and_then(parse_len).unwrap_or(0.0);
     let exact = attr_any(dom, th, "hRule").is_some_and(|r| r == "exact");
     (val, exact)
+}
+
+fn table_ind(dom: &Dom, table: NodeId) -> f32 {
+    let Some(pr) = first_named(dom, table, "tblPr") else {
+        return 0.0;
+    };
+    let Some(ind) = first_named(dom, pr, "tblInd") else {
+        return 0.0;
+    };
+    if attr_any(dom, ind, "type").unwrap_or("dxa") != "dxa" {
+        return 0.0;
+    }
+    attr_any(dom, ind, "w").and_then(parse_len).unwrap_or(0.0)
 }
 
 fn table_pref_width(dom: &Dom, table: NodeId) -> TblWidth {
@@ -6192,6 +6233,9 @@ struct Layout<'a> {
     /// and a plain `w:br type=page` keep space-before (plan Step 3).
     suppress_space_before: bool,
     suppress_sp_bf_after_pg_brk: bool,
+    /// Word `compatibilityMode` (absent → 12). Mode < 15 pulls the table
+    /// left edge by the left cell margin (plan xml 3.3).
+    compat_mode: u8,
     last_break_was_section: bool,
     tab_stops: Vec<TabStop>,
     section_page: u32,
@@ -6239,6 +6283,7 @@ impl<'a> Layout<'a> {
         page: PageSetup,
         hf: HfChrome,
         suppress_sp_bf_after_pg_brk: bool,
+        compat_mode: u8,
     ) -> Self {
         let header = hf.header;
         let footer = hf.footer;
@@ -6287,6 +6332,7 @@ impl<'a> Layout<'a> {
             at_page_top: true,
             suppress_space_before: false,
             suppress_sp_bf_after_pg_brk,
+            compat_mode,
             last_break_was_section: false,
             tab_stops: Vec::new(),
             section_page: page.page_num_start.unwrap_or(1),
@@ -8099,9 +8145,14 @@ impl<'a> Layout<'a> {
             Align::Right => (avail - used).max(0.0),
             Align::Left | Align::Justify => 0.0,
         };
-        // Do not add w:tblInd (mini 233): file_146 ±4/5 twips dropped
-        // no-redline median −0.011. Nested −216 twips is off the 60-stem.
-        let table_left = self.page.margin_l + shift;
+        // Word mode < 15: border at margin + tblInd - left cell mar so
+        // cell text lines up with body. Mode 15: margin + tblInd.
+        let pull = if self.compat_mode < 15 {
+            geom.mar_l
+        } else {
+            0.0
+        };
+        let table_left = self.page.margin_l + shift + geom.tbl_ind - pull;
         let color = [0.0, 0.0, 0.0];
         let header_n = geom.header_rows.min(rows.len());
         let header_h: f32 = row_h.iter().take(header_n).copied().sum();
@@ -8994,8 +9045,15 @@ fn layout(
     hf: &HfChrome,
     blocks: &[Block],
     suppress_sp_bf_after_pg_brk: bool,
+    compat_mode: u8,
 ) -> Vec<Page> {
-    let mut lay = Layout::new(fonts, *page, hf.clone(), suppress_sp_bf_after_pg_brk);
+    let mut lay = Layout::new(
+        fonts,
+        *page,
+        hf.clone(),
+        suppress_sp_bf_after_pg_brk,
+        compat_mode,
+    );
     lay.known_bookmarks = document_bookmark_names(blocks);
     if blocks.is_empty() {
         lay.current().ops.push(Op::text(
@@ -11848,6 +11906,7 @@ mod comments_spacing_tests {
                 bookmarks: Vec::new(),
             }],
             false,
+            12,
         );
         let xs: Vec<f32> = pages[0]
             .ops
@@ -11903,6 +11962,7 @@ mod comments_spacing_tests {
                 bookmarks: Vec::new(),
             }],
             false,
+            12,
         );
         let ys: Vec<i32> = pages[0]
             .ops
