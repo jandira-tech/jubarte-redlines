@@ -5519,6 +5519,40 @@ fn heading1_ascii_theme_major_embeds_theme_calibri_not_body_aptos() {
 }
 
 #[test]
+fn latent_heading1_uses_theme_major_fourteen_pt_bold() {
+    // xml_parts_plan latent built-ins: Heading1 omitted from styles.xml
+    // still gets Word's 2007 Cambria 14pt bold (not docDefaults 11pt).
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+             <w:name w:val=\"Normal\"/>\
+           </w:style>\
+         </w:styles>";
+    let theme = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+           <a:themeElements><a:fontScheme name=\"Office\">\
+             <a:majorFont><a:latin typeface=\"Cambria\"/></a:majorFont>\
+             <a:minorFont><a:latin typeface=\"Calibri\"/></a:minorFont>\
+           </a:fontScheme></a:themeElements>\
+         </a:theme>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr>\
+           <w:r><w:t>LatentH1</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles_and_theme(body, styles, theme))
+        .expect("convert latent Heading1");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/Cambria"),
+        "latent Heading1 uses theme major Cambria; tail {}",
+        &text[text.len().saturating_sub(320)..]
+    );
+    assert!(
+        text.contains("14.00 Tf"),
+        "Word 2007 latent Heading1 is 14pt bold, not 11pt defaults; tail {}",
+        &text[text.len().saturating_sub(200)..]
+    );
+}
+
+#[test]
 fn heading1_aptos_display_ascii_uses_theme_major_calibri() {
     // I_am_sharing Heading1 stores ascii="Aptos Display" *and*
     // asciiTheme=majorHAnsi (Calibri). Word Quartz paints Calibri-Bold

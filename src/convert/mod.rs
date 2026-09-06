@@ -3772,7 +3772,7 @@ fn para_base(
             // Word still applies latent built-in heading spacing when the
             // style is referenced but omitted from styles.xml (the
             // heading_*_style_demo fixtures). Direct pPr below wins.
-            apply_latent_ppr(sid, &mut pstyle);
+            apply_latent_ppr(sid, &mut pstyle, &mut rstyle, &sheet.theme);
         }
         pstyle.style_id = sid.to_string();
     }
@@ -3782,15 +3782,29 @@ fn para_base(
     (pstyle, rstyle)
 }
 
-/// Word's latent heading spacing when `styles.xml` has no definition.
-/// Heading 3/4 on the official Word oracles keep after=0 and honor the
-/// next para's explicit before (heading_3_center gap 34.6pt). Heading1
-/// stays on defaults — inventing after=0 dropped red_bold_heading 90→72.
-fn apply_latent_ppr(style_id: &str, para: &mut ParaStyle) {
+/// Word's latent built-ins when `styles.xml` has no definition.
+/// Heading 3/4 keep after=0 (heading_3_center gap 34.6pt). Heading1
+/// after=0 is ITT-neg (red_bold_heading 90→72) — size/bold/face only.
+fn apply_latent_ppr(style_id: &str, para: &mut ParaStyle, run: &mut RunStyle, theme: &ThemeFonts) {
     match style_id {
         "Heading3" | "Heading4" => {
             para.before = 10.0;
             para.after = 0.0;
+        }
+        "Heading1" => {
+            let aptos = theme
+                .major
+                .as_deref()
+                .is_some_and(|s| s.to_ascii_lowercase().contains("aptos"));
+            run.bold = true;
+            run.size = if aptos { 20.0 } else { 14.0 };
+            run.family = theme.major.clone().unwrap_or_else(|| {
+                if aptos {
+                    "Aptos Display".into()
+                } else {
+                    "Cambria".into()
+                }
+            });
         }
         _ => {}
     }
