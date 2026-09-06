@@ -1160,6 +1160,7 @@ enum ShapeGeom {
     LeftCircularArrow,
     BlockArc,
     Chord,
+    Bevel,
 }
 
 enum ImageKind {
@@ -6077,6 +6078,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "leftCircularArrow" => ShapeGeom::LeftCircularArrow,
         "blockArc" => ShapeGeom::BlockArc,
         "chord" => ShapeGeom::Chord,
+        "bevel" => ShapeGeom::Bevel,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8976,6 +8978,14 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Bevel => {
+                    for points in bevel_faces(x, y, dw, dh) {
+                        self.current().ops.push(Op::FillPoly {
+                            points,
+                            color: fill,
+                        });
+                    }
+                }
             }
         }
         if box_.stroke {
@@ -9013,6 +9023,17 @@ impl<'a> Layout<'a> {
                 ShapeGeom::Cube => {
                     if let Some(color) = box_.line {
                         for points in cube_faces(x, y, dw, dh) {
+                            self.current().ops.push(Op::StrokePoly {
+                                points,
+                                width: box_.line_width,
+                                color,
+                            });
+                        }
+                    }
+                }
+                ShapeGeom::Bevel => {
+                    if let Some(color) = box_.line {
+                        for points in bevel_faces(x, y, dw, dh) {
                             self.current().ops.push(Op::StrokePoly {
                                 points,
                                 width: box_.line_width,
@@ -11375,6 +11396,42 @@ fn cube_faces(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 3] {
             (x + y1, py(0.0)),
             (x + w, py(0.0)),
             (x + x4, py(y1)),
+        ],
+    ]
+}
+
+fn bevel_faces(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 5] {
+    // OOXML bevel adj=12500: inner face plus four rim quads.
+    let a = preset_ss(w, h) * 12_500.0 / 100_000.0;
+    let x1 = a;
+    let x2 = w - a;
+    let y2 = h - a;
+    let py = |yd: f32| y + h - yd;
+    [
+        vec![
+            (x + x1, py(x1)),
+            (x + x2, py(x1)),
+            (x + x2, py(y2)),
+            (x + x1, py(y2)),
+        ],
+        vec![
+            (x, py(0.0)),
+            (x + w, py(0.0)),
+            (x + x2, py(x1)),
+            (x + x1, py(x1)),
+        ],
+        vec![
+            (x, py(h)),
+            (x + x1, py(y2)),
+            (x + x2, py(y2)),
+            (x + w, py(h)),
+        ],
+        vec![(x, py(0.0)), (x + x1, py(x1)), (x + x1, py(y2)), (x, py(h))],
+        vec![
+            (x + w, py(0.0)),
+            (x + w, py(h)),
+            (x + x2, py(y2)),
+            (x + x2, py(x1)),
         ],
     ]
 }
@@ -14823,6 +14880,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn bevel_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="bevel"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=bevel must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -15423,6 +15519,18 @@ mod drawing_tests {
                 .any(|(px, py)| (*px - 50.0).abs() < 0.5 && (*py - 50.0).abs() < 0.5),
             "chord must not include the pie centre; {pts:?}"
         );
+    }
+
+    #[test]
+    fn bevel_faces_are_five_quads() {
+        let faces = bevel_faces(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(faces.len(), 5);
+        for face in &faces {
+            assert_eq!(face.len(), 4);
+        }
+        let inner = &faces[0];
+        assert!((inner[0].0 - 12.5).abs() < 0.05 && (inner[0].1 - 87.5).abs() < 0.05);
+        assert!((inner[2].0 - 87.5).abs() < 0.05 && (inner[2].1 - 12.5).abs() < 0.05);
     }
 
     #[test]
