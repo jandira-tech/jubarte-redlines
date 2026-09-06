@@ -1119,6 +1119,10 @@ enum ShapeGeom {
     CurvedConnector,
     Line,
     RoundRect,
+    Ellipse,
+    Triangle,
+    Diamond,
+    Hexagon,
 }
 
 enum ImageKind {
@@ -5995,6 +5999,10 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         }
         "straightConnector1" | "line" => ShapeGeom::Line,
         "roundRect" => ShapeGeom::RoundRect,
+        "ellipse" => ShapeGeom::Ellipse,
+        "triangle" => ShapeGeom::Triangle,
+        "diamond" => ShapeGeom::Diamond,
+        "hexagon" => ShapeGeom::Hexagon,
         _ => ShapeGeom::Box,
     }
 }
@@ -8621,6 +8629,30 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Ellipse => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: ellipse_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::Triangle => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: triangle_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::Diamond => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: diamond_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::Hexagon => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: hexagon_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8652,6 +8684,26 @@ impl<'a> Layout<'a> {
                         self.current().ops.push(Op::FillPoly {
                             points: arrowhead_triangle(pts[2], pts[3]).to_vec(),
                             color: line_c,
+                        });
+                    }
+                }
+                ShapeGeom::Ellipse
+                | ShapeGeom::Triangle
+                | ShapeGeom::Diamond
+                | ShapeGeom::Hexagon
+                | ShapeGeom::RoundRect => {
+                    if let Some(color) = box_.line {
+                        let points = match box_.geom {
+                            ShapeGeom::Ellipse => ellipse_points(x, y, dw, dh),
+                            ShapeGeom::Triangle => triangle_points(x, y, dw, dh),
+                            ShapeGeom::Diamond => diamond_points(x, y, dw, dh),
+                            ShapeGeom::Hexagon => hexagon_points(x, y, dw, dh),
+                            _ => round_rect_points(x, y, dw, dh),
+                        };
+                        self.current().ops.push(Op::StrokePoly {
+                            points,
+                            width: box_.line_width,
+                            color,
                         });
                     }
                 }
@@ -10400,6 +10452,47 @@ fn bent_connector_points(x: f32, y: f32, dw: f32, dh: f32) -> [(f32, f32); 4] {
 }
 
 /// OOXML `roundRect` default adj=16667: corner radius is min(w,h)×1/6.
+fn ellipse_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    const STEPS: i32 = 24;
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let rx = (w * 0.5).max(0.5);
+    let ry = (h * 0.5).max(0.5);
+    (0..STEPS)
+        .map(|i| {
+            let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
+            (cx + rx * a.cos(), cy + ry * a.sin())
+        })
+        .collect()
+}
+
+fn triangle_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML `triangle` (y-down apex at top) → PDF y-up apex at y+h.
+    vec![(x + w * 0.5, y + h), (x + w, y), (x, y)]
+}
+
+fn diamond_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    vec![
+        (x + w * 0.5, y + h),
+        (x + w, y + h * 0.5),
+        (x + w * 0.5, y),
+        (x, y + h * 0.5),
+    ]
+}
+
+fn hexagon_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML hexagon default adj=25000: left/right inset is 25% of width.
+    let x1 = w * 25_000.0 / 100_000.0;
+    vec![
+        (x + x1, y + h),
+        (x + w - x1, y + h),
+        (x + w, y + h * 0.5),
+        (x + w - x1, y),
+        (x + x1, y),
+        (x, y + h * 0.5),
+    ]
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -11940,6 +12033,47 @@ mod drawing_tests {
     }
 
     #[test]
+    fn ellipse_prst_is_not_a_box() {
+        // plan Step 7 / case34: unknown prstGeom must not collapse to a
+        // rectangle. Word's ellipse is an oval in the extent.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="900000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="ellipse"/>
+        <a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=ellipse must not collapse to Box; Word paints an oval"
+        );
+    }
+
+    #[test]
     fn bent_connector_reads_triangle_tail_end() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -12042,6 +12176,39 @@ mod drawing_tests {
             "Word S-curve: first c2 is quarter-height; segs={:?}",
             curve.segments
         );
+    }
+
+    #[test]
+    fn ellipse_points_lie_on_the_bounding_oval() {
+        let pts = ellipse_points(0.0, 0.0, 100.0, 40.0);
+        assert_eq!(pts.len(), 24);
+        let on_oval = pts.iter().all(|(x, y)| {
+            let nx = (*x - 50.0) / 50.0;
+            let ny = (*y - 20.0) / 20.0;
+            (nx * nx + ny * ny - 1.0).abs() < 0.02
+        });
+        assert!(on_oval, "ellipse vertices must sit on the oval; {pts:?}");
+        assert!(
+            !pts.iter().any(|(x, y)| x.abs() < 0.05 && y.abs() < 0.05),
+            "must not include the bounding-box corner; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn triangle_points_are_isosceles_apex_top() {
+        let pts = triangle_points(10.0, 20.0, 80.0, 40.0);
+        assert_eq!(pts.len(), 3);
+        assert!((pts[0].0 - 50.0).abs() < 0.01 && (pts[0].1 - 60.0).abs() < 0.01);
+        assert!((pts[1].0 - 90.0).abs() < 0.01 && (pts[1].1 - 20.0).abs() < 0.01);
+        assert!((pts[2].0 - 10.0).abs() < 0.01 && (pts[2].1 - 20.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn hexagon_points_use_ooxml_default_inset() {
+        let pts = hexagon_points(0.0, 0.0, 100.0, 40.0);
+        assert_eq!(pts.len(), 6);
+        assert!((pts[0].0 - 25.0).abs() < 0.01 && (pts[0].1 - 40.0).abs() < 0.01);
+        assert!((pts[2].0 - 100.0).abs() < 0.01 && (pts[2].1 - 20.0).abs() < 0.01);
     }
 
     #[test]
