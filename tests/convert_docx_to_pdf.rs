@@ -696,7 +696,8 @@ fn drawing_docx_media(body: &str, media_name: &str, media: &[u8]) -> Vec<u8> {
            xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
            xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
            xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
-           xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+           xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\" \
+           xmlns:v=\"urn:schemas-microsoft-com:vml\">\
          <w:body>{body}</w:body></w:document>"
     );
     let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
@@ -1485,6 +1486,79 @@ fn page_origin_float_is_not_stuck_at_the_margin() {
     assert!(
         top > 780.0,
         "page posOffset=0 must sit on the top edge (~792), not below margin_t (~720); ys={ys:?}"
+    );
+}
+
+#[test]
+fn vml_textbox_center_relative_to_text_sits_beside_the_paragraph() {
+    // xml 3.4 ckpt 2 / file_104: VML `mso-position-horizontal:center`
+    // relative to `text` is beside the anchoring paragraph, not page
+    // origin (0,0) with the body pulled into the box.
+    let body = "<w:p><w:r><w:t>Title</w:t></w:r>\
+        <w:r><w:pict><v:shape filled=\"f\" stroked=\"t\" \
+          style=\"position:absolute;left:0;margin-left:0;margin-top:0;\
+width:186.35pt;height:110.6pt;z-index:251659264;visibility:visible;\
+mso-wrap-style:square;mso-wrap-distance-left:9pt;mso-wrap-distance-right:9pt;\
+mso-position-horizontal:center;mso-position-horizontal-relative:text;\
+mso-position-vertical:absolute;mso-position-vertical-relative:text\">\
+          <v:textbox><w:txbxContent><w:p><w:r><w:t>HelloBx</w:t></w:r></w:p></w:txbxContent></v:textbox>\
+        </v:shape></w:pict></w:r></w:p>\
+        <w:p><w:r><w:t>zzzz zzzz zzzz zzzz zzzz zzzz zzzz zzzz zzzz zzzz \
+zzzz zzzz zzzz zzzz zzzz zzzz zzzz zzzz zzzz zzzz</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+          <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert vml txbx");
+    let painted = pdf_winansi_text(&pdf);
+    assert!(
+        painted.contains("Title") && painted.contains("HelloBx"),
+        "painted={painted}"
+    );
+    let xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    assert!(!xs.is_empty(), "textbox and title must paint; xs={xs:?}");
+    let min_x = xs.iter().copied().fold(f32::INFINITY, f32::min);
+    let max_x = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(min_x < 90.0, "title stays at the left margin; xs={xs:?}");
+    assert!(
+        max_x > 180.0,
+        "file_104 box is column-center (~213), not page origin; xs={xs:?}"
+    );
+    assert!(
+        max_x - min_x > 80.0,
+        "box sits beside the paragraph, not on top of it; xs={xs:?}"
+    );
+}
+
+#[test]
+fn drawingml_textbox_column_center_is_not_page_origin() {
+    // xml 3.4 ckpt 2 / file_70 Choice: positionH column+center,
+    // positionV paragraph 0. Datum plane must not paint at (0,0).
+    let body = "<w:p><w:r><w:t>Lead70</w:t></w:r>\
+        <w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" \
+          locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\" \
+          distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\">\
+          <wp:positionH relativeFrom=\"column\"><wp:align>center</wp:align></wp:positionH>\
+          <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"2374265\" cy=\"1403985\"/>\
+          <wp:wrapNone/>\
+          <wp:docPr id=\"1\" name=\"Text Box 2\"/>\
+          <w:txbxContent><w:p><w:r><w:t>DatumX</w:t></w:r></w:p></w:txbxContent>\
+        </wp:anchor></w:drawing></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+          <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert drawingml txbx");
+    let painted = pdf_winansi_text(&pdf);
+    assert!(
+        painted.contains("Lead70") && painted.contains("DatumX"),
+        "painted={painted}"
+    );
+    let xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    assert!(!xs.is_empty(), "lead and box must paint; xs={xs:?}");
+    let min_x = xs.iter().copied().fold(f32::INFINITY, f32::min);
+    let max_x = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(min_x < 90.0, "lead stays at the left margin; xs={xs:?}");
+    assert!(
+        max_x > 150.0,
+        "file_70 column-center box is not page origin; xs={xs:?}"
     );
 }
 
