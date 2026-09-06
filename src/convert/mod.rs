@@ -1158,6 +1158,7 @@ enum ShapeGeom {
     NoSmoking,
     Plaque,
     LeftCircularArrow,
+    BlockArc,
 }
 
 enum ImageKind {
@@ -6073,6 +6074,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "noSmoking" => ShapeGeom::NoSmoking,
         "plaque" => ShapeGeom::Plaque,
         "leftCircularArrow" => ShapeGeom::LeftCircularArrow,
+        "blockArc" => ShapeGeom::BlockArc,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8960,6 +8962,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::BlockArc => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: block_arc_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9109,6 +9117,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::NoSmoking
                 | ShapeGeom::Plaque
                 | ShapeGeom::LeftCircularArrow
+                | ShapeGeom::BlockArc
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9150,6 +9159,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::LeftCircularArrow => {
                                 left_circular_arrow_points(x, y, dw, dh)
                             }
+                            ShapeGeom::BlockArc => block_arc_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11786,6 +11796,29 @@ fn left_circular_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)>
     let tip_ang = ooxml_ang_rad(ST + SW - 900_000.0);
     let tip_r = ss * 58_000.0 / 100_000.0;
     pts.push(map(hc + tip_r * tip_ang.cos(), vc + tip_r * tip_ang.sin()));
+    let mut icur = (hc + rw2 * en.cos(), vc + rh2 * en.sin());
+    pts.push(map(icur.0, icur.1));
+    ooxml_arc_to_y_down(&mut icur, rw2, rh2, ST + SW, -SW, &mut pts, map);
+    pts
+}
+
+fn block_arc_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML blockArc adj1=10800000 adj2=0 adj3=25000: 180° thick C, no head.
+    const ST: f32 = 10_800_000.0;
+    const SW: f32 = 10_800_000.0;
+    let dr = preset_ss(w, h) * 25_000.0 / 100_000.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let rw1 = (w * 0.5).max(0.5);
+    let rh1 = (h * 0.5).max(0.5);
+    let rw2 = (rw1 - dr).max(0.5);
+    let rh2 = (rh1 - dr).max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let st = ooxml_ang_rad(ST);
+    let mut cur = (hc + rw1 * st.cos(), vc + rh1 * st.sin());
+    let mut pts = vec![map(cur.0, cur.1)];
+    ooxml_arc_to_y_down(&mut cur, rw1, rh1, ST, SW, &mut pts, map);
+    let en = ooxml_ang_rad(ST + SW);
     let mut icur = (hc + rw2 * en.cos(), vc + rh2 * en.sin());
     pts.push(map(icur.0, icur.1));
     ooxml_arc_to_y_down(&mut icur, rw2, rh2, ST + SW, -SW, &mut pts, map);
@@ -14688,6 +14721,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn block_arc_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="blockArc"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=blockArc must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -15244,6 +15316,28 @@ mod drawing_tests {
             !pts.iter()
                 .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
             "leftCircularArrow must not include the bbox corner; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn block_arc_points_are_a_thick_semicircle() {
+        let pts = block_arc_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 16, "{}", pts.len());
+        assert!(pts[0].0.abs() < 0.05 && (pts[0].1 - 50.0).abs() < 0.05);
+        let min_x = pts.iter().map(|p| p.0).fold(f32::MAX, f32::min);
+        let max_x = pts.iter().map(|p| p.0).fold(f32::MIN, f32::max);
+        assert!(min_x < 5.0 && max_x > 90.0, "span {min_x}..{max_x}");
+        let inner = pts.iter().any(|(px, py)| {
+            let dx = *px - 50.0;
+            let dy = *py - 50.0;
+            let r = (dx * dx + dy * dy).sqrt();
+            r > 20.0 && r < 40.0
+        });
+        assert!(inner, "inner reverse arc must sit inside the ring; {pts:?}");
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
+            "blockArc must not include the bbox corner; {pts:?}"
         );
     }
 
