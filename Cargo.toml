@@ -33,6 +33,7 @@ include = [
   "/README.md",
   "/CHANGELOG.md",
   "/KNOWN_ISSUES.md",
+  "/TUNING_AUDIT.md",
   "/LICENSE",
   "/LICENSES.md",
   "/NOTICE",
