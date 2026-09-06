@@ -1132,6 +1132,8 @@ enum ShapeGeom {
     Octagon,
     Star4,
     Star5,
+    RtTriangle,
+    UpDownArrow,
 }
 
 enum ImageKind {
@@ -6021,6 +6023,9 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "octagon" => ShapeGeom::Octagon,
         "star4" => ShapeGeom::Star4,
         "star5" => ShapeGeom::Star5,
+        "rtTriangle" => ShapeGeom::RtTriangle,
+        "upDownArrow" => ShapeGeom::UpDownArrow,
+        "flowChartDecision" => ShapeGeom::Diamond,
         _ => ShapeGeom::Box,
     }
 }
@@ -8725,6 +8730,18 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::RtTriangle => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: rt_triangle_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::UpDownArrow => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: up_down_arrow_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8772,6 +8789,8 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Octagon
                 | ShapeGeom::Star4
                 | ShapeGeom::Star5
+                | ShapeGeom::RtTriangle
+                | ShapeGeom::UpDownArrow
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -8788,6 +8807,8 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Octagon => octagon_points(x, y, dw, dh),
                             ShapeGeom::Star4 => star4_points(x, y, dw, dh),
                             ShapeGeom::Star5 => star5_points(x, y, dw, dh),
+                            ShapeGeom::RtTriangle => rt_triangle_points(x, y, dw, dh),
+                            ShapeGeom::UpDownArrow => up_down_arrow_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -10772,6 +10793,33 @@ fn star5_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     ]
 }
 
+fn rt_triangle_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML rtTriangle: M l,b L l,t L r,b Z (right angle at bottom-left).
+    vec![(x, y), (x, y + h), (x + w, y)]
+}
+
+fn up_down_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML upDownArrow adj1=adj2=50000.
+    let ss = preset_ss(w, h);
+    let y2 = ss * 50_000.0 / 100_000.0;
+    let dx1 = w * 50_000.0 / 200_000.0;
+    let hc = w * 0.5;
+    let x1 = hc - dx1;
+    let x2 = hc + dx1;
+    vec![
+        (x, y + h - y2),
+        (x + hc, y + h),
+        (x + w, y + h - y2),
+        (x + x2, y + h - y2),
+        (x + x2, y + y2),
+        (x + w, y + y2),
+        (x + hc, y),
+        (x, y + y2),
+        (x + x1, y + y2),
+        (x + x1, y + h - y2),
+    ]
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -12587,6 +12635,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn rt_triangle_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="900000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="rtTriangle"/>
+        <a:solidFill><a:srgbClr val="FF8800"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=rtTriangle must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn bent_connector_reads_triangle_tail_end() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -12730,6 +12817,15 @@ mod drawing_tests {
         assert_eq!(pts.len(), 8);
         assert!((pts[2].0 - 50.0).abs() < 0.05 && (pts[2].1 - 100.0).abs() < 0.05);
         assert!((pts[6].0 - 50.0).abs() < 0.05 && pts[6].1.abs() < 0.05);
+    }
+
+    #[test]
+    fn rt_triangle_points_right_angle_at_bottom_left() {
+        let pts = rt_triangle_points(0.0, 0.0, 80.0, 40.0);
+        assert_eq!(pts.len(), 3);
+        assert!((pts[0].0).abs() < 0.01 && pts[0].1.abs() < 0.01);
+        assert!((pts[1].0).abs() < 0.01 && (pts[1].1 - 40.0).abs() < 0.01);
+        assert!((pts[2].0 - 80.0).abs() < 0.01 && pts[2].1.abs() < 0.01);
     }
 
     #[test]
