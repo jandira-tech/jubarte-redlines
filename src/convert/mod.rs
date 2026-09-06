@@ -645,6 +645,10 @@ struct TableGeom {
     tbl_ind: f32,
     /// Table-level left cell margin used by the Word edge rule.
     mar_l: f32,
+    /// First-row `tcW` preferred widths (spanned cells split evenly).
+    pref: Vec<PrefWidth>,
+    /// `w:tblLayout w:type=fixed`.
+    fixed: bool,
 }
 
 /// Preferred table width from `tblW`. Word `pct` is 50ths of a percent
@@ -654,6 +658,14 @@ enum TblWidth {
     Grid,
     Dxa(f32),
     Pct(f32),
+}
+
+/// First-row `w:tcW`. Word `pct` is 50ths of a percent of the table width.
+#[derive(Clone, Copy)]
+enum PrefWidth {
+    Dxa(f32),
+    Pct(f32),
+    Auto,
 }
 
 #[derive(Clone)]
@@ -725,6 +737,7 @@ enum VMerge {
 
 struct RawCell {
     paras: Vec<CellPara>,
+    pref: PrefWidth,
     colspan: usize,
     vmerge: VMerge,
     fill: Option<[f32; 3]>,
@@ -2734,19 +2747,44 @@ fn para_is_empty_toc_field(dom: &Dom, para: NodeId) -> bool {
 }
 
 fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
-    let total: f32 = cols.iter().sum();
-    // dxa/grid cap at the measure. pct does not: table_bookmark_end
-    // Test 5 is 10000/5000 = 200% and Word clips the extra columns.
+    let n = cols.len();
+    let grid_total: f32 = cols.iter().sum();
+    // tblW=auto: Word's tblGrid is the last autofit cache. Overlaying
+    // first-row tcW (mini 342) dropped comments-lots. Keep the cache.
+    if !geom.fixed && matches!(geom.width, TblWidth::Grid) {
+        let target = grid_total.min(avail).max(0.0);
+        let scale = if grid_total > 0.0 {
+            target / grid_total
+        } else {
+            1.0
+        };
+        return cols.iter().map(|c| c * scale).collect();
+    }
     let target = match geom.width {
-        TblWidth::Grid => total.min(avail),
-        // Word paints dxa past the measure (table_bookmark_end Test 2
-        // is 12000 twips / 8.33in; capping packed C4 at 419 vs Word 540).
+        TblWidth::Grid => grid_total,
         TblWidth::Dxa(w) => w,
         TblWidth::Pct(p) => avail * p,
     }
     .max(0.0);
+    let base: Vec<f32> = (0..n)
+        .map(|i| {
+            let grid = cols.get(i).copied().unwrap_or(80.0);
+            match geom.pref.get(i) {
+                Some(PrefWidth::Dxa(w)) if *w > 0.0 => *w,
+                Some(PrefWidth::Pct(p)) if *p > 0.0 => target * p,
+                _ => grid,
+            }
+        })
+        .collect();
+    let total: f32 = base.iter().sum();
+    // Fixed without tblW: cell tcW as written (may overflow the page).
+    // Fixed with tblW: scale preferred into the table width. Test 1/2
+    // grid 2000/3000 is that scaled result; raw tcW 2880/2160 is not.
+    if geom.fixed && matches!(geom.width, TblWidth::Grid) {
+        return base;
+    }
     let scale = if total > 0.0 { target / total } else { 1.0 };
-    cols.iter().map(|c| c * scale).collect()
+    base.iter().map(|c| c * scale).collect()
 }
 
 fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> f32 {
@@ -3400,6 +3438,7 @@ fn table_block(
             let (pad_t, pad_b) = cell_pad_tb(dom, cell, tbl_pad_t, tbl_pad_b);
             cells.push(RawCell {
                 paras: cell_paras,
+                pref: cell_pref_width(dom, cell),
                 colspan,
                 vmerge,
                 fill: cell_fill(dom, cell),
@@ -3449,6 +3488,8 @@ fn table_block(
     if cols.is_empty() && occupancy > 0 {
         cols = vec![80.0; occupancy];
     }
+    let pref = first_row_pref(&raw_rows, cols.len());
+    let fixed = table_layout_fixed(dom, table);
     let mut rows = resolve_table_merges(raw_rows);
     if let Some(ref style) = tdef {
         apply_tbl_style(&mut rows, style, &look);
@@ -3492,6 +3533,8 @@ fn table_block(
                 table_grid: table_style_id(dom, table) == Some("TableGrid"),
                 tbl_ind: table_ind(dom, table),
                 mar_l: tbl_pad_l,
+                pref,
+                fixed,
             }
         },
     }
@@ -3659,6 +3702,68 @@ fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {
     (colspan, vmerge)
 }
 
+fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
+    let Some(pr) = first_named(dom, cell, "tcPr") else {
+        return PrefWidth::Auto;
+    };
+    let Some(tw) = direct_named(dom, pr, "tcW") else {
+        return PrefWidth::Auto;
+    };
+    match attr_any(dom, tw, "type").unwrap_or("auto") {
+        "pct" => {
+            let fiftieths = attr_any(dom, tw, "w")
+                .and_then(|s| s.parse::<f32>().ok())
+                .unwrap_or(0.0);
+            if fiftieths > 0.0 {
+                PrefWidth::Pct(fiftieths / 5000.0)
+            } else {
+                PrefWidth::Auto
+            }
+        }
+        "dxa" => {
+            let w = attr_any(dom, tw, "w").and_then(parse_len).unwrap_or(0.0);
+            if w > 0.0 {
+                PrefWidth::Dxa(w)
+            } else {
+                PrefWidth::Auto
+            }
+        }
+        _ => PrefWidth::Auto,
+    }
+}
+
+fn first_row_pref(raw_rows: &[Vec<RawCell>], ncols: usize) -> Vec<PrefWidth> {
+    let mut pref = vec![PrefWidth::Auto; ncols];
+    let Some(row) = raw_rows.first() else {
+        return pref;
+    };
+    let mut col = 0usize;
+    for cell in row {
+        let span = cell.colspan.max(1);
+        match cell.pref {
+            PrefWidth::Dxa(w) => {
+                let each = w / span as f32;
+                for i in 0..span {
+                    if let Some(slot) = pref.get_mut(col + i) {
+                        *slot = PrefWidth::Dxa(each);
+                    }
+                }
+            }
+            PrefWidth::Pct(p) => {
+                let each = p / span as f32;
+                for i in 0..span {
+                    if let Some(slot) = pref.get_mut(col + i) {
+                        *slot = PrefWidth::Pct(each);
+                    }
+                }
+            }
+            PrefWidth::Auto => {}
+        }
+        col += span;
+    }
+    pref
+}
+
 fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
     let Some(pr) = first_named(dom, cell, "tcPr") else {
         return false;
@@ -3687,6 +3792,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
     style.highlight = None;
     style.effect_skip = false;
     RawCell {
+        pref: PrefWidth::Auto,
         paras: vec![CellPara {
             runs: vec![TextRun::new("Deleted Cells", style)],
             style: {

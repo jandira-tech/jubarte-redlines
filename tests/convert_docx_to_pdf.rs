@@ -7557,6 +7557,101 @@ fn auto_tblw_keeps_tblgrid_not_tcw_after_mini_342() {
     );
 }
 
+fn two_col_shaded(tbl_pr: &str, grid: &str, left_tcw: &str, right_tcw: &str) -> String {
+    format!(
+        "<w:tbl><w:tblPr>{tbl_pr}</w:tblPr>\
+           <w:tblGrid>{grid}</w:tblGrid>\
+           <w:tr>\
+             <w:tc><w:tcPr><w:tcW {left_tcw}/>\
+               <w:shd w:val=\"clear\" w:fill=\"FF0000\"/></w:tcPr>\
+               <w:p><w:r><w:t>L</w:t></w:r></w:p></w:tc>\
+             <w:tc><w:tcPr><w:tcW {right_tcw}/>\
+               <w:shd w:val=\"clear\" w:fill=\"00FF00\"/></w:tcPr>\
+               <w:p><w:r><w:t>R</w:t></w:r></w:p></w:tc>\
+           </w:tr></w:tbl><w:sectPr/>"
+    )
+}
+
+fn two_col_fill_ratio(body: &str) -> (f32, f32, f32) {
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert two-col table");
+    let red = pdf_fill_ws(&pdf, 1.0, 0.0, 0.0);
+    let green = pdf_fill_ws(&pdf, 0.0, 1.0, 0.0);
+    let rw = red.iter().copied().fold(0.0_f32, f32::max);
+    let gw = green.iter().copied().fold(0.0_f32, f32::max);
+    assert!(
+        rw > 20.0 && gw > 20.0,
+        "both cell fills must paint; red={red:?} green={green:?}"
+    );
+    (rw / gw, rw, gw)
+}
+
+#[test]
+fn fixed_layout_uses_tcw_not_grid() {
+    // xml 3.3 ckpt 3: tblLayout=fixed uses first-row tcW, not tblGrid.
+    let body = two_col_shaded(
+        "<w:tblLayout w:type=\"fixed\"/>",
+        "<w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"6000\"/>",
+        "w:w=\"4000\" w:type=\"dxa\"",
+        "w:w=\"4000\" w:type=\"dxa\"",
+    );
+    let (ratio, rw, gw) = two_col_fill_ratio(&body);
+    assert!(
+        (0.85..=1.15).contains(&ratio),
+        "fixed layout must use tcW 4000/4000 (1:1), not grid 1:3; ratio={ratio} red={rw} green={gw}"
+    );
+}
+
+#[test]
+fn tblw_dxa_scales_tcw_preferred_not_grid() {
+    // Explicit tblW dxa distributes first-row tcW, not a stale tblGrid cache.
+    let body = two_col_shaded(
+        "<w:tblW w:w=\"8000\" w:type=\"dxa\"/>",
+        "<w:gridCol w:w=\"4000\"/><w:gridCol w:w=\"4000\"/>",
+        "w:w=\"2000\" w:type=\"dxa\"",
+        "w:w=\"6000\" w:type=\"dxa\"",
+    );
+    let (ratio, rw, gw) = two_col_fill_ratio(&body);
+    assert!(
+        (0.28..=0.40).contains(&ratio),
+        "tblW dxa must scale tcW 2000/6000 (1:3), not grid 1:1; ratio={ratio} red={rw} green={gw}"
+    );
+}
+
+#[test]
+fn tcw_pct_splits_explicit_table_width() {
+    let body = two_col_shaded(
+        "<w:tblW w:w=\"8000\" w:type=\"dxa\"/>",
+        "<w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"6000\"/>",
+        "w:w=\"2500\" w:type=\"pct\"",
+        "w:w=\"2500\" w:type=\"pct\"",
+    );
+    let (ratio, rw, gw) = two_col_fill_ratio(&body);
+    assert!(
+        (0.85..=1.15).contains(&ratio),
+        "tcW pct 50%/50% of tblW must be equal columns; ratio={ratio} red={rw} green={gw}"
+    );
+}
+
+#[test]
+fn gridspan_tcw_splits_evenly_across_spanned_cols() {
+    let body = "<w:tbl><w:tblPr><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"1000\"/>\
+           <w:gridCol w:w=\"7000\"/></w:tblGrid>\
+         <w:tr>\
+           <w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/><w:gridSpan w:val=\"2\"/>\
+             <w:shd w:val=\"clear\" w:fill=\"FF0000\"/></w:tcPr>\
+             <w:p><w:r><w:t>Span</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/>\
+             <w:shd w:val=\"clear\" w:fill=\"00FF00\"/></w:tcPr>\
+             <w:p><w:r><w:t>R</w:t></w:r></w:p></w:tc>\
+         </w:tr></w:tbl><w:sectPr/>";
+    let (_, rw, gw) = two_col_fill_ratio(body);
+    assert!(
+        (rw - 2.0 * gw).abs() < 8.0,
+        "gridSpan=2 tcW=6000 splits 3000+3000, third col 3000; span={rw} tail={gw}"
+    );
+}
+
 #[test]
 fn light_shading_does_not_invent_inside_horizontal_rules() {
     // comments-lots / I_am_sharing LightShading-Accent1 lists only
