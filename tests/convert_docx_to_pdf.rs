@@ -12936,6 +12936,75 @@ fn mirror_margins_swap_left_and_right_on_even_pages() {
     );
 }
 
+fn csc_punct_docx(val: Option<&str>) -> Vec<u8> {
+    // 24 ideographic commas (U+3001) then ASCII marker. Compressing
+    // full-width punctuation must pull EndCscX left vs doNotCompress.
+    let punct = "&#x3001;".repeat(24);
+    let body = format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">{punct}EndCscX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>"
+    );
+    let settings = match val {
+        Some(v) => format!("<w:characterSpacingControl w:val=\"{v}\"/>"),
+        None => String::new(),
+    };
+    minimal_docx_with_settings(&body, &settings)
+}
+
+fn csc_run_end_x(pdf: &[u8]) -> f32 {
+    pdf_tf_xs(pdf, "11.04 Tf")
+        .into_iter()
+        .fold(0.0_f32, f32::max)
+}
+
+#[test]
+fn character_spacing_control_compresses_fullwidth_punctuation() {
+    // xml leftover: w:characterSpacingControl (ECMA-376 17.15.1.18).
+    // omitted / doNotCompress keep full advances; compressPunctuation
+    // (and compressPunctuationAndJapaneseKana) trim full-width punct.
+    let compressed = docx_to_pdf(&csc_punct_docx(Some("compressPunctuation")))
+        .expect("convert compressPunctuation");
+    let plain = docx_to_pdf(&csc_punct_docx(Some("doNotCompress"))).expect("convert doNotCompress");
+    let omitted = docx_to_pdf(&csc_punct_docx(None)).expect("convert omitted control");
+    let kana = docx_to_pdf(&csc_punct_docx(Some("compressPunctuationAndJapaneseKana")))
+        .expect("convert compressPunctuationAndJapaneseKana");
+    for (pdf, label) in [
+        (&compressed, "compress"),
+        (&plain, "doNotCompress"),
+        (&omitted, "omitted"),
+        (&kana, "kana"),
+    ] {
+        let text = pdf_winansi_text(pdf);
+        assert!(
+            text.contains("EndCscX"),
+            "{label} must paint the ASCII marker; text={text}"
+        );
+    }
+    let xc = csc_run_end_x(&compressed);
+    let xd = csc_run_end_x(&plain);
+    let xo = csc_run_end_x(&omitted);
+    let xk = csc_run_end_x(&kana);
+    assert!(
+        xc > 80.0 && xd > 80.0,
+        "11pt glyphs must paint past the left margin; xc={xc} xd={xd}"
+    );
+    assert!(
+        xc < xd - 20.0,
+        "compressPunctuation must shorten full-width punctuation advance; xc={xc} xd={xd}"
+    );
+    assert!(
+        (xo - xd).abs() < 1.0,
+        "omitted characterSpacingControl is doNotCompress; xo={xo} xd={xd}"
+    );
+    assert!(
+        (xk - xc).abs() < 1.0,
+        "compressPunctuationAndJapaneseKana also compresses punctuation; xk={xk} xc={xc}"
+    );
+}
+
 #[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";
