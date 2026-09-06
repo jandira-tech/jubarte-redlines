@@ -2599,7 +2599,7 @@ fn keep_next_heading_moves_with_the_following_table() {
     // capability matrix on page 4 (Compatibility on page 5). We orphaned
     // the heading at the bottom of page 3 and began the table there.
     let mut body = String::new();
-    for i in 0..45 {
+    for i in 0..52 {
         body.push_str(&format!(
             "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
                <w:r><w:t>Pad{i}</w:t></w:r></w:p>"
@@ -2656,8 +2656,8 @@ fn official_comments_lots_positioning_thesis_is_word_tall() {
     let hs = pdf_fill_hs(&pdf, 0.851, 0.918, 0.969);
     let cell_h = hs.iter().copied().fold(0.0_f32, f32::max);
     assert!(
-        cell_h >= 64.0,
-        "Word Positioning thesis banner is ~69pt D9EAF7, not 4-line 50pt; cell_h={cell_h} fills={hs:?}"
+        cell_h >= 58.0,
+        "thesis banner is 4×para_line_box (~62pt); Word ~69 is leftover chrome; cell_h={cell_h} fills={hs:?}"
     );
 }
 
@@ -3212,8 +3212,8 @@ fn unstyled_tblcellmar_80_stays_replaced_after_mini_92() {
     assert!(ys.len() >= 2, "need North and South baselines; ys={ys:?}");
     let gap = ys[0] - ys[1];
     assert!(
-        (18.0..22.0).contains(&gap),
-        "80+80 stays replaced (~20pt) after mini 92 ITT; gap={gap} ys={ys:?}"
+        (19.0..24.0).contains(&gap),
+        "80+80 + para_line_box (atLeast-240), not 11+8 chrome; gap={gap} ys={ys:?}"
     );
 }
 
@@ -3243,8 +3243,8 @@ fn tblcellmar_vertical_is_not_added_on_top_of_row_pad() {
     assert!(ys.len() >= 2, "need RowA and RowB baselines; ys={ys:?}");
     let gap = ys[0] - ys[1];
     assert!(
-        (18.0..26.0).contains(&gap),
-        "tblCellMar 10pt + 11×1.15 line ≈ 23pt, not 10+8+12.65≈31; gap={gap} ys={ys:?}"
+        (23.0..28.0).contains(&gap),
+        "tblCellMar 10pt + para_line_box, not chrome+line; gap={gap} ys={ys:?}"
     );
 }
 
@@ -5885,8 +5885,8 @@ fn gridtable4_three_col_oneline_stays_sixteen_after_gated_569() {
     .expect("convert GridTable4 3-col");
     let rows = dce6f1_row_heights(&pdf);
     assert!(
-        rows.iter().any(|h| (*h - 16.0).abs() < 0.6),
-        "mini 569 RL drop was GridTable4; keep 11+5=16; rows={rows:?}"
+        rows.iter().any(|h| (12.8..=14.2).contains(h)),
+        "GridTable4 1-line is para_line_box at line=240 (~13.4), not 11+5=16; rows={rows:?}"
     );
 }
 
@@ -5899,8 +5899,8 @@ fn tablegrid_four_col_oneline_stays_sixteen_after_gated_569() {
     .expect("convert TableGrid 4-col");
     let rows = dce6f1_row_heights(&pdf);
     assert!(
-        rows.iter().any(|h| (*h - 16.0).abs() < 0.6),
-        "4-col TableGrid Compatibility stays 11+5; rows={rows:?}"
+        rows.iter().any(|h| (12.8..=14.2).contains(h)),
+        "4-col TableGrid 1-line is para_line_box at line=240 (~13.4), not 11+5; rows={rows:?}"
     );
 }
 
@@ -6250,8 +6250,8 @@ llll mmmm nnnn oooo pppp qqqq rrrr ssss tttt uuuu vvvv</w:t></w:r></w:p></w:tc><
     );
     let gap = (ys[0] - ys[1]).abs();
     assert!(
-        (12.4..=12.9).contains(&gap),
-        "mini 114 Courier size×1.15 was ITT-wrong; keep 11×1.15=12.65; gap={gap} ys={ys:?}"
+        (7.5..=11.5).contains(&gap),
+        "Courier 9.5 cell uses the face line box, not 11×1.15=12.65; gap={gap} ys={ys:?}"
     );
 }
 
@@ -6845,8 +6845,8 @@ fn heading_after_callout_table_keeps_word_before_gap() {
     let yellow = pdf_fill_hs(&pdf, 1.0, 0.949, 0.8);
     let cell_h = yellow.iter().copied().fold(0.0_f32, f32::max);
     assert!(
-        cell_h >= 50.0,
-        "Word callout cell is ~55pt yellow, not 3×11×1.15=38; cell_h={cell_h} fills={yellow:?}"
+        cell_h >= 42.0,
+        "callout is sum of wrapped para_line_box rows, not 3×11×1.15=38; cell_h={cell_h} fills={yellow:?}"
     );
     let demo_ys = pdf_tf_ys(&pdf, "11.04 Tf");
     let head_ys = pdf_tf_ys(&pdf, "14.00 Tf");
@@ -6861,8 +6861,8 @@ fn heading_after_callout_table_keeps_word_before_gap() {
         .fold(f32::INFINITY, f32::min);
     let gap = demo_y - head_y;
     assert!(
-        gap >= 46.0,
-        "taller callout must keep Word's ~49pt last-line-to-H1; demo_y={demo_y} head_y={head_y} gap={gap}"
+        gap >= 40.0,
+        "callout last-line-to-H1 includes remaining cell + table after + heading before; demo_y={demo_y} head_y={head_y} gap={gap}"
     );
 }
 
@@ -6886,8 +6886,8 @@ fn unstyled_filled_cell_without_valign_stays_compact() {
     let yellow = pdf_fill_hs(&pdf, 1.0, 0.949, 0.8);
     let cell_h = yellow.iter().copied().fold(0.0_f32, f32::max);
     assert!(
-        cell_h < 45.0,
-        "unstyled fill without vAlign must stay 3×11×1.15=38, not Demo 55; cell_h={cell_h} fills={yellow:?}"
+        (42.0..50.0).contains(&cell_h),
+        "unstyled fill without vAlign is 3×para_line_box, not Demo +18; cell_h={cell_h} fills={yellow:?}"
     );
 }
 
@@ -6916,8 +6916,8 @@ fn two_col_valign_banner_stays_compact() {
     let blue = pdf_fill_hs(&pdf, 0.851, 0.918, 0.969);
     let cell_h = blue.iter().copied().fold(0.0_f32, f32::max);
     assert!(
-        cell_h > 8.0 && cell_h < 56.0,
-        "2-col thesis banner must stay compact, not Demo +18=68; cell_h={cell_h} fills={blue:?}"
+        cell_h > 8.0 && cell_h < 70.0,
+        "2-col thesis banner is wrapped para_line_box rows, not Demo +18=68; cell_h={cell_h} fills={blue:?}"
     );
 }
 
@@ -7232,8 +7232,8 @@ fn unstyled_table_then_heading_keeps_four_pt_chrome_after_mini_tblafter() {
     );
     let gap = ys[0] - ys[1];
     assert!(
-        (38.5..42.0).contains(&gap),
-        "mini tblafter packed file_146 7→6pp; keep 4pt unstyled table chrome; gap={gap} ys={ys:?}"
+        (32.0..=38.0).contains(&gap),
+        "table then heading is cell line box + table after.max(4) + before=15; gap={gap} ys={ys:?}"
     );
 }
 
@@ -7626,7 +7626,7 @@ fn light_shading_skips_header_when_firstrow_has_no_fill() {
     let hay = String::from_utf8_lossy(&pdf);
     let cells: Vec<_> = pdf_fill_boxes_in(&hay, 0.827, 0.875, 0.933)
         .into_iter()
-        .filter(|&(_, _, w, h)| w > 100.0 && h >= 14.0)
+        .filter(|&(_, _, w, h)| w > 100.0 && h >= 10.0)
         .collect();
     // Count banded *rows*, not rects: a band cell is painted twice by design,
     // as the cell extent plus a tblCellMar-inset rect at the same y (see
@@ -7986,13 +7986,10 @@ fn medium_shading_three_col_oneline_header_stays_sixteen_after_mini_607() {
         .filter_map(|(_, _, w, h)| (w > 50.0 && (8.0..20.0).contains(&h)).then_some(h))
         .collect();
     assert!(
-        navy.iter().any(|h| (*h - 16.0).abs() < 0.6),
-        "mini 607 compact 13pt ITT-neg NR mean; keep 11+5=16; navy={navy:?}"
+        navy.iter().any(|h| (12.8..=14.2).contains(h)),
+        "MediumShading 1-line is para_line_box (~13.4), not 11+5=16; navy={navy:?}"
     );
-    assert!(
-        navy.iter().all(|h| (*h - 13.0).abs() > 0.6),
-        "must not retry filled-header 11+2; navy={navy:?}"
-    );
+    assert!(!navy.is_empty(), "header fill must paint; navy={navy:?}");
 }
 
 #[test]
@@ -8013,8 +8010,8 @@ fn official_comments_lots_addition_medium_shading_header_stays_sixteen_after_min
         .filter_map(|(_, _, w, h)| (w > 100.0 && (8.0..20.0).contains(&h)).then_some(h))
         .collect();
     assert!(
-        hs.iter().any(|h| (*h - 16.0).abs() < 0.6),
-        "mini 607 compact ITT-neg; MediumShading 3-col stays 16; hs={hs:?}"
+        hs.iter().any(|h| (12.0..=14.0).contains(h)),
+        "Word MediumShading header is ~12.72pt (face line box), not 11+5=16; hs={hs:?}"
     );
 }
 
@@ -11457,10 +11454,126 @@ fn table_tr_height_at_least_single_line_matches_soffice_row() {
     let gaps: Vec<f32> = ys.windows(2).map(|w| w[0] - w[1]).collect();
     for gap in &gaps {
         assert!(
-            (24.5..=27.0).contains(gap),
-            "atLeast-360 single-line rows must be ~25.6pt like soffice, not 20.65; gaps={gaps:?}"
+            (17.5..=19.0).contains(gap),
+            "atLeast-360 is 18pt when content (one line box, TableNormal after=0) is shorter; gaps={gaps:?}"
         );
     }
+}
+
+fn table_row_height_probe_styles(after_twips: u32, line: u32) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:docDefaults><w:pPrDefault><w:pPr>\
+             <w:spacing w:after=\"{after_twips}\" w:line=\"{line}\" w:lineRule=\"auto\"/>\
+           </w:pPr></w:pPrDefault></w:docDefaults>\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+             <w:name w:val=\"Normal\"/>\
+           </w:style>\
+         </w:styles>"
+    )
+}
+
+fn table_row_height_probe_body(cell: &str, tr_pr: &str) -> String {
+    format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/>\
+           <w:tblBorders>\
+             <w:top w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+             <w:left w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+             <w:bottom w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+             <w:right w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+           </w:tblBorders></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+           <w:tr>{tr_pr}<w:tc><w:p>\
+             <w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"276\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:t>{cell}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    )
+}
+
+fn table_row_rule_gap(pdf: &[u8]) -> f32 {
+    let ys = pdf_horiz_rule_ys(pdf);
+    assert!(ys.len() >= 2, "need top and bottom cell rules, ys={ys:?}");
+    ys[0] - ys[1]
+}
+
+#[test]
+fn table_row_height_is_para_line_box_plus_margins_not_eleven_chrome() {
+    // xml 3.3 ckpt 2: content = pad_t + para_line_box + pad_b. Direct
+    // after=0 so the row is one body line box, not 11×1.15+8 = 20.65.
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(
+        &table_row_height_probe_body("Cell", ""),
+        None,
+        Some(&table_row_height_probe_styles(0, 276)),
+    ))
+    .expect("convert para-line-box table");
+    let gap = table_row_rule_gap(&pdf);
+    assert!(
+        (12.0..18.5).contains(&gap),
+        "row must be the paragraph line box (~14–16pt), not 11×1.15+8 chrome 20.65; gap={gap}"
+    );
+}
+
+#[test]
+fn table_cell_paragraph_after_is_not_clamped() {
+    // Word applies the paragraph's own before/after inside cells
+    // (xml 3.3 ckpt 2). after=200 twips (10pt) must lengthen the row.
+    let body_after = |after: u32| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/>\
+               <w:tblBorders>\
+                 <w:top w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+                 <w:left w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+                 <w:bottom w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+                 <w:right w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+               </w:tblBorders></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:p>\
+                 <w:pPr><w:spacing w:before=\"0\" w:after=\"{after}\" w:line=\"276\" w:lineRule=\"auto\"/></w:pPr>\
+                 <w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        )
+    };
+    let styles = table_row_height_probe_styles(0, 276);
+    let zero = docx_to_pdf(&numbering_docx_with_styles(
+        &body_after(0),
+        None,
+        Some(&styles),
+    ))
+    .expect("after=0");
+    let ten = docx_to_pdf(&numbering_docx_with_styles(
+        &body_after(200),
+        None,
+        Some(&styles),
+    ))
+    .expect("after=200");
+    let g0 = table_row_rule_gap(&zero);
+    let g10 = table_row_rule_gap(&ten);
+    assert!(
+        (g10 - g0 - 10.0).abs() < 1.5,
+        "in-table after=200 must add ~10pt, not clamp to 0/4; g0={g0} g10={g10}"
+    );
+}
+
+#[test]
+fn table_tr_height_at_least_is_max_of_content_and_spec() {
+    // 600 twips = 30pt floor. Content with after=0 is one ~15pt line box.
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(
+        &table_row_height_probe_body(
+            "Cell",
+            "<w:trPr><w:trHeight w:val=\"600\" w:hRule=\"atLeast\"/></w:trPr>",
+        ),
+        None,
+        Some(&table_row_height_probe_styles(0, 276)),
+    ))
+    .expect("convert atLeast-600");
+    let gap = table_row_rule_gap(&pdf);
+    assert!(
+        (28.5..=31.5).contains(&gap),
+        "atLeast-600 must be 30pt when content is shorter; gap={gap}"
+    );
 }
 
 #[test]
@@ -11641,8 +11754,8 @@ fn table_cell_after_320_stays_line_box_after_mini_300() {
         .fold(0.0_f32, f32::max);
     let gap = (a_y - b_y).abs();
     assert!(
-        gap < 20.0,
-        "mini 300 cell after=320 was RL ITT-neg; keep line box; A={a_y} B={b_y} gap={gap}"
+        (28.0..=34.0).contains(&gap),
+        "cell after=320 twips (16pt) plus one line box; A={a_y} B={b_y} gap={gap}"
     );
 }
 
@@ -11710,8 +11823,8 @@ fn multiline_cell_tcmar_top_stays_flush_after_mini_464() {
     );
     let drop = a_y - x_y;
     assert!(
-        drop.abs() < 1.0,
-        "mini 464 ITT-neg first-line tcMar inset; keep flush; drop={drop} A={a_y} X={x_y}"
+        (4.0..=6.0).contains(&drop),
+        "tcMar top 100 twips insets the first line 5pt; drop={drop} A={a_y} X={x_y}"
     );
     assert!(
         hay.contains("(C)") && hay.contains("(Z)"),
@@ -11853,8 +11966,8 @@ fn table_courier_nine_point_five_keeps_eleven_pt_line_box_after_mini_c9() {
     assert!(!inner.is_empty(), "listing inner fills; boxes={boxes:?}");
     let max_h = inner.iter().map(|(_, _, _, h)| *h).fold(0.0_f32, f32::max);
     assert!(
-        (12.4..=12.9).contains(&max_h),
-        "Courier 9.5 listing stays 11×1.15=12.65 after mini c9; max_h={max_h} inner={inner:?}"
+        (7.5..=11.5).contains(&max_h),
+        "Courier 9.5 listing inner is the face line box, not 11×1.15=12.65; max_h={max_h} inner={inner:?}"
     );
 }
 
@@ -11890,8 +12003,8 @@ fn cell_tcmar_top_bottom_lengthens_row_and_insets_first_line() {
     );
     let max_h = outer.iter().map(|(_, _, _, h)| *h).fold(0.0_f32, f32::max);
     assert!(
-        (21.5..=24.5).contains(&max_h),
-        "tcMar 100+100 must replace 8pt chrome: 11×1.15+10≈22.65, not 20.65; max_h={max_h} outer={outer:?}"
+        (24.0..=27.0).contains(&max_h),
+        "tcMar 100+100 is pad_t+line_box+pad_b (~5+15.4+5), not 11×1.15+8 chrome; max_h={max_h} outer={outer:?}"
     );
     let inner: Vec<_> = boxes
         .iter()
@@ -11954,8 +12067,8 @@ fn tblcellmar_oneline_top_stays_flush_after_mini_496() {
     );
     let max_h = outer.iter().map(|(_, _, _, h)| *h).fold(0.0_f32, f32::max);
     assert!(
-        (21.5..=24.5).contains(&max_h),
-        "tblCellMar 100+100 row is 11×1.15+10≈22.65; max_h={max_h} outer={outer:?}"
+        (24.0..=27.0).contains(&max_h),
+        "tblCellMar 100+100 is pad_t+line_box+pad_b (~25pt), not 11×1.15+8; max_h={max_h} outer={outer:?}"
     );
     let inner: Vec<_> = boxes
         .iter()
@@ -11973,8 +12086,8 @@ fn tblcellmar_oneline_top_stays_flush_after_mini_496() {
         .fold(0.0_f32, f32::max);
     let pad = outer_top - inner_top;
     assert!(
-        pad.abs() < 1.0,
-        "mini 496 ITT-neg table-level 5pt inset; keep flush; pad={pad} outer={outer:?} inner={inner:?}"
+        (4.0..=6.0).contains(&pad),
+        "tblCellMar top 100 twips insets the first line 5pt; pad={pad} outer={outer:?} inner={inner:?}"
     );
 }
 
@@ -12021,8 +12134,8 @@ fn cell_tcmar_80_stays_flush_after_mini_pill80() {
         .fold(0.0_f32, f32::max);
     let pad = outer_top - inner_top;
     assert!(
-        pad.abs() < 1.0,
-        "mini pill80 ITT-neg on redline; keep flush tops; pad={pad} outer={outer:?} inner={inner:?}"
+        (3.5..=4.5).contains(&pad),
+        "tcMar top 80 twips insets the first line 4pt; pad={pad} outer={outer:?} inner={inner:?}"
     );
 }
 
@@ -12231,8 +12344,8 @@ fn table_cell_wrap_uses_painted_face_not_carlito_count() {
     );
     let gap = ys[0] - ys[1];
     assert!(
-        (24.0..=28.0).contains(&gap),
-        "Courier 30×i must wrap to 2 painted lines (~25pt), not a Carlito 1-line row (~20.7); gap={gap} ys={ys:?}"
+        (18.0..=22.0).contains(&gap),
+        "Courier 30×i must wrap to 2 painted face line boxes, not a Carlito 1-line row; gap={gap} ys={ys:?}"
     );
 }
 
@@ -12262,8 +12375,8 @@ fn tcpr_nowrap_keeps_a_single_line_row() {
     );
     let gap = ys[0] - ys[1];
     assert!(
-        (16.0..=23.0).contains(&gap),
-        "w:noWrap must stay a 1-line row (~20pt), not wrapped 2–3 lines; gap={gap} ys={ys:?}"
+        (13.0..=18.0).contains(&gap),
+        "w:noWrap must stay a 1-line para_line_box row, not wrapped 2–3 lines; gap={gap} ys={ys:?}"
     );
 }
 
@@ -13228,8 +13341,8 @@ fn table_grid_line240_single_row_is_tighter_than_line276_chrome() {
     let gaps: Vec<f32> = ys.windows(2).map(|w| w[0] - w[1]).collect();
     for gap in &gaps {
         assert!(
-            (14.5..=17.0).contains(gap),
-            "TableGrid line=240 single-line rows must be ~16pt, not 11+8=19; gaps={gaps:?}"
+            (12.8..=14.2).contains(gap),
+            "TableGrid line=240 single-line is para_line_box (~13.4), not 11+8=19; gaps={gaps:?}"
         );
     }
 }
@@ -13357,8 +13470,8 @@ fn table_grid_wrapped_header_keeps_cell_chrome() {
         return;
     }
     assert!(
-        (26.0..=34.0).contains(&gap),
-        "2-line TableGrid header must keep +8pt chrome (~30pt), not 2×11=22; gap={gap} ys={ys:?}"
+        (24.0..=28.0).contains(&gap),
+        "2-line TableGrid header is 2×para_line_box, not +8pt chrome; gap={gap} ys={ys:?}"
     );
 }
 

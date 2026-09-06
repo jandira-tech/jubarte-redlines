@@ -22,7 +22,7 @@ use crate::namespaces::{A, M, MC, R, W, W14, WNE, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
-use font::{Face, FaceId, Fonts};
+use font::{Face, FaceId, FaceRef, Fonts};
 
 pub use font::{FontReportEntry, FontStep, font_report_json};
 
@@ -682,8 +682,13 @@ struct Watermark {
     rotate_deg: f32,
 }
 
-struct TableCell {
+struct CellPara {
     runs: Vec<TextRun>,
+    style: ParaStyle,
+}
+
+struct TableCell {
+    paras: Vec<CellPara>,
     col: usize,
     colspan: usize,
     rowspan: usize,
@@ -705,6 +710,12 @@ struct TableCell {
     style_fill: bool,
 }
 
+impl TableCell {
+    fn runs(&self) -> impl Iterator<Item = &TextRun> {
+        self.paras.iter().flat_map(|p| p.runs.iter())
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum VMerge {
     None,
@@ -713,7 +724,7 @@ enum VMerge {
 }
 
 struct RawCell {
-    runs: Vec<TextRun>,
+    paras: Vec<CellPara>,
     colspan: usize,
     vmerge: VMerge,
     fill: Option<[f32; 3]>,
@@ -2567,7 +2578,7 @@ fn walk_container(
     for idx in 0..dom.child_count(node) {
         let child = dom.child_at(node, idx);
         if dom.name_is(child, &W::p()) {
-            if para_base(dom, child, ctx.sheet, false).0.page_break_before && !blocks.is_empty() {
+            if para_base(dom, child, ctx.sheet, None).0.page_break_before && !blocks.is_empty() {
                 blocks.push(Block::PageBreak { next: None });
             }
             let page_br = para_has_page_break(dom, child);
@@ -2738,143 +2749,73 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     cols.iter().map(|c| c * scale).collect()
 }
 
-fn table_row_pad(nlines: usize, spec: f32, exact: bool, line_mult: f32) -> f32 {
-    if nlines > 1 {
-        // TableGrid line=240 wrapped headers (comments-addition
-        // capability matrix) still need the 8pt chrome so the
-        // Compatibility row stays on Word page 5. line=276
-        // multi-line cells already carry it in 11×1.15 boxes
-        // (Courier wrap ~25pt; +8 there is 33pt).
-        if line_mult <= 1.01 { 8.0 } else { 0.0 }
-    } else if spec > 0.0 && !exact {
-        13.0
-    } else if line_mult <= 1.01 {
-        // TableGrid line=240: +8 was measured on line=276
-        // meeting_agenda (20.65pt). 11+8=19pt spills
-        // table_bookmark_end Tests 6–7 onto page 2.
-        // 3-col TableGrid 1-line Word 13pt is gated in
-        // table_row_height_pt (not here) so GridTable4 / MediumShading
-        // stay 11+5. Ungated mini 569 RL −0.029. Mini 607 filled
-        // firstRow 11+2 ITT-neg NR mean −0.0508. Do not ungated-retry.
-        5.0
-    } else {
-        8.0
-    }
-}
-
-fn table_row_line_size(row: &[TableCell], line_mult: f32) -> f32 {
-    // line=276 (1.15) keeps the 11pt box: mini 114 Courier 9.5
-    // listings sit on 11×1.15=12.65. line=240 uses the cell face.
-    if line_mult > 1.01 {
-        return 11.0;
-    }
-    let size = row
+fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> f32 {
+    let size = para
+        .runs
         .iter()
-        .flat_map(|cell| cell.runs.iter())
-        .map(|run| run.style.size)
+        .map(|r| r.style.size)
         .fold(0.0_f32, f32::max);
-    if size > 0.0 { size } else { 11.0 }
+    let size = if size > 0.0 { size } else { 11.0 };
+    let face_id = para
+        .runs
+        .iter()
+        .find(|r| !r.text.is_empty())
+        .map(|r| fonts.resolve(&r.style.family, r.style.bold, r.style.italic))
+        .unwrap_or_else(|| FaceId::CarlitoRegular.into());
+    let line_box = para_line_box(fonts.get(face_id), size, &para.style);
+    let nlines = wrap_runs(fonts, &para.runs, wrap_w, wrap_w, false)
+        .len()
+        .max(1);
+    para.style.before + nlines as f32 * line_box + para.style.after
 }
 
+fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32]) -> f32 {
+    let cw: f32 = (0..cell.colspan)
+        .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
+        .sum();
+    let wrap_w = cell_wrap_width(cell, cw);
+    let body: f32 = if cell.paras.is_empty() {
+        let mut style = Defaults::word().para;
+        style.before = 0.0;
+        style.after = 0.0;
+        cell_para_height(
+            fonts,
+            &CellPara {
+                runs: Vec::new(),
+                style,
+            },
+            wrap_w,
+        )
+    } else {
+        cell.paras
+            .iter()
+            .map(|p| cell_para_height(fonts, p, wrap_w))
+            .sum()
+    };
+    cell.pad_t + body + cell.pad_b
+}
+
+/// Word row height: max cell content (pad_t + sum of paragraph line
+/// boxes and spacing + pad_b). `trHeight` exact overrides; atLeast is
+/// a floor. No 11.0×line_mult chrome (xml 3.3 ckpt 2).
 fn table_row_height_pt(
     fonts: &Fonts,
     row: &[TableCell],
     col_w: &[f32],
     geom: &TableGeom,
-    line_mult: f32,
     ri: usize,
 ) -> f32 {
-    // 2-col line=240 (comments-lots LightShading metadata): Word
-    // 1-line is ~12pt. 4-col TableGrid stays 11+5 so Compatibility
-    // stays on Word page 5. 3-col *TableGrid* 1-line is Word 13pt
-    // (mini 569 ungated also hit Strict01 GridTable4, RL −0.029).
-    let two_col_single = line_mult <= 1.01 && col_w.len() == 2;
-    let three_col_grid = line_mult <= 1.01 && col_w.len() == 3 && geom.table_grid;
-    let line_box = if two_col_single {
-        table_row_line_size(row, line_mult)
-    } else {
-        11.0 * line_mult
-    };
-    let nlines = row
-        .iter()
-        .map(|cell| {
-            let cw: f32 = (0..cell.colspan)
-                .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
-                .sum();
-            wrap_runs(
-                fonts,
-                &cell.runs,
-                cell_wrap_width(cell, cw),
-                cell_wrap_width(cell, cw),
-                false,
-            )
-            .len()
-        })
-        .max()
-        .unwrap_or(1)
-        .max(1);
     let spec = geom.row_min.get(ri).copied().unwrap_or(0.0);
     let exact = geom.row_exact.get(ri).copied().unwrap_or(false);
-    let mut row_pad = table_row_pad(nlines, spec, exact, line_mult);
-    if (two_col_single || three_col_grid) && nlines == 1 {
-        row_pad = 2.0;
-    }
-    if geom.unstyled
-        && row.len() == 1
-        && row.iter().any(|c| c.fill.is_some() && c.valign_center)
-        && (2..=4).contains(&nlines)
-        && line_mult > 1.01
-    {
-        // 1-cell yellow Demo (comments-lots p7): 3 wrapped lines, Word
-        // 55pt vs 3×11×1.15=38. Page-1 Positioning thesis is the same
-        // unstyled+vAlign 1-cell wrapping to 4 lines; Word's D9EAF7 box
-        // is ~69pt (measured: 69.60pt outer over 15.36/14.88/14.64/24.72
-        // inner). Gating 2..=3 left that banner at 50pt and shifted
-        // Prepared-for 22pt (align max_shift 5px).
-        //
-        // The +18 is a stand-in for real per-document line metrics, and it
-        // cannot be right for every fixture. Word paints this banner as the
-        // exact sum of its inner line boxes with no pad at all; the two
-        // oracles simply have different line boxes —
-        // docx_lots_of_comments is 69.60pt over ~15pt lines, and
-        // docx_lots_of_comments_addition_removal_redline_removal_v_addition
-        // is 50.81pt over ~11pt lines, the whole banner (width included:
-        // 504.0 vs 367.92) scaled by exactly 0.73 despite identical pgSz,
-        // identical docDefaults and an identical sz=22 in the cell. Until
-        // that 0.73 is explained and the line box comes from the document
-        // rather than 11×1.15, one constant has to miss one of them; this
-        // gate keeps comments-lots exact. See
-        // `official_addition_removal_page_one_thesis_is_compact`.
-        row_pad += 10.0 + 8.0;
-    }
-    // Explicit tblCellMar / tcMar top+bottom replaces generic row chrome.
-    // uipriority Feature table is 100+100 twips; stacking +8pt made
-    // each row 31pt (Word ~23) and spilled Summary onto page 3.
-    // Cicero 80+80 == chrome: Word stacks (~28.6pt, West on page 2)
-    // but mini 92 dropped Cicero −0.10 ITT with 0 better. Keep max().
-    // sample_iter2 npm: no tblCellMar, cell tcMar 100+100 (10pt) must
-    // win over the 8pt 1-line chrome (Word outer 22.32 vs 20.65).
-    // Multi-line code listings (tcMar 120+120) must NOT pick this up:
-    // mini-run 188 applied it globally and dropped the 3pp sample/
-    // eigenpal cluster −3 (median 53.15 → 50.95).
-    let cell_v = row
-        .iter()
-        .map(|c| c.pad_t + c.pad_b)
-        .fold(0.0_f32, f32::max);
-    let extra = row_pad.max(geom.pad_v);
-    let extra = if nlines == 1 {
-        extra.max(cell_v)
-    } else {
-        extra
-    };
-    let padded = nlines as f32 * line_box + extra;
+    let _ = (geom.pad_v, geom.unstyled, geom.table_grid);
     if exact && spec > 0.0 {
-        spec
-    } else if line_mult <= 1.01 {
-        padded.max(spec)
-    } else {
-        padded.max(spec).max(18.0)
+        return spec;
     }
+    let content = row
+        .iter()
+        .map(|cell| cell_content_height(fonts, cell, col_w))
+        .fold(0.0_f32, f32::max);
+    content.max(spec)
 }
 
 fn keep_lines_need_pt(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle, width: f32) -> f32 {
@@ -2896,20 +2837,11 @@ fn keep_lines_need_pt(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle, width:
 fn keep_next_follow_pt(fonts: &Fonts, avail: f32, block: &Block) -> f32 {
     match block {
         Block::Table {
-            cols,
-            rows,
-            style,
-            geom,
-            ..
+            cols, rows, geom, ..
         } => {
-            let line_mult = if style.line_mult > 0.0 {
-                style.line_mult
-            } else {
-                1.0
-            };
             let col_w = table_col_widths(cols, geom, avail);
             rows.first()
-                .map(|row| table_row_height_pt(fonts, row, &col_w, geom, line_mult, 0))
+                .map(|row| table_row_height_pt(fonts, row, &col_w, geom, 0))
                 .unwrap_or(0.0)
         }
         Block::Paragraph { runs, style, .. } => {
@@ -2952,12 +2884,23 @@ fn block_is_blank(block: &Block) -> bool {
     }
 }
 
-fn para_base(dom: &Dom, para: NodeId, sheet: &StyleSheet, in_table: bool) -> (ParaStyle, RunStyle) {
+fn para_base(
+    dom: &Dom,
+    para: NodeId,
+    sheet: &StyleSheet,
+    table_para: Option<&ParaStyle>,
+) -> (ParaStyle, RunStyle) {
     let mut pstyle = sheet.defaults.para.clone();
     let mut rstyle = sheet.defaults.run.clone();
-    if in_table {
-        pstyle.after = 0.0;
-        pstyle.before = 0.0;
+    if let Some(t) = table_para {
+        // Table style pPr (or latent TableNormal after=0) sits between
+        // docDefaults and the cell's pStyle/pPr. Direct cell spacing still
+        // wins via apply_ppr below (xml 3.3 ckpt 2).
+        pstyle.after = t.after;
+        pstyle.before = t.before;
+        pstyle.line_mult = t.line_mult;
+        pstyle.line_exact = t.line_exact;
+        pstyle.line_at_least = t.line_at_least;
     }
     if let Some(ppr) = dom.element(para, &W::p_pr())
         && let Some(ps) = first_named(dom, ppr, "pStyle")
@@ -2966,10 +2909,6 @@ fn para_base(dom: &Dom, para: NodeId, sheet: &StyleSheet, in_table: bool) -> (Pa
         if let Some(named) = sheet.by_id.get(sid) {
             pstyle = named.para.clone();
             rstyle = named.run.clone();
-            if in_table {
-                pstyle.after = named.para.after.min(4.0);
-                pstyle.before = named.para.before.min(2.0);
-            }
         } else {
             // Word still applies latent built-in heading spacing when the
             // style is referenced but omitted from styles.xml (the
@@ -3006,7 +2945,7 @@ fn paragraph_block(
     numbering: &mut Numbering,
 ) -> Block {
     let sheet = ctx.sheet;
-    let (mut pstyle, rstyle) = para_base(dom, para, sheet, in_table);
+    let (mut pstyle, rstyle) = para_base(dom, para, sheet, None);
     let (marker, num_id, ilvl) = list_marker(dom, para, sheet, numbering);
     if pstyle.outline_lvl.is_some() && !num_id.is_empty() {
         pstyle.chap_num = numbering.last_used(&num_id, ilvl).map(|n| n.to_string());
@@ -3310,20 +3249,26 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
             }
             let col0 = look.first_col && cell.col == 0 && tdef.first_col_bold;
             if header_bold || col0 {
-                for run in &mut cell.runs {
-                    run.style.bold = true;
+                for para in &mut cell.paras {
+                    for run in &mut para.runs {
+                        run.style.bold = true;
+                    }
                 }
             }
             let col0_italic = look.first_col && cell.col == 0 && tdef.first_col_italic;
             if header_italic || col0_italic {
-                for run in &mut cell.runs {
-                    run.style.italic = true;
+                for para in &mut cell.paras {
+                    for run in &mut para.runs {
+                        run.style.italic = true;
+                    }
                 }
             }
             if header && let Some(color) = tdef.first_row_color {
-                for run in &mut cell.runs {
-                    if run.style.color == [0.0, 0.0, 0.0] {
-                        run.style.color = color;
+                for para in &mut cell.paras {
+                    for run in &mut para.runs {
+                        if run.style.color == [0.0, 0.0, 0.0] {
+                            run.style.color = color;
+                        }
                     }
                 }
             }
@@ -3363,6 +3308,10 @@ fn table_block(
     }
     let (tbl_pad_l, tbl_pad_r) = table_pad_h(dom, table);
     let (tbl_pad_t, tbl_pad_b) = table_pad_tb(dom, table);
+    let mut latent_table_para = sheet.defaults.para.clone();
+    latent_table_para.after = 0.0;
+    latent_table_para.before = 0.0;
+    let table_para = tdef.as_ref().map(|t| &t.para).unwrap_or(&latent_table_para);
     let mut raw_rows: Vec<Vec<RawCell>> = Vec::new();
     let mut row_min = Vec::new();
     let mut row_exact = Vec::new();
@@ -3376,17 +3325,16 @@ fn table_block(
         let mut row_has_cell_del = false;
         for cell in dom.elements(row, Some(&W::tc())) {
             row_has_cell_del |= cell_is_deleted(dom, cell);
-            let mut cell_runs = Vec::new();
-            let mut cell_para = 0usize;
+            let mut cell_paras = Vec::new();
             let mut cell_align = Align::Left;
             for idx in 0..dom.child_count(cell) {
                 let child = dom.child_at(cell, idx);
                 if !dom.name_is(child, &W::p()) {
                     continue;
                 }
-                let (pstyle, r) = para_base(dom, child, sheet, true);
+                let (pstyle, r) = para_base(dom, child, sheet, Some(table_para));
                 let (mark, _, _) = list_marker(dom, child, sheet, numbering);
-                let runs = collect_runs_in(
+                let mut runs = collect_runs_in(
                     dom,
                     child,
                     &r,
@@ -3412,26 +3360,24 @@ fn table_block(
                 if empty_ink && cell_rule.is_none() {
                     continue;
                 }
-                if cell_para == 0 {
+                if cell_paras.is_empty() {
                     cell_align = pstyle.align;
                 }
-                if cell_para > 0 {
-                    // sample_document code listing: each <w:p> is a line.
-                    cell_runs.push(TextRun::new("\n", r.clone()));
-                }
-                cell_para += 1;
                 if !mark.is_empty() {
-                    cell_runs.push(TextRun::new(mark, r.clone()));
+                    runs.insert(0, TextRun::new(mark, r.clone()));
                 }
-                cell_runs.extend(runs);
                 if empty_ink && let Some((color, width)) = cell_rule {
                     let mut rule = TextRun::new(" ", r.clone());
                     rule.rule = Some((color, width));
-                    cell_runs.push(rule);
+                    runs.push(rule);
                 }
+                cell_paras.push(CellPara {
+                    runs,
+                    style: pstyle,
+                });
             }
-            if cell_runs.is_empty() {
-                cell_runs = collect_runs_in(
+            if cell_paras.is_empty() {
+                let runs = collect_runs_in(
                     dom,
                     cell,
                     &sheet.defaults.run,
@@ -3444,12 +3390,16 @@ fn table_block(
                         toc: false,
                     },
                 );
+                cell_paras.push(CellPara {
+                    runs,
+                    style: table_para.clone(),
+                });
             }
             let (colspan, vmerge) = cell_span(dom, cell);
             let (pad_l, pad_r) = cell_pad_h(dom, cell, tbl_pad_l, tbl_pad_r);
             let (pad_t, pad_b) = cell_pad_tb(dom, cell, tbl_pad_t, tbl_pad_b);
             cells.push(RawCell {
-                runs: cell_runs,
+                paras: cell_paras,
                 colspan,
                 vmerge,
                 fill: cell_fill(dom, cell),
@@ -3737,7 +3687,16 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
     style.highlight = None;
     style.effect_skip = false;
     RawCell {
-        runs: vec![TextRun::new("Deleted Cells", style)],
+        paras: vec![CellPara {
+            runs: vec![TextRun::new("Deleted Cells", style)],
+            style: {
+                let mut p = Defaults::word().para;
+                p.before = 0.0;
+                p.after = 0.0;
+                p.line_mult = 1.0;
+                p
+            },
+        }],
         colspan: 1,
         vmerge: VMerge::None,
         fill: None,
@@ -3806,7 +3765,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
             }
             let idx = origins[ri].len();
             origins[ri].push(TableCell {
-                runs: raw.runs,
+                paras: raw.paras,
                 col,
                 colspan: span,
                 rowspan: 1,
@@ -8126,18 +8085,10 @@ impl<'a> Layout<'a> {
         // tblW dxa/pct is the preferred width (table_bookmark_end Tests 3–5
         // use pct 50ths). Grid-only tables still never stretch.
         let col_w = table_col_widths(cols, geom, avail);
-        let line_mult = if style.line_mult > 0.0 {
-            style.line_mult
-        } else {
-            1.0
-        };
-        // Word `auto` line is a multiple of font size (276/240 = 1.15),
-        // not of the full glyph box. The em-box made sample_document's
-        // 11-line code cell ~50pt too tall (5pp vs soffice 3).
         let row_h: Vec<f32> = rows
             .iter()
             .enumerate()
-            .map(|(ri, row)| table_row_height_pt(self.fonts, row, &col_w, geom, line_mult, ri))
+            .map(|(ri, row)| table_row_height_pt(self.fonts, row, &col_w, geom, ri))
             .collect();
         let used: f32 = col_w.iter().sum();
         let shift = match style.align {
@@ -8174,27 +8125,6 @@ impl<'a> Layout<'a> {
                 self.at_page_top = false;
                 self.y -= rh;
                 let y_top = self.y + rh;
-                let size = if line_mult <= 1.01 && col_w.len() == 2 {
-                    table_row_line_size(row, line_mult)
-                } else {
-                    11.0
-                };
-                let line_box = size * line_mult;
-                let face_id = row
-                    .iter()
-                    .find_map(|cell| {
-                        cell.runs.iter().find_map(|run| {
-                            (!run.text.is_empty()).then(|| {
-                                self.fonts.resolve(
-                                    &run.style.family,
-                                    run.style.bold,
-                                    run.style.italic,
-                                )
-                            })
-                        })
-                    })
-                    .unwrap_or(FaceId::CarlitoRegular.into());
-                let face = self.fonts.get(face_id);
                 for cell in row {
                     let x: f32 = table_left + col_w.iter().take(cell.col).copied().sum::<f32>();
                     let w: f32 = (0..cell.colspan)
@@ -8202,47 +8132,34 @@ impl<'a> Layout<'a> {
                         .sum();
                     let h: f32 = row_h.iter().skip(ri).take(cell.rowspan.max(1)).sum();
                     let bottom = y_top - h;
-                    // Per-run style. First-run-only paint mashed sample_document
-                    // npm/github cells (black label + 2563EB hyperlink).
                     let pad_l = cell.pad_l;
                     let pad_r = cell.pad_r;
-                    let lines = wrap_runs(
-                        self.fonts,
-                        &cell.runs,
-                        cell_wrap_width(cell, w),
-                        cell_wrap_width(cell, w),
-                        false,
-                    );
-                    // Win-ascent already places the first baseline; the extra
-                    // -3pt (tuned for typo 1536) clipped the second cell line.
-                    // 1-line tcMar that exceeds chrome (sample_iter2 npm
-                    // 100+100 vs 8pt) insets the inner fill 5pt, matching
-                    // Word. Multi-line / chrome-sized pads stay flush: run
-                    // 188's global inset packed the 3pp sample cluster.
-                    let chrome = if line_mult <= 1.01 { 5.0_f32 } else { 8.0_f32 };
-                    let chrome = chrome.max(geom.pad_v);
-                    let one_line = lines.len() == 1;
-                    // Do not inset when tcMar 80+80 == chrome (file_146
-                    // 1E293B pills): mini 257–260 no-redline +0.033/+0.102
-                    // but redline mean −0.005 (file_34 −0.25). Keep flush
-                    // tops; 100+100 still insets. Multi-line first-line
-                    // inset (file_146 listing yMin 86.3 vs flush 80.9)
-                    // plus pad_t row extra was mini 464: NR 58.9475/50.4487
-                    // vs KEEP 460 59.46/53.4527 (median −3). Keep flush.
-                    // Table-level tblCellMar 100+100 (file_34 Feature, no
-                    // cell tcMar) was Word-faithful 5pt inset (NR file_34
-                    // +2.16) but mini 496–498 ITT-neg: RL mean −0.0107,
-                    // file_33_file_34 −0.375 / file_34_file_35 −0.263, 0
-                    // gains. chrome.max(geom.pad_v) keeps that flush.
-                    let inset = if one_line && cell.pad_t + cell.pad_b > chrome + 0.01 {
-                        cell.pad_t
-                    } else {
-                        0.0
-                    };
-                    // Outer + inner is deliberate: Word paints a band cell as
-                    // the cell extent plus a tblCellMar-inset rect (see
-                    // `grid_table4_band_inner_fill_matches_cell_height`, which
-                    // requires both).
+                    let wrap_w = cell_wrap_width(cell, w);
+                    let mut para_lines: Vec<(f32, f32, FaceRef, Vec<Vec<TextRun>>)> = Vec::new();
+                    let mut nlines = 0usize;
+                    for para in &cell.paras {
+                        let size = para
+                            .runs
+                            .iter()
+                            .map(|r| r.style.size)
+                            .fold(0.0_f32, f32::max);
+                        let size = if size > 0.0 { size } else { 11.0 };
+                        let face_id = para
+                            .runs
+                            .iter()
+                            .find(|r| !r.text.is_empty())
+                            .map(|r| {
+                                self.fonts
+                                    .resolve(&r.style.family, r.style.bold, r.style.italic)
+                            })
+                            .unwrap_or_else(|| FaceId::CarlitoRegular.into());
+                        let line_box = para_line_box(self.fonts.get(face_id), size, &para.style);
+                        let lines = wrap_runs(self.fonts, &para.runs, wrap_w, wrap_w, false);
+                        nlines += lines.len().max(1);
+                        para_lines.push((size, line_box, face_id, lines));
+                    }
+                    let one_line = nlines == 1;
+                    let inset = cell.pad_t;
                     if let Some(fill) = cell.fill {
                         self.current().ops.push(Op::FillRect {
                             x,
@@ -8261,82 +8178,94 @@ impl<'a> Layout<'a> {
                         cell.borders,
                         [ri == 0, last_row, cell.col == 0, last_col],
                     );
-                    let mut ty = y_top - inset - face.ascent_pt(size);
-                    for line in lines {
-                        if ty < bottom {
-                            break;
-                        }
-                        if let Some((color, width)) = line.iter().find_map(|r| r.rule) {
-                            // file_146 Sign-off: empty cell para pBdr bottom
-                            // is a cell-wide hairline, not a space glyph.
-                            let inner_w = (w - pad_l - pad_r).max(1.0);
-                            self.current().ops.push(Op::FillRect {
-                                x: x + pad_l,
-                                y: ty,
-                                w: inner_w,
-                                h: width,
-                                color,
-                            });
-                        }
-                        if line.iter().all(|r| r.text.trim().is_empty()) {
-                            ty -= line_box;
-                            continue;
-                        }
-                        if let Some(fill) = cell.fill {
-                            // Word Quartz: cell shd plus an inset fill per line
-                            // (tblCellMar 108 twips). comments-lots p3 is 35
-                            // D3DFEE rects, not 9 cell-only paints.
-                            // GridTable4 band1Horz is cell-height × x-inset
-                            // (14.64/14.64), not a shorter line_box inner.
-                            let inner_w = (w - pad_l - pad_r).max(1.0);
-                            let (iy, ih) = if one_line && inset == 0.0 && cell.style_fill {
-                                (bottom, h)
-                            } else {
-                                (ty - (line_box - face.ascent_pt(size)), line_box)
-                            };
-                            self.current().ops.push(Op::FillRect {
-                                x: x + pad_l,
-                                y: iy,
-                                w: inner_w,
-                                h: ih,
-                                color: fill,
-                            });
-                        }
-                        let line_w: f32 = line
-                            .iter()
-                            .map(|run| {
-                                if run.text.is_empty() {
-                                    return 0.0;
-                                }
-                                let fid = self.fonts.resolve(
-                                    &run.style.family,
-                                    run.style.bold,
-                                    run.style.italic,
-                                );
-                                self.fonts
-                                    .get(fid)
-                                    .width_pt(&run.text, run.style.paint_size())
-                            })
-                            .sum();
-                        let inner = (w - pad_l - pad_r).max(0.0);
-                        let extra = match cell.align {
-                            Align::Center => ((inner - line_w) / 2.0).max(0.0),
-                            Align::Right => (inner - line_w).max(0.0),
-                            Align::Left | Align::Justify => 0.0,
+                    let mut y_line = y_top - inset;
+                    if cell.valign_center {
+                        let content =
+                            cell_content_height(self.fonts, cell, &col_w) - cell.pad_t - cell.pad_b;
+                        y_line -= (h - cell.pad_t - cell.pad_b - content).max(0.0) / 2.0;
+                    }
+                    for (para, (size, line_box, face_id, lines)) in
+                        cell.paras.iter().zip(para_lines)
+                    {
+                        y_line -= para.style.before;
+                        let face = self.fonts.get(face_id);
+                        let ascent = face.ascent_pt(size);
+                        let lines = if lines.is_empty() {
+                            vec![Vec::new()]
+                        } else {
+                            lines
                         };
-                        let mut tx = x + pad_l + extra;
-                        self.clip_right = Some(x + w);
-                        for run in &line {
-                            if run.text.is_empty() {
+                        for line in lines {
+                            let ty = y_line - ascent;
+                            if ty < bottom {
+                                break;
+                            }
+                            if let Some((color, width)) = line.iter().find_map(|r| r.rule) {
+                                let inner_w = (w - pad_l - pad_r).max(1.0);
+                                self.current().ops.push(Op::FillRect {
+                                    x: x + pad_l,
+                                    y: ty,
+                                    w: inner_w,
+                                    h: width,
+                                    color,
+                                });
+                            }
+                            if line.iter().all(|r| r.text.trim().is_empty()) {
+                                y_line -= line_box;
                                 continue;
                             }
-                            tx = self.paint_run(run, tx, ty);
+                            if let Some(fill) = cell.fill {
+                                let inner_w = (w - pad_l - pad_r).max(1.0);
+                                let (iy, ih) = if one_line && inset == 0.0 && cell.style_fill {
+                                    (bottom, h)
+                                } else {
+                                    (y_line - line_box, line_box)
+                                };
+                                self.current().ops.push(Op::FillRect {
+                                    x: x + pad_l,
+                                    y: iy,
+                                    w: inner_w,
+                                    h: ih,
+                                    color: fill,
+                                });
+                            }
+                            let line_w: f32 = line
+                                .iter()
+                                .map(|run| {
+                                    if run.text.is_empty() {
+                                        return 0.0;
+                                    }
+                                    let fid = self.fonts.resolve(
+                                        &run.style.family,
+                                        run.style.bold,
+                                        run.style.italic,
+                                    );
+                                    self.fonts
+                                        .get(fid)
+                                        .width_pt(&run.text, run.style.paint_size())
+                                })
+                                .sum();
+                            let inner = (w - pad_l - pad_r).max(0.0);
+                            let extra = match cell.align {
+                                Align::Center => ((inner - line_w) / 2.0).max(0.0),
+                                Align::Right => (inner - line_w).max(0.0),
+                                Align::Left | Align::Justify => 0.0,
+                            };
+                            let mut tx = x + pad_l + extra;
+                            self.clip_right = Some(x + w);
+                            for run in &line {
+                                if run.text.is_empty() {
+                                    continue;
+                                }
+                                tx = self.paint_run(run, tx, ty);
+                            }
+                            self.clip_right = None;
+                            y_line -= line_box;
                         }
-                        self.clip_right = None;
-                        ty -= line_box;
+                        y_line -= para.style.after;
                     }
                 }
-                if row.iter().any(|c| c.runs.iter().any(|r| r.rev)) {
+                if row.iter().any(|c| c.runs().any(|r| r.rev)) {
                     self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
                 }
             }
@@ -11363,7 +11292,7 @@ mod table_tests {
                 assert_eq!(rows.len(), 3);
                 let six = rows[1]
                     .iter()
-                    .find(|c| c.runs.iter().any(|r| r.text.contains('6')))
+                    .find(|c| c.runs().any(|r| r.text.contains('6')))
                     .expect("cell 6");
                 assert_eq!(six.col, 1);
                 assert_eq!(six.colspan, 2);
@@ -11512,9 +11441,9 @@ mod table_tests {
                 );
                 let fill1 = rows[1][0].fill.expect("row1 band1");
                 assert!((fill1[0] - 0xD3 as f32 / 255.0).abs() < 0.01);
-                assert!(rows[0][0].runs.iter().any(|r| r.style.bold));
-                assert!(rows[1][0].runs.iter().any(|r| r.style.bold), "first col");
-                assert!(!rows[1][1].runs.iter().any(|r| r.style.bold));
+                assert!(rows[0][0].runs().any(|r| r.style.bold));
+                assert!(rows[1][0].runs().any(|r| r.style.bold), "first col");
+                assert!(!rows[1][1].runs().any(|r| r.style.bold));
                 let b = borders.expect("style borders");
                 assert!(b.top && b.bottom && !b.left && !b.inside_v);
                 assert!((style.line_mult - 1.0).abs() < 0.02);
