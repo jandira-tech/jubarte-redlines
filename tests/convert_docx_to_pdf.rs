@@ -566,6 +566,43 @@ fn numbering_is_lgl_paints_parent_slots_as_decimal() {
 }
 
 #[test]
+fn numbering_pic_bullet_paints_the_image_marker() {
+    // xml_parts_plan: w:numPicBullet + lvlPicBulletId is Word's picture
+    // list marker. The body has no w:drawing; the PNG lives on numbering.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+          xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+          xmlns:v=\"urn:schemas-microsoft-com:vml\">\
+          <w:numPicBullet w:numPicBulletId=\"1\">\
+            <w:pict><v:shape style=\"width:12pt;height:12pt\">\
+              <v:imagedata r:id=\"rIdImg\"/>\
+            </v:shape></w:pict>\
+          </w:numPicBullet>\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
+              <w:lvlText w:val=\"\"/><w:lvlPicBulletId w:val=\"1\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>PicBulletItem</w:t></w:r></w:p><w:sectPr/>";
+    let pdf =
+        docx_to_pdf(&pic_bullet_docx(body, numbering, TINY_PNG)).expect("convert picture bullet");
+    let painted = pdf_winansi_text(&pdf);
+    assert!(
+        painted.contains("PicBulletItem"),
+        "list body must paint; painted={painted}"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("/Subtype /Image") && hay.contains("/Width 1"),
+        "picture bullet must embed the numbering PNG; tail {}",
+        &hay[hay.len().saturating_sub(400)..]
+    );
+}
+
+#[test]
 fn tbl_header_repeats_on_overflow_page() {
     // file_34 / uipriority: `w:trPr/w:tblHeader` is Word's repeating
     // header. Without it, overflow pages lose Feature/Description.
@@ -2391,6 +2428,61 @@ fn numbering_docx_with_styles(
         zip.start_file("word/styles.xml", opts).unwrap();
         zip.write_all(st.as_bytes()).unwrap();
     }
+    zip.finish().unwrap().into_inner()
+}
+
+fn pic_bullet_docx(body: &str, numbering: &str, media: &[u8]) -> Vec<u8> {
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:body>{body}</w:body></w:document>"
+    );
+    let types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Default Extension=\"png\" ContentType=\"image/png\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        <Override PartName=\"/word/numbering.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/>\
+        </Types>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/>\
+        </Relationships>";
+    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdN\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\" \
+          Target=\"numbering.xml\"/>\
+        </Relationships>";
+    let num_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdImg\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" \
+          Target=\"media/dot.png\"/>\
+        </Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(types.as_bytes()).unwrap();
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(rels.as_bytes()).unwrap();
+    zip.start_file("word/document.xml", opts).unwrap();
+    zip.write_all(document.as_bytes()).unwrap();
+    zip.start_file("word/_rels/document.xml.rels", opts)
+        .unwrap();
+    zip.write_all(doc_rels.as_bytes()).unwrap();
+    zip.start_file("word/numbering.xml", opts).unwrap();
+    zip.write_all(numbering.as_bytes()).unwrap();
+    zip.start_file("word/_rels/numbering.xml.rels", opts)
+        .unwrap();
+    zip.write_all(num_rels.as_bytes()).unwrap();
+    zip.start_file("word/media/dot.png", opts).unwrap();
+    zip.write_all(media).unwrap();
     zip.finish().unwrap().into_inner()
 }
 
