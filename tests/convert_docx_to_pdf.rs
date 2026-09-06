@@ -18615,6 +18615,36 @@ fn vml_imagedata_paints_embedded_png() {
     );
 }
 
+#[test]
+fn vml_absolute_imagedata_uses_margin_left_top() {
+    // xml 3.4 ckpt 5: VML pictures with position:absolute are the same
+    // Placement as text boxes, not in-flow at the left margin.
+    let body = "<w:p><w:r><w:pict>\
+          <v:shape style=\"position:absolute;margin-left:187.95pt;margin-top:15.9pt;width:72pt;height:36pt\">\
+            <v:imagedata r:id=\"rIdImg\"/>\
+          </v:shape></w:pict></w:r>\
+          <w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>AfterVml</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert VML absolute imagedata");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("187.95"),
+        "margin-left 187.95pt must be the image x; snippet {}",
+        text.split("/Im")
+            .nth(1)
+            .unwrap_or(&text[text.len().saturating_sub(240)..])
+    );
+    let after = pdf_device_xy(text.as_ref(), "67 Tf")
+        .into_iter()
+        .next()
+        .expect("AfterVml 16pt");
+    assert!(
+        after.0 < 90.0 && after.1 > 700.0,
+        "absolute VML overlay must not shove AfterVml below an in-flow picture; after={after:?}"
+    );
+}
+
 fn docx_with_settings(body: &str, settings: &str) -> Vec<u8> {
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
