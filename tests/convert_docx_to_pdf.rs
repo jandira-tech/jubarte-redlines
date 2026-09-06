@@ -5553,6 +5553,59 @@ fn latent_heading1_uses_theme_major_fourteen_pt_bold() {
 }
 
 #[test]
+fn latent_title_subtitle_heading2_to_4_use_word_2007_run_props() {
+    // xml_parts_plan latent built-ins: Title/Subtitle/Heading2-4 omitted
+    // from styles.xml still get Word 2007 Cambria sizes (28/12/13/12/11).
+    // Heading3/4 spacing (before=10 after=0) already ships; this is face/size.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+             <w:name w:val=\"Normal\"/>\
+           </w:style>\
+         </w:styles>";
+    let theme = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+           <a:themeElements><a:fontScheme name=\"Office\">\
+             <a:majorFont><a:latin typeface=\"Cambria\"/></a:majorFont>\
+             <a:minorFont><a:latin typeface=\"Calibri\"/></a:minorFont>\
+           </a:fontScheme></a:themeElements>\
+         </a:theme>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"Title\"/></w:pPr>\
+           <w:r><w:t>LatentTitleX</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pStyle w:val=\"Subtitle\"/></w:pPr>\
+           <w:r><w:t>LatentSubX</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pStyle w:val=\"Heading2\"/></w:pPr>\
+           <w:r><w:t>LatentH2X</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pStyle w:val=\"Heading3\"/></w:pPr>\
+           <w:r><w:t>LatentH3X</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pStyle w:val=\"Heading4\"/></w:pPr>\
+           <w:r><w:t>LatentH4X</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles_and_theme(body, styles, theme))
+        .expect("convert latent Title/H2-H4");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/Cambria"),
+        "latent Title/H2-H4 use theme major Cambria; tail {}",
+        &text[text.len().saturating_sub(320)..]
+    );
+    assert!(
+        text.contains("28.00 Tf"),
+        "Word 2007 latent Title is 28pt, not 11pt defaults; tail {}",
+        &text[text.len().saturating_sub(200)..]
+    );
+    assert!(
+        text.contains("13.00 Tf"),
+        "Word 2007 latent Heading2 is 13pt bold italic; tail {}",
+        &text[text.len().saturating_sub(200)..]
+    );
+    assert!(
+        text.contains("12.00 Tf"),
+        "Word 2007 latent Subtitle/Heading3 is 12pt; tail {}",
+        &text[text.len().saturating_sub(200)..]
+    );
+}
+
+#[test]
 fn heading1_aptos_display_ascii_uses_theme_major_calibri() {
     // I_am_sharing Heading1 stores ascii="Aptos Display" *and*
     // asciiTheme=majorHAnsi (Calibri). Word Quartz paints Calibri-Bold
