@@ -7525,6 +7525,51 @@ fn table_style_firstrow_sz_stays_para_size_after_mini_459() {
 }
 
 #[test]
+fn nested_table_paints_inner_cells_separately() {
+    // xml 3.3 ckpt 4: nested tbl inside a cell is a recursive table, not
+    // flattened into the outer cell's runs. CCC/DDD must be sibling cells
+    // (same baseline, different x); EEE vMerge must not swallow FFF/GGG.
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>\
+         <w:tr><w:tc>\
+           <w:p><w:r><w:t>Outer</w:t></w:r></w:p>\
+           <w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+             <w:tr>\
+               <w:tc><w:p><w:r><w:t>CCC</w:t></w:r></w:p></w:tc>\
+               <w:tc><w:p><w:r><w:t>DDD</w:t></w:r></w:p></w:tc>\
+             </w:tr>\
+             <w:tr>\
+               <w:tc><w:tcPr><w:vMerge w:val=\"restart\"/></w:tcPr>\
+                 <w:p><w:r><w:t>EEE</w:t></w:r></w:p></w:tc>\
+               <w:tc><w:p><w:r><w:t>FFF</w:t></w:r></w:p></w:tc>\
+             </w:tr>\
+             <w:tr>\
+               <w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p></w:p></w:tc>\
+               <w:tc><w:p><w:r><w:t>GGG</w:t></w:r></w:p></w:tc>\
+             </w:tr>\
+           </w:tbl>\
+         </w:tc></w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert nested table");
+    let painted = pdf_winansi_text(&pdf);
+    for needle in ["Outer", "CCC", "DDD", "EEE", "FFF", "GGG"] {
+        assert!(
+            painted.contains(needle),
+            "nested table must paint {needle}; painted={painted}"
+        );
+    }
+    let hay = String::from_utf8_lossy(&pdf);
+    let c = pdf_cm_tj_xy(&hay, "C").into_iter().next().expect("CCC");
+    let d = pdf_cm_tj_xy(&hay, "D").into_iter().next().expect("DDD");
+    assert!(
+        (c.1 - d.1).abs() < 2.0,
+        "CCC and DDD are sibling cells on one row; C={c:?} D={d:?}"
+    );
+    assert!(
+        d.0 - c.0 > 40.0,
+        "CCC and DDD must be separate columns, not stacked; C={c:?} D={d:?}"
+    );
+}
+
+#[test]
 fn auto_tblw_keeps_tblgrid_not_tcw_after_mini_342() {
     // sd_2517 / file_22 hideMark: tblW=auto, tcW 9576 vs tblGrid 8640.
     // Overlaying first-row tcW (mini 342–345) was 0-delta on 41–45 but

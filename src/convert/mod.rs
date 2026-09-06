@@ -701,6 +701,8 @@ struct CellPara {
 
 struct TableCell {
     paras: Vec<CellPara>,
+    /// Nested `w:tbl` in document order after the cell paragraphs.
+    nested: Vec<Block>,
     col: usize,
     colspan: usize,
     rowspan: usize,
@@ -737,6 +739,7 @@ enum VMerge {
 
 struct RawCell {
     paras: Vec<CellPara>,
+    nested: Vec<Block>,
     pref: PrefWidth,
     colspan: usize,
     vmerge: VMerge,
@@ -2812,7 +2815,7 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32]) -> f32 {
         .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
         .sum();
     let wrap_w = cell_wrap_width(cell, cw);
-    let body: f32 = if cell.paras.is_empty() {
+    let paras_h: f32 = if cell.paras.is_empty() && cell.nested.is_empty() {
         let mut style = Defaults::word().para;
         style.before = 0.0;
         style.after = 0.0;
@@ -2830,7 +2833,32 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32]) -> f32 {
             .map(|p| cell_para_height(fonts, p, wrap_w))
             .sum()
     };
-    cell.pad_t + body + cell.pad_b
+    let nested_h: f32 = cell
+        .nested
+        .iter()
+        .map(|b| nested_table_height(fonts, b, wrap_w))
+        .sum();
+    cell.pad_t + paras_h + nested_h + cell.pad_b
+}
+
+fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32) -> f32 {
+    let Block::Table {
+        cols,
+        rows,
+        style,
+        geom,
+        ..
+    } = block
+    else {
+        return 0.0;
+    };
+    let col_w = table_col_widths(cols, geom, avail);
+    let rows_h: f32 = rows
+        .iter()
+        .enumerate()
+        .map(|(ri, row)| table_row_height_pt(fonts, row, &col_w, geom, ri))
+        .sum();
+    rows_h + style.after.max(4.0)
 }
 
 /// Word row height: max cell content (pad_t + sum of paragraph line
@@ -3364,9 +3392,17 @@ fn table_block(
         for cell in dom.elements(row, Some(&W::tc())) {
             row_has_cell_del |= cell_is_deleted(dom, cell);
             let mut cell_paras = Vec::new();
+            let mut nested = Vec::new();
             let mut cell_align = Align::Left;
             for idx in 0..dom.child_count(cell) {
                 let child = dom.child_at(cell, idx);
+                if dom.name_is(child, &W::tbl()) {
+                    let block = table_block(dom, child, sheet, numbering, authors, comments);
+                    if !block_is_blank(&block) {
+                        nested.push(block);
+                    }
+                    continue;
+                }
                 if !dom.name_is(child, &W::p()) {
                     continue;
                 }
@@ -3414,7 +3450,7 @@ fn table_block(
                     style: pstyle,
                 });
             }
-            if cell_paras.is_empty() {
+            if cell_paras.is_empty() && nested.is_empty() {
                 let runs = collect_runs_in(
                     dom,
                     cell,
@@ -3438,6 +3474,7 @@ fn table_block(
             let (pad_t, pad_b) = cell_pad_tb(dom, cell, tbl_pad_t, tbl_pad_b);
             cells.push(RawCell {
                 paras: cell_paras,
+                nested,
                 pref: cell_pref_width(dom, cell),
                 colspan,
                 vmerge,
@@ -3793,6 +3830,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
     style.effect_skip = false;
     RawCell {
         pref: PrefWidth::Auto,
+        nested: Vec::new(),
         paras: vec![CellPara {
             runs: vec![TextRun::new("Deleted Cells", style)],
             style: {
@@ -3872,6 +3910,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
             let idx = origins[ri].len();
             origins[ri].push(TableCell {
                 paras: raw.paras,
+                nested: raw.nested,
                 col,
                 colspan: span,
                 rowspan: 1,
@@ -6316,6 +6355,8 @@ struct Layout<'a> {
     /// TextHeading* with leftover under ~23pt skips a blank (sd_2517
     /// 1-4). Table leftover must not (file_78 / file_196).
     last_style_id: String,
+    /// >0 while painting a table nested in a cell (no page-break/ensure).
+    nested_depth: u8,
     bookmark_pages: HashMap<String, String>,
     pageref_ops: Vec<(usize, usize, String)>,
     /// Bookmark names present in the DOCX (before layout pages exist).
@@ -6407,6 +6448,7 @@ impl<'a> Layout<'a> {
             placed_comments: HashSet::new(),
             clip_right: None,
             last_style_id: String::new(),
+            nested_depth: 0,
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
             known_bookmarks: HashSet::new(),
@@ -6591,6 +6633,9 @@ impl<'a> Layout<'a> {
     }
 
     fn ensure(&mut self, need: f32) {
+        if self.nested_depth > 0 {
+            return;
+        }
         let floor = self.body_floor;
         if self.y - need < floor {
             self.new_page();
@@ -8215,7 +8260,8 @@ impl<'a> Layout<'a> {
         let header_h: f32 = row_h.iter().take(header_n).copied().sum();
         for ri in 0..rows.len() {
             let rh = row_h[ri];
-            let will_break = header_n > 0
+            let will_break = self.nested_depth == 0
+                && header_n > 0
                 && ri >= header_n
                 && !self.at_page_top
                 && self.y - rh - header_h < self.body_floor;
@@ -8370,6 +8416,10 @@ impl<'a> Layout<'a> {
                         }
                         y_line -= para.style.after;
                     }
+                    for nested in &cell.nested {
+                        let used = self.emit_nested_table(nested, x + pad_l, y_line, wrap_w);
+                        y_line -= used;
+                    }
                 }
                 if row.iter().any(|c| c.runs().any(|r| r.rev)) {
                     self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
@@ -8381,6 +8431,36 @@ impl<'a> Layout<'a> {
         // Do not drop unstyled after (file_146 heading 4pt): 12 tables × 4pt
         // packed official file_146 7→6pp.
         self.y -= style.after.max(4.0);
+    }
+
+    fn emit_nested_table(&mut self, block: &Block, left: f32, top: f32, avail: f32) -> f32 {
+        let Block::Table {
+            cols,
+            rows,
+            style,
+            borders,
+            geom,
+        } = block
+        else {
+            return 0.0;
+        };
+        let saved_y = self.y;
+        let saved_ml = self.page.margin_l;
+        let saved_mr = self.page.margin_r;
+        let saved_top = self.at_page_top;
+        self.nested_depth = self.nested_depth.saturating_add(1);
+        self.page.margin_l = left;
+        self.page.margin_r = (self.page.width - left - avail).max(0.0);
+        self.y = top;
+        self.at_page_top = false;
+        self.emit_table(cols, rows, style, *borders, geom);
+        self.nested_depth = self.nested_depth.saturating_sub(1);
+        let used = (top - self.y).max(0.0);
+        self.y = saved_y;
+        self.page.margin_l = saved_ml;
+        self.page.margin_r = saved_mr;
+        self.at_page_top = saved_top;
+        used
     }
 
     fn stroke_cell(
@@ -11249,7 +11329,14 @@ mod table_tests {
             &mut AuthorColors::default(),
             &HashMap::new(),
         ) {
-            Block::Table { rows, .. } => assert_eq!(rows.len(), 1, "outer table has one row"),
+            Block::Table { rows, .. } => {
+                assert_eq!(rows.len(), 1, "outer table has one row");
+                assert_eq!(
+                    rows[0][0].nested.len(),
+                    1,
+                    "inner tbl is a nested Block, not flattened rows"
+                );
+            }
             Block::Paragraph { .. } | Block::PageBreak { .. } => panic!("expected table"),
         }
     }
