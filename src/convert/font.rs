@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 thread_local! {
     static ACTIVE_FONT_TABLE: RefCell<super::font_table::FontTable> =
@@ -112,6 +112,41 @@ pub(crate) struct FaceKey {
     pub family: String,
     pub bold: bool,
     pub italic: bool,
+}
+
+/// Catalogue slot or a per-document embedded face (plan xml 3.1 ckpt 4).
+///
+/// Copy-sized so `Op::Text` can keep a font identity without a `String`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum FaceRef {
+    Catalogue(FaceId),
+    Embedded(u16),
+}
+
+impl From<FaceId> for FaceRef {
+    fn from(id: FaceId) -> Self {
+        Self::Catalogue(id)
+    }
+}
+
+impl PartialEq<FaceId> for FaceRef {
+    fn eq(&self, other: &FaceId) -> bool {
+        matches!(self, Self::Catalogue(id) if id == other)
+    }
+}
+
+impl FaceRef {
+    pub(crate) fn is_arial(self) -> bool {
+        matches!(self, Self::Catalogue(id) if id.is_arial())
+    }
+
+    pub(crate) fn is_cambria(self) -> bool {
+        matches!(self, Self::Catalogue(id) if id.is_cambria())
+    }
+
+    pub(crate) fn is_times(self) -> bool {
+        matches!(self, Self::Catalogue(id) if id.is_times())
+    }
 }
 
 impl FaceId {
@@ -686,30 +721,28 @@ impl Face {
     }
 }
 
-/// Catalogue of the bundled faces (one slot per `FaceId::all()` member).
+/// Process-lifetime catalogue (one slot per `FaceId::all()` member).
 /// Faces load on first `get` so a conversion that uses three families
 /// does not parse the other forty-four (plan Step 2e).
-pub(crate) struct Fonts {
-    /// `OnceLock<Box<Face>>` so the catalogue array is pointer-sized.
-    /// `[OnceLock<Face>; 47]` is 47 inline Faces and overflowed the Windows
-    /// CLI stack (`jubarte convert` in convert_docx_to_pdf).
+///
+/// `OnceLock<Box<Face>>` so the array is pointer-sized. `[OnceLock<Face>; 47]`
+/// overflowed the Windows CLI stack (`jubarte convert` in convert_docx_to_pdf).
+struct Catalogue {
     faces: [OnceLock<Box<Face>>; 47],
 }
 
-impl Fonts {
-    pub(crate) fn new() -> Self {
+fn catalogue() -> &'static Catalogue {
+    static CATALOGUE: LazyLock<Catalogue> = LazyLock::new(|| {
         debug_assert_eq!(FaceId::all().len(), 47);
-        Self {
+        Catalogue {
             faces: std::array::from_fn(|_| OnceLock::new()),
         }
-    }
+    });
+    &CATALOGUE
+}
 
-    pub(crate) fn get(&self, id: FaceId) -> &Face {
-        self.get_key(&id.key())
-    }
-
-    pub(crate) fn get_key(&self, key: &FaceKey) -> &Face {
-        let id = Self::id_from_key(key);
+impl Catalogue {
+    fn get(&self, id: FaceId) -> &Face {
         self.faces[id.index()]
             .get_or_init(|| {
                 Box::new(
@@ -719,6 +752,101 @@ impl Fonts {
                 )
             })
             .as_ref()
+    }
+}
+
+/// Bundled catalogue plus per-document embedded faces (`.odttf`).
+pub(crate) struct Fonts {
+    extra: Vec<Face>,
+    extra_index: HashMap<FaceKey, u16>,
+}
+
+impl Fonts {
+    pub(crate) fn new() -> Self {
+        Self {
+            extra: Vec::new(),
+            extra_index: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn for_document(
+        pkg: &crate::opc::PartFs,
+        table: &super::font_table::FontTable,
+    ) -> Self {
+        let mut fonts = Self::new();
+        for ((family, bold, italic), bytes) in super::font_table::load_embedded_fonts(pkg, table) {
+            fonts.insert_embedded(&family, bold, italic, bytes);
+        }
+        fonts
+    }
+
+    pub(crate) fn insert_embedded(
+        &mut self,
+        family: &str,
+        bold: bool,
+        italic: bool,
+        bytes: Vec<u8>,
+    ) {
+        let leaked = intern_font_bytes(bytes);
+        let ps = ttf_postscript_name(leaked).unwrap_or_else(|| family.to_string());
+        let Some(face) = Face::from_bytes(FaceId::CarlitoRegular, leaked, sanitize_pdf_name(&ps))
+        else {
+            return;
+        };
+        let Ok(idx) = u16::try_from(self.extra.len()) else {
+            return;
+        };
+        self.extra.push(face);
+        self.extra_index.insert(
+            FaceKey {
+                family: family.to_ascii_lowercase(),
+                bold,
+                italic,
+            },
+            idx,
+        );
+    }
+
+    fn embedded_index(&self, family: &str, bold: bool, italic: bool) -> Option<u16> {
+        let exact = FaceKey {
+            family: family.to_ascii_lowercase(),
+            bold,
+            italic,
+        };
+        if let Some(&idx) = self.extra_index.get(&exact) {
+            return Some(idx);
+        }
+        if bold || italic {
+            self.extra_index
+                .get(&FaceKey {
+                    family: exact.family,
+                    bold: false,
+                    italic: false,
+                })
+                .copied()
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn get(&self, id: impl Into<FaceRef>) -> &Face {
+        match id.into() {
+            FaceRef::Catalogue(id) => self.get_key(&id.key()),
+            FaceRef::Embedded(i) => self
+                .extra
+                .get(usize::from(i))
+                .unwrap_or_else(|| catalogue().get(FaceId::CarlitoRegular)),
+        }
+    }
+
+    pub(crate) fn get_key(&self, key: &FaceKey) -> &Face {
+        if let Some(idx) = self.embedded_index(&key.family, key.bold, key.italic) {
+            return self
+                .extra
+                .get(usize::from(idx))
+                .unwrap_or_else(|| catalogue().get(FaceId::CarlitoRegular));
+        }
+        catalogue().get(Self::id_from_key(key))
     }
 
     fn id_from_key(key: &FaceKey) -> FaceId {
@@ -733,8 +861,13 @@ impl Fonts {
         .unwrap_or(FaceId::CambriaRegular)
     }
 
-    pub(crate) fn resolve(&self, family: &str, bold: bool, italic: bool) -> FaceId {
-        ACTIVE_FONT_TABLE.with(|slot| self.resolve_in(family, bold, italic, &slot.borrow()))
+    pub(crate) fn resolve(&self, family: &str, bold: bool, italic: bool) -> FaceRef {
+        let primary = family_token(family);
+        if let Some(idx) = self.embedded_index(primary, bold, italic) {
+            return FaceRef::Embedded(idx);
+        }
+        ACTIVE_FONT_TABLE
+            .with(|slot| FaceRef::Catalogue(self.resolve_in(family, bold, italic, &slot.borrow())))
     }
 
     /// Resolve `family` using Word's font table. Installed faces win;
@@ -764,15 +897,7 @@ impl Fonts {
         // (Quartz PDFs): `Verdana, Geneva, sans-serif` → Verdana;
         // `"Times New Roman", Times, serif` → Cambria, because the first
         // token still carries the quote characters and is not TNR.
-        let (token, listed) = match family.split_once(',') {
-            Some((first, _)) => (first.trim(), true),
-            None => (family.trim(), false),
-        };
-        let primary = if listed {
-            token
-        } else {
-            strip_outer_quotes(token)
-        };
+        let primary = family_token(family);
         let quoted = primary.starts_with('"') || primary.starts_with('\'');
         if !quoted {
             let key = primary
@@ -816,6 +941,18 @@ impl Fonts {
     }
 }
 
+fn family_token(family: &str) -> &str {
+    let (token, listed) = match family.split_once(',') {
+        Some((first, _)) => (first.trim(), true),
+        None => (family.trim(), false),
+    };
+    if listed {
+        token
+    } else {
+        strip_outer_quotes(token)
+    }
+}
+
 fn strip_outer_quotes(s: &str) -> &str {
     let t = s.trim();
     let bytes = t.as_bytes();
@@ -825,6 +962,26 @@ fn strip_outer_quotes(s: &str) -> &str {
         }
         _ => t,
     }
+}
+
+fn intern_font_bytes(bytes: Vec<u8>) -> &'static [u8] {
+    use std::hash::{Hash, Hasher};
+    static INTERN: Mutex<Vec<(u64, &'static [u8])>> = Mutex::new(Vec::new());
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    let h = hasher.finish();
+    let mut intern = INTERN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((_, existing)) = intern
+        .iter()
+        .find(|(k, existing)| *k == h && **existing == *bytes)
+    {
+        return existing;
+    }
+    let leaked: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+    intern.push((h, leaked));
+    leaked
 }
 
 impl Fonts {
@@ -1361,6 +1518,106 @@ mod tests {
             fonts.resolve_in("GhostA", false, false, &table),
             FaceId::CambriaRegular,
             "altName cycle uses the unknown-family evidence row"
+        );
+    }
+
+    #[test]
+    fn resolve_prefers_embedded_unknown_family() {
+        let mut fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve("Press Start 2P", false, false),
+            FaceId::CambriaRegular,
+            "without an embed, the unknown family is Cambria"
+        );
+        fonts.insert_embedded(
+            "Press Start 2P",
+            false,
+            false,
+            FaceId::MonoRegular.bytes().to_vec(),
+        );
+        let face = fonts.resolve("Press Start 2P", false, false);
+        assert!(
+            matches!(face, FaceRef::Embedded(_)),
+            "embedded face must win over the unknown-family row; got {face:?}"
+        );
+        assert_eq!(fonts.get(face).pdf_name(), "LiberationMono");
+        assert_eq!(
+            fonts.resolve("Press Start 2P", true, false),
+            face,
+            "missing bold embed falls back to the regular embed"
+        );
+    }
+
+    #[test]
+    fn resolve_embedded_does_not_steal_unrelated_families() {
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded(
+            "Press Start 2P",
+            false,
+            false,
+            FaceId::MonoRegular.bytes().to_vec(),
+        );
+        assert_eq!(
+            fonts.resolve("Calibri", false, false),
+            FaceId::CarlitoRegular
+        );
+        assert_eq!(
+            fonts.resolve("Cambria", false, false),
+            FaceId::CambriaRegular
+        );
+    }
+
+    fn obfuscated_embed_docx(family: &str, guid: &str, ttf: &[u8]) -> Vec<u8> {
+        use std::io::{Cursor, Write};
+        let mut odttf = ttf.to_vec();
+        let key = super::super::font_table::parse_font_key(guid).expect("guid");
+        super::super::font_table::deobfuscate_font(&mut odttf, &key);
+        let mut buf = Vec::new();
+        {
+            let mut z = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let opt = zip::write::SimpleFileOptions::default();
+            z.start_file("[Content_Types].xml", opt).unwrap();
+            z.write_all(
+                br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="odttf" ContentType="application/vnd.openxmlformats-officedocument.obfuscatedFont"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/></Types>"#,
+            )
+            .unwrap();
+            z.start_file("_rels/.rels", opt).unwrap();
+            z.write_all(
+                br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdM" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+            )
+            .unwrap();
+            z.start_file("word/document.xml", opt).unwrap();
+            let doc = format!(
+                r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:rFonts w:ascii="{family}" w:hAnsi="{family}"/></w:rPr><w:t>HELLO</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>"#
+            );
+            z.write_all(doc.as_bytes()).unwrap();
+            z.start_file("word/fontTable.xml", opt).unwrap();
+            let table = format!(
+                r#"<?xml version="1.0"?><w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:font w:name="{family}"><w:embedRegular r:id="rId1" w:fontKey="{guid}"/></w:font></w:fonts>"#
+            );
+            z.write_all(table.as_bytes()).unwrap();
+            z.start_file("word/_rels/fontTable.xml.rels", opt).unwrap();
+            z.write_all(
+                br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font1.odttf"/></Relationships>"#,
+            )
+            .unwrap();
+            z.start_file("word/fonts/font1.odttf", opt).unwrap();
+            z.write_all(&odttf).unwrap();
+            z.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn convert_emits_embedded_postscript_name() {
+        let guid = "{00000000-0000-0000-0000-000000000001}";
+        let docx = obfuscated_embed_docx("Press Start 2P", guid, FaceId::MonoRegular.bytes());
+        let pdf = super::super::docx_to_pdf(&docx).expect("convert");
+        let text = String::from_utf8_lossy(&pdf);
+        assert!(
+            text.contains("/LiberationMono"),
+            "embedded physical PostScript name must be a PDF font; snippet={}",
+            text.chars().take(800).collect::<String>()
         );
     }
 }
