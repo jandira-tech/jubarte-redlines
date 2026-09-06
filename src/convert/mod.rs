@@ -2793,10 +2793,16 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
             numbering.pic_bytes.insert(id, bytes);
         }
     }
+    let mut style_links: HashMap<String, String> = HashMap::new();
     for abs in dom.descendants(root, Some(&W::name("abstractNum"))) {
         let Some(aid) = attr_any(&dom, abs, "abstractNumId") else {
             continue;
         };
+        if let Some(name) =
+            first_named(&dom, abs, "styleLink").and_then(|n| dom.attribute(n, &W::val()))
+        {
+            style_links.insert(name.to_string(), aid.to_string());
+        }
         let mut lvls = HashMap::new();
         for lvl in dom.descendants(abs, Some(&W::name("lvl"))) {
             let ilvl = attr_any(&dom, lvl, "ilvl")
@@ -2866,12 +2872,18 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
         let Some(nid) = attr_any(&dom, num, "numId") else {
             continue;
         };
-        let Some(aid) =
-            first_named(&dom, num, "abstractNumId").and_then(|n| dom.attribute(n, &W::val()))
-        else {
+        let aid = first_named(&dom, num, "abstractNumId")
+            .and_then(|n| dom.attribute(n, &W::val()))
+            .map(str::to_string)
+            .or_else(|| {
+                first_named(&dom, num, "numStyleLink")
+                    .and_then(|n| dom.attribute(n, &W::val()))
+                    .and_then(|name| style_links.get(name).cloned())
+            });
+        let Some(aid) = aid else {
             continue;
         };
-        numbering.instances.insert(nid.to_string(), aid.to_string());
+        numbering.instances.insert(nid.to_string(), aid);
         for ov in dom.descendants(num, Some(&W::name("lvlOverride"))) {
             let ilvl = attr_any(&dom, ov, "ilvl")
                 .and_then(|s| s.parse().ok())

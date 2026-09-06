@@ -566,6 +566,41 @@ fn numbering_is_lgl_paints_parent_slots_as_decimal() {
 }
 
 #[test]
+fn numbering_num_style_link_binds_instance_to_style_link_abstract() {
+    // xml_parts_plan: w:num/w:numStyleLink looks up the abstractNum whose
+    // w:styleLink matches. Word still paints 1. 2. when abstractNumId is
+    // omitted (legacy WW8 / style-linked numbering).
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:styleLink w:val=\"WW8Num1\"/>\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"360\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:numStyleLink w:val=\"WW8Num1\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>AlphaNS</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>BravoNS</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("convert numStyleLink");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("AlphaNS") && text.contains("BravoNS"),
+        "list bodies must paint; text={text:?}"
+    );
+    let one = text.find("1.").expect("numStyleLink must paint 1.");
+    let two = text.find("2.").expect("numStyleLink second item is 2.");
+    let alpha = text.find("AlphaNS").expect("AlphaNS");
+    let bravo = text.find("BravoNS").expect("BravoNS");
+    assert!(
+        one < alpha && alpha < two && two < bravo,
+        "numStyleLink must bind to the styleLink abstract; text={text:?}"
+    );
+}
+
+#[test]
 fn numbering_pic_bullet_paints_the_image_marker() {
     // xml_parts_plan: w:numPicBullet + lvlPicBulletId is Word's picture
     // list marker. The body has no w:drawing; the PNG lives on numbering.
