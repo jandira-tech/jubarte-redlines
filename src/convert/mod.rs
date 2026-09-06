@@ -3782,29 +3782,57 @@ fn para_base(
     (pstyle, rstyle)
 }
 
-/// Word's latent built-ins when `styles.xml` has no definition.
+/// Word 2007/365 latent built-ins when `styles.xml` has no definition.
 /// Heading 3/4 keep after=0 (heading_3_center gap 34.6pt). Heading1
 /// after=0 is ITT-neg (red_bold_heading 90→72) — size/bold/face only.
+/// Title has no Cambria Light FaceId: paint theme major at 28pt.
 fn apply_latent_ppr(style_id: &str, para: &mut ParaStyle, run: &mut RunStyle, theme: &ThemeFonts) {
+    let aptos = theme
+        .major
+        .as_deref()
+        .is_some_and(|s| s.to_ascii_lowercase().contains("aptos"));
+    let major = theme.major.clone().unwrap_or_else(|| {
+        if aptos {
+            "Aptos Display".into()
+        } else {
+            "Cambria".into()
+        }
+    });
     match style_id {
-        "Heading3" | "Heading4" => {
-            para.before = 10.0;
-            para.after = 0.0;
+        "Title" => {
+            run.size = 28.0;
+            run.family = major;
+        }
+        "Subtitle" => {
+            run.italic = true;
+            run.size = 12.0;
+            run.family = major;
         }
         "Heading1" => {
-            let aptos = theme
-                .major
-                .as_deref()
-                .is_some_and(|s| s.to_ascii_lowercase().contains("aptos"));
             run.bold = true;
             run.size = if aptos { 20.0 } else { 14.0 };
-            run.family = theme.major.clone().unwrap_or_else(|| {
-                if aptos {
-                    "Aptos Display".into()
-                } else {
-                    "Cambria".into()
-                }
-            });
+            run.family = major;
+        }
+        "Heading2" => {
+            run.bold = true;
+            run.italic = true;
+            run.size = 13.0;
+            run.family = major;
+        }
+        "Heading3" => {
+            para.before = 10.0;
+            para.after = 0.0;
+            run.bold = true;
+            run.size = 12.0;
+            run.family = major;
+        }
+        "Heading4" => {
+            para.before = 10.0;
+            para.after = 0.0;
+            run.bold = true;
+            run.italic = true;
+            run.size = 11.0;
+            run.family = major;
         }
         _ => {}
     }
