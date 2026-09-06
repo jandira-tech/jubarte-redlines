@@ -13176,6 +13176,37 @@ fn paragraph_style_link_applies_linked_character_run_props() {
 }
 
 #[test]
+fn two_column_section_with_column_break_paints_side_by_side() {
+    // xml leftover: sectPr w:cols (ECMA-376 17.6.4). num=2 space=720
+    // (36pt) on letter + 72pt margins → col width 216, col2 x=324.
+    // w:br type=column starts the next column on the same page.
+    let body = "<w:p><w:r><w:t>ColOneX</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"column\"/></w:r></w:p>\
+         <w:p><w:r><w:t>ColTwoX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+           <w:cols w:num=\"2\" w:space=\"720\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("convert 2-col");
+    assert_eq!(pdf_page_count(&pdf), 1, "column break stays on one page");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("ColOneX") && text.contains("ColTwoX"),
+        "both columns must paint; text={text}"
+    );
+    let xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    assert!(
+        xs.iter().any(|x| (60.0..90.0).contains(x)),
+        "column 1 starts at left=72; xs={xs:?}"
+    );
+    assert!(
+        xs.iter().any(|x| (300.0..360.0).contains(x)),
+        "column 2 starts at 324pt (72+216+36); xs={xs:?}"
+    );
+}
+
+#[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert header_no_rels");
