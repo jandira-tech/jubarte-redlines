@@ -649,6 +649,8 @@ struct TableGeom {
     pref: Vec<PrefWidth>,
     /// `w:tblLayout w:type=fixed`.
     fixed: bool,
+    /// `w:tblpPr` floating table (xml 3.3 ckpt 5).
+    float: Option<ImageSlot>,
 }
 
 /// Preferred table width from `tblW`. Word `pct` is 50ths of a percent
@@ -3572,6 +3574,7 @@ fn table_block(
                 mar_l: tbl_pad_l,
                 pref,
                 fixed,
+                float: table_float(dom, table),
             }
         },
     }
@@ -3619,6 +3622,57 @@ fn table_pref_width(dom: &Dom, table: NodeId) -> TblWidth {
         "dxa" => TblWidth::Dxa(attr_any(dom, tw, "w").and_then(parse_len).unwrap_or(0.0)),
         _ => TblWidth::Grid,
     }
+}
+
+fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
+    let pr = first_named(dom, table, "tblPr")?;
+    let p = first_named(dom, pr, "tblpPr")?;
+    let horz = attr_any(dom, p, "horzAnchor").unwrap_or("text");
+    let vert = attr_any(dom, p, "vertAnchor").unwrap_or("text");
+    let x_spec = attr_any(dom, p, "tblpXSpec").unwrap_or("");
+    let x_raw = attr_any(dom, p, "tblpX").unwrap_or("");
+    let y_raw = attr_any(dom, p, "tblpY").unwrap_or("");
+    let align = match x_spec {
+        "right" | "outside" => Align::Right,
+        "center" => Align::Center,
+        _ if x_raw == "right" => Align::Right,
+        _ if x_raw == "center" => Align::Center,
+        _ => Align::Left,
+    };
+    let x_pt = if x_raw
+        .chars()
+        .next()
+        .is_some_and(|c| c == '-' || c.is_ascii_digit())
+    {
+        parse_len(x_raw)
+    } else {
+        None
+    };
+    let y_pt = if y_raw
+        .chars()
+        .next()
+        .is_some_and(|c| c == '-' || c.is_ascii_digit())
+    {
+        parse_len(y_raw)
+    } else {
+        None
+    };
+    let dist = |name: &str| attr_any(dom, p, name).and_then(parse_len).unwrap_or(0.0);
+    Some(ImageSlot::Float {
+        align,
+        page_x: (horz == "page").then_some(x_pt).flatten(),
+        page_y: (vert == "page").then_some(y_pt).flatten(),
+        col_x: matches!(horz, "margin" | "text").then_some(x_pt).flatten(),
+        para_y: (vert == "text").then_some(y_pt).flatten(),
+        pct_x: None,
+        pct_y: None,
+        pct_w: None,
+        pct_h: None,
+        v_align: Align::Left,
+        wrap_square: true,
+        dist_l: dist("leftFromText"),
+        dist_r: dist("rightFromText"),
+    })
 }
 
 fn table_layout_fixed(dom: &Dom, table: NodeId) -> bool {
@@ -6315,6 +6369,13 @@ fn collect_hf_rec(
     }
 }
 
+#[derive(Clone, Copy)]
+struct SideFloat {
+    align: Align,
+    inset: f32,
+    bottom: f32,
+}
+
 struct Layout<'a> {
     fonts: &'a Fonts,
     page: PageSetup,
@@ -6357,6 +6418,8 @@ struct Layout<'a> {
     last_style_id: String,
     /// >0 while painting a table nested in a cell (no page-break/ensure).
     nested_depth: u8,
+    /// Active wrapSquare-style float from a `tblpPr` table.
+    side_float: Option<SideFloat>,
     bookmark_pages: HashMap<String, String>,
     pageref_ops: Vec<(usize, usize, String)>,
     /// Bookmark names present in the DOCX (before layout pages exist).
@@ -6449,6 +6512,7 @@ impl<'a> Layout<'a> {
             clip_right: None,
             last_style_id: String::new(),
             nested_depth: 0,
+            side_float: None,
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
             known_bookmarks: HashSet::new(),
@@ -6689,6 +6753,15 @@ impl<'a> Layout<'a> {
         }
         for box_ in boxes {
             consider(box_.slot, box_.w, box_.h);
+        }
+        if let Some(sf) = self.side_float
+            && self.y > sf.bottom + 0.5
+        {
+            match sf.align {
+                Align::Right => right = right.max(sf.inset),
+                Align::Left => left = left.max(sf.inset),
+                Align::Center | Align::Justify => {}
+            }
         }
         (left, right)
     }
@@ -8255,6 +8328,54 @@ impl<'a> Layout<'a> {
             0.0
         };
         let table_left = self.page.margin_l + shift + geom.tbl_ind - pull;
+        if let Some(slot) = geom.float
+            && self.nested_depth == 0
+        {
+            let used: f32 = col_w.iter().sum();
+            let th: f32 = row_h.iter().sum();
+            let (fx, _) = self.float_xy(used.max(1.0), th.max(1.0), slot);
+            let dist = match slot {
+                ImageSlot::Float {
+                    align,
+                    dist_l,
+                    dist_r,
+                    ..
+                } => {
+                    if matches!(align, Align::Right) {
+                        dist_l
+                    } else {
+                        dist_r
+                    }
+                }
+                ImageSlot::Flow => 0.0,
+            };
+            let align = match slot {
+                ImageSlot::Float { align, .. } => align,
+                ImageSlot::Flow => Align::Left,
+            };
+            let top = self.y;
+            let saved_y = self.y;
+            let saved_ml = self.page.margin_l;
+            let saved_mr = self.page.margin_r;
+            let saved_top = self.at_page_top;
+            self.nested_depth = 1;
+            self.page.margin_l = fx;
+            self.page.margin_r = (self.page.width - fx - used).max(0.0);
+            self.y = top;
+            self.at_page_top = false;
+            self.emit_table(cols, rows, style, borders, geom);
+            self.nested_depth = 0;
+            self.y = saved_y;
+            self.page.margin_l = saved_ml;
+            self.page.margin_r = saved_mr;
+            self.at_page_top = saved_top;
+            self.side_float = Some(SideFloat {
+                align,
+                inset: used + dist,
+                bottom: top - th,
+            });
+            return;
+        }
         let color = [0.0, 0.0, 0.0];
         let header_n = geom.header_rows.min(rows.len());
         let header_h: f32 = row_h.iter().take(header_n).copied().sum();
@@ -9278,6 +9399,9 @@ fn layout(
                         lay.at_page_top = false;
                     }
                 } else if has_ink || (images.is_empty() && boxes.is_empty()) || !skip_empty_line {
+                    if lay.side_float.is_some_and(|sf| lay.y <= sf.bottom + 0.5) {
+                        lay.side_float = None;
+                    }
                     let (wrap_left, wrap_right) = lay.wrap_square_inset(images, boxes);
                     lay.emit_runs(runs, &style, *list, wrap_left, wrap_right);
                 } else if !lay.at_page_top || !lay.suppress_space_before {
