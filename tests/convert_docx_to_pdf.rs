@@ -7525,6 +7525,42 @@ fn table_style_firstrow_sz_stays_para_size_after_mini_459() {
 }
 
 #[test]
+fn floating_table_wraps_following_body_beside_it() {
+    // xml 3.3 ckpt 5: tblpPr right-of-margin + leftFromText=180 (9pt).
+    // Word wraps following body to the left of the table, not under it.
+    let body = "<w:p><w:r><w:t>Lead</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr>\
+           <w:tblpPr w:horzAnchor=\"margin\" w:vertAnchor=\"text\" \
+             w:tblpXSpec=\"right\" w:tblpY=\"0\" \
+             w:leftFromText=\"180\" w:rightFromText=\"180\"/>\
+           <w:tblW w:w=\"2880\" w:type=\"dxa\"/>\
+         </w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2880\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr>\
+           <w:shd w:val=\"clear\" w:fill=\"FF0000\"/></w:tcPr>\
+           <w:p><w:r><w:t>Flt</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:r><w:t>alpha alpha alpha alpha alpha alpha alpha alpha alpha \
+alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha \
+alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert floating table");
+    let xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    assert!(
+        xs.iter().any(|x| (70.0..90.0).contains(x)),
+        "body still starts at the left margin; xs={xs:?}"
+    );
+    assert!(
+        xs.iter().any(|x| (390.0..430.0).contains(x)),
+        "floating table sits on the right (~396); xs={xs:?}"
+    );
+    assert!(
+        xs.iter().all(|x| *x < 387.0 || *x >= 390.0),
+        "following body wraps left of the 144pt right table + 9pt leftFromText; xs={xs:?}"
+    );
+}
+
+#[test]
 fn nested_table_paints_inner_cells_separately() {
     // xml 3.3 ckpt 4: nested tbl inside a cell is a recursive table, not
     // flattened into the outer cell's runs. CCC/DDD must be sibling cells
