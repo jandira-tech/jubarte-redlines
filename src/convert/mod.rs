@@ -1201,6 +1201,7 @@ enum ShapeGeom {
     FlowChartSort,
     FlowChartOfflineStorage,
     FlowChartOnlineStorage,
+    FlowChartPunchedTape,
 }
 
 enum ImageKind {
@@ -6160,6 +6161,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "flowChartOfflineStorage" => ShapeGeom::FlowChartOfflineStorage,
         "flowChartOnlineStorage" => ShapeGeom::FlowChartOnlineStorage,
         "flowChartConnector" => ShapeGeom::Ellipse,
+        "flowChartPunchedTape" => ShapeGeom::FlowChartPunchedTape,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9327,6 +9329,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::FlowChartPunchedTape => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: flow_chart_punched_tape_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9529,6 +9537,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::FlowChartSort
                 | ShapeGeom::FlowChartOfflineStorage
                 | ShapeGeom::FlowChartOnlineStorage
+                | ShapeGeom::FlowChartPunchedTape
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9631,6 +9640,9 @@ impl<'a> Layout<'a> {
                             }
                             ShapeGeom::FlowChartOnlineStorage => {
                                 flow_chart_online_storage_points(x, y, dw, dh)
+                            }
+                            ShapeGeom::FlowChartPunchedTape => {
+                                flow_chart_punched_tape_points(x, y, dw, dh)
                             }
                             _ => round_rect_points(x, y, dw, dh),
                         };
@@ -12566,6 +12578,23 @@ fn double_wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     pts.push(p3);
     sample_cubic(p3, (x7, py(y6)), (x6, py(y5)), p4, 6, &mut pts);
     sample_cubic(p4, (x4, py(y6)), (x3, py(y5)), p5, 6, &mut pts);
+    pts
+}
+
+fn flow_chart_punched_tape_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML flowChartPunchedTape in 20×20 space: two top arcs, two bottom arcs.
+    const CD2: f32 = 10_800_000.0;
+    let wr = (w * 5.0 / 20.0).max(0.5);
+    let hr = (h * 2.0 / 20.0).max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut pts = vec![map(0.0, h * 0.1)];
+    let mut cur = (0.0, h * 0.1);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, CD2, -CD2, &mut pts, map);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, CD2, CD2, &mut pts, map);
+    pts.push(map(w, h * 0.9));
+    cur = (w, h * 0.9);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, 0.0, -CD2, &mut pts, map);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, 0.0, CD2, &mut pts, map);
     pts
 }
 
@@ -16669,6 +16698,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn flow_chart_punched_tape_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="flowChartPunchedTape"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=flowChartPunchedTape must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -19712,6 +19780,25 @@ mod drawing_tests {
         assert!(
             pts.iter().any(|(_, py)| py.abs() < 1.0),
             "bottom edge present; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn flow_chart_punched_tape_points_start_below_top() {
+        let pts = flow_chart_punched_tape_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 16, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 90.0).abs() < 0.2,
+            "start is (l, hd10) PDF (0,90); {start:?}"
+        );
+        assert!(
+            pts.iter().any(|(_, py)| *py > 95.0),
+            "top wave crests near t; {pts:?}"
+        );
+        assert!(
+            pts.iter().any(|(_, py)| *py < 5.0),
+            "bottom wave reaches b; {pts:?}"
         );
     }
 
