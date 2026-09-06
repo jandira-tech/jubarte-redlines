@@ -778,6 +778,8 @@ struct SectionChrome {
     header_odd: Option<ChromePart>,
     footer_even: Option<ChromePart>,
     footer_odd: Option<ChromePart>,
+    header_images: Vec<LaidImage>,
+    footer_images: Vec<LaidImage>,
 }
 
 #[derive(Clone)]
@@ -848,6 +850,7 @@ struct RawCell {
     borders: Option<CellBorders>,
 }
 
+#[derive(Clone)]
 struct LaidImage {
     w: f32,
     h: f32,
@@ -1258,6 +1261,7 @@ enum ShapeGeom {
     FlowChartMultidocument,
 }
 
+#[derive(Clone)]
 enum ImageKind {
     Jpeg {
         width: u32,
@@ -3415,6 +3419,8 @@ fn section_chrome(
         header_odd,
         footer_even: footer.even,
         footer_odd,
+        header_images: header.start.images,
+        footer_images: footer.start.images,
     }
 }
 
@@ -7088,6 +7094,8 @@ struct HfChrome {
     header_odd: Option<ChromePart>,
     footer_even: Option<ChromePart>,
     footer_odd: Option<ChromePart>,
+    header_images: Vec<LaidImage>,
+    footer_images: Vec<LaidImage>,
 }
 
 fn first_section_hf(
@@ -7124,6 +7132,8 @@ fn first_section_hf(
         header_odd,
         footer_even: footer.even,
         footer_odd,
+        header_images: header.start.images,
+        footer_images: footer.start.images,
     }
 }
 
@@ -7133,6 +7143,7 @@ struct ChromePart {
     border: Option<([f32; 3], f32)>,
     align: Align,
     watermark: Option<Watermark>,
+    images: Vec<LaidImage>,
 }
 
 fn empty_chrome() -> ChromePart {
@@ -7141,6 +7152,7 @@ fn empty_chrome() -> ChromePart {
         border: None,
         align: Align::Left,
         watermark: None,
+        images: Vec::new(),
     }
 }
 
@@ -7156,7 +7168,7 @@ struct PickedHf {
 }
 
 fn chrome_present(part: &ChromePart) -> bool {
-    !part.runs.is_empty() || part.watermark.is_some()
+    !part.runs.is_empty() || part.watermark.is_some() || !part.images.is_empty()
 }
 
 fn pick_section_hf(
@@ -7238,16 +7250,26 @@ fn load_chrome_part(
     local: &str,
     sheet: &StyleSheet,
 ) -> ChromePart {
-    let Some(bytes) = resolve_media(pkg, main, rid) else {
+    let Some(path) = rel_target_path(pkg, main, rid) else {
         return empty_chrome();
     };
-    let xml = String::from_utf8_lossy(&bytes);
+    let Some(bytes) = pkg.part_bytes(&path) else {
+        return empty_chrome();
+    };
+    let xml = String::from_utf8_lossy(bytes);
     let mut part_dom = Dom::new();
     let doc = part_dom.parse_xdocument(&xml);
     let Some(root) = part_dom.root(doc) else {
         return empty_chrome();
     };
     let runs = collect_hf_runs(&part_dom, root, &sheet.defaults.run, &sheet.theme);
+    let mut images = Vec::new();
+    for para in part_dom.descendants(root, Some(&W::p())) {
+        if hf_para_is_shape_text(&part_dom, para) {
+            continue;
+        }
+        images.extend(collect_images(pkg, &path, &part_dom, para));
+    }
     let align = first_para_align(&part_dom, root);
     let edge = if local.starts_with("header") {
         "bottom"
@@ -7259,7 +7281,14 @@ fn load_chrome_part(
         border: first_para_border(&part_dom, root, edge),
         align,
         watermark: parse_header_watermark(&part_dom, root),
+        images,
     }
+}
+
+fn rel_target_path(pkg: &PartFs, source: &str, rid: &str) -> Option<String> {
+    let rels = pkg.read_rels_for(source)?;
+    let rel = rels.items.iter().find(|item| item.id == rid)?;
+    Some(pkg.resolve_rel_target(source, &rel.target))
 }
 
 fn parse_header_watermark(dom: &Dom, root: NodeId) -> Option<Watermark> {
@@ -7645,6 +7674,8 @@ struct Layout<'a> {
     header_odd: Option<ChromePart>,
     footer_even: Option<ChromePart>,
     footer_odd: Option<ChromePart>,
+    header_images: Vec<LaidImage>,
+    footer_images: Vec<LaidImage>,
     placed_comments: HashSet<String>,
     /// Word clips table-cell ink at the cell’s right edge (file_146
     /// github underline ran ~46pt past the table when xml:space
@@ -7763,6 +7794,8 @@ impl<'a> Layout<'a> {
             header_odd: hf.header_odd,
             footer_even: hf.footer_even,
             footer_odd: hf.footer_odd,
+            header_images: hf.header_images,
+            footer_images: hf.footer_images,
             placed_comments: HashSet::new(),
             clip_right: None,
             last_style_id: String::new(),
@@ -7798,7 +7831,11 @@ impl<'a> Layout<'a> {
         // Explicit headerReference, even to an empty/no-watermark part,
         // replaces chrome (Strict01 landscape header5/6). Omitted refs
         // still inherit (comments-lots landscape).
-        if next.header_explicit || !next.header.is_empty() || next.watermark.is_some() {
+        if next.header_explicit
+            || !next.header.is_empty()
+            || next.watermark.is_some()
+            || !next.header_images.is_empty()
+        {
             self.header = next.header.clone();
             self.header_align = next.header_align;
             self.header_bottom = next.header_bottom;
@@ -7807,6 +7844,7 @@ impl<'a> Layout<'a> {
             self.even_and_odd = next.even_and_odd;
             self.header_even = next.header_even.clone();
             self.header_odd = next.header_odd.clone();
+            self.header_images.clone_from(&next.header_images);
         }
         if !next.footer.is_empty() {
             self.footer = next.footer.clone();
@@ -7815,6 +7853,7 @@ impl<'a> Layout<'a> {
             self.footer_rest = next.footer_rest.clone();
             self.footer_even = next.footer_even.clone();
             self.footer_odd = next.footer_odd.clone();
+            self.footer_images.clone_from(&next.footer_images);
         }
         let header_band = if self.header.is_empty() {
             0.0
@@ -7834,11 +7873,13 @@ impl<'a> Layout<'a> {
             self.header = part.runs;
             self.header_align = part.align;
             self.header_bottom = part.border;
+            self.header_images = part.images;
         }
         if let Some(part) = self.footer_rest.take() {
             self.footer = part.runs;
             self.footer_align = part.align;
             self.footer_top = part.border;
+            self.footer_images = part.images;
         }
     }
 
@@ -7846,12 +7887,14 @@ impl<'a> Layout<'a> {
         self.header.clone_from(&part.runs);
         self.header_align = part.align;
         self.header_bottom = part.border;
+        self.header_images.clone_from(&part.images);
     }
 
     fn apply_footer_part(&mut self, part: &ChromePart) {
         self.footer.clone_from(&part.runs);
         self.footer_align = part.align;
         self.footer_top = part.border;
+        self.footer_images.clone_from(&part.images);
     }
 
     fn select_parity_chrome(&mut self) {
@@ -9324,6 +9367,59 @@ impl<'a> Layout<'a> {
                 pos
             }
             slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
+        };
+        match &img.kind {
+            ImageKind::Jpeg {
+                width,
+                height,
+                bytes,
+                components,
+            } => self.current().ops.push(Op::Jpeg {
+                x,
+                y,
+                dw,
+                dh,
+                width: *width,
+                height: *height,
+                bytes: bytes.clone(),
+                components: *components,
+                crop: img.crop,
+            }),
+            ImageKind::Rgb {
+                width,
+                height,
+                bytes,
+                alpha,
+            } => self.current().ops.push(Op::Rgb {
+                x,
+                y,
+                dw,
+                dh,
+                width: *width,
+                height: *height,
+                bytes: bytes.clone(),
+                alpha: alpha.clone(),
+                crop: img.crop,
+            }),
+            ImageKind::Reserve => {}
+            ImageKind::Broken => self.current().ops.push(Op::StrokeRect {
+                x,
+                y,
+                w: dw,
+                h: dh,
+                width: 0.75,
+                color: [0.6, 0.6, 0.6],
+            }),
+        }
+    }
+
+    fn emit_chrome_image(&mut self, img: &LaidImage, in_header: bool) {
+        let (dw, dh) = self.image_wh(img);
+        let x = self.page.margin_l;
+        let y = if in_header {
+            self.page.height - self.page.header.max(10.0) - dh
+        } else {
+            self.page.footer.max(10.0)
         };
         match &img.kind {
             ImageKind::Jpeg {
@@ -11623,6 +11719,12 @@ impl<'a> Layout<'a> {
                 rotate_deg: mark.rotate_deg,
             });
         }
+        if !self.header_images.is_empty() {
+            let images = self.header_images.clone();
+            for img in &images {
+                self.emit_chrome_image(img, true);
+            }
+        }
         if !self.header.is_empty() {
             let header = self.resolve_fields(&self.header.clone(), page_no);
             let one = chrome_one_line_pt(self.fonts, &header);
@@ -11655,6 +11757,12 @@ impl<'a> Layout<'a> {
                 let x1 = self.page.margin_l;
                 let x2 = self.page.width - self.page.margin_r;
                 self.hairline_h(x1, y - 3.0, x2, width, color);
+            }
+        }
+        if !self.footer_images.is_empty() {
+            let images = self.footer_images.clone();
+            for img in &images {
+                self.emit_chrome_image(img, false);
             }
         }
         if !self.footer.is_empty() {
