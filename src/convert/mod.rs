@@ -1194,6 +1194,7 @@ enum ShapeGeom {
     FlowChartExtract,
     FlowChartMerge,
     FlowChartCollate,
+    DoubleWave,
 }
 
 enum ImageKind {
@@ -6145,6 +6146,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "flowChartExtract" => ShapeGeom::FlowChartExtract,
         "flowChartMerge" => ShapeGeom::FlowChartMerge,
         "flowChartCollate" => ShapeGeom::FlowChartCollate,
+        "doubleWave" => ShapeGeom::DoubleWave,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9250,6 +9252,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::DoubleWave => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: double_wave_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9445,6 +9453,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::FlowChartExtract
                 | ShapeGeom::FlowChartMerge
                 | ShapeGeom::FlowChartCollate
+                | ShapeGeom::DoubleWave
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9533,6 +9542,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::FlowChartExtract => flow_chart_extract_points(x, y, dw, dh),
                             ShapeGeom::FlowChartMerge => flow_chart_merge_points(x, y, dw, dh),
                             ShapeGeom::FlowChartCollate => flow_chart_collate_points(x, y, dw, dh),
+                            ShapeGeom::DoubleWave => double_wave_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -12437,6 +12447,37 @@ fn flow_chart_collate_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> 
         (x, py(h)),
         waist,
     ]
+}
+
+fn double_wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML doubleWave adj1=6250 adj2=0: two cubics on top, two on bottom.
+    let y1 = h * 6_250.0 / 100_000.0;
+    let dy2 = y1 * 10.0 / 3.0;
+    let y2 = y1 - dy2;
+    let y3 = y1 + dy2;
+    let y4 = h - y1;
+    let y5 = y4 - dy2;
+    let y6 = y4 + dy2;
+    let py = |yd: f32| y + h - yd;
+    let x3 = x + w / 6.0;
+    let x4 = x + w / 3.0;
+    let x5 = x + w * 0.5;
+    let x6 = x + w * 2.0 / 3.0;
+    let x7 = x + w * 5.0 / 6.0;
+    let x8 = x + w;
+    let p0 = (x, py(y1));
+    let p1 = (x5, py(y1));
+    let p2 = (x8, py(y1));
+    let p3 = (x8, py(y4));
+    let p4 = (x5, py(y4));
+    let p5 = (x, py(y4));
+    let mut pts = vec![p0];
+    sample_cubic(p0, (x3, py(y2)), (x4, py(y3)), p1, 6, &mut pts);
+    sample_cubic(p1, (x6, py(y2)), (x7, py(y3)), p2, 6, &mut pts);
+    pts.push(p3);
+    sample_cubic(p3, (x7, py(y6)), (x6, py(y5)), p4, 6, &mut pts);
+    sample_cubic(p4, (x4, py(y6)), (x3, py(y5)), p5, 6, &mut pts);
+    pts
 }
 
 fn cube_faces(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 3] {
@@ -16147,6 +16188,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn double_wave_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="doubleWave"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=doubleWave must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -19011,6 +19091,22 @@ mod drawing_tests {
         let trough = pts.iter().any(|(_, py)| *py < 80.0 && *py > 60.0);
         assert!(crest, "top cubic crests above y1; {pts:?}");
         assert!(trough, "top cubic troughs below y1; {pts:?}");
+    }
+
+    #[test]
+    fn double_wave_points_have_two_humps() {
+        let pts = double_wave_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 24, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 93.75).abs() < 0.2,
+            "start is (l,y1); {start:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
+            "must not include the bbox corner; {pts:?}"
+        );
     }
 
     #[test]
