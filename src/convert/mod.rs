@@ -1151,6 +1151,7 @@ enum ShapeGeom {
     Sun,
     Moon,
     CircularArrow,
+    Gear6,
 }
 
 enum ImageKind {
@@ -6059,6 +6060,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "sun" => ShapeGeom::Sun,
         "moon" => ShapeGeom::Moon,
         "circularArrow" => ShapeGeom::CircularArrow,
+        "gear6" => ShapeGeom::Gear6,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8895,6 +8897,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Gear6 => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: gear6_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9012,6 +9020,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::LightningBolt
                 | ShapeGeom::Moon
                 | ShapeGeom::CircularArrow
+                | ShapeGeom::Gear6
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9045,6 +9054,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::LightningBolt => lightning_bolt_points(x, y, dw, dh),
                             ShapeGeom::Moon => moon_points(x, y, dw, dh),
                             ShapeGeom::CircularArrow => circular_arrow_points(x, y, dw, dh),
+                            ShapeGeom::Gear6 => gear6_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11570,6 +11580,35 @@ fn circular_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     pts
 }
 
+fn gear6_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML gear6 adj1=15000 tooth depth; six flat teeth, solid (no hub hole).
+    const TEETH: i32 = 6;
+    let th = preset_ss(w, h) * 15_000.0 / 100_000.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let rw = (w * 0.5).max(0.5);
+    let rh = (h * 0.5).max(0.5);
+    let irw = (rw - th).max(0.5);
+    let irh = (rh - th).max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut pts = Vec::with_capacity(TEETH as usize * 4);
+    let step = std::f32::consts::TAU / TEETH as f32;
+    for i in 0..TEETH {
+        let mid = i as f32 * step;
+        let half_tooth = step * 0.18;
+        let half_gap = step * 0.5;
+        for (a, rx, ry) in [
+            (mid - half_gap, irw, irh),
+            (mid - half_tooth, rw, rh),
+            (mid + half_tooth, rw, rh),
+            (mid + half_gap, irw, irh),
+        ] {
+            pts.push(map(hc + rx * a.cos(), vc + ry * a.sin()));
+        }
+    }
+    pts
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -14087,6 +14126,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn gear6_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="gear6"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=gear6 must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -14516,6 +14594,29 @@ mod drawing_tests {
             !pts.iter()
                 .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
             "circularArrow must not include the bbox corner; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn gear6_points_have_six_flat_teeth() {
+        let pts = gear6_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 24);
+        let min_x = pts.iter().map(|p| p.0).fold(f32::MAX, f32::min);
+        let max_x = pts.iter().map(|p| p.0).fold(f32::MIN, f32::max);
+        assert!(min_x < 5.0 && max_x > 90.0, "span {min_x}..{max_x}");
+        let outer = pts
+            .iter()
+            .filter(|(px, py)| {
+                let dx = *px - 50.0;
+                let dy = *py - 50.0;
+                (dx * dx + dy * dy).sqrt() > 48.0
+            })
+            .count();
+        assert_eq!(outer, 12, "six teeth × two outer vertices; {pts:?}");
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
+            "gear6 must not include the bbox corner; {pts:?}"
         );
     }
 
