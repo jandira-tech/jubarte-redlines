@@ -206,6 +206,8 @@ struct RunStyle {
     family_ea: Option<String>,
     /// `w:cs` / `cstheme` face for complex script.
     family_cs: Option<String>,
+    /// `w:lang/@w:eastAsia` (xml 3.2 ckpt 3 script fonts).
+    lang_ea: Option<String>,
     hint: FontHint,
     size: f32,
     bold: bool,
@@ -438,6 +440,8 @@ struct ThemeFonts {
     minor_ea: Option<String>,
     major_cs: Option<String>,
     minor_cs: Option<String>,
+    /// `(major|minor, script)` → typeface from `a:font script=` (xml 3.2 ckpt 3).
+    script_fonts: HashMap<(String, String), String>,
     /// `a:clrScheme` srgbClr / sysClr lastClr. Empty → Office 2007
     /// fallback in `theme_slot_color` (comments-lots / I_am_sharing).
     colors: HashMap<String, [f32; 3]>,
@@ -539,6 +543,7 @@ impl Defaults {
                 family: "Calibri".into(),
                 family_ea: None,
                 family_cs: None,
+                lang_ea: None,
                 hint: FontHint::Default,
                 size: 11.0,
                 bold: false,
@@ -1415,6 +1420,9 @@ fn parse_theme_xml(xml: &str) -> ThemeFonts {
             }
         }
     }
+    let mut script_fonts = HashMap::new();
+    collect_script_fonts(&dom, root, "majorFont", "major", &mut script_fonts);
+    collect_script_fonts(&dom, root, "minorFont", "minor", &mut script_fonts);
     ThemeFonts {
         major: typeface("majorFont", "latin"),
         minor: typeface("minorFont", "latin"),
@@ -1422,7 +1430,33 @@ fn parse_theme_xml(xml: &str) -> ThemeFonts {
         minor_ea: typeface("minorFont", "ea"),
         major_cs: typeface("majorFont", "cs"),
         minor_cs: typeface("minorFont", "cs"),
+        script_fonts,
         colors,
+    }
+}
+
+fn collect_script_fonts(
+    dom: &Dom,
+    root: NodeId,
+    parent_local: &str,
+    bucket: &str,
+    out: &mut HashMap<(String, String), String>,
+) {
+    let Some(parent) = dom
+        .descendants(root, Some(&A::name(parent_local)))
+        .into_iter()
+        .next()
+    else {
+        return;
+    };
+    for font in descendants_local(dom, parent, "font") {
+        let Some(script) = attr_any(dom, font, "script") else {
+            continue;
+        };
+        let Some(face) = attr_any(dom, font, "typeface") else {
+            continue;
+        };
+        out.insert((bucket.to_string(), script.to_string()), face.to_string());
     }
 }
 
@@ -1815,6 +1849,49 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
     }
 }
 
+fn lang_to_ooxml_script(lang: &str) -> Option<&'static str> {
+    let lang = lang.to_ascii_lowercase();
+    if lang.starts_with("ja") {
+        Some("Jpan")
+    } else if lang.starts_with("ko") {
+        Some("Hang")
+    } else if lang.starts_with("zh-hant")
+        || lang.starts_with("zh-tw")
+        || lang.starts_with("zh-hk")
+        || lang.starts_with("zh-mo")
+    {
+        Some("Hant")
+    } else if lang.starts_with("zh") {
+        Some("Hans")
+    } else {
+        None
+    }
+}
+
+fn apply_theme_script_fonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
+    if attr_any(dom, fonts, "eastAsia").is_some() {
+        return;
+    }
+    let Some(lang) = style.lang_ea.as_deref() else {
+        return;
+    };
+    let Some(script) = lang_to_ooxml_script(lang) else {
+        return;
+    };
+    let slot = attr_any(dom, fonts, "eastAsiaTheme").unwrap_or("minorEastAsia");
+    let bucket = if slot.to_ascii_lowercase().contains("major") {
+        "major"
+    } else {
+        "minor"
+    };
+    if let Some(face) = theme
+        .script_fonts
+        .get(&(bucket.to_string(), script.to_string()))
+    {
+        style.family_ea = Some(face.clone());
+    }
+}
+
 fn theme_script_face(theme: &ThemeFonts, slot: &str) -> Option<String> {
     let slot = slot.to_ascii_lowercase();
     if slot.contains("majoreastasia") {
@@ -1861,8 +1938,12 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     {
         style.size = half / 2.0;
     }
+    if let Some(lang) = first_named(dom, rpr, "lang") {
+        style.lang_ea = attr_any(dom, lang, "eastAsia").map(str::to_string);
+    }
     if let Some(fonts) = first_named(dom, rpr, "rFonts") {
         apply_rfonts(dom, fonts, style, theme);
+        apply_theme_script_fonts(dom, fonts, style, theme);
     }
     if first_named(dom, rpr, "b").is_some() {
         style.bold = !val_is_false(dom, first_named(dom, rpr, "b"));
@@ -11401,6 +11482,7 @@ fn default_run_style() -> RunStyle {
         family: "Calibri".into(),
         family_ea: None,
         family_cs: None,
+        lang_ea: None,
         hint: FontHint::Default,
         size: 11.0,
         bold: false,
@@ -14762,6 +14844,80 @@ mod theme_slot_tests {
         );
         assert_eq!(theme.major_ea.as_deref(), Some("Georgia"));
         assert_eq!(theme.minor_cs.as_deref(), Some("Times New Roman"));
+    }
+
+    #[test]
+    fn load_theme_reads_script_font_jpan() {
+        let xml = r#"<?xml version="1.0"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <a:themeElements><a:fontScheme name="Office">
+    <a:minorFont>
+      <a:latin typeface="Cambria"/>
+      <a:ea typeface="Verdana"/>
+      <a:font script="Jpan" typeface="Yu Mincho"/>
+    </a:minorFont>
+  </a:fontScheme></a:themeElements>
+</a:theme>"#;
+        let theme = parse_theme_xml(xml);
+        assert_eq!(
+            theme
+                .script_fonts
+                .get(&("minor".into(), "Jpan".into()))
+                .map(String::as_str),
+            Some("Yu Mincho"),
+            "a:font script=Jpan is xml 3.2 ckpt 3; map={:?}",
+            theme.script_fonts
+        );
+    }
+
+    fn style_from_rpr(inner: &str, theme: &ThemeFonts) -> RunStyle {
+        let xml = format!(
+            r#"<?xml version="1.0"?>
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:rPr>{inner}</w:rPr>
+            </w:document>"#
+        );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).expect("root");
+        let rpr = first_named(&dom, root, "rPr").expect("rPr");
+        let mut style = Defaults::word().run;
+        apply_rpr(&dom, rpr, &mut style, theme);
+        style
+    }
+
+    #[test]
+    fn ja_lang_uses_jpan_script_font_over_generic_ea() {
+        let mut theme = theme_with_east_asia();
+        theme
+            .script_fonts
+            .insert(("minor".into(), "Jpan".into()), "Yu Mincho".into());
+        let style = style_from_rpr(
+            r#"<w:rFonts w:eastAsiaTheme="minorEastAsia" w:hint="eastAsia"/>
+               <w:lang w:eastAsia="ja-JP"/>"#,
+            &theme,
+        );
+        assert_eq!(
+            style.family_ea.as_deref(),
+            Some("Yu Mincho"),
+            "ja-JP must pick a:font script=Jpan, not generic a:ea; family_ea={:?}",
+            style.family_ea
+        );
+        assert_eq!(style.lang_ea.as_deref(), Some("ja-JP"));
+    }
+
+    #[test]
+    fn explicit_east_asia_beats_script_font() {
+        let mut theme = theme_with_east_asia();
+        theme
+            .script_fonts
+            .insert(("minor".into(), "Jpan".into()), "Yu Mincho".into());
+        let style = style_from_rpr(
+            r#"<w:rFonts w:eastAsia="MS Mincho" w:eastAsiaTheme="minorEastAsia"/>
+               <w:lang w:eastAsia="ja-JP"/>"#,
+            &theme,
+        );
+        assert_eq!(style.family_ea.as_deref(), Some("MS Mincho"));
     }
 }
 
