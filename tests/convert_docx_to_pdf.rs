@@ -13562,6 +13562,23 @@ fn strict01_matches_oracle_page_pairing() {
 }
 
 #[test]
+fn a4_pgsz_writes_word_mediabox() {
+    // plan.md Step 10 I / xml_parts_plan A4: Word Save-as-PDF writes
+    // 595.2×841.92 for pgSz 11906×16838 twips, not twip/20 = 595.3×841.9.
+    let docx = minimal_docx_body(
+        "<w:p><w:r><w:t>A4</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/></w:sectPr>",
+    );
+    let pdf = docx_to_pdf(&docx).expect("convert A4");
+    let boxes = pdf_mediaboxes(&pdf);
+    assert_eq!(boxes.len(), 1, "one page; {boxes:?}");
+    assert!(
+        (boxes[0].0 - 595.2).abs() < 0.02 && (boxes[0].1 - 841.92).abs() < 0.02,
+        "A4 MediaBox must be Word's 595.2×841.92, not 595.3×841.9; {boxes:?}"
+    );
+}
+
+#[test]
 fn later_section_landscape_writes_its_mediabox() {
     // Strict01 cluster: first sectPr is letter portrait; the next is
     // 792pt×612pt landscape (type omitted = nextPage). Each PDF page must
