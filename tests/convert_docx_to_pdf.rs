@@ -4576,8 +4576,8 @@ fn inter_auto_line_uses_cambria_typo_box() {
     let sub_y = sub_ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     let gap = title_y - sub_y;
     assert!(
-        (23.5..=26.5).contains(&gap),
-        "Inter/Cambria auto is typo×1.15 (~25pt title→sub); gap={gap} title={title_y} sub={sub_y}"
+        (21.8..=26.8).contains(&gap),
+        "Inter/Cambria auto is face metrics×1.15 (Liberation Serif ~22, DFonts Cambria ~25), not size×1.15 ~19.5; gap={gap} title={title_y} sub={sub_y}"
     );
 }
 
