@@ -1181,6 +1181,7 @@ enum ShapeGeom {
     Star7,
     Star8,
     Star10,
+    Star12,
 }
 
 enum ImageKind {
@@ -6119,6 +6120,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "star7" => ShapeGeom::Star7,
         "star8" => ShapeGeom::Star8,
         "star10" => ShapeGeom::Star10,
+        "star12" => ShapeGeom::Star12,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9146,6 +9148,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Star12 => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: star12_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9328,6 +9336,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Star7
                 | ShapeGeom::Star8
                 | ShapeGeom::Star10
+                | ShapeGeom::Star12
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9393,6 +9402,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Star7 => star7_points(x, y, dw, dh),
                             ShapeGeom::Star8 => star8_points(x, y, dw, dh),
                             ShapeGeom::Star10 => star10_points(x, y, dw, dh),
+                            ShapeGeom::Star12 => star12_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11746,6 +11756,70 @@ fn star10_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
         (x + sx2, py(sy3)),
         (x + x1, py(y3)),
         (x + sx1, py(vc)),
+    ]
+}
+
+fn star12_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML star12 adj=37500: 12 tips + 12 inner vertices.
+    let a = 37_500.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let wd4 = w * 0.25;
+    let hd4 = h * 0.25;
+    let dx1 = hc * ooxml_ang_rad(1_800_000.0).cos();
+    let dy1 = vc * ooxml_ang_rad(3_600_000.0).sin();
+    let x1 = hc - dx1;
+    let x3 = w * 0.75;
+    let x4 = hc + dx1;
+    let y1 = vc - dy1;
+    let y3 = h * 0.75;
+    let y4 = vc + dy1;
+    let iwd2 = hc * a / 50_000.0;
+    let ihd2 = vc * a / 50_000.0;
+    let sdx1 = iwd2 * ooxml_ang_rad(900_000.0).cos();
+    let sdx2 = iwd2 * ooxml_ang_rad(2_700_000.0).cos();
+    let sdx3 = iwd2 * ooxml_ang_rad(4_500_000.0).cos();
+    let sdy1 = ihd2 * ooxml_ang_rad(4_500_000.0).sin();
+    let sdy2 = ihd2 * ooxml_ang_rad(2_700_000.0).sin();
+    let sdy3 = ihd2 * ooxml_ang_rad(900_000.0).sin();
+    let sx1 = hc - sdx1;
+    let sx2 = hc - sdx2;
+    let sx3 = hc - sdx3;
+    let sx4 = hc + sdx3;
+    let sx5 = hc + sdx2;
+    let sx6 = hc + sdx1;
+    let sy1 = vc - sdy1;
+    let sy2 = vc - sdy2;
+    let sy3 = vc - sdy3;
+    let sy4 = vc + sdy3;
+    let sy5 = vc + sdy2;
+    let sy6 = vc + sdy1;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x, py(vc)),
+        (x + sx1, py(sy3)),
+        (x + x1, py(hd4)),
+        (x + sx2, py(sy2)),
+        (x + wd4, py(y1)),
+        (x + sx3, py(sy1)),
+        (x + hc, py(0.0)),
+        (x + sx4, py(sy1)),
+        (x + x3, py(y1)),
+        (x + sx5, py(sy2)),
+        (x + x4, py(hd4)),
+        (x + sx6, py(sy3)),
+        (x + w, py(vc)),
+        (x + sx6, py(sy4)),
+        (x + x4, py(y3)),
+        (x + sx5, py(sy5)),
+        (x + x3, py(y4)),
+        (x + sx4, py(sy6)),
+        (x + hc, py(h)),
+        (x + sx3, py(sy6)),
+        (x + wd4, py(y4)),
+        (x + sx2, py(sy5)),
+        (x + x1, py(y3)),
+        (x + sx1, py(sy4)),
     ]
 }
 
@@ -14950,6 +15024,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn star12_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="star12"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=star12 must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -16778,6 +16891,32 @@ mod drawing_tests {
         assert!(
             (pts[8].0 - 100.0).abs() < 0.2,
             "rightmost outer vertex on the right edge; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn star12_points_have_twelve_tips() {
+        let pts = star12_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 24);
+        let start = pts[0];
+        let top = pts[6];
+        let right = pts[12];
+        let bottom = pts[18];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 50.0).abs() < 0.05,
+            "start is (l,vc); {start:?}"
+        );
+        assert!(
+            (top.0 - 50.0).abs() < 0.05 && (top.1 - 100.0).abs() < 0.05,
+            "top tip is (hc,t); {top:?}"
+        );
+        assert!(
+            (right.0 - 100.0).abs() < 0.05 && (right.1 - 50.0).abs() < 0.05,
+            "right tip is (r,vc); {right:?}"
+        );
+        assert!(
+            (bottom.0 - 50.0).abs() < 0.05 && bottom.1.abs() < 0.05,
+            "bottom tip is (hc,b); {bottom:?}"
         );
     }
 
