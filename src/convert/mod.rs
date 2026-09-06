@@ -6159,6 +6159,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "flowChartSort" => ShapeGeom::FlowChartSort,
         "flowChartOfflineStorage" => ShapeGeom::FlowChartOfflineStorage,
         "flowChartOnlineStorage" => ShapeGeom::FlowChartOnlineStorage,
+        "flowChartConnector" => ShapeGeom::Ellipse,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -16621,6 +16622,49 @@ mod drawing_tests {
         assert!(
             !matches!(boxes[0].geom, ShapeGeom::Box),
             "prst=flowChartOnlineStorage must not collapse to Box"
+        );
+    }
+
+    #[test]
+    fn flow_chart_connector_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="flowChartConnector"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=flowChartConnector must not collapse to Box"
+        );
+        assert!(
+            matches!(boxes[0].geom, ShapeGeom::Ellipse),
+            "prst=flowChartConnector is an ellipse"
         );
     }
 
