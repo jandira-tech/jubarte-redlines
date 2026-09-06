@@ -1195,6 +1195,7 @@ enum ShapeGeom {
     FlowChartMerge,
     FlowChartCollate,
     DoubleWave,
+    FlowChartDisplay,
 }
 
 enum ImageKind {
@@ -6147,6 +6148,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "flowChartMerge" => ShapeGeom::FlowChartMerge,
         "flowChartCollate" => ShapeGeom::FlowChartCollate,
         "doubleWave" => ShapeGeom::DoubleWave,
+        "flowChartDisplay" => ShapeGeom::FlowChartDisplay,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9258,6 +9260,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::FlowChartDisplay => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: flow_chart_display_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9454,6 +9462,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::FlowChartMerge
                 | ShapeGeom::FlowChartCollate
                 | ShapeGeom::DoubleWave
+                | ShapeGeom::FlowChartDisplay
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9543,6 +9552,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::FlowChartMerge => flow_chart_merge_points(x, y, dw, dh),
                             ShapeGeom::FlowChartCollate => flow_chart_collate_points(x, y, dw, dh),
                             ShapeGeom::DoubleWave => double_wave_points(x, y, dw, dh),
+                            ShapeGeom::FlowChartDisplay => flow_chart_display_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -12477,6 +12487,24 @@ fn double_wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     pts.push(p3);
     sample_cubic(p3, (x7, py(y6)), (x6, py(y5)), p4, 6, &mut pts);
     sample_cubic(p4, (x4, py(y6)), (x3, py(y5)), p5, 6, &mut pts);
+    pts
+}
+
+fn flow_chart_display_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML flowChartDisplay in 6×6 space: pointed left, right semicircle.
+    const ST: f32 = 16_200_000.0;
+    const SW: f32 = 10_800_000.0;
+    let wr = (w / 6.0).max(0.5);
+    let hr = (h * 0.5).max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut pts = vec![
+        map(0.0, h * 0.5),
+        map(w / 6.0, 0.0),
+        map(w * 5.0 / 6.0, 0.0),
+    ];
+    let mut cur = (w * 5.0 / 6.0, 0.0);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, ST, SW, &mut pts, map);
+    pts.push(map(w / 6.0, h));
     pts
 }
 
@@ -16227,6 +16255,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn flow_chart_display_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="flowChartDisplay"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=flowChartDisplay must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -19106,6 +19173,22 @@ mod drawing_tests {
             !pts.iter()
                 .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
             "must not include the bbox corner; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn flow_chart_display_points_start_at_left_mid() {
+        let pts = flow_chart_display_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 8, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 50.0).abs() < 0.05,
+            "start is (l,vc); {start:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 100.0).abs() < 1.0 && (*py - 50.0).abs() < 1.0),
+            "right semicircle reaches (r,vc); {pts:?}"
         );
     }
 
