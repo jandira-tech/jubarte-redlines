@@ -13005,6 +13005,105 @@ fn character_spacing_control_compresses_fullwidth_punctuation() {
     );
 }
 
+fn background_shape_docx(bg_color: Option<&str>, settings: &str) -> Vec<u8> {
+    let background = bg_color.map_or(String::new(), |c| {
+        format!("<w:background w:color=\"{c}\"/>")
+    });
+    let body = "<w:p><w:r><w:t>BgShapeX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         {background}<w:body>{body}</w:body></w:document>"
+    );
+    let settings_xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         {settings}</w:settings>"
+    );
+    let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        <Override PartName=\"/word/settings.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml\"/>\
+        </Types>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/>\
+        </Relationships>";
+    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdSettings\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings\" \
+          Target=\"settings.xml\"/>\
+        </Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(content_types.as_bytes()).unwrap();
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(rels.as_bytes()).unwrap();
+    zip.start_file("word/document.xml", opts).unwrap();
+    zip.write_all(document.as_bytes()).unwrap();
+    zip.start_file("word/_rels/document.xml.rels", opts)
+        .unwrap();
+    zip.write_all(doc_rels.as_bytes()).unwrap();
+    zip.start_file("word/settings.xml", opts).unwrap();
+    zip.write_all(settings_xml.as_bytes()).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
+fn page_fill_of(pdf: &[u8], r: f32, g: f32, b: f32) -> bool {
+    pdf_fill_rects(pdf, r, g, b)
+        .iter()
+        .any(|(w, h)| *w > 600.0 && *h > 750.0)
+}
+
+#[test]
+fn display_background_shape_paints_document_background() {
+    // xml leftover: w:displayBackgroundShape (ECMA-376 17.15.1.26).
+    // Omitted / val=false keep print-layout pages unfilled; when present,
+    // w:background/@w:color fills the page behind body ink.
+    let on = docx_to_pdf(&background_shape_docx(
+        Some("FF0000"),
+        "<w:displayBackgroundShape/>",
+    ))
+    .expect("convert displayBackgroundShape on");
+    let omitted = docx_to_pdf(&background_shape_docx(Some("FF0000"), ""))
+        .expect("convert background without display flag");
+    let off = docx_to_pdf(&background_shape_docx(
+        Some("FF0000"),
+        "<w:displayBackgroundShape w:val=\"false\"/>",
+    ))
+    .expect("convert displayBackgroundShape false");
+    assert!(
+        pdf_winansi_text(&on).contains("BgShapeX"),
+        "body must still paint; text={}",
+        pdf_winansi_text(&on)
+    );
+    assert!(
+        page_fill_of(&on, 1.0, 0.0, 0.0),
+        "displayBackgroundShape + w:background FF0000 must fill the page; rects={:?}",
+        pdf_fill_rects(&on, 1.0, 0.0, 0.0)
+    );
+    assert!(
+        !page_fill_of(&omitted, 1.0, 0.0, 0.0),
+        "omitted displayBackgroundShape must not paint the background in print layout"
+    );
+    assert!(
+        !page_fill_of(&off, 1.0, 0.0, 0.0),
+        "displayBackgroundShape val=false must not paint the background"
+    );
+}
+
 #[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";

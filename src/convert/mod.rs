@@ -3082,6 +3082,31 @@ fn character_spacing_scale(mode: CharacterSpacing, ch: char) -> f32 {
     }
 }
 
+/// `w:displayBackgroundShape`: paint `w:background` in print layout / PDF.
+/// Omitted → off (ECMA-376 17.15.1.26).
+fn settings_display_background_shape(pkg: &PartFs) -> bool {
+    let Some(xml) = pkg.part_string("word/settings.xml") else {
+        return false;
+    };
+    xml.contains("displayBackgroundShape")
+        && !xml.contains("displayBackgroundShape w:val=\"0\"")
+        && !xml.contains("displayBackgroundShape w:val=\"false\"")
+        && !xml.contains("displayBackgroundShape w:val=\"off\"")
+}
+
+fn document_background_color(dom: &Dom, body: NodeId) -> Option<[f32; 3]> {
+    let root = dom.parent(body)?;
+    let bg = first_named(dom, root, "background")?;
+    attr_any(dom, bg, "color").and_then(parse_hex_color)
+}
+
+fn page_background_fill(pkg: &PartFs, dom: &Dom, body: NodeId) -> Option<[f32; 3]> {
+    if !settings_display_background_shape(pkg) {
+        return None;
+    }
+    document_background_color(dom, body)
+}
+
 /// Word factory is 720 twips (0.5in). Strict01 writes `36pt`; mcdoc `420`.
 fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
     let xml = pkg.part_string("word/settings.xml")?;
@@ -7173,6 +7198,7 @@ struct HfChrome {
     footer_tables: Vec<ChromeTable>,
     mirror_margins: bool,
     character_spacing: CharacterSpacing,
+    page_background: Option<[f32; 3]>,
 }
 
 fn first_section_hf(
@@ -7182,12 +7208,16 @@ fn first_section_hf(
     body: NodeId,
     sheet: &StyleSheet,
 ) -> HfChrome {
+    let page_background = page_background_fill(pkg, dom, body);
     let Some(sect) = dom
         .descendants(body, Some(&W::sect_pr()))
         .into_iter()
         .next()
     else {
-        return HfChrome::default();
+        return HfChrome {
+            page_background,
+            ..Default::default()
+        };
     };
     let header = pick_section_hf(pkg, main, dom, sect, "headerReference", sheet);
     let footer = pick_section_hf(pkg, main, dom, sect, "footerReference", sheet);
@@ -7215,6 +7245,7 @@ fn first_section_hf(
         footer_tables: footer.start.tables,
         mirror_margins: settings_mirror_margins(pkg),
         character_spacing: settings_character_spacing(pkg),
+        page_background,
     }
 }
 
@@ -7824,6 +7855,7 @@ struct Layout<'a> {
     footer_tables: Vec<ChromeTable>,
     mirror_margins: bool,
     character_spacing: CharacterSpacing,
+    page_background: Option<[f32; 3]>,
     margin_l0: f32,
     margin_r0: f32,
     placed_comments: HashSet<String>,
@@ -7950,6 +7982,7 @@ impl<'a> Layout<'a> {
             footer_tables: hf.footer_tables,
             mirror_margins: hf.mirror_margins,
             character_spacing: hf.character_spacing,
+            page_background: hf.page_background,
             margin_l0: page.margin_l,
             margin_r0: page.margin_r,
             placed_comments: HashSet::new(),
@@ -11927,6 +11960,16 @@ impl<'a> Layout<'a> {
     }
 
     fn chrome(&mut self) {
+        if let Some(color) = self.page_background {
+            let (w, h) = (self.page.width, self.page.height);
+            self.current().ops.push(Op::FillRect {
+                x: 0.0,
+                y: 0.0,
+                w,
+                h,
+                color,
+            });
+        }
         let page_no = self.pages.len();
         if let Some(mark) = self.watermark.clone() {
             let fid = self.fonts.resolve("Calibri", true, false);
