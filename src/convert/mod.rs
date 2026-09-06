@@ -1130,6 +1130,7 @@ enum ShapeGeom {
     HomePlate,
     Pentagon,
     Octagon,
+    Star4,
 }
 
 enum ImageKind {
@@ -6017,6 +6018,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "homePlate" => ShapeGeom::HomePlate,
         "pentagon" => ShapeGeom::Pentagon,
         "octagon" => ShapeGeom::Octagon,
+        "star4" => ShapeGeom::Star4,
         _ => ShapeGeom::Box,
     }
 }
@@ -8709,6 +8711,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Star4 => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: star4_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8754,6 +8762,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::HomePlate
                 | ShapeGeom::Pentagon
                 | ShapeGeom::Octagon
+                | ShapeGeom::Star4
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -8768,6 +8777,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::HomePlate => home_plate_points(x, y, dw, dh),
                             ShapeGeom::Pentagon => pentagon_points(x, y, dw, dh),
                             ShapeGeom::Octagon => octagon_points(x, y, dw, dh),
+                            ShapeGeom::Star4 => star4_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -10673,6 +10683,33 @@ fn octagon_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     ]
 }
 
+fn star4_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML star4 adj=12500; Cos/Sin 2700000 = 45°.
+    let a = 12_500.0;
+    let iwd2 = (w * 0.5) * a / 50_000.0;
+    let ihd2 = (h * 0.5) * a / 50_000.0;
+    let ang = ooxml_ang_rad(2_700_000.0);
+    let sdx = iwd2 * ang.cos();
+    let sdy = ihd2 * ang.sin();
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let sx1 = hc - sdx;
+    let sx2 = hc + sdx;
+    let sy1 = vc - sdy;
+    let sy2 = vc + sdy;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x, py(vc)),
+        (x + sx1, py(sy1)),
+        (x + hc, py(0.0)),
+        (x + sx2, py(sy1)),
+        (x + w, py(vc)),
+        (x + sx2, py(sy2)),
+        (x + hc, py(h)),
+        (x + sx1, py(sy2)),
+    ]
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -12410,6 +12447,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn star4_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="star4"/>
+        <a:solidFill><a:srgbClr val="FFFF00"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=star4 must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn bent_connector_reads_triangle_tail_end() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -12545,6 +12621,14 @@ mod drawing_tests {
         assert_eq!(pts.len(), 4);
         assert!((pts[1].0 - 10.0).abs() < 0.01 && (pts[1].1 - 40.0).abs() < 0.01);
         assert!((pts[3].0 - 90.0).abs() < 0.01 && pts[3].1.abs() < 0.01);
+    }
+
+    #[test]
+    fn star4_points_have_four_tips() {
+        let pts = star4_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 8);
+        assert!((pts[2].0 - 50.0).abs() < 0.05 && (pts[2].1 - 100.0).abs() < 0.05);
+        assert!((pts[6].0 - 50.0).abs() < 0.05 && pts[6].1.abs() < 0.05);
     }
 
     #[test]
