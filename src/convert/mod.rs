@@ -1179,6 +1179,7 @@ enum ShapeGeom {
     Ribbon2,
     LeftRightCircularArrow,
     Star7,
+    Star8,
 }
 
 enum ImageKind {
@@ -6115,6 +6116,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "ribbon2" => ShapeGeom::Ribbon2,
         "leftRightCircularArrow" => ShapeGeom::LeftRightCircularArrow,
         "star7" => ShapeGeom::Star7,
+        "star8" => ShapeGeom::Star8,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9130,6 +9132,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Star8 => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: star8_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9310,6 +9318,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Ribbon2
                 | ShapeGeom::LeftRightCircularArrow
                 | ShapeGeom::Star7
+                | ShapeGeom::Star8
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9373,6 +9382,7 @@ impl<'a> Layout<'a> {
                                 left_right_circular_arrow_points(x, y, dw, dh)
                             }
                             ShapeGeom::Star7 => star7_points(x, y, dw, dh),
+                            ShapeGeom::Star8 => star8_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11619,6 +11629,53 @@ fn star7_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
         (x + hc, py(sy4)),
         (x + x3, py(y3)),
         (x + sx2, py(sy3)),
+    ]
+}
+
+fn star8_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML star8 adj=37500: 8 tips + 8 inner vertices. Cos/Sin 2700000 = 45°.
+    let a = 37_500.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let ang = ooxml_ang_rad(2_700_000.0);
+    let dx1 = hc * ang.cos();
+    let dy1 = vc * ang.sin();
+    let x1 = hc - dx1;
+    let x2 = hc + dx1;
+    let y1 = vc - dy1;
+    let y2 = vc + dy1;
+    let iwd2 = hc * a / 50_000.0;
+    let ihd2 = vc * a / 50_000.0;
+    let sdx1 = iwd2 * 92_388.0 / 100_000.0;
+    let sdx2 = iwd2 * 38_268.0 / 100_000.0;
+    let sdy1 = ihd2 * 92_388.0 / 100_000.0;
+    let sdy2 = ihd2 * 38_268.0 / 100_000.0;
+    let sx1 = hc - sdx1;
+    let sx2 = hc - sdx2;
+    let sx3 = hc + sdx2;
+    let sx4 = hc + sdx1;
+    let sy1 = vc - sdy1;
+    let sy2 = vc - sdy2;
+    let sy3 = vc + sdy2;
+    let sy4 = vc + sdy1;
+    let py = |yd: f32| y + h - yd;
+    vec![
+        (x, py(vc)),
+        (x + sx1, py(sy2)),
+        (x + x1, py(y1)),
+        (x + sx2, py(sy1)),
+        (x + hc, py(0.0)),
+        (x + sx3, py(sy1)),
+        (x + x2, py(y1)),
+        (x + sx4, py(sy2)),
+        (x + w, py(vc)),
+        (x + sx4, py(sy3)),
+        (x + x2, py(y2)),
+        (x + sx3, py(sy4)),
+        (x + hc, py(h)),
+        (x + sx2, py(sy4)),
+        (x + x1, py(y2)),
+        (x + sx1, py(sy3)),
     ]
 }
 
@@ -14745,6 +14802,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn star8_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="star8"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=star8 must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -16523,6 +16619,32 @@ mod drawing_tests {
         assert!(
             (pts[8].0 - 100.0).abs() < 0.2,
             "rightmost outer vertex on the right edge; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn star8_points_have_eight_tips() {
+        let pts = star8_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 16);
+        let start = pts[0];
+        let top = pts[4];
+        let right = pts[8];
+        let bottom = pts[12];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 50.0).abs() < 0.05,
+            "start is (l,vc); {start:?}"
+        );
+        assert!(
+            (top.0 - 50.0).abs() < 0.05 && (top.1 - 100.0).abs() < 0.05,
+            "top tip is (hc,t); {top:?}"
+        );
+        assert!(
+            (right.0 - 100.0).abs() < 0.05 && (right.1 - 50.0).abs() < 0.05,
+            "right tip is (r,vc); {right:?}"
+        );
+        assert!(
+            (bottom.0 - 50.0).abs() < 0.05 && bottom.1.abs() < 0.05,
+            "bottom tip is (hc,b); {bottom:?}"
         );
     }
 
