@@ -1205,6 +1205,7 @@ enum ShapeGeom {
     FlowChartOr,
     FlowChartSummingJunction,
     FlowChartInternalStorage,
+    FlowChartPredefinedProcess,
 }
 
 enum ImageKind {
@@ -6169,6 +6170,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "flowChartOr" => ShapeGeom::FlowChartOr,
         "flowChartSummingJunction" => ShapeGeom::FlowChartSummingJunction,
         "flowChartInternalStorage" => ShapeGeom::FlowChartInternalStorage,
+        "flowChartPredefinedProcess" => ShapeGeom::FlowChartPredefinedProcess,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9418,6 +9420,30 @@ impl<'a> Layout<'a> {
                         });
                     }
                 }
+                ShapeGeom::FlowChartPredefinedProcess => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: flow_chart_predefined_process_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                    if let Some(color) = box_.line {
+                        self.current().ops.push(Op::Line {
+                            x1: x + dw * 0.125,
+                            y1: y,
+                            x2: x + dw * 0.125,
+                            y2: y + dh,
+                            width: box_.line_width,
+                            color,
+                        });
+                        self.current().ops.push(Op::Line {
+                            x1: x + dw * 0.875,
+                            y1: y,
+                            x2: x + dw * 0.875,
+                            y2: y + dh,
+                            width: box_.line_width,
+                            color,
+                        });
+                    }
+                }
             }
         }
         if box_.stroke {
@@ -9624,6 +9650,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::FlowChartOr
                 | ShapeGeom::FlowChartSummingJunction
                 | ShapeGeom::FlowChartInternalStorage
+                | ShapeGeom::FlowChartPredefinedProcess
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9734,6 +9761,9 @@ impl<'a> Layout<'a> {
                             ShapeGeom::FlowChartSummingJunction => ellipse_points(x, y, dw, dh),
                             ShapeGeom::FlowChartInternalStorage => {
                                 flow_chart_internal_storage_points(x, y, dw, dh)
+                            }
+                            ShapeGeom::FlowChartPredefinedProcess => {
+                                flow_chart_predefined_process_points(x, y, dw, dh)
                             }
                             _ => round_rect_points(x, y, dw, dh),
                         };
@@ -12670,6 +12700,12 @@ fn double_wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     sample_cubic(p3, (x7, py(y6)), (x6, py(y5)), p4, 6, &mut pts);
     sample_cubic(p4, (x4, py(y6)), (x3, py(y5)), p5, 6, &mut pts);
     pts
+}
+
+fn flow_chart_predefined_process_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML flowChartPredefinedProcess fill path is the extent rectangle.
+    let py = |yd: f32| y + h - yd;
+    vec![(x, py(0.0)), (x + w, py(0.0)), (x + w, py(h)), (x, py(h))]
 }
 
 fn flow_chart_internal_storage_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
@@ -17002,6 +17038,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn flow_chart_predefined_process_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="flowChartPredefinedProcess"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=flowChartPredefinedProcess must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -20090,6 +20165,22 @@ mod drawing_tests {
             pts.iter()
                 .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
             "bottom-left; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn flow_chart_predefined_process_points_are_extent_rect() {
+        let pts = flow_chart_predefined_process_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 4, "{pts:?}");
+        let start = pts[0];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 100.0).abs() < 0.05,
+            "start is (l,t) PDF (0,100); {start:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
+            "bottom-right; {pts:?}"
         );
     }
 
