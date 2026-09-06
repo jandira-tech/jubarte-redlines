@@ -6932,6 +6932,45 @@ fn line_chart_series_are_stroked_polylines() {
 }
 
 #[test]
+fn area_chart_series_are_filled_polygons() {
+    let body = "<w:p><w:r><w:drawing><wp:inline>\
+         <wp:extent cx=\"5486400\" cy=\"3200400\"/>\
+         <a:graphic><a:graphicData \
+           uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">\
+           <c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" \
+             r:id=\"rIdChart\"/>\
+         </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:sectPr/>";
+    let chart = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">\
+        <c:chart><c:title><c:tx><c:rich><a:p xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+          <a:r><a:t>Chart Title</a:t></a:r></a:p></c:rich></c:tx></c:title>\
+        <c:plotArea><c:areaChart>\
+          <c:ser><c:cat><c:strLit>\
+            <c:pt idx=\"0\"><c:v>A</c:v></c:pt>\
+            <c:pt idx=\"1\"><c:v>B</c:v></c:pt>\
+          </c:strLit></c:cat>\
+          <c:val><c:numLit>\
+            <c:pt idx=\"0\"><c:v>1</c:v></c:pt>\
+            <c:pt idx=\"1\"><c:v>3</c:v></c:pt>\
+          </c:numLit></c:val></c:ser>\
+        </c:areaChart></c:plotArea></c:chart></c:chartSpace>";
+    let pdf = docx_to_pdf(&chart_docx(body, chart)).expect("convert area chart");
+    let hay = String::from_utf8_lossy(&pdf);
+    let re_count = hay.matches(" re f").count();
+    assert!(
+        pdf_has_filled_polygon(&hay),
+        "area series must fill a polygon (h f), not bar re; tail {}",
+        &hay[hay.len().saturating_sub(400)..]
+    );
+    assert_eq!(
+        re_count,
+        1,
+        "area must not paint bar FillRects; re f count={re_count} tail {}",
+        &hay[hay.len().saturating_sub(400)..]
+    );
+}
+
+#[test]
 fn chart_only_flow_para_keeps_normal_after_after_mini_623() {
     // Word drawing-only Chart 1 skips Normal after=8 below the 252pt
     // chart. Mini 623–626 did that and lifted NR +0.1644 (8 Strict01

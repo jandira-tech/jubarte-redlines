@@ -899,6 +899,7 @@ enum ChartKind {
     Bar,
     Pie,
     Line,
+    Area,
 }
 
 struct ChartData {
@@ -5633,11 +5634,17 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
     let root = dom.root(doc)?;
     let is_pie = !descendants_local(&dom, root, "pieChart").is_empty();
     let is_line = !descendants_local(&dom, root, "lineChart").is_empty();
+    let is_area = !descendants_local(&dom, root, "areaChart").is_empty();
     let host = descendants_local(&dom, root, "pieChart")
         .into_iter()
         .next()
         .or_else(|| {
             descendants_local(&dom, root, "lineChart")
+                .into_iter()
+                .next()
+        })
+        .or_else(|| {
+            descendants_local(&dom, root, "areaChart")
                 .into_iter()
                 .next()
         })
@@ -5695,6 +5702,8 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
             ChartKind::Pie
         } else if is_line {
             ChartKind::Line
+        } else if is_area {
+            ChartKind::Area
         } else {
             ChartKind::Bar
         },
@@ -9960,6 +9969,7 @@ impl<'a> Layout<'a> {
             match chart.kind {
                 ChartKind::Pie => self.emit_chart_pie(x, y, dw, dh, chart),
                 ChartKind::Line => self.emit_chart_line(x, y, dw, dh, chart),
+                ChartKind::Area => self.emit_chart_area(x, y, dw, dh, chart),
                 ChartKind::Bar => self.emit_chart_bars(x, y, dw, dh, chart),
             }
         }
@@ -10163,6 +10173,48 @@ impl<'a> Layout<'a> {
             [0.35, 0.35, 0.35],
             text,
         ));
+    }
+
+    fn emit_chart_area(&mut self, x: f32, y: f32, dw: f32, dh: f32, chart: &ChartData) {
+        self.current().ops.push(Op::FillRect {
+            x,
+            y,
+            w: dw,
+            h: dh,
+            color: [1.0, 1.0, 1.0],
+        });
+        if !chart.title.is_empty() {
+            let face = self.fonts.get(FaceId::CarlitoRegular);
+            let tw = face.width_pt(&chart.title, 14.0);
+            let tx = x + ((dw - tw) / 2.0).max(4.0);
+            self.emit_label(&chart.title, 14.0, tx, y + dh - 22.0);
+        }
+        let max_v = chart
+            .series
+            .iter()
+            .flatten()
+            .copied()
+            .fold(0.0_f32, f32::max)
+            .max(1.0);
+        let axis_max = {
+            let ceil = max_v.ceil();
+            if (max_v - ceil).abs() < 0.05 {
+                (ceil + 1.0).max(1.0)
+            } else {
+                ceil.max(1.0)
+            }
+        };
+        let plot_x = x + 20.0;
+        let plot_y = y + 43.0;
+        let plot_w = (dw - 32.0).max(8.0);
+        let plot_h = (dh - 80.0).max(8.0);
+        for (si, ser) in chart.series.iter().enumerate() {
+            let color = chart.colors.get(si).copied().unwrap_or([0.5, 0.5, 0.5]);
+            let points = area_chart_fill_points(plot_x, plot_y, plot_w, plot_h, ser, axis_max);
+            if points.len() >= 3 {
+                self.current().ops.push(Op::FillPoly { points, color });
+            }
+        }
     }
 
     fn emit_chart_line(&mut self, x: f32, y: f32, dw: f32, dh: f32, chart: &ChartData) {
@@ -13323,6 +13375,25 @@ fn cloud_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     for (wr, hr, st, sw) in ARCS {
         ooxml_arc_to_y_down(&mut cur, wr, hr, st, sw, &mut pts, map);
     }
+    pts
+}
+
+fn area_chart_fill_points(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    values: &[f32],
+    axis_max: f32,
+) -> Vec<(f32, f32)> {
+    let mut pts = line_chart_polyline_points(x, y, w, h, values, axis_max);
+    if pts.len() < 2 {
+        return pts;
+    }
+    let first_x = pts[0].0;
+    let last_x = pts[pts.len() - 1].0;
+    pts.push((last_x, y));
+    pts.push((first_x, y));
     pts
 }
 
@@ -21030,6 +21101,56 @@ mod drawing_tests {
         assert!(
             (pts[0].1 - (y + dh * 0.75)).abs() < 0.02 && (pts[6].1 - (y + dh * 0.25)).abs() < 0.02,
             "shaft is the middle 50%; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn parse_area_chart_kind_is_area() {
+        let xml = r#"<?xml version="1.0"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart><c:plotArea><c:areaChart>
+  <c:ser>
+    <c:cat><c:strLit>
+      <c:pt idx="0"><c:v>A</c:v></c:pt>
+      <c:pt idx="1"><c:v>B</c:v></c:pt>
+    </c:strLit></c:cat>
+    <c:val><c:numLit>
+      <c:pt idx="0"><c:v>1</c:v></c:pt>
+      <c:pt idx="1"><c:v>3</c:v></c:pt>
+    </c:numLit></c:val>
+  </c:ser>
+</c:areaChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let data = parse_chart(xml).expect("area");
+        assert_eq!(
+            data.kind,
+            ChartKind::Area,
+            "c:areaChart must not parse as Bar"
+        );
+        assert_eq!(data.series.len(), 1);
+        assert!((data.series[0][0] - 1.0).abs() < 0.01);
+        assert!((data.series[0][1] - 3.0).abs() < 0.01);
+        assert_eq!(data.cats, ["A", "B"]);
+    }
+
+    #[test]
+    fn area_chart_fill_points_close_to_baseline() {
+        let pts = area_chart_fill_points(0.0, 0.0, 100.0, 40.0, &[1.0, 3.0], 4.0);
+        assert_eq!(pts.len(), 4, "{pts:?}");
+        assert!(
+            (pts[0].0 - 25.0).abs() < 0.05 && (pts[0].1 - 10.0).abs() < 0.05,
+            "first plot point; {pts:?}"
+        );
+        assert!(
+            (pts[1].0 - 75.0).abs() < 0.05 && (pts[1].1 - 30.0).abs() < 0.05,
+            "second plot point; {pts:?}"
+        );
+        assert!(
+            (pts[2].0 - 75.0).abs() < 0.05 && pts[2].1.abs() < 0.05,
+            "drops to baseline at last x; {pts:?}"
+        );
+        assert!(
+            (pts[3].0 - 25.0).abs() < 0.05 && pts[3].1.abs() < 0.05,
+            "baseline back to first x; {pts:?}"
         );
     }
 
