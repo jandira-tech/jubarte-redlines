@@ -32,7 +32,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `w:family`/`w:pitch` generics (roman/swiss/modern/fixed) after altName.
 - **`FaceKey` catalogue shim.** Physical family + bold/italic, with lazy
   `OnceLock` loads so a conversion does not parse all 47 faces up front.
-  `FaceId` remains the call-site type until embedded fonts land.
+- **Embedded `.odttf` fonts.** `w:embedRegular` (and bold/italic slots) are
+  de-obfuscated with the `w:fontKey` GUID (ECMA-376-2 §11) and registered as
+  extra faces for that conversion. Unknown families such as case8
+  `Press Start 2P` no longer fall through to Cambria.
 
 - **Convert fidelity gate.** `scripts/convert_sweep.py` (wrapper
   `scripts/convert-sweep.sh`) scores `jubarte convert` against Word PDFs on the

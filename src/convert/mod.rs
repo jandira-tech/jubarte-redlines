@@ -22,11 +22,11 @@ use crate::namespaces::{A, M, MC, R, W, W14, WNE, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
-use std::sync::LazyLock;
-
 use font::{FaceId, Fonts};
 
+#[cfg(test)]
 fn fonts() -> &'static Fonts {
+    use std::sync::LazyLock;
     static FONTS: LazyLock<Fonts> = LazyLock::new(Fonts::new);
     &FONTS
 }
@@ -99,8 +99,8 @@ pub fn docx_to_pdf_with(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Con
         .next()
         .ok_or(ConvertError::MissingDocument)?;
 
-    let fonts = fonts();
     let table = font_table::load_font_table(&pkg);
+    let fonts = Fonts::for_document(&pkg, &table);
     font::with_font_table(table, || {
         let markup = settings_track_revisions(&pkg);
         let mut sheet = load_stylesheet(&pkg);
@@ -114,9 +114,9 @@ pub fn docx_to_pdf_with(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Con
         }
         let page = load_page_setup(&dom, body, &sheet.defaults.page);
         let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
-        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts);
-        let pages = layout(fonts, &page, &hf, &blocks);
-        Ok(pdf::emit(fonts, &pages, options))
+        let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, &fonts);
+        let pages = layout(&fonts, &page, &hf, &blocks);
+        Ok(pdf::emit(&fonts, &pages, options))
     })
 }
 
@@ -6183,7 +6183,7 @@ fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
     let fid = runs
         .iter()
         .find(|r| r.text != HF_LINE_BREAK)
-        .map_or(FaceId::CarlitoRegular, |r| {
+        .map_or(FaceId::CarlitoRegular.into(), |r| {
             fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
         });
     fonts.get(fid).single_line_pt(size).max(size)
@@ -6538,7 +6538,7 @@ impl<'a> Layout<'a> {
                 self.fonts
                     .resolve(&first.style.family, first.style.bold, first.style.italic)
             } else {
-                FaceId::CarlitoRegular
+                FaceId::CarlitoRegular.into()
             };
             let metrics = self.fonts.get(face);
             // Title before blank+table: Word auto line is size*1.15.
@@ -7142,9 +7142,9 @@ impl<'a> Layout<'a> {
         };
         if ink_missing {
             fid = if run.style.bold {
-                FaceId::SansBold
+                FaceId::SansBold.into()
             } else {
-                FaceId::SansRegular
+                FaceId::SansRegular.into()
             };
             face = self.fonts.get(fid);
             shaped = face.shape_kern(&run.text, size, kern);
@@ -7707,7 +7707,7 @@ impl<'a> Layout<'a> {
         let mut content_h = 0.0;
         for line in &lines {
             let size = line.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
-            let fid = line.first().map_or(FaceId::CarlitoRegular, |r| {
+            let fid = line.first().map_or(FaceId::CarlitoRegular.into(), |r| {
                 self.fonts
                     .resolve(&r.style.family, r.style.bold, r.style.italic)
             });
@@ -7724,7 +7724,7 @@ impl<'a> Layout<'a> {
         }
         for line in lines {
             let size = line.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
-            let fid = line.first().map_or(FaceId::CarlitoRegular, |r| {
+            let fid = line.first().map_or(FaceId::CarlitoRegular.into(), |r| {
                 self.fonts
                     .resolve(&r.style.family, r.style.bold, r.style.italic)
             });
@@ -8142,7 +8142,7 @@ impl<'a> Layout<'a> {
                             })
                         })
                     })
-                    .unwrap_or(FaceId::CarlitoRegular);
+                    .unwrap_or(FaceId::CarlitoRegular.into());
                 let face = self.fonts.get(face_id);
                 for cell in row {
                     let x: f32 = table_left + col_w.iter().take(cell.col).copied().sum::<f32>();
@@ -8464,7 +8464,7 @@ impl<'a> Layout<'a> {
                 .map(|r| r.style.size)
                 .fold(11.0_f32, f32::max);
             let fid = header.iter().find(|r| r.text != HF_LINE_BREAK).map_or(
-                FaceId::CarlitoRegular,
+                FaceId::CarlitoRegular.into(),
                 |r| {
                     self.fonts
                         .resolve(&r.style.family, r.style.bold, r.style.italic)
@@ -8499,7 +8499,7 @@ impl<'a> Layout<'a> {
                 .map(|r| r.style.size)
                 .fold(11.0_f32, f32::max);
             let fid = footer.iter().find(|r| r.text != HF_LINE_BREAK).map_or(
-                FaceId::CarlitoRegular,
+                FaceId::CarlitoRegular.into(),
                 |r| {
                     self.fonts
                         .resolve(&r.style.family, r.style.bold, r.style.italic)

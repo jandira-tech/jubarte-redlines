@@ -11,12 +11,12 @@ use flate2::Compression;
 use flate2::write::ZlibEncoder;
 
 use super::PdfOptions;
-use super::font::{FaceId, Fonts, word_device_paint, word_device_track};
+use super::font::{FaceId, FaceRef, Fonts, word_device_paint, word_device_track};
 
 /// One drawing command on a page (PDF user space, origin bottom-left).
 pub(crate) enum Op {
     Text {
-        face: FaceId,
+        face: FaceRef,
         size: f32,
         x: f32,
         y: f32,
@@ -90,7 +90,7 @@ pub(crate) enum Op {
     },
     /// Behind-doc Word watermark (header SDT gallery=Watermarks).
     Watermark {
-        face: FaceId,
+        face: FaceRef,
         size: f32,
         x: f32,
         y: f32,
@@ -175,7 +175,7 @@ fn markup_chrome(width: f32, height: f32) -> Option<MarkupChrome> {
 
 impl Op {
     pub(crate) fn text(
-        face: FaceId,
+        face: impl Into<FaceRef>,
         size: f32,
         x: f32,
         y: f32,
@@ -184,7 +184,7 @@ impl Op {
         text: impl Into<String>,
     ) -> Self {
         Self::Text {
-            face,
+            face: face.into(),
             size,
             x,
             y,
@@ -196,7 +196,7 @@ impl Op {
 }
 
 pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8> {
-    let used: Vec<FaceId> = {
+    let used: Vec<FaceRef> = {
         let mut seen = Vec::new();
         for page in pages {
             for op in &page.ops {
@@ -208,7 +208,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
             }
         }
         if seen.is_empty() {
-            seen.push(FaceId::CarlitoRegular);
+            seen.push(FaceRef::Catalogue(FaceId::CarlitoRegular));
         }
         seen
     };
@@ -240,7 +240,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         encodings.push(page_enc);
     }
     if simple_need.is_empty() && cid_need.is_empty() {
-        cid_need.push(FaceId::CarlitoRegular);
+        cid_need.push(FaceRef::Catalogue(FaceId::CarlitoRegular));
     }
 
     let mut simple_obj = FaceObjIds::new();
@@ -340,7 +340,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         }
         // Only the faces this page actually paints, not every face in the
         // document.
-        let res_for = |face: FaceId, winansi: bool| -> Option<(usize, &str)> {
+        let res_for = |face: FaceRef, winansi: bool| -> Option<(usize, &str)> {
             if winansi {
                 simple_obj.get(face).or_else(|| cid_obj.get(face))
             } else {
@@ -632,7 +632,7 @@ fn uniquify(base: &str, taken: &mut Vec<String>) -> String {
 /// Face → (font object id, PDF resource name). Vec-backed: a
 /// document uses a handful of faces, so a linear scan beats hashing.
 struct FaceObjIds {
-    items: Vec<(FaceId, usize, String)>,
+    items: Vec<(FaceRef, usize, String)>,
 }
 
 impl FaceObjIds {
@@ -640,12 +640,12 @@ impl FaceObjIds {
         Self { items: Vec::new() }
     }
 
-    fn insert(&mut self, k: FaceId, obj_id: usize, res_name: String) {
+    fn insert(&mut self, k: FaceRef, obj_id: usize, res_name: String) {
         self.items.push((k, obj_id, res_name));
     }
 
     /// `(object id, resource name)` for `k`, if this map holds it.
-    fn get(&self, k: FaceId) -> Option<(usize, &str)> {
+    fn get(&self, k: FaceRef) -> Option<(usize, &str)> {
         self.items
             .iter()
             .find(|(id, _, _)| *id == k)
