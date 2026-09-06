@@ -6574,9 +6574,8 @@ fn official_table_bookmark_test_one_keeps_default_108_after_mini_430() {
 #[test]
 fn official_table_bookmark_test_eight_ignores_fixed_tblcellmar_left() {
     // Word Test 8 is tblLayout=fixed + tblCellMar left=1080 (54pt). Quartz
-    // still paints R1C1 at x=90, same grid as Test 1. Honoring 1080 inset
-    // the whole row to x=144 (align max_shift 5px). Keep default 108 twips
-    // on fixed tables; top/bottom mar still applies.
+    // still paints R1C1 at x=90, same grid as Test 1: mode<15 pull uses
+    // the same mar_l as the inner inset, so text stays on the body edge.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/table_bookmark_end.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert table_bookmark_end");
     assert_eq!(pdf_page_count(&pdf), 2, "Word table_bookmark_end is 2pp");
@@ -6611,6 +6610,47 @@ fn official_table_bookmark_test_eight_ignores_fixed_tblcellmar_left() {
     assert!(
         (cells[1] - cells[0] - 100.0).abs() < 15.0,
         "Test 8 columns stay 100pt grid; cells={cells:?}"
+    );
+}
+
+#[test]
+fn fixed_layout_honours_tblcellmar_left_right() {
+    // xml 3.3: table_pad_h must read tblCellMar on tblLayout=fixed.
+    // A 2000-twip (100pt) cell with left=right=720 twips (36pt) insets
+    // the direct shd to 28pt, not the 108-twip default (89.2pt). Mode<15
+    // pull uses the same mar_l, so PadFix stays on the body edge.
+    let body = "<w:tbl><w:tblPr>\
+           <w:tblLayout w:type=\"fixed\"/>\
+           <w:tblCellMar>\
+             <w:left w:w=\"720\" w:type=\"dxa\"/><w:right w:w=\"720\" w:type=\"dxa\"/>\
+           </w:tblCellMar></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr>\
+             <w:tcW w:w=\"2000\" w:type=\"dxa\"/>\
+             <w:shd w:val=\"clear\" w:fill=\"FF0000\"/></w:tcPr>\
+             <w:p><w:r><w:t>PadFix</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert fixed tblCellMar");
+    let widths = pdf_fill_ws(&pdf, 1.0, 0.0, 0.0);
+    assert!(
+        !widths.is_empty(),
+        "red cell fill must paint; widths={widths:?}"
+    );
+    assert!(
+        widths.iter().any(|w| (24.0..40.0).contains(w)),
+        "fixed tblCellMar 36+36 must inset 100pt cell to 28pt, not default 89; widths={widths:?}"
+    );
+    assert!(
+        !widths.iter().any(|w| (80.0..95.0).contains(w)),
+        "default 108-twip inner (~89pt) must not remain; widths={widths:?}"
+    );
+    let xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    assert!(!xs.is_empty(), "PadFix must paint; xs={xs:?}");
+    let x = xs.iter().copied().fold(f32::INFINITY, f32::min);
+    assert!(
+        (x - 72.0).abs() < 2.0,
+        "mode<15 pull keeps cell text on the body edge; x={x} xs={xs:?}"
     );
 }
 

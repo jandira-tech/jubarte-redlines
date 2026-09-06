@@ -4457,15 +4457,9 @@ fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
     };
     // Cicero tblCellMar is start/end=160. Mapping those to left/right
     // (mini 221–224) dropped Cicero −0.027 ITT (2.6pt pad, >5px align).
-    // table_bookmark_end Test 8: tblLayout=fixed + left=1080 / right=432.
-    // Word Quartz still paints R1C1 at x=90 (Test 1 grid). Applying 54pt
-    // inset shifted the row to x=144. Keep default 108 on fixed tables;
-    // top/bottom mar still applies (taller Test 8 rows).
-    // Fixed L/R pad 0 (mini 430) was Word Test 1 x=90 (+0.059) but
-    // file_134 −0.104 / NR mean −0.0007. Reverted.
-    if table_layout_fixed(dom, table) {
-        return (default, default);
-    }
+    // table_bookmark_end Test 8 is tblLayout=fixed + left=1080 / right=432.
+    // Mode<15 pull uses this same mar_l, so honouring tblCellMar keeps
+    // R1C1 on the body edge (x=90) while the inner box insets (xml 3.3).
     (
         edge("left").unwrap_or(default),
         edge("right").unwrap_or(default),
