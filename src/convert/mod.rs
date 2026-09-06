@@ -1174,6 +1174,7 @@ enum ShapeGeom {
     Snip2SameRect,
     Round2SameRect,
     Snip2DiagRect,
+    Round2DiagRect,
 }
 
 enum ImageKind {
@@ -6105,6 +6106,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "snip2SameRect" => ShapeGeom::Snip2SameRect,
         "round2SameRect" => ShapeGeom::Round2SameRect,
         "snip2DiagRect" => ShapeGeom::Snip2DiagRect,
+        "round2DiagRect" => ShapeGeom::Round2DiagRect,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9090,6 +9092,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Round2DiagRect => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: round2_diag_rect_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9265,6 +9273,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Snip2SameRect
                 | ShapeGeom::Round2SameRect
                 | ShapeGeom::Snip2DiagRect
+                | ShapeGeom::Round2DiagRect
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9321,6 +9330,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Snip2SameRect => snip2_same_rect_points(x, y, dw, dh),
                             ShapeGeom::Round2SameRect => round2_same_rect_points(x, y, dw, dh),
                             ShapeGeom::Snip2DiagRect => snip2_diag_rect_points(x, y, dw, dh),
+                            ShapeGeom::Round2DiagRect => round2_diag_rect_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -12246,6 +12256,26 @@ fn snip2_diag_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
         map(rx1, h),
         map(0.0, h - rx1),
     ]
+}
+
+fn round2_diag_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML round2DiagRect adj1=16667 adj2=0: round top-left and bottom-right;
+    // the other two corners stay square (adj2 radius is 0).
+    const CD4: f32 = 5_400_000.0;
+    const CD2: f32 = 10_800_000.0;
+    let x1 = (preset_ss(w, h) * 16_667.0 / 100_000.0).max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut cur = (x1, 0.0);
+    let mut pts = vec![map(cur.0, cur.1)];
+    pts.push(map(w, 0.0));
+    cur = (w, h - x1);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, x1, x1, 0.0, CD4, &mut pts, map);
+    pts.push(map(0.0, h));
+    cur = (0.0, x1);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, x1, x1, CD2, CD4, &mut pts, map);
+    pts
 }
 
 fn wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
@@ -15764,6 +15794,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn round2_diag_rect_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="round2DiagRect"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=round2DiagRect must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn wave_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -16705,6 +16774,37 @@ mod drawing_tests {
             pts.iter()
                 .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
             "bottom-right stays square; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn round2_diag_rect_points_round_opposite_corners() {
+        let pts = round2_diag_rect_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 10, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            (start.0 - 16.667).abs() < 0.05 && (start.1 - 100.0).abs() < 0.05,
+            "moveTo (x1,t) is PDF top edge after left radius; {start:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
+            "must not include the sharp top-left corner; {pts:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && (*py - 100.0).abs() < 0.05),
+            "top-right stays square (adj2=0); {pts:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
+            "bottom-left stays square (adj2=0); {pts:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
+            "must not include the sharp bottom-right corner; {pts:?}"
         );
     }
 
