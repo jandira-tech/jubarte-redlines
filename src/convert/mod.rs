@@ -1123,6 +1123,9 @@ enum ShapeGeom {
     Triangle,
     Diamond,
     Hexagon,
+    Parallelogram,
+    Trapezoid,
+    Chevron,
 }
 
 enum ImageKind {
@@ -6003,6 +6006,9 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "triangle" => ShapeGeom::Triangle,
         "diamond" => ShapeGeom::Diamond,
         "hexagon" => ShapeGeom::Hexagon,
+        "parallelogram" => ShapeGeom::Parallelogram,
+        "trapezoid" => ShapeGeom::Trapezoid,
+        "chevron" => ShapeGeom::Chevron,
         _ => ShapeGeom::Box,
     }
 }
@@ -8653,6 +8659,24 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Parallelogram => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: parallelogram_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::Trapezoid => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: trapezoid_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
+                ShapeGeom::Chevron => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: chevron_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8691,6 +8715,9 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Triangle
                 | ShapeGeom::Diamond
                 | ShapeGeom::Hexagon
+                | ShapeGeom::Parallelogram
+                | ShapeGeom::Trapezoid
+                | ShapeGeom::Chevron
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -8698,6 +8725,9 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Triangle => triangle_points(x, y, dw, dh),
                             ShapeGeom::Diamond => diamond_points(x, y, dw, dh),
                             ShapeGeom::Hexagon => hexagon_points(x, y, dw, dh),
+                            ShapeGeom::Parallelogram => parallelogram_points(x, y, dw, dh),
+                            ShapeGeom::Trapezoid => trapezoid_points(x, y, dw, dh),
+                            ShapeGeom::Chevron => chevron_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -10493,6 +10523,36 @@ fn hexagon_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     ]
 }
 
+fn preset_ss(w: f32, h: f32) -> f32 {
+    w.min(h)
+}
+
+fn parallelogram_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML parallelogram adj=25000: x2 = ss*adj/100000.
+    let x2 = preset_ss(w, h) * 25_000.0 / 100_000.0;
+    vec![(x, y), (x + x2, y + h), (x + w, y + h), (x + w - x2, y)]
+}
+
+fn trapezoid_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML trapezoid adj=25000: short edge on top.
+    let x2 = preset_ss(w, h) * 25_000.0 / 100_000.0;
+    vec![(x, y), (x + x2, y + h), (x + w - x2, y + h), (x + w, y)]
+}
+
+fn chevron_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML chevron adj=50000: x1 = ss*adj/100000, x2 = r-x1.
+    let x1 = preset_ss(w, h) * 50_000.0 / 100_000.0;
+    let x2 = w - x1;
+    vec![
+        (x, y + h),
+        (x + x2, y + h),
+        (x + w, y + h * 0.5),
+        (x + x2, y),
+        (x, y),
+        (x + x1, y + h * 0.5),
+    ]
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -12074,6 +12134,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn parallelogram_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="900000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="parallelogram"/>
+        <a:solidFill><a:srgbClr val="00FF00"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=parallelogram must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn bent_connector_reads_triangle_tail_end() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -12201,6 +12300,22 @@ mod drawing_tests {
         assert!((pts[0].0 - 50.0).abs() < 0.01 && (pts[0].1 - 60.0).abs() < 0.01);
         assert!((pts[1].0 - 90.0).abs() < 0.01 && (pts[1].1 - 20.0).abs() < 0.01);
         assert!((pts[2].0 - 10.0).abs() < 0.01 && (pts[2].1 - 20.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parallelogram_points_use_ooxml_default_inset() {
+        let pts = parallelogram_points(0.0, 0.0, 100.0, 40.0);
+        assert_eq!(pts.len(), 4);
+        assert!((pts[1].0 - 10.0).abs() < 0.01 && (pts[1].1 - 40.0).abs() < 0.01);
+        assert!((pts[3].0 - 90.0).abs() < 0.01 && pts[3].1.abs() < 0.01);
+    }
+
+    #[test]
+    fn chevron_points_use_ooxml_default_adj() {
+        let pts = chevron_points(0.0, 0.0, 100.0, 40.0);
+        assert_eq!(pts.len(), 6);
+        assert!((pts[2].0 - 100.0).abs() < 0.01 && (pts[2].1 - 20.0).abs() < 0.01);
+        assert!((pts[5].0 - 20.0).abs() < 0.01 && (pts[5].1 - 20.0).abs() < 0.01);
     }
 
     #[test]
