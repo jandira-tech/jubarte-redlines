@@ -5461,7 +5461,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     w,
                     h,
                     kind,
-                    slot: ImageSlot::Flow,
+                    slot: vml_absolute_slot(dom, root).unwrap_or(ImageSlot::Flow),
                     behind: false,
                     z: 0,
                     crop: None,
@@ -11089,6 +11089,37 @@ mod drawing_tests {
                 assert!(matches!(align, Align::Right));
             }
             _ => panic!("wrapTopAndBottom must overlay, not consume Flow"),
+        }
+    }
+
+    #[test]
+    fn vml_imagedata_absolute_slot_is_not_flow() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:v="urn:schemas-microsoft-com:vml" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<w:body><w:p><w:r><w:pict>
+  <v:shape style="position:absolute;margin-left:187.95pt;margin-top:15.9pt;width:72pt;height:36pt">
+    <v:imagedata r:id="rIdImg"/>
+  </v:shape>
+</w:pict></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let pict = dom
+            .descendants(root, Some(&W::pict()))
+            .into_iter()
+            .next()
+            .expect("pict");
+        match vml_absolute_slot(&dom, pict) {
+            Some(ImageSlot::Float {
+                page_x: Some(x),
+                page_y: Some(y),
+                ..
+            }) => {
+                assert!((x - 187.95).abs() < 0.05, "page_x={x}");
+                assert!((y - 15.9).abs() < 0.05, "page_y={y}");
+            }
+            _ => panic!("expected page-origin float, not Flow"),
         }
     }
 
