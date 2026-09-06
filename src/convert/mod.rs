@@ -1162,6 +1162,7 @@ enum ShapeGeom {
     Chord,
     Bevel,
     Arc,
+    LeftBracket,
 }
 
 enum ImageKind {
@@ -6081,6 +6082,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "chord" => ShapeGeom::Chord,
         "bevel" => ShapeGeom::Bevel,
         "arc" => ShapeGeom::Arc,
+        "leftBracket" => ShapeGeom::LeftBracket,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8994,6 +8996,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::LeftBracket => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: left_bracket_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9157,6 +9165,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::BlockArc
                 | ShapeGeom::Chord
                 | ShapeGeom::Arc
+                | ShapeGeom::LeftBracket
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9201,6 +9210,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::BlockArc => block_arc_points(x, y, dw, dh),
                             ShapeGeom::Chord => chord_points(x, y, dw, dh),
                             ShapeGeom::Arc => arc_points(x, y, dw, dh),
+                            ShapeGeom::LeftBracket => left_bracket_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11928,6 +11938,22 @@ fn arc_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let mut pts = vec![map(cur.0, cur.1)];
     ooxml_arc_to_y_down(&mut cur, hc, vc, ST, SW, &mut pts, map);
     pts.push(map(hc, vc));
+    pts
+}
+
+fn left_bracket_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML leftBracket adj=8333: rounded "[" — two 90° arcs of height y1
+    // plus a vertical spine, closed down the right edge by FillPoly `h`.
+    const CD4: f32 = 5_400_000.0;
+    const CD2: f32 = 10_800_000.0;
+    let y1 = (preset_ss(w, h) * 8_333.0 / 100_000.0).max(0.5);
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut cur = (w, h);
+    let mut pts = vec![map(cur.0, cur.1)];
+    ooxml_arc_to_y_down(&mut cur, w, y1, CD4, CD4, &mut pts, map);
+    cur = (0.0, y1);
+    pts.push(map(cur.0, cur.1));
+    ooxml_arc_to_y_down(&mut cur, w, y1, CD2, CD4, &mut pts, map);
     pts
 }
 
@@ -14983,6 +15009,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn left_bracket_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="leftBracket"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=leftBracket must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -15615,6 +15680,31 @@ mod drawing_tests {
         assert!(
             (end.0 - 100.0).abs() < 1.0 && (end.1 - 50.0).abs() < 1.0,
             "90° sweep lands at right center; {end:?}"
+        );
+    }
+
+    #[test]
+    fn left_bracket_points_are_a_rounded_c() {
+        let pts = left_bracket_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 10, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            (start.0 - 100.0).abs() < 0.05 && start.1.abs() < 0.05,
+            "moveTo (r,b) is PDF bottom-right; {start:?}"
+        );
+        let last = *pts.last().expect("end");
+        assert!(
+            (last.0 - 100.0).abs() < 1.0 && (last.1 - 100.0).abs() < 1.0,
+            "second arc lands at top-right; {last:?}"
+        );
+        assert!(
+            pts.iter().any(|(px, _)| *px < 1.0),
+            "spine sits on the left edge; {pts:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
+            "leftBracket must not include the bbox corner (0,0); {pts:?}"
         );
     }
 
