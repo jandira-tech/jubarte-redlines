@@ -882,9 +882,8 @@ enum ImageSlot {
     },
 }
 
-/// Page/emit context for `resolve_anchor` (xml 3.4 ckpt 1). PDF y is
+/// Page/emit context for `resolve_anchor` (xml 3.4). PDF y is
 /// bottom-up; `para_top` / `line_top` are already in PDF space.
-#[cfg(test)]
 #[derive(Clone, Copy)]
 struct PlaceCtx {
     page_w: f32,
@@ -899,7 +898,6 @@ struct PlaceCtx {
     cursor_x: f32,
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum WrapMode {
     None,
@@ -909,10 +907,8 @@ enum WrapMode {
         dist_t: f32,
         dist_b: f32,
     },
-    TopBottom,
 }
 
-#[cfg(test)]
 struct Placement {
     x: f32,
     y: f32,
@@ -921,8 +917,7 @@ struct Placement {
     wrap: WrapMode,
 }
 
-/// Word `wp:anchor` inputs for `resolve_anchor` (ckpt 1; not XML yet).
-#[cfg(test)]
+/// Word `wp:anchor` / VML `mso-position-*` inputs for `resolve_anchor`.
 struct AnchorSpec<'a> {
     w: f32,
     h: f32,
@@ -937,8 +932,7 @@ struct AnchorSpec<'a> {
 
 /// Word ECMA-376 §20.4.2 anchor matrix. `h_from`/`v_from` are
 /// `wp:positionH/V/@relativeFrom`. Offsets are points. Result `y` is
-/// the PDF bottom of the box. Ckpt 1: unit-tested, not wired to emit.
-#[cfg(test)]
+/// the PDF bottom of the box.
 fn resolve_anchor(ctx: &PlaceCtx, spec: &AnchorSpec<'_>) -> Placement {
     let w = spec.w;
     let h = spec.h;
@@ -991,6 +985,59 @@ fn resolve_anchor(ctx: &PlaceCtx, spec: &AnchorSpec<'_>) -> Placement {
         h,
         wrap: spec.wrap,
     }
+}
+
+fn spec_from_float(w: f32, h: f32, slot: ImageSlot) -> Option<AnchorSpec<'static>> {
+    let ImageSlot::Float {
+        align,
+        page_x,
+        page_y,
+        col_x,
+        para_y,
+        v_align,
+        wrap_square,
+        dist_l,
+        dist_r,
+        ..
+    } = slot
+    else {
+        return None;
+    };
+    let (h_from, h_off) = if let Some(px) = page_x {
+        ("page", Some(px))
+    } else if let Some(cx) = col_x {
+        ("column", Some(cx))
+    } else {
+        ("margin", None)
+    };
+    let (v_from, v_off) = if let Some(py) = page_y {
+        ("page", Some(py))
+    } else if let Some(py) = para_y {
+        ("paragraph", Some(py))
+    } else {
+        ("margin", None)
+    };
+    let wrap = if wrap_square {
+        WrapMode::Square {
+            dist_l,
+            dist_r,
+            dist_t: 0.0,
+            dist_b: 0.0,
+        }
+    } else {
+        WrapMode::None
+    };
+    Some(AnchorSpec {
+        w,
+        h,
+        h_from,
+        h_align: align,
+        h_off,
+        v_from,
+        v_align,
+        v_off,
+        wrap,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -5568,15 +5615,23 @@ fn drawing_z(dom: &Dom, shape: NodeId) -> (bool, u32) {
 }
 
 fn vml_style_pt(style: &str, key: &str) -> Option<f32> {
+    let v = vml_style_token(style, key);
+    if v.is_empty() {
+        return None;
+    }
+    parse_len(v)
+}
+
+fn vml_style_token<'a>(style: &'a str, key: &str) -> &'a str {
     for part in style.split(';') {
         let mut kv = part.splitn(2, ':');
-        let k = kv.next()?.trim();
-        let v = kv.next()?.trim();
+        let k = kv.next().unwrap_or("").trim();
+        let v = kv.next().unwrap_or("").trim();
         if k.eq_ignore_ascii_case(key) {
-            return parse_len(v);
+            return v;
         }
     }
-    None
+    ""
 }
 
 fn vml_style_hidden(style: &str) -> bool {
@@ -5605,22 +5660,44 @@ fn vml_absolute_slot(dom: &Dom, root: NodeId) -> Option<ImageSlot> {
         if !lower.contains("position:absolute") && !lower.contains("position: absolute") {
             continue;
         }
-        let x = vml_style_pt(style, "margin-left").unwrap_or(0.0);
-        let y = vml_style_pt(style, "margin-top").unwrap_or(0.0);
+        let mx = vml_style_pt(style, "margin-left").unwrap_or(0.0);
+        let my = vml_style_pt(style, "margin-top").unwrap_or(0.0);
+        let h_rel = vml_style_token(style, "mso-position-horizontal-relative").to_ascii_lowercase();
+        let v_rel = vml_style_token(style, "mso-position-vertical-relative").to_ascii_lowercase();
+        let h_pos = vml_style_token(style, "mso-position-horizontal").to_ascii_lowercase();
+        let v_pos = vml_style_token(style, "mso-position-vertical").to_ascii_lowercase();
+        let align = match h_pos.as_str() {
+            "right" | "outside" => Align::Right,
+            "center" => Align::Center,
+            _ => Align::Left,
+        };
+        let v_align = match v_pos.as_str() {
+            "bottom" | "outside" => Align::Right,
+            "center" => Align::Center,
+            _ => Align::Left,
+        };
+        // Absent relativeFrom keeps page-origin margin-left/top (DeepL
+        // overlay). `text` is Word's paragraph/column.
+        let h_abs = h_pos.is_empty() || h_pos == "absolute";
+        let v_abs = v_pos.is_empty() || v_pos == "absolute";
+        let h_page = h_rel.is_empty() || h_rel == "page";
+        let v_page = v_rel.is_empty() || v_rel == "page";
+        let v_para = matches!(v_rel.as_str(), "text" | "paragraph" | "line");
+        let wrap = vml_style_token(style, "mso-wrap-style").to_ascii_lowercase();
         return Some(ImageSlot::Float {
-            align: Align::Left,
-            page_x: Some(x),
-            page_y: Some(y),
-            col_x: None,
-            para_y: None,
+            align,
+            page_x: (h_page && h_abs).then_some(mx),
+            page_y: (v_page && v_abs).then_some(my),
+            col_x: (!h_page && h_abs).then_some(mx),
+            para_y: (v_para && v_abs).then_some(my),
             pct_x: None,
             pct_y: None,
             pct_w: None,
             pct_h: None,
-            v_align: Align::Left,
-            wrap_square: false,
-            dist_l: 0.0,
-            dist_r: 0.0,
+            v_align,
+            wrap_square: matches!(wrap.as_str(), "square" | "tight" | "through"),
+            dist_l: vml_style_pt(style, "mso-wrap-distance-left").unwrap_or(0.0),
+            dist_r: vml_style_pt(style, "mso-wrap-distance-right").unwrap_or(0.0),
         });
     }
     None
@@ -6531,6 +6608,8 @@ struct Layout<'a> {
     nested_depth: u8,
     /// Active wrapSquare-style float from a `tblpPr` table.
     side_float: Option<SideFloat>,
+    /// PDF y of the current paragraph's first-line top (xml 3.4).
+    para_top: f32,
     bookmark_pages: HashMap<String, String>,
     pageref_ops: Vec<(usize, usize, String)>,
     /// Bookmark names present in the DOCX (before layout pages exist).
@@ -6624,6 +6703,7 @@ impl<'a> Layout<'a> {
             last_style_id: String::new(),
             nested_depth: 0,
             side_float: None,
+            para_top: y,
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
             known_bookmarks: HashSet::new(),
@@ -6900,6 +6980,7 @@ impl<'a> Layout<'a> {
         }
         self.at_page_top = false;
         self.suppress_space_before = false;
+        self.para_top = self.y;
         let y_top = self.y;
         let hanging = if style.indent_first < 0.0 {
             -style.indent_first
@@ -7680,6 +7761,21 @@ impl<'a> Layout<'a> {
         }
     }
 
+    fn place_ctx(&self) -> PlaceCtx {
+        PlaceCtx {
+            page_w: self.page.width,
+            page_h: self.page.height,
+            margin_l: self.page.margin_l,
+            margin_r: self.page.margin_r,
+            margin_t: self.page.margin_t,
+            margin_b: self.page.margin_b,
+            column_x: self.page.margin_l,
+            para_top: self.para_top,
+            line_top: self.y,
+            cursor_x: self.page.margin_l,
+        }
+    }
+
     fn float_xy(&self, dw: f32, dh: f32, slot: ImageSlot) -> (f32, f32) {
         let ImageSlot::Float {
             align,
@@ -7864,11 +7960,11 @@ impl<'a> Layout<'a> {
         } else {
             24.0
         };
-        let (dw, dh) = self.sized_wh(box_.slot, box_.w, box_.h, min_w, min_dim);
-        let (x, y) = match box_.slot {
+        let (sized_w, sized_h) = self.sized_wh(box_.slot, box_.w, box_.h, min_w, min_dim);
+        let (x, y, dw, dh) = match box_.slot {
             ImageSlot::Flow => {
-                self.ensure(dh + 4.0);
-                self.y -= dh;
+                self.ensure(sized_h + 4.0);
+                self.y -= sized_h;
                 let pos = (self.page.margin_l, self.y);
                 // Rectangle 3 reserve_only (Strict01 167pt hole) then
                 // Chart 1: Word ChartSpace PDF y≈291.8 / fitz 248.2.
@@ -7876,9 +7972,20 @@ impl<'a> Layout<'a> {
                 // 631 title y+dh-19 compensated that 3pt. Mini 623
                 // after=8 stays. Images keep 4pt (emit_image).
                 self.y -= if box_.reserve_only { 1.0 } else { 4.0 };
-                pos
+                (pos.0, pos.1, sized_w, sized_h)
             }
-            slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
+            slot @ ImageSlot::Float { pct_x, pct_y, .. } if pct_x.is_some() || pct_y.is_some() => {
+                let (x, y) = self.float_xy(sized_w, sized_h, slot);
+                (x, y, sized_w, sized_h)
+            }
+            slot @ ImageSlot::Float { .. } => {
+                let spec = spec_from_float(sized_w, sized_h, slot).expect("float slot");
+                let p = resolve_anchor(&self.place_ctx(), &spec);
+                match p.wrap {
+                    WrapMode::None | WrapMode::Square { .. } => {}
+                }
+                (p.x, p.y, p.w, p.h)
+            }
         };
         if box_.reserve_only {
             return;
@@ -9423,6 +9530,7 @@ fn layout(
                 boxes,
                 bookmarks,
             } => {
+                lay.para_top = lay.y;
                 let mut style = style.clone();
                 if let Some(next) = blocks.get(i + 1).and_then(block_para_style) {
                     if same_contextual_pair(&style, next) {
@@ -10646,12 +10754,12 @@ mod drawing_tests {
                 v_from: "line",
                 v_align: Align::Left,
                 v_off: Some(0.0),
-                wrap: WrapMode::TopBottom,
+                wrap: WrapMode::None,
             },
         );
         assert!((p.x - 90.0).abs() < 0.01, "x={}", p.x);
         assert!((p.y - (688.0 - 20.0)).abs() < 0.01, "y={}", p.y);
-        assert_eq!(p.wrap, WrapMode::TopBottom);
+        assert_eq!(p.wrap, WrapMode::None);
     }
 
     #[test]
@@ -10807,6 +10915,68 @@ mod drawing_tests {
             "mini 417 ITT-neg unindented lIns=7.2; keep pad=4 path text_dx=0; text_dx={}",
             overlay.text_dx
         );
+    }
+
+    #[test]
+    fn vml_textbox_center_relative_to_text_is_not_page_origin() {
+        // xml 3.4 ckpt 2 / file_104: mso-position-horizontal:center
+        // relative to text is ImageSlot center, not page_x=0.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:v="urn:schemas-microsoft-com:vml">
+<w:body><w:p>
+<w:r><w:t>Title</w:t></w:r>
+<w:r><w:pict>
+  <v:shape style="position:absolute;left:0;margin-left:0;margin-top:0;width:186.35pt;height:110.6pt;z-index:251659264;visibility:visible;mso-wrap-style:square;mso-wrap-distance-left:9pt;mso-wrap-distance-right:9pt;mso-position-horizontal:center;mso-position-horizontal-relative:text;mso-position-vertical:absolute;mso-position-vertical-relative:text">
+  <v:textbox>
+    <w:txbxContent><w:p><w:r><w:t>hello</w:t></w:r></w:p></w:txbxContent>
+  </v:textbox>
+  </v:shape>
+</w:pict></w:r>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        let box_ = boxes
+            .iter()
+            .find(|b| b.runs.iter().any(|r| r.text.contains("hello")))
+            .expect("vml hello txbx");
+        match box_.slot {
+            ImageSlot::Float {
+                align,
+                page_x,
+                wrap_square,
+                para_y,
+                ..
+            } => {
+                assert!(
+                    matches!(align, Align::Center),
+                    "mso-position-horizontal:center"
+                );
+                assert!(
+                    page_x.is_none(),
+                    "text-relative center is not page origin; page_x={page_x:?}"
+                );
+                assert!(wrap_square, "mso-wrap-style:square");
+                assert!(
+                    para_y.is_some(),
+                    "mso-position-vertical-relative:text; para_y={para_y:?}"
+                );
+            }
+            _ => panic!("expected float slot, got flow w={}", box_.w),
+        }
     }
 
     #[test]
