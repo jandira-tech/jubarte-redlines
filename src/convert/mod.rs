@@ -690,7 +690,7 @@ enum Block {
     /// Hard page / next-page section break (`w:br type=page` or non-continuous `sectPr`).
     /// `next` is the following section's geometry + chrome (sd_2517 later
     /// sections are 1800-twip with their own footer; first is 2160/vAlign).
-    PageBreak { next: Option<SectionChrome> },
+    PageBreak { next: Option<Box<SectionChrome>> },
 }
 
 /// One paragraph of a `w:footnote` (plan Step 7).
@@ -772,6 +772,12 @@ struct SectionChrome {
     header_explicit: bool,
     header_rest: Option<ChromePart>,
     footer_rest: Option<ChromePart>,
+    /// `w:evenAndOddHeaders` + type=even (xml leftover).
+    even_and_odd: bool,
+    header_even: Option<ChromePart>,
+    header_odd: Option<ChromePart>,
+    footer_even: Option<ChromePart>,
+    footer_odd: Option<ChromePart>,
 }
 
 #[derive(Clone)]
@@ -2993,6 +2999,16 @@ fn settings_compat_mode(pkg: &PartFs) -> u8 {
     12
 }
 
+/// `w:evenAndOddHeaders`: type=even header/footer on even page numbers.
+fn settings_even_and_odd_headers(pkg: &PartFs) -> bool {
+    let Some(xml) = pkg.part_string("word/settings.xml") else {
+        return false;
+    };
+    xml.contains("evenAndOddHeaders")
+        && !xml.contains("evenAndOddHeaders w:val=\"0\"")
+        && !xml.contains("evenAndOddHeaders w:val=\"false\"")
+}
+
 /// Word factory is 720 twips (0.5in). Strict01 writes `36pt`; mcdoc `420`.
 fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
     let xml = pkg.part_string("word/settings.xml")?;
@@ -3377,20 +3393,28 @@ fn section_chrome(
     sect: NodeId,
     sheet: &StyleSheet,
 ) -> SectionChrome {
-    let (header, header_rest) = pick_section_hf(pkg, main, dom, sect, "headerReference", sheet);
-    let (footer, footer_rest) = pick_section_hf(pkg, main, dom, sect, "footerReference", sheet);
+    let header = pick_section_hf(pkg, main, dom, sect, "headerReference", sheet);
+    let footer = pick_section_hf(pkg, main, dom, sect, "footerReference", sheet);
+    let even_and_odd = settings_even_and_odd_headers(pkg);
+    let header_odd = header.even.is_some().then_some(header.odd);
+    let footer_odd = footer.even.is_some().then_some(footer.odd);
     SectionChrome {
         page: apply_sect_pr(dom, sect, &sheet.defaults.page),
-        header: header.runs,
-        footer: footer.runs,
-        header_align: header.align,
-        footer_align: footer.align,
-        header_bottom: header.border,
-        footer_top: footer.border,
-        watermark: header.watermark,
+        header: header.start.runs,
+        footer: footer.start.runs,
+        header_align: header.start.align,
+        footer_align: footer.start.align,
+        header_bottom: header.start.border,
+        footer_top: footer.start.border,
+        watermark: header.start.watermark,
         header_explicit: sect_has_ref(dom, sect, "headerReference"),
-        header_rest,
-        footer_rest,
+        header_rest: header.rest,
+        footer_rest: footer.rest,
+        even_and_odd,
+        header_even: header.even,
+        header_odd,
+        footer_even: footer.even,
+        footer_odd,
     }
 }
 
@@ -3432,7 +3456,7 @@ fn walk_container(
                 let next = if sect_br {
                     sect_here
                         .and_then(|s| next_sect_pr(ctx.sects, s))
-                        .map(|s| section_chrome(ctx.pkg, ctx.main, dom, s, ctx.sheet))
+                        .map(|s| Box::new(section_chrome(ctx.pkg, ctx.main, dom, s, ctx.sheet)))
                 } else {
                     None
                 };
@@ -3467,7 +3491,7 @@ fn walk_container(
             endnotes.flush_if_sect_end(ctx, dom, child, numbering, blocks);
             if sect_starts_new_page(dom, child) {
                 let next = next_sect_pr(ctx.sects, child)
-                    .map(|s| section_chrome(ctx.pkg, ctx.main, dom, s, ctx.sheet));
+                    .map(|s| Box::new(section_chrome(ctx.pkg, ctx.main, dom, s, ctx.sheet)));
                 blocks.push(Block::PageBreak { next });
             }
         }
@@ -7059,6 +7083,11 @@ struct HfChrome {
     watermark: Option<Watermark>,
     header_rest: Option<ChromePart>,
     footer_rest: Option<ChromePart>,
+    even_and_odd: bool,
+    header_even: Option<ChromePart>,
+    header_odd: Option<ChromePart>,
+    footer_even: Option<ChromePart>,
+    footer_odd: Option<ChromePart>,
 }
 
 fn first_section_hf(
@@ -7075,18 +7104,26 @@ fn first_section_hf(
     else {
         return HfChrome::default();
     };
-    let (header, header_rest) = pick_section_hf(pkg, main, dom, sect, "headerReference", sheet);
-    let (footer, footer_rest) = pick_section_hf(pkg, main, dom, sect, "footerReference", sheet);
+    let header = pick_section_hf(pkg, main, dom, sect, "headerReference", sheet);
+    let footer = pick_section_hf(pkg, main, dom, sect, "footerReference", sheet);
+    let even_and_odd = settings_even_and_odd_headers(pkg);
+    let header_odd = header.even.is_some().then_some(header.odd);
+    let footer_odd = footer.even.is_some().then_some(footer.odd);
     HfChrome {
-        header: header.runs,
-        footer: footer.runs,
-        header_align: header.align,
-        footer_align: footer.align,
-        header_bottom: header.border,
-        footer_top: footer.border,
-        watermark: header.watermark,
-        header_rest,
-        footer_rest,
+        header: header.start.runs,
+        footer: footer.start.runs,
+        header_align: header.start.align,
+        footer_align: footer.start.align,
+        header_bottom: header.start.border,
+        footer_top: footer.start.border,
+        watermark: header.start.watermark,
+        header_rest: header.rest,
+        footer_rest: footer.rest,
+        even_and_odd,
+        header_even: header.even,
+        header_odd,
+        footer_even: footer.even,
+        footer_odd,
     }
 }
 
@@ -7111,6 +7148,17 @@ fn sect_title_pg(dom: &Dom, sect: NodeId) -> bool {
     first_named(dom, sect, "titlePg").is_some_and(|n| !val_is_false(dom, Some(n)))
 }
 
+struct PickedHf {
+    start: ChromePart,
+    rest: Option<ChromePart>,
+    even: Option<ChromePart>,
+    odd: ChromePart,
+}
+
+fn chrome_present(part: &ChromePart) -> bool {
+    !part.runs.is_empty() || part.watermark.is_some()
+}
+
 fn pick_section_hf(
     pkg: &PartFs,
     main: &str,
@@ -7118,20 +7166,42 @@ fn pick_section_hf(
     sect: NodeId,
     local: &str,
     sheet: &StyleSheet,
-) -> (ChromePart, Option<ChromePart>) {
+) -> PickedHf {
     let default = sect_ref_chrome_of(pkg, main, dom, sect, local, sheet, "default");
     let first = sect_ref_chrome_of(pkg, main, dom, sect, local, sheet, "first");
-    let present = |part: &ChromePart| !part.runs.is_empty() || part.watermark.is_some();
-    if sect_title_pg(dom, sect) && present(&first) {
+    let even_raw = sect_ref_chrome_of(pkg, main, dom, sect, local, sheet, "even");
+    let even =
+        (settings_even_and_odd_headers(pkg) && chrome_present(&even_raw)).then_some(even_raw);
+    let odd = if chrome_present(&default) {
+        default.clone()
+    } else {
+        first.clone()
+    };
+    if sect_title_pg(dom, sect) && chrome_present(&first) {
         let mut first = first;
         if first.watermark.is_none() {
             first.watermark = default.watermark.clone();
         }
-        (first, Some(default))
-    } else if present(&default) {
-        (default, None)
+        PickedHf {
+            start: first,
+            rest: Some(default),
+            even,
+            odd,
+        }
+    } else if chrome_present(&default) {
+        PickedHf {
+            start: default,
+            rest: None,
+            even,
+            odd,
+        }
     } else {
-        (first, None)
+        PickedHf {
+            start: first,
+            rest: None,
+            even,
+            odd,
+        }
     }
 }
 
@@ -7570,6 +7640,11 @@ struct Layout<'a> {
     chapter: String,
     header_rest: Option<ChromePart>,
     footer_rest: Option<ChromePart>,
+    even_and_odd: bool,
+    header_even: Option<ChromePart>,
+    header_odd: Option<ChromePart>,
+    footer_even: Option<ChromePart>,
+    footer_odd: Option<ChromePart>,
     placed_comments: HashSet<String>,
     /// Word clips table-cell ink at the cell’s right edge (file_146
     /// github underline ran ~46pt past the table when xml:space
@@ -7683,6 +7758,11 @@ impl<'a> Layout<'a> {
             chapter: String::new(),
             header_rest: hf.header_rest,
             footer_rest: hf.footer_rest,
+            even_and_odd: hf.even_and_odd,
+            header_even: hf.header_even,
+            header_odd: hf.header_odd,
+            footer_even: hf.footer_even,
+            footer_odd: hf.footer_odd,
             placed_comments: HashSet::new(),
             clip_right: None,
             last_style_id: String::new(),
@@ -7724,12 +7804,17 @@ impl<'a> Layout<'a> {
             self.header_bottom = next.header_bottom;
             self.watermark = next.watermark.clone();
             self.header_rest = next.header_rest.clone();
+            self.even_and_odd = next.even_and_odd;
+            self.header_even = next.header_even.clone();
+            self.header_odd = next.header_odd.clone();
         }
         if !next.footer.is_empty() {
             self.footer = next.footer.clone();
             self.footer_align = next.footer_align;
             self.footer_top = next.footer_top;
             self.footer_rest = next.footer_rest.clone();
+            self.footer_even = next.footer_even.clone();
+            self.footer_odd = next.footer_odd.clone();
         }
         let header_band = if self.header.is_empty() {
             0.0
@@ -7754,6 +7839,39 @@ impl<'a> Layout<'a> {
             self.footer = part.runs;
             self.footer_align = part.align;
             self.footer_top = part.border;
+        }
+    }
+
+    fn apply_header_part(&mut self, part: &ChromePart) {
+        self.header.clone_from(&part.runs);
+        self.header_align = part.align;
+        self.header_bottom = part.border;
+    }
+
+    fn apply_footer_part(&mut self, part: &ChromePart) {
+        self.footer.clone_from(&part.runs);
+        self.footer_align = part.align;
+        self.footer_top = part.border;
+    }
+
+    fn select_parity_chrome(&mut self) {
+        if !self.even_and_odd {
+            return;
+        }
+        if self.section_page.is_multiple_of(2) {
+            if let Some(part) = self.header_even.clone() {
+                self.apply_header_part(&part);
+            }
+            if let Some(part) = self.footer_even.clone() {
+                self.apply_footer_part(&part);
+            }
+        } else {
+            if let Some(part) = self.header_odd.clone() {
+                self.apply_header_part(&part);
+            }
+            if let Some(part) = self.footer_odd.clone() {
+                self.apply_footer_part(&part);
+            }
         }
     }
 
@@ -7783,6 +7901,7 @@ impl<'a> Layout<'a> {
         // Overflow is not a section start — Word suppresses before here.
         self.last_break_was_section = false;
         self.promote_rest_chrome();
+        self.select_parity_chrome();
         self.refresh_body_floor();
         self.chrome();
         self.chrome_end = self.current().ops.len();
@@ -7852,6 +7971,7 @@ impl<'a> Layout<'a> {
                 self.section_page = self.section_page.saturating_add(1);
                 self.promote_rest_chrome();
             }
+            self.select_parity_chrome();
             self.pages.push(self.fresh_page());
             self.y = self.page.height - self.body_top;
             self.page_has_body = false;
@@ -12270,7 +12390,7 @@ fn layout(
                 borders,
                 geom,
             } => lay.emit_table(cols, rows, style, *borders, geom),
-            Block::PageBreak { next } => lay.hard_page_break(next.as_ref()),
+            Block::PageBreak { next } => lay.hard_page_break(next.as_deref()),
         }
     }
     if lay.pages.iter().all(|p| p.ops.is_empty()) {
