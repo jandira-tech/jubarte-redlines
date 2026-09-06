@@ -16004,6 +16004,38 @@ fn docdefaults_minor_hansi_aptos_embeds_liberation_sans() {
 }
 
 #[test]
+fn jpan_script_font_embeds_over_generic_ea() {
+    // xml 3.2 ckpt 3: a:font script=Jpan beats generic a:ea when lang is ja-JP.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+             <w:name w:val=\"Normal\"/>\
+           </w:style>\
+         </w:styles>";
+    let theme = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+           <a:themeElements><a:fontScheme name=\"Office\">\
+             <a:majorFont><a:latin typeface=\"Calibri\"/></a:majorFont>\
+             <a:minorFont><a:latin typeface=\"Calibri\"/>\
+               <a:ea typeface=\"Verdana\"/>\
+               <a:font script=\"Jpan\" typeface=\"Georgia\"/></a:minorFont>\
+           </a:fontScheme></a:themeElements>\
+         </a:theme>";
+    let body = "<w:p><w:r><w:rPr>\
+         <w:rFonts w:ascii=\"Calibri\" w:eastAsiaTheme=\"minorEastAsia\" w:hint=\"eastAsia\"/>\
+         <w:lang w:eastAsia=\"ja-JP\"/>\
+         </w:rPr><w:t>HelloEA</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles_and_theme(body, styles, theme))
+        .expect("convert Jpan script font");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/Georgia"),
+        "ja-JP + script=Jpan must embed Georgia, not generic a:ea Verdana; tail {}",
+        &text[text.len().saturating_sub(320)..]
+    );
+}
+
+#[test]
 fn east_asia_theme_slot_embeds_ea_face_for_cjk() {
     // xml 3.2 ckpt 2: hint=eastAsia + eastAsiaTheme uses a:ea, not latin.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
