@@ -485,6 +485,49 @@ fn numbering_start_override_restarts_the_second_instance() {
 }
 
 #[test]
+fn numbering_lvl_restart_zero_does_not_reset_nested_counter() {
+    // xml_parts_plan: w:lvlRestart val=0 means this level never restarts
+    // when a shallower level increments. Default (omitted) is Word's
+    // "restart after the previous level" (2.1). val=0 continues (2.2).
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"360\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+            <w:lvl w:ilvl=\"1\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.%2\"/>\
+              <w:lvlRestart w:val=\"0\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>AlphaRS</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:numPr><w:ilvl w:val=\"1\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>BravoRS</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>CharlieRS</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:numPr><w:ilvl w:val=\"1\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>DeltaRS</w:t></w:r></w:p><w:sectPr/>";
+    let pdf =
+        docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("convert lvlRestart=0 list");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("AlphaRS") && text.contains("DeltaRS"),
+        "list bodies must paint; text={text:?}"
+    );
+    let two_two = text
+        .find("2.2")
+        .expect("lvlRestart=0 continues nested as 2.2");
+    let delta = text.find("DeltaRS").expect("DeltaRS");
+    assert!(
+        two_two < delta && !text.contains("2.1"),
+        "nested counter must not reset after parent 2.; text={text:?}"
+    );
+}
+
+#[test]
 fn tbl_header_repeats_on_overflow_page() {
     // file_34 / uipriority: `w:trPr/w:tblHeader` is Word's repeating
     // header. Without it, overflow pages lose Feature/Description.
