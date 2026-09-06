@@ -1163,6 +1163,7 @@ enum ShapeGeom {
     Bevel,
     Arc,
     LeftBracket,
+    Wave,
 }
 
 enum ImageKind {
@@ -6083,6 +6084,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "bevel" => ShapeGeom::Bevel,
         "arc" => ShapeGeom::Arc,
         "leftBracket" => ShapeGeom::LeftBracket,
+        "wave" => ShapeGeom::Wave,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9002,6 +9004,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Wave => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: wave_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9166,6 +9174,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Chord
                 | ShapeGeom::Arc
                 | ShapeGeom::LeftBracket
+                | ShapeGeom::Wave
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9211,6 +9220,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Chord => chord_points(x, y, dw, dh),
                             ShapeGeom::Arc => arc_points(x, y, dw, dh),
                             ShapeGeom::LeftBracket => left_bracket_points(x, y, dw, dh),
+                            ShapeGeom::Wave => wave_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11954,6 +11964,41 @@ fn left_bracket_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     cur = (0.0, y1);
     pts.push(map(cur.0, cur.1));
     ooxml_arc_to_y_down(&mut cur, w, y1, CD2, CD4, &mut pts, map);
+    pts
+}
+
+fn wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML wave adj1=12500 adj2=0: two cubics (top then bottom reverse).
+    let y1 = h * 12_500.0 / 100_000.0;
+    let dy2 = y1 * 10.0 / 3.0;
+    let y2 = y1 - dy2;
+    let y3 = y1 + dy2;
+    let y4 = h - y1;
+    let y5 = y4 - dy2;
+    let y6 = y4 + dy2;
+    let py = |yd: f32| y + h - yd;
+    let p0 = (x, py(y1));
+    let p1 = (x + w, py(y1));
+    let p2 = (x + w, py(y4));
+    let p3 = (x, py(y4));
+    let mut pts = vec![p0];
+    sample_cubic(
+        p0,
+        (x + w / 3.0, py(y2)),
+        (x + w * 2.0 / 3.0, py(y3)),
+        p1,
+        8,
+        &mut pts,
+    );
+    pts.push(p2);
+    sample_cubic(
+        p2,
+        (x + w * 2.0 / 3.0, py(y6)),
+        (x + w / 3.0, py(y5)),
+        p3,
+        8,
+        &mut pts,
+    );
     pts
 }
 
@@ -15048,6 +15093,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn wave_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="wave"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=wave must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -15706,6 +15790,21 @@ mod drawing_tests {
                 .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
             "leftBracket must not include the bbox corner (0,0); {pts:?}"
         );
+    }
+
+    #[test]
+    fn wave_points_undulate_top_and_bottom() {
+        let pts = wave_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 16, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            start.0.abs() < 0.05 && (start.1 - 87.5).abs() < 0.2,
+            "{start:?}"
+        );
+        let crest = pts.iter().any(|(_, py)| *py > 95.0);
+        let trough = pts.iter().any(|(_, py)| *py < 80.0 && *py > 60.0);
+        assert!(crest, "top cubic crests above y1; {pts:?}");
+        assert!(trough, "top cubic troughs below y1; {pts:?}");
     }
 
     #[test]
