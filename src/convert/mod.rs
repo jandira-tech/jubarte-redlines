@@ -1159,6 +1159,7 @@ enum ShapeGeom {
     Plaque,
     LeftCircularArrow,
     BlockArc,
+    Chord,
 }
 
 enum ImageKind {
@@ -6075,6 +6076,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "plaque" => ShapeGeom::Plaque,
         "leftCircularArrow" => ShapeGeom::LeftCircularArrow,
         "blockArc" => ShapeGeom::BlockArc,
+        "chord" => ShapeGeom::Chord,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8968,6 +8970,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Chord => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: chord_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9118,6 +9126,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Plaque
                 | ShapeGeom::LeftCircularArrow
                 | ShapeGeom::BlockArc
+                | ShapeGeom::Chord
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9160,6 +9169,7 @@ impl<'a> Layout<'a> {
                                 left_circular_arrow_points(x, y, dw, dh)
                             }
                             ShapeGeom::BlockArc => block_arc_points(x, y, dw, dh),
+                            ShapeGeom::Chord => chord_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11822,6 +11832,20 @@ fn block_arc_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let mut icur = (hc + rw2 * en.cos(), vc + rh2 * en.sin());
     pts.push(map(icur.0, icur.1));
     ooxml_arc_to_y_down(&mut icur, rw2, rh2, ST + SW, -SW, &mut pts, map);
+    pts
+}
+
+fn chord_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML chord adj1=2700000 adj2=16200000: 225° arc then close (no pie centre).
+    const ST: f32 = 2_700_000.0;
+    const SW: f32 = 13_500_000.0;
+    let hc = w * 0.5;
+    let vc = h * 0.5;
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let st = ooxml_ang_rad(ST);
+    let mut cur = (hc + hc * st.cos(), vc + vc * st.sin());
+    let mut pts = vec![map(cur.0, cur.1)];
+    ooxml_arc_to_y_down(&mut cur, hc, vc, ST, SW, &mut pts, map);
     pts
 }
 
@@ -14760,6 +14784,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn chord_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="chord"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=chord must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -15338,6 +15401,27 @@ mod drawing_tests {
             !pts.iter()
                 .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
             "blockArc must not include the bbox corner; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn chord_points_are_an_arc_without_a_centre() {
+        let pts = chord_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 8, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            start.0 > 80.0 && start.1 < 20.0,
+            "45° start lower-right; {start:?}"
+        );
+        let end = *pts.last().expect("end");
+        assert!(
+            (end.0 - 50.0).abs() < 1.0 && (end.1 - 100.0).abs() < 1.0,
+            "225° sweep lands at top center; {end:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| (*px - 50.0).abs() < 0.5 && (*py - 50.0).abs() < 0.5),
+            "chord must not include the pie centre; {pts:?}"
         );
     }
 
