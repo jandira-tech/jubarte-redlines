@@ -528,6 +528,44 @@ fn numbering_lvl_restart_zero_does_not_reset_nested_counter() {
 }
 
 #[test]
+fn numbering_is_lgl_paints_parent_slots_as_decimal() {
+    // xml_parts_plan: w:isLgl displays every numbering slot as Arabic,
+    // so a nested level under upperRoman is 1.1 not I.1.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"upperRoman\"/>\
+              <w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"360\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+            <w:lvl w:ilvl=\"1\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.%2\"/><w:isLgl/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>AlphaLG</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:numPr><w:ilvl w:val=\"1\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>BravoLG</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>CharlieLG</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:numPr><w:ilvl w:val=\"1\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>DeltaLG</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("convert isLgl list");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("AlphaLG") && text.contains("BravoLG") && text.contains("DeltaLG"),
+        "list bodies must paint; text={text:?}"
+    );
+    let one_one = text.find("1.1").expect("isLgl nested marker is Arabic 1.1");
+    let bravo = text.find("BravoLG").expect("BravoLG");
+    assert!(
+        one_one < bravo && !text.contains("I.1"),
+        "isLgl must not keep parent upperRoman in the nested label; text={text:?}"
+    );
+}
+
+#[test]
 fn tbl_header_repeats_on_overflow_page() {
     // file_34 / uipriority: `w:trPr/w:tblHeader` is Word's repeating
     // header. Without it, overflow pages lose Feature/Description.
