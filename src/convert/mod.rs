@@ -1208,6 +1208,7 @@ enum ShapeGeom {
     FlowChartPredefinedProcess,
     FlowChartMagneticDisk,
     FlowChartMagneticDrum,
+    FlowChartMagneticTape,
 }
 
 enum ImageKind {
@@ -6175,6 +6176,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "flowChartPredefinedProcess" => ShapeGeom::FlowChartPredefinedProcess,
         "flowChartMagneticDisk" => ShapeGeom::FlowChartMagneticDisk,
         "flowChartMagneticDrum" => ShapeGeom::FlowChartMagneticDrum,
+        "flowChartMagneticTape" => ShapeGeom::FlowChartMagneticTape,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -9486,6 +9488,12 @@ impl<'a> Layout<'a> {
                         }
                     }
                 }
+                ShapeGeom::FlowChartMagneticTape => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: flow_chart_magnetic_tape_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9695,6 +9703,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::FlowChartPredefinedProcess
                 | ShapeGeom::FlowChartMagneticDisk
                 | ShapeGeom::FlowChartMagneticDrum
+                | ShapeGeom::FlowChartMagneticTape
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9814,6 +9823,9 @@ impl<'a> Layout<'a> {
                             }
                             ShapeGeom::FlowChartMagneticDrum => {
                                 flow_chart_magnetic_drum_points(x, y, dw, dh)
+                            }
+                            ShapeGeom::FlowChartMagneticTape => {
+                                flow_chart_magnetic_tape_points(x, y, dw, dh)
                             }
                             _ => round_rect_points(x, y, dw, dh),
                         };
@@ -12749,6 +12761,28 @@ fn double_wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     pts.push(p3);
     sample_cubic(p3, (x7, py(y6)), (x6, py(y5)), p4, 6, &mut pts);
     sample_cubic(p4, (x4, py(y6)), (x3, py(y5)), p5, 6, &mut pts);
+    pts
+}
+
+fn flow_chart_magnetic_tape_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML flowChartMagneticTape: ellipse from (hc,b) through l,t,r then
+    // swAng=at2(w,h), lnTo (r,ib) (r,b) Z. ib = vc + hd2*sin(45°).
+    const CD4: f32 = 5_400_000.0;
+    const CD2: f32 = 10_800_000.0;
+    const CD3_4: f32 = 16_200_000.0;
+    let wr = (w * 0.5).max(0.5);
+    let hr = (h * 0.5).max(0.5);
+    let ang1 = h.atan2(w) * 10_800_000.0 / std::f32::consts::PI;
+    let ib = h * 0.5 + hr * std::f32::consts::FRAC_PI_4.sin();
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut pts = vec![map(w * 0.5, h)];
+    let mut cur = (w * 0.5, h);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, CD4, CD4, &mut pts, map);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, CD2, CD4, &mut pts, map);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, CD3_4, CD4, &mut pts, map);
+    ooxml_arc_to_y_down(&mut cur, wr, hr, 0.0, ang1, &mut pts, map);
+    pts.push(map(w, ib));
+    pts.push(map(w, h));
     pts
 }
 
@@ -17263,6 +17297,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn flow_chart_magnetic_tape_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="flowChartMagneticTape"/>
+        <a:solidFill><a:srgbClr val="C00000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=flowChartMagneticTape must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn cube_prst_is_not_a_box() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -20432,6 +20505,32 @@ mod drawing_tests {
             !pts.iter()
                 .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
             "must not include sharp top-left; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn flow_chart_magnetic_tape_points_start_at_bottom_mid() {
+        let pts = flow_chart_magnetic_tape_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 12, "{}", pts.len());
+        let start = pts[0];
+        assert!(
+            (start.0 - 50.0).abs() < 0.05 && start.1.abs() < 0.05,
+            "start is (hc,b) PDF (50,0); {start:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| px.abs() < 2.0 && (*py - 50.0).abs() < 2.0),
+            "left of circle (l,vc); {pts:?}"
+        );
+        assert!(
+            pts.iter()
+                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
+            "bite corner (r,b); {pts:?}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
+            "must not include bbox top-left; {pts:?}"
         );
     }
 
