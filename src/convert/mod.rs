@@ -1155,6 +1155,7 @@ enum ShapeGeom {
     SmileyFace,
     Gear9,
     Teardrop,
+    NoSmoking,
 }
 
 enum ImageKind {
@@ -6067,6 +6068,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "smileyFace" => ShapeGeom::SmileyFace,
         "gear9" => ShapeGeom::Gear9,
         "teardrop" => ShapeGeom::Teardrop,
+        "noSmoking" => ShapeGeom::NoSmoking,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8936,6 +8938,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::NoSmoking => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: no_smoking_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -9082,6 +9090,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::Gear6
                 | ShapeGeom::Gear9
                 | ShapeGeom::Teardrop
+                | ShapeGeom::NoSmoking
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9118,6 +9127,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::Gear6 => gear6_points(x, y, dw, dh),
                             ShapeGeom::Gear9 => gear9_points(x, y, dw, dh),
                             ShapeGeom::Teardrop => teardrop_points(x, y, dw, dh),
+                            ShapeGeom::NoSmoking => no_smoking_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11677,6 +11687,37 @@ fn gear6_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
 
 fn gear9_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     gear_points(x, y, w, h, 9, 10_000.0)
+}
+
+fn no_smoking_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML noSmoking adj=18750: outer ellipse plus a diagonal bar hole
+    // (nonzero winding, same contour trick as donut).
+    const STEPS: i32 = 24;
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let rx = (w * 0.5).max(0.5);
+    let ry = (h * 0.5).max(0.5);
+    let dr = preset_ss(w, h) * 18_750.0 / 100_000.0;
+    let mut pts = Vec::with_capacity(STEPS as usize + 4);
+    for i in 0..STEPS {
+        let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
+        pts.push((cx + rx * a.cos(), cy + ry * a.sin()));
+    }
+    let len = (w * w + h * h).sqrt().max(0.001);
+    let ux = w / len;
+    let uy = -h / len;
+    let hx = -uy * (dr * 0.5);
+    let hy = ux * (dr * 0.5);
+    let inset = dr;
+    let nwx = x + ux * inset;
+    let nwy = y + h + uy * inset;
+    let sex = x + w - ux * inset;
+    let sey = y - uy * inset;
+    pts.push((nwx + hx, nwy + hy));
+    pts.push((nwx - hx, nwy - hy));
+    pts.push((sex - hx, sey - hy));
+    pts.push((sex + hx, sey + hy));
+    pts
 }
 
 fn teardrop_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
@@ -14458,6 +14499,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn no_smoking_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="noSmoking"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=noSmoking must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -14949,6 +15029,24 @@ mod drawing_tests {
             !pts.iter()
                 .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
             "teardrop must not include the bbox corner; {pts:?}"
+        );
+    }
+
+    #[test]
+    fn no_smoking_points_cut_a_diagonal_bar() {
+        let pts = no_smoking_points(0.0, 0.0, 100.0, 100.0);
+        assert_eq!(pts.len(), 28);
+        let bar = &pts[24..];
+        let min_x = bar.iter().map(|p| p.0).fold(f32::MAX, f32::min);
+        let max_x = bar.iter().map(|p| p.0).fold(f32::MIN, f32::max);
+        let min_y = bar.iter().map(|p| p.1).fold(f32::MAX, f32::min);
+        let max_y = bar.iter().map(|p| p.1).fold(f32::MIN, f32::max);
+        assert!(min_x < 30.0 && max_x > 70.0, "bar x {min_x}..{max_x}");
+        assert!(min_y < 30.0 && max_y > 70.0, "bar y {min_y}..{max_y}");
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
+            "noSmoking must not include the bbox corner; {pts:?}"
         );
     }
 
