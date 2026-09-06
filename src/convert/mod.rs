@@ -1149,6 +1149,7 @@ enum ShapeGeom {
     QuadArrow,
     LightningBolt,
     Sun,
+    Moon,
 }
 
 enum ImageKind {
@@ -6055,6 +6056,7 @@ fn shape_geom(dom: &Dom, shape: NodeId) -> ShapeGeom {
         "quadArrow" => ShapeGeom::QuadArrow,
         "lightningBolt" => ShapeGeom::LightningBolt,
         "sun" => ShapeGeom::Sun,
+        "moon" => ShapeGeom::Moon,
         "flowChartDecision" => ShapeGeom::Diamond,
         "flowChartProcess" => ShapeGeom::Box,
         _ => ShapeGeom::Box,
@@ -8879,6 +8881,12 @@ impl<'a> Layout<'a> {
                         color: fill,
                     });
                 }
+                ShapeGeom::Moon => {
+                    self.current().ops.push(Op::FillPoly {
+                        points: moon_points(x, y, dw, dh),
+                        color: fill,
+                    });
+                }
             }
         }
         if box_.stroke {
@@ -8994,6 +9002,7 @@ impl<'a> Layout<'a> {
                 | ShapeGeom::LeftRightArrow
                 | ShapeGeom::QuadArrow
                 | ShapeGeom::LightningBolt
+                | ShapeGeom::Moon
                 | ShapeGeom::RoundRect => {
                     if let Some(color) = box_.line {
                         let points = match box_.geom {
@@ -9025,6 +9034,7 @@ impl<'a> Layout<'a> {
                             ShapeGeom::LeftRightArrow => left_right_arrow_points(x, y, dw, dh),
                             ShapeGeom::QuadArrow => quad_arrow_points(x, y, dw, dh),
                             ShapeGeom::LightningBolt => lightning_bolt_points(x, y, dw, dh),
+                            ShapeGeom::Moon => moon_points(x, y, dw, dh),
                             _ => round_rect_points(x, y, dw, dh),
                         };
                         self.current().ops.push(Op::StrokePoly {
@@ -11503,6 +11513,25 @@ fn sun_disk_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     ellipse_points(x + w * 0.5 - wr, y + h * 0.5 - hr, wr * 2.0, hr * 2.0)
 }
 
+fn moon_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
+    // OOXML moon adj=50000: outer D (ellipse at the right edge) plus inner bite.
+    const CD4: f32 = 5_400_000.0;
+    const CD2: f32 = 10_800_000.0;
+    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
+    let mut cur = (w, h);
+    let mut pts = vec![map(cur.0, cur.1)];
+    ooxml_arc_to_y_down(&mut cur, w, h * 0.5, CD4, CD2, &mut pts, map);
+    ellipse_arc(
+        &mut pts,
+        (x + w * 0.72, y + h * 0.5),
+        (w * 0.40, h * 0.48),
+        90.0,
+        270.0,
+        12,
+    );
+    pts
+}
+
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -13942,6 +13971,45 @@ mod drawing_tests {
     }
 
     #[test]
+    fn moon_prst_is_not_a_box() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+<w:body><w:p><w:r><w:drawing>
+  <wp:anchor><wp:extent cx="1800000" cy="1800000"/><wp:wrapNone/>
+    <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+      <wps:wsp><wps:spPr>
+        <a:prstGeom prst="moon"/>
+        <a:solidFill><a:srgbClr val="FFC000"/></a:solidFill>
+      </wps:spPr></wps:wsp>
+    </a:graphicData></a:graphic>
+  </wp:anchor>
+</w:drawing></w:r></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let boxes = collect_textboxes(
+            None,
+            &dom,
+            para,
+            &Defaults::word().run,
+            &ThemeFonts::default(),
+        );
+        assert_eq!(boxes.len(), 1);
+        assert!(
+            !matches!(boxes[0].geom, ShapeGeom::Box),
+            "prst=moon must not collapse to Box"
+        );
+    }
+
+    #[test]
     fn circle_prst_maps_to_ellipse() {
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -14333,6 +14401,23 @@ mod drawing_tests {
             (nx * nx + ny * ny - 1.0).abs() < 0.05
         });
         assert!(on_disk, "sun disk sits on the inner oval; {disk:?}");
+    }
+
+    #[test]
+    fn moon_points_are_a_crescent() {
+        let pts = moon_points(0.0, 0.0, 100.0, 100.0);
+        assert!(pts.len() >= 16, "{}", pts.len());
+        assert!((pts[0].0 - 100.0).abs() < 0.05 && pts[0].1.abs() < 0.05);
+        let min_x = pts.iter().map(|p| p.0).fold(f32::MAX, f32::min);
+        assert!(
+            min_x < 5.0,
+            "outer D must reach the left edge; min_x={min_x}"
+        );
+        assert!(
+            !pts.iter()
+                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
+            "crescent must not include the bbox corner; {pts:?}"
+        );
     }
 
     #[test]
