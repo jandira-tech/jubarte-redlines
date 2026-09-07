@@ -7260,6 +7260,17 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     continue;
                 };
                 let Some(bytes) = resolve_media(pkg, main, rid) else {
+                    // Missing OLE/VML preview Target: Word's 1in box
+                    // (plan.md Step 10 E), not drawing_extent_pt 200×120.
+                    out.push(LaidImage {
+                        w: 72.0,
+                        h: 72.0,
+                        kind: ImageKind::Broken,
+                        slot: vml_absolute_slot(dom, root).unwrap_or(ImageSlot::Flow),
+                        behind: false,
+                        z: 0,
+                        crop: None,
+                    });
                     continue;
                 };
                 let (w, h) = vml_extent_pt(dom, root);
