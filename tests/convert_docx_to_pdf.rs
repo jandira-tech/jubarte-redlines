@@ -8304,6 +8304,37 @@ fn page_field_uses_sectpr_iroha() {
 }
 
 #[test]
+fn page_field_uses_sectpr_decimal_full_width() {
+    // MS-DOCX: decimalFullWidth is U+FF11… (１２３). start=10 is １０,
+    // not ASCII "10".
+    let pdf = page_num_fmt_pdf("decimalFullWidth", 10, "PgFwX");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "decimalFullWidth PAGE start=10 must not stay ASCII 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "decimalFullWidth １０ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_ganada() {
+    // MS-DOCX: ganada is Hangul 가나다… (U+AC00). start=1 is 가.
+    assert_ideograph_page_is_cid_not_decimal("ganada", "PgGaX");
+}
+
+#[test]
+fn page_field_uses_sectpr_chosung() {
+    // MS-DOCX: chosung is Hangul jamo ㄱㄴㄷ… (U+3131). start=1 is ㄱ.
+    assert_ideograph_page_is_cid_not_decimal("chosung", "PgCsX");
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).
