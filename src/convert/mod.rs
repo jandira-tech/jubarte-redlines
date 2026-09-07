@@ -458,6 +458,8 @@ enum PageNumFmt {
     UpperLetter,
     DecimalZero,
     CardinalText,
+    Ordinal,
+    OrdinalText,
 }
 
 struct NamedStyle {
@@ -2588,6 +2590,8 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "upperLetter" => PageNumFmt::UpperLetter,
             "decimalZero" => PageNumFmt::DecimalZero,
             "cardinalText" => PageNumFmt::CardinalText,
+            "ordinal" => PageNumFmt::Ordinal,
+            "ordinalText" => PageNumFmt::OrdinalText,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -2730,6 +2734,8 @@ enum NumFmt {
     Decimal,
     DecimalZero,
     CardinalText,
+    Ordinal,
+    OrdinalText,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -2973,6 +2979,8 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "bullet" => NumFmt::Bullet,
         "decimalZero" => NumFmt::DecimalZero,
         "cardinalText" => NumFmt::CardinalText,
+        "ordinal" => NumFmt::Ordinal,
+        "ordinalText" => NumFmt::OrdinalText,
         _ => NumFmt::Decimal,
     }
 }
@@ -2982,6 +2990,8 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::Decimal => n.to_string(),
         NumFmt::DecimalZero => format!("{n:02}"),
         NumFmt::CardinalText => cardinal_label(n),
+        NumFmt::Ordinal => ordinal_label(n),
+        NumFmt::OrdinalText => ordinal_text_label(n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -3029,6 +3039,75 @@ fn cardinal_label(n: u32) -> String {
         return format!("{ten}-{ones}");
     }
     n.to_string()
+}
+
+fn ordinal_label(n: u32) -> String {
+    format!("{n}{}", ordinal_suffix(n))
+}
+
+fn ordinal_suffix(n: u32) -> &'static str {
+    if matches!(n % 100, 11..=13) {
+        "th"
+    } else {
+        match n % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        }
+    }
+}
+
+fn ordinal_text_label(n: u32) -> String {
+    match n {
+        1 => "First".into(),
+        2 => "Second".into(),
+        3 => "Third".into(),
+        4 => "Fourth".into(),
+        5 => "Fifth".into(),
+        6 => "Sixth".into(),
+        7 => "Seventh".into(),
+        8 => "Eighth".into(),
+        9 => "Ninth".into(),
+        10 => "Tenth".into(),
+        11 => "Eleventh".into(),
+        12 => "Twelfth".into(),
+        13 => "Thirteenth".into(),
+        14 => "Fourteenth".into(),
+        15 => "Fifteenth".into(),
+        16 => "Sixteenth".into(),
+        17 => "Seventeenth".into(),
+        18 => "Eighteenth".into(),
+        19 => "Nineteenth".into(),
+        20 => "Twentieth".into(),
+        30 => "Thirtieth".into(),
+        40 => "Fortieth".into(),
+        50 => "Fiftieth".into(),
+        60 => "Sixtieth".into(),
+        70 => "Seventieth".into(),
+        80 => "Eightieth".into(),
+        90 => "Ninetieth".into(),
+        n if n < 100 => {
+            let card = cardinal_label(n);
+            match card.split_once('-') {
+                Some((ten, one)) => format!("{ten}-{}", ordinal_text_ones(one)),
+                None => format!("{card}th"),
+            }
+        }
+        n => format!("{n}th"),
+    }
+}
+
+fn ordinal_text_ones(one: &str) -> String {
+    match one {
+        "One" => "First".into(),
+        "Two" => "Second".into(),
+        "Three" => "Third".into(),
+        "Five" => "Fifth".into(),
+        "Eight" => "Eighth".into(),
+        "Nine" => "Ninth".into(),
+        other => format!("{other}th"),
+    }
 }
 
 fn alpha_label(mut n: u32, upper: bool) -> String {
@@ -13395,6 +13474,8 @@ impl<'a> Layout<'a> {
             PageNumFmt::UpperLetter => format_num(NumFmt::UpperLetter, self.section_page),
             PageNumFmt::DecimalZero => format_num(NumFmt::DecimalZero, self.section_page),
             PageNumFmt::CardinalText => format_num(NumFmt::CardinalText, self.section_page),
+            PageNumFmt::Ordinal => format_num(NumFmt::Ordinal, self.section_page),
+            PageNumFmt::OrdinalText => format_num(NumFmt::OrdinalText, self.section_page),
         }
     }
 

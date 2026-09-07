@@ -8053,6 +8053,66 @@ fn page_field_uses_sectpr_cardinal_text() {
 }
 
 #[test]
+fn page_field_uses_sectpr_ordinal() {
+    // xml leftover: sectPr w:pgNumType/@w:fmt ordinal (ECMA-376 17.18.50).
+    // PAGE still falls through to decimal "1"; Word paints "1st".
+    let footer = page_footer_xml();
+    let body = "<w:p><w:r><w:t>PgOrX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:footer=\"720\"/>\
+           <w:pgNumType w:fmt=\"ordinal\" w:start=\"1\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer)],
+    ))
+    .expect("convert ordinal PAGE");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        lits.iter().any(|s| s == "1st"),
+        "PAGE in an ordinal section must paint 1st; lits={lits:?}"
+    );
+    assert!(
+        !lits.iter().any(|s| s == "1"),
+        "cached arabic 1 must not survive ordinal PAGE; lits={lits:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_ordinal_text() {
+    // xml leftover: sectPr w:pgNumType/@w:fmt ordinalText. Cardinal PAGE
+    // is "One"; Word ordinalText for start=1 is "First".
+    let footer = page_footer_xml();
+    let body = "<w:p><w:r><w:t>PgOtX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:footer=\"720\"/>\
+           <w:pgNumType w:fmt=\"ordinalText\" w:start=\"1\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer)],
+    ))
+    .expect("convert ordinalText PAGE");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        lits.iter().any(|s| s == "First"),
+        "PAGE in an ordinalText section must paint First; lits={lits:?}"
+    );
+    assert!(
+        !lits.iter().any(|s| s == "1") && !lits.iter().any(|s| s == "One"),
+        "cached arabic 1 and cardinal One must not survive ordinalText PAGE; lits={lits:?}"
+    );
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).
