@@ -426,6 +426,8 @@ struct PageSetup {
     ln_distance: f32,
     /// 0 = newPage, 1 = newSection, 2 = continuous.
     ln_restart: u8,
+    /// `w:docGrid/@w:linePitch` (pt) when type is lines/linesAndChars. 0 = off.
+    grid_pitch: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -649,6 +651,7 @@ impl Defaults {
                 ln_start: 1,
                 ln_distance: 0.0,
                 ln_restart: 0,
+                grid_pitch: 0.0,
             },
         }
     }
@@ -2545,7 +2548,26 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             _ => 0,
         };
     }
+    page.grid_pitch = 0.0;
+    if let Some(grid) = first_named(dom, sect, "docGrid") {
+        match attr_any(dom, grid, "type").unwrap_or("default") {
+            "lines" | "linesAndChars" => {
+                page.grid_pitch = attr_any(dom, grid, "linePitch")
+                    .and_then(parse_len)
+                    .unwrap_or(0.0);
+            }
+            _ => {}
+        }
+    }
     page
+}
+
+fn snap_doc_grid(h: f32, pitch: f32) -> f32 {
+    if pitch <= 0.5 {
+        h
+    } else {
+        (h / pitch).ceil().max(1.0) * pitch
+    }
 }
 
 fn parse_pg_borders(dom: &Dom, pb: NodeId) -> PageBorders {
@@ -9578,6 +9600,7 @@ impl<'a> Layout<'a> {
             if self.space_for_ul && line_has_underlined_cjk(line) {
                 line_box += space_for_ul_extra(size);
             }
+            line_box = snap_doc_grid(line_box, self.page.grid_pitch);
             let ascent = metrics.ascent_pt(size);
             let fn_h = self.added_footnote_h(line);
             if fn_h > 0.0 {
