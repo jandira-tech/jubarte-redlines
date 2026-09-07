@@ -13434,6 +13434,57 @@ fn decimal_and_bar_tabs_place_ink() {
 }
 
 #[test]
+fn numwords_field_paints_live_count() {
+    // xml leftover: NUMWORDS (ECMA-376 17.16.5.49). PAGE/NUMPAGES/DATE/REF
+    // already ship; this field was cache-only. Live count is whitespace
+    // tokens in body runs, excluding the NUMWORDS result itself.
+    let body = "<w:p>\
+           <w:r><w:t>AlphaBeta GammaDelta EpsilonZeta</w:t></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t xml:space=\"preserve\">NwDx </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> NUMWORDS </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t xml:space=\"preserve\">StaleNw </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> NUMWORDS </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+           <w:r><w:t>99</w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("convert NUMWORDS");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("NwDx") && text.contains("StaleNw") && text.contains("AlphaBeta"),
+        "NUMWORDS labels and body must paint; text={text}"
+    );
+    assert!(
+        !text.contains("NUMWORDS"),
+        "NUMWORDS instrText must not leak; text={text}"
+    );
+    assert!(
+        !text.contains("99"),
+        "cached NUMWORDS must not keep the stale count; text={text}"
+    );
+    let after = text.split("NwDx").nth(1).unwrap_or("").trim_start();
+    assert!(
+        after.starts_with('5'),
+        "uncached NUMWORDS is 5 tokens (3 body + NwDx + StaleNw); after={after:?} text={text}"
+    );
+    assert!(
+        text.contains("StaleNw") && text.contains('5'),
+        "live NUMWORDS must paint 5; text={text}"
+    );
+}
+
+#[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert header_no_rels");
