@@ -8113,6 +8113,99 @@ fn page_field_uses_sectpr_ordinal_text() {
 }
 
 #[test]
+fn page_field_uses_sectpr_hex() {
+    // xml leftover: sectPr w:pgNumType/@w:fmt hex (ECMA-376 17.18.50).
+    // start=10 stays decimal "10"; Word hex is uppercase "A".
+    let footer = page_footer_xml();
+    let body = "<w:p><w:r><w:t>PgHxX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:footer=\"720\"/>\
+           <w:pgNumType w:fmt=\"hex\" w:start=\"10\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer)],
+    ))
+    .expect("convert hex PAGE");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        lits.iter().any(|s| s == "A"),
+        "PAGE in a hex section start=10 must paint A; lits={lits:?}"
+    );
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "cached/decimal 10 must not survive hex PAGE; lits={lits:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_chicago() {
+    // xml leftover: ST_NumberFormat chicago. Word's first mark is `*`,
+    // then † ‡ §, then repeats. start=1 must not stay decimal "1".
+    let footer = page_footer_xml();
+    let body = "<w:p><w:r><w:t>PgChX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:footer=\"720\"/>\
+           <w:pgNumType w:fmt=\"chicago\" w:start=\"1\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer)],
+    ))
+    .expect("convert chicago PAGE");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        lits.iter().any(|s| s == "*"),
+        "PAGE in a chicago section must paint *; lits={lits:?}"
+    );
+    assert!(
+        !lits.iter().any(|s| s == "1"),
+        "cached arabic 1 must not survive chicago PAGE; lits={lits:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_ideograph_digital() {
+    // xml leftover: ST_NumberFormat ideographDigital. Decimal digits
+    // become 〇一二三四五六七八九. start=1 is 一 (U+4E00), not "1".
+    let footer = page_footer_xml();
+    let body = "<w:p><w:r><w:t>PgIdX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:footer=\"720\"/>\
+           <w:pgNumType w:fmt=\"ideographDigital\" w:start=\"1\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer)],
+    ))
+    .expect("convert ideographDigital PAGE");
+    let streams = pdf_content_streams(&pdf);
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "1"),
+        "cached arabic 1 must not survive ideographDigital PAGE; lits={lits:?}"
+    );
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "ideographDigital 一 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).

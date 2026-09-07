@@ -460,6 +460,9 @@ enum PageNumFmt {
     CardinalText,
     Ordinal,
     OrdinalText,
+    Hex,
+    Chicago,
+    IdeographDigital,
 }
 
 struct NamedStyle {
@@ -2592,6 +2595,9 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "cardinalText" => PageNumFmt::CardinalText,
             "ordinal" => PageNumFmt::Ordinal,
             "ordinalText" => PageNumFmt::OrdinalText,
+            "hex" => PageNumFmt::Hex,
+            "chicago" => PageNumFmt::Chicago,
+            "ideographDigital" => PageNumFmt::IdeographDigital,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -2736,6 +2742,9 @@ enum NumFmt {
     CardinalText,
     Ordinal,
     OrdinalText,
+    Hex,
+    Chicago,
+    IdeographDigital,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -2981,6 +2990,9 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "cardinalText" => NumFmt::CardinalText,
         "ordinal" => NumFmt::Ordinal,
         "ordinalText" => NumFmt::OrdinalText,
+        "hex" => NumFmt::Hex,
+        "chicago" => NumFmt::Chicago,
+        "ideographDigital" => NumFmt::IdeographDigital,
         _ => NumFmt::Decimal,
     }
 }
@@ -2992,6 +3004,9 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::CardinalText => cardinal_label(n),
         NumFmt::Ordinal => ordinal_label(n),
         NumFmt::OrdinalText => ordinal_text_label(n),
+        NumFmt::Hex => format!("{n:X}"),
+        NumFmt::Chicago => chicago_label(n),
+        NumFmt::IdeographDigital => ideograph_digital_label(n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -3108,6 +3123,26 @@ fn ordinal_text_ones(one: &str) -> String {
         "Nine" => "Ninth".into(),
         other => format!("{other}th"),
     }
+}
+
+fn chicago_label(n: u32) -> String {
+    const MARKS: [&str; 4] = ["*", "†", "‡", "§"];
+    let i = n.saturating_sub(1) as usize;
+    MARKS[i % 4].repeat(i / 4 + 1)
+}
+
+fn ideograph_digital_label(n: u32) -> String {
+    const DIGITS: [char; 10] = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+    if n == 0 {
+        return "〇".into();
+    }
+    let mut buf = Vec::new();
+    let mut x = n;
+    while x > 0 {
+        buf.push(DIGITS[(x % 10) as usize]);
+        x /= 10;
+    }
+    buf.iter().rev().collect()
 }
 
 fn alpha_label(mut n: u32, upper: bool) -> String {
@@ -13476,6 +13511,9 @@ impl<'a> Layout<'a> {
             PageNumFmt::CardinalText => format_num(NumFmt::CardinalText, self.section_page),
             PageNumFmt::Ordinal => format_num(NumFmt::Ordinal, self.section_page),
             PageNumFmt::OrdinalText => format_num(NumFmt::OrdinalText, self.section_page),
+            PageNumFmt::Hex => format_num(NumFmt::Hex, self.section_page),
+            PageNumFmt::Chicago => format_num(NumFmt::Chicago, self.section_page),
+            PageNumFmt::IdeographDigital => format_num(NumFmt::IdeographDigital, self.section_page),
         }
     }
 
@@ -16892,6 +16930,31 @@ mod character_spacing_tests {
             character_spacing_scale(CharacterSpacing::CompressPunctuationAndKana, 'あ'),
             1.0
         );
+    }
+}
+
+#[cfg(test)]
+mod page_num_fmt_labels {
+    use super::{NumFmt, chicago_label, format_num, ideograph_digital_label};
+
+    #[test]
+    fn hex_is_uppercase() {
+        assert_eq!(format_num(NumFmt::Hex, 10), "A");
+        assert_eq!(format_num(NumFmt::Hex, 16), "10");
+    }
+
+    #[test]
+    fn chicago_cycles_star_dagger_double_section() {
+        assert_eq!(chicago_label(1), "*");
+        assert_eq!(chicago_label(2), "†");
+        assert_eq!(chicago_label(5), "**");
+    }
+
+    #[test]
+    fn ideograph_digital_uses_cjk_digits() {
+        assert_eq!(ideograph_digital_label(1), "一");
+        assert_eq!(ideograph_digital_label(10), "一〇");
+        assert_eq!(ideograph_digital_label(12), "一二");
     }
 }
 
