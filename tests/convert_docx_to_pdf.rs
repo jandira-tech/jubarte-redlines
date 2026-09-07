@@ -159,6 +159,53 @@ fn minimal_docx_with_settings(body: &str, settings: &str) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+fn minimal_docx_with_core_props(body: &str, created: &str, printed: &str) -> Vec<u8> {
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:body>{body}</w:body></w:document>"
+    );
+    let core = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <cp:coreProperties \
+           xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" \
+           xmlns:dcterms=\"http://purl.org/dc/terms/\" \
+           xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\
+           <dcterms:created xsi:type=\"dcterms:W3CDTF\">{created}</dcterms:created>\
+           <cp:lastPrinted>{printed}</cp:lastPrinted>\
+         </cp:coreProperties>"
+    );
+    let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        <Override PartName=\"/docProps/core.xml\" \
+          ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>\
+        </Types>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/>\
+        <Relationship Id=\"rIdCore\" \
+          Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" \
+          Target=\"docProps/core.xml\"/>\
+        </Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(content_types.as_bytes()).unwrap();
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(rels.as_bytes()).unwrap();
+    zip.start_file("word/document.xml", opts).unwrap();
+    zip.write_all(document.as_bytes()).unwrap();
+    zip.start_file("docProps/core.xml", opts).unwrap();
+    zip.write_all(core.as_bytes()).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
 fn minimal_docx_with_font_table(body: &str, font_table: &str) -> Vec<u8> {
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
@@ -13398,6 +13445,105 @@ fn date_and_ref_fields_paint_word_results() {
     assert!(
         text.contains("GoneRx"),
         "missing-REF label must still paint; text={text}"
+    );
+}
+
+#[test]
+fn time_createdate_printdate_fields_paint_word_results() {
+    // xml leftover: TIME / CREATEDATE / PRINTDATE (ECMA-376 17.16.5.70 /
+    // 17.16.5.16 / 17.16.5.56). DATE already ships; these were cache-only.
+    // Uncached TIME uses \@ picture (UTC). CREATEDATE/PRINTDATE read
+    // docProps/core.xml. Cached results keep stored w:t.
+    let body = "<w:p>\
+           <w:r><w:t xml:space=\"preserve\">WhenTx </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> TIME \\@ \"HHmm\" </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t xml:space=\"preserve\">CachedTx </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> TIME \\@ \"h:mm am/pm\" </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+           <w:r><w:t>3:04 AM</w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t xml:space=\"preserve\">MadeDx </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> CREATEDATE \\@ \"yyyy\" </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t xml:space=\"preserve\">CachedCd </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> CREATEDATE \\@ \"d MMMM yyyy\" </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+           <w:r><w:t>15 March 2020</w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t xml:space=\"preserve\">PrintDx </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> PRINTDATE \\@ \"yyyy\" </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t xml:space=\"preserve\">CachedPd </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> PRINTDATE \\@ \"d MMMM yyyy\" </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+           <w:r><w:t>1 January 2017</w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_core_props(
+        body,
+        "2018-07-04T15:30:00Z",
+        "2019-11-22T08:00:00Z",
+    ))
+    .expect("convert TIME/CREATEDATE/PRINTDATE");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("WhenTx"),
+        "uncached TIME paragraph must paint; text={text}"
+    );
+    assert!(
+        !text.contains("TIME") && !text.contains("CREATEDATE") && !text.contains("PRINTDATE"),
+        "datetime instrText must not leak; text={text}"
+    );
+    let after = text.split("WhenTx").nth(1).unwrap_or("").trim_start();
+    let hhmm: String = after.chars().take(4).collect();
+    assert!(
+        hhmm.len() == 4 && hhmm.chars().all(|c| c.is_ascii_digit()),
+        "uncached TIME \\@ HHmm must paint 4 digits immediately after WhenTx; hhmm={hhmm:?} text={text}"
+    );
+    assert!(
+        text.contains("CachedTx") && text.contains("3:04 AM"),
+        "cached TIME must keep the stored result; text={text}"
+    );
+    let made = text.split("MadeDx").nth(1).unwrap_or("").trim_start();
+    let created_year: String = made.chars().take(4).collect();
+    assert_eq!(
+        created_year, "2018",
+        "uncached CREATEDATE \\@ yyyy is core.xml created; year={created_year:?} text={text}"
+    );
+    assert!(
+        text.contains("CachedCd") && text.contains("15 March 2020"),
+        "cached CREATEDATE must keep the stored result; text={text}"
+    );
+    let printed = text.split("PrintDx").nth(1).unwrap_or("").trim_start();
+    let printed_year: String = printed.chars().take(4).collect();
+    assert_eq!(
+        printed_year, "2019",
+        "uncached PRINTDATE \\@ yyyy is core.xml lastPrinted; year={printed_year:?} text={text}"
+    );
+    assert!(
+        text.contains("CachedPd") && text.contains("1 January 2017"),
+        "cached PRINTDATE must keep the stored result; text={text}"
     );
 }
 
