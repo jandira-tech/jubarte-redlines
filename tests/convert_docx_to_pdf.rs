@@ -13760,6 +13760,43 @@ fn sectpr_doc_grid_lines_snaps_line_box_to_pitch() {
 }
 
 #[test]
+fn do_not_expand_shift_return_skips_justify_on_soft_break() {
+    // xml leftover: w:compat/w:doNotExpandShiftReturn (ECMA-376 17.15.3.10).
+    // A justified line that ends in w:br (shift-return) is not expanded
+    // to the measure. Omitted (typical) still justifies that line.
+    let body = "<w:p>\
+           <w:pPr><w:jc w:val=\"both\"/>\
+             <w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:t>AaShX BbShY</w:t></w:r>\
+           <w:r><w:br/></w:r>\
+           <w:r><w:t>CcShZ</w:t></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(
+        body,
+        "<w:compat><w:doNotExpandShiftReturn/></w:compat>",
+    ))
+    .expect("convert doNotExpandShiftReturn");
+    let hay = String::from_utf8_lossy(&pdf);
+    let ax = pdf_cm_tj_xy(&hay, "A")
+        .first()
+        .map(|(x, _)| *x)
+        .expect("marker A");
+    let bx = pdf_cm_tj_xy(&hay, "B")
+        .first()
+        .map(|(x, _)| *x)
+        .expect("marker B");
+    assert!(
+        bx - ax < 80.0,
+        "doNotExpandShiftReturn must not justify the shift-return line; A={ax} B={bx} dx={}",
+        bx - ax
+    );
+}
+
+#[test]
 fn decimal_and_bar_tabs_place_ink() {
     // xml leftover: w:tab val=decimal / bar (ECMA-376 17.3.1.38 ST_TabJc).
     // Decimal currently falls through to left; bar is skipped in parse.
