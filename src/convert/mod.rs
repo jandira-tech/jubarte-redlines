@@ -367,6 +367,8 @@ enum TabAlign {
     Left,
     Right,
     Center,
+    Decimal,
+    Bar,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1359,6 +1361,10 @@ fn word_pgsz_pt(raw: &str, pt: f32) -> f32 {
 /// dot leader and the TOC fell a page behind Word (p3 9.2 vs 11-1).
 fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop], default_tab: f32) -> TabStop {
     for &stop in stops {
+        // `bar` is a drawn rule, not a destination (ECMA-376 17.3.1.38).
+        if stop.align == TabAlign::Bar {
+            continue;
+        }
         let abs = origin + stop.pos;
         if abs > x + 0.5 {
             return TabStop {
@@ -1389,7 +1395,7 @@ fn parse_tab_stops(dom: &Dom, ppr: NodeId) -> Vec<TabStop> {
     let mut stops = Vec::new();
     for tab in dom.elements(tabs, Some(&W::name("tab"))) {
         let val = attr_any(dom, tab, "val").unwrap_or("left");
-        if val == "clear" || val == "bar" {
+        if val == "clear" {
             continue;
         }
         if let Some(pos) = attr_any(dom, tab, "pos").and_then(|s| s.parse::<f32>().ok()) {
@@ -1398,6 +1404,8 @@ fn parse_tab_stops(dom: &Dom, ppr: NodeId) -> Vec<TabStop> {
                 // (Strict01 TOC val=end leader=dot pos=9350).
                 "right" | "end" => TabAlign::Right,
                 "center" => TabAlign::Center,
+                "decimal" => TabAlign::Decimal,
+                "bar" => TabAlign::Bar,
                 _ => TabAlign::Left,
             };
             let leader = match attr_any(dom, tab, "leader").unwrap_or("") {
@@ -9258,6 +9266,7 @@ impl<'a> Layout<'a> {
         // Do not skip empty/del-only pBdr (mini 217–220): no-redline
         // file_146 +0.026 but redline mean −0.020 (comments-lots family
         // −0.48). Keep painting every pBdr.
+        self.paint_tab_bars(y_top, self.y);
         self.paint_pbdr(style, y_top, self.y);
         if runs.iter().any(|r| r.rev) {
             self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
@@ -9647,12 +9656,57 @@ impl<'a> Layout<'a> {
         self.paint_run(&fill, x0 + pad, y);
     }
 
-    fn advance_tab(&mut self, x: f32, y: f32, after_w: f32, style: &RunStyle) -> f32 {
+    fn decimal_prefix_width(&self, rest_of_run: &str, run: &TextRun, following: &[TextRun]) -> f32 {
+        if let Some((pre, _)) = rest_of_run.split_once('.') {
+            return self.run_width_pt(run, pre);
+        }
+        let mut w = self.run_width_pt(run, rest_of_run);
+        for later in following {
+            let chunk = later.text.split('\t').next().unwrap_or("");
+            if let Some((pre, _)) = chunk.split_once('.') {
+                w += self.run_width_pt(later, pre);
+                break;
+            }
+            w += self.run_width_pt(later, chunk);
+            if later.text.contains('\t') {
+                break;
+            }
+        }
+        w
+    }
+
+    fn paint_tab_bars(&mut self, y_top: f32, y_bot: f32) {
+        let top = y_top.max(y_bot);
+        let bot = y_top.min(y_bot);
+        if top - bot < 8.0 {
+            return;
+        }
+        let origin = self.flow_left();
+        let xs: Vec<f32> = self
+            .tab_stops
+            .iter()
+            .filter(|stop| stop.align == TabAlign::Bar)
+            .map(|stop| origin + stop.pos)
+            .collect();
+        for x in xs {
+            self.hairline_v(x, bot, top, 0.72, [0.0, 0.0, 0.0]);
+        }
+    }
+
+    fn advance_tab(
+        &mut self,
+        x: f32,
+        y: f32,
+        after_w: f32,
+        decimal_w: f32,
+        style: &RunStyle,
+    ) -> f32 {
         let stop = next_tab_stop(x, self.flow_left(), &self.tab_stops, self.page.default_tab);
         let dest = match stop.align {
-            TabAlign::Left => stop.pos,
+            TabAlign::Left | TabAlign::Bar => stop.pos,
             TabAlign::Right => (stop.pos - after_w).max(x),
             TabAlign::Center => (stop.pos - after_w * 0.5).max(x),
+            TabAlign::Decimal => (stop.pos - decimal_w).max(x),
         };
         if dest > x + 1.0 {
             let mark = match stop.leader {
@@ -9706,7 +9760,8 @@ impl<'a> Layout<'a> {
             for (pi, part) in parts.iter().enumerate() {
                 if pi > 0 {
                     let after_w = self.tab_suffix_width(part, run, &line[i + 1..]);
-                    x = self.advance_tab(x, y, after_w, &run.style);
+                    let decimal_w = self.decimal_prefix_width(part, run, &line[i + 1..]);
+                    x = self.advance_tab(x, y, after_w, decimal_w, &run.style);
                 }
                 if !part.is_empty() {
                     let mut piece = run.clone();

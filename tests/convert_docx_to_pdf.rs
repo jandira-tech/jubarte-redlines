@@ -13368,6 +13368,72 @@ fn date_and_ref_fields_paint_word_results() {
 }
 
 #[test]
+fn decimal_and_bar_tabs_place_ink() {
+    // xml leftover: w:tab val=decimal / bar (ECMA-376 17.3.1.38 ST_TabJc).
+    // Decimal currently falls through to left; bar is skipped in parse.
+    // Decimal stop 2880 twips = 144pt from left=72 → 216pt. Bar 720 twips
+    // = 36pt from margin → 108pt. "100." is wider than "1.", so decimal
+    // alignment starts the longer integer further left.
+    let body = "<w:p>\
+           <w:pPr><w:tabs>\
+             <w:tab w:val=\"decimal\" w:pos=\"2880\"/>\
+           </w:tabs></w:pPr>\
+           <w:r><w:t>AaaDx</w:t></w:r><w:r><w:tab/></w:r>\
+           <w:r><w:t>100.00</w:t></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:pPr><w:tabs>\
+             <w:tab w:val=\"decimal\" w:pos=\"2880\"/>\
+           </w:tabs></w:pPr>\
+           <w:r><w:t>BbbDx</w:t></w:r><w:r><w:tab/></w:r>\
+           <w:r><w:t>1.00</w:t></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:pPr><w:tabs>\
+             <w:tab w:val=\"bar\" w:pos=\"720\"/>\
+           </w:tabs></w:pPr>\
+           <w:r><w:t>BarTx</w:t></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("convert decimal/bar tabs");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("AaaDx")
+            && text.contains("100.00")
+            && text.contains("BbbDx")
+            && text.contains("1.00"),
+        "decimal-tab numbers must paint; text={text}"
+    );
+    assert!(
+        text.contains("BarTx"),
+        "bar-tab paragraph must paint; text={text}"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    let dots = pdf_cm_tj_xy(&hay, ".");
+    assert!(
+        dots.len() >= 2,
+        "both 100.00 and 1.00 must paint a decimal point; dots={dots:?} text={text}"
+    );
+    let dx = (dots[0].0 - dots[1].0).abs();
+    assert!(
+        dx < 2.0,
+        "decimal tab must align '.' of 100.00 and 1.00 (left-tab shifts by digit width); dots={dots:?} dx={dx}"
+    );
+    let bars: Vec<_> = pdf_fill_boxes_in(&hay, 0.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(x, _, w, h)| *w > 0.0 && *w < 1.6 && *h > 8.0 && (100.0..116.0).contains(x))
+        .collect();
+    assert!(
+        !bars.is_empty(),
+        "bar tab at 108pt must paint a vertical hairline; boxes={:?} text={text}",
+        pdf_fill_boxes_in(&hay, 0.0, 0.0, 0.0)
+    );
+}
+
+#[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert header_no_rels");
