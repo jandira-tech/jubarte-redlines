@@ -480,6 +480,13 @@ struct ThemeFonts {
     /// `a:clrScheme` srgbClr / sysClr lastClr. Empty → Office 2007
     /// fallback in `theme_slot_color` (comments-lots / I_am_sharing).
     colors: HashMap<String, [f32; 3]>,
+    /// `a:fmtScheme/a:fillStyleLst` solid RGB, 1-based idx 1..=3.
+    /// `None` is phClr / gradient — fall through to fillRef schemeClr.
+    fill_styles: [Option<[f32; 3]>; 3],
+    /// `a:fmtScheme/a:lnStyleLst` width in pt, 1-based idx 1..=3.
+    ln_widths: [Option<f32>; 3],
+    /// `a:fmtScheme/a:lnStyleLst` solid RGB, 1-based idx 1..=3.
+    ln_colors: [Option<[f32; 3]>; 3],
 }
 
 impl ThemeFonts {
@@ -498,6 +505,28 @@ impl ThemeFonts {
             .or_else(|| self.colors.get(mapped))
             .copied()
             .or_else(|| theme_slot_color(slot))
+    }
+
+    fn style_idx(idx: i32) -> Option<usize> {
+        usize::try_from(idx.checked_sub(1)?).ok()
+    }
+
+    /// 1-based `fillRef/@idx` into `a:fillStyleLst`. `None` is phClr.
+    fn fill_style(&self, idx: i32) -> Option<[f32; 3]> {
+        self.fill_styles
+            .get(Self::style_idx(idx)?)
+            .copied()
+            .flatten()
+    }
+
+    /// 1-based `lnRef/@idx` into `a:lnStyleLst`. Missing theme → `None`
+    /// so callers keep the Office 2007 6350/12700/19050 fallback.
+    fn ln_width_pt(&self, idx: i32) -> Option<f32> {
+        self.ln_widths.get(Self::style_idx(idx)?).copied().flatten()
+    }
+
+    fn ln_color(&self, idx: i32) -> Option<[f32; 3]> {
+        self.ln_colors.get(Self::style_idx(idx)?).copied().flatten()
     }
 }
 
@@ -1552,6 +1581,11 @@ fn parse_theme_xml(xml: &str) -> ThemeFonts {
     let mut script_fonts = HashMap::new();
     collect_script_fonts(&dom, root, "majorFont", "major", &mut script_fonts);
     collect_script_fonts(&dom, root, "minorFont", "minor", &mut script_fonts);
+    let probe = ThemeFonts {
+        colors: colors.clone(),
+        ..ThemeFonts::default()
+    };
+    let fmt = parse_fmt_scheme(&dom, root, &probe);
     ThemeFonts {
         major: typeface("majorFont", "latin"),
         minor: typeface("minorFont", "latin"),
@@ -1561,6 +1595,70 @@ fn parse_theme_xml(xml: &str) -> ThemeFonts {
         minor_cs: typeface("minorFont", "cs"),
         script_fonts,
         colors,
+        fill_styles: fmt.fills,
+        ln_widths: fmt.widths,
+        ln_colors: fmt.lines,
+    }
+}
+
+struct FmtScheme {
+    fills: [Option<[f32; 3]>; 3],
+    widths: [Option<f32>; 3],
+    lines: [Option<[f32; 3]>; 3],
+}
+
+/// `a:fmtScheme` fillStyleLst / lnStyleLst (ECMA-376 20.1.4.1.18).
+/// Direct children only; `phClr` stays `None` so fillRef/lnRef schemeClr
+/// still substitutes (Office default).
+fn parse_fmt_scheme(dom: &Dom, root: NodeId, probe: &ThemeFonts) -> FmtScheme {
+    let mut fills = [None; 3];
+    if let Some(lst) = dom
+        .descendants(root, Some(&A::name("fillStyleLst")))
+        .into_iter()
+        .next()
+    {
+        let mut i = 0usize;
+        for c in 0..dom.child_count(lst) {
+            let child = dom.child_at(lst, c);
+            if dom.name(child).is_none() {
+                continue;
+            }
+            if i >= 3 {
+                break;
+            }
+            if local_name_is(dom, child, "solidFill") {
+                fills[i] = scheme_color(dom, child, probe);
+            }
+            i += 1;
+        }
+    }
+    let mut widths = [None; 3];
+    let mut lines = [None; 3];
+    if let Some(lst) = dom
+        .descendants(root, Some(&A::name("lnStyleLst")))
+        .into_iter()
+        .next()
+    {
+        let mut i = 0usize;
+        for c in 0..dom.child_count(lst) {
+            let child = dom.child_at(lst, c);
+            if !local_name_is(dom, child, "ln") {
+                continue;
+            }
+            if i >= 3 {
+                break;
+            }
+            if let Some(w) = attr_any(dom, child, "w").and_then(|s| s.parse::<f64>().ok()) {
+                widths[i] = Some(((w / 12700.0) as f32).clamp(0.4, 4.0));
+            }
+            lines[i] = scheme_color(dom, child, probe);
+            i += 1;
+        }
+    }
+    FmtScheme {
+        fills,
+        widths,
+        lines,
     }
 }
 
@@ -6621,7 +6719,7 @@ fn collect_textboxes(
                             || matches!(geom, ShapeGeom::Box | ShapeGeom::RightArrow)),
                     fill,
                     line: box_line,
-                    line_width: shape_line_width(dom, shape),
+                    line_width: shape_line_width(dom, shape, theme),
                     geom,
                     reserve_only: false,
                     behind,
@@ -7892,7 +7990,7 @@ fn ln_ref_idx(dom: &Dom, shape: NodeId) -> Option<i32> {
         .find_map(|n| attr_any(dom, n, "idx").and_then(|s| s.parse().ok()))
 }
 
-fn shape_line_width(dom: &Dom, shape: NodeId) -> f32 {
+fn shape_line_width(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> f32 {
     // a:ln/@w when present. Box emit still ignores this (mini 511).
     for ln in descendants_local(dom, shape, "ln") {
         if !descendants_local(dom, ln, "noFill").is_empty() {
@@ -7902,8 +8000,12 @@ fn shape_line_width(dom: &Dom, shape: NodeId) -> f32 {
             return ((w / 12700.0) as f32).clamp(0.4, 4.0);
         }
     }
-    // Theme lnStyleLst: idx 1/2/3 = 6350/12700/19050 EMU.
-    match ln_ref_idx(dom, shape).unwrap_or(0) {
+    let idx = ln_ref_idx(dom, shape).unwrap_or(0);
+    if let Some(w) = theme.ln_width_pt(idx) {
+        return w;
+    }
+    // Office default lnStyleLst: idx 1/2/3 = 6350/12700/19050 EMU.
+    match idx {
         1 => 0.5,
         2 => 1.0,
         3 => 1.5,
@@ -7933,6 +8035,9 @@ fn shape_fill_color(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> Option<[f32
     if idx == 0 {
         return None;
     }
+    if let Some(c) = theme.fill_style(idx) {
+        return Some(c);
+    }
     descendants_local(dom, shape, "fillRef")
         .into_iter()
         .find_map(|n| scheme_color(dom, n, theme))
@@ -7950,6 +8055,9 @@ fn shape_line_color(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> Option<[f32
     let idx = ln_ref_idx(dom, shape).unwrap_or(0);
     if idx == 0 {
         return None;
+    }
+    if let Some(c) = theme.ln_color(idx) {
+        return Some(c);
     }
     descendants_local(dom, shape, "lnRef")
         .into_iter()
@@ -16861,6 +16969,45 @@ mod theme_slot_tests {
             "a:font script=Jpan is xml 3.2 ckpt 3; map={:?}",
             theme.script_fonts
         );
+    }
+
+    #[test]
+    fn load_theme_reads_fmt_scheme_fill_and_ln() {
+        // xml leftover: fmtScheme fillStyleLst / lnStyleLst. phClr stays
+        // None so fillRef/lnRef schemeClr still substitutes.
+        let xml = r#"<?xml version="1.0"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <a:themeElements><a:fmtScheme name="Office">
+    <a:fillStyleLst>
+      <a:solidFill><a:srgbClr val="CC0000"/></a:solidFill>
+      <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+      <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
+    </a:fillStyleLst>
+    <a:lnStyleLst>
+      <a:ln w="25400"><a:solidFill><a:srgbClr val="00AA00"/></a:solidFill></a:ln>
+      <a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
+    </a:lnStyleLst>
+  </a:fmtScheme></a:themeElements>
+</a:theme>"#;
+        let theme = parse_theme_xml(xml);
+        assert_eq!(
+            theme.fill_styles[0],
+            parse_hex_color("CC0000"),
+            "fillStyleLst[0] solid CC0000"
+        );
+        assert_eq!(
+            theme.fill_styles[1], None,
+            "phClr must not freeze fillRef substitution; {:?}",
+            theme.fill_styles
+        );
+        assert_eq!(theme.ln_widths[0], Some(2.0), "25400 EMU = 2pt");
+        assert_eq!(
+            theme.ln_colors[0],
+            parse_hex_color("00AA00"),
+            "lnStyleLst[0] solid 00AA00"
+        );
+        assert_eq!(theme.ln_widths[1], Some(1.0));
+        assert_eq!(theme.ln_colors[1], None);
     }
 
     fn style_from_rpr(inner: &str, theme: &ThemeFonts) -> RunStyle {

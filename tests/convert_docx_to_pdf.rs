@@ -993,6 +993,54 @@ fn drawing_docx_media(body: &str, media_name: &str, media: &[u8]) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+/// DrawingML shape plus `word/theme/theme1.xml` (fmtScheme fills/lines).
+fn drawing_docx_with_theme(body: &str, theme: &str) -> Vec<u8> {
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+           xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+           xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+           xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+           xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+         <w:body>{body}</w:body></w:document>"
+    );
+    let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        <Override PartName=\"/word/theme/theme1.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.theme+xml\"/>\
+        </Types>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/>\
+        </Relationships>";
+    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdT\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme\" \
+          Target=\"theme/theme1.xml\"/>\
+        </Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    zip.start_file("[Content_Types].xml", opts).unwrap();
+    zip.write_all(content_types.as_bytes()).unwrap();
+    zip.start_file("_rels/.rels", opts).unwrap();
+    zip.write_all(rels.as_bytes()).unwrap();
+    zip.start_file("word/document.xml", opts).unwrap();
+    zip.write_all(document.as_bytes()).unwrap();
+    zip.start_file("word/_rels/document.xml.rels", opts)
+        .unwrap();
+    zip.write_all(doc_rels.as_bytes()).unwrap();
+    zip.start_file("word/theme/theme1.xml", opts).unwrap();
+    zip.write_all(theme.as_bytes()).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
 /// Image rel points at a missing part (plan.md Step 10 E).
 fn drawing_docx_broken_rel(body: &str) -> Vec<u8> {
     let document = format!(
@@ -1381,6 +1429,102 @@ fn xfrm_rot_ninety_rotates_image_cm() {
         text.split("/Im")
             .nth(1)
             .unwrap_or(&text[text.len().saturating_sub(240)..])
+    );
+}
+
+#[test]
+fn fmt_scheme_fill_and_ln_style_paint_from_theme() {
+    // xml leftover: theme1.xml a:fmtScheme fillStyleLst / lnStyleLst.
+    // fillRef/lnRef idx=1 currently uses the Ref schemeClr and hardcoded
+    // 0.5pt; Word paints the style list's solidFill and a:ln/@w.
+    let theme = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" name=\"Office\">\
+           <a:themeElements>\
+             <a:clrScheme name=\"Office\">\
+               <a:dk1><a:srgbClr val=\"000000\"/></a:dk1>\
+               <a:lt1><a:srgbClr val=\"FFFFFF\"/></a:lt1>\
+               <a:dk2><a:srgbClr val=\"1F497D\"/></a:dk2>\
+               <a:lt2><a:srgbClr val=\"EEECE1\"/></a:lt2>\
+               <a:accent1><a:srgbClr val=\"4F81BD\"/></a:accent1>\
+               <a:accent2><a:srgbClr val=\"C0504D\"/></a:accent2>\
+               <a:accent3><a:srgbClr val=\"9BBB59\"/></a:accent3>\
+               <a:accent4><a:srgbClr val=\"8064A2\"/></a:accent4>\
+               <a:accent5><a:srgbClr val=\"4BACC6\"/></a:accent5>\
+               <a:accent6><a:srgbClr val=\"F79646\"/></a:accent6>\
+               <a:hlink><a:srgbClr val=\"0000FF\"/></a:hlink>\
+               <a:folHlink><a:srgbClr val=\"800080\"/></a:folHlink>\
+             </a:clrScheme>\
+             <a:fontScheme name=\"Office\">\
+               <a:majorFont><a:latin typeface=\"Calibri\"/></a:majorFont>\
+               <a:minorFont><a:latin typeface=\"Calibri\"/></a:minorFont>\
+             </a:fontScheme>\
+             <a:fmtScheme name=\"Office\">\
+               <a:fillStyleLst>\
+                 <a:solidFill><a:srgbClr val=\"CC0000\"/></a:solidFill>\
+                 <a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>\
+                 <a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>\
+               </a:fillStyleLst>\
+               <a:lnStyleLst>\
+                 <a:ln w=\"25400\"><a:solidFill><a:srgbClr val=\"00AA00\"/></a:solidFill></a:ln>\
+                 <a:ln w=\"12700\"><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill></a:ln>\
+                 <a:ln w=\"19050\"><a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill></a:ln>\
+               </a:lnStyleLst>\
+               <a:effectStyleLst>\
+                 <a:effectStyle><a:effectLst/></a:effectStyle>\
+                 <a:effectStyle><a:effectLst/></a:effectStyle>\
+                 <a:effectStyle><a:effectLst/></a:effectStyle>\
+               </a:effectStyleLst>\
+               <a:bgFillStyleLst>\
+                 <a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>\
+                 <a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>\
+                 <a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>\
+               </a:bgFillStyleLst>\
+             </a:fmtScheme>\
+           </a:themeElements>\
+         </a:theme>";
+    let body = "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"1371600\" cy=\"914400\"/>\
+          <wp:wrapNone/>\
+          <wp:docPr id=\"1\" name=\"FmtSchX\"/>\
+          <a:graphic><a:graphicData \
+            uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+            <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+              <wps:spPr><a:xfrm><a:ext cx=\"1371600\" cy=\"914400\"/></a:xfrm>\
+                <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr>\
+              <wps:style><a:lnRef idx=\"1\"><a:schemeClr val=\"accent1\"/></a:lnRef>\
+                <a:fillRef idx=\"1\"><a:schemeClr val=\"accent1\"/></a:fillRef></wps:style>\
+            </wps:wsp>\
+          </a:graphicData></a:graphic>\
+        </wp:anchor></w:drawing></w:r>\
+        <w:r><w:t>FmtSchX</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&drawing_docx_with_theme(body, theme)).expect("convert fmtScheme");
+    let fills = pdf_fill_rects(&pdf, 0.8, 0.0, 0.0);
+    assert!(
+        !fills.is_empty(),
+        "fillStyleLst[0] solid CC0000 must paint, not fillRef accent1; fills={fills:?} tail {}",
+        {
+            let t = String::from_utf8_lossy(&pdf);
+            t[t.len().saturating_sub(280)..].to_string()
+        }
+    );
+    let accent = pdf_fill_rects(&pdf, 0.310, 0.506, 0.741);
+    assert!(
+        accent.is_empty(),
+        "must not keep fillRef accent1 4F81BD; accent={accent:?}"
+    );
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("2.00 w") && text.contains("0.000 0.667 0.000 RG"),
+        "lnStyleLst[0] w=25400 (2pt) 00AA00 must stroke; tail {}",
+        &text[text.len().saturating_sub(280)..]
+    );
+    assert!(
+        !text.contains("0.50 w 0.310 0.506 0.741 RG"),
+        "must not keep hardcoded idx=1 0.5pt accent1; tail {}",
+        &text[text.len().saturating_sub(280)..]
     );
 }
 
