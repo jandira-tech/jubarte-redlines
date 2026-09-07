@@ -13284,6 +13284,90 @@ fn unequal_col_children_place_the_second_column() {
 }
 
 #[test]
+fn date_and_ref_fields_paint_word_results() {
+    // xml leftover: DATE / REF (ECMA-376 17.16.5.20 / 17.16.5.59).
+    // PAGE/NUMPAGES/PAGEREF already ship; these two were left as cache-only.
+    // Uncached DATE uses \@ picture (not the instrText). Missing REF is
+    // Word's "Error! Reference source not found."; live REF replaces the
+    // stale cache with the bookmark text.
+    let body = "<w:p>\
+           <w:r><w:t xml:space=\"preserve\">WhenDx </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> DATE \\@ \"yyyy\" </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t xml:space=\"preserve\">CachedDx </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> DATE \\@ \"d MMMM yyyy\" </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+           <w:r><w:t>15 March 2020</w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:bookmarkStart w:id=\"1\" w:name=\"_HereRef\"/>\
+           <w:r><w:t>TargetRefX</w:t></w:r>\
+           <w:bookmarkEnd w:id=\"1\"/>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t xml:space=\"preserve\">LiveRx </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> REF _HereRef \\h </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+           <w:r><w:t>StaleRefX</w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t xml:space=\"preserve\">GoneRx </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> REF _GoneRef </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+           <w:r><w:t>1</w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("convert DATE/REF");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("WhenDx"),
+        "uncached DATE paragraph must paint; text={text}"
+    );
+    assert!(
+        !text.contains("DATE"),
+        "DATE instrText must not leak; text={text}"
+    );
+    let after = text.split("WhenDx").nth(1).unwrap_or("").trim_start();
+    let year: String = after.chars().take(4).collect();
+    assert!(
+        year.len() == 4 && year.chars().all(|c| c.is_ascii_digit()),
+        "uncached DATE \\@ yyyy must paint a 4-digit year immediately after WhenDx; year={year:?} text={text}"
+    );
+    assert!(
+        text.contains("CachedDx") && text.contains("15 March 2020"),
+        "cached DATE must keep the stored result; text={text}"
+    );
+    assert!(
+        text.contains("TargetRefX") && text.contains("LiveRx"),
+        "live REF must paint the bookmark text; text={text}"
+    );
+    assert!(
+        !text.contains("StaleRefX"),
+        "live REF must not keep the stale cache; text={text}"
+    );
+    assert!(
+        text.contains("Error! Reference source not found."),
+        "missing REF is Word's Error! Reference source not found.; text={text}"
+    );
+    assert!(
+        text.contains("GoneRx"),
+        "missing-REF label must still paint; text={text}"
+    );
+}
+
+#[test]
 fn official_header_no_rels_page_one_uses_first_header() {
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/header_no_rels.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert header_no_rels");
