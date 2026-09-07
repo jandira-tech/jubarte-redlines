@@ -428,6 +428,8 @@ struct PageSetup {
     ln_restart: u8,
     /// `w:docGrid/@w:linePitch` (pt) when type is lines/linesAndChars. 0 = off.
     grid_pitch: f32,
+    /// `w:docGrid/@w:charSpace` (pt) when type is snapToChars/linesAndChars.
+    grid_char: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -652,6 +654,7 @@ impl Defaults {
                 ln_distance: 0.0,
                 ln_restart: 0,
                 grid_pitch: 0.0,
+                grid_char: 0.0,
             },
         }
     }
@@ -2551,14 +2554,18 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
         };
     }
     page.grid_pitch = 0.0;
+    page.grid_char = 0.0;
     if let Some(grid) = first_named(dom, sect, "docGrid") {
-        match attr_any(dom, grid, "type").unwrap_or("default") {
-            "lines" | "linesAndChars" => {
-                page.grid_pitch = attr_any(dom, grid, "linePitch")
-                    .and_then(parse_len)
-                    .unwrap_or(0.0);
-            }
-            _ => {}
+        let ty = attr_any(dom, grid, "type").unwrap_or("default");
+        if matches!(ty, "lines" | "linesAndChars") {
+            page.grid_pitch = attr_any(dom, grid, "linePitch")
+                .and_then(parse_len)
+                .unwrap_or(0.0);
+        }
+        if matches!(ty, "snapToChars" | "linesAndChars") {
+            page.grid_char = attr_any(dom, grid, "charSpace")
+                .and_then(parse_len)
+                .unwrap_or(0.0);
         }
     }
     page
@@ -10037,7 +10044,7 @@ impl<'a> Layout<'a> {
                 } else {
                     1.0
                 };
-                *adv * sp
+                *adv * sp + self.page.grid_char
             })
             .collect()
     }

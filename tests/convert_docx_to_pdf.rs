@@ -13797,6 +13797,37 @@ fn do_not_expand_shift_return_skips_justify_on_soft_break() {
 }
 
 #[test]
+fn sectpr_doc_grid_chars_adds_char_space() {
+    // xml leftover: sectPr w:docGrid type=snapToChars charSpace (ECMA-376 17.6.5).
+    // charSpace 200 twips = 10pt extra per glyph. A then B must sit
+    // farther apart than the natural ~7pt advance.
+    let body = "<w:p>\
+           <w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr>\
+           <w:r><w:t>AB</w:t></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+           <w:docGrid w:type=\"snapToChars\" w:charSpace=\"200\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("convert docGrid chars");
+    let hay = String::from_utf8_lossy(&pdf);
+    let ax = pdf_cm_tj_xy(&hay, "A")
+        .first()
+        .map(|(x, _)| *x)
+        .expect("marker A");
+    let bx = pdf_cm_tj_xy(&hay, "B")
+        .first()
+        .map(|(x, _)| *x)
+        .expect("marker B");
+    assert!(
+        bx - ax > 14.0,
+        "snapToChars charSpace=200 must add ~10pt per glyph; A={ax} B={bx} dx={}",
+        bx - ax
+    );
+}
+
+#[test]
 fn decimal_and_bar_tabs_place_ink() {
     // xml leftover: w:tab val=decimal / bar (ECMA-376 17.3.1.38 ST_TabJc).
     // Decimal currently falls through to left; bar is skipped in parse.
