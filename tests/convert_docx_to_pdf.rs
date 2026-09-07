@@ -8335,6 +8335,25 @@ fn page_field_uses_sectpr_chosung() {
 }
 
 #[test]
+fn page_field_uses_sectpr_decimal_enclosed_circle() {
+    // MS-DOCX: decimalEnclosedCircle is ①②③… (U+2460). start=1 is ①,
+    // not ASCII "1" and not ideographEnclosedCircle ㈠.
+    assert_ideograph_page_is_cid_not_decimal("decimalEnclosedCircle", "PgEcX");
+}
+
+#[test]
+fn page_field_uses_sectpr_decimal_enclosed_paren() {
+    // MS-DOCX: decimalEnclosedParen is ⑴⑵⑶… (U+2474). start=1 is ⑴.
+    assert_ideograph_page_is_cid_not_decimal("decimalEnclosedParen", "PgEpX");
+}
+
+#[test]
+fn page_field_uses_sectpr_decimal_enclosed_fullstop() {
+    // MS-DOCX: decimalEnclosedFullstop is ⒈⒉⒊… (U+2488). start=1 is ⒈.
+    assert_ideograph_page_is_cid_not_decimal("decimalEnclosedFullstop", "PgEfX");
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).
