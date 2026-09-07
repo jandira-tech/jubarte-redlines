@@ -474,6 +474,9 @@ enum PageNumFmt {
     DecimalFullWidth,
     Ganada,
     Chosung,
+    DecimalEnclosedCircle,
+    DecimalEnclosedParen,
+    DecimalEnclosedFullstop,
 }
 
 struct NamedStyle {
@@ -2620,6 +2623,9 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "decimalFullWidth" => PageNumFmt::DecimalFullWidth,
             "ganada" => PageNumFmt::Ganada,
             "chosung" => PageNumFmt::Chosung,
+            "decimalEnclosedCircle" => PageNumFmt::DecimalEnclosedCircle,
+            "decimalEnclosedParen" => PageNumFmt::DecimalEnclosedParen,
+            "decimalEnclosedFullstop" => PageNumFmt::DecimalEnclosedFullstop,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -2778,6 +2784,9 @@ enum NumFmt {
     DecimalFullWidth,
     Ganada,
     Chosung,
+    DecimalEnclosedCircle,
+    DecimalEnclosedParen,
+    DecimalEnclosedFullstop,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -3037,6 +3046,9 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "decimalFullWidth" => NumFmt::DecimalFullWidth,
         "ganada" => NumFmt::Ganada,
         "chosung" => NumFmt::Chosung,
+        "decimalEnclosedCircle" => NumFmt::DecimalEnclosedCircle,
+        "decimalEnclosedParen" => NumFmt::DecimalEnclosedParen,
+        "decimalEnclosedFullstop" => NumFmt::DecimalEnclosedFullstop,
         _ => NumFmt::Decimal,
     }
 }
@@ -3062,6 +3074,9 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::DecimalFullWidth => decimal_fullwidth_label(n),
         NumFmt::Ganada => cycle_cjk(&GANADA, n),
         NumFmt::Chosung => cycle_cjk(&CHOSUNG, n),
+        NumFmt::DecimalEnclosedCircle => enclosed_decimal_label(n, &DECIMAL_ENCLOSED_CIRCLE),
+        NumFmt::DecimalEnclosedParen => enclosed_decimal_label(n, &DECIMAL_ENCLOSED_PAREN),
+        NumFmt::DecimalEnclosedFullstop => enclosed_decimal_label(n, &DECIMAL_ENCLOSED_FULLSTOP),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -3300,6 +3315,30 @@ const GANADA: [char; 14] = [
 const CHOSUNG: [char; 14] = [
     'ㄱ', 'ㄴ', 'ㄷ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅅ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ',
 ];
+
+/// MS-DOCX decimalEnclosedCircle: U+2460…U+2473 (①–⑳). After 20, decimal.
+const DECIMAL_ENCLOSED_CIRCLE: [char; 20] = [
+    '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲',
+    '⑳',
+];
+/// MS-DOCX decimalEnclosedParen: U+2474…U+2487 (⑴–⒇).
+const DECIMAL_ENCLOSED_PAREN: [char; 20] = [
+    '⑴', '⑵', '⑶', '⑷', '⑸', '⑹', '⑺', '⑻', '⑼', '⑽', '⑾', '⑿', '⒀', '⒁', '⒂', '⒃', '⒄', '⒅', '⒆',
+    '⒇',
+];
+/// MS-DOCX decimalEnclosedFullstop: U+2488…U+249B (⒈–⒛).
+const DECIMAL_ENCLOSED_FULLSTOP: [char; 20] = [
+    '⒈', '⒉', '⒊', '⒋', '⒌', '⒍', '⒎', '⒏', '⒐', '⒑', '⒒', '⒓', '⒔', '⒕', '⒖', '⒗', '⒘', '⒙', '⒚',
+    '⒛',
+];
+
+fn enclosed_decimal_label(n: u32, glyphs: &[char; 20]) -> String {
+    if (1..=20).contains(&n) {
+        glyphs[(n - 1) as usize].to_string()
+    } else {
+        n.to_string()
+    }
+}
 
 fn alpha_label(mut n: u32, upper: bool) -> String {
     if n == 0 {
@@ -13689,6 +13728,15 @@ impl<'a> Layout<'a> {
             PageNumFmt::DecimalFullWidth => format_num(NumFmt::DecimalFullWidth, self.section_page),
             PageNumFmt::Ganada => format_num(NumFmt::Ganada, self.section_page),
             PageNumFmt::Chosung => format_num(NumFmt::Chosung, self.section_page),
+            PageNumFmt::DecimalEnclosedCircle => {
+                format_num(NumFmt::DecimalEnclosedCircle, self.section_page)
+            }
+            PageNumFmt::DecimalEnclosedParen => {
+                format_num(NumFmt::DecimalEnclosedParen, self.section_page)
+            }
+            PageNumFmt::DecimalEnclosedFullstop => {
+                format_num(NumFmt::DecimalEnclosedFullstop, self.section_page)
+            }
         }
     }
 
@@ -17213,6 +17261,21 @@ mod page_num_fmt_labels {
         assert_eq!(format_num(NumFmt::Chosung, 1), "ㄱ");
         assert_eq!(format_num(NumFmt::Chosung, 2), "ㄴ");
         assert_eq!(format_num(NumFmt::Chosung, 3), "ㄷ");
+    }
+
+    #[test]
+    fn decimal_enclosed_circle_is_circled_digits() {
+        assert_eq!(format_num(NumFmt::DecimalEnclosedCircle, 1), "①");
+        assert_eq!(format_num(NumFmt::DecimalEnclosedCircle, 2), "②");
+        assert_eq!(format_num(NumFmt::DecimalEnclosedCircle, 20), "⑳");
+        assert_eq!(format_num(NumFmt::DecimalEnclosedCircle, 21), "21");
+    }
+
+    #[test]
+    fn decimal_enclosed_paren_and_fullstop() {
+        assert_eq!(format_num(NumFmt::DecimalEnclosedParen, 1), "⑴");
+        assert_eq!(format_num(NumFmt::DecimalEnclosedFullstop, 1), "⒈");
+        assert_eq!(format_num(NumFmt::DecimalEnclosedParen, 21), "21");
     }
 }
 
