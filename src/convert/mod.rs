@@ -14,7 +14,7 @@ mod metafile;
 mod pdf;
 mod word_subst;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -129,33 +129,36 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
     let fonts = Fonts::for_document(&pkg, &table);
     font::with_font_table(table, || {
         let markup = settings_track_revisions(&pkg);
-        let mut sheet = load_stylesheet(&pkg);
-        if let Some(tab) = settings_default_tab_pt(&pkg) {
-            sheet.defaults.page.default_tab = tab;
-        }
-        // Word Save-as-PDF All Markup (file_27): gray balloon pasteboard + scale.
-        // Ins-only trackRevisions (file_6) stays full-page / 0.24 cm.
-        if markup && document_wants_markup_pane(&pkg, &main) {
-            sheet.defaults.page.balloon_gutter = 144.0;
-        }
-        let page = load_page_setup(&dom, body, &sheet.defaults.page);
-        let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
-        let mut blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, &fonts);
-        let display = number_footnote_refs(&mut blocks);
-        let footnotes = FootnoteCatalog {
-            notes: load_footnotes(&pkg, &main, &sheet),
-            display,
-        };
-        let pages = layout(
-            &fonts,
-            &page,
-            &hf,
-            &blocks,
-            settings_suppress_sp_bf_after_pg_brk(&pkg),
-            settings_compat_mode(&pkg),
-            footnotes,
-        );
-        Ok(pdf::emit(&fonts, &pages, options))
+        let core = load_core_dates(&pkg);
+        with_core_dates(core, || {
+            let mut sheet = load_stylesheet(&pkg);
+            if let Some(tab) = settings_default_tab_pt(&pkg) {
+                sheet.defaults.page.default_tab = tab;
+            }
+            // Word Save-as-PDF All Markup (file_27): gray balloon pasteboard + scale.
+            // Ins-only trackRevisions (file_6) stays full-page / 0.24 cm.
+            if markup && document_wants_markup_pane(&pkg, &main) {
+                sheet.defaults.page.balloon_gutter = 144.0;
+            }
+            let page = load_page_setup(&dom, body, &sheet.defaults.page);
+            let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
+            let mut blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, &fonts);
+            let display = number_footnote_refs(&mut blocks);
+            let footnotes = FootnoteCatalog {
+                notes: load_footnotes(&pkg, &main, &sheet),
+                display,
+            };
+            let pages = layout(
+                &fonts,
+                &page,
+                &hf,
+                &blocks,
+                settings_suppress_sp_bf_after_pg_brk(&pkg),
+                settings_compat_mode(&pkg),
+                footnotes,
+            );
+            Ok(pdf::emit(&fonts, &pages, options))
+        })
     })
 }
 
@@ -4389,6 +4392,25 @@ fn is_date_field(instr: &str) -> bool {
     field_first_token(instr).eq_ignore_ascii_case("DATE")
 }
 
+fn is_time_field(instr: &str) -> bool {
+    field_first_token(instr).eq_ignore_ascii_case("TIME")
+}
+
+fn is_createdate_field(instr: &str) -> bool {
+    field_first_token(instr).eq_ignore_ascii_case("CREATEDATE")
+}
+
+fn is_printdate_field(instr: &str) -> bool {
+    field_first_token(instr).eq_ignore_ascii_case("PRINTDATE")
+}
+
+fn is_datetime_field(instr: &str) -> bool {
+    is_date_field(instr)
+        || is_time_field(instr)
+        || is_createdate_field(instr)
+        || is_printdate_field(instr)
+}
+
 fn is_numwords_field(instr: &str) -> bool {
     field_first_token(instr).eq_ignore_ascii_case("NUMWORDS")
 }
@@ -4481,12 +4503,108 @@ const WEEKDAYS_FULL: [&str; 7] = [
 ];
 const WEEKDAYS_ABBR: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-fn utc_ymd() -> (i32, u32, u32) {
-    let unix_days = SystemTime::now()
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CivilDateTime {
+    y: i32,
+    m: u32,
+    d: u32,
+    h: u32,
+    min: u32,
+    s: u32,
+}
+
+#[derive(Clone, Copy, Default)]
+struct CoreDates {
+    created: Option<CivilDateTime>,
+    printed: Option<CivilDateTime>,
+}
+
+thread_local! {
+    static CORE_DATES: Cell<CoreDates> = const { Cell::new(CoreDates { created: None, printed: None }) };
+}
+
+fn with_core_dates<R>(dates: CoreDates, f: impl FnOnce() -> R) -> R {
+    CORE_DATES.with(|slot| {
+        let prev = slot.replace(dates);
+        let out = f();
+        slot.set(prev);
+        out
+    })
+}
+
+fn core_dates() -> CoreDates {
+    CORE_DATES.with(Cell::get)
+}
+
+fn utc_now() -> CivilDateTime {
+    let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_secs() / 86_400).unwrap_or(0))
+        .map(|d| d.as_secs())
         .unwrap_or(0);
-    civil_from_unix_days(unix_days)
+    let (y, m, d) = civil_from_unix_days(i64::try_from(secs / 86_400).unwrap_or(0));
+    let tod = u32::try_from(secs % 86_400).unwrap_or(0);
+    CivilDateTime {
+        y,
+        m,
+        d,
+        h: tod / 3600,
+        min: (tod % 3600) / 60,
+        s: tod % 60,
+    }
+}
+
+fn xml_tagged_text<'a>(xml: &'a str, local: &str) -> Option<&'a str> {
+    let bytes = xml.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = xml[from..].find(local) {
+        let at = from + rel;
+        let tagged = at == 0 || matches!(bytes.get(at - 1), Some(b':' | b'<'));
+        let after_name = at + local.len();
+        let rest = xml.get(after_name..)?;
+        if tagged
+            && (rest.starts_with('>') || rest.starts_with(' ') || rest.starts_with('/'))
+            && let Some(gt) = rest.find('>')
+        {
+            if rest.as_bytes().get(gt.saturating_sub(1)) == Some(&b'/') {
+                from = after_name + gt + 1;
+                continue;
+            }
+            let inner = &rest[gt + 1..];
+            let end = inner.find('<')?;
+            return Some(inner[..end].trim());
+        }
+        from = after_name;
+    }
+    None
+}
+
+fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
+    let s = raw.trim();
+    if s.len() < 19 {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    if bytes[4] != b'-' || bytes[7] != b'-' || (bytes[10] != b'T' && bytes[10] != b' ') {
+        return None;
+    }
+    Some(CivilDateTime {
+        y: s.get(0..4)?.parse().ok()?,
+        m: s.get(5..7)?.parse().ok()?,
+        d: s.get(8..10)?.parse().ok()?,
+        h: s.get(11..13)?.parse().ok()?,
+        min: s.get(14..16)?.parse().ok()?,
+        s: s.get(17..19)?.parse().ok()?,
+    })
+}
+
+fn load_core_dates(pkg: &PartFs) -> CoreDates {
+    let Some(xml) = pkg.part_string("docProps/core.xml") else {
+        return CoreDates::default();
+    };
+    CoreDates {
+        created: xml_tagged_text(&xml, "created").and_then(parse_w3cdtf),
+        printed: xml_tagged_text(&xml, "lastPrinted").and_then(parse_w3cdtf),
+    }
 }
 
 /// Howard Hinnant civil_from_days: Unix epoch days → UTC (year, month, day).
@@ -4514,22 +4632,56 @@ fn weekday_sun0(y: i32, m: u32, d: u32) -> usize {
     (y + y / 4 - y / 100 + y / 400 + offset + d as i32).rem_euclid(7) as usize
 }
 
+#[cfg(test)]
 fn format_date_picture(pic: &str, y: i32, m: u32, d: u32) -> String {
+    format_datetime_picture(
+        pic,
+        CivilDateTime {
+            y,
+            m,
+            d,
+            h: 0,
+            min: 0,
+            s: 0,
+        },
+    )
+}
+
+fn ampm_run_len(chars: &[char], i: usize) -> Option<usize> {
+    let rest: String = chars[i..].iter().take(5).collect();
+    rest.eq_ignore_ascii_case("am/pm").then_some(5)
+}
+
+fn format_datetime_picture(pic: &str, dt: CivilDateTime) -> String {
     let mut out = String::new();
     let chars: Vec<char> = pic.chars().collect();
     let mut i = 0;
-    let mi = m.saturating_sub(1) as usize;
+    let mi = dt.m.saturating_sub(1) as usize;
     let month_full = MONTHS_FULL.get(mi).copied().unwrap_or("");
     let month_abbr = MONTHS_ABBR.get(mi).copied().unwrap_or("");
-    let wd = weekday_sun0(y, m, d);
+    let wd = weekday_sun0(dt.y, dt.m, dt.d);
+    let h12 = {
+        let h = dt.h % 12;
+        if h == 0 { 12 } else { h }
+    };
     while i < chars.len() {
+        if ampm_run_len(&chars, i).is_some() {
+            let pm = dt.h >= 12;
+            if chars[i].is_uppercase() {
+                out.push_str(if pm { "PM" } else { "AM" });
+            } else {
+                out.push_str(if pm { "pm" } else { "am" });
+            }
+            i += 5;
+            continue;
+        }
         match chars[i] {
             'y' => {
                 let n = count_run(&chars, i, 'y');
                 if n >= 4 {
-                    out.push_str(&format!("{y:04}"));
+                    out.push_str(&format!("{:04}", dt.y));
                 } else {
-                    out.push_str(&format!("{:02}", y.rem_euclid(100)));
+                    out.push_str(&format!("{:02}", dt.y.rem_euclid(100)));
                 }
                 i += n;
             }
@@ -4538,8 +4690,8 @@ fn format_date_picture(pic: &str, y: i32, m: u32, d: u32) -> String {
                 match n {
                     4 => out.push_str(month_full),
                     3 => out.push_str(month_abbr),
-                    2 => out.push_str(&format!("{m:02}")),
-                    _ => out.push_str(&m.to_string()),
+                    2 => out.push_str(&format!("{:02}", dt.m)),
+                    _ => out.push_str(&dt.m.to_string()),
                 }
                 i += n;
             }
@@ -4548,8 +4700,44 @@ fn format_date_picture(pic: &str, y: i32, m: u32, d: u32) -> String {
                 match n {
                     4 => out.push_str(WEEKDAYS_FULL.get(wd).copied().unwrap_or("")),
                     3 => out.push_str(WEEKDAYS_ABBR.get(wd).copied().unwrap_or("")),
-                    2 => out.push_str(&format!("{d:02}")),
-                    _ => out.push_str(&d.to_string()),
+                    2 => out.push_str(&format!("{:02}", dt.d)),
+                    _ => out.push_str(&dt.d.to_string()),
+                }
+                i += n;
+            }
+            'H' => {
+                let n = count_run(&chars, i, 'H');
+                if n >= 2 {
+                    out.push_str(&format!("{:02}", dt.h));
+                } else {
+                    out.push_str(&dt.h.to_string());
+                }
+                i += n;
+            }
+            'h' => {
+                let n = count_run(&chars, i, 'h');
+                if n >= 2 {
+                    out.push_str(&format!("{h12:02}"));
+                } else {
+                    out.push_str(&h12.to_string());
+                }
+                i += n;
+            }
+            'm' => {
+                let n = count_run(&chars, i, 'm');
+                if n >= 2 {
+                    out.push_str(&format!("{:02}", dt.min));
+                } else {
+                    out.push_str(&dt.min.to_string());
+                }
+                i += n;
+            }
+            's' => {
+                let n = count_run(&chars, i, 's');
+                if n >= 2 {
+                    out.push_str(&format!("{:02}", dt.s));
+                } else {
+                    out.push_str(&dt.s.to_string());
                 }
                 i += n;
             }
@@ -4580,12 +4768,25 @@ fn count_run(chars: &[char], start: usize, want: char) -> usize {
         .max(1)
 }
 
-fn date_field_text(instr: &str) -> String {
-    let (y, m, d) = utc_ymd();
-    let pic = date_picture(instr).unwrap_or_else(|| "M/d/yyyy".to_string());
-    let painted = format_date_picture(&pic, y, m, d);
+fn datetime_field_text(instr: &str) -> String {
+    let core = core_dates();
+    let now = utc_now();
+    let dt = if is_createdate_field(instr) {
+        core.created.unwrap_or(now)
+    } else if is_printdate_field(instr) {
+        core.printed.unwrap_or(now)
+    } else {
+        now
+    };
+    let default_pic = if is_time_field(instr) {
+        "h:mm am/pm"
+    } else {
+        "M/d/yyyy"
+    };
+    let pic = date_picture(instr).unwrap_or_else(|| default_pic.to_string());
+    let painted = format_datetime_picture(&pic, dt);
     if painted.is_empty() {
-        format_date_picture("M/d/yyyy", y, m, d)
+        format_datetime_picture(default_pic, dt)
     } else {
         painted
     }
@@ -5642,8 +5843,8 @@ fn finish_field(ctx: &RunCollect<'_>, runs: &mut Vec<TextRun>) {
     if ctx.field_emitted {
         return;
     }
-    if is_date_field(&ctx.field_instr) {
-        runs.push(field_run(date_field_text(&ctx.field_instr), ctx.base));
+    if is_datetime_field(&ctx.field_instr) {
+        runs.push(field_run(datetime_field_text(&ctx.field_instr), ctx.base));
         return;
     }
     if is_numwords_field(&ctx.field_instr) {
@@ -8254,8 +8455,8 @@ fn collect_hf_rec(
                     let mut run = field_run(String::new(), base);
                     run.field = kind;
                     runs.push(run);
-                } else if !scan.emitted && is_date_field(&scan.instr) {
-                    runs.push(field_run(date_field_text(&scan.instr), base));
+                } else if !scan.emitted && is_datetime_field(&scan.instr) {
+                    runs.push(field_run(datetime_field_text(&scan.instr), base));
                 }
                 *scan = FieldScan::default();
             }
@@ -16485,8 +16686,51 @@ mod field_tests {
         assert!(!ref_copies_bookmark_text(" REF _HereRef \\w \\h "));
         assert!(is_date_field(" DATE \\@ \"yyyy\" "));
         assert!(!is_date_field("CREATEDATE"));
+        assert!(is_createdate_field(" CREATEDATE \\@ \"yyyy\" "));
+        assert!(is_time_field(" TIME \\@ \"HHmm\" "));
+        assert!(is_printdate_field(" PRINTDATE \\@ \"yyyy\" "));
+        assert!(!is_time_field("DATE"));
         assert!(is_numwords_field(" NUMWORDS "));
         assert!(!is_numwords_field("NUMPAGES"));
+        assert_eq!(
+            parse_w3cdtf("2018-07-04T15:30:00Z"),
+            Some(CivilDateTime {
+                y: 2018,
+                m: 7,
+                d: 4,
+                h: 15,
+                min: 30,
+                s: 0,
+            })
+        );
+        assert_eq!(
+            format_datetime_picture(
+                "HHmm",
+                CivilDateTime {
+                    y: 2018,
+                    m: 7,
+                    d: 4,
+                    h: 15,
+                    min: 30,
+                    s: 0,
+                }
+            ),
+            "1530"
+        );
+        assert_eq!(
+            format_datetime_picture(
+                "h:mm am/pm",
+                CivilDateTime {
+                    y: 2018,
+                    m: 7,
+                    d: 4,
+                    h: 15,
+                    min: 30,
+                    s: 0,
+                }
+            ),
+            "3:30 pm"
+        );
     }
 
     #[test]
