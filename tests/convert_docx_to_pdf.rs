@@ -22358,6 +22358,37 @@ fn table_sdt_repeating_row_stays_header_only_after_mini_454() {
     );
 }
 
+#[test]
+fn table_cell_sdt_unwraps_the_nested_paragraph() {
+    // xml leftover: sdt unwrap is partial. Body-level sdt is walked;
+    // repeating-section w:sdt rows stay locked (mini 454 KEEP above).
+    // A cell with a direct para plus a sibling sdt-wrapped para currently
+    // skips the sdt (only empty cells fall back to collect_runs_in).
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"4680\"/></w:tblGrid>\
+         <w:tr><w:tc>\
+           <w:p><w:r><w:t>DirectPx</w:t></w:r></w:p>\
+           <w:sdt><w:sdtPr><w:alias w:val=\"Field\"/></w:sdtPr>\
+             <w:sdtContent>\
+               <w:p><w:r><w:t>SdtCellX</w:t></w:r></w:p>\
+             </w:sdtContent>\
+           </w:sdt>\
+         </w:tc></w:tr></w:tbl>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert cell sdt");
+    let painted = pdf_winansi_text(&pdf);
+    assert!(
+        painted.contains("DirectPx"),
+        "direct cell para must paint; painted={painted}"
+    );
+    assert!(
+        painted.contains("SdtCellX"),
+        "cell sdtContent paragraph must unwrap; painted={painted}"
+    );
+}
+
 fn accent1_fill_is_sharp_rect(hay: &str) -> bool {
     let needle = "0.357 0.608 0.835 rg ";
     let mut from = 0;
