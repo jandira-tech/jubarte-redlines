@@ -7838,16 +7838,14 @@ fn page_field_uses_sectpr_decimal_zero() {
         &[("word/footer1.xml", footer)],
     ))
     .expect("convert decimalZero PAGE");
-    let text = String::from_utf8_lossy(&pdf);
+    let lits = pdf_winansi_literals(&pdf);
     assert!(
-        text.contains("(01)"),
-        "PAGE in a decimalZero section must paint 01; tail {}",
-        &text[text.len().saturating_sub(240)..]
+        lits.iter().any(|s| s == "01"),
+        "PAGE in a decimalZero section must paint 01; lits={lits:?}"
     );
     assert!(
-        !text.contains("(1)"),
-        "cached arabic 1 must not survive decimalZero PAGE; tail {}",
-        &text[text.len().saturating_sub(240)..]
+        !lits.iter().any(|s| s == "1"),
+        "cached arabic 1 must not survive decimalZero PAGE; lits={lits:?}"
     );
 }
 
@@ -7870,16 +7868,14 @@ fn page_field_uses_sectpr_cardinal_text() {
         &[("word/footer1.xml", footer)],
     ))
     .expect("convert cardinalText PAGE");
-    let text = String::from_utf8_lossy(&pdf);
+    let lits = pdf_winansi_literals(&pdf);
     assert!(
-        text.contains("(One)"),
-        "PAGE in a cardinalText section must paint One; tail {}",
-        &text[text.len().saturating_sub(240)..]
+        lits.iter().any(|s| s == "One"),
+        "PAGE in a cardinalText section must paint One; lits={lits:?}"
     );
     assert!(
-        !text.contains("(1)"),
-        "cached arabic 1 must not survive cardinalText PAGE; tail {}",
-        &text[text.len().saturating_sub(240)..]
+        !lits.iter().any(|s| s == "1"),
+        "cached arabic 1 must not survive cardinalText PAGE; lits={lits:?}"
     );
 }
 
