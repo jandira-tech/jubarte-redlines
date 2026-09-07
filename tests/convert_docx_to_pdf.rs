@@ -8354,6 +8354,43 @@ fn page_field_uses_sectpr_decimal_enclosed_fullstop() {
 }
 
 #[test]
+fn page_field_uses_sectpr_hebrew1() {
+    // MS-DOCX: hebrew1 is Hebrew numerals א, י, ק… (U+05D0, U+05D9, U+05E7).
+    // start=10 is י, not ASCII "10".
+    let pdf = page_num_fmt_pdf("hebrew1", 10, "PgH1X");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "hebrew1 PAGE start=10 must not stay decimal 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "hebrew1 י is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_hebrew2() {
+    // MS-DOCX: hebrew2 is the Hebrew alphabet אבג… (U+05D0). start=1 is א.
+    assert_ideograph_page_is_cid_not_decimal("hebrew2", "PgH2X");
+}
+
+#[test]
+fn page_field_uses_sectpr_arabic_alpha() {
+    // MS-DOCX: arabicAlpha is أ ب ت… (U+0623, U+0628, U+062A). start=1 is أ.
+    assert_ideograph_page_is_cid_not_decimal("arabicAlpha", "PgAaX");
+}
+
+#[test]
+fn page_field_uses_sectpr_arabic_abjad() {
+    // MS-DOCX: arabicAbjad is أ ب ج… (U+0623, U+0628, U+062C). start=1 is أ.
+    assert_ideograph_page_is_cid_not_decimal("arabicAbjad", "PgAjX");
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).
