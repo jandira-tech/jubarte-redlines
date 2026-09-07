@@ -643,6 +643,7 @@ enum FieldKind {
     None,
     Page,
     NumPages,
+    NumWords,
 }
 
 #[derive(Clone)]
@@ -4297,6 +4298,34 @@ fn document_bookmark_texts(blocks: &[Block]) -> HashMap<String, String> {
     texts
 }
 
+fn run_word_count(runs: &[TextRun]) -> u32 {
+    runs.iter()
+        .filter(|r| r.field != FieldKind::NumWords)
+        .map(|r| r.text.split_whitespace().filter(|w| !w.is_empty()).count() as u32)
+        .sum()
+}
+
+fn document_word_count(blocks: &[Block]) -> u32 {
+    let mut n = 0u32;
+    for block in blocks {
+        match block {
+            Block::Paragraph { runs, .. } => n += run_word_count(runs),
+            Block::Table { rows, .. } => {
+                for row in rows {
+                    for cell in row {
+                        for para in &cell.paras {
+                            n += run_word_count(&para.runs);
+                        }
+                        n += document_word_count(&cell.nested);
+                    }
+                }
+            }
+            Block::PageBreak { .. } | Block::ColumnBreak => {}
+        }
+    }
+    n
+}
+
 /// Word Save-as-PDF result for `PAGEREF` whose bookmark is gone
 /// (`_Toc218523836` / `_Toc218523837` on sd_2517 / file_22).
 const BOOKMARK_NOT_DEFINED: &str = "Error! Bookmark not defined.";
@@ -4307,6 +4336,7 @@ fn apply_field_results(
     runs: &[TextRun],
     known: &HashSet<String>,
     texts: &HashMap<String, String>,
+    words: u32,
 ) -> Vec<TextRun> {
     runs.iter()
         .map(|run| {
@@ -4328,6 +4358,9 @@ fn apply_field_results(
                 {
                     out.text.clone_from(text);
                 }
+            }
+            if run.field == FieldKind::NumWords {
+                out.text = words.to_string();
             }
             out
         })
@@ -4352,6 +4385,10 @@ fn field_first_token(instr: &str) -> &str {
 
 fn is_date_field(instr: &str) -> bool {
     field_first_token(instr).eq_ignore_ascii_case("DATE")
+}
+
+fn is_numwords_field(instr: &str) -> bool {
+    field_first_token(instr).eq_ignore_ascii_case("NUMWORDS")
 }
 
 fn ref_copies_bookmark_text(instr: &str) -> bool {
@@ -5607,6 +5644,12 @@ fn finish_field(ctx: &RunCollect<'_>, runs: &mut Vec<TextRun>) {
         runs.push(field_run(date_field_text(&ctx.field_instr), ctx.base));
         return;
     }
+    if is_numwords_field(&ctx.field_instr) {
+        let mut run = field_run(String::new(), ctx.base);
+        run.field = FieldKind::NumWords;
+        runs.push(run);
+        return;
+    }
     if let Some(name) = ctx.ref_name.as_ref() {
         let mut run = field_run(String::new(), ctx.base);
         run.ref_name = Some(name.clone());
@@ -5840,6 +5883,7 @@ fn collect_runs_rec(
                 ctx.field_emitted = true;
             }
             let rev = mark != RevMark::None;
+            let numwords = is_numwords_field(&ctx.field_instr);
             if style.small_caps {
                 let mut first = true;
                 for (piece, st) in small_caps_pieces(&text, &style) {
@@ -5848,6 +5892,9 @@ fn collect_runs_rec(
                     run.pageref.clone_from(&pageref);
                     run.ref_name.clone_from(&ref_name);
                     run.ref_copy_text = ref_copy_text;
+                    if numwords {
+                        run.field = FieldKind::NumWords;
+                    }
                     if first {
                         run.comments.clone_from(&pending);
                         first = false;
@@ -5860,6 +5907,9 @@ fn collect_runs_rec(
                 run.pageref = pageref;
                 run.ref_name = ref_name;
                 run.ref_copy_text = ref_copy_text;
+                if numwords {
+                    run.field = FieldKind::NumWords;
+                }
                 run.comments = pending;
                 runs.push(run);
             }
@@ -8179,6 +8229,8 @@ fn collect_hf_rec(
         let up = scan.instr.to_ascii_uppercase();
         if up.contains("NUMPAGES") {
             scan.kind = Some(FieldKind::NumPages);
+        } else if up.contains("NUMWORDS") {
+            scan.kind = Some(FieldKind::NumWords);
         } else if up.contains("PAGE") {
             scan.kind = Some(FieldKind::Page);
         }
@@ -8330,6 +8382,8 @@ struct Layout<'a> {
     known_bookmarks: HashSet<String>,
     /// Bookmarked paragraph text for `REF` (xml leftover).
     bookmark_texts: HashMap<String, String>,
+    /// Live `NUMWORDS` count (body tokens, excluding NUMWORDS results).
+    word_count: u32,
     footnotes: FootnoteCatalog,
     page_fn_ids: Vec<String>,
 }
@@ -8448,6 +8502,7 @@ impl<'a> Layout<'a> {
             pageref_ops: Vec::new(),
             known_bookmarks: HashSet::new(),
             bookmark_texts: HashMap::new(),
+            word_count: 0,
             footnotes: FootnoteCatalog::default(),
             page_fn_ids: Vec::new(),
         };
@@ -9135,7 +9190,12 @@ impl<'a> Layout<'a> {
         wrap_right: f32,
         inset_h: f32,
     ) {
-        let rewritten = apply_field_results(runs, &self.known_bookmarks, &self.bookmark_texts);
+        let rewritten = apply_field_results(
+            runs,
+            &self.known_bookmarks,
+            &self.bookmark_texts,
+            self.word_count,
+        );
         let runs = rewritten.as_slice();
         self.note_chapter_heading(style);
         self.last_style_id.clone_from(&style.style_id);
@@ -12824,6 +12884,7 @@ impl<'a> Layout<'a> {
                     FieldKind::None => {}
                     FieldKind::Page => out.text = page.clone(),
                     FieldKind::NumPages => out.text = NUMPAGES_MARK.into(),
+                    FieldKind::NumWords => out.text = self.word_count.to_string(),
                 }
                 out
             })
@@ -13212,6 +13273,7 @@ fn layout(
     lay.footnotes = footnotes;
     lay.known_bookmarks = document_bookmark_names(blocks);
     lay.bookmark_texts = document_bookmark_texts(blocks);
+    lay.word_count = document_word_count(blocks);
     if blocks.is_empty() {
         lay.current().ops.push(Op::text(
             FaceId::CarlitoRegular,
@@ -16416,6 +16478,8 @@ mod field_tests {
         assert!(!ref_copies_bookmark_text(" REF _HereRef \\w \\h "));
         assert!(is_date_field(" DATE \\@ \"yyyy\" "));
         assert!(!is_date_field("CREATEDATE"));
+        assert!(is_numwords_field(" NUMWORDS "));
+        assert!(!is_numwords_field("NUMPAGES"));
     }
 
     #[test]
