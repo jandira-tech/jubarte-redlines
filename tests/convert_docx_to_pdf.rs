@@ -159,12 +159,22 @@ fn minimal_docx_with_settings(body: &str, settings: &str) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
-fn minimal_docx_with_core_props(body: &str, created: &str, printed: &str) -> Vec<u8> {
+fn minimal_docx_with_core_props(
+    body: &str,
+    created: &str,
+    printed: &str,
+    modified: &str,
+) -> Vec<u8> {
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
          <w:body>{body}</w:body></w:document>"
     );
+    let modified_el = if modified.is_empty() {
+        String::new()
+    } else {
+        format!("<dcterms:modified xsi:type=\"dcterms:W3CDTF\">{modified}</dcterms:modified>")
+    };
     let core = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <cp:coreProperties \
@@ -173,6 +183,7 @@ fn minimal_docx_with_core_props(body: &str, created: &str, printed: &str) -> Vec
            xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\
            <dcterms:created xsi:type=\"dcterms:W3CDTF\">{created}</dcterms:created>\
            <cp:lastPrinted>{printed}</cp:lastPrinted>\
+           {modified_el}\
          </cp:coreProperties>"
     );
     let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
@@ -13504,6 +13515,7 @@ fn time_createdate_printdate_fields_paint_word_results() {
         body,
         "2018-07-04T15:30:00Z",
         "2019-11-22T08:00:00Z",
+        "",
     ))
     .expect("convert TIME/CREATEDATE/PRINTDATE");
     let text = pdf_winansi_text(&pdf);
@@ -13544,6 +13556,57 @@ fn time_createdate_printdate_fields_paint_word_results() {
     assert!(
         text.contains("CachedPd") && text.contains("1 January 2017"),
         "cached PRINTDATE must keep the stored result; text={text}"
+    );
+}
+
+#[test]
+fn savedate_field_paints_core_modified() {
+    // xml leftover: SAVEDATE (ECMA-376 17.16.5.64). DATE/TIME/CREATEDATE/
+    // PRINTDATE already ship; last-saved was cache-only. Uncached reads
+    // dcterms:modified; cached w:t is kept.
+    let body = "<w:p>\
+           <w:r><w:t xml:space=\"preserve\">SavedDx </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> SAVEDATE \\@ \"yyyy\" </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:r><w:t xml:space=\"preserve\">CachedSd </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> SAVEDATE \\@ \"d MMMM yyyy\" </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+           <w:r><w:t>9 May 2021</w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_core_props(
+        body,
+        "2018-07-04T15:30:00Z",
+        "2019-11-22T08:00:00Z",
+        "2021-05-09T12:00:00Z",
+    ))
+    .expect("convert SAVEDATE");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("SavedDx"),
+        "uncached SAVEDATE paragraph must paint; text={text}"
+    );
+    assert!(
+        !text.contains("SAVEDATE"),
+        "SAVEDATE instrText must not leak; text={text}"
+    );
+    let after = text.split("SavedDx").nth(1).unwrap_or("").trim_start();
+    let year: String = after.chars().take(4).collect();
+    assert_eq!(
+        year, "2021",
+        "uncached SAVEDATE \\@ yyyy is core.xml modified; year={year:?} text={text}"
+    );
+    assert!(
+        text.contains("CachedSd") && text.contains("9 May 2021"),
+        "cached SAVEDATE must keep the stored result; text={text}"
     );
 }
 
