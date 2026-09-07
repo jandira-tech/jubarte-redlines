@@ -463,6 +463,11 @@ enum PageNumFmt {
     Hex,
     Chicago,
     IdeographDigital,
+    IdeographTraditional,
+    IdeographZodiac,
+    IdeographZodiacTraditional,
+    IdeographLegalTraditional,
+    IdeographEnclosedCircle,
 }
 
 struct NamedStyle {
@@ -2598,6 +2603,11 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "hex" => PageNumFmt::Hex,
             "chicago" => PageNumFmt::Chicago,
             "ideographDigital" => PageNumFmt::IdeographDigital,
+            "ideographTraditional" => PageNumFmt::IdeographTraditional,
+            "ideographZodiac" => PageNumFmt::IdeographZodiac,
+            "ideographZodiacTraditional" => PageNumFmt::IdeographZodiacTraditional,
+            "ideographLegalTraditional" => PageNumFmt::IdeographLegalTraditional,
+            "ideographEnclosedCircle" => PageNumFmt::IdeographEnclosedCircle,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -2745,6 +2755,11 @@ enum NumFmt {
     Hex,
     Chicago,
     IdeographDigital,
+    IdeographTraditional,
+    IdeographZodiac,
+    IdeographZodiacTraditional,
+    IdeographLegalTraditional,
+    IdeographEnclosedCircle,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -2993,6 +3008,11 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "hex" => NumFmt::Hex,
         "chicago" => NumFmt::Chicago,
         "ideographDigital" => NumFmt::IdeographDigital,
+        "ideographTraditional" => NumFmt::IdeographTraditional,
+        "ideographZodiac" => NumFmt::IdeographZodiac,
+        "ideographZodiacTraditional" => NumFmt::IdeographZodiacTraditional,
+        "ideographLegalTraditional" => NumFmt::IdeographLegalTraditional,
+        "ideographEnclosedCircle" => NumFmt::IdeographEnclosedCircle,
         _ => NumFmt::Decimal,
     }
 }
@@ -3007,6 +3027,11 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::Hex => format!("{n:X}"),
         NumFmt::Chicago => chicago_label(n),
         NumFmt::IdeographDigital => ideograph_digital_label(n),
+        NumFmt::IdeographTraditional => cycle_cjk(&IDEOGRAPH_STEMS, n),
+        NumFmt::IdeographZodiac => cycle_cjk(&IDEOGRAPH_BRANCHES, n),
+        NumFmt::IdeographZodiacTraditional => ideograph_zodiac_traditional_label(n),
+        NumFmt::IdeographLegalTraditional => ideograph_legal_traditional_label(n),
+        NumFmt::IdeographEnclosedCircle => ideograph_enclosed_circle_label(n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -3143,6 +3168,53 @@ fn ideograph_digital_label(n: u32) -> String {
         x /= 10;
     }
     buf.iter().rev().collect()
+}
+
+/// Heavenly stems. [MS-DOCX] ideographTraditional: U+7532, U+4E59, U+4E19, …
+const IDEOGRAPH_STEMS: [char; 10] = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸'];
+/// Earthly branches. [MS-DOCX] ideographZodiac: U+5B50, U+4E11, U+5BC5, …
+const IDEOGRAPH_BRANCHES: [char; 12] = [
+    '子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥',
+];
+/// Traditional legal digits 1–10. [MS-DOCX] U+58F9, U+8CB3, U+53C3, …
+const IDEOGRAPH_LEGAL: [char; 10] = ['壹', '貳', '參', '肆', '伍', '陸', '柒', '捌', '玖', '拾'];
+
+fn cycle_cjk(chars: &[char], n: u32) -> String {
+    let i = n.saturating_sub(1) as usize % chars.len();
+    chars[i].to_string()
+}
+
+fn ideograph_zodiac_traditional_label(n: u32) -> String {
+    let i = n.saturating_sub(1) as usize;
+    format!("{}{}", IDEOGRAPH_STEMS[i % 10], IDEOGRAPH_BRANCHES[i % 12])
+}
+
+fn ideograph_legal_traditional_label(n: u32) -> String {
+    match n {
+        0 => "零".into(),
+        1..=10 => IDEOGRAPH_LEGAL[(n - 1) as usize].to_string(),
+        11..=19 => format!("拾{}", IDEOGRAPH_LEGAL[(n - 11) as usize]),
+        20..=99 => {
+            let tens = n / 10;
+            let ones = n % 10;
+            let mut s = format!("{}拾", IDEOGRAPH_LEGAL[(tens - 1) as usize]);
+            if ones > 0 {
+                s.push(IDEOGRAPH_LEGAL[(ones - 1) as usize]);
+            }
+            s
+        }
+        n => n.to_string(),
+    }
+}
+
+fn ideograph_enclosed_circle_label(n: u32) -> String {
+    // U+3220..=U+3229 are ㈠–㈩. After 10, ECMA allows unenclosed digits.
+    const ENCLOSED: [char; 10] = ['㈠', '㈡', '㈢', '㈣', '㈤', '㈥', '㈦', '㈧', '㈨', '㈩'];
+    if (1..=10).contains(&n) {
+        ENCLOSED[(n - 1) as usize].to_string()
+    } else {
+        ideograph_digital_label(n)
+    }
 }
 
 fn alpha_label(mut n: u32, upper: bool) -> String {
@@ -13514,6 +13586,19 @@ impl<'a> Layout<'a> {
             PageNumFmt::Hex => format_num(NumFmt::Hex, self.section_page),
             PageNumFmt::Chicago => format_num(NumFmt::Chicago, self.section_page),
             PageNumFmt::IdeographDigital => format_num(NumFmt::IdeographDigital, self.section_page),
+            PageNumFmt::IdeographTraditional => {
+                format_num(NumFmt::IdeographTraditional, self.section_page)
+            }
+            PageNumFmt::IdeographZodiac => format_num(NumFmt::IdeographZodiac, self.section_page),
+            PageNumFmt::IdeographZodiacTraditional => {
+                format_num(NumFmt::IdeographZodiacTraditional, self.section_page)
+            }
+            PageNumFmt::IdeographLegalTraditional => {
+                format_num(NumFmt::IdeographLegalTraditional, self.section_page)
+            }
+            PageNumFmt::IdeographEnclosedCircle => {
+                format_num(NumFmt::IdeographEnclosedCircle, self.section_page)
+            }
         }
     }
 
@@ -16935,7 +17020,11 @@ mod character_spacing_tests {
 
 #[cfg(test)]
 mod page_num_fmt_labels {
-    use super::{NumFmt, chicago_label, format_num, ideograph_digital_label};
+    use super::{
+        NumFmt, chicago_label, format_num, ideograph_digital_label,
+        ideograph_enclosed_circle_label, ideograph_legal_traditional_label,
+        ideograph_zodiac_traditional_label,
+    };
 
     #[test]
     fn hex_is_uppercase() {
@@ -16955,6 +17044,41 @@ mod page_num_fmt_labels {
         assert_eq!(ideograph_digital_label(1), "一");
         assert_eq!(ideograph_digital_label(10), "一〇");
         assert_eq!(ideograph_digital_label(12), "一二");
+    }
+
+    #[test]
+    fn ideograph_traditional_is_heavenly_stems() {
+        assert_eq!(format_num(NumFmt::IdeographTraditional, 1), "甲");
+        assert_eq!(format_num(NumFmt::IdeographTraditional, 2), "乙");
+        assert_eq!(format_num(NumFmt::IdeographTraditional, 11), "甲");
+    }
+
+    #[test]
+    fn ideograph_zodiac_is_earthly_branches() {
+        assert_eq!(format_num(NumFmt::IdeographZodiac, 1), "子");
+        assert_eq!(format_num(NumFmt::IdeographZodiac, 3), "寅");
+        assert_eq!(format_num(NumFmt::IdeographZodiac, 13), "子");
+    }
+
+    #[test]
+    fn ideograph_zodiac_traditional_is_sexagenary() {
+        assert_eq!(ideograph_zodiac_traditional_label(1), "甲子");
+        assert_eq!(ideograph_zodiac_traditional_label(2), "乙丑");
+    }
+
+    #[test]
+    fn ideograph_legal_traditional_is_financial_forms() {
+        assert_eq!(ideograph_legal_traditional_label(1), "壹");
+        assert_eq!(ideograph_legal_traditional_label(2), "貳");
+        assert_eq!(ideograph_legal_traditional_label(10), "拾");
+        assert_eq!(ideograph_legal_traditional_label(11), "拾壹");
+    }
+
+    #[test]
+    fn ideograph_enclosed_circle_is_parenthesized() {
+        assert_eq!(ideograph_enclosed_circle_label(1), "㈠");
+        assert_eq!(ideograph_enclosed_circle_label(2), "㈡");
+        assert_eq!(ideograph_enclosed_circle_label(11), "一一");
     }
 }
 

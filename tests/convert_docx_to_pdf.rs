@@ -8205,6 +8205,73 @@ fn page_field_uses_sectpr_ideograph_digital() {
     );
 }
 
+fn page_num_fmt_pdf(fmt: &str, start: u32, marker: &str) -> Vec<u8> {
+    let footer = page_footer_xml();
+    let body = format!(
+        "<w:p><w:r><w:t>{marker}</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:footer=\"720\"/>\
+           <w:pgNumType w:fmt=\"{fmt}\" w:start=\"{start}\"/>\
+         </w:sectPr>"
+    );
+    docx_to_pdf(&hf_docx(
+        &body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer)],
+    ))
+    .unwrap_or_else(|_| panic!("convert {fmt} PAGE"))
+}
+
+fn assert_ideograph_page_is_cid_not_decimal(fmt: &str, marker: &str) {
+    let pdf = page_num_fmt_pdf(fmt, 1, marker);
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "1"),
+        "{fmt} PAGE must not stay decimal 1; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "{fmt} PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_ideograph_traditional() {
+    // MS-DOCX: ideographTraditional start=1 is 甲 (U+7532), not decimal.
+    assert_ideograph_page_is_cid_not_decimal("ideographTraditional", "PgItX");
+}
+
+#[test]
+fn page_field_uses_sectpr_ideograph_zodiac() {
+    // MS-DOCX: ideographZodiac start=1 is 子 (U+5B50).
+    assert_ideograph_page_is_cid_not_decimal("ideographZodiac", "PgIzX");
+}
+
+#[test]
+fn page_field_uses_sectpr_ideograph_zodiac_traditional() {
+    // MS-DOCX: ideographZodiacTraditional start=1 is 甲子.
+    assert_ideograph_page_is_cid_not_decimal("ideographZodiacTraditional", "PgIztX");
+}
+
+#[test]
+fn page_field_uses_sectpr_ideograph_legal_traditional() {
+    // MS-DOCX: ideographLegalTraditional start=1 is 壹 (U+58F9).
+    assert_ideograph_page_is_cid_not_decimal("ideographLegalTraditional", "PgIlX");
+}
+
+#[test]
+fn page_field_uses_sectpr_ideograph_enclosed_circle() {
+    // MS-DOCX / MS-OE376: ideographEnclosedCircle is parenthesized
+    // ideographs ㈠ (U+3220), not decimal 1. After 10, unenclosed digits.
+    assert_ideograph_page_is_cid_not_decimal("ideographEnclosedCircle", "PgIeX");
+}
+
 #[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
