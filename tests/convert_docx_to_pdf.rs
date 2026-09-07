@@ -13725,6 +13725,41 @@ fn space_for_ul_adds_descent_under_east_asian_underline() {
 }
 
 #[test]
+fn sectpr_doc_grid_lines_snaps_line_box_to_pitch() {
+    // xml leftover: sectPr w:docGrid type=lines (ECMA-376 17.6.5).
+    // linePitch 576 twips = 28.8pt. Two 11pt body lines must sit on
+    // that grid, not the natural ~13.4pt box.
+    let body = "<w:p>\
+           <w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:t>J</w:t></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:t>Q</w:t></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+           <w:docGrid w:type=\"lines\" w:linePitch=\"576\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("convert docGrid");
+    let hay = String::from_utf8_lossy(&pdf);
+    let jy = pdf_cm_tj_xy(&hay, "J")
+        .first()
+        .map(|(_, y)| *y)
+        .expect("marker J");
+    let qy = pdf_cm_tj_xy(&hay, "Q")
+        .first()
+        .map(|(_, y)| *y)
+        .expect("marker Q");
+    let gap = jy - qy;
+    assert!(
+        gap > 24.0,
+        "docGrid type=lines linePitch=576 must snap to ~28.8pt, not natural ~13.4; gap={gap}"
+    );
+}
+
+#[test]
 fn decimal_and_bar_tabs_place_ink() {
     // xml leftover: w:tab val=decimal / bar (ECMA-376 17.3.1.38 ST_TabJc).
     // Decimal currently falls through to left; bar is skipped in parse.
