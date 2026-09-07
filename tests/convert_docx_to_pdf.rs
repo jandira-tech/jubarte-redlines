@@ -13611,6 +13611,42 @@ fn savedate_field_paints_core_modified() {
 }
 
 #[test]
+fn sectpr_ln_num_type_paints_margin_line_numbers() {
+    // xml leftover: sectPr w:lnNumType (ECMA-376 17.6.8). countBy=1
+    // start=1 paints 1 and 2 in the left margin, left of the body.
+    let body = "<w:p><w:r><w:t>LnOneX</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>LnTwoX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+           <w:lnNumType w:countBy=\"1\" w:start=\"1\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("convert lnNumType");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("LnOneX") && text.contains("LnTwoX"),
+        "body lines must paint; text={text}"
+    );
+    assert!(
+        text.contains('1') && text.contains('2'),
+        "lnNumType countBy=1 must paint line numbers 1 and 2; text={text}"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    let ones = pdf_cm_tj_xy(&hay, "1");
+    let ells = pdf_cm_tj_xy(&hay, "L");
+    assert!(
+        !ones.is_empty() && !ells.is_empty(),
+        "line number and LnOneX must both emit; ones={ones:?} ells={ells:?}"
+    );
+    let one_x = ones.iter().map(|(x, _)| *x).fold(f32::INFINITY, f32::min);
+    let ell_x = ells.iter().map(|(x, _)| *x).fold(f32::INFINITY, f32::min);
+    assert!(
+        one_x < ell_x - 4.0,
+        "line number 1 must sit left of LnOneX; one_x={one_x} ell_x={ell_x}"
+    );
+}
+
+#[test]
 fn decimal_and_bar_tabs_place_ink() {
     // xml leftover: w:tab val=decimal / bar (ECMA-376 17.3.1.38 ST_TabJc).
     // Decimal currently falls through to left; bar is skipped in parse.
