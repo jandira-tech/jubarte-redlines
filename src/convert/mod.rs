@@ -839,6 +839,8 @@ struct SectionChrome {
     mirror_margins: bool,
     /// `w:characterSpacingControl` (xml leftover, document-level).
     character_spacing: CharacterSpacing,
+    /// `w:compat/w:ulTrailSpace` (xml leftover).
+    ul_trail_space: bool,
 }
 
 /// ECMA-376 17.15.1.18 / ST_CharacterSpacing. Omitted = `doNotCompress`.
@@ -3195,6 +3197,18 @@ fn settings_mirror_margins(pkg: &PartFs) -> bool {
 
 /// `w:characterSpacingControl/@w:val`. Longer token first: `compressPunctuation`
 /// is a prefix of `compressPunctuationAndJapaneseKana`.
+/// `w:compat/w:ulTrailSpace`: underline trailing spaces (ECMA-376 17.15.3.63).
+/// Omitted → off. Present (default on) paints the pad Word otherwise skips.
+fn settings_ul_trail_space(pkg: &PartFs) -> bool {
+    let Some(xml) = pkg.part_string("word/settings.xml") else {
+        return false;
+    };
+    xml.contains("ulTrailSpace")
+        && !xml.contains("ulTrailSpace w:val=\"0\"")
+        && !xml.contains("ulTrailSpace w:val=\"false\"")
+        && !xml.contains("ulTrailSpace w:val=\"off\"")
+}
+
 fn settings_character_spacing(pkg: &PartFs) -> CharacterSpacing {
     let Some(xml) = pkg.part_string("word/settings.xml") else {
         return CharacterSpacing::DoNotCompress;
@@ -3674,6 +3688,7 @@ fn section_chrome(
         footer_tables: footer.start.tables,
         mirror_margins: settings_mirror_margins(pkg),
         character_spacing: settings_character_spacing(pkg),
+        ul_trail_space: settings_ul_trail_space(pkg),
     }
 }
 
@@ -7959,6 +7974,8 @@ struct HfChrome {
     mirror_margins: bool,
     character_spacing: CharacterSpacing,
     page_background: Option<[f32; 3]>,
+    /// `w:compat/w:ulTrailSpace` (xml leftover).
+    ul_trail_space: bool,
 }
 
 fn first_section_hf(
@@ -7976,6 +7993,7 @@ fn first_section_hf(
     else {
         return HfChrome {
             page_background,
+            ul_trail_space: settings_ul_trail_space(pkg),
             ..Default::default()
         };
     };
@@ -8006,6 +8024,7 @@ fn first_section_hf(
         mirror_margins: settings_mirror_margins(pkg),
         character_spacing: settings_character_spacing(pkg),
         page_background,
+        ul_trail_space: settings_ul_trail_space(pkg),
     }
 }
 
@@ -8607,6 +8626,8 @@ struct Layout<'a> {
     mirror_margins: bool,
     character_spacing: CharacterSpacing,
     page_background: Option<[f32; 3]>,
+    /// `w:compat/w:ulTrailSpace`: underline trailing spaces even in cells.
+    ul_trail_space: bool,
     /// Current newspaper column (0-based) when `page.col_count` > 1.
     col_i: u8,
     margin_l0: f32,
@@ -8742,6 +8763,7 @@ impl<'a> Layout<'a> {
             mirror_margins: hf.mirror_margins,
             character_spacing: hf.character_spacing,
             page_background: hf.page_background,
+            ul_trail_space: hf.ul_trail_space,
             col_i: 0,
             margin_l0: page.margin_l,
             margin_r0: page.margin_r,
@@ -8771,6 +8793,7 @@ impl<'a> Layout<'a> {
         self.page = next.page;
         self.mirror_margins = next.mirror_margins;
         self.character_spacing = next.character_spacing;
+        self.ul_trail_space = next.ul_trail_space;
         self.margin_l0 = next.page.margin_l;
         self.margin_r0 = next.page.margin_r;
         if !self.page_has_body {
@@ -10199,7 +10222,7 @@ impl<'a> Layout<'a> {
         // does carry a revision mark through generator padding, so a body
         // `w:ins` of `fresh` + 12 spaces underlines the whole pad. Trimming
         // there collapsed the mark to the tight width.
-        let ink_w = if self.clip_right.is_none() {
+        let ink_w = if self.clip_right.is_none() || self.ul_trail_space {
             w
         } else {
             let ink_n = run.text.trim_end().chars().count();

@@ -13647,6 +13647,43 @@ fn sectpr_ln_num_type_paints_margin_line_numbers() {
 }
 
 #[test]
+fn ul_trail_space_underlines_trailing_spaces_in_a_cell() {
+    // xml leftover: w:compat/w:ulTrailSpace (ECMA-376 17.15.3.63).
+    // Default Word underlines ink only in a cell (KEEP
+    // table_cell_underline_stops_at_ink_not_xml_space_padding). The
+    // flag paints the trailing xml:space pad as well, still clipped
+    // at the cell edge.
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"4680\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"4680\"/></w:tblGrid>\
+           <w:tr><w:tc><w:p>\
+             <w:r><w:rPr><w:color w:val=\"FF0000\"/><w:u w:val=\"single\"/></w:rPr>\
+               <w:t xml:space=\"preserve\">UlTx                        </w:t></w:r>\
+           </w:p></w:tc></w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(
+        body,
+        "<w:compat><w:ulTrailSpace/></w:compat>",
+    ))
+    .expect("convert ulTrailSpace");
+    let text = pdf_winansi_text(&pdf);
+    assert!(text.contains("UlTx"), "cell ink must paint; text={text}");
+    let hair: Vec<_> = pdf_fill_rects(&pdf, 1.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(w, h)| *h > 0.0 && *h < 1.6 && *w > 4.0)
+        .collect();
+    assert!(
+        !hair.is_empty(),
+        "UlTx must fill a red underline; hair={hair:?}"
+    );
+    let max_w = hair.iter().map(|(w, _)| *w).fold(0.0_f32, f32::max);
+    assert!(
+        max_w > 70.0,
+        "ulTrailSpace must underline trailing spaces (~4 letters + 24 spaces), not ink-only ~25pt; max_w={max_w} hair={hair:?}"
+    );
+}
+
+#[test]
 fn decimal_and_bar_tabs_place_ink() {
     // xml leftover: w:tab val=decimal / bar (ECMA-376 17.3.1.38 ST_TabJc).
     // Decimal currently falls through to left; bar is skipped in parse.
