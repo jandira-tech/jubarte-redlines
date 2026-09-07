@@ -946,6 +946,8 @@ struct LaidImage {
     z: u32,
     /// `a:srcRect` l/t/r/b as 0..1 of the source (xml 3.4 ckpt 3).
     crop: Option<[f32; 4]>,
+    /// `a:xfrm/@rot` degrees (60000ths in OOXML). 0 = unrotated.
+    rotate_deg: f32,
 }
 
 struct LaidTextBox {
@@ -4363,6 +4365,7 @@ fn paragraph_block(
                 behind: false,
                 z: 0,
                 crop: None,
+                rotate_deg: 0.0,
             },
         );
     }
@@ -7239,6 +7242,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         behind,
                         z,
                         crop: src_rect_frac(dom, drawing),
+                        rotate_deg: drawing_rotate_deg(dom, drawing),
                     });
                 } else {
                     out.push(LaidImage {
@@ -7249,6 +7253,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         behind,
                         z,
                         crop: None,
+                        rotate_deg: drawing_rotate_deg(dom, drawing),
                     });
                 }
             }
@@ -7278,6 +7283,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         behind: false,
                         z: 0,
                         crop: None,
+                        rotate_deg: 0.0,
                     });
                     continue;
                 };
@@ -7291,6 +7297,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     behind: false,
                     z: 0,
                     crop: None,
+                    rotate_deg: 0.0,
                 });
             }
         }
@@ -7318,6 +7325,18 @@ fn src_rect_frac(dom: &Dom, drawing: NodeId) -> Option<[f32; 4]> {
     } else {
         Some([l, t, r, b])
     }
+}
+
+/// `a:xfrm/@rot` is 60000ths of a degree (ECMA-376 20.1.7.6).
+fn drawing_rotate_deg(dom: &Dom, drawing: NodeId) -> f32 {
+    for xfrm in descendants_local(dom, drawing, "xfrm") {
+        if let Some(rot) = attr_any(dom, xfrm, "rot")
+            && let Ok(emu) = rot.parse::<f32>()
+        {
+            return emu / 60_000.0;
+        }
+    }
+    0.0
 }
 
 fn drawing_extent_pt(dom: &Dom, drawing: NodeId) -> (f32, f32) {
@@ -10718,6 +10737,7 @@ impl<'a> Layout<'a> {
                 bytes: bytes.clone(),
                 components: *components,
                 crop: img.crop,
+                rotate_deg: img.rotate_deg,
             }),
             ImageKind::Rgb {
                 width,
@@ -10734,6 +10754,7 @@ impl<'a> Layout<'a> {
                 bytes: bytes.clone(),
                 alpha: alpha.clone(),
                 crop: img.crop,
+                rotate_deg: img.rotate_deg,
             }),
             ImageKind::Reserve => {}
             ImageKind::Broken => self.current().ops.push(Op::StrokeRect {
@@ -10771,6 +10792,7 @@ impl<'a> Layout<'a> {
                 bytes: bytes.clone(),
                 components: *components,
                 crop: img.crop,
+                rotate_deg: img.rotate_deg,
             }),
             ImageKind::Rgb {
                 width,
@@ -10787,6 +10809,7 @@ impl<'a> Layout<'a> {
                 bytes: bytes.clone(),
                 alpha: alpha.clone(),
                 crop: img.crop,
+                rotate_deg: img.rotate_deg,
             }),
             ImageKind::Reserve => {}
             ImageKind::Broken => self.current().ops.push(Op::StrokeRect {

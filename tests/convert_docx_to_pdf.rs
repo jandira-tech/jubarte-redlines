@@ -1356,6 +1356,35 @@ fn png_alpha_emits_smask() {
 }
 
 #[test]
+fn xfrm_rot_ninety_rotates_image_cm() {
+    // xml leftover / media rotation: pic:spPr a:xfrm/@rot is 60000ths of a
+    // degree (ECMA-376 20.1.7.6). 5400000 = 90°. Unrotated paint is
+    // `q dw 0 0 dh x y cm`; Word rotates about the extent centre.
+    let drawing = "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+           <wp:extent cx=\"137160\" cy=\"137160\"/>\
+           <wp:docPr id=\"1\" name=\"Picture 0\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+             <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+               <pic:spPr><a:xfrm rot=\"5400000\">\
+                 <a:off x=\"0\" y=\"0\"/><a:ext cx=\"137160\" cy=\"137160\"/>\
+               </a:xfrm></pic:spPr></pic:pic>\
+           </a:graphicData></a:graphic>\
+         </wp:inline></w:drawing>";
+    let pdf = docx_to_pdf(&drawing_docx(&format!(
+        "<w:p><w:r>{drawing}</w:r></w:p><w:sectPr/>"
+    )))
+    .expect("convert xfrm rot");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("0.0000 1.0000 -1.0000 0.0000"),
+        "90° a:xfrm rot must emit a rotation cm about the image centre; snippet {}",
+        text.split("/Im")
+            .nth(1)
+            .unwrap_or(&text[text.len().saturating_sub(240)..])
+    );
+}
+
+#[test]
 fn page_float_blip_keeps_xml_extent_when_wider_than_page() {
     // image_out_of_folder DeepL banner: 10690522×807396 EMU = 841.77×63.57
     // on A4 (595.3pt). Word paints the overflow (clipped by the page);
