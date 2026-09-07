@@ -846,6 +846,8 @@ struct SectionChrome {
     ul_trail_space: bool,
     /// `w:compat/w:spaceForUL` (xml leftover).
     space_for_ul: bool,
+    /// `w:compat/w:doNotExpandShiftReturn` (xml leftover).
+    do_not_expand_shift_return: bool,
 }
 
 /// ECMA-376 17.15.1.18 / ST_CharacterSpacing. Omitted = `doNotCompress`.
@@ -3247,6 +3249,18 @@ fn space_for_ul_extra(size: f32) -> f32 {
     (size * 0.03).max(2.0)
 }
 
+/// `w:compat/w:doNotExpandShiftReturn` (ECMA-376 17.15.3.10).
+/// Present: a justified line ending at `w:br` is not expanded.
+fn settings_do_not_expand_shift_return(pkg: &PartFs) -> bool {
+    let Some(xml) = pkg.part_string("word/settings.xml") else {
+        return false;
+    };
+    xml.contains("doNotExpandShiftReturn")
+        && !xml.contains("doNotExpandShiftReturn w:val=\"0\"")
+        && !xml.contains("doNotExpandShiftReturn w:val=\"false\"")
+        && !xml.contains("doNotExpandShiftReturn w:val=\"off\"")
+}
+
 fn line_has_underlined_cjk(line: &[TextRun]) -> bool {
     line.iter()
         .any(|r| r.style.underline && r.text.chars().any(is_cjk))
@@ -3735,6 +3749,7 @@ fn section_chrome(
         character_spacing: settings_character_spacing(pkg),
         ul_trail_space: settings_ul_trail_space(pkg),
         space_for_ul: settings_space_for_ul(pkg),
+        do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
     }
 }
 
@@ -8024,6 +8039,8 @@ struct HfChrome {
     ul_trail_space: bool,
     /// `w:compat/w:spaceForUL` (xml leftover).
     space_for_ul: bool,
+    /// `w:compat/w:doNotExpandShiftReturn` (xml leftover).
+    do_not_expand_shift_return: bool,
 }
 
 fn first_section_hf(
@@ -8043,6 +8060,7 @@ fn first_section_hf(
             page_background,
             ul_trail_space: settings_ul_trail_space(pkg),
             space_for_ul: settings_space_for_ul(pkg),
+            do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
             ..Default::default()
         };
     };
@@ -8075,6 +8093,7 @@ fn first_section_hf(
         page_background,
         ul_trail_space: settings_ul_trail_space(pkg),
         space_for_ul: settings_space_for_ul(pkg),
+        do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
     }
 }
 
@@ -8680,6 +8699,8 @@ struct Layout<'a> {
     ul_trail_space: bool,
     /// `w:compat/w:spaceForUL`: extra descent under underlined CJK.
     space_for_ul: bool,
+    /// `w:compat/w:doNotExpandShiftReturn`: do not justify a `w:br` line.
+    do_not_expand_shift_return: bool,
     /// Current newspaper column (0-based) when `page.col_count` > 1.
     col_i: u8,
     margin_l0: f32,
@@ -8817,6 +8838,7 @@ impl<'a> Layout<'a> {
             page_background: hf.page_background,
             ul_trail_space: hf.ul_trail_space,
             space_for_ul: hf.space_for_ul,
+            do_not_expand_shift_return: hf.do_not_expand_shift_return,
             col_i: 0,
             margin_l0: page.margin_l,
             margin_r0: page.margin_r,
@@ -8848,6 +8870,7 @@ impl<'a> Layout<'a> {
         self.character_spacing = next.character_spacing;
         self.ul_trail_space = next.ul_trail_space;
         self.space_for_ul = next.space_for_ul;
+        self.do_not_expand_shift_return = next.do_not_expand_shift_return;
         self.margin_l0 = next.page.margin_l;
         self.margin_r0 = next.page.margin_r;
         if !self.page_has_body {
@@ -9562,12 +9585,14 @@ impl<'a> Layout<'a> {
         // not run under the float (Strict01 / ole / image_out).
         let width = (self.content_width() - indent - style.indent_right - wrap_right).max(40.0);
         let full_width = (self.content_width() - indent - style.indent_right).max(40.0);
-        let mut lines = self.wrap_para_runs(body, style, indent, marker.is_some(), width, list);
+        let (mut lines, mut ends_br) =
+            self.wrap_para_runs(body, style, indent, marker.is_some(), width, list);
         if inset_h > 0.5
             && wrap_right > 0.5
             && self.tab_stops.iter().all(|t| t.align != TabAlign::Right)
         {
             lines = self.reflow_past_float(lines, style, full_width, inset_h);
+            ends_br = vec![false; lines.len()];
         }
         for (line_i, line) in lines.iter().enumerate() {
             // Layout uses the authored point size so line boxes stay on
@@ -9637,7 +9662,8 @@ impl<'a> Layout<'a> {
             let justify_left = (width - (line_w - trail).max(0.0)).max(0.0);
             let justify = matches!(style.align, Align::Justify)
                 && line_i + 1 < lines.len()
-                && justify_left > 0.5;
+                && justify_left > 0.5
+                && !(self.do_not_expand_shift_return && ends_br.get(line_i) == Some(&true));
             let first_extra = if line_i == 0 && marker.is_none() {
                 style.indent_first
             } else {
@@ -9849,7 +9875,7 @@ impl<'a> Layout<'a> {
         has_marker: bool,
         width: f32,
         list: bool,
-    ) -> Vec<Vec<TextRun>> {
+    ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
         let list = list && !has_marker;
         let right = self
             .tab_stops
@@ -9858,10 +9884,10 @@ impl<'a> Layout<'a> {
             .rev()
             .find(|t| t.align == TabAlign::Right);
         let Some(stop) = right else {
-            return wrap_runs(self.fonts, body, width, width, list);
+            return wrap_runs_marked(self.fonts, body, width, width, list);
         };
         let Some((prefix, suffix)) = peel_trailing_tab(body) else {
-            return wrap_runs(self.fonts, body, width, width, list);
+            return wrap_runs_marked(self.fonts, body, width, width, list);
         };
         // Missing PAGEREF is Word's long Error! string, not a 9-1 page
         // number. Subtracting its width from the TOC column packed the
@@ -9937,7 +9963,8 @@ impl<'a> Layout<'a> {
         } else if let Some(last) = lines.last_mut() {
             last.extend(suffix);
         }
-        lines
+        let n = lines.len();
+        (lines, vec![false; n])
     }
 
     fn width_after_last_tab(&self, line: &[TextRun]) -> f32 {
@@ -13518,6 +13545,16 @@ fn wrap_runs(
     width: f32,
     list: bool,
 ) -> Vec<Vec<TextRun>> {
+    wrap_runs_marked(fonts, runs, first_width, width, list).0
+}
+
+fn wrap_runs_marked(
+    fonts: &Fonts,
+    runs: &[TextRun],
+    first_width: f32,
+    width: f32,
+    list: bool,
+) -> (Vec<Vec<TextRun>>, Vec<bool>) {
     let mut segments: Vec<Vec<TextRun>> = vec![Vec::new()];
     for run in runs {
         let mut parts = run.text.split('\n');
@@ -13543,14 +13580,22 @@ fn wrap_runs(
         }
     }
     let mut lines = Vec::new();
+    let mut ends_br = Vec::new();
     for (i, seg) in segments.iter().enumerate() {
         let fw = if i == 0 { first_width } else { width };
-        lines.extend(wrap_runs_segment(fonts, seg, fw, width, list && i == 0));
+        let wrapped = wrap_runs_segment(fonts, seg, fw, width, list && i == 0);
+        let more = i + 1 < segments.len();
+        let n = wrapped.len();
+        for (j, line) in wrapped.into_iter().enumerate() {
+            lines.push(line);
+            ends_br.push(more && j + 1 == n);
+        }
     }
     if lines.is_empty() {
         lines.push(vec![TextRun::new(String::new(), default_run_style())]);
+        ends_br.push(false);
     }
-    lines
+    (lines, ends_br)
 }
 
 fn wrap_runs_segment(
