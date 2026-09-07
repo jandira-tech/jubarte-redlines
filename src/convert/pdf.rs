@@ -79,6 +79,7 @@ pub(crate) enum Op {
         bytes: Vec<u8>,
         components: u8,
         crop: Option<[f32; 4]>,
+        rotate_deg: f32,
     },
     Rgb {
         x: f32,
@@ -90,6 +91,7 @@ pub(crate) enum Op {
         bytes: Vec<u8>,
         alpha: Option<Vec<u8>>,
         crop: Option<[f32; 4]>,
+        rotate_deg: f32,
     },
     /// Behind-doc Word watermark (header SDT gallery=Watermarks).
     Watermark {
@@ -549,13 +551,33 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     stream.push_str(" S\n");
                 }
                 Op::Jpeg {
-                    x, y, dw, dh, crop, ..
+                    x,
+                    y,
+                    dw,
+                    dh,
+                    crop,
+                    rotate_deg,
+                    ..
                 }
                 | Op::Rgb {
-                    x, y, dw, dh, crop, ..
+                    x,
+                    y,
+                    dw,
+                    dh,
+                    crop,
+                    rotate_deg,
+                    ..
                 } => {
                     img_counter += 1;
-                    stream.push_str(&paint_image(*x, *y, *dw, *dh, *crop, img_counter));
+                    stream.push_str(&paint_image(
+                        *x,
+                        *y,
+                        *dw,
+                        *dh,
+                        *crop,
+                        img_counter,
+                        *rotate_deg,
+                    ));
                 }
             }
         }
@@ -794,9 +816,18 @@ fn gray_xobject(width: u32, height: u32, bytes: &[u8], compress: bool) -> Vec<u8
 }
 
 /// `a:srcRect` l/t/r/b as 0..1. Scale the full image so the uncropped
-/// window fills `dw×dh`, then clip to the extent.
-fn paint_image(x: f32, y: f32, dw: f32, dh: f32, crop: Option<[f32; 4]>, n: usize) -> String {
-    match crop {
+/// window fills `dw×dh`, then clip to the extent. `a:xfrm/@rot` is applied
+/// about the extent centre (Word).
+fn paint_image(
+    x: f32,
+    y: f32,
+    dw: f32,
+    dh: f32,
+    crop: Option<[f32; 4]>,
+    n: usize,
+    rotate_deg: f32,
+) -> String {
+    let inner = match crop {
         Some([l, t, r, b]) if l + r + t + b > 0.001 => {
             let fw = (1.0 - l - r).max(0.001);
             let fh = (1.0 - t - b).max(0.001);
@@ -809,7 +840,28 @@ fn paint_image(x: f32, y: f32, dw: f32, dh: f32, crop: Option<[f32; 4]>, n: usiz
             )
         }
         _ => format!("q {dw:.2} 0 0 {dh:.2} {x:.2} {y:.2} cm /Im{n} Do Q\n"),
+    };
+    if rotate_deg.abs() < 0.05 {
+        return inner;
     }
+    let cx = x + dw * 0.5;
+    let cy = y + dh * 0.5;
+    let rad = rotate_deg.to_radians();
+    let mut cos = rad.cos();
+    let mut sin = rad.sin();
+    if cos.abs() < 1e-4 {
+        cos = 0.0;
+    }
+    if sin.abs() < 1e-4 {
+        sin = 0.0;
+    }
+    format!(
+        "q 1 0 0 1 {cx:.2} {cy:.2} cm {cos:.4} {sin:.4} {nsin:.4} {cos:.4} 0 0 cm \
+         1 0 0 1 {ncx:.2} {ncy:.2} cm {inner}Q\n",
+        nsin = -sin,
+        ncx = -cx,
+        ncy = -cy,
+    )
 }
 
 fn text_annot_obj(note: &PdfComment) -> Vec<u8> {
