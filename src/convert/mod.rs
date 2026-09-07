@@ -17,6 +17,7 @@ mod word_subst;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::namespaces::{A, M, MC, R, W, W14, WNE, WP};
 use crate::opc::PartFs;
@@ -659,6 +660,12 @@ struct TextRun {
     /// `PAGEREF _Toc…` bookmark. Cached `w:t` is a first-pass guess;
     /// Word Save-as-PDF patches it from the bookmark’s layout page.
     pageref: Option<String>,
+    /// `REF bookmark` name. Cached `w:t` is a first-pass guess;
+    /// missing names become Word's Error! Reference source not found.
+    ref_name: Option<String>,
+    /// Plain `REF` copies bookmark text. `\r`/`\n`/`\w`/`\p` keep cache
+    /// (sd_2517 numbered cross-refs).
+    ref_copy_text: bool,
     /// Empty cell-para `w:pBdr` bottom (file_146 Sign-off signature rule).
     rule: Option<([f32; 3], f32)>,
     /// Body `w:footnoteReference/@w:id`.
@@ -676,6 +683,8 @@ impl TextRun {
             text: text.into(),
             style,
             pageref: None,
+            ref_name: None,
+            ref_copy_text: false,
             field: FieldKind::None,
             rev: false,
             comments: Vec::new(),
@@ -4256,11 +4265,41 @@ fn document_bookmark_names(blocks: &[Block]) -> HashSet<String> {
     names
 }
 
+fn document_bookmark_texts(blocks: &[Block]) -> HashMap<String, String> {
+    let mut texts = HashMap::new();
+    for block in blocks {
+        let Block::Paragraph {
+            bookmarks, runs, ..
+        } = block
+        else {
+            continue;
+        };
+        if bookmarks.is_empty() {
+            continue;
+        }
+        let text: String = runs
+            .iter()
+            .filter(|r| r.pageref.is_none() && r.ref_name.is_none())
+            .map(|r| r.text.as_str())
+            .collect();
+        for name in bookmarks {
+            texts.entry(name.clone()).or_insert_with(|| text.clone());
+        }
+    }
+    texts
+}
+
 /// Word Save-as-PDF result for `PAGEREF` whose bookmark is gone
 /// (`_Toc218523836` / `_Toc218523837` on sd_2517 / file_22).
 const BOOKMARK_NOT_DEFINED: &str = "Error! Bookmark not defined.";
+/// Word Save-as-PDF result for `REF` whose bookmark is gone.
+const REF_NOT_FOUND: &str = "Error! Reference source not found.";
 
-fn apply_missing_pagerefs(runs: &[TextRun], known: &HashSet<String>) -> Vec<TextRun> {
+fn apply_field_results(
+    runs: &[TextRun],
+    known: &HashSet<String>,
+    texts: &HashMap<String, String>,
+) -> Vec<TextRun> {
     runs.iter()
         .map(|run| {
             let mut out = run.clone();
@@ -4271,6 +4310,16 @@ fn apply_missing_pagerefs(runs: &[TextRun], known: &HashSet<String>) -> Vec<Text
                 // (sd_2517 / file_22 TOC lorem 9.01–9.02).
                 out.text = BOOKMARK_NOT_DEFINED.to_string();
                 out.style.bold = true;
+            }
+            if let Some(name) = run.ref_name.as_deref() {
+                if !known.contains(name) {
+                    out.text = REF_NOT_FOUND.to_string();
+                    out.style.bold = true;
+                } else if run.ref_copy_text
+                    && let Some(text) = texts.get(name).filter(|t| !t.is_empty())
+                {
+                    out.text.clone_from(text);
+                }
             }
             out
         })
@@ -4287,6 +4336,216 @@ fn pageref_bookmark(instr: &str) -> Option<String> {
         .find(|p| !p.starts_with('\\'))
         .map(str::to_string)
         .filter(|s| !s.is_empty())
+}
+
+fn field_first_token(instr: &str) -> &str {
+    instr.split_whitespace().next().unwrap_or("")
+}
+
+fn is_date_field(instr: &str) -> bool {
+    field_first_token(instr).eq_ignore_ascii_case("DATE")
+}
+
+fn ref_copies_bookmark_text(instr: &str) -> bool {
+    !instr.split_whitespace().any(|p| {
+        let Some(sw) = p.strip_prefix('\\') else {
+            return false;
+        };
+        sw.eq_ignore_ascii_case("r")
+            || sw.eq_ignore_ascii_case("n")
+            || sw.eq_ignore_ascii_case("w")
+            || sw.eq_ignore_ascii_case("p")
+    })
+}
+
+fn ref_bookmark(instr: &str) -> Option<String> {
+    let trimmed = instr.trim();
+    let tok = field_first_token(trimmed);
+    if !tok.eq_ignore_ascii_case("REF") {
+        return None;
+    }
+    let rest = trimmed[tok.len()..].trim_start();
+    if let Some(quoted) = rest.strip_prefix('"') {
+        let name = quoted.split('"').next().unwrap_or("").trim();
+        return (!name.is_empty()).then(|| name.to_string());
+    }
+    rest.split_whitespace()
+        .find(|p| !p.starts_with('\\'))
+        .map(|p| p.trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn date_picture(instr: &str) -> Option<String> {
+    let bytes = instr.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'\\' && bytes[i + 1] == b'@' {
+            i += 2;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'"' {
+                i += 1;
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += 1;
+                }
+                return Some(instr[start..i].to_string());
+            }
+            let start = i;
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if start < i {
+                return Some(instr[start..i].to_string());
+            }
+            return None;
+        }
+        i += 1;
+    }
+    None
+}
+
+const MONTHS_FULL: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+const MONTHS_ABBR: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const WEEKDAYS_FULL: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
+const WEEKDAYS_ABBR: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+fn utc_ymd() -> (i32, u32, u32) {
+    let unix_days = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs() / 86_400).unwrap_or(0))
+        .unwrap_or(0);
+    civil_from_unix_days(unix_days)
+}
+
+/// Howard Hinnant civil_from_days: Unix epoch days → UTC (year, month, day).
+fn civil_from_unix_days(unix_days: i64) -> (i32, u32, u32) {
+    let z = unix_days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = u32::try_from(z - era * 146_097).unwrap_or(0);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut y = i32::try_from(yoe).unwrap_or(0) + i32::try_from(era).unwrap_or(0) * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    if m <= 2 {
+        y += 1;
+    }
+    (y, m, d)
+}
+
+fn weekday_sun0(y: i32, m: u32, d: u32) -> usize {
+    let t = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+    let y = if m < 3 { y - 1 } else { y };
+    let mi = m.saturating_sub(1) as usize;
+    let offset = t.get(mi).copied().unwrap_or(0);
+    (y + y / 4 - y / 100 + y / 400 + offset + d as i32).rem_euclid(7) as usize
+}
+
+fn format_date_picture(pic: &str, y: i32, m: u32, d: u32) -> String {
+    let mut out = String::new();
+    let chars: Vec<char> = pic.chars().collect();
+    let mut i = 0;
+    let mi = m.saturating_sub(1) as usize;
+    let month_full = MONTHS_FULL.get(mi).copied().unwrap_or("");
+    let month_abbr = MONTHS_ABBR.get(mi).copied().unwrap_or("");
+    let wd = weekday_sun0(y, m, d);
+    while i < chars.len() {
+        match chars[i] {
+            'y' => {
+                let n = count_run(&chars, i, 'y');
+                if n >= 4 {
+                    out.push_str(&format!("{y:04}"));
+                } else {
+                    out.push_str(&format!("{:02}", y.rem_euclid(100)));
+                }
+                i += n;
+            }
+            'M' => {
+                let n = count_run(&chars, i, 'M');
+                match n {
+                    4 => out.push_str(month_full),
+                    3 => out.push_str(month_abbr),
+                    2 => out.push_str(&format!("{m:02}")),
+                    _ => out.push_str(&m.to_string()),
+                }
+                i += n;
+            }
+            'd' => {
+                let n = count_run(&chars, i, 'd');
+                match n {
+                    4 => out.push_str(WEEKDAYS_FULL.get(wd).copied().unwrap_or("")),
+                    3 => out.push_str(WEEKDAYS_ABBR.get(wd).copied().unwrap_or("")),
+                    2 => out.push_str(&format!("{d:02}")),
+                    _ => out.push_str(&d.to_string()),
+                }
+                i += n;
+            }
+            '\'' => {
+                i += 1;
+                while i < chars.len() && chars[i] != '\'' {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    i += 1;
+                }
+            }
+            other => {
+                out.push(other);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+fn count_run(chars: &[char], start: usize, want: char) -> usize {
+    chars[start..]
+        .iter()
+        .take_while(|c| **c == want)
+        .count()
+        .max(1)
+}
+
+fn date_field_text(instr: &str) -> String {
+    let (y, m, d) = utc_ymd();
+    let pic = date_picture(instr).unwrap_or_else(|| "M/d/yyyy".to_string());
+    let painted = format_date_picture(&pic, y, m, d);
+    if painted.is_empty() {
+        format_date_picture("M/d/yyyy", y, m, d)
+    } else {
+        painted
+    }
+}
+
+fn field_run(text: impl Into<String>, style: &RunStyle) -> TextRun {
+    TextRun::new(text, style.clone())
 }
 
 fn resolve_num_pr(
@@ -5138,7 +5397,10 @@ struct RunCollect<'a> {
     pending: Vec<String>,
     bound: HashSet<String>,
     pageref: Option<String>,
+    ref_name: Option<String>,
+    field_instr: String,
     field_result: bool,
+    field_emitted: bool,
     /// OMML `m:sSup` / `m:sSub` overlay (Strict01 binomial).
     math_vert: VertAlign,
     /// file_146 pBdr-bottom section heads keep generator xml:space pads.
@@ -5176,7 +5438,10 @@ fn collect_runs_in(
         pending: Vec::new(),
         bound: HashSet::new(),
         pageref: None,
+        ref_name: None,
+        field_instr: String::new(),
         field_result: false,
+        field_emitted: false,
         math_vert: VertAlign::Baseline,
         keep_xml_space: para_keeps_xml_space(dom, node),
     };
@@ -5326,6 +5591,53 @@ fn skip_non_text(dom: &Dom, node: NodeId) -> bool {
         || dom.name_is(node, &W::del_instr_text())
 }
 
+fn finish_field(ctx: &RunCollect<'_>, runs: &mut Vec<TextRun>) {
+    if ctx.field_emitted {
+        return;
+    }
+    if is_date_field(&ctx.field_instr) {
+        runs.push(field_run(date_field_text(&ctx.field_instr), ctx.base));
+        return;
+    }
+    if let Some(name) = ctx.ref_name.as_ref() {
+        let mut run = field_run(String::new(), ctx.base);
+        run.ref_name = Some(name.clone());
+        run.ref_copy_text = ref_copies_bookmark_text(&ctx.field_instr);
+        runs.push(run);
+    }
+}
+
+fn collect_fld_simple(
+    ctx: &mut RunCollect<'_>,
+    node: NodeId,
+    mark: RevMark,
+    author: &str,
+    runs: &mut Vec<TextRun>,
+) {
+    let instr = attr_any(ctx.dom, node, "instr").unwrap_or("").to_string();
+    let saved_pageref = ctx.pageref.take();
+    let saved_ref = ctx.ref_name.take();
+    let saved_instr = std::mem::take(&mut ctx.field_instr);
+    let saved_result = ctx.field_result;
+    let saved_emitted = ctx.field_emitted;
+    ctx.field_instr.clone_from(&instr);
+    ctx.pageref = pageref_bookmark(&instr);
+    ctx.ref_name = ref_bookmark(&instr);
+    ctx.field_result = true;
+    ctx.field_emitted = false;
+    let before = runs.len();
+    for idx in 0..ctx.dom.child_count(node) {
+        collect_runs_rec(ctx, ctx.dom.child_at(node, idx), mark, author, runs);
+    }
+    ctx.field_emitted = ctx.field_emitted || runs.len() > before;
+    finish_field(ctx, runs);
+    ctx.pageref = saved_pageref;
+    ctx.ref_name = saved_ref;
+    ctx.field_instr = saved_instr;
+    ctx.field_result = saved_result;
+    ctx.field_emitted = saved_emitted;
+}
+
 fn collect_runs_rec(
     ctx: &mut RunCollect<'_>,
     node: NodeId,
@@ -5363,16 +5675,27 @@ fn collect_runs_rec(
         }
         return;
     }
+    if ctx.dom.name_is(node, &W::fld_simple()) {
+        collect_fld_simple(ctx, node, mark, author, runs);
+        return;
+    }
     if ctx.dom.name_is(node, &W::fld_char()) {
         match attr_any(ctx.dom, node, "fldCharType").unwrap_or("") {
             "begin" => {
                 ctx.pageref = None;
+                ctx.ref_name = None;
+                ctx.field_instr.clear();
                 ctx.field_result = false;
+                ctx.field_emitted = false;
             }
             "separate" => ctx.field_result = true,
             "end" => {
+                finish_field(ctx, runs);
                 ctx.pageref = None;
+                ctx.ref_name = None;
+                ctx.field_instr.clear();
                 ctx.field_result = false;
+                ctx.field_emitted = false;
             }
             _ => {}
         }
@@ -5380,8 +5703,12 @@ fn collect_runs_rec(
     }
     if ctx.dom.name_is(node, &W::instr_text()) {
         let raw = element_text(ctx.dom, node);
-        if let Some(name) = pageref_bookmark(&raw) {
+        ctx.field_instr.push_str(&raw);
+        if let Some(name) = pageref_bookmark(&ctx.field_instr) {
             ctx.pageref = Some(name);
+        }
+        if let Some(name) = ref_bookmark(&ctx.field_instr) {
+            ctx.ref_name = Some(name);
         }
         return;
     }
@@ -5495,6 +5822,15 @@ fn collect_runs_rec(
             } else {
                 None
             };
+            let ref_name = if ctx.field_result {
+                ctx.ref_name.clone()
+            } else {
+                None
+            };
+            let ref_copy_text = ref_name.is_some() && ref_copies_bookmark_text(&ctx.field_instr);
+            if ctx.field_result {
+                ctx.field_emitted = true;
+            }
             let rev = mark != RevMark::None;
             if style.small_caps {
                 let mut first = true;
@@ -5502,6 +5838,8 @@ fn collect_runs_rec(
                     let mut run = TextRun::new(piece, st);
                     run.rev = rev;
                     run.pageref.clone_from(&pageref);
+                    run.ref_name.clone_from(&ref_name);
+                    run.ref_copy_text = ref_copy_text;
                     if first {
                         run.comments.clone_from(&pending);
                         first = false;
@@ -5512,6 +5850,8 @@ fn collect_runs_rec(
                 let mut run = TextRun::new(text, style);
                 run.rev = rev;
                 run.pageref = pageref;
+                run.ref_name = ref_name;
+                run.ref_copy_text = ref_copy_text;
                 run.comments = pending;
                 runs.push(run);
             }
@@ -7814,6 +8154,7 @@ struct FieldScan {
     kind: Option<FieldKind>,
     result: bool,
     emitted: bool,
+    instr: String,
 }
 
 fn collect_hf_rec(
@@ -7826,7 +8167,8 @@ fn collect_hf_rec(
 ) {
     if dom.name_is(node, &W::instr_text()) {
         let raw = element_text(dom, node);
-        let up = raw.to_ascii_uppercase();
+        scan.instr.push_str(&raw);
+        let up = scan.instr.to_ascii_uppercase();
         if up.contains("NUMPAGES") {
             scan.kind = Some(FieldKind::NumPages);
         } else if up.contains("PAGE") {
@@ -7847,18 +8189,11 @@ fn collect_hf_rec(
                 if !scan.emitted
                     && let Some(kind) = scan.kind
                 {
-                    runs.push(TextRun {
-                        text: String::new(),
-                        style: base.clone(),
-                        field: kind,
-                        rev: false,
-                        comments: Vec::new(),
-                        pageref: None,
-                        rule: None,
-                        footnote_id: None,
-                        note_ref: false,
-                        para_gap: 0.0,
-                    });
+                    let mut run = field_run(String::new(), base);
+                    run.field = kind;
+                    runs.push(run);
+                } else if !scan.emitted && is_date_field(&scan.instr) {
+                    runs.push(field_run(date_field_text(&scan.instr), base));
                 }
                 *scan = FieldScan::default();
             }
@@ -7890,18 +8225,9 @@ fn collect_hf_rec(
         {
             let text = visible_text(dom, node, RevMark::None, false);
             if !text.is_empty() {
-                runs.push(TextRun {
-                    text,
-                    style,
-                    field: kind,
-                    rev: false,
-                    comments: Vec::new(),
-                    pageref: None,
-                    rule: None,
-                    footnote_id: None,
-                    note_ref: false,
-                    para_gap: 0.0,
-                });
+                let mut run = field_run(text, &style);
+                run.field = kind;
+                runs.push(run);
                 scan.emitted = true;
             }
             return;
@@ -7909,6 +8235,9 @@ fn collect_hf_rec(
         let text = visible_text(dom, node, RevMark::None, false);
         if !text.is_empty() {
             runs.push(TextRun::new(text, style));
+            if scan.result {
+                scan.emitted = true;
+            }
         }
         return;
     }
@@ -7991,6 +8320,8 @@ struct Layout<'a> {
     /// Bookmark names present in the DOCX (before layout pages exist).
     /// Missing PAGEREF wraps Word's Error! string; live names patch later.
     known_bookmarks: HashSet<String>,
+    /// Bookmarked paragraph text for `REF` (xml leftover).
+    bookmark_texts: HashMap<String, String>,
     footnotes: FootnoteCatalog,
     page_fn_ids: Vec<String>,
 }
@@ -8108,6 +8439,7 @@ impl<'a> Layout<'a> {
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
             known_bookmarks: HashSet::new(),
+            bookmark_texts: HashMap::new(),
             footnotes: FootnoteCatalog::default(),
             page_fn_ids: Vec::new(),
         };
@@ -8795,7 +9127,7 @@ impl<'a> Layout<'a> {
         wrap_right: f32,
         inset_h: f32,
     ) {
-        let rewritten = apply_missing_pagerefs(runs, &self.known_bookmarks);
+        let rewritten = apply_field_results(runs, &self.known_bookmarks, &self.bookmark_texts);
         let runs = rewritten.as_slice();
         self.note_chapter_heading(style);
         self.last_style_id.clone_from(&style.style_id);
@@ -9104,7 +9436,9 @@ impl<'a> Layout<'a> {
         // number. Subtracting its width from the TOC column packed the
         // description into 40pt slices. Fold it into the wrap so
         // sd_2517 9.01 breaks after "Bookmark" like Word.
-        let error_suffix = suffix.iter().any(|r| r.text == BOOKMARK_NOT_DEFINED);
+        let error_suffix = suffix
+            .iter()
+            .any(|r| r.text == BOOKMARK_NOT_DEFINED || r.text == REF_NOT_FOUND);
         let suf_w: f32 = if error_suffix {
             0.0
         } else {
@@ -12718,6 +13052,8 @@ fn wrap_runs(
                 let mut piece = run.with_text(part);
                 piece.comments.clear();
                 piece.pageref = None;
+                piece.ref_name = None;
+                piece.ref_copy_text = false;
                 piece.footnote_id = None;
                 segments.last_mut().expect("segment").push(piece);
             }
@@ -12784,6 +13120,8 @@ fn wrap_runs_segment(
                     && style_eq(&last.style, &run.style)
                     && last.pageref.is_none()
                     && run.pageref.is_none()
+                    && last.ref_name.is_none()
+                    && run.ref_name.is_none()
                     && last.footnote_id.is_none()
                     && run.footnote_id.is_none()
                 {
@@ -12818,6 +13156,7 @@ fn layout(
     );
     lay.footnotes = footnotes;
     lay.known_bookmarks = document_bookmark_names(blocks);
+    lay.bookmark_texts = document_bookmark_texts(blocks);
     if blocks.is_empty() {
         lay.current().ops.push(Op::text(
             FaceId::CarlitoRegular,
@@ -15984,6 +16323,72 @@ mod field_tests {
         assert_eq!(joined, "Page 1 of 2");
         assert!(!joined.contains("PAGE"), "{joined}");
         assert!(!joined.contains("NUMPAGES"), "{joined}");
+    }
+
+    #[test]
+    fn civil_from_unix_days_epoch_and_y2k() {
+        assert_eq!(civil_from_unix_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_unix_days(-1), (1969, 12, 31));
+        assert_eq!(civil_from_unix_days(10_957), (2000, 1, 1));
+        assert_eq!(format_date_picture("yyyy", 1970, 1, 1), "1970");
+    }
+
+    #[test]
+    fn date_picture_reads_quoted_switch() {
+        assert_eq!(date_picture(r#" DATE \@ "yyyy" "#).as_deref(), Some("yyyy"));
+        assert_eq!(
+            date_picture(r#"DATE \@ "d MMMM yyyy""#).as_deref(),
+            Some("d MMMM yyyy")
+        );
+        assert_eq!(format_date_picture("yyyy", 2020, 3, 15), "2020");
+        assert_eq!(
+            format_date_picture("d MMMM yyyy", 2020, 3, 15),
+            "15 March 2020"
+        );
+        assert_eq!(format_date_picture("M/d/yyyy", 2020, 3, 15), "3/15/2020");
+    }
+
+    #[test]
+    fn ref_bookmark_skips_pageref() {
+        assert_eq!(
+            ref_bookmark(" REF _HereRef \\h ").as_deref(),
+            Some("_HereRef")
+        );
+        assert_eq!(ref_bookmark("PAGEREF _HereRef \\h "), None);
+        assert_eq!(pageref_bookmark(" REF _HereRef "), None);
+        assert!(ref_copies_bookmark_text(" REF _HereRef \\h "));
+        assert!(!ref_copies_bookmark_text(" REF _HereRef \\r \\h "));
+        assert!(!ref_copies_bookmark_text(" REF _HereRef \\w \\h "));
+        assert!(is_date_field(" DATE \\@ \"yyyy\" "));
+        assert!(!is_date_field("CREATEDATE"));
+    }
+
+    #[test]
+    fn uncached_date_field_paints_picture_not_instr() {
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body><w:p>
+  <w:r><w:t xml:space="preserve">WhenDx </w:t></w:r>
+  <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+  <w:r><w:instrText xml:space="preserve"> DATE \@ "yyyy" </w:instrText></w:r>
+  <w:r><w:fldChar w:fldCharType="end"/></w:r>
+</w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .next()
+            .expect("p");
+        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
+        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert!(!joined.contains("DATE"), "{joined}");
+        assert!(
+            joined.chars().any(|c| c.is_ascii_digit()),
+            "uncached DATE must paint a year; {joined}"
+        );
+        assert!(joined.starts_with("WhenDx "), "{joined}");
     }
 
     #[test]
