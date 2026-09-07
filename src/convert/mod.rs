@@ -471,6 +471,9 @@ enum PageNumFmt {
     JapaneseCounting,
     Aiueo,
     Iroha,
+    DecimalFullWidth,
+    Ganada,
+    Chosung,
 }
 
 struct NamedStyle {
@@ -2614,6 +2617,9 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "japaneseCounting" => PageNumFmt::JapaneseCounting,
             "aiueo" => PageNumFmt::Aiueo,
             "iroha" => PageNumFmt::Iroha,
+            "decimalFullWidth" => PageNumFmt::DecimalFullWidth,
+            "ganada" => PageNumFmt::Ganada,
+            "chosung" => PageNumFmt::Chosung,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -2769,6 +2775,9 @@ enum NumFmt {
     JapaneseCounting,
     Aiueo,
     Iroha,
+    DecimalFullWidth,
+    Ganada,
+    Chosung,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -3025,6 +3034,9 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "japaneseCounting" => NumFmt::JapaneseCounting,
         "aiueo" => NumFmt::Aiueo,
         "iroha" => NumFmt::Iroha,
+        "decimalFullWidth" => NumFmt::DecimalFullWidth,
+        "ganada" => NumFmt::Ganada,
+        "chosung" => NumFmt::Chosung,
         _ => NumFmt::Decimal,
     }
 }
@@ -3047,6 +3059,9 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::JapaneseCounting => japanese_counting_label(n),
         NumFmt::Aiueo => cycle_cjk(&AIUEO, n),
         NumFmt::Iroha => cycle_cjk(&IROHA, n),
+        NumFmt::DecimalFullWidth => decimal_fullwidth_label(n),
+        NumFmt::Ganada => cycle_cjk(&GANADA, n),
+        NumFmt::Chosung => cycle_cjk(&CHOSUNG, n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -3265,6 +3280,25 @@ const IROHA: [char; 47] = [
     'ｲ', 'ﾛ', 'ﾊ', 'ﾆ', 'ﾎ', 'ﾍ', 'ﾄ', 'ﾁ', 'ﾘ', 'ﾇ', 'ﾙ', 'ｦ', 'ﾜ', 'ｶ', 'ﾖ', 'ﾀ', 'ﾚ', 'ｿ', 'ﾂ',
     'ﾈ', 'ﾅ', 'ﾗ', 'ﾑ', 'ｳ', 'ｲ', 'ﾉ', 'ｵ', 'ｸ', 'ﾔ', 'ﾏ', 'ｹ', 'ﾌ', 'ｺ', 'ｴ', 'ﾃ', 'ｱ', 'ｻ', 'ｷ',
     'ﾕ', 'ﾒ', 'ﾐ', 'ｼ', 'ｴ', 'ﾋ', 'ﾓ', 'ｾ', 'ｽ',
+];
+
+/// MS-DOCX decimalFullWidth: U+FF10…U+FF19 (０１２…).
+fn decimal_fullwidth_label(n: u32) -> String {
+    const DIGITS: [char; 10] = ['０', '１', '２', '３', '４', '５', '６', '７', '８', '９'];
+    n.to_string()
+        .bytes()
+        .map(|b| DIGITS[usize::from(b - b'0')])
+        .collect()
+}
+
+/// MS-DOCX ganada: U+AC00, U+B098, U+B2E4… 가나다라마바사아자차카타파하.
+const GANADA: [char; 14] = [
+    '가', '나', '다', '라', '마', '바', '사', '아', '자', '차', '카', '타', '파', '하',
+];
+
+/// MS-DOCX chosung: U+3131, U+3134, U+3137… ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎ.
+const CHOSUNG: [char; 14] = [
+    'ㄱ', 'ㄴ', 'ㄷ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅅ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ',
 ];
 
 fn alpha_label(mut n: u32, upper: bool) -> String {
@@ -13652,6 +13686,9 @@ impl<'a> Layout<'a> {
             PageNumFmt::JapaneseCounting => format_num(NumFmt::JapaneseCounting, self.section_page),
             PageNumFmt::Aiueo => format_num(NumFmt::Aiueo, self.section_page),
             PageNumFmt::Iroha => format_num(NumFmt::Iroha, self.section_page),
+            PageNumFmt::DecimalFullWidth => format_num(NumFmt::DecimalFullWidth, self.section_page),
+            PageNumFmt::Ganada => format_num(NumFmt::Ganada, self.section_page),
+            PageNumFmt::Chosung => format_num(NumFmt::Chosung, self.section_page),
         }
     }
 
@@ -17074,7 +17111,7 @@ mod character_spacing_tests {
 #[cfg(test)]
 mod page_num_fmt_labels {
     use super::{
-        NumFmt, chicago_label, format_num, ideograph_digital_label,
+        NumFmt, chicago_label, decimal_fullwidth_label, format_num, ideograph_digital_label,
         ideograph_enclosed_circle_label, ideograph_legal_traditional_label,
         ideograph_zodiac_traditional_label, japanese_counting_label,
     };
@@ -17155,6 +17192,27 @@ mod page_num_fmt_labels {
         assert_eq!(format_num(NumFmt::Iroha, 1), "ｲ");
         assert_eq!(format_num(NumFmt::Iroha, 2), "ﾛ");
         assert_eq!(format_num(NumFmt::Iroha, 3), "ﾊ");
+    }
+
+    #[test]
+    fn decimal_fullwidth_uses_ff10_digits() {
+        assert_eq!(decimal_fullwidth_label(1), "１");
+        assert_eq!(decimal_fullwidth_label(10), "１０");
+        assert_eq!(format_num(NumFmt::DecimalFullWidth, 10), "１０");
+    }
+
+    #[test]
+    fn ganada_is_hangul_syllable_order() {
+        assert_eq!(format_num(NumFmt::Ganada, 1), "가");
+        assert_eq!(format_num(NumFmt::Ganada, 2), "나");
+        assert_eq!(format_num(NumFmt::Ganada, 3), "다");
+    }
+
+    #[test]
+    fn chosung_is_hangul_jamo_order() {
+        assert_eq!(format_num(NumFmt::Chosung, 1), "ㄱ");
+        assert_eq!(format_num(NumFmt::Chosung, 2), "ㄴ");
+        assert_eq!(format_num(NumFmt::Chosung, 3), "ㄷ");
     }
 }
 
