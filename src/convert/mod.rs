@@ -5162,8 +5162,21 @@ fn table_block(
             let mut cell_paras = Vec::new();
             let mut nested = Vec::new();
             let mut cell_align = Align::Left;
-            for idx in 0..dom.child_count(cell) {
-                let child = dom.child_at(cell, idx);
+            let mut queue: Vec<NodeId> = (0..dom.child_count(cell))
+                .map(|i| dom.child_at(cell, i))
+                .collect();
+            let mut qi = 0;
+            while qi < queue.len() {
+                let child = queue[qi];
+                qi += 1;
+                if dom.name_is(child, &W::sdt()) {
+                    if let Some(content) = dom.element(child, &W::sdt_content()) {
+                        for i in 0..dom.child_count(content) {
+                            queue.push(dom.child_at(content, i));
+                        }
+                    }
+                    continue;
+                }
                 if dom.name_is(child, &W::tbl()) {
                     let block = table_block(dom, child, sheet, numbering, authors, comments);
                     if !block_is_blank(&block) {
