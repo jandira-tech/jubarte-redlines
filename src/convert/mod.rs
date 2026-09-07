@@ -841,6 +841,8 @@ struct SectionChrome {
     character_spacing: CharacterSpacing,
     /// `w:compat/w:ulTrailSpace` (xml leftover).
     ul_trail_space: bool,
+    /// `w:compat/w:spaceForUL` (xml leftover).
+    space_for_ul: bool,
 }
 
 /// ECMA-376 17.15.1.18 / ST_CharacterSpacing. Omitted = `doNotCompress`.
@@ -3195,8 +3197,6 @@ fn settings_mirror_margins(pkg: &PartFs) -> bool {
         && !xml.contains("mirrorMargins w:val=\"false\"")
 }
 
-/// `w:characterSpacingControl/@w:val`. Longer token first: `compressPunctuation`
-/// is a prefix of `compressPunctuationAndJapaneseKana`.
 /// `w:compat/w:ulTrailSpace`: underline trailing spaces (ECMA-376 17.15.3.63).
 /// Omitted → off. Present (default on) paints the pad Word otherwise skips.
 fn settings_ul_trail_space(pkg: &PartFs) -> bool {
@@ -3209,6 +3209,29 @@ fn settings_ul_trail_space(pkg: &PartFs) -> bool {
         && !xml.contains("ulTrailSpace w:val=\"off\"")
 }
 
+/// `w:compat/w:spaceForUL`: extra descent under underlined East Asian
+/// (ECMA-376 17.15.3.40). Omitted → off. Present adds max(3% of size, 2pt).
+fn settings_space_for_ul(pkg: &PartFs) -> bool {
+    let Some(xml) = pkg.part_string("word/settings.xml") else {
+        return false;
+    };
+    xml.contains("spaceForUL")
+        && !xml.contains("spaceForUL w:val=\"0\"")
+        && !xml.contains("spaceForUL w:val=\"false\"")
+        && !xml.contains("spaceForUL w:val=\"off\"")
+}
+
+fn space_for_ul_extra(size: f32) -> f32 {
+    (size * 0.03).max(2.0)
+}
+
+fn line_has_underlined_cjk(line: &[TextRun]) -> bool {
+    line.iter()
+        .any(|r| r.style.underline && r.text.chars().any(is_cjk))
+}
+
+/// `w:characterSpacingControl/@w:val`. Longer token first: `compressPunctuation`
+/// is a prefix of `compressPunctuationAndJapaneseKana`.
 fn settings_character_spacing(pkg: &PartFs) -> CharacterSpacing {
     let Some(xml) = pkg.part_string("word/settings.xml") else {
         return CharacterSpacing::DoNotCompress;
@@ -3689,6 +3712,7 @@ fn section_chrome(
         mirror_margins: settings_mirror_margins(pkg),
         character_spacing: settings_character_spacing(pkg),
         ul_trail_space: settings_ul_trail_space(pkg),
+        space_for_ul: settings_space_for_ul(pkg),
     }
 }
 
@@ -7976,6 +8000,8 @@ struct HfChrome {
     page_background: Option<[f32; 3]>,
     /// `w:compat/w:ulTrailSpace` (xml leftover).
     ul_trail_space: bool,
+    /// `w:compat/w:spaceForUL` (xml leftover).
+    space_for_ul: bool,
 }
 
 fn first_section_hf(
@@ -7994,6 +8020,7 @@ fn first_section_hf(
         return HfChrome {
             page_background,
             ul_trail_space: settings_ul_trail_space(pkg),
+            space_for_ul: settings_space_for_ul(pkg),
             ..Default::default()
         };
     };
@@ -8025,6 +8052,7 @@ fn first_section_hf(
         character_spacing: settings_character_spacing(pkg),
         page_background,
         ul_trail_space: settings_ul_trail_space(pkg),
+        space_for_ul: settings_space_for_ul(pkg),
     }
 }
 
@@ -8628,6 +8656,8 @@ struct Layout<'a> {
     page_background: Option<[f32; 3]>,
     /// `w:compat/w:ulTrailSpace`: underline trailing spaces even in cells.
     ul_trail_space: bool,
+    /// `w:compat/w:spaceForUL`: extra descent under underlined CJK.
+    space_for_ul: bool,
     /// Current newspaper column (0-based) when `page.col_count` > 1.
     col_i: u8,
     margin_l0: f32,
@@ -8764,6 +8794,7 @@ impl<'a> Layout<'a> {
             character_spacing: hf.character_spacing,
             page_background: hf.page_background,
             ul_trail_space: hf.ul_trail_space,
+            space_for_ul: hf.space_for_ul,
             col_i: 0,
             margin_l0: page.margin_l,
             margin_r0: page.margin_r,
@@ -8794,6 +8825,7 @@ impl<'a> Layout<'a> {
         self.mirror_margins = next.mirror_margins;
         self.character_spacing = next.character_spacing;
         self.ul_trail_space = next.ul_trail_space;
+        self.space_for_ul = next.space_for_ul;
         self.margin_l0 = next.page.margin_l;
         self.margin_r0 = next.page.margin_r;
         if !self.page_has_body {
@@ -9542,7 +9574,10 @@ impl<'a> Layout<'a> {
                 self.y -= box_h;
                 continue;
             }
-            let line_box = para_line_box(metrics, size, style);
+            let mut line_box = para_line_box(metrics, size, style);
+            if self.space_for_ul && line_has_underlined_cjk(line) {
+                line_box += space_for_ul_extra(size);
+            }
             let ascent = metrics.ascent_pt(size);
             let fn_h = self.added_footnote_h(line);
             if fn_h > 0.0 {

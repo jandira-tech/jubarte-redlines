@@ -13684,6 +13684,47 @@ fn ul_trail_space_underlines_trailing_spaces_in_a_cell() {
 }
 
 #[test]
+fn space_for_ul_adds_descent_under_east_asian_underline() {
+    // xml leftover: w:compat/w:spaceForUL (ECMA-376 17.15.3.40).
+    // Underlined East Asian runs get extra descent: max(3% of size,
+    // 40 twips = 2pt). Omitted leaves the line box unchanged.
+    let body = "<w:p>\
+           <w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>漢字</w:t></w:r>\
+           <w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>J</w:t></w:r>\
+         </w:p>\
+         <w:p>\
+           <w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>漢字</w:t></w:r>\
+           <w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>Q</w:t></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let gap = |settings: &str| -> f32 {
+        let pdf =
+            docx_to_pdf(&minimal_docx_with_settings(body, settings)).expect("convert spaceForUL");
+        let hay = String::from_utf8_lossy(&pdf);
+        let a = pdf_cm_tj_xy(&hay, "J")
+            .first()
+            .map(|(_, y)| *y)
+            .expect("marker J");
+        let b = pdf_cm_tj_xy(&hay, "Q")
+            .first()
+            .map(|(_, y)| *y)
+            .expect("marker Q");
+        a - b
+    };
+    let off = gap("");
+    let on = gap("<w:compat><w:spaceForUL/></w:compat>");
+    assert!(
+        on > off + 1.0,
+        "spaceForUL must add ≥2pt descent under underlined 漢字; off={off} on={on}"
+    );
+}
+
+#[test]
 fn decimal_and_bar_tabs_place_ink() {
     // xml leftover: w:tab val=decimal / bar (ECMA-376 17.3.1.38 ST_TabJc).
     // Decimal currently falls through to left; bar is skipped in parse.
