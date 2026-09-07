@@ -7807,16 +7807,15 @@ fn page_field_uses_sectpr_upper_letter() {
         &[("word/footer1.xml", footer)],
     ))
     .expect("convert upperLetter PAGE");
-    let text = String::from_utf8_lossy(&pdf);
+    let lits = pdf_winansi_literals(&pdf);
     assert!(
-        text.contains("(A)"),
-        "PAGE in an upperLetter section must paint A; tail {}",
-        &text[text.len().saturating_sub(240)..]
+        lits.iter().any(|s| s == "A"),
+        "PAGE in an upperLetter section must paint A; lits={lits:?} tail {}",
+        String::from_utf8_lossy(&pdf[pdf.len().saturating_sub(240)..])
     );
     assert!(
-        !text.contains("(1)"),
-        "cached arabic 1 must not survive upperLetter PAGE; tail {}",
-        &text[text.len().saturating_sub(240)..]
+        !lits.iter().any(|s| s == "1"),
+        "cached arabic 1 must not survive upperLetter PAGE; lits={lits:?}"
     );
 }
 
