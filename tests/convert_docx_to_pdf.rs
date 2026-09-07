@@ -7820,6 +7820,70 @@ fn page_field_uses_sectpr_upper_letter() {
 }
 
 #[test]
+fn page_field_uses_sectpr_decimal_zero() {
+    // xml leftover: sectPr w:pgNumType/@w:fmt decimalZero (ECMA-376 17.18.50).
+    // Numbering already zero-pads; PAGE still falls through to decimal "1".
+    let footer = page_footer_xml();
+    let body = "<w:p><w:r><w:t>PgDzX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:footer=\"720\"/>\
+           <w:pgNumType w:fmt=\"decimalZero\" w:start=\"1\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer)],
+    ))
+    .expect("convert decimalZero PAGE");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("(01)"),
+        "PAGE in a decimalZero section must paint 01; tail {}",
+        &text[text.len().saturating_sub(240)..]
+    );
+    assert!(
+        !text.contains("(1)"),
+        "cached arabic 1 must not survive decimalZero PAGE; tail {}",
+        &text[text.len().saturating_sub(240)..]
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_cardinal_text() {
+    // xml leftover: sectPr w:pgNumType/@w:fmt cardinalText. Numbering
+    // already has cardinal_label; PAGE still paints decimal "1".
+    let footer = page_footer_xml();
+    let body = "<w:p><w:r><w:t>PgCdX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:footer=\"720\"/>\
+           <w:pgNumType w:fmt=\"cardinalText\" w:start=\"1\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer)],
+    ))
+    .expect("convert cardinalText PAGE");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("(One)"),
+        "PAGE in a cardinalText section must paint One; tail {}",
+        &text[text.len().saturating_sub(240)..]
+    );
+    assert!(
+        !text.contains("(1)"),
+        "cached arabic 1 must not survive cardinalText PAGE; tail {}",
+        &text[text.len().saturating_sub(240)..]
+    );
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).
