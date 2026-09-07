@@ -7788,6 +7788,38 @@ fn page_field_uses_sectpr_lower_roman_start() {
 }
 
 #[test]
+fn page_field_uses_sectpr_upper_letter() {
+    // xml leftover: sectPr w:pgNumType/@w:fmt ST_NumberFormat letters.
+    // Numbering already has upperLetter; PAGE still falls through to
+    // decimal, so start=1 paints "1" not Word's "A".
+    let footer = page_footer_xml();
+    let body = "<w:p><w:r><w:t>PgLtX</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:footer=\"720\"/>\
+           <w:pgNumType w:fmt=\"upperLetter\" w:start=\"1\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer)],
+    ))
+    .expect("convert upperLetter PAGE");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        lits.iter().any(|s| s == "A"),
+        "PAGE in an upperLetter section must paint A; lits={lits:?} tail {}",
+        String::from_utf8_lossy(&pdf[pdf.len().saturating_sub(240)..])
+    );
+    assert!(
+        !lits.iter().any(|s| s == "1"),
+        "cached arabic 1 must not survive upperLetter PAGE; lits={lits:?}"
+    );
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).

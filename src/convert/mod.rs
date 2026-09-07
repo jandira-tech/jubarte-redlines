@@ -454,6 +454,8 @@ enum PageNumFmt {
     Decimal,
     LowerRoman,
     UpperRoman,
+    LowerLetter,
+    UpperLetter,
 }
 
 struct NamedStyle {
@@ -2480,6 +2482,8 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
         page.page_num_fmt = match attr_any(dom, num, "fmt").unwrap_or("") {
             "lowerRoman" => PageNumFmt::LowerRoman,
             "upperRoman" => PageNumFmt::UpperRoman,
+            "lowerLetter" => PageNumFmt::LowerLetter,
+            "upperLetter" => PageNumFmt::UpperLetter,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -13252,6 +13256,8 @@ impl<'a> Layout<'a> {
             PageNumFmt::Decimal => self.section_page.to_string(),
             PageNumFmt::LowerRoman => format_num(NumFmt::LowerRoman, self.section_page),
             PageNumFmt::UpperRoman => format_num(NumFmt::UpperRoman, self.section_page),
+            PageNumFmt::LowerLetter => format_num(NumFmt::LowerLetter, self.section_page),
+            PageNumFmt::UpperLetter => format_num(NumFmt::UpperLetter, self.section_page),
         }
     }
 
