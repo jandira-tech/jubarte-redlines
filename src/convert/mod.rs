@@ -377,6 +377,7 @@ enum TabLeader {
     Dot,
     Hyphen,
     Underscore,
+    Heavy,
 }
 
 #[derive(Clone, Copy)]
@@ -1413,6 +1414,7 @@ fn parse_tab_stops(dom: &Dom, ppr: NodeId) -> Vec<TabStop> {
                 "dot" | "middleDot" => TabLeader::Dot,
                 "hyphen" => TabLeader::Hyphen,
                 "underscore" => TabLeader::Underscore,
+                "heavy" => TabLeader::Heavy,
                 _ => TabLeader::None,
             };
             stops.push(TabStop {
@@ -9769,14 +9771,19 @@ impl<'a> Layout<'a> {
             TabAlign::Decimal => (stop.pos - decimal_w).max(x),
         };
         if dest > x + 1.0 {
-            let mark = match stop.leader {
-                TabLeader::None => None,
-                TabLeader::Dot => Some("."),
-                TabLeader::Hyphen => Some("-"),
-                TabLeader::Underscore => Some("_"),
-            };
-            if let Some(mark) = mark {
-                self.paint_tab_leader(x, dest, y, style, mark);
+            match stop.leader {
+                TabLeader::None => {}
+                TabLeader::Dot => self.paint_tab_leader(x, dest, y, style, "."),
+                TabLeader::Hyphen => self.paint_tab_leader(x, dest, y, style, "-"),
+                TabLeader::Underscore => self.paint_tab_leader(x, dest, y, style, "_"),
+                TabLeader::Heavy => {
+                    // ST_TabTlc heavy: Word paints a thick filled rule
+                    // (sz=12 → 1.5pt), not repeated underscore glyphs.
+                    let pad = 2.0;
+                    if dest > x + pad * 2.0 + 1.0 {
+                        self.hairline_h(x + pad, y - 0.5, dest - pad, 1.5, style.color);
+                    }
+                }
             }
         }
         dest.max(x)
