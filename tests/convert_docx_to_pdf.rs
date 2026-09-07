@@ -1636,6 +1636,32 @@ fn missing_blip_rel_paints_small_placeholder_not_full_extent() {
 }
 
 #[test]
+fn missing_ole_imagedata_paints_one_inch_placeholder() {
+    // xml leftover: w:object OLE preview. Missing v:imagedata Target
+    // currently skips. Word paints the 1in broken-media box at the VML
+    // style size. Bare pict/object without extent must not invent 200×120.
+    let body = "<w:p><w:r><w:t>OleBeforeX</w:t></w:r></w:p>\
+         <w:p><w:r><w:object w:dxaOrig=\"1440\" w:dyaOrig=\"1440\">\
+           <v:shape id=\"_x0000_i1025\" style=\"width:72pt;height:72pt\">\
+             <v:imagedata r:id=\"rIdMissing\"/>\
+           </v:shape>\
+         </w:object></w:r></w:p>\
+         <w:p><w:r><w:t>OleAfterX</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert missing OLE preview");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("OleBeforeX") && text.contains("OleAfterX"),
+        "OLE neighbours must paint; text={text}"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("72.00 72.00 re S"),
+        "missing OLE imagedata must stroke the 1in placeholder, not skip; tail {}",
+        &hay[hay.len().saturating_sub(400)..]
+    );
+}
+
+#[test]
 fn multiline_footer_after_spacing_raises_the_block() {
     // plan.md Step 10 G: Word honours footer paragraph after; jubarte
     // stacked only chrome_one_line_pt so a 3-line footer sat 19pt low
