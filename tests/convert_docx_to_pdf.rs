@@ -13828,6 +13828,40 @@ fn sectpr_doc_grid_chars_adds_char_space() {
 }
 
 #[test]
+fn balance_sbcs_dbcs_stretches_ascii_to_em() {
+    // xml leftover: w:compat/w:balanceSingleByteDoubleByteWidth
+    // (ECMA-376 17.15.3.3). SBCS advances match the font em (DBCS slot).
+    // "I" is ~3pt naturally; balanced it occupies ~11pt.
+    let body = "<w:p>\
+           <w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr>\
+           <w:r><w:t>IJ</w:t></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(
+        body,
+        "<w:compat><w:balanceSingleByteDoubleByteWidth/></w:compat>",
+    ))
+    .expect("convert balance SBCS/DBCS");
+    let hay = String::from_utf8_lossy(&pdf);
+    let ix = pdf_cm_tj_xy(&hay, "I")
+        .first()
+        .map(|(x, _)| *x)
+        .expect("marker I");
+    let jx = pdf_cm_tj_xy(&hay, "J")
+        .first()
+        .map(|(x, _)| *x)
+        .expect("marker J");
+    assert!(
+        jx - ix > 8.0,
+        "balanceSingleByteDoubleByteWidth must stretch I to the em; I={ix} J={jx} dx={}",
+        jx - ix
+    );
+}
+
+#[test]
 fn decimal_and_bar_tabs_place_ink() {
     // xml leftover: w:tab val=decimal / bar (ECMA-376 17.3.1.38 ST_TabJc).
     // Decimal currently falls through to left; bar is skipped in parse.

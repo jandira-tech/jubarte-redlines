@@ -851,6 +851,8 @@ struct SectionChrome {
     space_for_ul: bool,
     /// `w:compat/w:doNotExpandShiftReturn` (xml leftover).
     do_not_expand_shift_return: bool,
+    /// `w:compat/w:balanceSingleByteDoubleByteWidth` (xml leftover).
+    balance_sbcs_dbcs: bool,
 }
 
 /// ECMA-376 17.15.1.18 / ST_CharacterSpacing. Omitted = `doNotCompress`.
@@ -3268,6 +3270,18 @@ fn settings_do_not_expand_shift_return(pkg: &PartFs) -> bool {
         && !xml.contains("doNotExpandShiftReturn w:val=\"off\"")
 }
 
+/// `w:compat/w:balanceSingleByteDoubleByteWidth` (ECMA-376 17.15.3.3).
+/// Present: SBCS glyph advance is at least the font em (DBCS slot).
+fn settings_balance_sbcs_dbcs(pkg: &PartFs) -> bool {
+    let Some(xml) = pkg.part_string("word/settings.xml") else {
+        return false;
+    };
+    xml.contains("balanceSingleByteDoubleByteWidth")
+        && !xml.contains("balanceSingleByteDoubleByteWidth w:val=\"0\"")
+        && !xml.contains("balanceSingleByteDoubleByteWidth w:val=\"false\"")
+        && !xml.contains("balanceSingleByteDoubleByteWidth w:val=\"off\"")
+}
+
 fn line_has_underlined_cjk(line: &[TextRun]) -> bool {
     line.iter()
         .any(|r| r.style.underline && r.text.chars().any(is_cjk))
@@ -3757,6 +3771,7 @@ fn section_chrome(
         ul_trail_space: settings_ul_trail_space(pkg),
         space_for_ul: settings_space_for_ul(pkg),
         do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
+        balance_sbcs_dbcs: settings_balance_sbcs_dbcs(pkg),
     }
 }
 
@@ -8048,6 +8063,8 @@ struct HfChrome {
     space_for_ul: bool,
     /// `w:compat/w:doNotExpandShiftReturn` (xml leftover).
     do_not_expand_shift_return: bool,
+    /// `w:compat/w:balanceSingleByteDoubleByteWidth` (xml leftover).
+    balance_sbcs_dbcs: bool,
 }
 
 fn first_section_hf(
@@ -8068,6 +8085,7 @@ fn first_section_hf(
             ul_trail_space: settings_ul_trail_space(pkg),
             space_for_ul: settings_space_for_ul(pkg),
             do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
+            balance_sbcs_dbcs: settings_balance_sbcs_dbcs(pkg),
             ..Default::default()
         };
     };
@@ -8101,6 +8119,7 @@ fn first_section_hf(
         ul_trail_space: settings_ul_trail_space(pkg),
         space_for_ul: settings_space_for_ul(pkg),
         do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
+        balance_sbcs_dbcs: settings_balance_sbcs_dbcs(pkg),
     }
 }
 
@@ -8708,6 +8727,8 @@ struct Layout<'a> {
     space_for_ul: bool,
     /// `w:compat/w:doNotExpandShiftReturn`: do not justify a `w:br` line.
     do_not_expand_shift_return: bool,
+    /// `w:compat/w:balanceSingleByteDoubleByteWidth`: SBCS advance ≥ em.
+    balance_sbcs_dbcs: bool,
     /// Current newspaper column (0-based) when `page.col_count` > 1.
     col_i: u8,
     margin_l0: f32,
@@ -8846,6 +8867,7 @@ impl<'a> Layout<'a> {
             ul_trail_space: hf.ul_trail_space,
             space_for_ul: hf.space_for_ul,
             do_not_expand_shift_return: hf.do_not_expand_shift_return,
+            balance_sbcs_dbcs: hf.balance_sbcs_dbcs,
             col_i: 0,
             margin_l0: page.margin_l,
             margin_r0: page.margin_r,
@@ -8878,6 +8900,7 @@ impl<'a> Layout<'a> {
         self.ul_trail_space = next.ul_trail_space;
         self.space_for_ul = next.space_for_ul;
         self.do_not_expand_shift_return = next.do_not_expand_shift_return;
+        self.balance_sbcs_dbcs = next.balance_sbcs_dbcs;
         self.margin_l0 = next.page.margin_l;
         self.margin_r0 = next.page.margin_r;
         if !self.page_has_body {
@@ -10032,7 +10055,7 @@ impl<'a> Layout<'a> {
         w
     }
 
-    fn spaced_glyph_advances(&self, text: &str, shaped: &[(u16, f32)]) -> Vec<f32> {
+    fn spaced_glyph_advances(&self, text: &str, shaped: &[(u16, f32)], em: f32) -> Vec<f32> {
         let chars: Vec<char> = text.chars().collect();
         let paired = chars.len() == shaped.len();
         shaped
@@ -10044,7 +10067,15 @@ impl<'a> Layout<'a> {
                 } else {
                     1.0
                 };
-                *adv * sp + self.page.grid_char
+                let mut a = *adv * sp + self.page.grid_char;
+                if self.balance_sbcs_dbcs
+                    && paired
+                    && chars[i].is_ascii()
+                    && !chars[i].is_ascii_whitespace()
+                {
+                    a = a.max(em);
+                }
+                a
             })
             .collect()
     }
@@ -10062,7 +10093,7 @@ impl<'a> Layout<'a> {
         let size = run.style.paint_size();
         let kern = run.style.kerns_at(size);
         let shaped = face.shape_kern(text, size, kern);
-        let advs = self.spaced_glyph_advances(text, &shaped);
+        let advs = self.spaced_glyph_advances(text, &shaped, size);
         let w: f32 =
             advs.iter().sum::<f32>() + run.style.track * shaped.len().saturating_sub(1) as f32;
         if w > 0.05 || text.chars().all(char::is_whitespace) {
@@ -10072,7 +10103,7 @@ impl<'a> Layout<'a> {
             .fonts
             .get(FaceId::SansRegular)
             .shape_kern(text, size, kern);
-        let advs = self.spaced_glyph_advances(text, &shaped);
+        let advs = self.spaced_glyph_advances(text, &shaped, size);
         advs.iter().sum::<f32>()
     }
 
@@ -10298,7 +10329,7 @@ impl<'a> Layout<'a> {
         } else {
             1.0
         };
-        let advs = self.spaced_glyph_advances(&run.text, &shaped);
+        let advs = self.spaced_glyph_advances(&run.text, &shaped, size);
         let w: f32 = advs.iter().map(|a| *a * scale).sum::<f32>()
             + run.style.track * shaped.len().saturating_sub(1) as f32;
         let w = self.clip_width(x, w);
