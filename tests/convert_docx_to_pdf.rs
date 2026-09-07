@@ -8273,6 +8273,37 @@ fn page_field_uses_sectpr_ideograph_enclosed_circle() {
 }
 
 #[test]
+fn page_field_uses_sectpr_japanese_counting() {
+    // MS-DOCX: japaneseCounting is 一, 二, …, 十, 十一 — not digit-wise
+    // ideographDigital 一〇 for 10. start=10 must not stay decimal "10".
+    let pdf = page_num_fmt_pdf("japaneseCounting", 10, "PgJcX");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "japaneseCounting PAGE start=10 must not stay decimal 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "japaneseCounting 十 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_aiueo() {
+    // MS-DOCX: aiueo is half-width katakana ｱｲｳ… (U+FF71). start=1 is ｱ.
+    assert_ideograph_page_is_cid_not_decimal("aiueo", "PgAiX");
+}
+
+#[test]
+fn page_field_uses_sectpr_iroha() {
+    // MS-DOCX: iroha is half-width ｲﾛﾊ… (U+FF72). start=1 is ｲ.
+    assert_ideograph_page_is_cid_not_decimal("iroha", "PgIrX");
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).

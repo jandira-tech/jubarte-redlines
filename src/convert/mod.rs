@@ -468,6 +468,9 @@ enum PageNumFmt {
     IdeographZodiacTraditional,
     IdeographLegalTraditional,
     IdeographEnclosedCircle,
+    JapaneseCounting,
+    Aiueo,
+    Iroha,
 }
 
 struct NamedStyle {
@@ -2608,6 +2611,9 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "ideographZodiacTraditional" => PageNumFmt::IdeographZodiacTraditional,
             "ideographLegalTraditional" => PageNumFmt::IdeographLegalTraditional,
             "ideographEnclosedCircle" => PageNumFmt::IdeographEnclosedCircle,
+            "japaneseCounting" => PageNumFmt::JapaneseCounting,
+            "aiueo" => PageNumFmt::Aiueo,
+            "iroha" => PageNumFmt::Iroha,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -2760,6 +2766,9 @@ enum NumFmt {
     IdeographZodiacTraditional,
     IdeographLegalTraditional,
     IdeographEnclosedCircle,
+    JapaneseCounting,
+    Aiueo,
+    Iroha,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -3013,6 +3022,9 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "ideographZodiacTraditional" => NumFmt::IdeographZodiacTraditional,
         "ideographLegalTraditional" => NumFmt::IdeographLegalTraditional,
         "ideographEnclosedCircle" => NumFmt::IdeographEnclosedCircle,
+        "japaneseCounting" => NumFmt::JapaneseCounting,
+        "aiueo" => NumFmt::Aiueo,
+        "iroha" => NumFmt::Iroha,
         _ => NumFmt::Decimal,
     }
 }
@@ -3032,6 +3044,9 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::IdeographZodiacTraditional => ideograph_zodiac_traditional_label(n),
         NumFmt::IdeographLegalTraditional => ideograph_legal_traditional_label(n),
         NumFmt::IdeographEnclosedCircle => ideograph_enclosed_circle_label(n),
+        NumFmt::JapaneseCounting => japanese_counting_label(n),
+        NumFmt::Aiueo => cycle_cjk(&AIUEO, n),
+        NumFmt::Iroha => cycle_cjk(&IROHA, n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -3216,6 +3231,41 @@ fn ideograph_enclosed_circle_label(n: u32) -> String {
         ideograph_digital_label(n)
     }
 }
+
+/// MS-DOCX japaneseCounting: 一, 二, …, 十, 十一 (not digit-wise 一〇).
+fn japanese_counting_label(n: u32) -> String {
+    const DIGITS: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+    match n {
+        0 => "零".into(),
+        1..=9 => DIGITS[n as usize].to_string(),
+        10 => "十".into(),
+        11..=19 => format!("十{}", DIGITS[(n - 10) as usize]),
+        20..=99 => {
+            let tens = n / 10;
+            let ones = n % 10;
+            let mut s = format!("{}十", DIGITS[tens as usize]);
+            if ones > 0 {
+                s.push(DIGITS[ones as usize]);
+            }
+            s
+        }
+        n => n.to_string(),
+    }
+}
+
+/// MS-DOCX aiueo: half-width katakana ｱｲｳ… (U+FF71). 46-mora gojūon.
+const AIUEO: [char; 46] = [
+    'ｱ', 'ｲ', 'ｳ', 'ｴ', 'ｵ', 'ｶ', 'ｷ', 'ｸ', 'ｹ', 'ｺ', 'ｻ', 'ｼ', 'ｽ', 'ｾ', 'ｿ', 'ﾀ', 'ﾁ', 'ﾂ', 'ﾃ',
+    'ﾄ', 'ﾅ', 'ﾆ', 'ﾇ', 'ﾈ', 'ﾉ', 'ﾊ', 'ﾋ', 'ﾌ', 'ﾍ', 'ﾎ', 'ﾏ', 'ﾐ', 'ﾑ', 'ﾒ', 'ﾓ', 'ﾔ', 'ﾕ', 'ﾖ',
+    'ﾗ', 'ﾘ', 'ﾙ', 'ﾚ', 'ﾛ', 'ﾜ', 'ｦ', 'ﾝ',
+];
+
+/// MS-DOCX iroha: half-width ｲﾛﾊ… (U+FF72). ゐ→ｲ, ゑ→ｴ.
+const IROHA: [char; 47] = [
+    'ｲ', 'ﾛ', 'ﾊ', 'ﾆ', 'ﾎ', 'ﾍ', 'ﾄ', 'ﾁ', 'ﾘ', 'ﾇ', 'ﾙ', 'ｦ', 'ﾜ', 'ｶ', 'ﾖ', 'ﾀ', 'ﾚ', 'ｿ', 'ﾂ',
+    'ﾈ', 'ﾅ', 'ﾗ', 'ﾑ', 'ｳ', 'ｲ', 'ﾉ', 'ｵ', 'ｸ', 'ﾔ', 'ﾏ', 'ｹ', 'ﾌ', 'ｺ', 'ｴ', 'ﾃ', 'ｱ', 'ｻ', 'ｷ',
+    'ﾕ', 'ﾒ', 'ﾐ', 'ｼ', 'ｴ', 'ﾋ', 'ﾓ', 'ｾ', 'ｽ',
+];
 
 fn alpha_label(mut n: u32, upper: bool) -> String {
     if n == 0 {
@@ -13599,6 +13649,9 @@ impl<'a> Layout<'a> {
             PageNumFmt::IdeographEnclosedCircle => {
                 format_num(NumFmt::IdeographEnclosedCircle, self.section_page)
             }
+            PageNumFmt::JapaneseCounting => format_num(NumFmt::JapaneseCounting, self.section_page),
+            PageNumFmt::Aiueo => format_num(NumFmt::Aiueo, self.section_page),
+            PageNumFmt::Iroha => format_num(NumFmt::Iroha, self.section_page),
         }
     }
 
@@ -17023,7 +17076,7 @@ mod page_num_fmt_labels {
     use super::{
         NumFmt, chicago_label, format_num, ideograph_digital_label,
         ideograph_enclosed_circle_label, ideograph_legal_traditional_label,
-        ideograph_zodiac_traditional_label,
+        ideograph_zodiac_traditional_label, japanese_counting_label,
     };
 
     #[test]
@@ -17079,6 +17132,29 @@ mod page_num_fmt_labels {
         assert_eq!(ideograph_enclosed_circle_label(1), "㈠");
         assert_eq!(ideograph_enclosed_circle_label(2), "㈡");
         assert_eq!(ideograph_enclosed_circle_label(11), "一一");
+    }
+
+    #[test]
+    fn japanese_counting_uses_ten_not_digital_zero() {
+        assert_eq!(japanese_counting_label(1), "一");
+        assert_eq!(japanese_counting_label(10), "十");
+        assert_eq!(japanese_counting_label(11), "十一");
+        assert_eq!(japanese_counting_label(21), "二十一");
+        assert_eq!(ideograph_digital_label(10), "一〇");
+    }
+
+    #[test]
+    fn aiueo_is_halfwidth_katakana_gojuon() {
+        assert_eq!(format_num(NumFmt::Aiueo, 1), "ｱ");
+        assert_eq!(format_num(NumFmt::Aiueo, 2), "ｲ");
+        assert_eq!(format_num(NumFmt::Aiueo, 3), "ｳ");
+    }
+
+    #[test]
+    fn iroha_is_halfwidth_iroha_order() {
+        assert_eq!(format_num(NumFmt::Iroha, 1), "ｲ");
+        assert_eq!(format_num(NumFmt::Iroha, 2), "ﾛ");
+        assert_eq!(format_num(NumFmt::Iroha, 3), "ﾊ");
     }
 }
 
