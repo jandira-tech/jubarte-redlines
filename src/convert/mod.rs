@@ -4404,11 +4404,16 @@ fn is_printdate_field(instr: &str) -> bool {
     field_first_token(instr).eq_ignore_ascii_case("PRINTDATE")
 }
 
+fn is_savedate_field(instr: &str) -> bool {
+    field_first_token(instr).eq_ignore_ascii_case("SAVEDATE")
+}
+
 fn is_datetime_field(instr: &str) -> bool {
     is_date_field(instr)
         || is_time_field(instr)
         || is_createdate_field(instr)
         || is_printdate_field(instr)
+        || is_savedate_field(instr)
 }
 
 fn is_numwords_field(instr: &str) -> bool {
@@ -4517,10 +4522,17 @@ struct CivilDateTime {
 struct CoreDates {
     created: Option<CivilDateTime>,
     printed: Option<CivilDateTime>,
+    modified: Option<CivilDateTime>,
 }
 
 thread_local! {
-    static CORE_DATES: Cell<CoreDates> = const { Cell::new(CoreDates { created: None, printed: None }) };
+    static CORE_DATES: Cell<CoreDates> = const {
+        Cell::new(CoreDates {
+            created: None,
+            printed: None,
+            modified: None,
+        })
+    };
 }
 
 fn with_core_dates<R>(dates: CoreDates, f: impl FnOnce() -> R) -> R {
@@ -4604,6 +4616,7 @@ fn load_core_dates(pkg: &PartFs) -> CoreDates {
     CoreDates {
         created: xml_tagged_text(&xml, "created").and_then(parse_w3cdtf),
         printed: xml_tagged_text(&xml, "lastPrinted").and_then(parse_w3cdtf),
+        modified: xml_tagged_text(&xml, "modified").and_then(parse_w3cdtf),
     }
 }
 
@@ -4775,6 +4788,8 @@ fn datetime_field_text(instr: &str) -> String {
         core.created.unwrap_or(now)
     } else if is_printdate_field(instr) {
         core.printed.unwrap_or(now)
+    } else if is_savedate_field(instr) {
+        core.modified.unwrap_or(now)
     } else {
         now
     };
@@ -16689,6 +16704,8 @@ mod field_tests {
         assert!(is_createdate_field(" CREATEDATE \\@ \"yyyy\" "));
         assert!(is_time_field(" TIME \\@ \"HHmm\" "));
         assert!(is_printdate_field(" PRINTDATE \\@ \"yyyy\" "));
+        assert!(is_savedate_field(" SAVEDATE \\@ \"yyyy\" "));
+        assert!(!is_savedate_field("CREATEDATE"));
         assert!(!is_time_field("DATE"));
         assert!(is_numwords_field(" NUMWORDS "));
         assert!(!is_numwords_field("NUMPAGES"));
