@@ -418,6 +418,14 @@ struct PageSetup {
     col_w: [f32; 4],
     /// Space after each custom column (pt).
     col_gap: [f32; 4],
+    /// `w:lnNumType/@w:countBy`. 0 = line numbering off.
+    ln_count_by: u32,
+    /// `w:lnNumType/@w:start`. Word default 1.
+    ln_start: u32,
+    /// `w:lnNumType/@w:distance` (pt). 0 = auto 18pt.
+    ln_distance: f32,
+    /// 0 = newPage, 1 = newSection, 2 = continuous.
+    ln_restart: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -637,6 +645,10 @@ impl Defaults {
                 col_custom: 0,
                 col_w: [0.0; 4],
                 col_gap: [0.0; 4],
+                ln_count_by: 0,
+                ln_start: 1,
+                ln_distance: 0.0,
+                ln_restart: 0,
             },
         }
     }
@@ -2507,6 +2519,27 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
                 page.col_gap = gaps;
             }
         }
+    }
+    page.ln_count_by = 0;
+    page.ln_start = 1;
+    page.ln_distance = 0.0;
+    page.ln_restart = 0;
+    if let Some(ln) = first_named(dom, sect, "lnNumType") {
+        page.ln_count_by = attr_any(dom, ln, "countBy")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(1)
+            .max(1);
+        page.ln_start = attr_any(dom, ln, "start")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(1);
+        page.ln_distance = attr_any(dom, ln, "distance")
+            .and_then(parse_len)
+            .unwrap_or(0.0);
+        page.ln_restart = match attr_any(dom, ln, "restart").unwrap_or("newPage") {
+            "newSection" => 1,
+            "continuous" => 2,
+            _ => 0,
+        };
     }
     page
 }
@@ -8604,6 +8637,8 @@ struct Layout<'a> {
     word_count: u32,
     footnotes: FootnoteCatalog,
     page_fn_ids: Vec<String>,
+    /// Next `w:lnNumType` line number to assign.
+    ln_i: u32,
 }
 
 fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
@@ -8723,6 +8758,7 @@ impl<'a> Layout<'a> {
             word_count: 0,
             footnotes: FootnoteCatalog::default(),
             page_fn_ids: Vec::new(),
+            ln_i: page.ln_start.max(1),
         };
         lay.apply_mirror_margins();
         lay.chrome();
@@ -8748,6 +8784,9 @@ impl<'a> Layout<'a> {
         // start restarts. Defaulting to 1 retagged comments-lots p6–p9 as 1.
         if let Some(start) = next.page.page_num_start {
             self.section_page = start.max(1);
+        }
+        if self.page.ln_restart != 2 {
+            self.ln_i = self.page.ln_start.max(1);
         }
         // Explicit headerReference, even to an empty/no-watermark part,
         // replaces chrome (Strict01 landscape header5/6). Omitted refs
@@ -8879,6 +8918,9 @@ impl<'a> Layout<'a> {
         self.section_page = self.section_page.saturating_add(1);
         self.pages.push(self.fresh_page());
         self.col_i = 0;
+        if self.page.ln_restart == 0 {
+            self.ln_i = self.page.ln_start.max(1);
+        }
         self.y = self.page.height - self.body_top;
         self.page_has_body = false;
         self.at_page_top = true;
@@ -9539,6 +9581,7 @@ impl<'a> Layout<'a> {
             } else {
                 self.paint_line_with_tabs(line, x, baseline);
             }
+            self.paint_line_number(baseline);
             self.y -= (line_box - ascent).max(1.0);
         }
         // Do not skip empty/del-only pBdr (mini 217–220): no-redline
@@ -9550,6 +9593,26 @@ impl<'a> Layout<'a> {
             self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
         }
         self.y -= style.after;
+    }
+
+    fn paint_line_number(&mut self, y: f32) {
+        if self.page.ln_count_by == 0 || self.nested_depth > 0 {
+            return;
+        }
+        let n = self.ln_i;
+        self.ln_i = self.ln_i.saturating_add(1);
+        if n == 0 || !n.is_multiple_of(self.page.ln_count_by) {
+            return;
+        }
+        let run = TextRun::new(n.to_string(), default_run_style());
+        let w = self.run_width_pt(&run, &run.text);
+        let dist = if self.page.ln_distance > 0.5 {
+            self.page.ln_distance
+        } else {
+            18.0
+        };
+        let x = (self.flow_left() - dist - w).max(2.0);
+        self.paint_run(&run, x, y);
     }
 
     fn hairline_h(&mut self, x1: f32, y: f32, x2: f32, width: f32, color: [f32; 3]) {
