@@ -13251,6 +13251,40 @@ fn hyphen_and_underscore_tab_leaders_fill_the_gap() {
 }
 
 #[test]
+fn heavy_tab_leader_fills_a_rule() {
+    // xml leftover: w:tab/@w:leader heavy (ST_TabTlc). Dot/hyphen/underscore
+    // already ship; heavy still maps to none. Word paints a thick filled
+    // rule across the tab gap, not repeated "_" glyphs.
+    let body = "<w:p>\
+           <w:pPr><w:tabs>\
+             <w:tab w:val=\"left\" w:leader=\"heavy\" w:pos=\"4320\"/>\
+           </w:tabs></w:pPr>\
+           <w:r><w:t>HvyTx</w:t></w:r><w:r><w:tab/></w:r>\
+           <w:r><w:t>EndHx</w:t></w:r>\
+         </w:p>\
+         <w:sectPr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         </w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("convert heavy tab leader");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("HvyTx") && text.contains("EndHx"),
+        "heavy-leader run must paint; text={text}"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    let rules: Vec<_> = pdf_fill_boxes_in(&hay, 0.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(_, _, w, h)| *w > 80.0 && *h > 0.2 && *h < 3.0)
+        .collect();
+    assert!(
+        !rules.is_empty(),
+        "heavy leader must fill a thick horizontal rule in the tab gap; boxes={:?} text={text}",
+        pdf_fill_boxes_in(&hay, 0.0, 0.0, 0.0)
+    );
+}
+
+#[test]
 fn unequal_col_children_place_the_second_column() {
     // xml leftover: w:cols/w:col when equalWidth=0. Narrow first column
     // 1440 twips (72pt) + space 720 (36pt) → col2 x=180, not equal-width 324.
