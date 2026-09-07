@@ -477,6 +477,10 @@ enum PageNumFmt {
     DecimalEnclosedCircle,
     DecimalEnclosedParen,
     DecimalEnclosedFullstop,
+    Hebrew1,
+    Hebrew2,
+    ArabicAlpha,
+    ArabicAbjad,
 }
 
 struct NamedStyle {
@@ -2626,6 +2630,10 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "decimalEnclosedCircle" => PageNumFmt::DecimalEnclosedCircle,
             "decimalEnclosedParen" => PageNumFmt::DecimalEnclosedParen,
             "decimalEnclosedFullstop" => PageNumFmt::DecimalEnclosedFullstop,
+            "hebrew1" => PageNumFmt::Hebrew1,
+            "hebrew2" => PageNumFmt::Hebrew2,
+            "arabicAlpha" => PageNumFmt::ArabicAlpha,
+            "arabicAbjad" => PageNumFmt::ArabicAbjad,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -2787,6 +2795,10 @@ enum NumFmt {
     DecimalEnclosedCircle,
     DecimalEnclosedParen,
     DecimalEnclosedFullstop,
+    Hebrew1,
+    Hebrew2,
+    ArabicAlpha,
+    ArabicAbjad,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -3049,6 +3061,10 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "decimalEnclosedCircle" => NumFmt::DecimalEnclosedCircle,
         "decimalEnclosedParen" => NumFmt::DecimalEnclosedParen,
         "decimalEnclosedFullstop" => NumFmt::DecimalEnclosedFullstop,
+        "hebrew1" => NumFmt::Hebrew1,
+        "hebrew2" => NumFmt::Hebrew2,
+        "arabicAlpha" => NumFmt::ArabicAlpha,
+        "arabicAbjad" => NumFmt::ArabicAbjad,
         _ => NumFmt::Decimal,
     }
 }
@@ -3077,6 +3093,10 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::DecimalEnclosedCircle => enclosed_decimal_label(n, &DECIMAL_ENCLOSED_CIRCLE),
         NumFmt::DecimalEnclosedParen => enclosed_decimal_label(n, &DECIMAL_ENCLOSED_PAREN),
         NumFmt::DecimalEnclosedFullstop => enclosed_decimal_label(n, &DECIMAL_ENCLOSED_FULLSTOP),
+        NumFmt::Hebrew1 => hebrew1_label(n),
+        NumFmt::Hebrew2 => cycle_cjk(&HEBREW2, n),
+        NumFmt::ArabicAlpha => cycle_cjk(&ARABIC_ALPHA, n),
+        NumFmt::ArabicAbjad => cycle_cjk(&ARABIC_ABJAD, n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -3339,6 +3359,60 @@ fn enclosed_decimal_label(n: u32, glyphs: &[char; 20]) -> String {
         n.to_string()
     }
 }
+
+/// MS-DOCX hebrew1: Hebrew numerals א, י, ק… (U+05D0, U+05D9, U+05E7).
+/// Additive gematria without geresh; 15=טו, 16=טז. After 999, decimal.
+fn hebrew1_label(n: u32) -> String {
+    if n == 0 || n > 999 {
+        return n.to_string();
+    }
+    let mut out = String::new();
+    let hundreds = n / 100;
+    let mut rest = n % 100;
+    const HUNDREDS: [&str; 9] = ["ק", "ר", "ש", "ת", "תק", "תר", "תש", "תת", "תתק"];
+    if hundreds >= 1 {
+        out.push_str(HUNDREDS[(hundreds - 1) as usize]);
+    }
+    if rest == 15 {
+        out.push('ט');
+        out.push('ו');
+        return out;
+    }
+    if rest == 16 {
+        out.push('ט');
+        out.push('ז');
+        return out;
+    }
+    const TENS: [char; 9] = ['י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ'];
+    const ONES: [char; 9] = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט'];
+    let tens = rest / 10;
+    rest %= 10;
+    if tens > 0 {
+        out.push(TENS[(tens - 1) as usize]);
+    }
+    if rest > 0 {
+        out.push(ONES[(rest - 1) as usize]);
+    }
+    out
+}
+
+/// MS-DOCX hebrew2: Hebrew alphabet אבג… (U+05D0, U+05D1, U+05D2). 22 letters.
+const HEBREW2: [char; 22] = [
+    'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ', 'ק',
+    'ר', 'ש', 'ת',
+];
+
+/// MS-DOCX arabicAlpha: أ ب ت… (U+0623, U+0628, U+062A). Hijāʾī, hamza-alef first.
+const ARABIC_ALPHA: [char; 28] = [
+    'أ', 'ب', 'ت', 'ث', 'ج', 'ح', 'خ', 'د', 'ذ', 'ر', 'ز', 'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ع', 'غ',
+    'ف', 'ق', 'ك', 'ل', 'م', 'ن', 'ه', 'و', 'ي',
+];
+
+/// MS-DOCX arabicAbjad: أ ب ج… (U+0623, U+0628, U+062C). Abjadī, hamza-alef first.
+const ARABIC_ABJAD: [char; 28] = [
+    'أ', 'ب', 'ج', 'د', 'ه', 'و', 'ز', 'ح', 'ط', 'ي', 'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق',
+    'ر', 'ش', 'ت', 'ث', 'خ', 'ذ', 'ض', 'ظ', 'غ',
+];
 
 fn alpha_label(mut n: u32, upper: bool) -> String {
     if n == 0 {
@@ -13737,6 +13811,10 @@ impl<'a> Layout<'a> {
             PageNumFmt::DecimalEnclosedFullstop => {
                 format_num(NumFmt::DecimalEnclosedFullstop, self.section_page)
             }
+            PageNumFmt::Hebrew1 => format_num(NumFmt::Hebrew1, self.section_page),
+            PageNumFmt::Hebrew2 => format_num(NumFmt::Hebrew2, self.section_page),
+            PageNumFmt::ArabicAlpha => format_num(NumFmt::ArabicAlpha, self.section_page),
+            PageNumFmt::ArabicAbjad => format_num(NumFmt::ArabicAbjad, self.section_page),
         }
     }
 
@@ -17276,6 +17354,30 @@ mod page_num_fmt_labels {
         assert_eq!(format_num(NumFmt::DecimalEnclosedParen, 1), "⑴");
         assert_eq!(format_num(NumFmt::DecimalEnclosedFullstop, 1), "⒈");
         assert_eq!(format_num(NumFmt::DecimalEnclosedParen, 21), "21");
+    }
+
+    #[test]
+    fn hebrew1_is_gematria_without_geresh() {
+        assert_eq!(format_num(NumFmt::Hebrew1, 1), "א");
+        assert_eq!(format_num(NumFmt::Hebrew1, 10), "י");
+        assert_eq!(format_num(NumFmt::Hebrew1, 11), "יא");
+        assert_eq!(format_num(NumFmt::Hebrew1, 15), "טו");
+        assert_eq!(format_num(NumFmt::Hebrew1, 100), "ק");
+    }
+
+    #[test]
+    fn hebrew2_is_hebrew_alphabet() {
+        assert_eq!(format_num(NumFmt::Hebrew2, 1), "א");
+        assert_eq!(format_num(NumFmt::Hebrew2, 2), "ב");
+        assert_eq!(format_num(NumFmt::Hebrew2, 3), "ג");
+    }
+
+    #[test]
+    fn arabic_alpha_is_hijai_not_abjad() {
+        assert_eq!(format_num(NumFmt::ArabicAlpha, 1), "أ");
+        assert_eq!(format_num(NumFmt::ArabicAlpha, 2), "ب");
+        assert_eq!(format_num(NumFmt::ArabicAlpha, 3), "ت");
+        assert_eq!(format_num(NumFmt::ArabicAbjad, 3), "ج");
     }
 }
 
