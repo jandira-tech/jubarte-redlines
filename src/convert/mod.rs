@@ -486,6 +486,10 @@ enum PageNumFmt {
     ThaiNumbers,
     ThaiLetters,
     ThaiCounting,
+    HindiNumbers,
+    HindiVowels,
+    HindiConsonants,
+    HindiCounting,
 }
 
 struct NamedStyle {
@@ -2644,6 +2648,10 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "thaiNumbers" => PageNumFmt::ThaiNumbers,
             "thaiLetters" => PageNumFmt::ThaiLetters,
             "thaiCounting" => PageNumFmt::ThaiCounting,
+            "hindiNumbers" => PageNumFmt::HindiNumbers,
+            "hindiVowels" => PageNumFmt::HindiVowels,
+            "hindiConsonants" => PageNumFmt::HindiConsonants,
+            "hindiCounting" => PageNumFmt::HindiCounting,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -2814,6 +2822,10 @@ enum NumFmt {
     ThaiNumbers,
     ThaiLetters,
     ThaiCounting,
+    HindiNumbers,
+    HindiVowels,
+    HindiConsonants,
+    HindiCounting,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -3085,6 +3097,10 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "thaiNumbers" => NumFmt::ThaiNumbers,
         "thaiLetters" => NumFmt::ThaiLetters,
         "thaiCounting" => NumFmt::ThaiCounting,
+        "hindiNumbers" => NumFmt::HindiNumbers,
+        "hindiVowels" => NumFmt::HindiVowels,
+        "hindiConsonants" => NumFmt::HindiConsonants,
+        "hindiCounting" => NumFmt::HindiCounting,
         _ => NumFmt::Decimal,
     }
 }
@@ -3122,6 +3138,10 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::ThaiNumbers => thai_numbers_label(n),
         NumFmt::ThaiLetters => cycle_cjk(&THAI_LETTERS, n),
         NumFmt::ThaiCounting => thai_counting_label(n),
+        NumFmt::HindiNumbers => hindi_numbers_label(n),
+        NumFmt::HindiVowels => cycle_cjk(&HINDI_VOWELS, n),
+        NumFmt::HindiConsonants => cycle_cjk(&HINDI_CONSONANTS, n),
+        NumFmt::HindiCounting => hindi_counting_label(n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -3501,6 +3521,56 @@ fn thai_counting_label(n: u32) -> String {
             }
         }
         n => n.to_string(),
+    }
+}
+
+/// MS-DOCX hindiNumbers: U+0967… (१२३). Digit-wise Devanagari.
+fn hindi_numbers_label(n: u32) -> String {
+    const DIGITS: [char; 10] = ['०', '१', '२', '३', '४', '५', '६', '७', '८', '९'];
+    n.to_string()
+        .bytes()
+        .map(|b| DIGITS[usize::from(b - b'0')])
+        .collect()
+}
+
+/// MS-DOCX hindiVowels: क ख ग… (U+0915). 33 Devanagari consonants despite the name.
+const HINDI_VOWELS: [char; 33] = [
+    'क', 'ख', 'ग', 'घ', 'ङ', 'च', 'छ', 'ज', 'झ', 'ञ', 'ट', 'ठ', 'ड', 'ढ', 'ण', 'त', 'थ', 'द', 'ध',
+    'न', 'प', 'फ', 'ब', 'भ', 'म', 'य', 'र', 'ल', 'व', 'श', 'ष', 'स', 'ह',
+];
+
+/// MS-DOCX hindiConsonants: अ आ इ… (U+0905). Independent vowels despite the name.
+const HINDI_CONSONANTS: [char; 11] = ['अ', 'आ', 'इ', 'ई', 'उ', 'ऊ', 'ऋ', 'ए', 'ऐ', 'ओ', 'औ'];
+
+/// MS-DOCX hindiCounting: एक, दो, तीन… (U+090F U+0915). After 20, decimal.
+fn hindi_counting_label(n: u32) -> String {
+    const WORDS: [&str; 21] = [
+        "शून्य",
+        "एक",
+        "दो",
+        "तीन",
+        "चार",
+        "पाँच",
+        "छह",
+        "सात",
+        "आठ",
+        "नौ",
+        "दस",
+        "ग्यारह",
+        "बारह",
+        "तेरह",
+        "चौदह",
+        "पंद्रह",
+        "सोलह",
+        "सत्रह",
+        "अठारह",
+        "उन्नीस",
+        "बीस",
+    ];
+    if (n as usize) < WORDS.len() {
+        WORDS[n as usize].into()
+    } else {
+        n.to_string()
     }
 }
 
@@ -13910,6 +13980,10 @@ impl<'a> Layout<'a> {
             PageNumFmt::ThaiNumbers => format_num(NumFmt::ThaiNumbers, self.section_page),
             PageNumFmt::ThaiLetters => format_num(NumFmt::ThaiLetters, self.section_page),
             PageNumFmt::ThaiCounting => format_num(NumFmt::ThaiCounting, self.section_page),
+            PageNumFmt::HindiNumbers => format_num(NumFmt::HindiNumbers, self.section_page),
+            PageNumFmt::HindiVowels => format_num(NumFmt::HindiVowels, self.section_page),
+            PageNumFmt::HindiConsonants => format_num(NumFmt::HindiConsonants, self.section_page),
+            PageNumFmt::HindiCounting => format_num(NumFmt::HindiCounting, self.section_page),
         }
     }
 
@@ -17506,6 +17580,29 @@ mod page_num_fmt_labels {
         assert_eq!(format_num(NumFmt::ThaiCounting, 2), "สอง");
         assert_eq!(format_num(NumFmt::ThaiCounting, 10), "สิบ");
         assert_eq!(format_num(NumFmt::ThaiCounting, 11), "สิบเอ็ด");
+    }
+
+    #[test]
+    fn hindi_numbers_use_devanagari_digits() {
+        assert_eq!(format_num(NumFmt::HindiNumbers, 1), "१");
+        assert_eq!(format_num(NumFmt::HindiNumbers, 10), "१०");
+    }
+
+    #[test]
+    fn hindi_vowels_are_ka_kha_ga() {
+        assert_eq!(format_num(NumFmt::HindiVowels, 1), "क");
+        assert_eq!(format_num(NumFmt::HindiVowels, 2), "ख");
+        assert_eq!(format_num(NumFmt::HindiVowels, 3), "ग");
+        assert_eq!(format_num(NumFmt::HindiConsonants, 1), "अ");
+        assert_eq!(format_num(NumFmt::HindiConsonants, 3), "इ");
+    }
+
+    #[test]
+    fn hindi_counting_uses_hindi_words() {
+        assert_eq!(format_num(NumFmt::HindiCounting, 1), "एक");
+        assert_eq!(format_num(NumFmt::HindiCounting, 2), "दो");
+        assert_eq!(format_num(NumFmt::HindiCounting, 3), "तीन");
+        assert_eq!(format_num(NumFmt::HindiCounting, 10), "दस");
     }
 }
 
