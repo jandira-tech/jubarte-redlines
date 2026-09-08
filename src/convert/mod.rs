@@ -481,6 +481,8 @@ enum PageNumFmt {
     Hebrew2,
     ArabicAlpha,
     ArabicAbjad,
+    RussianLower,
+    RussianUpper,
 }
 
 struct NamedStyle {
@@ -2634,6 +2636,8 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "hebrew2" => PageNumFmt::Hebrew2,
             "arabicAlpha" => PageNumFmt::ArabicAlpha,
             "arabicAbjad" => PageNumFmt::ArabicAbjad,
+            "russianLower" => PageNumFmt::RussianLower,
+            "russianUpper" => PageNumFmt::RussianUpper,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -2799,6 +2803,8 @@ enum NumFmt {
     Hebrew2,
     ArabicAlpha,
     ArabicAbjad,
+    RussianLower,
+    RussianUpper,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -3065,6 +3071,8 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "hebrew2" => NumFmt::Hebrew2,
         "arabicAlpha" => NumFmt::ArabicAlpha,
         "arabicAbjad" => NumFmt::ArabicAbjad,
+        "russianLower" => NumFmt::RussianLower,
+        "russianUpper" => NumFmt::RussianUpper,
         _ => NumFmt::Decimal,
     }
 }
@@ -3097,6 +3105,8 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::Hebrew2 => cycle_cjk(&HEBREW2, n),
         NumFmt::ArabicAlpha => cycle_cjk(&ARABIC_ALPHA, n),
         NumFmt::ArabicAbjad => cycle_cjk(&ARABIC_ABJAD, n),
+        NumFmt::RussianLower => cycle_cjk(&RUSSIAN_LOWER, n),
+        NumFmt::RussianUpper => cycle_cjk(&RUSSIAN_UPPER, n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -3412,6 +3422,17 @@ const ARABIC_ALPHA: [char; 28] = [
 const ARABIC_ABJAD: [char; 28] = [
     'أ', 'ب', 'ج', 'د', 'ه', 'و', 'ز', 'ح', 'ط', 'ي', 'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق',
     'ر', 'ش', 'ت', 'ث', 'خ', 'ذ', 'ض', 'ظ', 'غ',
+];
+
+/// MS-DOCX russianLower: абв… (U+0430). 33-letter Russian including ё as 7.
+const RUSSIAN_LOWER: [char; 33] = [
+    'а', 'б', 'в', 'г', 'д', 'е', 'ё', 'ж', 'з', 'и', 'й', 'к', 'л', 'м', 'н', 'о', 'п', 'р', 'с',
+    'т', 'у', 'ф', 'х', 'ц', 'ч', 'ш', 'щ', 'ъ', 'ы', 'ь', 'э', 'ю', 'я',
+];
+/// MS-DOCX russianUpper: АБВ… (U+0410). Ё is U+0401, not sequential after Е.
+const RUSSIAN_UPPER: [char; 33] = [
+    'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ё', 'Ж', 'З', 'И', 'Й', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С',
+    'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Ъ', 'Ы', 'Ь', 'Э', 'Ю', 'Я',
 ];
 
 fn alpha_label(mut n: u32, upper: bool) -> String {
@@ -13815,6 +13836,8 @@ impl<'a> Layout<'a> {
             PageNumFmt::Hebrew2 => format_num(NumFmt::Hebrew2, self.section_page),
             PageNumFmt::ArabicAlpha => format_num(NumFmt::ArabicAlpha, self.section_page),
             PageNumFmt::ArabicAbjad => format_num(NumFmt::ArabicAbjad, self.section_page),
+            PageNumFmt::RussianLower => format_num(NumFmt::RussianLower, self.section_page),
+            PageNumFmt::RussianUpper => format_num(NumFmt::RussianUpper, self.section_page),
         }
     }
 
@@ -17378,6 +17401,18 @@ mod page_num_fmt_labels {
         assert_eq!(format_num(NumFmt::ArabicAlpha, 2), "ب");
         assert_eq!(format_num(NumFmt::ArabicAlpha, 3), "ت");
         assert_eq!(format_num(NumFmt::ArabicAbjad, 3), "ج");
+    }
+
+    #[test]
+    fn russian_letters_are_cyrillic_alphabet() {
+        assert_eq!(format_num(NumFmt::RussianLower, 1), "а");
+        assert_eq!(format_num(NumFmt::RussianLower, 2), "б");
+        assert_eq!(format_num(NumFmt::RussianLower, 3), "в");
+        assert_eq!(format_num(NumFmt::RussianLower, 7), "ё");
+        assert_eq!(format_num(NumFmt::RussianLower, 33), "я");
+        assert_eq!(format_num(NumFmt::RussianUpper, 1), "А");
+        assert_eq!(format_num(NumFmt::RussianUpper, 7), "Ё");
+        assert_eq!(format_num(NumFmt::RussianUpper, 33), "Я");
     }
 }
 
