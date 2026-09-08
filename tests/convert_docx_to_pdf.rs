@@ -8391,6 +8391,18 @@ fn page_field_uses_sectpr_arabic_abjad() {
 }
 
 #[test]
+fn page_field_uses_sectpr_russian_lower() {
+    // MS-DOCX: russianLower is абв… (U+0430). start=1 is а, not ASCII "1".
+    assert_ideograph_page_is_cid_not_decimal("russianLower", "PgRlX");
+}
+
+#[test]
+fn page_field_uses_sectpr_russian_upper() {
+    // MS-DOCX: russianUpper is АБВ… (U+0410). start=1 is А.
+    assert_ideograph_page_is_cid_not_decimal("russianUpper", "PgRuX");
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).
