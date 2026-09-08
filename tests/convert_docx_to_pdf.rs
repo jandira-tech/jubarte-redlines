@@ -8403,6 +8403,48 @@ fn page_field_uses_sectpr_russian_upper() {
 }
 
 #[test]
+fn page_field_uses_sectpr_thai_numbers() {
+    // MS-DOCX: thaiNumbers is ๑๒๓… (U+0E51). start=10 is ๑๐, not ASCII "10".
+    let pdf = page_num_fmt_pdf("thaiNumbers", 10, "PgTnX");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "thaiNumbers PAGE start=10 must not stay ASCII 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "thaiNumbers ๑๐ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_thai_letters() {
+    // MS-DOCX / ECMA: thaiLetters is ก ข ค… (U+0E01, U+0E02, U+0E04). start=1 is ก.
+    assert_ideograph_page_is_cid_not_decimal("thaiLetters", "PgTlX");
+}
+
+#[test]
+fn page_field_uses_sectpr_thai_counting() {
+    // MS-DOCX: thaiCounting is หนึ่ง สอง สาม… start=10 is สิบ, not ASCII "10".
+    let pdf = page_num_fmt_pdf("thaiCounting", 10, "PgTcX");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "thaiCounting PAGE start=10 must not stay ASCII 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "thaiCounting สิบ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).

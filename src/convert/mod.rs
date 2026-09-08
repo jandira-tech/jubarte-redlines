@@ -483,6 +483,9 @@ enum PageNumFmt {
     ArabicAbjad,
     RussianLower,
     RussianUpper,
+    ThaiNumbers,
+    ThaiLetters,
+    ThaiCounting,
 }
 
 struct NamedStyle {
@@ -2638,6 +2641,9 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "arabicAbjad" => PageNumFmt::ArabicAbjad,
             "russianLower" => PageNumFmt::RussianLower,
             "russianUpper" => PageNumFmt::RussianUpper,
+            "thaiNumbers" => PageNumFmt::ThaiNumbers,
+            "thaiLetters" => PageNumFmt::ThaiLetters,
+            "thaiCounting" => PageNumFmt::ThaiCounting,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -2805,6 +2811,9 @@ enum NumFmt {
     ArabicAbjad,
     RussianLower,
     RussianUpper,
+    ThaiNumbers,
+    ThaiLetters,
+    ThaiCounting,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -3073,6 +3082,9 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "arabicAbjad" => NumFmt::ArabicAbjad,
         "russianLower" => NumFmt::RussianLower,
         "russianUpper" => NumFmt::RussianUpper,
+        "thaiNumbers" => NumFmt::ThaiNumbers,
+        "thaiLetters" => NumFmt::ThaiLetters,
+        "thaiCounting" => NumFmt::ThaiCounting,
         _ => NumFmt::Decimal,
     }
 }
@@ -3107,6 +3119,9 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::ArabicAbjad => cycle_cjk(&ARABIC_ABJAD, n),
         NumFmt::RussianLower => cycle_cjk(&RUSSIAN_LOWER, n),
         NumFmt::RussianUpper => cycle_cjk(&RUSSIAN_UPPER, n),
+        NumFmt::ThaiNumbers => thai_numbers_label(n),
+        NumFmt::ThaiLetters => cycle_cjk(&THAI_LETTERS, n),
+        NumFmt::ThaiCounting => thai_counting_label(n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -3434,6 +3449,60 @@ const RUSSIAN_UPPER: [char; 33] = [
     'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ё', 'Ж', 'З', 'И', 'Й', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С',
     'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Ъ', 'Ы', 'Ь', 'Э', 'Ю', 'Я',
 ];
+
+/// MS-DOCX thaiNumbers: U+0E51… (๑๒๓). Digit-wise, like decimalFullWidth.
+fn thai_numbers_label(n: u32) -> String {
+    const DIGITS: [char; 10] = ['๐', '๑', '๒', '๓', '๔', '๕', '๖', '๗', '๘', '๙'];
+    n.to_string()
+        .bytes()
+        .map(|b| DIGITS[usize::from(b - b'0')])
+        .collect()
+}
+
+/// MS-DOCX/ECMA thaiLetters: ก ข ค… (U+0E01, U+0E02, U+0E04). Skip obsolete ฃ/ฅ and vowels ฤ/ฦ.
+const THAI_LETTERS: [char; 42] = [
+    'ก', 'ข', 'ค', 'ฆ', 'ง', 'จ', 'ฉ', 'ช', 'ซ', 'ฌ', 'ญ', 'ฎ', 'ฏ', 'ฐ', 'ฑ', 'ฒ', 'ณ', 'ด', 'ต',
+    'ถ', 'ท', 'ธ', 'น', 'บ', 'ป', 'ผ', 'ฝ', 'พ', 'ฟ', 'ภ', 'ม', 'ย', 'ร', 'ล', 'ว', 'ศ', 'ษ', 'ส',
+    'ห', 'ฬ', 'อ', 'ฮ',
+];
+
+/// MS-DOCX thaiCounting: หนึ่ง, สอง, สาม… (U+0E2B U+0E19 U+0E36 U+0E48 U+0E07).
+fn thai_counting_label(n: u32) -> String {
+    const ONES: [&str; 10] = [
+        "",
+        "หนึ่ง",
+        "สอง",
+        "สาม",
+        "สี่",
+        "ห้า",
+        "หก",
+        "เจ็ด",
+        "แปด",
+        "เก้า",
+    ];
+    match n {
+        0 => "ศูนย์".into(),
+        1..=9 => ONES[n as usize].into(),
+        10 => "สิบ".into(),
+        11 => "สิบเอ็ด".into(),
+        12..=19 => format!("สิบ{}", ONES[(n - 10) as usize]),
+        20..=99 => {
+            let tens = n / 10;
+            let ones = n % 10;
+            let head = if tens == 2 {
+                "ยี่สิบ".into()
+            } else {
+                format!("{}สิบ", ONES[tens as usize])
+            };
+            match ones {
+                0 => head,
+                1 => format!("{head}เอ็ด"),
+                _ => format!("{head}{}", ONES[ones as usize]),
+            }
+        }
+        n => n.to_string(),
+    }
+}
 
 fn alpha_label(mut n: u32, upper: bool) -> String {
     if n == 0 {
@@ -13838,6 +13907,9 @@ impl<'a> Layout<'a> {
             PageNumFmt::ArabicAbjad => format_num(NumFmt::ArabicAbjad, self.section_page),
             PageNumFmt::RussianLower => format_num(NumFmt::RussianLower, self.section_page),
             PageNumFmt::RussianUpper => format_num(NumFmt::RussianUpper, self.section_page),
+            PageNumFmt::ThaiNumbers => format_num(NumFmt::ThaiNumbers, self.section_page),
+            PageNumFmt::ThaiLetters => format_num(NumFmt::ThaiLetters, self.section_page),
+            PageNumFmt::ThaiCounting => format_num(NumFmt::ThaiCounting, self.section_page),
         }
     }
 
@@ -17413,6 +17485,27 @@ mod page_num_fmt_labels {
         assert_eq!(format_num(NumFmt::RussianUpper, 1), "А");
         assert_eq!(format_num(NumFmt::RussianUpper, 7), "Ё");
         assert_eq!(format_num(NumFmt::RussianUpper, 33), "Я");
+    }
+
+    #[test]
+    fn thai_numbers_use_thai_digits() {
+        assert_eq!(format_num(NumFmt::ThaiNumbers, 1), "๑");
+        assert_eq!(format_num(NumFmt::ThaiNumbers, 10), "๑๐");
+    }
+
+    #[test]
+    fn thai_letters_skip_obsolete_kho() {
+        assert_eq!(format_num(NumFmt::ThaiLetters, 1), "ก");
+        assert_eq!(format_num(NumFmt::ThaiLetters, 2), "ข");
+        assert_eq!(format_num(NumFmt::ThaiLetters, 3), "ค");
+    }
+
+    #[test]
+    fn thai_counting_uses_thai_words() {
+        assert_eq!(format_num(NumFmt::ThaiCounting, 1), "หนึ่ง");
+        assert_eq!(format_num(NumFmt::ThaiCounting, 2), "สอง");
+        assert_eq!(format_num(NumFmt::ThaiCounting, 10), "สิบ");
+        assert_eq!(format_num(NumFmt::ThaiCounting, 11), "สิบเอ็ด");
     }
 }
 
