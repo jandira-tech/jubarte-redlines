@@ -8445,6 +8445,54 @@ fn page_field_uses_sectpr_thai_counting() {
 }
 
 #[test]
+fn page_field_uses_sectpr_hindi_numbers() {
+    // MS-DOCX: hindiNumbers is १२३… (U+0967). start=10 is १०, not ASCII "10".
+    let pdf = page_num_fmt_pdf("hindiNumbers", 10, "PgHnX");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "hindiNumbers PAGE start=10 must not stay ASCII 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "hindiNumbers १० is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_hindi_vowels() {
+    // MS-DOCX: hindiVowels is क ख ग… (U+0915), not independent vowels.
+    assert_ideograph_page_is_cid_not_decimal("hindiVowels", "PgHvX");
+}
+
+#[test]
+fn page_field_uses_sectpr_hindi_consonants() {
+    // MS-DOCX: hindiConsonants is अ आ इ… (U+0905), not ka-kha-ga.
+    assert_ideograph_page_is_cid_not_decimal("hindiConsonants", "PgHcX");
+}
+
+#[test]
+fn page_field_uses_sectpr_hindi_counting() {
+    // MS-DOCX: hindiCounting is एक दो तीन… start=10 is दस, not ASCII "10".
+    let pdf = page_num_fmt_pdf("hindiCounting", 10, "PgHkX");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "hindiCounting PAGE start=10 must not stay ASCII 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "hindiCounting दस is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).
