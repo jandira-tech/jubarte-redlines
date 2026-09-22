@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -167,6 +168,40 @@ class RatchetTests(unittest.TestCase):
             failed=["a"],
         )
         self.assertFalse(result.ok)
+
+
+class MainOutputTests(unittest.TestCase):
+    def test_compare_without_out_writes_stdout_not_default_baseline(self) -> None:
+        row = cs.ScoreRow("case1", 50.0, 80.0, 100.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            jubarte = root / "jubarte"
+            scorer = root / "scorer"
+            baseline = root / "baseline.tsv"
+            for path in (jubarte, scorer, baseline):
+                _touch(path)
+            job = cs.Job("case1", root / "input.docx", root / "reference.pdf")
+
+            with (
+                mock.patch.object(cs, "discover_76_or_skip", return_value=([job], "")),
+                mock.patch.object(cs, "convert_and_score", return_value=([row], [])),
+                mock.patch.object(cs, "read_tsv", return_value=[row]),
+                mock.patch.object(cs, "write_tsv") as write_tsv,
+            ):
+                result = cs.main(
+                    [
+                        "76",
+                        "--jubarte",
+                        str(jubarte),
+                        "--scorer",
+                        str(scorer),
+                        "--compare",
+                        str(baseline),
+                    ]
+                )
+
+        self.assertEqual(result, 0)
+        write_tsv.assert_called_once_with([row], Path("/dev/stdout"))
 
 
 class LiveTreeTests(unittest.TestCase):
