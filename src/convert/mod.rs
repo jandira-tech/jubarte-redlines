@@ -1136,6 +1136,16 @@ struct ChartData {
     colors: Vec<[f32; 3]>,
     legend: bool,
     kind: ChartKind,
+    /// Per series, `(c:pt/@idx, value)`: a sparse cache keeps each point
+    /// in its own category slot (line, scatter).
+    indexed: Vec<Vec<(usize, f32)>>,
+    /// Per series, the scatter `c:xVal` points by `c:pt/@idx`.
+    x_indexed: Vec<Vec<(usize, f32)>>,
+    /// Shared category slots: the largest ptCount / idx / cat count.
+    n_cats: usize,
+    /// `c:valAx` `c:scaling` min/max: horizontal (axPos b/t) and vertical.
+    x_scaling: (Option<f32>, Option<f32>),
+    y_scaling: (Option<f32>, Option<f32>),
 }
 
 /// Inline / wrapTopAndBottom images consume flow; wrapSquare anchors overlay.
@@ -3032,8 +3042,12 @@ struct Numbering {
     restarts: HashMap<(String, u32), u32>,
     /// `w:isLgl` on a level: every `%n` slot paints as Arabic.
     is_lgl: HashSet<(String, u32)>,
+    /// `(numId, ilvl)` → isLgl of a `w:lvlOverride/w:lvl` replacement.
+    lgl_override: HashMap<(String, u32), bool>,
     /// `w:numPicBullet/@w:numPicBulletId` → image bytes.
     pic_bytes: HashMap<u32, Vec<u8>>,
+    /// `w:numPicBullet` `v:shape` width/height (pt), when given.
+    pic_extent: HashMap<u32, (f32, f32)>,
     /// `(abstractNumId, ilvl)` → `lvlPicBulletId`.
     lvl_pic: HashMap<(String, u32), u32>,
 }
@@ -3112,14 +3126,18 @@ impl Numbering {
         let Some(lvl) = self.ensure_level(&abs, resolved) else {
             return String::new();
         };
+        // Incrementing level `resolved` restarts each deeper level L unless
+        // its lvlRestart says otherwise: 0 never restarts; a valid 1-based
+        // n (1..=L) restarts only when a level at or above n-1 increments;
+        // anything else is the default (restart on any shallower level).
         self.counters.retain(|(id, level), _| {
             if id != num_id || *level <= resolved {
                 return true;
             }
             match self.restarts.get(&(abs.clone(), *level)) {
                 Some(0) => true,
-                Some(n) => *n != resolved,
-                None => false,
+                Some(&n) if (1..=*level).contains(&n) => resolved + 1 > n,
+                _ => false,
             }
         });
         let start = self
@@ -3141,6 +3159,14 @@ impl Numbering {
         self.counters
             .get(&(num_id.to_string(), ilvl))
             .map(|v| v.saturating_sub(1).max(1))
+    }
+
+    /// The picture bullet's own extent (pt), from its `v:shape` style.
+    fn pic_extent(&self, num_id: &str, ilvl: u32) -> Option<(f32, f32)> {
+        let abs = self.instances.get(num_id)?;
+        let resolved = self.resolve_ilvl(abs, ilvl);
+        let pic_id = self.lvl_pic.get(&(abs.clone(), resolved))?;
+        self.pic_extent.get(pic_id).copied()
     }
 
     fn pic_image(&self, num_id: &str, ilvl: u32) -> Option<ImageKind> {
@@ -3184,6 +3210,9 @@ impl Numbering {
                 self.counters
                     .get(&(num_id.to_string(), i))
                     .map(|v| (*v).saturating_sub(1).max(1))
+                    // An unused parent slot shows this instance's
+                    // startOverride before the abstract start.
+                    .or_else(|| self.starts.get(&(num_id.to_string(), i)).copied())
                     .or_else(|| {
                         self.levels
                             .get(abs)
@@ -3200,9 +3229,12 @@ impl Numbering {
             // Word `Section 1.01`: decimalZero lvlText uses decimal for
             // parent slots, not the parent's cardinalText (`Article One`).
             // w:isLgl on this level forces every slot to Arabic (I.1 → 1.1).
-            let fmt = if self.is_lgl.contains(&(abs.to_string(), ilvl))
-                || (lvl.fmt == NumFmt::DecimalZero && i != ilvl)
-            {
+            let lgl = self
+                .lgl_override
+                .get(&(num_id.to_string(), ilvl))
+                .copied()
+                .unwrap_or_else(|| self.is_lgl.contains(&(abs.to_string(), ilvl)));
+            let fmt = if lgl || (lvl.fmt == NumFmt::DecimalZero && i != ilvl) {
                 NumFmt::Decimal
             } else {
                 fmt
@@ -3797,13 +3829,18 @@ fn bullet_glyph(raw: &str) -> String {
 }
 
 fn load_numbering(pkg: &PartFs) -> Numbering {
-    let mut numbering = Numbering::default();
     let numbering_part = main_rel_part(pkg, "numbering", "word/numbering.xml");
     let Some(xml) = pkg.part_string(&numbering_part) else {
-        return numbering;
+        return Numbering::default();
     };
+    parse_numbering_xml(&xml, |rid| resolve_media(pkg, &numbering_part, rid))
+}
+
+/// `word/numbering.xml`; `media` resolves a picture-bullet r:id.
+fn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Numbering {
+    let mut numbering = Numbering::default();
     let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
+    let doc = dom.parse_xdocument(xml);
     let Some(root) = dom.root(doc) else {
         return numbering;
     };
@@ -3820,9 +3857,17 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
                     .find_map(|n| attr_any(&dom, n, "embed"))
             });
         if let Some(rid) = rid
-            && let Some(bytes) = resolve_media(pkg, &numbering_part, rid)
+            && let Some(bytes) = media(rid)
         {
             numbering.pic_bytes.insert(id, bytes);
+        }
+        if let Some(ext) = descendants_local(&dom, bullet, "shape")
+            .into_iter()
+            .find_map(|sh| attr_any(&dom, sh, "style"))
+            .and_then(|st| Some((vml_style_pt(st, "width")?, vml_style_pt(st, "height")?)))
+            .filter(|(w, h)| *w > 0.0 && *h > 0.0)
+        {
+            numbering.pic_extent.insert(id, ext);
         }
     }
     let mut style_links: HashMap<String, String> = HashMap::new();
@@ -3931,6 +3976,13 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
                 });
             if let Some(start) = start {
                 numbering.starts.insert((nid.to_string(), ilvl), start);
+            }
+            // A full lvlOverride/w:lvl replaces the abstract level for this
+            // instance, isLgl included (absent there means off).
+            if let Some(lvl) = first_named(&dom, ov, "lvl") {
+                let lgl =
+                    first_named(&dom, lvl, "isLgl").is_some_and(|n| !val_is_false(&dom, Some(n)));
+                numbering.lgl_override.insert((nid.to_string(), ilvl), lgl);
             }
         }
     }
@@ -5215,6 +5267,7 @@ fn paragraph_block(
     let (mut pstyle, rstyle) = para_base(dom, para, sheet, None);
     let (marker, num_id, ilvl) = list_marker(dom, para, sheet, numbering);
     let pic = numbering.pic_image(&num_id, ilvl);
+    let pic_extent = numbering.pic_extent(&num_id, ilvl);
     if pstyle.outline_lvl.is_some() && !num_id.is_empty() {
         pstyle.chap_num = numbering.last_used(&num_id, ilvl).map(|n| n.to_string());
     }
@@ -5296,12 +5349,14 @@ fn paragraph_block(
     }
     let mut images = collect_images(ctx.pkg, ctx.main, dom, para);
     if let Some(kind) = pic {
+        // The bullet's own v:shape extent; the run size only when absent.
         let size = rstyle.size.max(8.0);
+        let (w, h) = pic_extent.unwrap_or((size, size));
         images.insert(
             0,
             LaidImage {
-                w: size,
-                h: size,
+                w,
+                h,
                 kind,
                 slot: ImageSlot::Flow,
                 behind: false,
@@ -7953,6 +8008,59 @@ fn element_text(dom: &Dom, node: NodeId) -> String {
     out
 }
 
+/// `c:pt` values with their `@idx`, and the cache's `c:ptCount`.
+fn chart_pts_indexed(dom: &Dom, node: NodeId) -> (Vec<(usize, f32)>, usize) {
+    let mut pts = Vec::new();
+    for (pos, pt) in descendants_local(dom, node, "pt").into_iter().enumerate() {
+        let idx = attr_any(dom, pt, "idx")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(pos);
+        if let Some(v) = descendants_local(dom, pt, "v").into_iter().next()
+            && let Ok(n) = element_text(dom, v).trim().parse::<f32>()
+        {
+            pts.push((idx, n));
+        }
+    }
+    let count = descendants_local(dom, node, "ptCount")
+        .into_iter()
+        .next()
+        .and_then(|n| attr_any(dom, n, "val"))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    (pts, count)
+}
+
+/// `c:valAx` `c:scaling` bounds split by axis position: `(horizontal,
+/// vertical)`, each `(min, max)`.
+type AxisScaling = ((Option<f32>, Option<f32>), (Option<f32>, Option<f32>));
+
+fn chart_val_ax_scaling(dom: &Dom, root: NodeId) -> AxisScaling {
+    let mut horiz = (None, None);
+    let mut vert = (None, None);
+    for ax in descendants_local(dom, root, "valAx") {
+        let pos = descendants_local(dom, ax, "axPos")
+            .into_iter()
+            .next()
+            .and_then(|n| attr_any(dom, n, "val"))
+            .unwrap_or("l");
+        let bound = |local: &str| {
+            descendants_local(dom, ax, "scaling")
+                .into_iter()
+                .next()
+                .and_then(|sc| descendants_local(dom, sc, local).into_iter().next())
+                .and_then(|n| attr_any(dom, n, "val"))
+                .and_then(|s| s.parse::<f32>().ok())
+        };
+        let b = (bound("min"), bound("max"));
+        if matches!(pos, "b" | "t") {
+            horiz = b;
+        } else {
+            vert = b;
+        }
+    }
+    (horiz, vert)
+}
+
 fn chart_pts(dom: &Dom, node: NodeId) -> Vec<String> {
     let mut pts = Vec::new();
     for pt in descendants_local(dom, node, "pt") {
@@ -8072,6 +8180,9 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
     let mut series = Vec::new();
     let mut names = Vec::new();
     let mut colors = Vec::new();
+    let mut indexed = Vec::new();
+    let mut x_indexed = Vec::new();
+    let mut n_cats = 0usize;
     for ser in descendants_local(&dom, host, "ser") {
         if cats.is_empty() {
             if let Some(cat) = descendants_local(&dom, ser, "cat").into_iter().next() {
@@ -8094,6 +8205,18 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
             if !nums.is_empty() {
                 colors.push(chart_ser_color(&dom, ser, idx, theme));
                 series.push(nums);
+                let (pts, count) = chart_pts_indexed(&dom, val);
+                n_cats = n_cats
+                    .max(count)
+                    .max(pts.iter().map(|p| p.0 + 1).max().unwrap_or(0));
+                indexed.push(pts);
+                x_indexed.push(
+                    descendants_local(&dom, ser, "xVal")
+                        .into_iter()
+                        .next()
+                        .map(|x| chart_pts_indexed(&dom, x).0)
+                        .unwrap_or_default(),
+                );
             }
         }
     }
@@ -8115,7 +8238,14 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
             .collect();
     }
     let legend = !descendants_local(&dom, root, "legend").is_empty();
+    let n_cats = n_cats.max(cats.len());
+    let (x_scaling, y_scaling) = chart_val_ax_scaling(&dom, root);
     Some(ChartData {
+        indexed,
+        x_indexed,
+        n_cats,
+        x_scaling,
+        y_scaling,
         title: chart_title(&dom, root),
         cats,
         series,
@@ -13187,25 +13317,30 @@ impl<'a> Layout<'a> {
             let tx = x + ((dw - tw) / 2.0).max(4.0);
             self.emit_label(&chart.title, 14.0, tx, y + dh - 22.0);
         }
-        let xs: Vec<f32> = chart.cats.iter().filter_map(|s| s.parse().ok()).collect();
-        let ys = chart.series.first().cloned().unwrap_or_default();
         let plot_x = x + 20.0;
         let plot_y = y + 43.0;
         let plot_w = (dw - 32.0).max(8.0);
         let plot_h = (dh - 80.0).max(8.0);
-        let color = chart.colors.first().copied().unwrap_or([0.5, 0.5, 0.5]);
-        let pts = scatter_chart_marker_points(plot_x, plot_y, plot_w, plot_h, &xs, &ys);
-        for (mx, my) in pts {
-            let s = 3.0;
-            self.current().ops.push(Op::FillPoly {
-                points: vec![
-                    (mx - s, my - s),
-                    (mx + s, my - s),
-                    (mx + s, my + s),
-                    (mx - s, my + s),
-                ],
-                color,
-            });
+        // Every c:ser, each pairing its own xVal and yVal by c:pt/@idx.
+        let pairs = scatter_series_pairs(chart);
+        let all: Vec<(f32, f32)> = pairs.iter().flatten().copied().collect();
+        let bx = scatter_axis_bounds(all.iter().map(|p| p.0), chart.x_scaling);
+        let by = scatter_axis_bounds(all.iter().map(|p| p.1), chart.y_scaling);
+        for (si, pts) in pairs.iter().enumerate() {
+            let color = chart.colors.get(si).copied().unwrap_or([0.5, 0.5, 0.5]);
+            for (mx, my) in scatter_chart_marker_points(plot_x, plot_y, plot_w, plot_h, pts, bx, by)
+            {
+                let s = 3.0;
+                self.current().ops.push(Op::FillPoly {
+                    points: vec![
+                        (mx - s, my - s),
+                        (mx + s, my - s),
+                        (mx + s, my + s),
+                        (mx - s, my + s),
+                    ],
+                    color,
+                });
+            }
         }
     }
 
@@ -13284,18 +13419,31 @@ impl<'a> Layout<'a> {
         let plot_y = y + 43.0;
         let plot_w = (dw - 32.0).max(8.0);
         let plot_h = (dh - 80.0).max(8.0);
-        for (si, ser) in chart.series.iter().enumerate() {
+        // Every series plots against one category axis: slot i is category
+        // i for all of them, and a missing point leaves a gap.
+        let slots = chart.n_cats.max(1);
+        for (si, ser) in chart.indexed.iter().enumerate() {
             let color = chart.colors.get(si).copied().unwrap_or([0.5, 0.5, 0.5]);
-            let pts = line_chart_polyline_points(plot_x, plot_y, plot_w, plot_h, ser, axis_max);
-            for pair in pts.windows(2) {
-                self.current().ops.push(Op::Line {
-                    x1: pair[0].0,
-                    y1: pair[0].1,
-                    x2: pair[1].0,
-                    y2: pair[1].1,
-                    width: 1.5,
-                    color,
-                });
+            for run in line_chart_runs(ser, slots) {
+                let pts: Vec<(f32, f32)> = run
+                    .iter()
+                    .map(|&(i, v)| {
+                        (
+                            plot_x + (i as f32 + 0.5) / slots as f32 * plot_w,
+                            plot_y + (v.max(0.0) / axis_max.max(1.0)) * plot_h,
+                        )
+                    })
+                    .collect();
+                for pair in pts.windows(2) {
+                    self.current().ops.push(Op::Line {
+                        x1: pair[0].0,
+                        y1: pair[0].1,
+                        x2: pair[1].0,
+                        y2: pair[1].1,
+                        width: 1.5,
+                        color,
+                    });
+                }
             }
         }
     }
@@ -16320,19 +16468,60 @@ fn radar_chart_polygon_points(
         .collect()
 }
 
+/// Per series, `(x, y)` pairs matched by `c:pt/@idx`. A series without
+/// its own `c:xVal` takes 1, 2, 3… (Excel's category index).
+fn scatter_series_pairs(chart: &ChartData) -> Vec<Vec<(f32, f32)>> {
+    chart
+        .indexed
+        .iter()
+        .enumerate()
+        .map(|(si, ys)| {
+            let xs = chart.x_indexed.get(si).filter(|x| !x.is_empty());
+            ys.iter()
+                .filter_map(|&(i, yv)| {
+                    let xv = match xs {
+                        Some(xs) => xs.iter().find(|p| p.0 == i)?.1,
+                        None => i as f32 + 1.0,
+                    };
+                    Some((xv, yv))
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Word's scatter value axis: explicit `c:scaling` min/max, else
+/// `min(0, data_min)` .. `max(1, data_max)`; a zero span widens by 1.
+fn scatter_axis_bounds(
+    values: impl Iterator<Item = f32>,
+    scaling: (Option<f32>, Option<f32>),
+) -> (f32, f32) {
+    let (lo, hi) = values.fold((0.0_f32, 1.0_f32), |(lo, hi), v| (lo.min(v), hi.max(v)));
+    let lo = scaling.0.unwrap_or(lo);
+    let hi = scaling.1.unwrap_or(hi);
+    if hi - lo > f32::EPSILON {
+        (lo, hi)
+    } else {
+        (lo, lo + 1.0)
+    }
+}
+
 fn scatter_chart_marker_points(
     x: f32,
     y: f32,
     w: f32,
     h: f32,
-    xs: &[f32],
-    ys: &[f32],
+    pts: &[(f32, f32)],
+    (x_lo, x_hi): (f32, f32),
+    (y_lo, y_hi): (f32, f32),
 ) -> Vec<(f32, f32)> {
-    let x_max = xs.iter().copied().fold(0.0_f32, f32::max).max(1.0);
-    let y_max = ys.iter().copied().fold(0.0_f32, f32::max).max(1.0);
-    xs.iter()
-        .zip(ys)
-        .map(|(xv, yv)| (x + (xv.max(0.0) / x_max) * w, y + (yv.max(0.0) / y_max) * h))
+    pts.iter()
+        .map(|(xv, yv)| {
+            (
+                x + (xv - x_lo) / (x_hi - x_lo) * w,
+                y + (yv - y_lo) / (y_hi - y_lo) * h,
+            )
+        })
         .collect()
 }
 
@@ -16353,6 +16542,21 @@ fn area_chart_fill_points(
     pts.push((last_x, y));
     pts.push((first_x, y));
     pts
+}
+
+/// A line series' points in category order, split where an idx is
+/// missing (Word's default `dispBlanksAs="gap"`), each within `slots`.
+fn line_chart_runs(points: &[(usize, f32)], slots: usize) -> Vec<Vec<(usize, f32)>> {
+    let mut pts: Vec<(usize, f32)> = points.iter().copied().filter(|p| p.0 < slots).collect();
+    pts.sort_by_key(|p| p.0);
+    let mut runs: Vec<Vec<(usize, f32)>> = Vec::new();
+    for p in pts {
+        match runs.last_mut() {
+            Some(run) if run.last().is_some_and(|q| q.0 + 1 == p.0) => run.push(p),
+            _ => runs.push(vec![p]),
+        }
+    }
+    runs
 }
 
 fn line_chart_polyline_points(
@@ -16437,7 +16641,9 @@ fn left_right_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
 }
 
 fn quad_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML quadArrow adj1=adj2=adj3=22500.
+    // OOXML quadArrow adj1=adj2=adj3=22500. Locals are the ECMA guide
+    // names, which cross the adjustments: x1 = ss*a3 (head length),
+    // dx2 = ss*a2 (half head spread), dx3 = ss*a1/2 (half shaft width).
     let ss = preset_ss(w, h);
     let hc = w * 0.5;
     let vc = h * 0.5;
@@ -23122,6 +23328,23 @@ mod drawing_tests {
     fn quad_arrow_points_have_four_tips() {
         let pts = quad_arrow_points(0.0, 0.0, 100.0, 100.0);
         assert_eq!(pts.len(), 24);
+        // Left head: base at x1 = 22.5 spreads ±dx2 = 22.5 about vc; the
+        // shaft is ±dx3 = 11.25 wide.
+        assert!(
+            (pts[1].0 - 22.5).abs() < 0.05 && (pts[1].1 - 72.5).abs() < 0.05,
+            "{:?}",
+            pts[1]
+        );
+        assert!(
+            (pts[2].0 - 22.5).abs() < 0.05 && (pts[2].1 - 61.25).abs() < 0.05,
+            "{:?}",
+            pts[2]
+        );
+        assert!(
+            (pts[3].0 - 38.75).abs() < 0.05 && (pts[3].1 - 61.25).abs() < 0.05,
+            "{:?}",
+            pts[3]
+        );
         assert!(pts[0].0.abs() < 0.05 && (pts[0].1 - 50.0).abs() < 0.05);
         assert!((pts[6].0 - 50.0).abs() < 0.05 && (pts[6].1 - 100.0).abs() < 0.05);
         assert!((pts[12].0 - 100.0).abs() < 0.05 && (pts[12].1 - 50.0).abs() < 0.05);
@@ -23808,12 +24031,83 @@ mod drawing_tests {
 
     #[test]
     fn scatter_chart_marker_points_map_xy() {
-        let pts = scatter_chart_marker_points(0.0, 0.0, 100.0, 40.0, &[0.0, 4.0], &[0.0, 4.0]);
+        let pts = scatter_chart_marker_points(
+            0.0,
+            0.0,
+            100.0,
+            40.0,
+            &[(0.0, 0.0), (4.0, 4.0)],
+            (0.0, 4.0),
+            (0.0, 4.0),
+        );
         assert_eq!(pts.len(), 2, "{pts:?}");
         assert!(pts[0].0.abs() < 0.05 && pts[0].1.abs() < 0.05, "{pts:?}");
         assert!(
             (pts[1].0 - 100.0).abs() < 0.05 && (pts[1].1 - 40.0).abs() < 0.05,
             "{pts:?}"
+        );
+    }
+
+    #[test]
+    fn line_series_share_category_slots_and_keep_point_idx() {
+        // #105: series of 3 and 2 values share 3 slots, and a sparse point
+        // (idx 2 of 3) keeps slot 2 with a gap before it.
+        let xml = r#"<?xml version="1.0"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart><c:plotArea><c:lineChart>
+  <c:ser><c:val><c:numLit><c:ptCount val="3"/>
+    <c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt><c:pt idx="2"><c:v>3</c:v></c:pt>
+  </c:numLit></c:val></c:ser>
+  <c:ser><c:val><c:numLit><c:ptCount val="3"/>
+    <c:pt idx="0"><c:v>4</c:v></c:pt><c:pt idx="2"><c:v>5</c:v></c:pt>
+  </c:numLit></c:val></c:ser>
+</c:lineChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let data = parse_chart(xml).expect("line");
+        assert_eq!(data.n_cats, 3);
+        assert_eq!(data.indexed[1], vec![(0, 4.0), (2, 5.0)]);
+        let runs = line_chart_runs(&data.indexed[1], data.n_cats);
+        assert_eq!(
+            runs,
+            vec![vec![(0, 4.0)], vec![(2, 5.0)]],
+            "a missing idx breaks the line"
+        );
+    }
+
+    #[test]
+    fn scatter_pairs_every_series_by_idx_and_scales_like_word() {
+        // #107: both series paint, each with its own xVal; negatives stay
+        // negative; c:scaling wins; otherwise min(0, lo) .. max(1, hi).
+        let xml = r#"<?xml version="1.0"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+<c:chart><c:plotArea><c:scatterChart>
+  <c:ser>
+    <c:xVal><c:numLit><c:pt idx="0"><c:v>-2</c:v></c:pt><c:pt idx="1"><c:v>4</c:v></c:pt></c:numLit></c:xVal>
+    <c:yVal><c:numLit><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>8</c:v></c:pt></c:numLit></c:yVal>
+  </c:ser>
+  <c:ser>
+    <c:xVal><c:numLit><c:pt idx="1"><c:v>10</c:v></c:pt></c:numLit></c:xVal>
+    <c:yVal><c:numLit><c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>6</c:v></c:pt></c:numLit></c:yVal>
+  </c:ser>
+</c:scatterChart>
+<c:valAx><c:scaling><c:max val="20"/></c:scaling><c:axPos val="b"/></c:valAx>
+<c:valAx><c:scaling/><c:axPos val="l"/></c:valAx>
+</c:plotArea></c:chart></c:chartSpace>"#;
+        let data = parse_chart(xml).expect("scatter");
+        let pairs = scatter_series_pairs(&data);
+        assert_eq!(pairs[0], vec![(-2.0, 1.0), (4.0, 8.0)]);
+        assert_eq!(
+            pairs[1],
+            vec![(10.0, 6.0)],
+            "y idx 0 has no x: not fabricated"
+        );
+        assert_eq!(data.x_scaling, (None, Some(20.0)));
+        let bx = scatter_axis_bounds(pairs.iter().flatten().map(|p| p.0), data.x_scaling);
+        assert_eq!(bx, (-2.0, 20.0));
+        let by = scatter_axis_bounds(pairs.iter().flatten().map(|p| p.1), data.y_scaling);
+        assert_eq!(by, (0.0, 8.0), "positive data keeps a zero minimum");
+        assert_eq!(
+            scatter_axis_bounds([5.0_f32].into_iter(), (Some(5.0), Some(5.0))),
+            (5.0, 6.0)
         );
     }
 
@@ -24131,6 +24425,107 @@ mod numbering_tests {
         );
         n.levels.insert("0".into(), lvls);
         n
+    }
+
+    fn numbering_xml(abstract_lvls: &str, nums: &str) -> Numbering {
+        let xml = format!(
+            r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+               <w:abstractNum w:abstractNumId="0">{abstract_lvls}</w:abstractNum>{nums}</w:numbering>"#
+        );
+        parse_numbering_xml(&xml, |_| None)
+    }
+
+    fn lvl(ilvl: u32, fmt: &str, text: &str, extra: &str) -> String {
+        format!(
+            r#"<w:lvl w:ilvl="{ilvl}"><w:start w:val="1"/><w:numFmt w:val="{fmt}"/><w:lvlText w:val="{text}"/>{extra}</w:lvl>"#
+        )
+    }
+
+    #[test]
+    fn unused_parent_slot_shows_its_start_override() {
+        // #117: the first ilvl=1 item under startOverride 5 on level 0
+        // renders 5.1, not 1.1.
+        let mut n = numbering_xml(
+            &format!(
+                "{}{}",
+                lvl(0, "decimal", "%1.", ""),
+                lvl(1, "decimal", "%1.%2", "")
+            ),
+            r#"<w:num w:numId="1"><w:abstractNumId w:val="0"/>
+                 <w:lvlOverride w:ilvl="0"><w:startOverride w:val="5"/></w:lvlOverride></w:num>"#,
+        );
+        assert_eq!(n.next_marker("1", 1).trim(), "5.1");
+    }
+
+    #[test]
+    fn lvl_restart_names_the_level_that_restarts_it() {
+        // #118: ilvl 2 with lvlRestart=1 restarts only when level 0 (1-based
+        // 1) increments; level 1 incrementing leaves it counting.
+        let restart = |v: u32| {
+            numbering_xml(
+                &format!(
+                    "{}{}{}",
+                    lvl(0, "decimal", "%1", ""),
+                    lvl(1, "decimal", "%1.%2", ""),
+                    lvl(
+                        2,
+                        "decimal",
+                        "%1.%2.%3",
+                        &format!(r#"<w:lvlRestart w:val="{v}"/>"#)
+                    ),
+                ),
+                r#"<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>"#,
+            )
+        };
+        let seq = |mut n: Numbering| -> Vec<String> {
+            [0, 1, 2, 1, 2, 0, 2]
+                .iter()
+                .map(|&l| n.next_marker("1", l).trim().to_string())
+                .collect()
+        };
+        assert_eq!(
+            seq(restart(1)),
+            ["1", "1.1", "1.1.1", "1.2", "1.2.2", "2", "2.1.1"]
+        );
+        assert_eq!(
+            seq(restart(0)),
+            ["1", "1.1", "1.1.1", "1.2", "1.2.2", "2", "2.1.3"],
+            "0 never restarts"
+        );
+        assert_eq!(
+            seq(restart(3)),
+            ["1", "1.1", "1.1.1", "1.2", "1.2.1", "2", "2.1.1"],
+            "val past the level is the default"
+        );
+    }
+
+    #[test]
+    fn lvl_override_replaces_the_abstract_is_lgl() {
+        // #119: numId 2's lvlOverride/lvl for ilvl 1 has no isLgl, so its
+        // parent slot keeps upperRoman; numId 1 keeps the abstract isLgl.
+        let mut n = numbering_xml(
+            &format!(
+                "{}{}",
+                lvl(0, "upperRoman", "%1.", ""),
+                lvl(1, "decimal", "%1.%2", "<w:isLgl/>")
+            ),
+            &format!(
+                r#"<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+                   <w:num w:numId="2"><w:abstractNumId w:val="0"/>
+                     <w:lvlOverride w:ilvl="1">{}</w:lvlOverride></w:num>"#,
+                lvl(1, "decimal", "%1.%2", "")
+            ),
+        );
+        assert_eq!(
+            n.next_marker("1", 1).trim(),
+            "1.1",
+            "abstract isLgl: Arabic parent"
+        );
+        assert_eq!(
+            n.next_marker("2", 1).trim(),
+            "I.1",
+            "override without isLgl: Roman parent"
+        );
     }
 
     #[test]

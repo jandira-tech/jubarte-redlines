@@ -772,6 +772,36 @@ fn numbering_pic_bullet_paints_the_image_marker() {
 }
 
 #[test]
+fn picture_bullet_uses_its_shape_extent() {
+    // #121: the numPicBullet v:shape is 14pt × 7pt; the marker paints at
+    // that size, not a square of the run size.
+    let numbering = "<?xml version=\"1.0\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+          xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+          xmlns:v=\"urn:schemas-microsoft-com:vml\">\
+          <w:numPicBullet w:numPicBulletId=\"1\">\
+            <w:pict><v:shape style=\"width:14pt;height:7pt\"><v:imagedata r:id=\"rIdImg\"/></v:shape></w:pict>\
+          </w:numPicBullet>\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
+              <w:lvlText w:val=\"\"/><w:lvlPicBulletId w:val=\"1\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:t>Item</w:t></w:r></w:p><w:sectPr/>";
+    let pdf =
+        docx_to_pdf(&pic_bullet_docx(body, numbering, TINY_PNG)).expect("convert picture bullet");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("14.00 0 0 7.00 "),
+        "marker painted at 14 x 7; tail {}",
+        &hay[hay.len().saturating_sub(300)..]
+    );
+}
+
+#[test]
 fn tbl_header_repeats_on_overflow_page() {
     // file_34 / uipriority: `w:trPr/w:tblHeader` is Word's repeating
     // header. Without it, overflow pages lose Feature/Description.
@@ -7762,6 +7792,53 @@ fn pie_chart_series_are_filled_wedges() {
 }
 
 #[test]
+fn pie_zero_slice_keeps_legend_and_wedge_colours_aligned() {
+    // #104: a zero category paints no wedge, yet keeps its legend swatch,
+    // and the next wedge keeps its own category colour (accent3, not 2).
+    let body = "<w:p><w:r><w:drawing><wp:inline>\
+         <wp:extent cx=\"5486400\" cy=\"3200400\"/>\
+         <a:graphic><a:graphicData \
+           uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">\
+           <c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" \
+             r:id=\"rIdChart\"/>\
+         </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:sectPr/>";
+    let chart = "<?xml version=\"1.0\"?>\
+        <c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">\
+        <c:chart><c:plotArea><c:pieChart>\
+          <c:ser><c:cat><c:strLit>\
+            <c:pt idx=\"0\"><c:v>A</c:v></c:pt><c:pt idx=\"1\"><c:v>B</c:v></c:pt><c:pt idx=\"2\"><c:v>C</c:v></c:pt>\
+          </c:strLit></c:cat>\
+          <c:val><c:numLit>\
+            <c:pt idx=\"0\"><c:v>2</c:v></c:pt><c:pt idx=\"1\"><c:v>0</c:v></c:pt><c:pt idx=\"2\"><c:v>2</c:v></c:pt>\
+          </c:numLit></c:val></c:ser>\
+        </c:pieChart></c:plotArea><c:legend><c:legendPos val=\"b\"/></c:legend></c:chart></c:chartSpace>";
+    let pdf = docx_to_pdf(&chart_docx(body, chart)).expect("convert pie with zero slice");
+    let hay = String::from_utf8_lossy(&pdf);
+    let rg = |l: &str| l.split(" rg").next().unwrap_or("").to_string();
+    let wedges: Vec<String> = hay.lines().filter(|l| l.contains(" h f")).map(rg).collect();
+    let swatches: Vec<String> = hay
+        .lines()
+        .filter(|l| l.contains(" 5.00 5.00 re f"))
+        .map(rg)
+        .collect();
+    assert_eq!(
+        wedges.len(),
+        2,
+        "the zero slice paints no wedge: {wedges:?}"
+    );
+    assert_eq!(
+        swatches.len(),
+        3,
+        "every category keeps a legend swatch: {swatches:?}"
+    );
+    assert_eq!(
+        wedges,
+        vec![swatches[0].clone(), swatches[2].clone()],
+        "wedge C uses C's colour"
+    );
+}
+
+#[test]
 fn line_chart_series_are_stroked_polylines() {
     let body = "<w:p><w:r><w:drawing><wp:inline>\
          <wp:extent cx=\"5486400\" cy=\"3200400\"/>\
@@ -7878,6 +7955,41 @@ fn scatter_chart_points_are_filled_markers() {
         "scatter must not paint bar FillRects; re f count={re_count} tail {}",
         &hay[hay.len().saturating_sub(400)..]
     );
+}
+
+#[test]
+fn scatter_chart_paints_every_series() {
+    // #107: two c:ser, two marker colours (series 2 used to be dropped).
+    let body = "<w:p><w:r><w:drawing><wp:inline>\
+         <wp:extent cx=\"5486400\" cy=\"3200400\"/>\
+         <a:graphic><a:graphicData \
+           uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">\
+           <c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" \
+             r:id=\"rIdChart\"/>\
+         </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:sectPr/>";
+    let ser = |color: &str, y: &str| {
+        format!(
+            "<c:ser><c:spPr><a:solidFill xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+               <a:srgbClr val=\"{color}\"/></a:solidFill></c:spPr>\
+             <c:xVal><c:numLit><c:pt idx=\"0\"><c:v>1</c:v></c:pt></c:numLit></c:xVal>\
+             <c:yVal><c:numLit><c:pt idx=\"0\"><c:v>{y}</c:v></c:pt></c:numLit></c:yVal></c:ser>"
+        )
+    };
+    let chart = format!(
+        "<?xml version=\"1.0\"?>\
+        <c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">\
+        <c:chart><c:plotArea><c:scatterChart>{}{}</c:scatterChart></c:plotArea></c:chart></c:chartSpace>",
+        ser("FF0000", "2"),
+        ser("0000FF", "4")
+    );
+    let pdf = docx_to_pdf(&chart_docx(body, &chart)).expect("convert two-series scatter");
+    let hay = String::from_utf8_lossy(&pdf);
+    for rgb in ["1.000 0.000 0.000 rg", "0.000 0.000 1.000 rg"] {
+        assert!(
+            hay.lines().any(|l| l.contains(rgb) && l.contains(" h f")),
+            "a {rgb} marker per series"
+        );
+    }
 }
 
 #[test]
@@ -11458,7 +11570,10 @@ fn preset_polygons_stroke_their_explicit_outline() {
     // preset's closed outline in the line colour for every polygon.
     for prst in [
         "pentagon",
+        "star5",
         "star8",
+        "plaque",
+        "flowChartDocument",
         "hexagon",
         "flowChartInputOutput",
         "chevron",
