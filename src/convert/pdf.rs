@@ -61,6 +61,19 @@ pub(crate) enum Op {
         width: f32,
         color: [f32; 3],
     },
+    /// Filled compound path (nonzero): every contour is one closed subpath,
+    /// so a donut's inner ellipse is a hole, not a slit (preset paths).
+    FillPath {
+        contours: Vec<Vec<(f32, f32)>>,
+        color: [f32; 3],
+    },
+    /// Stroked subpaths; `true` closes one (`h`). Open ones keep the
+    /// preset's open outline (brackets, braces) without a closing chord.
+    StrokePath {
+        subpaths: Vec<(Vec<(f32, f32)>, bool)>,
+        width: f32,
+        color: [f32; 3],
+    },
     /// Cubic Bézier stroke (DrawingML curvedConnector). `segments` are
     /// (ctrl1, ctrl2, end) triples after `start`.
     Cubic {
@@ -507,6 +520,53 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                             stream.push_str(&format!(" {x:.2} {y:.2} l"));
                         }
                         stream.push_str(" h f\n");
+                    }
+                }
+                Op::FillPath { contours, color } => {
+                    let mut body = String::new();
+                    for c in contours.iter().filter(|c| c.len() >= 2) {
+                        for (i, (x, y)) in c.iter().enumerate() {
+                            body.push_str(&format!(
+                                " {x:.2} {y:.2} {}",
+                                if i == 0 { 'm' } else { 'l' }
+                            ));
+                        }
+                        body.push_str(" h");
+                    }
+                    if !body.is_empty() {
+                        stream.push_str(&format!(
+                            "{r:.3} {g:.3} {b:.3} rg{body} f\n",
+                            r = color[0],
+                            g = color[1],
+                            b = color[2],
+                        ));
+                    }
+                }
+                Op::StrokePath {
+                    subpaths,
+                    width,
+                    color,
+                } => {
+                    let mut body = String::new();
+                    for (pts, closed) in subpaths.iter().filter(|(p, _)| p.len() >= 2) {
+                        for (i, (x, y)) in pts.iter().enumerate() {
+                            body.push_str(&format!(
+                                " {x:.2} {y:.2} {}",
+                                if i == 0 { 'm' } else { 'l' }
+                            ));
+                        }
+                        if *closed {
+                            body.push_str(" h");
+                        }
+                    }
+                    if !body.is_empty() {
+                        stream.push_str(&format!(
+                            "{w:.2} w {r:.3} {g:.3} {b:.3} RG{body} S\n",
+                            w = width,
+                            r = color[0],
+                            g = color[1],
+                            b = color[2],
+                        ));
                     }
                 }
                 Op::StrokePoly {

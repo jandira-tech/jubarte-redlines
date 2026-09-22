@@ -11347,6 +11347,111 @@ fn filled_polygon_points(hay: &str, rgb: &str) -> Vec<(f32, f32)> {
         .collect()
 }
 
+fn preset_pdf_lines(prst: &str, sp_pr: &str) -> Vec<String> {
+    let body = preset_shape_styled(prst, sp_pr, "");
+    String::from_utf8_lossy(&docx_to_pdf(&drawing_docx(&body)).expect("convert preset"))
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+fn subpath_count(line: &str) -> usize {
+    line.matches(" m").count()
+}
+
+#[test]
+fn donut_fills_a_ring_with_a_hole_and_strokes_two_rings() {
+    // #35: outer and inner contours in one fill (the hole is a hole, not a
+    // slit) and two separate stroked rings with no connector segment.
+    let lines = preset_pdf_lines("donut", &format!("{RED_FILL}{BLUE_LINE}"));
+    let fill = lines
+        .iter()
+        .find(|l| l.contains("1.000 0.000 0.000 rg"))
+        .expect("donut fill");
+    assert_eq!(subpath_count(fill), 2, "{fill}");
+    let stroke = lines
+        .iter()
+        .find(|l| l.contains("0.000 0.000 1.000 RG"))
+        .expect("donut stroke");
+    assert_eq!(subpath_count(stroke), 2, "two closed rings: {stroke}");
+    assert_eq!(stroke.matches(" h").count(), 2);
+}
+
+#[test]
+fn cube_shades_three_faces_and_strokes_one_outline() {
+    // #37: norm / darkenLess (80%) / lightenLess (20% to white) faces and
+    // a single fill="none" outline, not a stroke around every face.
+    let lines = preset_pdf_lines("cube", &format!("{RED_FILL}{BLUE_LINE}"));
+    for rgb in [
+        "1.000 0.000 0.000 rg",
+        "0.800 0.000 0.000 rg",
+        "1.000 0.200 0.200 rg",
+    ] {
+        assert!(lines.iter().any(|l| l.contains(rgb)), "cube face {rgb}");
+    }
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.contains("0.000 0.000 1.000 RG"))
+            .count(),
+        1,
+        "one outline op"
+    );
+}
+
+#[test]
+fn bracket_and_brace_outlines_stay_open() {
+    // #54/#56/#57/#59: the stroke path is open; a closing `h` would draw
+    // the chord across the bracket.
+    for prst in [
+        "leftBracket",
+        "rightBracket",
+        "leftBrace",
+        "rightBrace",
+        "bracePair",
+        "bracketPair",
+    ] {
+        let lines = preset_pdf_lines(prst, &format!("<a:noFill/>{BLUE_LINE}"));
+        let stroke = lines
+            .iter()
+            .find(|l| l.contains("0.000 0.000 1.000 RG"))
+            .unwrap_or_else(|| panic!("{prst} outline"));
+        assert!(!stroke.contains(" h"), "{prst} outline is open: {stroke}");
+    }
+    let pair = preset_pdf_lines("bracePair", &format!("<a:noFill/>{BLUE_LINE}"));
+    let stroke = pair
+        .iter()
+        .find(|l| l.contains("0.000 0.000 1.000 RG"))
+        .expect("pair");
+    assert_eq!(
+        subpath_count(stroke),
+        2,
+        "bracePair strokes two braces: {stroke}"
+    );
+}
+
+#[test]
+fn flowchart_decorations_stroke_with_the_outline() {
+    // #90 sort divider, #97 summing-junction X, #101 magnetic-drum end arc:
+    // extra stroke-only subpaths, painted with the line even when unfilled.
+    for (prst, extra) in [
+        ("flowChartSort", 2),
+        ("flowChartSummingJunction", 3),
+        ("flowChartMagneticDrum", 2),
+    ] {
+        let lines = preset_pdf_lines(prst, &format!("<a:noFill/>{BLUE_LINE}"));
+        let n: usize = lines
+            .iter()
+            .filter(|l| l.contains("0.000 0.000 1.000 RG"))
+            .map(|l| subpath_count(l))
+            .sum();
+        assert!(
+            n >= extra,
+            "{prst}: outline plus decoration subpaths, got {n}"
+        );
+    }
+}
+
 #[test]
 fn preset_polygons_stroke_their_explicit_outline() {
     // Filled + a:ln and outline-only (noFill + a:ln): Word draws the

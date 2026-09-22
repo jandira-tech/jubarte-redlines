@@ -12,6 +12,8 @@ mod font;
 mod font_table;
 mod metafile;
 mod pdf;
+mod preset_geom;
+mod preset_geom_data;
 mod word_subst;
 
 use std::cell::{Cell, RefCell};
@@ -1090,6 +1092,9 @@ struct LaidTextBox {
     /// wrapSquare a:spAutoFit ~30pt was Word-faithful but ITT-neg RL
     /// mean −0.0002 (ole_object −0.019). Do not retry.
     text_anchor: TextAnchor,
+    /// `a:prstGeom/a:avLst` guide values (`fmla="val N"`) for presets
+    /// drawn through `preset_geom`.
+    adj: Vec<(String, f64)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -7599,6 +7604,7 @@ fn collect_textboxes(
                     text_dx: 0.0,
                     text_dy: 0.0,
                     text_anchor,
+                    adj: preset_adjustments(dom, shape),
                 });
                 continue;
             }
@@ -7633,6 +7639,7 @@ fn collect_textboxes(
                     text_dx: 0.0,
                     text_dy: 0.0,
                     text_anchor,
+                    adj: preset_adjustments(dom, shape),
                 });
                 continue;
             }
@@ -7682,6 +7689,7 @@ fn collect_textboxes(
             text_dx,
             text_dy,
             text_anchor,
+            adj: preset_adjustments(dom, shape),
         });
     }
     // WrapNone accent fills on the same paragraph as an inline chart
@@ -8964,6 +8972,67 @@ fn shape_line_width(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> f32 {
         3 => 1.5,
         _ => 1.0,
     }
+}
+
+/// The ECMA preset drawn through `preset_geom` for `geom`: shapes whose
+/// Word rendering needs compound fills, shaded faces, a separate outline
+/// path or open outlines.
+fn geom_preset_name(geom: ShapeGeom) -> Option<&'static str> {
+    Some(match geom {
+        ShapeGeom::UpDownArrow => "upDownArrow",
+        ShapeGeom::Donut => "donut",
+        ShapeGeom::Frame => "frame",
+        ShapeGeom::Cube => "cube",
+        ShapeGeom::FoldedCorner => "foldedCorner",
+        ShapeGeom::Can => "can",
+        ShapeGeom::Moon => "moon",
+        ShapeGeom::CircularArrow => "circularArrow",
+        ShapeGeom::SmileyFace => "smileyFace",
+        ShapeGeom::NoSmoking => "noSmoking",
+        ShapeGeom::Bevel => "bevel",
+        ShapeGeom::LeftBracket => "leftBracket",
+        ShapeGeom::RightBracket => "rightBracket",
+        ShapeGeom::LeftBrace => "leftBrace",
+        ShapeGeom::RightBrace => "rightBrace",
+        ShapeGeom::BracePair => "bracePair",
+        ShapeGeom::BracketPair => "bracketPair",
+        ShapeGeom::LeftRightCircularArrow => "leftRightCircularArrow",
+        ShapeGeom::LeftCircularArrow => "leftCircularArrow",
+        ShapeGeom::FlowChartSort => "flowChartSort",
+        ShapeGeom::FlowChartSummingJunction => "flowChartSummingJunction",
+        ShapeGeom::FlowChartMagneticDrum => "flowChartMagneticDrum",
+        ShapeGeom::FlowChartMagneticDisk => "flowChartMagneticDisk",
+        ShapeGeom::FlowChartMagneticTape => "flowChartMagneticTape",
+        ShapeGeom::BlockArc => "blockArc",
+        ShapeGeom::Ribbon => "ribbon",
+        ShapeGeom::Ribbon2 => "ribbon2",
+        ShapeGeom::FlowChartOr => "flowChartOr",
+        ShapeGeom::FlowChartOfflineStorage => "flowChartOfflineStorage",
+        ShapeGeom::FlowChartInternalStorage => "flowChartInternalStorage",
+        ShapeGeom::FlowChartPredefinedProcess => "flowChartPredefinedProcess",
+        ShapeGeom::FlowChartMultidocument => "flowChartMultidocument",
+        ShapeGeom::FlowChartPunchedTape => "flowChartPunchedTape",
+        _ => return None,
+    })
+}
+
+/// `a:prstGeom/a:avLst/a:gd` adjustments (`fmla="val N"`).
+fn preset_adjustments(dom: &Dom, shape: NodeId) -> Vec<(String, f64)> {
+    let Some(prst) = descendants_local(dom, shape, "prstGeom").into_iter().next() else {
+        return Vec::new();
+    };
+    descendants_local(dom, prst, "gd")
+        .into_iter()
+        .filter_map(|gd| {
+            let name = attr_any(dom, gd, "name")?;
+            let v = attr_any(dom, gd, "fmla")?
+                .strip_prefix("val ")?
+                .trim()
+                .parse()
+                .ok()?;
+            Some((name.to_string(), v))
+        })
+        .collect()
 }
 
 /// Every preset whose outline is a polygon stroke (not the tuned Box
@@ -12052,6 +12121,44 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// Paint a preset through its ECMA path list: each `a:path` fills in
+    /// its own shade of the shape fill (compound contours in one nonzero
+    /// fill) and strokes only when the path strokes, open subpaths staying
+    /// open.
+    fn paint_preset_paths(
+        &mut self,
+        def: &preset_geom::Preset,
+        box_: &LaidTextBox,
+        (x, y, dw, dh): (f32, f32, f32, f32),
+    ) {
+        let map = |(px, py): (f32, f32)| (x + px, y + dh - py);
+        for path in preset_geom::evaluate(def, dw, dh, &box_.adj) {
+            if let Some(color) = box_.fill.and_then(|f| path.fill.shade(f)) {
+                let contours = path
+                    .subpaths
+                    .iter()
+                    .map(|s| s.pts.iter().copied().map(map).collect())
+                    .collect();
+                self.current().ops.push(Op::FillPath { contours, color });
+            }
+            if path.stroke
+                && box_.stroke
+                && let Some(color) = box_.line
+            {
+                let subpaths = path
+                    .subpaths
+                    .iter()
+                    .map(|s| (s.pts.iter().copied().map(map).collect(), s.closed))
+                    .collect();
+                self.current().ops.push(Op::StrokePath {
+                    subpaths,
+                    width: box_.line_width,
+                    color,
+                });
+            }
+        }
+    }
+
     fn emit_textbox(&mut self, box_: &LaidTextBox) {
         self.page_has_body = true;
         let min_dim = if box_.reserve_only || box_.fill.is_some() {
@@ -12095,788 +12202,607 @@ impl<'a> Layout<'a> {
             return;
         }
         let geom_ops = self.current().ops.len();
-        if let Some(fill) = box_.fill {
-            match box_.geom {
-                ShapeGeom::RightArrow => {
-                    // OOXML rightArrow default adj1=adj2=50000: shaft is
-                    // the middle 50% of height; head width is min(w,h)/2.
-                    // Word Quartz fills the 7-vertex chevron (Strict01).
-                    self.current().ops.push(Op::FillPoly {
-                        points: right_arrow_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::CurvedConnector => {
-                    // lnRef idx=1 → theme lnStyleLst[0] w=6350 EMU = 0.5pt
-                    // (Strict01 Curved Connector 5). KEEP 512 bent a:ln
-                    // without @w stays 1pt via emit_connector.
-                    let curve = curved_connector_cubics(x, y, dw, dh, box_.flip_h, box_.flip_v);
-                    self.current().ops.push(Op::Cubic {
-                        start: curve.start,
-                        segments: curve.segments,
-                        width: box_.line_width,
-                        color: fill,
-                    });
-                }
-                ShapeGeom::BentConnector | ShapeGeom::Line => {
-                    self.emit_connector(x, y, dw, dh, (fill, box_.line_width), box_.geom);
-                    if box_.tail_end && matches!(box_.geom, ShapeGeom::BentConnector) {
-                        let pts = bent_connector_points(x, y, dw, dh);
+        let preset_def = geom_preset_name(box_.geom).and_then(preset_geom::preset);
+        if let Some(def) = preset_def {
+            self.paint_preset_paths(def, box_, (x, y, dw, dh));
+        } else {
+            if let Some(fill) = box_.fill {
+                match box_.geom {
+                    ShapeGeom::RightArrow => {
+                        // OOXML rightArrow default adj1=adj2=50000: shaft is
+                        // the middle 50% of height; head width is min(w,h)/2.
+                        // Word Quartz fills the 7-vertex chevron (Strict01).
                         self.current().ops.push(Op::FillPoly {
-                            points: arrowhead_triangle(pts[2], pts[3]).to_vec(),
+                            points: right_arrow_points(x, y, dw, dh),
                             color: fill,
                         });
                     }
-                }
-                ShapeGeom::Box => {
-                    self.current().ops.push(Op::FillRect {
-                        x,
-                        y,
-                        w: dw,
-                        h: dh,
-                        color: fill,
-                    });
-                }
-                ShapeGeom::RoundRect => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: round_rect_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Ellipse => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: ellipse_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Triangle => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: triangle_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Diamond => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: diamond_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Hexagon => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: hexagon_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Parallelogram => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: parallelogram_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Trapezoid => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: trapezoid_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Chevron => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: chevron_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Plus => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: plus_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::HomePlate => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: home_plate_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Pentagon => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: pentagon_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Octagon => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: octagon_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Star4 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: star4_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Star5 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: star5_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::RtTriangle => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: rt_triangle_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::UpDownArrow => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: up_down_arrow_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Heart => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: heart_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Donut => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: donut_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Frame => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: frame_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartTerminator => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_terminator_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Heptagon => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: heptagon_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Star6 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: star6_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Cube => {
-                    for points in cube_faces(x, y, dw, dh) {
-                        self.current().ops.push(Op::FillPoly {
-                            points,
+                    ShapeGeom::CurvedConnector => {
+                        // lnRef idx=1 → theme lnStyleLst[0] w=6350 EMU = 0.5pt
+                        // (Strict01 Curved Connector 5). KEEP 512 bent a:ln
+                        // without @w stays 1pt via emit_connector.
+                        let curve = curved_connector_cubics(x, y, dw, dh, box_.flip_h, box_.flip_v);
+                        self.current().ops.push(Op::Cubic {
+                            start: curve.start,
+                            segments: curve.segments,
+                            width: box_.line_width,
                             color: fill,
                         });
                     }
-                }
-                ShapeGeom::FoldedCorner => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: folded_corner_body_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                    self.current().ops.push(Op::FillPoly {
-                        points: folded_corner_fold_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Can => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: can_body_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                    self.current().ops.push(Op::FillPoly {
-                        points: can_lid_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Cloud => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: cloud_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Pie => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: pie_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::LeftRightArrow => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: left_right_arrow_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::QuadArrow => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: quad_arrow_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::LightningBolt => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: lightning_bolt_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Sun => {
-                    for points in sun_ray_points(x, y, dw, dh) {
-                        self.current().ops.push(Op::FillPoly {
-                            points,
-                            color: fill,
-                        });
-                    }
-                    self.current().ops.push(Op::FillPoly {
-                        points: sun_disk_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Moon => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: moon_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::CircularArrow => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: circular_arrow_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Gear6 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: gear6_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::SmileyFace => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: ellipse_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                    let eye = [0.0, 0.0, 0.0];
-                    self.current().ops.push(Op::FillPoly {
-                        points: smiley_eye_points(x, y, dw, dh, true),
-                        color: eye,
-                    });
-                    self.current().ops.push(Op::FillPoly {
-                        points: smiley_eye_points(x, y, dw, dh, false),
-                        color: eye,
-                    });
-                }
-                ShapeGeom::Gear9 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: gear9_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Teardrop => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: teardrop_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::NoSmoking => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: no_smoking_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Plaque => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: plaque_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::LeftCircularArrow => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: left_circular_arrow_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::BlockArc => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: block_arc_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Chord => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: chord_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Bevel => {
-                    for points in bevel_faces(x, y, dw, dh) {
-                        self.current().ops.push(Op::FillPoly {
-                            points,
-                            color: fill,
-                        });
-                    }
-                }
-                ShapeGeom::Arc => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: arc_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::LeftBracket => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: left_bracket_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Wave => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: wave_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::RightBracket => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: right_bracket_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::LeftBrace => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: left_brace_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::RightBrace => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: right_brace_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::BracePair => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: brace_pair_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::BracketPair => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: bracket_pair_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Snip1Rect => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: snip1_rect_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Round1Rect => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: round1_rect_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Snip2SameRect => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: snip2_same_rect_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Round2SameRect => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: round2_same_rect_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Snip2DiagRect => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: snip2_diag_rect_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Round2DiagRect => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: round2_diag_rect_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Ribbon => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: ribbon_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Ribbon2 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: ribbon2_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::LeftRightCircularArrow => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: left_right_circular_arrow_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Star7 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: star7_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Star8 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: star8_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Star10 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: star10_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Star12 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: star12_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Star16 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: star16_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Star24 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: star24_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::Star32 => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: star32_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartDocument => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_document_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartOffpageConnector => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_offpage_connector_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartDelay => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_delay_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartManualInput => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_manual_input_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartPunchedCard => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_punched_card_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartPreparation => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_preparation_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartExtract => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_extract_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartMerge => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_merge_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartCollate => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_collate_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::DoubleWave => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: double_wave_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartDisplay => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_display_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartInputOutput => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_input_output_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartManualOperation => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_manual_operation_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartSort => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_sort_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                    if let Some(color) = box_.line {
-                        self.current().ops.push(Op::Line {
-                            x1: x,
-                            y1: y + dh * 0.5,
-                            x2: x + dw,
-                            y2: y + dh * 0.5,
-                            width: box_.line_width,
-                            color,
-                        });
-                    }
-                }
-                ShapeGeom::FlowChartOfflineStorage => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_offline_storage_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                    if let Some(color) = box_.line {
-                        self.current().ops.push(Op::Line {
-                            x1: x + dw * 0.4,
-                            y1: y + dh * 0.2,
-                            x2: x + dw * 0.6,
-                            y2: y + dh * 0.2,
-                            width: box_.line_width,
-                            color,
-                        });
-                    }
-                }
-                ShapeGeom::FlowChartOnlineStorage => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_online_storage_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartPunchedTape => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_punched_tape_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartOr => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: ellipse_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                    if let Some(color) = box_.line {
-                        self.current().ops.push(Op::Line {
-                            x1: x + dw * 0.5,
-                            y1: y,
-                            x2: x + dw * 0.5,
-                            y2: y + dh,
-                            width: box_.line_width,
-                            color,
-                        });
-                        self.current().ops.push(Op::Line {
-                            x1: x,
-                            y1: y + dh * 0.5,
-                            x2: x + dw,
-                            y2: y + dh * 0.5,
-                            width: box_.line_width,
-                            color,
-                        });
-                    }
-                }
-                ShapeGeom::FlowChartSummingJunction => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: ellipse_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                    if let Some(color) = box_.line {
-                        let idx = dw * 0.5 * std::f32::consts::FRAC_1_SQRT_2;
-                        let idy = dh * 0.5 * std::f32::consts::FRAC_1_SQRT_2;
-                        let cx = x + dw * 0.5;
-                        let cy = y + dh * 0.5;
-                        self.current().ops.push(Op::Line {
-                            x1: cx - idx,
-                            y1: cy + idy,
-                            x2: cx + idx,
-                            y2: cy - idy,
-                            width: box_.line_width,
-                            color,
-                        });
-                        self.current().ops.push(Op::Line {
-                            x1: cx + idx,
-                            y1: cy + idy,
-                            x2: cx - idx,
-                            y2: cy - idy,
-                            width: box_.line_width,
-                            color,
-                        });
-                    }
-                }
-                ShapeGeom::FlowChartInternalStorage => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_internal_storage_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                    if let Some(color) = box_.line {
-                        self.current().ops.push(Op::Line {
-                            x1: x + dw * 0.125,
-                            y1: y,
-                            x2: x + dw * 0.125,
-                            y2: y + dh,
-                            width: box_.line_width,
-                            color,
-                        });
-                        self.current().ops.push(Op::Line {
-                            x1: x,
-                            y1: y + dh * 0.875,
-                            x2: x + dw,
-                            y2: y + dh * 0.875,
-                            width: box_.line_width,
-                            color,
-                        });
-                    }
-                }
-                ShapeGeom::FlowChartPredefinedProcess => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_predefined_process_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                    if let Some(color) = box_.line {
-                        self.current().ops.push(Op::Line {
-                            x1: x + dw * 0.125,
-                            y1: y,
-                            x2: x + dw * 0.125,
-                            y2: y + dh,
-                            width: box_.line_width,
-                            color,
-                        });
-                        self.current().ops.push(Op::Line {
-                            x1: x + dw * 0.875,
-                            y1: y,
-                            x2: x + dw * 0.875,
-                            y2: y + dh,
-                            width: box_.line_width,
-                            color,
-                        });
-                    }
-                }
-                ShapeGeom::FlowChartMagneticDisk => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_magnetic_disk_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                    if let Some(color) = box_.line {
-                        let lid = flow_chart_magnetic_disk_lid_points(x, y, dw, dh);
-                        for pair in lid.windows(2) {
-                            self.current().ops.push(Op::Line {
-                                x1: pair[0].0,
-                                y1: pair[0].1,
-                                x2: pair[1].0,
-                                y2: pair[1].1,
-                                width: box_.line_width,
-                                color,
+                    ShapeGeom::BentConnector | ShapeGeom::Line => {
+                        self.emit_connector(x, y, dw, dh, (fill, box_.line_width), box_.geom);
+                        if box_.tail_end && matches!(box_.geom, ShapeGeom::BentConnector) {
+                            let pts = bent_connector_points(x, y, dw, dh);
+                            self.current().ops.push(Op::FillPoly {
+                                points: arrowhead_triangle(pts[2], pts[3]).to_vec(),
+                                color: fill,
                             });
                         }
                     }
-                }
-                ShapeGeom::FlowChartMagneticDrum => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_magnetic_drum_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                    if let Some(color) = box_.line {
-                        let end = flow_chart_magnetic_drum_end_points(x, y, dw, dh);
-                        for pair in end.windows(2) {
-                            self.current().ops.push(Op::Line {
-                                x1: pair[0].0,
-                                y1: pair[0].1,
-                                x2: pair[1].0,
-                                y2: pair[1].1,
-                                width: box_.line_width,
-                                color,
-                            });
-                        }
-                    }
-                }
-                ShapeGeom::FlowChartMagneticTape => {
-                    self.current().ops.push(Op::FillPoly {
-                        points: flow_chart_magnetic_tape_points(x, y, dw, dh),
-                        color: fill,
-                    });
-                }
-                ShapeGeom::FlowChartMultidocument => {
-                    for points in flow_chart_multidocument_sheets(x, y, dw, dh) {
-                        self.current().ops.push(Op::FillPoly {
-                            points,
+                    ShapeGeom::Box => {
+                        self.current().ops.push(Op::FillRect {
+                            x,
+                            y,
+                            w: dw,
+                            h: dh,
                             color: fill,
                         });
                     }
+                    ShapeGeom::RoundRect => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: round_rect_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Ellipse => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: ellipse_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Triangle => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: triangle_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Diamond => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: diamond_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Hexagon => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: hexagon_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Parallelogram => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: parallelogram_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Trapezoid => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: trapezoid_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Chevron => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: chevron_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Plus => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: plus_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::HomePlate => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: home_plate_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Pentagon => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: pentagon_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Octagon => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: octagon_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Star4 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: star4_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Star5 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: star5_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::RtTriangle => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: rt_triangle_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Heart => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: heart_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartTerminator => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_terminator_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Heptagon => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: heptagon_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Star6 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: star6_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Cloud => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: cloud_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Pie => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: pie_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::LeftRightArrow => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: left_right_arrow_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::QuadArrow => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: quad_arrow_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::LightningBolt => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: lightning_bolt_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Sun => {
+                        for points in sun_ray_points(x, y, dw, dh) {
+                            self.current().ops.push(Op::FillPoly {
+                                points,
+                                color: fill,
+                            });
+                        }
+                        self.current().ops.push(Op::FillPoly {
+                            points: sun_disk_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Gear6 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: gear6_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Gear9 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: gear9_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Teardrop => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: teardrop_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Plaque => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: plaque_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Chord => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: chord_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Arc => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: arc_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Wave => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: wave_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Snip1Rect => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: snip1_rect_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Round1Rect => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: round1_rect_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Snip2SameRect => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: snip2_same_rect_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Round2SameRect => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: round2_same_rect_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Snip2DiagRect => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: snip2_diag_rect_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Round2DiagRect => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: round2_diag_rect_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Star7 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: star7_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Star8 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: star8_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Star10 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: star10_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Star12 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: star12_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Star16 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: star16_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Star24 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: star24_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::Star32 => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: star32_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartDocument => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_document_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartOffpageConnector => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_offpage_connector_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartDelay => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_delay_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartManualInput => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_manual_input_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartPunchedCard => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_punched_card_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartPreparation => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_preparation_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartExtract => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_extract_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartMerge => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_merge_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartCollate => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_collate_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::DoubleWave => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: double_wave_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartDisplay => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_display_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartInputOutput => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_input_output_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartManualOperation => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_manual_operation_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    ShapeGeom::FlowChartOnlineStorage => {
+                        self.current().ops.push(Op::FillPoly {
+                            points: flow_chart_online_storage_points(x, y, dw, dh),
+                            color: fill,
+                        });
+                    }
+                    // Presets in geom_preset_name paint through preset_geom above.
+                    _ => {}
                 }
             }
-        }
-        if box_.stroke {
-            match box_.geom {
-                ShapeGeom::RightArrow => {
-                    if let Some(color) = box_.line {
-                        self.current().ops.push(Op::StrokePoly {
-                            points: right_arrow_points(x, y, dw, dh),
-                            width: 1.0,
-                            color,
-                        });
+            if box_.stroke {
+                match box_.geom {
+                    ShapeGeom::RightArrow => {
+                        if let Some(color) = box_.line {
+                            self.current().ops.push(Op::StrokePoly {
+                                points: right_arrow_points(x, y, dw, dh),
+                                width: 1.0,
+                                color,
+                            });
+                        }
                     }
-                }
-                ShapeGeom::CurvedConnector => {
-                    let line_c = box_.fill.unwrap_or([0.310, 0.506, 0.741]);
-                    let curve = curved_connector_cubics(x, y, dw, dh, box_.flip_h, box_.flip_v);
-                    self.current().ops.push(Op::Cubic {
-                        start: curve.start,
-                        segments: curve.segments,
-                        width: box_.line_width,
-                        color: line_c,
-                    });
-                }
-                ShapeGeom::BentConnector | ShapeGeom::Line => {
-                    let line_c = box_.fill.unwrap_or([0.310, 0.506, 0.741]);
-                    self.emit_connector(x, y, dw, dh, (line_c, box_.line_width), box_.geom);
-                    if box_.tail_end && matches!(box_.geom, ShapeGeom::BentConnector) {
-                        let pts = bent_connector_points(x, y, dw, dh);
-                        self.current().ops.push(Op::FillPoly {
-                            points: arrowhead_triangle(pts[2], pts[3]).to_vec(),
+                    ShapeGeom::CurvedConnector => {
+                        let line_c = box_.fill.unwrap_or([0.310, 0.506, 0.741]);
+                        let curve = curved_connector_cubics(x, y, dw, dh, box_.flip_h, box_.flip_v);
+                        self.current().ops.push(Op::Cubic {
+                            start: curve.start,
+                            segments: curve.segments,
+                            width: box_.line_width,
                             color: line_c,
                         });
                     }
-                }
-                ShapeGeom::Cube => {
-                    if let Some(color) = box_.line {
-                        for points in cube_faces(x, y, dw, dh) {
+                    ShapeGeom::BentConnector | ShapeGeom::Line => {
+                        let line_c = box_.fill.unwrap_or([0.310, 0.506, 0.741]);
+                        self.emit_connector(x, y, dw, dh, (line_c, box_.line_width), box_.geom);
+                        if box_.tail_end && matches!(box_.geom, ShapeGeom::BentConnector) {
+                            let pts = bent_connector_points(x, y, dw, dh);
+                            self.current().ops.push(Op::FillPoly {
+                                points: arrowhead_triangle(pts[2], pts[3]).to_vec(),
+                                color: line_c,
+                            });
+                        }
+                    }
+                    ShapeGeom::Sun => {
+                        if let Some(color) = box_.line {
+                            for points in sun_ray_points(x, y, dw, dh) {
+                                self.current().ops.push(Op::StrokePoly {
+                                    points,
+                                    width: box_.line_width,
+                                    color,
+                                });
+                            }
+                            self.current().ops.push(Op::StrokePoly {
+                                points: sun_disk_points(x, y, dw, dh),
+                                width: box_.line_width,
+                                color,
+                            });
+                        }
+                    }
+                    ShapeGeom::Ellipse
+                    | ShapeGeom::Triangle
+                    | ShapeGeom::Diamond
+                    | ShapeGeom::Hexagon
+                    | ShapeGeom::Parallelogram
+                    | ShapeGeom::Trapezoid
+                    | ShapeGeom::Chevron
+                    | ShapeGeom::Plus
+                    | ShapeGeom::HomePlate
+                    | ShapeGeom::Pentagon
+                    | ShapeGeom::Octagon
+                    | ShapeGeom::Star4
+                    | ShapeGeom::Star5
+                    | ShapeGeom::RtTriangle
+                    | ShapeGeom::Heart
+                    | ShapeGeom::FlowChartTerminator
+                    | ShapeGeom::Heptagon
+                    | ShapeGeom::Star6
+                    | ShapeGeom::Cloud
+                    | ShapeGeom::Pie
+                    | ShapeGeom::LeftRightArrow
+                    | ShapeGeom::QuadArrow
+                    | ShapeGeom::LightningBolt
+                    | ShapeGeom::Gear6
+                    | ShapeGeom::Gear9
+                    | ShapeGeom::Teardrop
+                    | ShapeGeom::Plaque
+                    | ShapeGeom::Chord
+                    | ShapeGeom::Arc
+                    | ShapeGeom::Wave
+                    | ShapeGeom::Snip1Rect
+                    | ShapeGeom::Round1Rect
+                    | ShapeGeom::Snip2SameRect
+                    | ShapeGeom::Round2SameRect
+                    | ShapeGeom::Snip2DiagRect
+                    | ShapeGeom::Round2DiagRect
+                    | ShapeGeom::Star7
+                    | ShapeGeom::Star8
+                    | ShapeGeom::Star10
+                    | ShapeGeom::Star12
+                    | ShapeGeom::Star16
+                    | ShapeGeom::Star24
+                    | ShapeGeom::Star32
+                    | ShapeGeom::FlowChartDocument
+                    | ShapeGeom::FlowChartOffpageConnector
+                    | ShapeGeom::FlowChartDelay
+                    | ShapeGeom::FlowChartManualInput
+                    | ShapeGeom::FlowChartPunchedCard
+                    | ShapeGeom::FlowChartPreparation
+                    | ShapeGeom::FlowChartExtract
+                    | ShapeGeom::FlowChartMerge
+                    | ShapeGeom::FlowChartCollate
+                    | ShapeGeom::DoubleWave
+                    | ShapeGeom::FlowChartDisplay
+                    | ShapeGeom::FlowChartInputOutput
+                    | ShapeGeom::FlowChartManualOperation
+                    | ShapeGeom::FlowChartOnlineStorage
+                    | ShapeGeom::RoundRect => {
+                        if let Some(color) = box_.line {
+                            let points = match box_.geom {
+                                ShapeGeom::Ellipse => ellipse_points(x, y, dw, dh),
+                                ShapeGeom::Triangle => triangle_points(x, y, dw, dh),
+                                ShapeGeom::Diamond => diamond_points(x, y, dw, dh),
+                                ShapeGeom::Hexagon => hexagon_points(x, y, dw, dh),
+                                ShapeGeom::Parallelogram => parallelogram_points(x, y, dw, dh),
+                                ShapeGeom::Trapezoid => trapezoid_points(x, y, dw, dh),
+                                ShapeGeom::Chevron => chevron_points(x, y, dw, dh),
+                                ShapeGeom::Plus => plus_points(x, y, dw, dh),
+                                ShapeGeom::HomePlate => home_plate_points(x, y, dw, dh),
+                                ShapeGeom::Pentagon => pentagon_points(x, y, dw, dh),
+                                ShapeGeom::Octagon => octagon_points(x, y, dw, dh),
+                                ShapeGeom::Star4 => star4_points(x, y, dw, dh),
+                                ShapeGeom::Star5 => star5_points(x, y, dw, dh),
+                                ShapeGeom::RtTriangle => rt_triangle_points(x, y, dw, dh),
+                                ShapeGeom::Heart => heart_points(x, y, dw, dh),
+                                ShapeGeom::FlowChartTerminator => {
+                                    flow_chart_terminator_points(x, y, dw, dh)
+                                }
+                                ShapeGeom::Heptagon => heptagon_points(x, y, dw, dh),
+                                ShapeGeom::Star6 => star6_points(x, y, dw, dh),
+                                ShapeGeom::Cloud => cloud_points(x, y, dw, dh),
+                                ShapeGeom::Pie => pie_points(x, y, dw, dh),
+                                ShapeGeom::LeftRightArrow => left_right_arrow_points(x, y, dw, dh),
+                                ShapeGeom::QuadArrow => quad_arrow_points(x, y, dw, dh),
+                                ShapeGeom::LightningBolt => lightning_bolt_points(x, y, dw, dh),
+                                ShapeGeom::Gear6 => gear6_points(x, y, dw, dh),
+                                ShapeGeom::Gear9 => gear9_points(x, y, dw, dh),
+                                ShapeGeom::Teardrop => teardrop_points(x, y, dw, dh),
+                                ShapeGeom::Plaque => plaque_points(x, y, dw, dh),
+                                ShapeGeom::Chord => chord_points(x, y, dw, dh),
+                                ShapeGeom::Arc => arc_points(x, y, dw, dh),
+                                ShapeGeom::Wave => wave_points(x, y, dw, dh),
+                                ShapeGeom::Snip1Rect => snip1_rect_points(x, y, dw, dh),
+                                ShapeGeom::Round1Rect => round1_rect_points(x, y, dw, dh),
+                                ShapeGeom::Snip2SameRect => snip2_same_rect_points(x, y, dw, dh),
+                                ShapeGeom::Round2SameRect => round2_same_rect_points(x, y, dw, dh),
+                                ShapeGeom::Snip2DiagRect => snip2_diag_rect_points(x, y, dw, dh),
+                                ShapeGeom::Round2DiagRect => round2_diag_rect_points(x, y, dw, dh),
+                                ShapeGeom::Star7 => star7_points(x, y, dw, dh),
+                                ShapeGeom::Star8 => star8_points(x, y, dw, dh),
+                                ShapeGeom::Star10 => star10_points(x, y, dw, dh),
+                                ShapeGeom::Star12 => star12_points(x, y, dw, dh),
+                                ShapeGeom::Star16 => star16_points(x, y, dw, dh),
+                                ShapeGeom::Star24 => star24_points(x, y, dw, dh),
+                                ShapeGeom::Star32 => star32_points(x, y, dw, dh),
+                                ShapeGeom::FlowChartDocument => {
+                                    flow_chart_document_points(x, y, dw, dh)
+                                }
+                                ShapeGeom::FlowChartOffpageConnector => {
+                                    flow_chart_offpage_connector_points(x, y, dw, dh)
+                                }
+                                ShapeGeom::FlowChartDelay => flow_chart_delay_points(x, y, dw, dh),
+                                ShapeGeom::FlowChartManualInput => {
+                                    flow_chart_manual_input_points(x, y, dw, dh)
+                                }
+                                ShapeGeom::FlowChartPunchedCard => {
+                                    flow_chart_punched_card_points(x, y, dw, dh)
+                                }
+                                ShapeGeom::FlowChartPreparation => {
+                                    flow_chart_preparation_points(x, y, dw, dh)
+                                }
+                                ShapeGeom::FlowChartExtract => {
+                                    flow_chart_extract_points(x, y, dw, dh)
+                                }
+                                ShapeGeom::FlowChartMerge => flow_chart_merge_points(x, y, dw, dh),
+                                ShapeGeom::FlowChartCollate => {
+                                    flow_chart_collate_points(x, y, dw, dh)
+                                }
+                                ShapeGeom::DoubleWave => double_wave_points(x, y, dw, dh),
+                                ShapeGeom::FlowChartDisplay => {
+                                    flow_chart_display_points(x, y, dw, dh)
+                                }
+                                ShapeGeom::FlowChartInputOutput => {
+                                    flow_chart_input_output_points(x, y, dw, dh)
+                                }
+                                ShapeGeom::FlowChartManualOperation => {
+                                    flow_chart_manual_operation_points(x, y, dw, dh)
+                                }
+                                ShapeGeom::FlowChartOnlineStorage => {
+                                    flow_chart_online_storage_points(x, y, dw, dh)
+                                }
+                                _ => round_rect_points(x, y, dw, dh),
+                            };
                             self.current().ops.push(Op::StrokePoly {
                                 points,
                                 width: box_.line_width,
@@ -12884,359 +12810,17 @@ impl<'a> Layout<'a> {
                             });
                         }
                     }
-                }
-                ShapeGeom::FlowChartMultidocument => {
-                    if let Some(color) = box_.line {
-                        for points in flow_chart_multidocument_sheets(x, y, dw, dh) {
-                            self.current().ops.push(Op::StrokePoly {
-                                points,
-                                width: box_.line_width,
-                                color,
-                            });
-                        }
-                    }
-                }
-                ShapeGeom::Bevel => {
-                    if let Some(color) = box_.line {
-                        for points in bevel_faces(x, y, dw, dh) {
-                            self.current().ops.push(Op::StrokePoly {
-                                points,
-                                width: box_.line_width,
-                                color,
-                            });
-                        }
-                    }
-                }
-                ShapeGeom::FoldedCorner => {
-                    if let Some(color) = box_.line {
-                        self.current().ops.push(Op::StrokePoly {
-                            points: folded_corner_body_points(x, y, dw, dh),
-                            width: box_.line_width,
-                            color,
-                        });
-                        self.current().ops.push(Op::StrokePoly {
-                            points: folded_corner_fold_points(x, y, dw, dh),
-                            width: box_.line_width,
-                            color,
-                        });
-                    }
-                }
-                ShapeGeom::Can => {
-                    if let Some(color) = box_.line {
-                        self.current().ops.push(Op::StrokePoly {
-                            points: can_body_points(x, y, dw, dh),
-                            width: box_.line_width,
-                            color,
-                        });
-                        self.current().ops.push(Op::StrokePoly {
-                            points: can_lid_points(x, y, dw, dh),
-                            width: box_.line_width,
-                            color,
-                        });
-                    }
-                }
-                ShapeGeom::Sun => {
-                    if let Some(color) = box_.line {
-                        for points in sun_ray_points(x, y, dw, dh) {
-                            self.current().ops.push(Op::StrokePoly {
-                                points,
-                                width: box_.line_width,
-                                color,
-                            });
-                        }
-                        self.current().ops.push(Op::StrokePoly {
-                            points: sun_disk_points(x, y, dw, dh),
-                            width: box_.line_width,
-                            color,
-                        });
-                    }
-                }
-                ShapeGeom::SmileyFace => {
-                    if let Some(color) = box_.line {
-                        self.current().ops.push(Op::StrokePoly {
-                            points: ellipse_points(x, y, dw, dh),
-                            width: box_.line_width,
-                            color,
-                        });
-                        self.current().ops.push(Op::StrokePoly {
-                            points: smiley_eye_points(x, y, dw, dh, true),
-                            width: box_.line_width,
-                            color,
-                        });
-                        self.current().ops.push(Op::StrokePoly {
-                            points: smiley_eye_points(x, y, dw, dh, false),
-                            width: box_.line_width,
-                            color,
-                        });
-                        let mouth = smiley_mouth_cubic(x, y, dw, dh);
-                        self.current().ops.push(Op::Cubic {
-                            start: mouth.start,
-                            segments: mouth.segments,
-                            width: box_.line_width,
-                            color,
-                        });
-                    }
-                }
-                ShapeGeom::Ellipse
-                | ShapeGeom::Triangle
-                | ShapeGeom::Diamond
-                | ShapeGeom::Hexagon
-                | ShapeGeom::Parallelogram
-                | ShapeGeom::Trapezoid
-                | ShapeGeom::Chevron
-                | ShapeGeom::Plus
-                | ShapeGeom::HomePlate
-                | ShapeGeom::Pentagon
-                | ShapeGeom::Octagon
-                | ShapeGeom::Star4
-                | ShapeGeom::Star5
-                | ShapeGeom::RtTriangle
-                | ShapeGeom::UpDownArrow
-                | ShapeGeom::Heart
-                | ShapeGeom::Donut
-                | ShapeGeom::Frame
-                | ShapeGeom::FlowChartTerminator
-                | ShapeGeom::Heptagon
-                | ShapeGeom::Star6
-                | ShapeGeom::Cloud
-                | ShapeGeom::Pie
-                | ShapeGeom::LeftRightArrow
-                | ShapeGeom::QuadArrow
-                | ShapeGeom::LightningBolt
-                | ShapeGeom::Moon
-                | ShapeGeom::CircularArrow
-                | ShapeGeom::Gear6
-                | ShapeGeom::Gear9
-                | ShapeGeom::Teardrop
-                | ShapeGeom::NoSmoking
-                | ShapeGeom::Plaque
-                | ShapeGeom::LeftCircularArrow
-                | ShapeGeom::BlockArc
-                | ShapeGeom::Chord
-                | ShapeGeom::Arc
-                | ShapeGeom::LeftBracket
-                | ShapeGeom::Wave
-                | ShapeGeom::RightBracket
-                | ShapeGeom::LeftBrace
-                | ShapeGeom::RightBrace
-                | ShapeGeom::BracePair
-                | ShapeGeom::BracketPair
-                | ShapeGeom::Snip1Rect
-                | ShapeGeom::Round1Rect
-                | ShapeGeom::Snip2SameRect
-                | ShapeGeom::Round2SameRect
-                | ShapeGeom::Snip2DiagRect
-                | ShapeGeom::Round2DiagRect
-                | ShapeGeom::Ribbon
-                | ShapeGeom::Ribbon2
-                | ShapeGeom::LeftRightCircularArrow
-                | ShapeGeom::Star7
-                | ShapeGeom::Star8
-                | ShapeGeom::Star10
-                | ShapeGeom::Star12
-                | ShapeGeom::Star16
-                | ShapeGeom::Star24
-                | ShapeGeom::Star32
-                | ShapeGeom::FlowChartDocument
-                | ShapeGeom::FlowChartOffpageConnector
-                | ShapeGeom::FlowChartDelay
-                | ShapeGeom::FlowChartManualInput
-                | ShapeGeom::FlowChartPunchedCard
-                | ShapeGeom::FlowChartPreparation
-                | ShapeGeom::FlowChartExtract
-                | ShapeGeom::FlowChartMerge
-                | ShapeGeom::FlowChartCollate
-                | ShapeGeom::DoubleWave
-                | ShapeGeom::FlowChartDisplay
-                | ShapeGeom::FlowChartInputOutput
-                | ShapeGeom::FlowChartManualOperation
-                | ShapeGeom::FlowChartSort
-                | ShapeGeom::FlowChartOfflineStorage
-                | ShapeGeom::FlowChartOnlineStorage
-                | ShapeGeom::FlowChartPunchedTape
-                | ShapeGeom::FlowChartOr
-                | ShapeGeom::FlowChartSummingJunction
-                | ShapeGeom::FlowChartInternalStorage
-                | ShapeGeom::FlowChartPredefinedProcess
-                | ShapeGeom::FlowChartMagneticDisk
-                | ShapeGeom::FlowChartMagneticDrum
-                | ShapeGeom::FlowChartMagneticTape
-                | ShapeGeom::RoundRect => {
-                    if let Some(color) = box_.line {
-                        let points = match box_.geom {
-                            ShapeGeom::Ellipse => ellipse_points(x, y, dw, dh),
-                            ShapeGeom::Triangle => triangle_points(x, y, dw, dh),
-                            ShapeGeom::Diamond => diamond_points(x, y, dw, dh),
-                            ShapeGeom::Hexagon => hexagon_points(x, y, dw, dh),
-                            ShapeGeom::Parallelogram => parallelogram_points(x, y, dw, dh),
-                            ShapeGeom::Trapezoid => trapezoid_points(x, y, dw, dh),
-                            ShapeGeom::Chevron => chevron_points(x, y, dw, dh),
-                            ShapeGeom::Plus => plus_points(x, y, dw, dh),
-                            ShapeGeom::HomePlate => home_plate_points(x, y, dw, dh),
-                            ShapeGeom::Pentagon => pentagon_points(x, y, dw, dh),
-                            ShapeGeom::Octagon => octagon_points(x, y, dw, dh),
-                            ShapeGeom::Star4 => star4_points(x, y, dw, dh),
-                            ShapeGeom::Star5 => star5_points(x, y, dw, dh),
-                            ShapeGeom::RtTriangle => rt_triangle_points(x, y, dw, dh),
-                            ShapeGeom::UpDownArrow => up_down_arrow_points(x, y, dw, dh),
-                            ShapeGeom::Heart => heart_points(x, y, dw, dh),
-                            ShapeGeom::Donut => donut_points(x, y, dw, dh),
-                            ShapeGeom::Frame => frame_points(x, y, dw, dh),
-                            ShapeGeom::FlowChartTerminator => {
-                                flow_chart_terminator_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::Heptagon => heptagon_points(x, y, dw, dh),
-                            ShapeGeom::Star6 => star6_points(x, y, dw, dh),
-                            ShapeGeom::Cloud => cloud_points(x, y, dw, dh),
-                            ShapeGeom::Pie => pie_points(x, y, dw, dh),
-                            ShapeGeom::LeftRightArrow => left_right_arrow_points(x, y, dw, dh),
-                            ShapeGeom::QuadArrow => quad_arrow_points(x, y, dw, dh),
-                            ShapeGeom::LightningBolt => lightning_bolt_points(x, y, dw, dh),
-                            ShapeGeom::Moon => moon_points(x, y, dw, dh),
-                            ShapeGeom::CircularArrow => circular_arrow_points(x, y, dw, dh),
-                            ShapeGeom::Gear6 => gear6_points(x, y, dw, dh),
-                            ShapeGeom::Gear9 => gear9_points(x, y, dw, dh),
-                            ShapeGeom::Teardrop => teardrop_points(x, y, dw, dh),
-                            ShapeGeom::NoSmoking => no_smoking_points(x, y, dw, dh),
-                            ShapeGeom::Plaque => plaque_points(x, y, dw, dh),
-                            ShapeGeom::LeftCircularArrow => {
-                                left_circular_arrow_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::BlockArc => block_arc_points(x, y, dw, dh),
-                            ShapeGeom::Chord => chord_points(x, y, dw, dh),
-                            ShapeGeom::Arc => arc_points(x, y, dw, dh),
-                            ShapeGeom::LeftBracket => left_bracket_points(x, y, dw, dh),
-                            ShapeGeom::Wave => wave_points(x, y, dw, dh),
-                            ShapeGeom::RightBracket => right_bracket_points(x, y, dw, dh),
-                            ShapeGeom::LeftBrace => left_brace_points(x, y, dw, dh),
-                            ShapeGeom::RightBrace => right_brace_points(x, y, dw, dh),
-                            ShapeGeom::BracePair => brace_pair_points(x, y, dw, dh),
-                            ShapeGeom::BracketPair => bracket_pair_points(x, y, dw, dh),
-                            ShapeGeom::Snip1Rect => snip1_rect_points(x, y, dw, dh),
-                            ShapeGeom::Round1Rect => round1_rect_points(x, y, dw, dh),
-                            ShapeGeom::Snip2SameRect => snip2_same_rect_points(x, y, dw, dh),
-                            ShapeGeom::Round2SameRect => round2_same_rect_points(x, y, dw, dh),
-                            ShapeGeom::Snip2DiagRect => snip2_diag_rect_points(x, y, dw, dh),
-                            ShapeGeom::Round2DiagRect => round2_diag_rect_points(x, y, dw, dh),
-                            ShapeGeom::Ribbon => ribbon_points(x, y, dw, dh),
-                            ShapeGeom::Ribbon2 => ribbon2_points(x, y, dw, dh),
-                            ShapeGeom::LeftRightCircularArrow => {
-                                left_right_circular_arrow_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::Star7 => star7_points(x, y, dw, dh),
-                            ShapeGeom::Star8 => star8_points(x, y, dw, dh),
-                            ShapeGeom::Star10 => star10_points(x, y, dw, dh),
-                            ShapeGeom::Star12 => star12_points(x, y, dw, dh),
-                            ShapeGeom::Star16 => star16_points(x, y, dw, dh),
-                            ShapeGeom::Star24 => star24_points(x, y, dw, dh),
-                            ShapeGeom::Star32 => star32_points(x, y, dw, dh),
-                            ShapeGeom::FlowChartDocument => {
-                                flow_chart_document_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartOffpageConnector => {
-                                flow_chart_offpage_connector_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartDelay => flow_chart_delay_points(x, y, dw, dh),
-                            ShapeGeom::FlowChartManualInput => {
-                                flow_chart_manual_input_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartPunchedCard => {
-                                flow_chart_punched_card_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartPreparation => {
-                                flow_chart_preparation_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartExtract => flow_chart_extract_points(x, y, dw, dh),
-                            ShapeGeom::FlowChartMerge => flow_chart_merge_points(x, y, dw, dh),
-                            ShapeGeom::FlowChartCollate => flow_chart_collate_points(x, y, dw, dh),
-                            ShapeGeom::DoubleWave => double_wave_points(x, y, dw, dh),
-                            ShapeGeom::FlowChartDisplay => flow_chart_display_points(x, y, dw, dh),
-                            ShapeGeom::FlowChartInputOutput => {
-                                flow_chart_input_output_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartManualOperation => {
-                                flow_chart_manual_operation_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartSort => flow_chart_sort_points(x, y, dw, dh),
-                            ShapeGeom::FlowChartOfflineStorage => {
-                                flow_chart_offline_storage_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartOnlineStorage => {
-                                flow_chart_online_storage_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartPunchedTape => {
-                                flow_chart_punched_tape_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartOr => ellipse_points(x, y, dw, dh),
-                            ShapeGeom::FlowChartSummingJunction => ellipse_points(x, y, dw, dh),
-                            ShapeGeom::FlowChartInternalStorage => {
-                                flow_chart_internal_storage_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartPredefinedProcess => {
-                                flow_chart_predefined_process_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartMagneticDisk => {
-                                flow_chart_magnetic_disk_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartMagneticDrum => {
-                                flow_chart_magnetic_drum_points(x, y, dw, dh)
-                            }
-                            ShapeGeom::FlowChartMagneticTape => {
-                                flow_chart_magnetic_tape_points(x, y, dw, dh)
-                            }
-                            _ => round_rect_points(x, y, dw, dh),
-                        };
-                        self.current().ops.push(Op::StrokePoly {
-                            points,
-                            width: box_.line_width,
-                            color,
-                        });
-                    }
-                }
-                _ => {
-                    if let Some(color) = box_.line {
-                        // Mini 635–638: Word wrapNone Rectangle 1 closed
-                        // 1pt `h S` (not 4-edge end caps) is Word-faithful
-                        // but ITT-neg RL mean −0.0024 (file_196_file_197
-                        // −0.1456, 11 Strict01-clone micro-gains). KEEP-only
-                        // forbids. Do not retry. KEEP 591 4-edge stands.
-                        // line_width from a:ln/@w (Rectangle 468 1.25) or
-                        // lnRef idx (Rectangle 1 idx=2 → 1pt). Mini 511
-                        // locked a:ln/@w on the 0.6 black path (line:None).
-                        // ChartSpace 0.6 black stays 4-edge (mini 568).
-                        for (x1, y1, x2, y2) in [
-                            (x, y, x + dw, y),
-                            (x, y + dh, x + dw, y + dh),
-                            (x, y, x, y + dh),
-                            (x + dw, y, x + dw, y + dh),
-                        ] {
-                            self.current().ops.push(Op::Line {
-                                x1,
-                                y1,
-                                x2,
-                                y2,
-                                width: box_.line_width,
-                                color,
-                            });
-                        }
-                    } else {
-                        let color = [0.0, 0.0, 0.0];
-                        // Word ChartSpace frame is closed `re` (Strict01
-                        // 72×248.2 432×252). 4-edge Lines grow square-cap
-                        // corners. Mini 568 keeps 0.6 black (do not skip;
-                        // do not add 0.75 gray mini 384). Mini 635 locked
-                        // wrapNone Box closed StrokePoly; this is the
-                        // chart-bearing 0.6 path only.
-                        if box_.chart.is_some() {
-                            self.current().ops.push(Op::StrokeRect {
-                                x,
-                                y,
-                                w: dw,
-                                h: dh,
-                                width: 0.6,
-                                color,
-                            });
-                        } else {
+                    _ => {
+                        if let Some(color) = box_.line {
+                            // Mini 635–638: Word wrapNone Rectangle 1 closed
+                            // 1pt `h S` (not 4-edge end caps) is Word-faithful
+                            // but ITT-neg RL mean −0.0024 (file_196_file_197
+                            // −0.1456, 11 Strict01-clone micro-gains). KEEP-only
+                            // forbids. Do not retry. KEEP 591 4-edge stands.
+                            // line_width from a:ln/@w (Rectangle 468 1.25) or
+                            // lnRef idx (Rectangle 1 idx=2 → 1pt). Mini 511
+                            // locked a:ln/@w on the 0.6 black path (line:None).
+                            // ChartSpace 0.6 black stays 4-edge (mini 568).
                             for (x1, y1, x2, y2) in [
                                 (x, y, x + dw, y),
                                 (x, y + dh, x + dw, y + dh),
@@ -13248,9 +12832,43 @@ impl<'a> Layout<'a> {
                                     y1,
                                     x2,
                                     y2,
+                                    width: box_.line_width,
+                                    color,
+                                });
+                            }
+                        } else {
+                            let color = [0.0, 0.0, 0.0];
+                            // Word ChartSpace frame is closed `re` (Strict01
+                            // 72×248.2 432×252). 4-edge Lines grow square-cap
+                            // corners. Mini 568 keeps 0.6 black (do not skip;
+                            // do not add 0.75 gray mini 384). Mini 635 locked
+                            // wrapNone Box closed StrokePoly; this is the
+                            // chart-bearing 0.6 path only.
+                            if box_.chart.is_some() {
+                                self.current().ops.push(Op::StrokeRect {
+                                    x,
+                                    y,
+                                    w: dw,
+                                    h: dh,
                                     width: 0.6,
                                     color,
                                 });
+                            } else {
+                                for (x1, y1, x2, y2) in [
+                                    (x, y, x + dw, y),
+                                    (x, y + dh, x + dw, y + dh),
+                                    (x, y, x, y + dh),
+                                    (x + dw, y, x + dw, y + dh),
+                                ] {
+                                    self.current().ops.push(Op::Line {
+                                        x1,
+                                        y1,
+                                        x2,
+                                        y2,
+                                        width: 0.6,
+                                        color,
+                                    });
+                                }
                             }
                         }
                     }
@@ -13268,6 +12886,16 @@ impl<'a> Layout<'a> {
                 match op {
                     Op::FillPoly { points, .. } | Op::StrokePoly { points, .. } => {
                         for p in points.iter_mut() {
+                            *p = (mx(p.0), my(p.1));
+                        }
+                    }
+                    Op::FillPath { contours, .. } => {
+                        for p in contours.iter_mut().flatten() {
+                            *p = (mx(p.0), my(p.1));
+                        }
+                    }
+                    Op::StrokePath { subpaths, .. } => {
+                        for p in subpaths.iter_mut().flat_map(|(pts, _)| pts.iter_mut()) {
                             *p = (mx(p.0), my(p.1));
                         }
                     }
@@ -15673,28 +15301,6 @@ fn rt_triangle_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     vec![(x, y), (x, y + h), (x + w, y)]
 }
 
-fn up_down_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML upDownArrow adj1=adj2=50000.
-    let ss = preset_ss(w, h);
-    let y2 = ss * 50_000.0 / 100_000.0;
-    let dx1 = w * 50_000.0 / 200_000.0;
-    let hc = w * 0.5;
-    let x1 = hc - dx1;
-    let x2 = hc + dx1;
-    vec![
-        (x, y + h - y2),
-        (x + hc, y + h),
-        (x + w, y + h - y2),
-        (x + x2, y + h - y2),
-        (x + x2, y + y2),
-        (x + w, y + y2),
-        (x + hc, y),
-        (x, y + y2),
-        (x + x1, y + y2),
-        (x + x1, y + h - y2),
-    ]
-}
-
 fn sample_cubic(
     p0: (f32, f32),
     p1: (f32, f32),
@@ -15734,46 +15340,6 @@ fn heart_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     sample_cubic(start, (x3, py(y1)), (x4, py(hd4)), bottom, 8, &mut pts);
     sample_cubic(bottom, (x1, py(hd4)), (x2, py(y1)), start, 8, &mut pts);
     pts
-}
-
-fn donut_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML donut adj=25000: outer ellipse, inner ellipse reverse (one contour).
-    const STEPS: i32 = 24;
-    let cx = x + w * 0.5;
-    let cy = y + h * 0.5;
-    let rx = (w * 0.5).max(0.5);
-    let ry = (h * 0.5).max(0.5);
-    let dr = preset_ss(w, h) * 25_000.0 / 100_000.0;
-    let irx = (rx - dr).max(0.5);
-    let iry = (ry - dr).max(0.5);
-    let mut pts = Vec::with_capacity(STEPS as usize * 2);
-    for i in 0..STEPS {
-        let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
-        pts.push((cx + rx * a.cos(), cy + ry * a.sin()));
-    }
-    for i in (0..STEPS).rev() {
-        let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
-        pts.push((cx + irx * a.cos(), cy + iry * a.sin()));
-    }
-    pts
-}
-
-fn frame_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML frame adj1=12500: outer rect with inner rect cut.
-    let x1 = preset_ss(w, h) * 12_500.0 / 100_000.0;
-    vec![
-        (x, y),
-        (x + w, y),
-        (x + w, y + h),
-        (x, y + h),
-        (x, y + x1),
-        (x + x1, y + x1),
-        (x + x1, y + h - x1),
-        (x + w - x1, y + h - x1),
-        (x + w - x1, y + x1),
-        (x + x1, y + x1),
-        (x, y + x1),
-    ]
 }
 
 fn flow_chart_terminator_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
@@ -16621,161 +16187,6 @@ fn double_wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     pts
 }
 
-fn flow_chart_multidocument_sheets(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 3] {
-    // OOXML flowChartMultidocument in 21600 space: three stacked
-    // document sheets (back, mid, front). Front cubic hangs below b.
-    let sx = |ox: f32| x + w * ox / 21_600.0;
-    let sy = |oy: f32| y + h - h * oy / 21_600.0;
-    let p = |ox: f32, oy: f32| (sx(ox), sy(oy));
-    let mut back = vec![p(2972.0, 1815.0), p(2972.0, 0.0), p(21_600.0, 0.0)];
-    let b0 = p(21_600.0, 14_392.0);
-    back.push(b0);
-    sample_cubic(
-        b0,
-        p(20_800.0, 14_392.0),
-        p(20_000.0, 14_467.0),
-        p(20_000.0, 14_467.0),
-        6,
-        &mut back,
-    );
-    back.push(p(20_000.0, 1815.0));
-    let mut mid = vec![p(1532.0, 3675.0), p(1532.0, 1815.0), p(20_000.0, 1815.0)];
-    let m0 = p(20_000.0, 16_252.0);
-    mid.push(m0);
-    sample_cubic(
-        m0,
-        p(19_298.0, 16_252.0),
-        p(18_595.0, 16_352.0),
-        p(18_595.0, 16_352.0),
-        6,
-        &mut mid,
-    );
-    mid.push(p(18_595.0, 3675.0));
-    let f0 = p(0.0, 20_782.0);
-    let f1 = p(18_595.0, 18_022.0);
-    let mut front = vec![f0];
-    sample_cubic(
-        f0,
-        p(9298.0, 23_542.0),
-        p(9298.0, 18_022.0),
-        f1,
-        8,
-        &mut front,
-    );
-    front.push(p(18_595.0, 3675.0));
-    front.push(p(0.0, 3675.0));
-    [back, mid, front]
-}
-
-fn flow_chart_magnetic_tape_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML flowChartMagneticTape: ellipse from (hc,b) through l,t,r then
-    // swAng=at2(w,h), lnTo (r,ib) (r,b) Z. ib = vc + hd2*sin(45°).
-    const CD4: f32 = 5_400_000.0;
-    const CD2: f32 = 10_800_000.0;
-    const CD3_4: f32 = 16_200_000.0;
-    let wr = (w * 0.5).max(0.5);
-    let hr = (h * 0.5).max(0.5);
-    let ang1 = h.atan2(w) * 10_800_000.0 / std::f32::consts::PI;
-    let ib = h * 0.5 + hr * std::f32::consts::FRAC_PI_4.sin();
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut pts = vec![map(w * 0.5, h)];
-    let mut cur = (w * 0.5, h);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, CD4, CD4, &mut pts, map);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, CD2, CD4, &mut pts, map);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, CD3_4, CD4, &mut pts, map);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, 0.0, ang1, &mut pts, map);
-    pts.push(map(w, ib));
-    pts.push(map(w, h));
-    pts
-}
-
-fn flow_chart_magnetic_drum_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML flowChartMagneticDrum in 6×6 space: horizontal cylinder.
-    const ST_R: f32 = 16_200_000.0;
-    const ST_L: f32 = 5_400_000.0;
-    const SW: f32 = 10_800_000.0;
-    let wr = (w / 6.0).max(0.5);
-    let hr = (h * 0.5).max(0.5);
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut pts = vec![map(w / 6.0, 0.0), map(w * 5.0 / 6.0, 0.0)];
-    let mut cur = (w * 5.0 / 6.0, 0.0);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, ST_R, SW, &mut pts, map);
-    pts.push(map(w / 6.0, h));
-    cur = (w / 6.0, h);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, ST_L, SW, &mut pts, map);
-    pts
-}
-
-fn flow_chart_magnetic_drum_end_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // Fill=none right-end: M (5,6) arcTo wr=1 hr=3 stAng=cd4 swAng=cd2.
-    const ST: f32 = 5_400_000.0;
-    const SW: f32 = 10_800_000.0;
-    let wr = (w / 6.0).max(0.5);
-    let hr = (h * 0.5).max(0.5);
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut pts = vec![map(w * 5.0 / 6.0, h)];
-    let mut cur = (w * 5.0 / 6.0, h);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, ST, SW, &mut pts, map);
-    pts
-}
-
-fn flow_chart_magnetic_disk_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML flowChartMagneticDisk in 6×6 space: cylinder body.
-    // Top arc stAng=cd2 swAng=cd2, bottom arc stAng=0 swAng=cd2.
-    const CD2: f32 = 10_800_000.0;
-    let wr = (w * 0.5).max(0.5);
-    let hr = (h / 6.0).max(0.5);
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut pts = vec![map(0.0, h / 6.0)];
-    let mut cur = (0.0, h / 6.0);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, CD2, CD2, &mut pts, map);
-    pts.push(map(w, h * 5.0 / 6.0));
-    cur = (w, h * 5.0 / 6.0);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, 0.0, CD2, &mut pts, map);
-    pts
-}
-
-fn flow_chart_magnetic_disk_lid_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // Fill=none lid front: M (r, hd6) arcTo wr=wd2 hr=hd6 stAng=0 swAng=cd2.
-    const CD2: f32 = 10_800_000.0;
-    let wr = (w * 0.5).max(0.5);
-    let hr = (h / 6.0).max(0.5);
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut pts = vec![map(w, h / 6.0)];
-    let mut cur = (w, h / 6.0);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, 0.0, CD2, &mut pts, map);
-    pts
-}
-
-fn flow_chart_predefined_process_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML flowChartPredefinedProcess fill path is the extent rectangle.
-    let py = |yd: f32| y + h - yd;
-    vec![(x, py(0.0)), (x + w, py(0.0)), (x + w, py(h)), (x, py(h))]
-}
-
-fn flow_chart_internal_storage_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML flowChartInternalStorage fill path is the extent rectangle.
-    let py = |yd: f32| y + h - yd;
-    vec![(x, py(0.0)), (x + w, py(0.0)), (x + w, py(h)), (x, py(h))]
-}
-
-fn flow_chart_punched_tape_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML flowChartPunchedTape in 20×20 space: two top arcs, two bottom arcs.
-    const CD2: f32 = 10_800_000.0;
-    let wr = (w * 5.0 / 20.0).max(0.5);
-    let hr = (h * 2.0 / 20.0).max(0.5);
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut pts = vec![map(0.0, h * 0.1)];
-    let mut cur = (0.0, h * 0.1);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, CD2, -CD2, &mut pts, map);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, CD2, CD2, &mut pts, map);
-    pts.push(map(w, h * 0.9));
-    cur = (w, h * 0.9);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, 0.0, -CD2, &mut pts, map);
-    ooxml_arc_to_y_down(&mut cur, wr, hr, 0.0, CD2, &mut pts, map);
-    pts
-}
-
 fn flow_chart_online_storage_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     // OOXML flowChartOnlineStorage in 6×6 space: horizontal cylinder,
     // right arc stAng=3cd4 swAng=-cd2, left arc stAng=cd4 swAng=cd2.
@@ -16793,23 +16204,6 @@ fn flow_chart_online_storage_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32,
     cur = (w / 6.0, h);
     ooxml_arc_to_y_down(&mut cur, wr, hr, ST_L, SW_L, &mut pts, map);
     pts
-}
-
-fn flow_chart_offline_storage_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML flowChartOfflineStorage in 2×2 space: down-triangle (l,t)→(r,t)→(hc,b).
-    let py = |yd: f32| y + h - yd;
-    vec![(x, py(0.0)), (x + w, py(0.0)), (x + w * 0.5, py(h))]
-}
-
-fn flow_chart_sort_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML flowChartSort in 2×2 space: diamond (l,vc)→(hc,t)→(r,vc)→(hc,b).
-    let py = |yd: f32| y + h - yd;
-    vec![
-        (x, py(h * 0.5)),
-        (x + w * 0.5, py(0.0)),
-        (x + w, py(h * 0.5)),
-        (x + w * 0.5, py(h)),
-    ]
 }
 
 fn flow_chart_manual_operation_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
@@ -16850,124 +16244,6 @@ fn flow_chart_display_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> 
     ooxml_arc_to_y_down(&mut cur, wr, hr, ST, SW, &mut pts, map);
     pts.push(map(w / 6.0, h));
     pts
-}
-
-fn cube_faces(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 3] {
-    // OOXML cube adj=25000: y1=ss*adj/100000, x4=r-y1.
-    let y1 = preset_ss(w, h) * 25_000.0 / 100_000.0;
-    let x4 = w - y1;
-    let py = |yd: f32| y + h - yd;
-    [
-        vec![(x, py(y1)), (x + x4, py(y1)), (x + x4, py(h)), (x, py(h))],
-        vec![
-            (x + x4, py(y1)),
-            (x + w, py(0.0)),
-            (x + w, py(h - y1)),
-            (x + x4, py(h)),
-        ],
-        vec![
-            (x, py(y1)),
-            (x + y1, py(0.0)),
-            (x + w, py(0.0)),
-            (x + x4, py(y1)),
-        ],
-    ]
-}
-
-fn bevel_faces(x: f32, y: f32, w: f32, h: f32) -> [Vec<(f32, f32)>; 5] {
-    // OOXML bevel adj=12500: inner face plus four rim quads.
-    let a = preset_ss(w, h) * 12_500.0 / 100_000.0;
-    let x1 = a;
-    let x2 = w - a;
-    let y2 = h - a;
-    let py = |yd: f32| y + h - yd;
-    [
-        vec![
-            (x + x1, py(x1)),
-            (x + x2, py(x1)),
-            (x + x2, py(y2)),
-            (x + x1, py(y2)),
-        ],
-        vec![
-            (x, py(0.0)),
-            (x + w, py(0.0)),
-            (x + x2, py(x1)),
-            (x + x1, py(x1)),
-        ],
-        vec![
-            (x, py(h)),
-            (x + x1, py(y2)),
-            (x + x2, py(y2)),
-            (x + w, py(h)),
-        ],
-        vec![(x, py(0.0)), (x + x1, py(x1)), (x + x1, py(y2)), (x, py(h))],
-        vec![
-            (x + w, py(0.0)),
-            (x + w, py(h)),
-            (x + x2, py(y2)),
-            (x + x2, py(x1)),
-        ],
-    ]
-}
-
-fn folded_corner_body_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML foldedCorner adj=16667: dy2=ss*adj/100000, x1=r-dy2, y2=b-dy2.
-    let dy2 = preset_ss(w, h) * 16_667.0 / 100_000.0;
-    let x1 = w - dy2;
-    let y2 = h - dy2;
-    let py = |yd: f32| y + h - yd;
-    vec![
-        (x, py(0.0)),
-        (x + w, py(0.0)),
-        (x + w, py(y2)),
-        (x + x1, py(h)),
-        (x, py(h)),
-    ]
-}
-
-fn folded_corner_fold_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    let dy2 = preset_ss(w, h) * 16_667.0 / 100_000.0;
-    let dy1 = dy2 / 5.0;
-    let x1 = w - dy2;
-    let x2 = x1 + dy1;
-    let y2 = h - dy2;
-    let y1 = y2 + dy1;
-    let py = |yd: f32| y + h - yd;
-    vec![(x + x1, py(h)), (x + x2, py(y1)), (x + w, py(y2))]
-}
-
-fn ellipse_arc(
-    pts: &mut Vec<(f32, f32)>,
-    center: (f32, f32),
-    radii: (f32, f32),
-    deg0: f32,
-    deg1: f32,
-    steps: i32,
-) {
-    for i in 1..=steps {
-        let t = i as f32 / steps as f32;
-        let a = (deg0 + (deg1 - deg0) * t).to_radians();
-        pts.push((center.0 + radii.0 * a.cos(), center.1 + radii.1 * a.sin()));
-    }
-}
-
-fn can_body_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML can adj=25000: y1=ss*adj/200000 lid half-height.
-    let y1 = (preset_ss(w, h) * 25_000.0 / 200_000.0).max(0.5);
-    let cx = x + w * 0.5;
-    let rx = (w * 0.5).max(0.5);
-    let top_cy = y + h - y1;
-    let bot_cy = y + y1;
-    let mut pts = vec![(x, top_cy)];
-    ellipse_arc(&mut pts, (cx, top_cy), (rx, y1), 180.0, 360.0, 8);
-    pts.push((x + w, bot_cy));
-    ellipse_arc(&mut pts, (cx, bot_cy), (rx, y1), 0.0, -180.0, 8);
-    pts
-}
-
-fn can_lid_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    let y1 = (preset_ss(w, h) * 25_000.0 / 200_000.0).max(0.5);
-    ellipse_points(x, y + h - 2.0 * y1, w, 2.0 * y1)
 }
 
 fn ooxml_arc_to_y_down(
@@ -17287,53 +16563,6 @@ fn sun_disk_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     ellipse_points(x + w * 0.5 - wr, y + h * 0.5 - hr, wr * 2.0, hr * 2.0)
 }
 
-fn moon_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML moon adj=50000: outer D (ellipse at the right edge) plus inner bite.
-    const CD4: f32 = 5_400_000.0;
-    const CD2: f32 = 10_800_000.0;
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut cur = (w, h);
-    let mut pts = vec![map(cur.0, cur.1)];
-    ooxml_arc_to_y_down(&mut cur, w, h * 0.5, CD4, CD2, &mut pts, map);
-    ellipse_arc(
-        &mut pts,
-        (x + w * 0.72, y + h * 0.5),
-        (w * 0.40, h * 0.48),
-        90.0,
-        270.0,
-        12,
-    );
-    pts
-}
-
-fn circular_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML circularArrow adj1=adj5=12500, stAng=10800000 (180°).
-    // Outer 270° ring, triangular head, inner reverse arc (one contour).
-    const ST: f32 = 10_800_000.0;
-    const SW: f32 = 16_200_000.0;
-    let ss = preset_ss(w, h);
-    let th = ss * 12_500.0 / 100_000.0;
-    let hc = w * 0.5;
-    let vc = h * 0.5;
-    let rw1 = (w * 0.5).max(0.5);
-    let rh1 = (h * 0.5).max(0.5);
-    let rw2 = (rw1 - th).max(0.5);
-    let rh2 = (rh1 - th).max(0.5);
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let st = ooxml_ang_rad(ST);
-    let mut cur = (hc + rw1 * st.cos(), vc + rh1 * st.sin());
-    let mut pts = vec![map(cur.0, cur.1)];
-    ooxml_arc_to_y_down(&mut cur, rw1, rh1, ST, SW, &mut pts, map);
-    let en = ooxml_ang_rad(ST + SW);
-    let tip_ang = ooxml_ang_rad(ST + SW + 900_000.0);
-    let tip_r = ss * 58_000.0 / 100_000.0;
-    pts.push(map(hc + tip_r * tip_ang.cos(), vc + tip_r * tip_ang.sin()));
-    let mut icur = (hc + rw2 * en.cos(), vc + rh2 * en.sin());
-    pts.push(map(icur.0, icur.1));
-    ooxml_arc_to_y_down(&mut icur, rw2, rh2, ST + SW, -SW, &mut pts, map);
-    pts
-}
-
 fn gear_points(x: f32, y: f32, w: f32, h: f32, teeth: i32, adj1: f32) -> Vec<(f32, f32)> {
     // OOXML gear6 adj1=15000 / gear9 adj1=10000; flat teeth, solid (no hub hole).
     let th = preset_ss(w, h) * adj1 / 100_000.0;
@@ -17370,37 +16599,6 @@ fn gear9_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     gear_points(x, y, w, h, 9, 10_000.0)
 }
 
-fn no_smoking_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML noSmoking adj=18750: outer ellipse plus a diagonal bar hole
-    // (nonzero winding, same contour trick as donut).
-    const STEPS: i32 = 24;
-    let cx = x + w * 0.5;
-    let cy = y + h * 0.5;
-    let rx = (w * 0.5).max(0.5);
-    let ry = (h * 0.5).max(0.5);
-    let dr = preset_ss(w, h) * 18_750.0 / 100_000.0;
-    let mut pts = Vec::with_capacity(STEPS as usize + 4);
-    for i in 0..STEPS {
-        let a = i as f32 * std::f32::consts::TAU / STEPS as f32;
-        pts.push((cx + rx * a.cos(), cy + ry * a.sin()));
-    }
-    let len = (w * w + h * h).sqrt().max(0.001);
-    let ux = w / len;
-    let uy = -h / len;
-    let hx = -uy * (dr * 0.5);
-    let hy = ux * (dr * 0.5);
-    let inset = dr;
-    let nwx = x + ux * inset;
-    let nwy = y + h + uy * inset;
-    let sex = x + w - ux * inset;
-    let sey = y - uy * inset;
-    pts.push((nwx + hx, nwy + hy));
-    pts.push((nwx - hx, nwy - hy));
-    pts.push((sex - hx, sey - hy));
-    pts.push((sex + hx, sey + hy));
-    pts
-}
-
 fn plaque_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     // OOXML plaque adj=16667: square with concave quarter-circles at corners.
     const CD4: f32 = 5_400_000.0;
@@ -17420,88 +16618,6 @@ fn plaque_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     cur = (r, h);
     pts.push(map(cur.0, cur.1));
     ooxml_arc_to_y_down(&mut cur, r, r, 0.0, -CD4, &mut pts, map);
-    pts
-}
-
-fn left_circular_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML leftCircularArrow adj1=adj5=12500, stAng=10800000 (180°).
-    // Counterclockwise 270° ring plus triangular head (mirror of circularArrow).
-    const ST: f32 = 10_800_000.0;
-    const SW: f32 = -16_200_000.0;
-    let ss = preset_ss(w, h);
-    let th = ss * 12_500.0 / 100_000.0;
-    let hc = w * 0.5;
-    let vc = h * 0.5;
-    let rw1 = (w * 0.5).max(0.5);
-    let rh1 = (h * 0.5).max(0.5);
-    let rw2 = (rw1 - th).max(0.5);
-    let rh2 = (rh1 - th).max(0.5);
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let st = ooxml_ang_rad(ST);
-    let mut cur = (hc + rw1 * st.cos(), vc + rh1 * st.sin());
-    let mut pts = vec![map(cur.0, cur.1)];
-    ooxml_arc_to_y_down(&mut cur, rw1, rh1, ST, SW, &mut pts, map);
-    let en = ooxml_ang_rad(ST + SW);
-    let tip_ang = ooxml_ang_rad(ST + SW - 900_000.0);
-    let tip_r = ss * 58_000.0 / 100_000.0;
-    pts.push(map(hc + tip_r * tip_ang.cos(), vc + tip_r * tip_ang.sin()));
-    let mut icur = (hc + rw2 * en.cos(), vc + rh2 * en.sin());
-    pts.push(map(icur.0, icur.1));
-    ooxml_arc_to_y_down(&mut icur, rw2, rh2, ST + SW, -SW, &mut pts, map);
-    pts
-}
-
-fn left_right_circular_arrow_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML leftRightCircularArrow adj1=adj5=12500, stAng=11942319, enAng=20457681.
-    // Top ~142° ring, triangular head at each end, inner reverse (one contour).
-    const ST: f32 = 11_942_319.0;
-    const SW: f32 = 8_515_362.0;
-    const HEAD: f32 = 1_142_319.0;
-    let ss = preset_ss(w, h);
-    let th = ss * 12_500.0 / 100_000.0;
-    let hc = w * 0.5;
-    let vc = h * 0.5;
-    let rw1 = (w * 0.5).max(0.5);
-    let rh1 = (h * 0.5).max(0.5);
-    let rw2 = (rw1 - th).max(0.5);
-    let rh2 = (rh1 - th).max(0.5);
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let tip_r = ss * 58_000.0 / 100_000.0;
-    let lpt = ooxml_ang_rad(ST - HEAD);
-    let mut pts = vec![map(hc + tip_r * lpt.cos(), vc + tip_r * lpt.sin())];
-    let st = ooxml_ang_rad(ST);
-    let mut cur = (hc + rw1 * st.cos(), vc + rh1 * st.sin());
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, rw1, rh1, ST, SW, &mut pts, map);
-    let rpt = ooxml_ang_rad(ST + SW + HEAD);
-    pts.push(map(hc + tip_r * rpt.cos(), vc + tip_r * rpt.sin()));
-    let en = ooxml_ang_rad(ST + SW);
-    let mut icur = (hc + rw2 * en.cos(), vc + rh2 * en.sin());
-    pts.push(map(icur.0, icur.1));
-    ooxml_arc_to_y_down(&mut icur, rw2, rh2, ST + SW, -SW, &mut pts, map);
-    pts
-}
-
-fn block_arc_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML blockArc adj1=10800000 adj2=0 adj3=25000: 180° thick C, no head.
-    const ST: f32 = 10_800_000.0;
-    const SW: f32 = 10_800_000.0;
-    let dr = preset_ss(w, h) * 25_000.0 / 100_000.0;
-    let hc = w * 0.5;
-    let vc = h * 0.5;
-    let rw1 = (w * 0.5).max(0.5);
-    let rh1 = (h * 0.5).max(0.5);
-    let rw2 = (rw1 - dr).max(0.5);
-    let rh2 = (rh1 - dr).max(0.5);
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let st = ooxml_ang_rad(ST);
-    let mut cur = (hc + rw1 * st.cos(), vc + rh1 * st.sin());
-    let mut pts = vec![map(cur.0, cur.1)];
-    ooxml_arc_to_y_down(&mut cur, rw1, rh1, ST, SW, &mut pts, map);
-    let en = ooxml_ang_rad(ST + SW);
-    let mut icur = (hc + rw2 * en.cos(), vc + rh2 * en.sin());
-    pts.push(map(icur.0, icur.1));
-    ooxml_arc_to_y_down(&mut icur, rw2, rh2, ST + SW, -SW, &mut pts, map);
     pts
 }
 
@@ -17531,123 +16647,6 @@ fn arc_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let mut pts = vec![map(cur.0, cur.1)];
     ooxml_arc_to_y_down(&mut cur, hc, vc, ST, SW, &mut pts, map);
     pts.push(map(hc, vc));
-    pts
-}
-
-fn left_bracket_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML leftBracket adj=8333: rounded "[" — two 90° arcs of height y1
-    // plus a vertical spine, closed down the right edge by FillPoly `h`.
-    const CD4: f32 = 5_400_000.0;
-    const CD2: f32 = 10_800_000.0;
-    let y1 = (preset_ss(w, h) * 8_333.0 / 100_000.0).max(0.5);
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut cur = (w, h);
-    let mut pts = vec![map(cur.0, cur.1)];
-    ooxml_arc_to_y_down(&mut cur, w, y1, CD4, CD4, &mut pts, map);
-    cur = (0.0, y1);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, w, y1, CD2, CD4, &mut pts, map);
-    pts
-}
-
-fn right_bracket_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // Horizontal mirror of leftBracket: rounded "]".
-    left_bracket_points(x, y, w, h)
-        .into_iter()
-        .map(|(px, py)| (x + w - (px - x), py))
-        .collect()
-}
-
-fn left_brace_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML leftBrace adj1=8333 adj2=50000: curly "{" with a mid-height cusp.
-    const CD4: f32 = 5_400_000.0;
-    const CD2: f32 = 10_800_000.0;
-    let y1 = (preset_ss(w, h) * 8_333.0 / 100_000.0).max(0.5);
-    let y4 = h * 0.5 + y1;
-    let wd2 = w * 0.5;
-    let hc = w * 0.5;
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut cur = (w, h);
-    let mut pts = vec![map(cur.0, cur.1)];
-    ooxml_arc_to_y_down(&mut cur, wd2, y1, CD4, CD4, &mut pts, map);
-    cur = (hc, y4);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, wd2, y1, 0.0, -CD4, &mut pts, map);
-    ooxml_arc_to_y_down(&mut cur, wd2, y1, CD4, -CD4, &mut pts, map);
-    cur = (hc, y1);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, wd2, y1, CD2, CD4, &mut pts, map);
-    pts
-}
-
-fn right_brace_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // Horizontal mirror of leftBrace: curly "}".
-    left_brace_points(x, y, w, h)
-        .into_iter()
-        .map(|(px, py)| (x + w - (px - x), py))
-        .collect()
-}
-
-fn brace_pair_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML bracePair adj=8333: "{ }" as one closed fill path.
-    const CD4: f32 = 5_400_000.0;
-    const CD2: f32 = 10_800_000.0;
-    const CD3_4: f32 = 16_200_000.0;
-    let x1 = (preset_ss(w, h) * 8_333.0 / 100_000.0).max(0.5);
-    let x2 = x1 * 2.0;
-    let x3 = w - x2;
-    let x4 = w - x1;
-    let vc = h * 0.5;
-    let y2 = vc - x1;
-    let y3 = vc + x1;
-    let y4 = h - x1;
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut cur = (x2, h);
-    let mut pts = vec![map(cur.0, cur.1)];
-    ooxml_arc_to_y_down(&mut cur, x1, x1, CD4, CD4, &mut pts, map);
-    cur = (x1, y3);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, x1, x1, 0.0, -CD4, &mut pts, map);
-    ooxml_arc_to_y_down(&mut cur, x1, x1, CD4, -CD4, &mut pts, map);
-    cur = (x1, x1);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, x1, x1, CD2, CD4, &mut pts, map);
-    cur = (x3, 0.0);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, x1, x1, CD3_4, CD4, &mut pts, map);
-    cur = (x4, y2);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, x1, x1, CD2, -CD4, &mut pts, map);
-    ooxml_arc_to_y_down(&mut cur, x1, x1, CD3_4, -CD4, &mut pts, map);
-    cur = (x4, y4);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, x1, x1, 0.0, CD4, &mut pts, map);
-    pts
-}
-
-fn bracket_pair_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML bracketPair adj=16667: "[ ]" fill path is four corner arcs
-    // (a rounded rectangle); stroke of the two brackets is the same
-    // closed contour via FillPoly `h`.
-    const CD4: f32 = 5_400_000.0;
-    const CD2: f32 = 10_800_000.0;
-    const CD3_4: f32 = 16_200_000.0;
-    let x1 = (preset_ss(w, h) * 16_667.0 / 100_000.0).max(0.5);
-    let x2 = w - x1;
-    let y2 = h - x1;
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut cur = (0.0, x1);
-    let mut pts = vec![map(cur.0, cur.1)];
-    ooxml_arc_to_y_down(&mut cur, x1, x1, CD2, CD4, &mut pts, map);
-    cur = (x2, 0.0);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, x1, x1, CD3_4, CD4, &mut pts, map);
-    cur = (w, y2);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, x1, x1, 0.0, CD4, &mut pts, map);
-    cur = (x1, h);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, x1, x1, CD4, CD4, &mut pts, map);
     pts
 }
 
@@ -17751,70 +16750,6 @@ fn round2_diag_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     pts
 }
 
-fn ribbon_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML ribbon adj1=16667 adj2=50000: down-pointing banner with
-    // mid-height notches. First fill path only (folds later).
-    const CD4: f32 = 5_400_000.0;
-    const CD2: f32 = 10_800_000.0;
-    const CD3_4: f32 = 16_200_000.0;
-    let wd8 = w / 8.0;
-    let wd32 = (w / 32.0).max(0.5);
-    let hc = w * 0.5;
-    let dx2 = w * 50_000.0 / 200_000.0;
-    let x2 = hc - dx2;
-    let x9 = hc + dx2;
-    let x3 = x2 + wd32;
-    let x8 = x9 - wd32;
-    let x5 = x2 + wd8;
-    let x6 = x9 - wd8;
-    let x4 = x5 - wd32;
-    let x7 = x6 + wd32;
-    let x10 = w - wd8;
-    let y1 = h * 16_667.0 / 200_000.0;
-    let y2 = h * 16_667.0 / 100_000.0;
-    let y4 = h - y2;
-    let y3 = y4 * 0.5;
-    let hr = (h * 16_667.0 / 400_000.0).max(0.5);
-    let y5 = h - hr;
-    let map = |ox: f32, oy: f32| (x + ox, y + h - oy);
-    let mut cur = (0.0, 0.0);
-    let mut pts = vec![map(cur.0, cur.1)];
-    cur = (x4, 0.0);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, wd32, hr, CD3_4, CD2, &mut pts, map);
-    cur = (x3, y1);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, wd32, hr, CD3_4, -CD2, &mut pts, map);
-    cur = (x8, y2);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, wd32, hr, CD4, -CD2, &mut pts, map);
-    cur = (x7, y1);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, wd32, hr, CD4, CD2, &mut pts, map);
-    pts.push(map(w, 0.0));
-    pts.push(map(x10, y3));
-    pts.push(map(w, y4));
-    pts.push(map(x9, y4));
-    cur = (x9, y5);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, wd32, hr, 0.0, CD4, &mut pts, map);
-    cur = (x3, h);
-    pts.push(map(cur.0, cur.1));
-    ooxml_arc_to_y_down(&mut cur, wd32, hr, CD4, CD4, &mut pts, map);
-    pts.push(map(x2, y4));
-    pts.push(map(0.0, y4));
-    pts.push(map(wd8, y3));
-    pts
-}
-
-fn ribbon2_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    // OOXML ribbon2: vertical mirror of ribbon (up-pointing banner).
-    ribbon_points(x, y, w, h)
-        .into_iter()
-        .map(|(px, py)| (px, y + h - (py - y)))
-        .collect()
-}
-
 fn wave_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     // OOXML wave adj1=12500 adj2=0: two cubics (top then bottom reverse).
     let y1 = h * 12_500.0 / 100_000.0;
@@ -17900,62 +16835,6 @@ fn sample_quad_y_down(
     }
 }
 
-fn smiley_eye_points(x: f32, y: f32, w: f32, h: f32, left: bool) -> Vec<(f32, f32)> {
-    // OOXML smileyFace adj=4653: eyes at x2/x3,y1 with wr=hr=1125/21600.
-    let wr = w * 1_125.0 / 21_600.0;
-    let hr = h * 1_125.0 / 21_600.0;
-    let y1 = h * 7_570.0 / 21_600.0;
-    let ox = if left {
-        w * 6_215.0 / 21_600.0
-    } else {
-        w * 13_135.0 / 21_600.0
-    };
-    let py = |yd: f32| y + h - yd;
-    ellipse_points(x + ox, py(y1) - hr, wr * 2.0, hr * 2.0)
-}
-
-fn smiley_mouth_cubic(x: f32, y: f32, w: f32, h: f32) -> ConnectorCubic {
-    // OOXML smileyFace P2: M x1,y2 Q hc,y5 x4,y2 (open stroke, adj=4653).
-    // x1 uses the spec denominator 21699, not 21600.
-    let a = 4_653.0;
-    let x1 = w * 4_969.0 / 21_699.0;
-    let x4 = w * 16_640.0 / 21_600.0;
-    let y3 = h * 16_515.0 / 21_600.0;
-    let dy2 = h * a / 100_000.0;
-    let y2 = y3 - dy2;
-    let y4 = y3 + dy2;
-    let dy3 = h * a / 50_000.0;
-    let y5 = y4 + dy3;
-    let hc = w * 0.5;
-    let py = |yd: f32| y + h - yd;
-    let p0 = (x + x1, py(y2));
-    let p1 = (x + hc, py(y5));
-    let p2 = (x + x4, py(y2));
-    let two_thirds = 2.0 / 3.0;
-    let c1 = (
-        p0.0 + two_thirds * (p1.0 - p0.0),
-        p0.1 + two_thirds * (p1.1 - p0.1),
-    );
-    let c2 = (
-        p2.0 + two_thirds * (p1.0 - p2.0),
-        p2.1 + two_thirds * (p1.1 - p2.1),
-    );
-    ConnectorCubic {
-        start: p0,
-        segments: vec![[c1, c2, p2]],
-    }
-}
-
-#[cfg(test)]
-fn smiley_mouth_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
-    let mouth = smiley_mouth_cubic(x, y, w, h);
-    let mut pts = vec![mouth.start];
-    for [c1, c2, end] in mouth.segments {
-        sample_cubic(mouth.start, c1, c2, end, 8, &mut pts);
-    }
-    pts
-}
-
 fn round_rect_points(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32)> {
     let r = (w.min(h) * 16_667.0 / 100_000.0).clamp(0.5, w.min(h) * 0.49);
     let mut pts = Vec::with_capacity(24);
@@ -18015,6 +16894,16 @@ fn shift_op_y(op: &mut Op, dy: f32) {
                 p.1 += dy;
             }
         }
+        Op::FillPath { contours, .. } => {
+            for p in contours.iter_mut().flatten() {
+                p.1 += dy;
+            }
+        }
+        Op::StrokePath { subpaths, .. } => {
+            for p in subpaths.iter_mut().flat_map(|(pts, _)| pts.iter_mut()) {
+                p.1 += dy;
+            }
+        }
         Op::Cubic {
             start, segments, ..
         } => {
@@ -18052,6 +16941,18 @@ fn body_op_yrange(ops: &[Op]) -> Option<(f32, f32)> {
             }
             Op::FillPoly { points, .. } | Op::StrokePoly { points, .. } => {
                 for &(_, py) in points {
+                    min_y = min_y.min(py);
+                    max_y = max_y.max(py);
+                }
+            }
+            Op::FillPath { contours, .. } => {
+                for &(_, py) in contours.iter().flatten() {
+                    min_y = min_y.min(py);
+                    max_y = max_y.max(py);
+                }
+            }
+            Op::StrokePath { subpaths, .. } => {
+                for &(_, py) in subpaths.iter().flat_map(|(pts, _)| pts.iter()) {
                     min_y = min_y.min(py);
                     max_y = max_y.max(py);
                 }
@@ -23782,24 +22683,6 @@ mod drawing_tests {
     }
 
     #[test]
-    fn donut_points_have_inner_and_outer_radii() {
-        let pts = donut_points(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(pts.len(), 48);
-        assert!((pts[0].0 - 100.0).abs() < 0.05 && (pts[0].1 - 50.0).abs() < 0.05);
-        let inner = pts[47];
-        assert!((inner.0 - 75.0).abs() < 0.05 && (inner.1 - 50.0).abs() < 0.05);
-    }
-
-    #[test]
-    fn frame_points_cut_an_inner_rect() {
-        let pts = frame_points(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(pts.len(), 11);
-        assert!(pts[0].0.abs() < 0.01 && pts[0].1.abs() < 0.01);
-        assert!((pts[5].0 - 12.5).abs() < 0.01 && (pts[5].1 - 12.5).abs() < 0.01);
-        assert!((pts[7].0 - 87.5).abs() < 0.01 && (pts[7].1 - 87.5).abs() < 0.01);
-    }
-
-    #[test]
     fn terminator_points_omit_bbox_corners() {
         let pts = flow_chart_terminator_points(0.0, 0.0, 100.0, 40.0);
         assert!(pts.len() >= 16, "{}", pts.len());
@@ -24198,46 +23081,6 @@ mod drawing_tests {
     }
 
     #[test]
-    fn cube_faces_are_three_isometric_quads() {
-        let [front, right, top] = cube_faces(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(front.len(), 4);
-        assert!((front[0].0).abs() < 0.05 && (front[0].1 - 75.0).abs() < 0.05);
-        assert!((front[2].0 - 75.0).abs() < 0.05 && front[2].1.abs() < 0.05);
-        assert!((right[1].0 - 100.0).abs() < 0.05 && (right[1].1 - 100.0).abs() < 0.05);
-        assert!((top[1].0 - 25.0).abs() < 0.05 && (top[1].1 - 100.0).abs() < 0.05);
-    }
-
-    #[test]
-    fn folded_corner_cuts_the_bottom_right() {
-        let body = folded_corner_body_points(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(body.len(), 5);
-        assert!(
-            !body
-                .iter()
-                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
-            "fold must remove the bbox corner; {body:?}"
-        );
-        let fold = folded_corner_fold_points(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(fold.len(), 3);
-        assert!((fold[0].0 - 83.333).abs() < 0.05 && fold[0].1.abs() < 0.05);
-    }
-
-    #[test]
-    fn can_body_has_lid_and_base_ellipses() {
-        let pts = can_body_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 16, "{}", pts.len());
-        assert!(pts[0].0.abs() < 0.05 && (pts[0].1 - 87.5).abs() < 0.05);
-        let lid = can_lid_points(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(lid.len(), 24);
-        let on_lid = lid.iter().all(|(px, py)| {
-            let nx = (*px - 50.0) / 50.0;
-            let ny = (*py - 87.5) / 12.5;
-            (nx * nx + ny * ny - 1.0).abs() < 0.05
-        });
-        assert!(on_lid, "lid vertices on the top ellipse; {lid:?}");
-    }
-
-    #[test]
     fn cloud_points_are_lobed_not_a_rect() {
         let pts = cloud_points(0.0, 0.0, 100.0, 100.0);
         assert!(pts.len() >= 40, "{}", pts.len());
@@ -24311,45 +23154,6 @@ mod drawing_tests {
     }
 
     #[test]
-    fn moon_points_are_a_crescent() {
-        let pts = moon_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 16, "{}", pts.len());
-        assert!((pts[0].0 - 100.0).abs() < 0.05 && pts[0].1.abs() < 0.05);
-        let min_x = pts.iter().map(|p| p.0).fold(f32::MAX, f32::min);
-        assert!(
-            min_x < 5.0,
-            "outer D must reach the left edge; min_x={min_x}"
-        );
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
-            "crescent must not include the bbox corner; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn circular_arrow_points_are_a_ring_with_a_head() {
-        let pts = circular_arrow_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 16, "{}", pts.len());
-        assert!(pts[0].0.abs() < 0.05 && (pts[0].1 - 50.0).abs() < 0.05);
-        let min_x = pts.iter().map(|p| p.0).fold(f32::MAX, f32::min);
-        let max_x = pts.iter().map(|p| p.0).fold(f32::MIN, f32::max);
-        assert!(min_x < 5.0 && max_x > 90.0, "span {min_x}..{max_x}");
-        let inner = pts.iter().any(|(px, py)| {
-            let dx = *px - 50.0;
-            let dy = *py - 50.0;
-            let r = (dx * dx + dy * dy).sqrt();
-            r > 20.0 && r < 40.0
-        });
-        assert!(inner, "inner reverse arc must sit inside the ring; {pts:?}");
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
-            "circularArrow must not include the bbox corner; {pts:?}"
-        );
-    }
-
-    #[test]
     fn gear6_points_have_six_flat_teeth() {
         let pts = gear6_points(0.0, 0.0, 100.0, 100.0);
         assert_eq!(pts.len(), 24);
@@ -24412,24 +23216,6 @@ mod drawing_tests {
     }
 
     #[test]
-    fn no_smoking_points_cut_a_diagonal_bar() {
-        let pts = no_smoking_points(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(pts.len(), 28);
-        let bar = &pts[24..];
-        let min_x = bar.iter().map(|p| p.0).fold(f32::MAX, f32::min);
-        let max_x = bar.iter().map(|p| p.0).fold(f32::MIN, f32::max);
-        let min_y = bar.iter().map(|p| p.1).fold(f32::MAX, f32::min);
-        let max_y = bar.iter().map(|p| p.1).fold(f32::MIN, f32::max);
-        assert!(min_x < 30.0 && max_x > 70.0, "bar x {min_x}..{max_x}");
-        assert!(min_y < 30.0 && max_y > 70.0, "bar y {min_y}..{max_y}");
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
-            "noSmoking must not include the bbox corner; {pts:?}"
-        );
-    }
-
-    #[test]
     fn plaque_points_cut_concave_corners() {
         let pts = plaque_points(0.0, 0.0, 100.0, 100.0);
         assert!(pts.len() > 12, "plaque is four inward arcs; {pts:?}");
@@ -24447,84 +23233,6 @@ mod drawing_tests {
             .iter()
             .any(|(px, py)| px.abs() < 0.5 && *py > 10.0 && *py < 90.0);
         assert!(near_left, "left edge after the top-left bite; {pts:?}");
-    }
-
-    #[test]
-    fn left_circular_arrow_points_are_a_ccw_ring_with_a_head() {
-        let pts = left_circular_arrow_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 16, "{}", pts.len());
-        assert!(pts[0].0.abs() < 0.05 && (pts[0].1 - 50.0).abs() < 0.05);
-        let min_x = pts.iter().map(|p| p.0).fold(f32::MAX, f32::min);
-        let max_x = pts.iter().map(|p| p.0).fold(f32::MIN, f32::max);
-        assert!(min_x < 5.0 && max_x > 90.0, "span {min_x}..{max_x}");
-        let inner = pts.iter().any(|(px, py)| {
-            let dx = *px - 50.0;
-            let dy = *py - 50.0;
-            let r = (dx * dx + dy * dy).sqrt();
-            r > 20.0 && r < 40.0
-        });
-        assert!(inner, "inner reverse arc must sit inside the ring; {pts:?}");
-        let tip_bottom = pts.iter().any(|(_, py)| *py > 95.0);
-        assert!(
-            tip_bottom,
-            "leftCircularArrow head is at the bottom of the 270° ring; {pts:?}"
-        );
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
-            "leftCircularArrow must not include the bbox corner; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn left_right_circular_arrow_points_have_two_heads() {
-        let pts = left_right_circular_arrow_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 16, "{}", pts.len());
-        assert!(
-            (pts[0].0 + 8.0).abs() < 0.5 && (pts[0].1 - 50.0).abs() < 0.5,
-            "left tip at 180° mid-radius; {start:?}",
-            start = pts[0]
-        );
-        let right_tip = pts
-            .iter()
-            .any(|(px, py)| *px > 100.0 && (*py - 50.0).abs() < 1.0);
-        assert!(right_tip, "right tip at 0° mid-radius; {pts:?}");
-        let top = pts.iter().any(|(_, py)| *py > 95.0);
-        assert!(top, "outer arc is the top ~142° ring; {pts:?}");
-        let inner = pts.iter().any(|(px, py)| {
-            let dx = *px - 50.0;
-            let dy = *py - 50.0;
-            let r = (dx * dx + dy * dy).sqrt();
-            r > 20.0 && r < 40.0
-        });
-        assert!(inner, "inner reverse arc must sit inside the ring; {pts:?}");
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
-            "leftRightCircularArrow must not include the bbox corner; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn block_arc_points_are_a_thick_semicircle() {
-        let pts = block_arc_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 16, "{}", pts.len());
-        assert!(pts[0].0.abs() < 0.05 && (pts[0].1 - 50.0).abs() < 0.05);
-        let min_x = pts.iter().map(|p| p.0).fold(f32::MAX, f32::min);
-        let max_x = pts.iter().map(|p| p.0).fold(f32::MIN, f32::max);
-        assert!(min_x < 5.0 && max_x > 90.0, "span {min_x}..{max_x}");
-        let inner = pts.iter().any(|(px, py)| {
-            let dx = *px - 50.0;
-            let dy = *py - 50.0;
-            let r = (dx * dx + dy * dy).sqrt();
-            r > 20.0 && r < 40.0
-        });
-        assert!(inner, "inner reverse arc must sit inside the ring; {pts:?}");
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
-            "blockArc must not include the bbox corner; {pts:?}"
-        );
     }
 
     #[test]
@@ -24549,18 +23257,6 @@ mod drawing_tests {
     }
 
     #[test]
-    fn bevel_faces_are_five_quads() {
-        let faces = bevel_faces(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(faces.len(), 5);
-        for face in &faces {
-            assert_eq!(face.len(), 4);
-        }
-        let inner = &faces[0];
-        assert!((inner[0].0 - 12.5).abs() < 0.05 && (inner[0].1 - 87.5).abs() < 0.05);
-        assert!((inner[2].0 - 87.5).abs() < 0.05 && (inner[2].1 - 12.5).abs() < 0.05);
-    }
-
-    #[test]
     fn arc_points_are_a_quarter_wedge() {
         let pts = arc_points(0.0, 0.0, 100.0, 100.0);
         assert!(pts.len() >= 6, "{}", pts.len());
@@ -24578,141 +23274,6 @@ mod drawing_tests {
         assert!(
             (end.0 - 100.0).abs() < 1.0 && (end.1 - 50.0).abs() < 1.0,
             "90° sweep lands at right center; {end:?}"
-        );
-    }
-
-    #[test]
-    fn left_bracket_points_are_a_rounded_c() {
-        let pts = left_bracket_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 10, "{}", pts.len());
-        let start = pts[0];
-        assert!(
-            (start.0 - 100.0).abs() < 0.05 && start.1.abs() < 0.05,
-            "moveTo (r,b) is PDF bottom-right; {start:?}"
-        );
-        let last = *pts.last().expect("end");
-        assert!(
-            (last.0 - 100.0).abs() < 1.0 && (last.1 - 100.0).abs() < 1.0,
-            "second arc lands at top-right; {last:?}"
-        );
-        assert!(
-            pts.iter().any(|(px, _)| *px < 1.0),
-            "spine sits on the left edge; {pts:?}"
-        );
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
-            "leftBracket must not include the bbox corner (0,0); {pts:?}"
-        );
-    }
-
-    #[test]
-    fn right_bracket_points_are_a_rounded_reverse_c() {
-        // Horizontal mirror of leftBracket. Start is PDF bottom-left (0,0);
-        // do not copy the left-bracket "no bbox corner" assert.
-        let pts = right_bracket_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 10, "{}", pts.len());
-        let start = pts[0];
-        assert!(
-            start.0.abs() < 0.05 && start.1.abs() < 0.05,
-            "moveTo (l,b) is PDF bottom-left; {start:?}"
-        );
-        let last = *pts.last().expect("end");
-        assert!(
-            last.0.abs() < 1.0 && (last.1 - 100.0).abs() < 1.0,
-            "second arc lands at top-left; {last:?}"
-        );
-        assert!(
-            pts.iter().any(|(px, _)| *px > 99.0),
-            "spine sits on the right edge; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn left_brace_points_are_a_curly_brace() {
-        // OOXML leftBrace: start PDF bottom-right, cusp on the left edge at mid,
-        // last PDF top-right.
-        let pts = left_brace_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 16, "{}", pts.len());
-        let start = pts[0];
-        assert!(
-            (start.0 - 100.0).abs() < 0.05 && start.1.abs() < 0.05,
-            "moveTo (r,b) is PDF bottom-right; {start:?}"
-        );
-        let last = *pts.last().expect("end");
-        assert!(
-            (last.0 - 100.0).abs() < 1.0 && (last.1 - 100.0).abs() < 1.0,
-            "last arc lands at top-right; {last:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| *px < 1.0 && (*py - 50.0).abs() < 2.0),
-            "mid cusp sits on the left edge; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn right_brace_points_are_a_curly_brace() {
-        // Horizontal mirror of leftBrace. Start is PDF bottom-left (0,0);
-        // do not copy a "no bbox corner" assert.
-        let pts = right_brace_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 16, "{}", pts.len());
-        let start = pts[0];
-        assert!(
-            start.0.abs() < 0.05 && start.1.abs() < 0.05,
-            "moveTo is PDF bottom-left; {start:?}"
-        );
-        let last = *pts.last().expect("end");
-        assert!(
-            last.0.abs() < 1.0 && (last.1 - 100.0).abs() < 1.0,
-            "last arc lands at top-left; {last:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| *px > 99.0 && (*py - 50.0).abs() < 2.0),
-            "mid cusp sits on the right edge; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn brace_pair_points_have_left_and_right_cusps() {
-        let pts = brace_pair_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 24, "{}", pts.len());
-        let start = pts[0];
-        assert!(
-            (start.0 - 16.667).abs() < 0.05 && start.1.abs() < 0.05,
-            "moveTo (x2,b) is PDF bottom inset; {start:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| *px < 1.0 && (*py - 50.0).abs() < 2.0),
-            "left cusp on the left edge; {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| *px > 99.0 && (*py - 50.0).abs() < 2.0),
-            "right cusp on the right edge; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn bracket_pair_points_round_the_corners() {
-        // OOXML fill path starts at (l, x1); adj=16667 so x1≈16.667.
-        let pts = bracket_pair_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 16, "{}", pts.len());
-        let start = pts[0];
-        assert!(
-            start.0.abs() < 0.05 && (start.1 - 83.333).abs() < 0.05,
-            "moveTo (l,x1) is PDF left edge inset from top; {start:?}"
-        );
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
-            "must not include the sharp bbox corner (0,0); {pts:?}"
-        );
-        assert!(
-            pts.iter().any(|(px, _)| *px > 99.0),
-            "right bracket sits on the right edge; {pts:?}"
         );
     }
 
@@ -24883,49 +23444,6 @@ mod drawing_tests {
     }
 
     #[test]
-    fn ribbon_points_have_mid_height_notches() {
-        let pts = ribbon_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 20, "{}", pts.len());
-        let start = pts[0];
-        assert!(
-            start.0.abs() < 0.05 && (start.1 - 100.0).abs() < 0.05,
-            "moveTo (l,t) is PDF top-left; {start:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 12.5).abs() < 0.2 && (*py - 58.333).abs() < 0.5),
-            "left notch at (wd8, y3); {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 87.5).abs() < 0.2 && (*py - 58.333).abs() < 0.5),
-            "right notch at (x10, y3); {pts:?}"
-        );
-    }
-
-    #[test]
-    fn ribbon2_points_are_a_vertical_mirror() {
-        // Start is PDF bottom-left (0,0); notches sit below mid-height.
-        let pts = ribbon2_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 20, "{}", pts.len());
-        let start = pts[0];
-        assert!(
-            start.0.abs() < 0.05 && start.1.abs() < 0.05,
-            "moveTo (l,b) is PDF bottom-left; {start:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 12.5).abs() < 0.2 && (*py - 41.667).abs() < 0.5),
-            "left notch at (wd8, y3); {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 87.5).abs() < 0.2 && (*py - 41.667).abs() < 0.5),
-            "right notch at (x10, y3); {pts:?}"
-        );
-    }
-
-    #[test]
     fn wave_points_undulate_top_and_bottom() {
         let pts = wave_points(0.0, 0.0, 100.0, 100.0);
         assert!(pts.len() >= 16, "{}", pts.len());
@@ -25045,63 +23563,6 @@ mod drawing_tests {
     }
 
     #[test]
-    fn flow_chart_sort_points_are_diamond_starting_left_mid() {
-        let pts = flow_chart_sort_points(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(pts.len(), 4, "{pts:?}");
-        let start = pts[0];
-        assert!(
-            start.0.abs() < 0.05 && (start.1 - 50.0).abs() < 0.05,
-            "start is (l,vc) PDF (0,50); {start:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 50.0).abs() < 0.05 && (*py - 100.0).abs() < 0.05),
-            "top tip (hc,t); {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && (*py - 50.0).abs() < 0.05),
-            "right (r,vc); {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 50.0).abs() < 0.05 && py.abs() < 0.05),
-            "bottom tip (hc,b); {pts:?}"
-        );
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
-            "must not include bbox corner; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn flow_chart_offline_storage_points_are_down_triangle() {
-        let pts = flow_chart_offline_storage_points(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(pts.len(), 3, "{pts:?}");
-        let start = pts[0];
-        assert!(
-            start.0.abs() < 0.05 && (start.1 - 100.0).abs() < 0.05,
-            "start is (l,t) PDF (0,100); {start:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && (*py - 100.0).abs() < 0.05),
-            "top-right (r,t); {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 50.0).abs() < 0.05 && py.abs() < 0.05),
-            "bottom tip (hc,b); {pts:?}"
-        );
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
-            "must not include bbox bottom-left; {pts:?}"
-        );
-    }
-
-    #[test]
     fn flow_chart_online_storage_points_start_inset_top() {
         let pts = flow_chart_online_storage_points(0.0, 0.0, 100.0, 100.0);
         assert!(pts.len() >= 8, "{}", pts.len());
@@ -25117,216 +23578,6 @@ mod drawing_tests {
         assert!(
             pts.iter().any(|(_, py)| py.abs() < 1.0),
             "bottom edge present; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn flow_chart_punched_tape_points_start_below_top() {
-        let pts = flow_chart_punched_tape_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 16, "{}", pts.len());
-        let start = pts[0];
-        assert!(
-            start.0.abs() < 0.05 && (start.1 - 90.0).abs() < 0.2,
-            "start is (l, hd10) PDF (0,90); {start:?}"
-        );
-        assert!(
-            pts.iter().any(|(_, py)| *py > 95.0),
-            "top wave crests near t; {pts:?}"
-        );
-        assert!(
-            pts.iter().any(|(_, py)| *py < 5.0),
-            "bottom wave reaches b; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn flow_chart_internal_storage_points_are_extent_rect() {
-        let pts = flow_chart_internal_storage_points(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(pts.len(), 4, "{pts:?}");
-        let start = pts[0];
-        assert!(
-            start.0.abs() < 0.05 && (start.1 - 100.0).abs() < 0.05,
-            "start is (l,t) PDF (0,100); {start:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && (*py - 100.0).abs() < 0.05),
-            "top-right; {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
-            "bottom-right; {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && py.abs() < 0.05),
-            "bottom-left; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn flow_chart_predefined_process_points_are_extent_rect() {
-        let pts = flow_chart_predefined_process_points(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(pts.len(), 4, "{pts:?}");
-        let start = pts[0];
-        assert!(
-            start.0.abs() < 0.05 && (start.1 - 100.0).abs() < 0.05,
-            "start is (l,t) PDF (0,100); {start:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
-            "bottom-right; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn flow_chart_magnetic_disk_points_are_a_cylinder() {
-        let pts = flow_chart_magnetic_disk_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 8, "{}", pts.len());
-        let start = pts[0];
-        let y_eq = 100.0 - 100.0 / 6.0;
-        assert!(
-            start.0.abs() < 0.05 && (start.1 - y_eq).abs() < 0.2,
-            "start is (l, hd6) PDF; {start:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 50.0).abs() < 2.0 && (*py - 100.0).abs() < 2.0),
-            "top ellipse crest (hc,t); {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 50.0).abs() < 2.0 && py.abs() < 2.0),
-            "bottom ellipse lower rim (hc,b); {pts:?}"
-        );
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
-            "must not include sharp top-left; {pts:?}"
-        );
-        let lid = flow_chart_magnetic_disk_lid_points(0.0, 0.0, 100.0, 100.0);
-        assert!(lid.len() >= 5, "{}", lid.len());
-        let lid0 = lid[0];
-        assert!(
-            (lid0.0 - 100.0).abs() < 0.05 && (lid0.1 - y_eq).abs() < 0.2,
-            "lid starts (r, hd6); {lid0:?}"
-        );
-        assert!(
-            lid.iter()
-                .any(|(px, py)| (*px - 50.0).abs() < 2.0 && (*py - 200.0 / 3.0).abs() < 2.0),
-            "lid through lower rim of top ellipse; {lid:?}"
-        );
-    }
-
-    #[test]
-    fn flow_chart_magnetic_drum_points_are_a_horizontal_cylinder() {
-        let pts = flow_chart_magnetic_drum_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 8, "{}", pts.len());
-        let start = pts[0];
-        assert!(
-            (start.0 - 100.0 / 6.0).abs() < 0.2 && (start.1 - 100.0).abs() < 0.05,
-            "start is (wd6,t) PDF; {start:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 100.0).abs() < 2.0 && (*py - 50.0).abs() < 2.0),
-            "right cap reaches r; {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| px.abs() < 2.0 && (*py - 50.0).abs() < 2.0),
-            "left cap reaches l; {pts:?}"
-        );
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
-            "must not include sharp top-left; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn flow_chart_magnetic_tape_points_start_at_bottom_mid() {
-        let pts = flow_chart_magnetic_tape_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 12, "{}", pts.len());
-        let start = pts[0];
-        assert!(
-            (start.0 - 50.0).abs() < 0.05 && start.1.abs() < 0.05,
-            "start is (hc,b) PDF (50,0); {start:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| px.abs() < 2.0 && (*py - 50.0).abs() < 2.0),
-            "left of circle (l,vc); {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 100.0).abs() < 0.05 && py.abs() < 0.05),
-            "bite corner (r,b); {pts:?}"
-        );
-        assert!(
-            !pts.iter()
-                .any(|(px, py)| px.abs() < 0.05 && (*py - 100.0).abs() < 0.05),
-            "must not include bbox top-left; {pts:?}"
-        );
-    }
-
-    #[test]
-    fn flow_chart_multidocument_front_sheet_has_hanging_cubic() {
-        let sheets = flow_chart_multidocument_sheets(0.0, 0.0, 100.0, 100.0);
-        assert_eq!(sheets.len(), 3);
-        let pts = &sheets[2];
-        assert!(pts.len() >= 8, "{}", pts.len());
-        let start = pts[0];
-        let y_start = 100.0 - 100.0 * 20_782.0 / 21_600.0;
-        assert!(
-            start.0.abs() < 0.05 && (start.1 - y_start).abs() < 0.5,
-            "front starts (l, 20782/21600); {start:?}"
-        );
-        assert!(
-            pts.iter().any(|(_, py)| *py < 1.0),
-            "front cubic wave reaches near b; {pts:?}"
-        );
-        assert!(
-            pts.iter()
-                .any(|(px, py)| (*px - 86.09).abs() < 0.5 && (*py - 16.56).abs() < 1.0),
-            "front cubic ends (18595, 18022); {pts:?}"
-        );
-    }
-
-    #[test]
-    fn smiley_eye_points_are_symmetric_off_center_ellipses() {
-        // MoveTo (x2,y1) + arc stAng=cd2 → eye centre is (x2+wR, y1), not (x2, y1).
-        let left = smiley_eye_points(0.0, 0.0, 100.0, 100.0, true);
-        let right = smiley_eye_points(0.0, 0.0, 100.0, 100.0, false);
-        assert_eq!(left.len(), 24);
-        assert_eq!(right.len(), 24);
-        let mean_x = |pts: &[(f32, f32)]| pts.iter().map(|p| p.0).sum::<f32>() / pts.len() as f32;
-        let lcx = mean_x(&left);
-        let rcx = mean_x(&right);
-        assert!(
-            (lcx - 33.98).abs() < 0.3,
-            "left eye cx {lcx} (expect x2+wR)"
-        );
-        assert!(
-            (rcx - 66.02).abs() < 0.3,
-            "right eye cx {rcx} (expect x3+wR)"
-        );
-        assert!((lcx + rcx - 100.0).abs() < 0.2, "eyes must be symmetric");
-    }
-
-    #[test]
-    fn smiley_mouth_points_dip_below_the_corners() {
-        let pts = smiley_mouth_points(0.0, 0.0, 100.0, 100.0);
-        assert!(pts.len() >= 9);
-        let start = pts[0];
-        let end = *pts.last().expect("end");
-        let mid = pts[pts.len() / 2];
-        assert!(start.0 < 30.0 && end.0 > 70.0, "span {start:?}..{end:?}");
-        assert!(
-            mid.1 < start.1 - 2.0 && mid.1 < end.1 - 2.0,
-            "smile must dip in PDF y-up; {pts:?}"
         );
     }
 
