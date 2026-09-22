@@ -1423,6 +1423,113 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
     cloud_font_override(id)
 }
 
+/// Installed faces for a family the catalogue has no slot for, keyed by
+/// (bold, italic). Word draws these with the real file (fixtures_500:
+/// Tahoma in 158 documents, Segoe UI from Word's cloud-font cache,
+/// Century Gothic in DFonts); we painted them as Arial or Calibri.
+/// Candidates are files whose normalised name starts with the family's,
+/// confirmed against the font's own family name.
+pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>)> {
+    const DIRS: &[&str] = &[
+        "/System/Library/Fonts/Supplemental",
+        "/Library/Fonts",
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
+        "/Library/Fonts/Microsoft",
+    ];
+    let norm = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    let key = norm(family);
+    if key.len() < 3 {
+        return Vec::new();
+    }
+    let mut dirs: Vec<PathBuf> = DIRS.iter().map(PathBuf::from).collect();
+    if let Some(home) = std::env::var_os("HOME") {
+        let cloud = PathBuf::from(home)
+            .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts")
+            .join(family);
+        dirs.push(cloud);
+    }
+    let mut out: Vec<((bool, bool), Vec<u8>)> = Vec::new();
+    for dir in dirs {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        paths.sort();
+        for path in paths {
+            let is_font = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("ttf") || e.eq_ignore_ascii_case("otf"));
+            let stem = path.file_stem().and_then(|s| s.to_str()).map(norm);
+            if !is_font || !stem.is_some_and(|s| s.starts_with(&key)) {
+                continue;
+            }
+            let Ok(bytes) = fs::read(&path) else {
+                continue;
+            };
+            let Some(style) = face_family_style(&bytes, family) else {
+                continue;
+            };
+            if out.iter().all(|(s, _)| *s != style) {
+                out.push((style, bytes));
+            }
+        }
+    }
+    out
+}
+
+/// Adds the installed faces of every font-table family that the catalogue
+/// does not cover and the document does not embed.
+pub(crate) fn add_installed_faces(
+    embedded: &mut EmbeddedFonts,
+    table: &super::font_table::FontTable,
+) {
+    for entry in table.iter() {
+        let lower = entry.name.to_ascii_lowercase();
+        if catalogue_paints_family(&entry.name) || embedded.keys().any(|(f, _, _)| *f == lower) {
+            continue;
+        }
+        for ((bold, italic), bytes) in installed_family_faces(&entry.name) {
+            embedded.insert((lower.clone(), bold, italic), bytes);
+        }
+    }
+}
+
+/// The catalogue slot for `family` really is that family, not a stand-in
+/// (Tahoma, Trebuchet and Roboto all fold into the Arial slot).
+fn catalogue_paints_family(family: &str) -> bool {
+    let norm = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    let key = FaceKey {
+        family: family.to_ascii_lowercase(),
+        bold: false,
+        italic: false,
+    };
+    let face = catalogue().get(Fonts::id_from_key(&key));
+    norm(face.pdf_name()).starts_with(&norm(family))
+}
+
+/// (bold, italic) when the font's own family name is `family`.
+fn face_family_style(bytes: &[u8], family: &str) -> Option<(bool, bool)> {
+    let face = ttf_parser::Face::parse(bytes, 0).ok()?;
+    let named = face.names().into_iter().any(|n| {
+        (n.name_id == ttf_parser::name_id::FAMILY
+            || n.name_id == ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
+            && n.to_string()
+                .is_some_and(|f| f.eq_ignore_ascii_case(family))
+    });
+    named.then(|| (face.is_bold(), face.is_italic()))
+}
+
 fn cloud_font_override(id: FaceId) -> Option<PathBuf> {
     // Scanned once per process: `Fonts::new` probes every FaceId, and each
     // probe would otherwise re-read the directory and re-parse every font

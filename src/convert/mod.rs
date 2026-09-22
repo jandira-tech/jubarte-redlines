@@ -128,7 +128,8 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
         .ok_or(ConvertError::MissingDocument)?;
 
     let table = font_table::load_font_table(&pkg);
-    let embedded = font_table::load_embedded_fonts(&pkg, &table);
+    let mut embedded = font_table::load_embedded_fonts(&pkg, &table);
+    font::add_installed_faces(&mut embedded, &table);
     let fonts = Fonts::for_document(&embedded);
     font::with_font_table(table, || {
         let markup = settings_track_revisions(&pkg);

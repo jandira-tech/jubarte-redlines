@@ -25687,3 +25687,29 @@ fn an_empty_paragraph_takes_its_mark_run_properties() {
         "alpha→bravo spans two TNR 10 × 1.5 lines (34.5pt); gap={gap} ys={ys:?}"
     );
 }
+
+#[test]
+fn an_installed_family_outside_the_catalogue_paints_its_own_face() {
+    // fixtures_500: Tahoma runs in 158 documents painted as Arial/Calibri.
+    // Word draws the installed Tahoma (macOS Supplemental / Word DFonts).
+    let installed = [
+        "/System/Library/Fonts/Supplemental/Tahoma.ttf",
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts/tahoma.ttf",
+    ];
+    if !installed.iter().any(|p| std::path::Path::new(p).is_file()) {
+        return;
+    }
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Tahoma\" w:hAnsi=\"Tahoma\"/></w:rPr>\
+         <w:t>Tahoma text</w:t></w:r></w:p><w:sectPr/>";
+    let docx = docx_with_renamed_parts(
+        body,
+        "",
+        "<w:font w:name=\"Tahoma\"><w:family w:val=\"swiss\"/></w:font>",
+    );
+    let pdf = docx_to_pdf(&docx).expect("convert Tahoma");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("Tahoma"),
+        "Tahoma runs must embed the installed Tahoma face"
+    );
+}
