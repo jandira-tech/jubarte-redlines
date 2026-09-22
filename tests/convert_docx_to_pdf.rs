@@ -1922,6 +1922,36 @@ fn missing_blip_rel_paints_small_placeholder_not_full_extent() {
 }
 
 #[test]
+fn missing_blip_rel_with_percentage_size_keeps_the_placeholder() {
+    // #114: a broken anchored picture sized by wp14:sizeRelH/V (50% of the
+    // page) still paints Word's 1in placeholder, not a half-page box.
+    let drawing = blip(
+        "2000000",
+        "2000000",
+        "<wp:anchor simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" \
+           layoutInCell=\"1\" allowOverlap=\"1\" \
+           xmlns:wp14=\"http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:wrapNone/>\
+           <wp14:sizeRelH relativeFrom=\"page\"><wp14:pctWidth>50000</wp14:pctWidth></wp14:sizeRelH>\
+           <wp14:sizeRelV relativeFrom=\"page\"><wp14:pctHeight>50000</wp14:pctHeight></wp14:sizeRelV>",
+        "</wp:anchor>",
+    );
+    let pdf = docx_to_pdf(&drawing_docx_broken_rel(&format!(
+        "<w:p><w:r><w:t>Before</w:t></w:r><w:r>{drawing}</w:r></w:p><w:sectPr/>"
+    )))
+    .expect("convert broken anchored rel");
+    assert_eq!(pdf_page_count(&pdf), 1);
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("72.00 72.00 re S"),
+        "the 1in placeholder, not the 50% extent; tail {}",
+        &hay[hay.len().saturating_sub(400)..]
+    );
+}
+
+#[test]
 fn missing_ole_imagedata_paints_one_inch_placeholder() {
     // xml leftover: w:object OLE preview. Missing v:imagedata Target
     // currently skips. Word paints the 1in broken-media box at the VML
@@ -14287,6 +14317,96 @@ fn titlepg_uses_first_header_on_page_one_then_default() {
     );
 }
 
+fn even_odd_settings() -> String {
+    "<?xml version=\"1.0\"?>\
+     <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+       <w:evenAndOddHeaders/></w:settings>"
+        .to_string()
+}
+
+fn two_page_body(sect_extra: &str) -> String {
+    format!(
+        "<w:p><w:r><w:t>PageOneBody</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         <w:p><w:r><w:t>PageTwoBody</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:headerReference w:type=\"even\" r:id=\"rIdH2\"/>\
+           {sect_extra}\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>"
+    )
+}
+
+fn even_odd_docx(body: &str, even_header: String) -> Vec<u8> {
+    hf_docx(
+        body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdH2", "header", "header2.xml"),
+            ("rIdSet", "settings", "settings.xml"),
+        ],
+        &[
+            ("word/header1.xml", hf_part("hdr", 22, "OddHdrX")),
+            ("word/header2.xml", even_header),
+            ("word/settings.xml", even_odd_settings()),
+        ],
+    )
+}
+
+#[test]
+fn explicit_blank_even_header_blanks_even_pages() {
+    // #126: the type="even" part exists but is empty; even pages show no
+    // header rather than falling back to the default one.
+    let blank = "<?xml version=\"1.0\"?>\
+        <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:p/></w:hdr>"
+        .to_string();
+    let pdf = docx_to_pdf(&even_odd_docx(&two_page_body(""), blank)).expect("convert blank even");
+    let pages = pdf_content_streams(&pdf);
+    let p2 = pdf_winansi_text(pages[1].as_bytes());
+    assert!(
+        !p2.contains("OddHdrX"),
+        "even page keeps its blank even header; p2={p2}"
+    );
+    assert!(pdf_winansi_text(pages[0].as_bytes()).contains("OddHdrX"));
+}
+
+#[test]
+fn even_page_number_start_opens_on_the_even_header() {
+    // #126: pgNumType start=2 makes physical page 1 an even page.
+    let body = two_page_body("<w:pgNumType w:start=\"2\"/>");
+    let pdf = docx_to_pdf(&even_odd_docx(&body, hf_part("hdr", 22, "EvenHdrX")))
+        .expect("convert start=2");
+    let pages = pdf_content_streams(&pdf);
+    let p1 = pdf_winansi_text(pages[0].as_bytes());
+    let p2 = pdf_winansi_text(pages[1].as_bytes());
+    assert!(
+        p1.contains("EvenHdrX") && !p1.contains("OddHdrX"),
+        "page 1 is even; p1={p1}"
+    );
+    assert!(p2.contains("OddHdrX"), "page 2 is odd; p2={p2}");
+}
+
+#[test]
+fn a_taller_even_header_pushes_the_even_page_body_down() {
+    // #126: body top follows the parity header now in force.
+    let tall = "<?xml version=\"1.0\"?>\
+        <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">"
+        .to_string()
+        + &"<w:p><w:r><w:rPr><w:sz w:val=\"40\"/></w:rPr><w:t>EvenLine</w:t></w:r></w:p>".repeat(4)
+        + "</w:hdr>";
+    let pdf = docx_to_pdf(&even_odd_docx(&two_page_body(""), tall)).expect("convert tall even");
+    let (y1, y2) = (
+        glyph_xy(&pdf, "P").1,
+        pdf_cm_tj_xy(&String::from_utf8_lossy(&pdf), "P")[1].1,
+    );
+    assert!(
+        y2 < y1 - 20.0,
+        "even-page body starts under the 4-line header: p1 {y1} p2 {y2}"
+    );
+}
+
 #[test]
 fn even_and_odd_headers_use_even_ref_on_even_pages() {
     // xml_parts_plan: w:evenAndOddHeaders + type=even headerReference.
@@ -14427,6 +14547,187 @@ fn header_inline_image_paints_in_the_header_band() {
         hay.contains("/Subtype /Image") && hay.contains("/Width 1"),
         "header blip must embed as a 1×1 image XObject; tail {}",
         &hay[hay.len().saturating_sub(320)..]
+    );
+}
+
+fn chrome_drawing(cx: u32) -> String {
+    format!(
+        "<w:r><w:drawing><wp:inline><wp:extent cx=\"{cx}\" cy=\"{cx}\"/>\
+           <wp:docPr id=\"1\" name=\"Picture 1\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+             <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+           </a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"
+    )
+}
+
+/// Package whose header/footer parts each carry `rIdImg` → media/dot.png.
+/// `parts` is (document rel id, "header"/"footer", part name, inner paragraphs).
+fn chrome_image_docx(body: &str, parts: &[(&str, &str, &str, String)]) -> Vec<u8> {
+    let ns = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+        xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+        xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+        xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+        xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"";
+    let rel = |id: &str, kind: &str, target: &str| {
+        format!(
+            "<Relationship Id=\"{id}\" \
+               Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}\" \
+               Target=\"{target}\"/>"
+        )
+    };
+    let rels_part = |inner: String| {
+        format!(
+            "<?xml version=\"1.0\"?><Relationships \
+               xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{inner}</Relationships>"
+        )
+    };
+    let mut types = String::from(
+        "<?xml version=\"1.0\"?>\
+         <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+         <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+         <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+         <Default Extension=\"png\" ContentType=\"image/png\"/>\
+         <Override PartName=\"/word/document.xml\" \
+           ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>",
+    );
+    let mut doc_rels = String::new();
+    for (id, kind, name, _) in parts {
+        types += &format!(
+            "<Override PartName=\"/word/{name}\" \
+               ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml\"/>"
+        );
+        doc_rels += &rel(id, kind, name);
+    }
+    types += "</Types>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    let mut put = |name: &str, bytes: &[u8]| {
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(bytes).unwrap();
+    };
+    put("[Content_Types].xml", types.as_bytes());
+    put(
+        "_rels/.rels",
+        rels_part(rel("rId1", "officeDocument", "word/document.xml")).as_bytes(),
+    );
+    put(
+        "word/document.xml",
+        format!("<?xml version=\"1.0\"?><w:document {ns}><w:body>{body}</w:body></w:document>")
+            .as_bytes(),
+    );
+    put(
+        "word/_rels/document.xml.rels",
+        rels_part(doc_rels).as_bytes(),
+    );
+    for (_, kind, name, inner) in parts {
+        let tag = if *kind == "header" { "hdr" } else { "ftr" };
+        put(
+            &format!("word/{name}"),
+            format!("<?xml version=\"1.0\"?><w:{tag} {ns}>{inner}</w:{tag}>").as_bytes(),
+        );
+        put(
+            &format!("word/_rels/{name}.rels"),
+            rels_part(rel("rIdImg", "image", "media/dot.png")).as_bytes(),
+        );
+    }
+    put("word/media/dot.png", TINY_PNG);
+    zip.finish().unwrap().into_inner()
+}
+
+const CHROME_SECT: &str = "<w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+    <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+      w:header=\"720\" w:footer=\"720\"/>";
+
+#[test]
+fn header_image_paints_inside_the_header_band() {
+    // #127: the 36pt image hangs from the header distance (0.5in) on a
+    // 792pt page, above the 1in top margin, never in the body area.
+    let body = format!(
+        "<w:p><w:r><w:t>HdrBandBody</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>{CHROME_SECT}</w:sectPr>"
+    );
+    let hdr = format!("<w:p>{}</w:p>", chrome_drawing(457_200));
+    let pdf = docx_to_pdf(&chrome_image_docx(
+        &body,
+        &[("rIdH1", "header", "header1.xml", hdr)],
+    ))
+    .expect("convert header band image");
+    let (x, y) = image_cm_xy(&pdf, "36.00", "36.00");
+    assert!(
+        (x - 72.0).abs() < 0.5,
+        "image starts at the left margin; x={x}"
+    );
+    assert!(
+        y >= 792.0 - 72.0 && y + 36.0 <= 792.0 - 36.0 + 0.5,
+        "image sits between the header distance and the top margin; y={y}"
+    );
+}
+
+#[test]
+fn two_header_images_in_one_paragraph_sit_side_by_side() {
+    // #127: inline images advance along the line; they must not stack on
+    // one origin.
+    let body = format!(
+        "<w:p><w:r><w:t>TwoImgBody</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>{CHROME_SECT}</w:sectPr>"
+    );
+    let hdr = format!(
+        "<w:p>{}{}</w:p>",
+        chrome_drawing(457_200),
+        chrome_drawing(685_800)
+    );
+    let pdf = docx_to_pdf(&chrome_image_docx(
+        &body,
+        &[("rIdH1", "header", "header1.xml", hdr)],
+    ))
+    .expect("convert two header images");
+    let (x1, _) = image_cm_xy(&pdf, "36.00", "36.00");
+    let (x2, _) = image_cm_xy(&pdf, "54.00", "54.00");
+    assert!(
+        x2 >= x1 + 36.0 - 0.5,
+        "second image follows the first; x1={x1} x2={x2}"
+    );
+}
+
+#[test]
+fn image_only_footer_of_a_later_section_replaces_the_earlier_footer() {
+    // #127: section 2's footer holds only a picture; the old guard looked
+    // at footer text alone and kept section 1's footer.
+    let body = format!(
+        "<w:p><w:r><w:t>SectOneBody</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           {CHROME_SECT}</w:sectPr></w:pPr></w:p>\
+         <w:p><w:r><w:t>SectTwoBody</w:t></w:r></w:p>\
+         <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF2\"/>{CHROME_SECT}</w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&chrome_image_docx(
+        &body,
+        &[
+            (
+                "rIdF1",
+                "footer",
+                "footer1.xml",
+                "<w:p><w:r><w:t>FtrOneText</w:t></w:r></w:p>".into(),
+            ),
+            (
+                "rIdF2",
+                "footer",
+                "footer2.xml",
+                format!("<w:p>{}</w:p>", chrome_drawing(457_200)),
+            ),
+        ],
+    ))
+    .expect("convert image-only footer");
+    let pages = pdf_content_streams(&pdf);
+    assert!(pages.len() >= 2, "nextPage section break opens page 2");
+    let p2 = pdf_winansi_text(pages[1].as_bytes());
+    assert!(
+        !p2.contains("FtrOneText"),
+        "section 1 footer text is replaced; p2={p2}"
+    );
+    assert!(
+        pages[1].contains("36.00 0 0 36.00"),
+        "section 2 paints its image-only footer on page 2"
     );
 }
 
@@ -16549,6 +16850,36 @@ fn referenced_endnote_is_painted() {
     assert!(
         shows >= 2,
         "endnote text must paint in addition to the body; got {shows} Tj"
+    );
+}
+
+#[test]
+fn endnote_referenced_from_a_table_cell_is_painted() {
+    // #116: the reference sits in a cell; the note must still render at
+    // the document end (and at a sectEnd boundary).
+    let notes = "<w:endnote w:type=\"separator\" w:id=\"-1\"><w:p/></w:endnote>\
+         <w:endnote w:id=\"1\"><w:p><w:r><w:t>Qnote</w:t></w:r></w:p></w:endnote>";
+    let table = "<w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r>\
+             <w:r><w:endnoteReference w:id=\"1\"/></w:r></w:p></w:tc></w:tr></w:tbl>";
+    let doc_end = format!("{table}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>");
+    let pdf = docx_to_pdf(&endnotes_docx(&doc_end, notes)).expect("convert cell endnote");
+    assert!(
+        page_of(&pdf, "Q").is_some(),
+        "docEnd: the cell's endnote paints"
+    );
+    let sect_end = format!(
+        "{table}<w:p><w:pPr><w:sectPr><w:type w:val=\"continuous\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:endnotePr><w:pos w:val=\"sectEnd\"/></w:endnotePr></w:sectPr></w:pPr></w:p>\
+         <w:p><w:r><w:t>Zafter</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&endnotes_docx(&sect_end, notes)).expect("convert cell endnote sectEnd");
+    let (q, z) = (glyph_xy(&pdf, "Q").1, glyph_xy(&pdf, "Z").1);
+    assert!(
+        q > z,
+        "sectEnd: the note paints before the next section's text"
     );
 }
 

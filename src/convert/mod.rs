@@ -214,6 +214,10 @@ struct RunStyle {
     family_cs: Option<String>,
     /// `w:lang/@w:eastAsia` (xml 3.2 ckpt 3 script fonts).
     lang_ea: Option<String>,
+    /// The effective `w:eastAsiaTheme` slot while `family_ea` comes from
+    /// the theme; an explicit `w:eastAsia` clears it (script fonts never
+    /// replace a named face).
+    ea_theme_slot: Option<String>,
     hint: FontHint,
     size: f32,
     bold: bool,
@@ -669,6 +673,7 @@ impl Defaults {
                 family_ea: None,
                 family_cs: None,
                 lang_ea: None,
+                ea_theme_slot: None,
                 hint: FontHint::Default,
                 size: 11.0,
                 bold: false,
@@ -2213,8 +2218,12 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
     let east_asia_slot = attr_any(dom, fonts, "eastAsiaTheme");
     if let Some(name) = east_asia {
         style.family_ea = Some(name.to_string());
-    } else if let Some(face) = east_asia_slot.and_then(|slot| theme_script_face(theme, slot)) {
-        style.family_ea = Some(face);
+        style.ea_theme_slot = None;
+    } else if let Some(slot) = east_asia_slot {
+        style.ea_theme_slot = Some(slot.to_string());
+        if let Some(face) = theme_script_face(theme, slot) {
+            style.family_ea = Some(face);
+        }
     }
     let cs = attr_any(dom, fonts, "cs");
     let cs_slot = attr_any(dom, fonts, "cstheme").or_else(|| attr_any(dom, fonts, "csTheme"));
@@ -2279,17 +2288,20 @@ fn lang_to_ooxml_script(lang: &str) -> Option<&'static str> {
     }
 }
 
-fn apply_theme_script_fonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
-    if attr_any(dom, fonts, "eastAsia").is_some() {
+/// Re-resolve a theme-slot East Asian face against the effective
+/// `w:lang/@w:eastAsia` script (theme `a:font script=`), after any rPr
+/// layer. Named `w:eastAsia` faces and styles without a theme slot keep
+/// what they have.
+fn apply_theme_script_fonts(style: &mut RunStyle, theme: &ThemeFonts) {
+    let Some(slot) = style.ea_theme_slot.as_deref() else {
         return;
-    }
+    };
     let Some(lang) = style.lang_ea.as_deref() else {
         return;
     };
     let Some(script) = lang_to_ooxml_script(lang) else {
         return;
     };
-    let slot = attr_any(dom, fonts, "eastAsiaTheme").unwrap_or("minorEastAsia");
     let bucket = if slot.to_ascii_lowercase().contains("major") {
         "major"
     } else {
@@ -2349,13 +2361,15 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     {
         style.size = half / 2.0;
     }
-    if let Some(lang) = first_named(dom, rpr, "lang") {
-        style.lang_ea = attr_any(dom, lang, "eastAsia").map(str::to_string);
+    // A w:lang without @w:eastAsia leaves the inherited East Asian
+    // language alone (it only restates the Latin one).
+    if let Some(ea) = first_named(dom, rpr, "lang").and_then(|l| attr_any(dom, l, "eastAsia")) {
+        style.lang_ea = Some(ea.to_string());
     }
     if let Some(fonts) = first_named(dom, rpr, "rFonts") {
         apply_rfonts(dom, fonts, style, theme);
-        apply_theme_script_fonts(dom, fonts, style, theme);
     }
+    apply_theme_script_fonts(style, theme);
     if first_named(dom, rpr, "b").is_some() {
         style.bold = !val_is_false(dom, first_named(dom, rpr, "b"));
     }
@@ -4795,6 +4809,8 @@ fn walk_container(
                 blocks.push(Block::ColumnBreak);
             }
         } else if dom.name_is(child, &W::tbl()) {
+            // Endnote references in cells count, in document order.
+            endnotes.observe_para(dom, child);
             let block = table_block(
                 dom,
                 child,
@@ -9494,6 +9510,15 @@ struct PickedHf {
     odd: ChromePart,
 }
 
+/// A `w:headerReference` / `w:footerReference` (`local`) of `kind`
+/// directly on `sect`.
+fn sect_has_typed_ref(dom: &Dom, sect: NodeId, local: &str, kind: &str) -> bool {
+    (0..dom.child_count(sect)).any(|i| {
+        let c = dom.child_at(sect, i);
+        local_name_is(dom, c, local) && attr_any(dom, c, "type") == Some(kind)
+    })
+}
+
 fn chrome_present(part: &ChromePart) -> bool {
     !part.runs.is_empty()
         || part.watermark.is_some()
@@ -9569,8 +9594,11 @@ fn pick_section_hf(
     let default = sect_ref_chrome_of(pkg, main, dom, sect, local, sheet, "default");
     let first = sect_ref_chrome_of(pkg, main, dom, sect, local, sheet, "first");
     let even_raw = sect_ref_chrome_of(pkg, main, dom, sect, local, sheet, "even");
-    let even =
-        (settings_even_and_odd_headers(pkg) && chrome_present(&even_raw)).then_some(even_raw);
+    // An explicit type="even" reference counts even when its part is
+    // blank: even pages then show no header, not the default one.
+    let even_explicit = sect_has_typed_ref(dom, sect, local, "even");
+    let even = (settings_even_and_odd_headers(pkg) && (even_explicit || chrome_present(&even_raw)))
+        .then_some(even_raw);
     let odd = if chrome_present(&default) {
         default.clone()
     } else {
@@ -10266,6 +10294,14 @@ impl<'a> Layout<'a> {
             page_fn_ids: Vec::new(),
             ln_i: page.ln_start.max(1),
         };
+        // Page 1's parity is its section's starting page number
+        // (pgNumType/@start): an even start opens on the even chrome.
+        if lay.even_and_odd {
+            lay.select_parity_chrome();
+            lay.y = lay.page.height - lay.body_top;
+            lay.para_top = lay.y;
+            lay.refresh_body_floor();
+        }
         lay.apply_mirror_margins();
         lay.chrome();
         lay.chrome_end = lay.current().ops.len();
@@ -10318,7 +10354,10 @@ impl<'a> Layout<'a> {
             self.header_images.clone_from(&next.header_images);
             self.header_tables.clone_from(&next.header_tables);
         }
-        if !next.footer.is_empty() {
+        if !next.footer.is_empty()
+            || !next.footer_images.is_empty()
+            || !next.footer_tables.is_empty()
+        {
             self.footer = next.footer.clone();
             self.footer_align = next.footer_align;
             self.footer_top = next.footer_top;
@@ -10328,6 +10367,13 @@ impl<'a> Layout<'a> {
             self.footer_images.clone_from(&next.footer_images);
             self.footer_tables.clone_from(&next.footer_tables);
         }
+        self.refresh_body_top();
+        self.refresh_body_floor();
+    }
+
+    /// Body top from the header now in force (its line band below
+    /// `pgMar/@w:header`, never above the top margin).
+    fn refresh_body_top(&mut self) {
         let header_band = if self.header.is_empty() {
             0.0
         } else {
@@ -10338,7 +10384,6 @@ impl<'a> Layout<'a> {
         } else {
             self.page.margin_t.max(self.page.header + header_band)
         };
-        self.refresh_body_floor();
     }
 
     fn promote_rest_chrome(&mut self) {
@@ -10374,25 +10419,30 @@ impl<'a> Layout<'a> {
         self.footer_tables.clone_from(&part.tables);
     }
 
+    /// Even/odd chrome for the current page number. A titlePg first page
+    /// (its `*_rest` still pending) keeps its first-page part; the body
+    /// top follows whichever header is now in force.
     fn select_parity_chrome(&mut self) {
         if !self.even_and_odd {
             return;
         }
-        if self.section_page.is_multiple_of(2) {
-            if let Some(part) = self.header_even.clone() {
-                self.apply_header_part(&part);
-            }
-            if let Some(part) = self.footer_even.clone() {
-                self.apply_footer_part(&part);
-            }
+        let even = self.section_page.is_multiple_of(2);
+        let (header, footer) = if even {
+            (self.header_even.clone(), self.footer_even.clone())
         } else {
-            if let Some(part) = self.header_odd.clone() {
-                self.apply_header_part(&part);
-            }
-            if let Some(part) = self.footer_odd.clone() {
-                self.apply_footer_part(&part);
-            }
+            (self.header_odd.clone(), self.footer_odd.clone())
+        };
+        if self.header_rest.is_none()
+            && let Some(part) = header
+        {
+            self.apply_header_part(&part);
         }
+        if self.footer_rest.is_none()
+            && let Some(part) = footer
+        {
+            self.apply_footer_part(&part);
+        }
+        self.refresh_body_top();
     }
 
     fn apply_mirror_margins(&mut self) {
@@ -10434,7 +10484,6 @@ impl<'a> Layout<'a> {
         if self.page.ln_restart == 0 {
             self.ln_i = self.page.ln_start.max(1);
         }
-        self.y = self.page.height - self.body_top;
         self.page_has_body = false;
         self.at_page_top = true;
         self.suppress_space_before = true;
@@ -10442,6 +10491,9 @@ impl<'a> Layout<'a> {
         self.last_break_was_section = false;
         self.promote_rest_chrome();
         self.select_parity_chrome();
+        // Body top after the parity header is in place (even/odd headers
+        // may differ in height).
+        self.y = self.page.height - self.body_top;
         self.apply_mirror_margins();
         self.refresh_body_floor();
         self.chrome();
@@ -12090,6 +12142,11 @@ impl<'a> Layout<'a> {
     /// 518.4×266.55 fits `page.width - margin_l` (558) and matches Word.
     fn image_wh(&self, img: &LaidImage) -> (f32, f32) {
         match img.slot {
+            // A broken picture is Word's fixed 1in placeholder whatever the
+            // anchor's wp14 percentage size says.
+            ImageSlot::Float { .. } if matches!(img.kind, ImageKind::Broken) => {
+                (img.w.max(1.0), img.h.max(1.0))
+            }
             ImageSlot::Float { pct_w, pct_h, .. } => {
                 let dw = pct_w
                     .filter(|p| *p > 0.001)
@@ -12173,9 +12230,12 @@ impl<'a> Layout<'a> {
         }
     }
 
-    fn emit_chrome_image(&mut self, img: &LaidImage, in_header: bool) {
+    /// Paint one header/footer inline image `dx` after the previous ones
+    /// (inline images flow left to right; they no longer stack on one
+    /// spot). Returns the width it used.
+    fn emit_chrome_image(&mut self, img: &LaidImage, in_header: bool, dx: f32) -> f32 {
         let (dw, dh) = self.image_wh(img);
-        let x = self.page.margin_l;
+        let x = self.page.margin_l + dx;
         let y = if in_header {
             self.page.height - self.page.header.max(10.0) - dh
         } else {
@@ -12226,6 +12286,7 @@ impl<'a> Layout<'a> {
                 color: [0.6, 0.6, 0.6],
             }),
         }
+        dw
     }
 
     fn emit_chrome_table(&mut self, table: &ChromeTable, in_header: bool) {
@@ -14163,10 +14224,14 @@ impl<'a> Layout<'a> {
             });
         }
         if !self.header_images.is_empty() {
-            let images = self.header_images.clone();
+            // Moved out and back (not cloned): the vector owns image bytes
+            // and chrome() runs on every page.
+            let images = std::mem::take(&mut self.header_images);
+            let mut dx = 0.0;
             for img in &images {
-                self.emit_chrome_image(img, true);
+                dx += self.emit_chrome_image(img, true, dx);
             }
+            self.header_images = images;
         }
         if !self.header_tables.is_empty() {
             let tables = self.header_tables.clone();
@@ -14209,10 +14274,12 @@ impl<'a> Layout<'a> {
             }
         }
         if !self.footer_images.is_empty() {
-            let images = self.footer_images.clone();
+            let images = std::mem::take(&mut self.footer_images);
+            let mut dx = 0.0;
             for img in &images {
-                self.emit_chrome_image(img, false);
+                dx += self.emit_chrome_image(img, false, dx);
             }
+            self.footer_images = images;
         }
         if !self.footer_tables.is_empty() {
             let tables = self.footer_tables.clone();
@@ -14587,6 +14654,7 @@ fn default_run_style() -> RunStyle {
         family_ea: None,
         family_cs: None,
         lang_ea: None,
+        ea_theme_slot: None,
         hint: FontHint::Default,
         size: 11.0,
         bold: false,
@@ -14638,7 +14706,12 @@ fn small_caps_pieces(text: &str, style: &RunStyle) -> Vec<(String, RunStyle)> {
 }
 
 fn style_eq(a: &RunStyle, b: &RunStyle) -> bool {
+    // Script slots decide the painted face per range (ECMA-376 17.3.2.26):
+    // runs that differ there are different formats even with one Latin face.
     a.family == b.family
+        && a.family_ea == b.family_ea
+        && a.family_cs == b.family_cs
+        && a.hint == b.hint
         && (a.size - b.size).abs() < f32::EPSILON
         && a.bold == b.bold
         && a.italic == b.italic
@@ -17531,6 +17604,47 @@ mod theme_slot_tests {
     }
 
     #[test]
+    fn runs_with_different_script_fonts_do_not_merge() {
+        // #111: "AB " (eastAsia SimSun) and "你好" (eastAsia MS Gothic)
+        // share the Latin family; merging kept SimSun for 你好.
+        let mut a = Defaults::word().run;
+        a.family_ea = Some("SimSun".into());
+        let mut b = a.clone();
+        b.family_ea = Some("MS Gothic".into());
+        let runs = vec![TextRun::new("AB ", a.clone()), TextRun::new("你好", b)];
+        let lines = wrap_runs(fonts(), &runs, 400.0, 400.0, false);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0].len(),
+            2,
+            "different eastAsia faces stay separate runs"
+        );
+        let mut c = a.clone();
+        c.hint = FontHint::EastAsia;
+        let lines = wrap_runs(
+            fonts(),
+            &[TextRun::new("A ", a.clone()), TextRun::new("B", c)],
+            400.0,
+            400.0,
+            false,
+        );
+        assert_eq!(lines[0].len(), 2, "a w:hint boundary stays a run boundary");
+        let mut d = a;
+        d.family_cs = Some("Arial".into());
+        let lines = wrap_runs(
+            fonts(),
+            &[
+                TextRun::new("A ", Defaults::word().run),
+                TextRun::new("B", d),
+            ],
+            400.0,
+            400.0,
+            false,
+        );
+        assert_eq!(lines[0].len(), 2, "different cs faces stay separate runs");
+    }
+
+    #[test]
     fn empty_theme_typefaces_are_absent_not_empty_families() {
         // Word writes `<a:ea typeface=""/>` / `<a:cs typeface=""/>` in its
         // stock themes; an empty minor latin is legal too. None of them may
@@ -17659,6 +17773,79 @@ mod theme_slot_tests {
         let mut style = Defaults::word().run;
         apply_rpr(&dom, rpr, &mut style, theme);
         style
+    }
+
+    /// Apply `layers` (rPr inner XML) in cascade order, like docDefaults →
+    /// style chain → run.
+    fn style_from_layers(layers: &[&str], theme: &ThemeFonts) -> RunStyle {
+        let mut style = Defaults::word().run;
+        for inner in layers {
+            let xml = format!(
+                r#"<w:rPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{inner}</w:rPr>"#
+            );
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let rpr = dom.root(doc).expect("rPr");
+            apply_rpr(&dom, rpr, &mut style, theme);
+        }
+        style
+    }
+
+    fn jpan_theme() -> ThemeFonts {
+        let mut theme = theme_with_east_asia();
+        for (bucket, face) in [("minor", "Yu Mincho"), ("major", "Yu Gothic")] {
+            theme
+                .script_fonts
+                .insert((bucket.into(), "Jpan".into()), face.into());
+        }
+        theme
+    }
+
+    #[test]
+    fn inherited_explicit_east_asia_survives_a_run_language() {
+        // #112: the style names MS Mincho; the run sets only Latin fonts
+        // and ja-JP. No East Asian slot at the run, so the face stays.
+        let style = style_from_layers(
+            &[
+                r#"<w:rFonts w:eastAsia="MS Mincho"/>"#,
+                r#"<w:rFonts w:ascii="Calibri"/><w:lang w:eastAsia="ja-JP"/>"#,
+            ],
+            &jpan_theme(),
+        );
+        assert_eq!(style.family_ea.as_deref(), Some("MS Mincho"));
+    }
+
+    #[test]
+    fn script_font_follows_the_inherited_theme_slot_and_lang_only_runs() {
+        // #112: majorEastAsia inherited from the style picks the major Jpan
+        // face, and a run with only w:lang still resolves it.
+        let style = style_from_layers(
+            &[
+                r#"<w:rFonts w:eastAsiaTheme="majorEastAsia"/>"#,
+                r#"<w:lang w:eastAsia="ja-JP"/>"#,
+            ],
+            &jpan_theme(),
+        );
+        assert_eq!(style.family_ea.as_deref(), Some("Yu Gothic"));
+    }
+
+    #[test]
+    fn no_east_asia_theme_slot_selects_no_script_font() {
+        let style = style_from_layers(&[r#"<w:lang w:eastAsia="ja-JP"/>"#], &jpan_theme());
+        assert_eq!(style.family_ea, None);
+    }
+
+    #[test]
+    fn lang_without_east_asia_keeps_the_inherited_east_asian_language() {
+        let style = style_from_layers(
+            &[
+                r#"<w:rFonts w:eastAsiaTheme="minorEastAsia"/><w:lang w:eastAsia="ja-JP"/>"#,
+                r#"<w:lang w:val="en-US"/>"#,
+            ],
+            &jpan_theme(),
+        );
+        assert_eq!(style.lang_ea.as_deref(), Some("ja-JP"));
+        assert_eq!(style.family_ea.as_deref(), Some("Yu Mincho"));
     }
 
     #[test]
