@@ -639,6 +639,10 @@ pub(crate) struct Face<'a> {
     pub ascent: f32,
     pub descent: f32,
     pub line_gap: f32,
+    /// Word's single line in font units: hhea ascender − descender +
+    /// lineGap (typo when USE_TYPO_METRICS is set). GDI reaches the same
+    /// total as win height + external leading.
+    line_height: f32,
     /// Win ascent when USE_TYPO_METRICS is unset (Liberation ↔ Arial).
     paint_ascent: f32,
     pub bbox: [i16; 4],
@@ -686,6 +690,11 @@ impl<'a> Face<'a> {
             face.typographic_line_gap()
                 .unwrap_or_else(|| face.line_gap()),
         );
+        // ttf-parser's ascender/descender/line_gap are hhea unless the font
+        // sets USE_TYPO_METRICS. Typo metrics under-size Courier (0.80 em
+        // vs 1.13) and Arial (1.09 vs 1.15) against Word's line.
+        let line_height = f32::from(face.ascender()) - f32::from(face.descender())
+            + f32::from(face.line_gap());
         let paint_ascent = face
             .tables()
             .os2
@@ -722,6 +731,7 @@ impl<'a> Face<'a> {
             ascent,
             descent,
             line_gap,
+            line_height,
             paint_ascent,
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
@@ -765,7 +775,7 @@ impl<'a> Face<'a> {
     }
 
     pub(crate) fn single_line_pt(&self, size: f32) -> f32 {
-        (self.ascent + self.descent.abs() + self.line_gap) * size / self.upem
+        self.line_height * size / self.upem
     }
 
     pub(crate) fn glyphs(&self, text: &str) -> Vec<u16> {
@@ -2028,6 +2038,24 @@ mod tests {
                 "style must survive a case-insensitive multi-hop altName lookup"
             );
         }
+    }
+
+    #[test]
+    fn single_line_is_the_hhea_line_not_the_typo_line() {
+        // Word's single line is hhea ascender - descender + lineGap (GDI:
+        // win height + external leading). Typo metrics differ for Courier
+        // (0.80 em) and Arial (1.09 em); Word's file_146 Courier 9.5 lines
+        // are 10.8pt apart (1.133 em), and Arial 11 is 12.65pt.
+        let fonts = Fonts::new();
+        let mono = fonts.get(FaceId::MonoRegular);
+        assert!((mono.single_line_pt(9.5) - 9.5 * 2320.0 / 2048.0).abs() < 0.02);
+        let sans = fonts.get(FaceId::SansRegular);
+        assert!((sans.single_line_pt(11.0) - 11.0 * 2355.0 / 2048.0).abs() < 0.02);
+        let carlito = fonts.get(FaceId::CarlitoRegular);
+        assert!(
+            (carlito.single_line_pt(11.0) - 11.0 * 2500.0 / 2048.0).abs() < 0.02,
+            "Calibri/Carlito hhea equals typo: unchanged at 13.43"
+        );
     }
 
     #[test]
