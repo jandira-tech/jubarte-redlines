@@ -399,6 +399,10 @@ struct PageSetup {
     margin_r: f32,
     margin_t: f32,
     margin_b: f32,
+    /// A negative `w:top`/`w:bottom` is an exact margin of `|value|`:
+    /// the header/footer never pushes the body past it.
+    top_exact: bool,
+    bottom_exact: bool,
     header: f32,
     footer: f32,
     valign_center: bool,
@@ -603,6 +607,9 @@ struct StyleSheet {
 #[derive(Clone)]
 struct TblStyle {
     para: ParaStyle,
+    /// The table style's own pPr sets `w:line`; otherwise cells keep the
+    /// default paragraph style's line (00319da4 Normal 276).
+    sets_line: bool,
     first_row_fill: Option<[f32; 3]>,
     band1_fill: Option<[f32; 3]>,
     band2_fill: Option<[f32; 3]>,
@@ -729,6 +736,8 @@ impl Defaults {
                 margin_r: 72.0,
                 margin_t: 72.0,
                 margin_b: 72.0,
+                top_exact: false,
+                bottom_exact: false,
                 header: 36.0,
                 footer: 36.0,
                 valign_center: false,
@@ -1911,6 +1920,9 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     // sample_document / eigenpal family) means after=0. docDefaults below
     // can still set after when the file actually specifies it.
     defaults.para.after = 0.0;
+    // Same for the Word-2013 276/240 line: with no `w:line` anywhere Word
+    // is single-spaced (fixtures_500 003599e1 TNR 13 lines 14.88pt apart).
+    defaults.para.line_mult = 1.0;
     if let Some(dd) = dom
         .descendants(root, Some(&W::name("docDefaults")))
         .into_iter()
@@ -1982,6 +1994,11 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         defaults.para = named.para.clone();
         defaults.run = named.run.clone();
     }
+    for table in tables.values_mut().filter(|t| !t.sets_line) {
+        table.para.line_mult = defaults.para.line_mult;
+        table.para.line_exact = defaults.para.line_exact;
+        table.para.line_at_least = defaults.para.line_at_least;
+    }
     StyleSheet {
         defaults,
         by_id,
@@ -1990,15 +2007,38 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     }
 }
 
+/// Narrower than this beside a floating table, no text fits: Word moves
+/// the line below the table.
+const MIN_SIDE_FLOAT_ROOM_PT: f32 = 18.0;
+
+fn is_auto_spacing(dom: &Dom, spacing: NodeId, name: &str) -> bool {
+    attr_any(dom, spacing, name).is_some_and(|v| matches!(v, "1" | "true" | "on"))
+}
+
 fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
     let mut para = defaults.para.clone();
     para.after = 0.0;
     para.before = 0.0;
+    let mut sets_line = false;
     if let Some(ppr) = dom.element(style, &W::p_pr()) {
         apply_ppr(dom, ppr, &mut para);
+        sets_line =
+            first_named(dom, ppr, "spacing").is_some_and(|sp| attr_any(dom, sp, "line").is_some());
+        // HTML auto spacing resolves to 0 inside a cell (fixtures_500
+        // 00319da4 Table Grid after=100 afterAutospacing=1: Word's cell
+        // lines are one line apart), and table-style pPr only reaches cells.
+        if let Some(sp) = first_named(dom, ppr, "spacing") {
+            if is_auto_spacing(dom, sp, "beforeAutospacing") {
+                para.before = 0.0;
+            }
+            if is_auto_spacing(dom, sp, "afterAutospacing") {
+                para.after = 0.0;
+            }
+        }
     }
     let mut out = TblStyle {
         para,
+        sets_line,
         first_row_fill: None,
         band1_fill: None,
         band2_fill: None,
@@ -2514,6 +2554,14 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
         if let Some(before) = attr_any(dom, sp, "before").and_then(parse_len) {
             style.before = before;
         }
+        // HTML auto spacing (fixtures_500 00a46590) replaces the twips with
+        // 14pt; Word keeps the w:before/w:after only as a fallback.
+        if is_auto_spacing(dom, sp, "beforeAutospacing") {
+            style.before = 14.0;
+        }
+        if is_auto_spacing(dom, sp, "afterAutospacing") {
+            style.after = 14.0;
+        }
         let rule = attr_any(dom, sp, "lineRule").unwrap_or("auto");
         if let Some(line) = attr_any(dom, sp, "line") {
             // Each lineRule owns the whole line model: a later layer (child
@@ -2732,10 +2780,12 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             page.margin_r = v;
         }
         if let Some(v) = attr_any(dom, mar, "top").and_then(parse_len) {
-            page.margin_t = v;
+            page.margin_t = v.abs();
+            page.top_exact = v < 0.0;
         }
         if let Some(v) = attr_any(dom, mar, "bottom").and_then(parse_len) {
-            page.margin_b = v;
+            page.margin_b = v.abs();
+            page.bottom_exact = v < 0.0;
         }
         if let Some(v) = attr_any(dom, mar, "header").and_then(parse_len) {
             page.header = v;
@@ -4954,17 +5004,6 @@ fn same_contextual_pair(left: &ParaStyle, right: &ParaStyle) -> bool {
     left.contextual && left.style_id == right.style_id
 }
 
-fn is_word_heading_style(style: &ParaStyle) -> bool {
-    // Heading1/2 official demos sum after+before (10+18 / 10+20) and miss
-    // Word's grid. Heading3/4 already use latent after=0 (34.6pt test).
-    // Localized sd_2517 ids (`Título2`, TextHeading3) must keep the sum —
-    // collapsing those halved Word's 107pp fixture to 91.
-    // uipriority uses styleId="2"/"3" with w:name heading 1/2.
-    let id = style.style_id.as_str();
-    let name = style.style_name.to_ascii_lowercase();
-    matches!(id, "Heading1" | "Heading2") || matches!(name.as_str(), "heading 1" | "heading 2")
-}
-
 fn leftover_break_heading(style_id: &str) -> bool {
     // sd_2517 / file_22 empty page-breaks sit after TextHeading2/3/4.
     // Do not treat Título1/Heading1 exact leftovers as skip sites.
@@ -5470,12 +5509,28 @@ fn paragraph_block(
     // Do not stamp Normal 11 (file_146 Inter→Cambria): that swapped a
     // 15.4pt Calibri em-box for 12.65 and collapsed 7pp→6.
     pstyle.empty_toc_field = para_is_empty_toc_field(dom, para);
-    if runs.is_empty()
-        && images.is_empty()
-        && boxes.is_empty()
-        && (pstyle.line_exact.is_some() || rstyle.size >= 14.0)
-    {
-        runs.push(TextRun::new(" ", rstyle));
+    // An installed style face is safe to stamp: fixtures_500 014babb2
+    // empty Normal (Times New Roman 12, double) lines are 27.6pt in Word,
+    // not a factory Calibri 11 line (26.85).
+    // The mark's own pPr/rPr sizes an empty line (fixtures_500 000b1b49:
+    // TNR 10 marks under a Calibri 11 Normal are 17.25pt lines at 1.5).
+    let mark_rpr = dom
+        .element(para, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .filter(|rpr| {
+            first_named(dom, *rpr, "sz").is_some() || first_named(dom, *rpr, "rFonts").is_some()
+        });
+    if runs.is_empty() && images.is_empty() && boxes.is_empty() {
+        if let Some(rpr) = mark_rpr {
+            let mut mark = rstyle.clone();
+            apply_rpr(dom, rpr, &mut mark, &sheet.theme);
+            runs.push(TextRun::new(" ", mark));
+        } else if pstyle.line_exact.is_some()
+            || rstyle.size >= 14.0
+            || Fonts::is_installed_family(&rstyle.family)
+        {
+            runs.push(TextRun::new(" ", rstyle));
+        }
     }
     Block::Paragraph {
         runs,
@@ -10110,7 +10165,21 @@ fn hf_para_is_shape_text(dom: &Dom, para: NodeId) -> bool {
 fn collect_hf_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts) -> Vec<TextRun> {
     // One footer/header <w:p> is one painted line. Flattening sd_2517's
     // "Smith Family Trust" + PAGE into one run list produced Trust106.
+    // An empty top-level paragraph above the first line or below the last
+    // is still a Word line: sd_2517's footer opens with one (before=60),
+    // so its top is one line higher and each page ends a line sooner.
+    // It rides as a bare HF_LINE_BREAK whose para_gap is its own spacing.
+    let empty_break = |para: NodeId| {
+        let mut br = TextRun::new(HF_LINE_BREAK, base.clone());
+        br.para_gap = hf_para_spacing(dom, para, "before") + hf_para_spacing(dom, para, "after");
+        br
+    };
+    // Header/footer tables still stack their cell paragraphs as lines
+    // (fixtures_500 0005052e: Word puts Doküman/Revizyon on one row), which
+    // already over-counts the band; padding it too pushed the body 32pt.
+    let has_table = !dom.descendants(node, Some(&W::tbl())).is_empty();
     let mut runs = Vec::new();
+    let mut pending = Vec::new();
     let mut prev_after = 0.0;
     for para in dom.descendants(node, Some(&W::p())) {
         if hf_para_is_shape_text(dom, para) {
@@ -10120,23 +10189,57 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts)
         let mut line = Vec::new();
         collect_hf_rec(dom, para, base, theme, &mut scan, &mut line);
         if line.iter().all(|r| r.text.trim().is_empty()) {
+            if !has_table && hf_para_is_bare_line(dom, node, para) {
+                pending.push(empty_break(para));
+            }
             continue;
         }
-        if !runs.is_empty() {
+        if runs.is_empty() {
+            runs.append(&mut pending);
+        } else {
+            pending.clear();
             let mut br = TextRun::new(HF_LINE_BREAK, base.clone());
             br.para_gap = prev_after;
             runs.push(br);
         }
         runs.extend(line);
-        prev_after = hf_para_after(dom, para);
+        prev_after = hf_para_spacing(dom, para, "after");
+    }
+    if runs.iter().any(|r| r.text != HF_LINE_BREAK) {
+        runs.append(&mut pending);
     }
     runs
 }
 
-fn hf_para_after(dom: &Dom, para: NodeId) -> f32 {
+fn hf_para_is_bare_line(dom: &Dom, root: NodeId, para: NodeId) -> bool {
+    // Only a body-level paragraph (or one in an sdt) stacks in the part;
+    // table-cell, framed and drawing paragraphs are sized elsewhere.
+    if dom
+        .element(para, &W::p_pr())
+        .is_some_and(|ppr| first_named(dom, ppr, "framePr").is_some())
+    {
+        return false;
+    }
+    let mut cur = dom.parent(para);
+    while let Some(id) = cur {
+        if id == root {
+            return !dom
+                .descendants(para, None)
+                .into_iter()
+                .any(|d| dom.name_is(d, &W::drawing()) || dom.name_is(d, &W::pict()));
+        }
+        if !(dom.name_is(id, &W::sdt()) || dom.name_is(id, &W::sdt_content())) {
+            return false;
+        }
+        cur = dom.parent(id);
+    }
+    false
+}
+
+fn hf_para_spacing(dom: &Dom, para: NodeId, side: &str) -> f32 {
     dom.element(para, &W::p_pr())
         .and_then(|ppr| first_named(dom, ppr, "spacing"))
-        .and_then(|sp| attr_any(dom, sp, "after"))
+        .and_then(|sp| attr_any(dom, sp, side))
         .and_then(parse_len)
         .unwrap_or(0.0)
 }
@@ -10391,7 +10494,21 @@ fn chrome_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
         .take(lines.len().saturating_sub(1))
         .map(|(_, gap)| *gap)
         .sum();
-    one * n + gaps
+    let (lead, trail) = chrome_empty_pads(runs, one);
+    one * n + gaps + lead + trail
+}
+
+/// Height of the empty paragraphs above the first and below the last
+/// painted header/footer line (see `collect_hf_runs`).
+fn chrome_empty_pads(runs: &[TextRun], one: f32) -> (f32, f32) {
+    let pad = |it: &mut dyn Iterator<Item = &TextRun>| -> f32 {
+        it.take_while(|r| r.text == HF_LINE_BREAK)
+            .map(|r| one + r.para_gap)
+            .sum()
+    };
+    let lead = pad(&mut runs.iter());
+    let trail = pad(&mut runs.iter().rev());
+    (lead, trail)
 }
 
 impl<'a> Layout<'a> {
@@ -10420,12 +10537,16 @@ impl<'a> Layout<'a> {
         // band whenever top>header (the old comments_pgmar lock) left
         // that 1.8pt overlap. Adding the band on a 9pp doc must not
         // spill a tenth page.
-        let body_top = if header.is_empty() {
+        let body_top = if header.is_empty() || page.top_exact {
             page.margin_t
         } else {
             page.margin_t.max(page.header + header_band)
         };
-        let body_floor = page.margin_b.max(page.footer + footer_band);
+        let body_floor = if page.bottom_exact {
+            page.margin_b
+        } else {
+            page.margin_b.max(page.footer + footer_band)
+        };
         let y = page.height - body_top;
         let (pw, ph) = (page.width, page.height);
         let mut first = Page::new(pw, ph);
@@ -10578,7 +10699,7 @@ impl<'a> Layout<'a> {
         } else {
             chrome_line_pt(self.fonts, &self.header)
         };
-        self.body_top = if self.header.is_empty() {
+        self.body_top = if self.header.is_empty() || self.page.top_exact {
             self.page.margin_t
         } else {
             self.page.margin_t.max(self.page.header + header_band)
@@ -10880,6 +11001,9 @@ impl<'a> Layout<'a> {
         } else {
             chrome_line_pt(self.fonts, &self.footer)
         };
+        if self.page.bottom_exact {
+            return self.page.margin_b;
+        }
         self.page.margin_b.max(self.page.footer + footer_band)
     }
 
@@ -11129,6 +11253,21 @@ impl<'a> Layout<'a> {
             }
         }
         (left, right)
+    }
+
+    /// A floating table that leaves no room beside it (00319da4's
+    /// full-width tblpPr header) acts like wrapTopAndBottom: Word starts
+    /// the paragraph under its last row.
+    fn clear_full_width_side_float(&mut self, runs: &[TextRun], style: &ParaStyle) {
+        let Some(sf) = self.side_float_holds_line() else {
+            return;
+        };
+        if self.content_width() - sf.inset >= MIN_SIDE_FLOAT_ROOM_PT {
+            return;
+        }
+        self.y = self.y.min(sf.bottom);
+        self.side_float = None;
+        self.set_line_probe(runs, style);
     }
 
     /// wrapTopAndBottom: if this line intersects the float, jump to just
@@ -14472,7 +14611,8 @@ impl<'a> Layout<'a> {
                 },
             );
             let ascent = self.fonts.get(fid).ascent_pt(size);
-            let mut y = self.page.height - self.page.header.max(10.0) - ascent;
+            let (lead, _) = chrome_empty_pads(&header, one);
+            let mut y = self.page.height - self.page.header.max(10.0) - ascent - lead;
             let header_lines = hf_styled_lines(&header);
             for (i, (line, _)) in header_lines.iter().enumerate() {
                 if i > 0 {
@@ -14524,7 +14664,8 @@ impl<'a> Layout<'a> {
             // w:footer is from the page bottom to the bottom of the footer
             // (comments-lots Word top y=743). Using it as the baseline
             // sat the cap-height 7pt high (Td 36).
-            let base = self.page.footer.max(12.0) + self.fonts.get(fid).descent_pt(size);
+            let (_, trail) = chrome_empty_pads(&footer, one);
+            let base = self.page.footer.max(12.0) + self.fonts.get(fid).descent_pt(size) + trail;
             let above: f32 = lines
                 .iter()
                 .take(n.saturating_sub(1))
@@ -14969,6 +15110,34 @@ fn url_wrap_pieces(tok: &str) -> Vec<&str> {
     if out.is_empty() { vec![tok] } else { out }
 }
 
+/// One measured piece of a run inside a wrap unit: source run, text, width.
+type WrapPiece<'r> = (&'r TextRun, &'r str, f32);
+
+/// Word's line may end after a hyphen-minus that follows a letter or digit
+/// and precedes more text: `sham-vaccinated` → `sham-` | `vaccinated`.
+fn hyphen_wrap_pieces(tok: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut prev: Option<char> = None;
+    for (i, ch) in tok.char_indices() {
+        let end = i + ch.len_utf8();
+        if ch == '-' && prev.is_some_and(char::is_alphanumeric) && end < tok.len() {
+            out.push(&tok[start..end]);
+            start = end;
+        }
+        prev = Some(ch);
+    }
+    out.push(&tok[start..]);
+    out
+}
+
+/// Ideographic text breaks between characters, so a run boundary next to
+/// one stays a break opportunity.
+fn is_cjk_break_char(ch: char) -> bool {
+    matches!(u32::from(ch),
+        0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF | 0x20000..=0x2FFFF)
+}
+
 fn ws_tokens(s: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0;
@@ -15173,9 +15342,21 @@ fn wrap_runs_segment(
                 .map_or_else(default_run_style, |r| r.style.clone()),
         ));
     }
+    // Word breaks only at whitespace, after a hyphen, or inside a URL. A
+    // run boundary inside a word is not a break (`birds` + bold `.`), so
+    // pieces glue into units and a unit wraps whole (fixtures_500 014babb2).
+    let mut units: Vec<(Vec<WrapPiece<'_>>, bool)> = Vec::new();
+    let mut open = false;
     for run in runs {
         for tok in ws_tokens(&run.text) {
-            for tok in url_wrap_pieces(tok) {
+            let url = url_wrap_pieces(tok);
+            let pieces: Vec<&str> = if url.len() > 1 {
+                url
+            } else {
+                hyphen_wrap_pieces(tok)
+            };
+            let last = pieces.len().saturating_sub(1);
+            for (i, tok) in pieces.into_iter().enumerate() {
                 // Tabs jump at paint time; counting .notdef width packed wraps.
                 let w = if tok.contains('\t') {
                     0.0
@@ -15190,29 +15371,47 @@ fn wrap_runs_segment(
                     face.width_pt_kern(tok, size, run.style.kerns_at(size))
                 };
                 let is_space = tok.chars().all(char::is_whitespace);
-                let limit = if line_i == 0 { first_width } else { width };
-                // Unbreakable tokens wider than the cell overflow (Test 7).
-                // Character-break was ITT-wrong: file_196 13→15pp and
-                // file_100/115/185/196 ~−24 ITT even when gated to tables.
-                if !is_space && x + w > limit && x > 0.0 {
-                    lines.push(Vec::new());
-                    line_i += 1;
-                    x = 0.0;
+                let glue = open
+                    && !is_space
+                    && units.last().is_some_and(|(u, _)| {
+                        let prev = u.last().and_then(|(_, t, _)| t.chars().last());
+                        !prev.is_some_and(is_cjk_break_char)
+                            && !tok.chars().next().is_some_and(is_cjk_break_char)
+                    });
+                if glue && let Some((unit, _)) = units.last_mut() {
+                    unit.push((run, tok, w));
+                } else {
+                    units.push((vec![(run, tok, w)], is_space));
                 }
-                x += w;
-                if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
-                    && style_eq(&last.style, &run.style)
-                    && last.pageref.is_none()
-                    && run.pageref.is_none()
-                    && last.ref_name.is_none()
-                    && run.ref_name.is_none()
-                    && last.footnote_id.is_none()
-                    && run.footnote_id.is_none()
-                {
-                    last.text.push_str(tok);
-                } else if let Some(line) = lines.last_mut() {
-                    line.push(run.with_text(tok));
-                }
+                open = !is_space && i == last;
+            }
+        }
+    }
+    for (unit, is_space) in units {
+        let w: f32 = unit.iter().map(|(_, _, w)| w).sum();
+        let limit = if line_i == 0 { first_width } else { width };
+        // Unbreakable tokens wider than the cell overflow (Test 7).
+        // Character-break was ITT-wrong: file_196 13→15pp and
+        // file_100/115/185/196 ~−24 ITT even when gated to tables.
+        if !is_space && x + w > limit && x > 0.0 {
+            lines.push(Vec::new());
+            line_i += 1;
+            x = 0.0;
+        }
+        x += w;
+        for (run, tok, _) in unit {
+            if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
+                && style_eq(&last.style, &run.style)
+                && last.pageref.is_none()
+                && run.pageref.is_none()
+                && last.ref_name.is_none()
+                && run.ref_name.is_none()
+                && last.footnote_id.is_none()
+                && run.footnote_id.is_none()
+            {
+                last.text.push_str(tok);
+            } else if let Some(line) = lines.last_mut() {
+                line.push(run.with_text(tok));
             }
         }
     }
@@ -15268,7 +15467,7 @@ fn layout(
                 if let Some(next) = blocks.get(i + 1).and_then(block_para_style) {
                     if same_contextual_pair(&style, next) {
                         style.after = 0.0;
-                    } else if is_word_heading_style(&style) && is_word_heading_style(next) {
+                    } else {
                         // Word inter-para space is max(after, next.before).
                         // Heading2 after=10 + before=18 was 28pt vs Word 18.
                         style.after = style.after.max(next.before);
@@ -15278,11 +15477,7 @@ fn layout(
                     // −1.13, file_170 −2.31). Ungated also packed Cicero
                     // 5→4 and file_22 107→102.
                 }
-                if i > 0
-                    && let Some(prev) = block_para_style(&blocks[i - 1])
-                    && (same_contextual_pair(prev, &style)
-                        || (is_word_heading_style(prev) && is_word_heading_style(&style)))
-                {
+                if i > 0 && block_para_style(&blocks[i - 1]).is_some() {
                     style.before = 0.0;
                 }
                 if style.keep_next {
@@ -15304,7 +15499,7 @@ fn layout(
                         // +2pt breaks leftover==need ties so a heading is
                         // not orphaned above a table row that then wraps
                         // (comments-lots Heading1 + capability header).
-                        lay.ensure(style.before + own + 8.0 + follow + 2.0);
+                        lay.ensure(style.before + own + style.after + follow + 2.0);
                     }
                 }
                 if style.keep_lines {
@@ -15362,6 +15557,7 @@ fn layout(
                         lay.side_float = None;
                     }
                     lay.set_line_probe(runs, &style);
+                    lay.clear_full_width_side_float(runs, &style);
                     lay.apply_top_bottom_wrap(images, boxes);
                     let (wrap_left, wrap_right) = lay.wrap_square_inset(images, boxes);
                     let inset_h = lay.wrap_band_remaining(images, boxes);
@@ -17888,6 +18084,40 @@ mod theme_slot_tests {
     fn hint_east_asia_is_recorded() {
         let style = style_from_rfonts(r#"w:hint="eastAsia""#, &theme_with_east_asia());
         assert_eq!(style.hint, FontHint::EastAsia);
+    }
+
+    fn wrap_texts(runs: &[TextRun], width: f32) -> Vec<String> {
+        wrap_runs(fonts(), runs, width, width, false)
+            .iter()
+            .map(|line| line.iter().map(|r| r.text.as_str()).collect())
+            .collect()
+    }
+
+    fn body_width(text: &str) -> f32 {
+        let style = Defaults::word().run;
+        let fid = fonts().resolve(&style.family, false, false);
+        fonts().get(fid).width_pt(text, style.paint_size())
+    }
+
+    #[test]
+    fn a_line_may_break_after_a_hyphen() {
+        // fixtures_500 014babb2: Word ends line 1 on "sham-" and starts
+        // line 2 with "vaccinated"; one token pushed the whole word down.
+        let style = Defaults::word().run;
+        let runs = [TextRun::new("aaaa sham-vaccinated", style)];
+        let lines = wrap_texts(&runs, body_width("aaaa sham-") + 1.0);
+        assert_eq!(lines, ["aaaa sham-", "vaccinated"]);
+    }
+
+    #[test]
+    fn a_run_boundary_inside_a_word_is_not_a_break() {
+        // `birds` + bold `.`: Word never starts a line with the period.
+        let plain = Defaults::word().run;
+        let mut bold = plain.clone();
+        bold.bold = true;
+        let runs = [TextRun::new("aaaa bbbb", plain), TextRun::new(".", bold)];
+        let lines = wrap_texts(&runs, body_width("aaaa bbbb") + 0.5);
+        assert_eq!(lines, ["aaaa ", "bbbb."]);
     }
 
     #[test]
@@ -25562,6 +25792,7 @@ mod table_tests {
             "LightShading-Accent1".into(),
             TblStyle {
                 para,
+                sets_line: true,
                 first_row_fill: None,
                 band1_fill: parse_hex_color("D3DFEE"),
                 band2_fill: None,

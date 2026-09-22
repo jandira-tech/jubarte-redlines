@@ -636,9 +636,7 @@ pub(crate) struct Face<'a> {
     buzz: Option<rustybuzz::Face<'a>>,
     pdf_name: String,
     pub upem: f32,
-    pub ascent: f32,
     pub descent: f32,
-    pub line_gap: f32,
     /// Word's single line in font units: hhea ascender − descender +
     /// lineGap (typo when USE_TYPO_METRICS is set). GDI reaches the same
     /// total as win height + external leading.
@@ -686,15 +684,11 @@ impl<'a> Face<'a> {
             face.typographic_descender()
                 .unwrap_or_else(|| face.descender()),
         );
-        let line_gap = f32::from(
-            face.typographic_line_gap()
-                .unwrap_or_else(|| face.line_gap()),
-        );
         // ttf-parser's ascender/descender/line_gap are hhea unless the font
         // sets USE_TYPO_METRICS. Typo metrics under-size Courier (0.80 em
         // vs 1.13) and Arial (1.09 vs 1.15) against Word's line.
-        let line_height = f32::from(face.ascender()) - f32::from(face.descender())
-            + f32::from(face.line_gap());
+        let line_height =
+            f32::from(face.ascender()) - f32::from(face.descender()) + f32::from(face.line_gap());
         let paint_ascent = face
             .tables()
             .os2
@@ -728,9 +722,7 @@ impl<'a> Face<'a> {
             buzz,
             pdf_name,
             upem,
-            ascent,
             descent,
-            line_gap,
             line_height,
             paint_ascent,
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
@@ -1147,6 +1139,21 @@ impl<'a> Fonts<'a> {
         (id, if via_alt { FontStep::AltName } else { step })
     }
 
+    /// `family` names an installed catalogue face directly (the report's
+    /// `explicit` step, no altName / substitution / generic hop).
+    pub(crate) fn is_installed_family(family: &str) -> bool {
+        let primary = family_token(family);
+        if primary.starts_with('"') || primary.starts_with('\'') {
+            return false;
+        }
+        let key = primary
+            .to_ascii_lowercase()
+            .replace([' ', '-'], "")
+            .replace("mt", "");
+        Self::mapped_face(&key, false, false)
+            .is_some_and(|id| Self::catalogue_step(id) == FontStep::Explicit)
+    }
+
     fn catalogue_step(id: FaceId) -> FontStep {
         if system_override(id).is_some() {
             FontStep::Explicit
@@ -1388,10 +1395,22 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
         "/System/Library/Fonts/Supplemental",
         "/Library/Fonts",
     ];
-    let dirs = if id == FaceId::Symbol {
-        WORD_DIRS
-    } else {
-        DIRS
+    // Times New Roman: Word draws the installed macOS face (5.01, hhea
+    // lineGap 87 → 13.8pt at 12) over its private DFonts copy (7.0,
+    // lineGap 0 → 13.29); fixtures_500 014babb2 double lines are 27.6pt.
+    const INSTALLED_FIRST: &[&str] = &[
+        "/System/Library/Fonts/Supplemental",
+        "/Library/Fonts",
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
+        "/Library/Fonts/Microsoft",
+    ];
+    let dirs = match id {
+        FaceId::Symbol => WORD_DIRS,
+        FaceId::SerifRegular
+        | FaceId::SerifBold
+        | FaceId::SerifItalic
+        | FaceId::SerifBoldItalic => INSTALLED_FIRST,
+        _ => DIRS,
     };
     for dir in dirs {
         for name in names {
@@ -2038,6 +2057,24 @@ mod tests {
                 "style must survive a case-insensitive multi-hop altName lookup"
             );
         }
+    }
+
+    #[test]
+    fn times_new_roman_uses_the_installed_face_word_uses() {
+        // fixtures_500 014babb2: Word's double-spaced Times 12 lines are
+        // 27.6pt apart (13.8 single). macOS Supplemental Times New Roman
+        // 5.01 has hhea lineGap 87 (13.80); Word's private DFonts copy 7.0
+        // has lineGap 0 (13.29). Word draws with the installed face.
+        if !Path::new("/System/Library/Fonts/Supplemental/Times New Roman.ttf").is_file() {
+            return;
+        }
+        let fonts = Fonts::new();
+        let times = fonts.get(FaceId::SerifRegular);
+        assert!(
+            (times.single_line_pt(12.0) - 13.8).abs() < 0.02,
+            "Times 12 single line {}",
+            times.single_line_pt(12.0)
+        );
     }
 
     #[test]
