@@ -711,6 +711,12 @@ treat green CI on the stack as this measurement.
 | docxide-pdf 76 fixtures | 76 | 13.74 / 8.86 | 28.27 / 20.62 | +14.53 | 45.19 / 44.43 | 51.54 / 53.86 | 0 |
 | neurotic 398 corpus | 398 | 53.10 / — | 56.38 / 66.57 | +3.28 | 72.53 / 89.27 | 88.89 / 100.0 | 0 |
 
+Rounding: every figure is rounded on its own from the tool's full-precision
+value (`sample50_check.py` prints `d = n - b` and `dm = mean - base_mean`
+unrounded, then formats each field; `convert_sweep.py` likewise). A Δ can
+therefore differ by 0.01 (or 0.1 in one-decimal rows) from the difference of
+the two rounded endpoints shown beside it — e.g. 37.565… → 43.634… is +6.07.
+
 sample50 still uses the 2026-09-05 `planning/sample50_baseline.json` ratchet
 (not `--bless`ed). 76 vs `tools/convert_baseline_76.tsv`. 398 vs
 `tools/convert_baseline_398.tsv`.

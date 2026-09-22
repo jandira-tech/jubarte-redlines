@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{LazyLock, OnceLock};
 
 thread_local! {
     static ACTIVE_FONT_TABLE: RefCell<super::font_table::FontTable> =
@@ -621,17 +621,19 @@ impl FaceId {
     }
 }
 
-/// Parsed metrics + cmap for one bundled (or system-overlaid) face.
+/// Parsed metrics + cmap for one bundled, system-overlaid or embedded face.
 ///
-/// `bytes` is `&'static`: bundled faces are `include_bytes!` data, and
-/// system-override files are leaked once at `Fonts` (process-lifetime
-/// `LazyLock`) construction so the pre-parsed `rustybuzz::Face` below can
-/// borrow them without a self-referential struct.
-pub(crate) struct Face {
-    bytes: &'static [u8],
+/// `bytes` outlives the face: bundled faces are `include_bytes!` data,
+/// system-override files are leaked once into the process-lifetime
+/// catalogue (one per slot), and a document's embedded fonts are borrowed
+/// from the conversion that loaded them, so the pre-parsed
+/// `rustybuzz::Face` below can borrow them without a self-referential
+/// struct and nothing untrusted outlives its document.
+pub(crate) struct Face<'a> {
+    bytes: &'a [u8],
     /// Parsed once here; `shape` runs per text run and must not re-parse
     /// the font table directory each call.
-    buzz: Option<rustybuzz::Face<'static>>,
+    buzz: Option<rustybuzz::Face<'a>>,
     pdf_name: String,
     pub upem: f32,
     pub ascent: f32,
@@ -644,7 +646,7 @@ pub(crate) struct Face {
     cmap: HashMap<u32, u16>,
 }
 
-impl Face {
+impl<'a> Face<'a> {
     pub(crate) fn bytes(&self) -> &[u8] {
         self.bytes
     }
@@ -669,7 +671,7 @@ impl Face {
     /// `None` when the bytes are not a parseable TTF/TTC face — a truncated
     /// or unsupported *system* font file must fall back to the bundled face,
     /// never panic (a panic here poisons the process-wide `Fonts` LazyLock).
-    fn from_bytes(_id: FaceId, bytes: &'static [u8], pdf_name: String) -> Option<Self> {
+    fn from_bytes(_id: FaceId, bytes: &'a [u8], pdf_name: String) -> Option<Self> {
         let face = ttf_parser::Face::parse(bytes, 0).ok()?;
         let upem = f32::from(face.units_per_em());
         let ascent = f32::from(
@@ -860,7 +862,7 @@ impl Face {
 /// `OnceLock<Box<Face>>` so the array is pointer-sized. `[OnceLock<Face>; 47]`
 /// overflowed the Windows CLI stack (`jubarte convert` in convert_docx_to_pdf).
 struct Catalogue {
-    faces: [OnceLock<Box<Face>>; 47],
+    faces: [OnceLock<Box<Face<'static>>>; 47],
 }
 
 fn catalogue() -> &'static Catalogue {
@@ -874,7 +876,7 @@ fn catalogue() -> &'static Catalogue {
 }
 
 impl Catalogue {
-    fn get(&self, id: FaceId) -> &Face {
+    fn get(&self, id: FaceId) -> &Face<'static> {
         self.faces[id.index()]
             .get_or_init(|| {
                 Box::new(
@@ -887,13 +889,17 @@ impl Catalogue {
     }
 }
 
+/// A document's decoded embedded fonts (`.odttf`), keyed by
+/// (family, bold, italic). The conversion owns them; [`Fonts`] borrows.
+pub(crate) type EmbeddedFonts = HashMap<(String, bool, bool), Vec<u8>>;
+
 /// Bundled catalogue plus per-document embedded faces (`.odttf`).
-pub(crate) struct Fonts {
-    extra: Vec<Face>,
+pub(crate) struct Fonts<'a> {
+    extra: Vec<Face<'a>>,
     extra_index: HashMap<FaceKey, u16>,
 }
 
-impl Fonts {
+impl<'a> Fonts<'a> {
     pub(crate) fn new() -> Self {
         Self {
             extra: Vec::new(),
@@ -901,13 +907,12 @@ impl Fonts {
         }
     }
 
-    pub(crate) fn for_document(
-        pkg: &crate::opc::PartFs,
-        table: &super::font_table::FontTable,
-    ) -> Self {
+    /// Faces for one document, borrowing its embedded font bytes: they are
+    /// dropped with the conversion (#11: they were leaked process-wide).
+    pub(crate) fn for_document(embedded: &'a EmbeddedFonts) -> Self {
         let mut fonts = Self::new();
-        for ((family, bold, italic), bytes) in super::font_table::load_embedded_fonts(pkg, table) {
-            fonts.insert_embedded(&family, bold, italic, bytes);
+        for ((family, bold, italic), bytes) in embedded {
+            fonts.insert_embedded(family, *bold, *italic, bytes);
         }
         fonts
     }
@@ -917,11 +922,10 @@ impl Fonts {
         family: &str,
         bold: bool,
         italic: bool,
-        bytes: Vec<u8>,
+        bytes: &'a [u8],
     ) {
-        let leaked = intern_font_bytes(bytes);
-        let ps = ttf_postscript_name(leaked).unwrap_or_else(|| family.to_string());
-        let Some(face) = Face::from_bytes(FaceId::CarlitoRegular, leaked, sanitize_pdf_name(&ps))
+        let ps = ttf_postscript_name(bytes).unwrap_or_else(|| family.to_string());
+        let Some(face) = Face::from_bytes(FaceId::CarlitoRegular, bytes, sanitize_pdf_name(&ps))
         else {
             return;
         };
@@ -961,7 +965,7 @@ impl Fonts {
         }
     }
 
-    pub(crate) fn get(&self, id: impl Into<FaceRef>) -> &Face {
+    pub(crate) fn get(&self, id: impl Into<FaceRef>) -> &Face<'a> {
         match id.into() {
             FaceRef::Catalogue(id) => self.get_key(&id.key()),
             FaceRef::Embedded(i) => self
@@ -971,7 +975,7 @@ impl Fonts {
         }
     }
 
-    pub(crate) fn get_key(&self, key: &FaceKey) -> &Face {
+    pub(crate) fn get_key(&self, key: &FaceKey) -> &Face<'a> {
         if let Some(idx) = self.embedded_index(&key.family, key.bold, key.italic) {
             return self
                 .extra
@@ -1178,27 +1182,7 @@ fn strip_outer_quotes(s: &str) -> &str {
     }
 }
 
-fn intern_font_bytes(bytes: Vec<u8>) -> &'static [u8] {
-    use std::hash::{Hash, Hasher};
-    static INTERN: Mutex<Vec<(u64, &'static [u8])>> = Mutex::new(Vec::new());
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    let h = hasher.finish();
-    let mut intern = INTERN
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some((_, existing)) = intern
-        .iter()
-        .find(|(k, existing)| *k == h && **existing == *bytes)
-    {
-        return existing;
-    }
-    let leaked: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-    intern.push((h, leaked));
-    leaked
-}
-
-impl Fonts {
+impl Fonts<'_> {
     fn carlito(bold: bool, italic: bool) -> FaceId {
         match (bold, italic) {
             (false, false) => FaceId::CarlitoRegular,
@@ -1753,12 +1737,7 @@ mod tests {
             FaceId::CambriaRegular,
             "without an embed, the unknown family is Cambria"
         );
-        fonts.insert_embedded(
-            "Press Start 2P",
-            false,
-            false,
-            FaceId::MonoRegular.bytes().to_vec(),
-        );
+        fonts.insert_embedded("Press Start 2P", false, false, FaceId::MonoRegular.bytes());
         let face = fonts.resolve("Press Start 2P", false, false);
         assert!(
             matches!(face, FaceRef::Embedded(_)),
@@ -1773,14 +1752,27 @@ mod tests {
     }
 
     #[test]
+    fn embedded_faces_borrow_the_conversion_bytes() {
+        // #11: embedded payloads were copied into a process-global intern
+        // table and Box::leak-ed, so a long-lived caller kept every
+        // document's fonts. The face now borrows the conversion's buffer
+        // (same allocation), which the compiler ties to the Fonts value.
+        let embedded: EmbeddedFonts = HashMap::from([(
+            ("Press Start 2P".to_string(), false, false),
+            FaceId::MonoRegular.bytes().to_vec(),
+        )]);
+        let fonts = Fonts::for_document(&embedded);
+        let face = fonts.resolve("Press Start 2P", false, false);
+        assert!(matches!(face, FaceRef::Embedded(_)));
+        let owned = &embedded[&("Press Start 2P".to_string(), false, false)];
+        assert_eq!(fonts.get(face).bytes().as_ptr(), owned.as_ptr());
+        assert_eq!(fonts.get(face).pdf_name(), "LiberationMono");
+    }
+
+    #[test]
     fn resolve_embedded_does_not_steal_unrelated_families() {
         let mut fonts = Fonts::new();
-        fonts.insert_embedded(
-            "Press Start 2P",
-            false,
-            false,
-            FaceId::MonoRegular.bytes().to_vec(),
-        );
+        fonts.insert_embedded("Press Start 2P", false, false, FaceId::MonoRegular.bytes());
         assert_eq!(
             fonts.resolve("Calibri", false, false),
             FaceId::CarlitoRegular
@@ -1968,12 +1960,7 @@ mod tests {
     #[test]
     fn classify_embedded_unknown_family_is_embedded_step() {
         let mut fonts = Fonts::new();
-        fonts.insert_embedded(
-            "Press Start 2P",
-            false,
-            false,
-            FaceId::MonoRegular.bytes().to_vec(),
-        );
+        fonts.insert_embedded("Press Start 2P", false, false, FaceId::MonoRegular.bytes());
         let table = super::super::font_table::FontTable::default();
         let (_, regular) = fonts.classify_in("Press Start 2P", false, false, &table);
         assert_eq!(regular.step, FontStep::Embedded);

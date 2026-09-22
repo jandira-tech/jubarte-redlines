@@ -57,7 +57,7 @@ Disposition is the action, not a score. Parked items stay parked; this table doe
 | src/convert/mod.rs | 2356 | mini 108 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Keep the PUA (mini 108 U+00B7 was ITT-wrong); append |
 | src/convert/mod.rs | 2405 | mini sechang | b | Document-specific mini site; remeasure 398+76. // hanging packed sd_2517 107→106 (mini sechang). |
 | src/convert/mod.rs | 2532 | mini 108 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // U+00B7 (mini 108) put the real bullet at x=72, but ITT dropped the |
-| src/convert/mod.rs | 2860 | mini 619–622 | c | Word/ECMA behaviour; replace mini N citation with the oracle/spec. // Mini 619–622: Word-faithful `w:separator` 144×0.72 (Strict01 p13) |
+| src/convert/mod.rs | 4512 | mini 619-622 | c | RETIRED (plan Step 7): `paint_page_footnotes` draws the Word separator rule from `FOOTNOTE_SEP_PT`/`FOOTNOTE_SEP_W`; the content-driven 144×0.72 `w:separator` rule stays retired. // at `sep_y`, above the reserved note block (mini 619-622's content- |
 | src/convert/mod.rs | 3228 | mini 342 | b | KEEP: measured gate. // first-row tcW (mini 342) dropped comments-lots. Keep the cache. |
 | src/convert/mod.rs | 3454 | apply_latent_ppr | c | Word latent Heading3/4 spacing (before=10 after=0) when styles.xml omits the definition; Heading1 stays defaults (red_bold_heading). Cite Word latent built-ins, not a mini N |
 | src/convert/mod.rs | 3529 | mini 423 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // does not strike/underline the bullet (mini 423 ITT −0.003 |

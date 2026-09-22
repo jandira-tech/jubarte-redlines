@@ -241,26 +241,35 @@ fn minimal_docx_with_core_props(
     printed: &str,
     modified: &str,
 ) -> Vec<u8> {
-    let document = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-         <w:body>{body}</w:body></w:document>"
-    );
     let modified_el = if modified.is_empty() {
         String::new()
     } else {
         format!("<dcterms:modified xsi:type=\"dcterms:W3CDTF\">{modified}</dcterms:modified>")
     };
+    minimal_docx_with_core_xml(
+        body,
+        &format!(
+            "<dcterms:created xsi:type=\"dcterms:W3CDTF\">{created}</dcterms:created>\
+             <cp:lastPrinted>{printed}</cp:lastPrinted>{modified_el}"
+        ),
+    )
+}
+
+/// `core_inner` is the children of `cp:coreProperties` (cp, dc, dcterms,
+/// xsi prefixes are declared).
+fn minimal_docx_with_core_xml(body: &str, core_inner: &str) -> Vec<u8> {
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:body>{body}</w:body></w:document>"
+    );
     let core = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <cp:coreProperties \
            xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" \
+           xmlns:dc=\"http://purl.org/dc/elements/1.1/\" \
            xmlns:dcterms=\"http://purl.org/dc/terms/\" \
-           xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">\
-           <dcterms:created xsi:type=\"dcterms:W3CDTF\">{created}</dcterms:created>\
-           <cp:lastPrinted>{printed}</cp:lastPrinted>\
-           {modified_el}\
-         </cp:coreProperties>"
+           xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">{core_inner}</cp:coreProperties>"
     );
     let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
@@ -1080,6 +1089,9 @@ fn drawing_docx_media(body: &str, media_name: &str, media: &[u8]) -> Vec<u8> {
         <Relationship Id=\"rIdImg\" \
           Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" \
           Target=\"media/{media_name}\"/>\
+        <Relationship Id=\"rIdMissing\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" \
+          Target=\"media/missing.png\"/>\
         </Relationships>"
     );
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
@@ -1953,17 +1965,27 @@ fn missing_blip_rel_with_percentage_size_keeps_the_placeholder() {
 
 #[test]
 fn missing_ole_imagedata_paints_one_inch_placeholder() {
-    // xml leftover: w:object OLE preview. Missing v:imagedata Target
-    // currently skips. Word paints the 1in broken-media box at the VML
-    // style size. Bare pict/object without extent must not invent 200×120.
-    let body = "<w:p><w:r><w:t>OleBeforeX</w:t></w:r></w:p>\
+    // xml leftover: w:object OLE preview whose v:imagedata cannot load
+    // used to skip. Word paints its 1in broken-media box (plan.md Step 10
+    // E), never a 200×120 reservation. Both failure modes: the rel exists
+    // but its Target part is missing (rIdMissing → media/missing.png,
+    // #150), and the rel id itself is absent (rIdNowhere).
+    for rid in ["rIdMissing", "rIdNowhere"] {
+        missing_ole_imagedata_case(rid);
+    }
+}
+
+fn missing_ole_imagedata_case(rid: &str) {
+    let body = format!(
+        "<w:p><w:r><w:t>OleBeforeX</w:t></w:r></w:p>\
          <w:p><w:r><w:object w:dxaOrig=\"1440\" w:dyaOrig=\"1440\">\
            <v:shape id=\"_x0000_i1025\" style=\"width:72pt;height:72pt\">\
-             <v:imagedata r:id=\"rIdMissing\"/>\
+             <v:imagedata r:id=\"{rid}\"/>\
            </v:shape>\
          </w:object></w:r></w:p>\
-         <w:p><w:r><w:t>OleAfterX</w:t></w:r></w:p><w:sectPr/>";
-    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert missing OLE preview");
+         <w:p><w:r><w:t>OleAfterX</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert missing OLE preview");
     let text = pdf_winansi_text(&pdf);
     assert!(
         text.contains("OleBeforeX") && text.contains("OleAfterX"),
@@ -6583,6 +6605,109 @@ fn missing_pageref_paints_error_bookmark_not_defined() {
     );
 }
 
+fn field_run(instr: &str, cached: &str) -> String {
+    format!(
+        "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+         <w:r><w:instrText xml:space=\"preserve\"> {instr} </w:instrText></w:r>\
+         <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+         <w:r><w:t>{cached}</w:t></w:r>\
+         <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+    )
+}
+
+fn one_cell_table(inner: &str) -> String {
+    format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4320\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"4320\"/></w:tblGrid>\
+           <w:tr><w:tc>{inner}</w:tc></w:tr></w:tbl>"
+    )
+}
+
+const REF_SECT: &str = "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+    <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+
+#[test]
+fn ref_field_inside_a_table_cell_paints_the_bookmark_text() {
+    // #136: cell runs skipped apply_field_results, so a live REF kept its
+    // stale cache.
+    let body = format!(
+        "<w:p><w:bookmarkStart w:id=\"1\" w:name=\"_Top\"/><w:r><w:t>TopTargetX</w:t></w:r>\
+           <w:bookmarkEnd w:id=\"1\"/></w:p>{}{REF_SECT}",
+        one_cell_table(&format!(
+            "<w:p>{}</w:p>",
+            field_run("REF _Top \\h", "StaleCellX")
+        ))
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert cell REF");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        !text.contains("StaleCellX"),
+        "cell REF resolves; text={text}"
+    );
+    assert_eq!(
+        text.matches("TopTargetX").count(),
+        2,
+        "target + cell REF; text={text}"
+    );
+}
+
+#[test]
+fn ref_to_a_bookmark_in_a_nested_table_cell_is_found() {
+    // #136: the bookmark indexes only looked at top-level paragraphs, so a
+    // REF to a cell (or nested-cell) bookmark painted the not-found error.
+    let nested = one_cell_table(
+        "<w:p><w:bookmarkStart w:id=\"2\" w:name=\"_Deep\"/><w:r><w:t>DeepTargetX</w:t></w:r>\
+           <w:bookmarkEnd w:id=\"2\"/></w:p>",
+    );
+    let outer = one_cell_table(&format!(
+        "<w:p><w:bookmarkStart w:id=\"1\" w:name=\"_Cell\"/><w:r><w:t>CellTargetX</w:t></w:r>\
+           <w:bookmarkEnd w:id=\"1\"/></w:p>{nested}<w:p/>"
+    ));
+    let body = format!(
+        "{outer}<w:p>{}</w:p><w:p>{}</w:p>{REF_SECT}",
+        field_run("REF _Cell \\h", "OldOneX"),
+        field_run("REF _Deep \\h", "OldTwoX")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert REF to cell bookmarks");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        !text.contains("Error! Reference source not found."),
+        "text={text}"
+    );
+    assert!(
+        !text.contains("OldOneX") && !text.contains("OldTwoX"),
+        "text={text}"
+    );
+    assert_eq!(text.matches("CellTargetX").count(), 2, "text={text}");
+    assert_eq!(text.matches("DeepTargetX").count(), 2, "text={text}");
+}
+
+#[test]
+fn pageref_to_a_bookmark_in_a_table_cell_paints_its_page() {
+    // #136: cell bookmarks never reached bookmark_pages, so PAGEREF kept
+    // its cache. The cell sits on page 2.
+    let cell = one_cell_table(
+        "<w:p><w:bookmarkStart w:id=\"1\" w:name=\"_OnTwo\"/><w:r><w:t>CellOnTwoX</w:t></w:r>\
+           <w:bookmarkEnd w:id=\"1\"/></w:p>",
+    );
+    let body = format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">SeePgX </w:t></w:r>{}</w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>{cell}<w:p/>{REF_SECT}",
+        field_run("PAGEREF _OnTwo \\h", "97")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert cell PAGEREF");
+    let pages = pdf_content_streams(&pdf);
+    let p1 = pdf_winansi_text(pages[0].as_bytes());
+    assert!(
+        !p1.contains("97"),
+        "cached PAGEREF must not survive; p1={p1}"
+    );
+    assert!(
+        p1.contains("SeePgX 2") || p1.contains("SeePgX2"),
+        "PAGEREF paints page 2; p1={p1}"
+    );
+}
+
 #[test]
 fn missing_pageref_error_is_bold_like_word_quartz() {
     // sd_2517 / file_22 TOC lorem 9.01: Word paints
@@ -8473,6 +8598,92 @@ fn page_num_fmt_pdf(fmt: &str, start: u32, marker: &str) -> Vec<u8> {
         &[("word/footer1.xml", footer)],
     ))
     .unwrap_or_else(|_| panic!("convert {fmt} PAGE"))
+}
+
+/// Hex glyph operands of the CID text painted in the footer band (below
+/// the 72pt bottom margin): the PAGE label, not any other CID text.
+fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    for stream in pdf_content_streams(pdf) {
+        for op in stream.split("Q\n").chain(stream.split(" Q ")) {
+            let Some(cm) = op.find(" cm BT /") else {
+                continue;
+            };
+            let nums: Vec<f32> = op[..cm]
+                .split_whitespace()
+                .rev()
+                .take(2)
+                .filter_map(|v| v.parse().ok())
+                .collect();
+            let Some(&y) = nums.first() else { continue };
+            let font = op[cm + 8..].split_whitespace().next().unwrap_or("");
+            if y >= 72.0 || !font.ends_with("CID") {
+                continue;
+            }
+            if let (Some(a), Some(b)) = (op.find('<'), op.find("> Tj")) {
+                out.push(op[a + 1..b].to_string());
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The PAGE label in the footer is one CID run of `glyphs` glyphs.
+fn assert_footer_page_label_glyphs(fmt: &str, start: u32, glyphs: usize) {
+    let pdf = page_num_fmt_pdf(fmt, start, "PgGlyphX");
+    let runs = footer_cid_glyph_runs(&pdf);
+    assert_eq!(
+        runs.len(),
+        1,
+        "{fmt} start={start}: one footer CID run; runs={runs:?}"
+    );
+    assert_eq!(
+        runs[0].len(),
+        glyphs * 4,
+        "{fmt} start={start}: {glyphs} glyph(s); runs={runs:?}"
+    );
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == &start.to_string() || s == "1"),
+        "{fmt} start={start}: no decimal survives; lits={lits:?}"
+    );
+}
+
+#[test]
+fn page_labels_bind_to_the_footer_with_the_formatted_glyph_count() {
+    // #157/#158/#161: the old checks accepted any CID text anywhere. Bind
+    // to the footer CID run and count glyphs, which tells formats apart
+    // (exact code points are pinned in page_num_fmt_labels; the writer
+    // has no ToUnicode map to decode against).
+    assert_footer_page_label_glyphs("ideographEnclosedCircle", 10, 1); // ㈩
+    assert_footer_page_label_glyphs("ideographEnclosedCircle", 11, 2); // 一一
+    assert_footer_page_label_glyphs("japaneseCounting", 100, 1); // 百
+    assert_footer_page_label_glyphs("japaneseCounting", 101, 2); // 百一
+    assert_footer_page_label_glyphs("japaneseCounting", 1000, 1); // 千
+    assert_footer_page_label_glyphs("ideographLegalTraditional", 100, 2); // 壹佰
+    assert_footer_page_label_glyphs("ideographLegalTraditional", 101, 4); // 壹佰零壹
+    assert_footer_page_label_glyphs("hebrew1", 10, 1); // י
+    assert_footer_page_label_glyphs("hebrew1", 16, 2); // טז
+    assert_footer_page_label_glyphs("arabicAlpha", 1, 1); // أ
+    assert_footer_page_label_glyphs("decimalEnclosedParen", 20, 1); // ⒇
+}
+
+#[test]
+fn page_field_letters_twin_and_rollover() {
+    // #151: lowerLetter paints "a"; upperLetter start=27 rolls Z → AA.
+    let lower = pdf_winansi_text(&page_num_fmt_pdf("lowerLetter", 1, "PgLlX"));
+    // Footer chrome paints before the body marker.
+    assert!(
+        lower.starts_with("aPgLlX") && !lower.contains('1'),
+        "text={lower}"
+    );
+    let rolled = pdf_winansi_text(&page_num_fmt_pdf("upperLetter", 27, "PgRoX"));
+    assert!(
+        rolled.starts_with("AAPgRoX") && !rolled.contains("27"),
+        "text={rolled}"
+    );
 }
 
 fn assert_ideograph_page_is_cid_not_decimal(fmt: &str, marker: &str) {
@@ -14972,6 +15183,17 @@ fn display_background_shape_paints_document_background() {
         !page_fill_of(&off, 1.0, 0.0, 0.0),
         "displayBackgroundShape val=false must not paint the background"
     );
+    // #131: a single-quoted, whitespace-split disabled value is the same
+    // CT_OnOff false; substring matching read it as enabled.
+    let off_quoted = docx_to_pdf(&background_shape_docx(
+        Some("FF0000"),
+        "<w:displayBackgroundShape\n   w:val='false' />",
+    ))
+    .expect("convert displayBackgroundShape single-quoted false");
+    assert!(
+        !page_fill_of(&off_quoted, 1.0, 0.0, 0.0),
+        "single-quoted val='false' must not paint the background"
+    );
 }
 
 fn linked_para_styles(with_link: bool) -> String {
@@ -15360,6 +15582,59 @@ fn time_createdate_printdate_fields_paint_word_results() {
     );
 }
 
+fn uncached_field_para(label: &str, instr: &str) -> String {
+    format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">{label} </w:t></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+           <w:r><w:instrText xml:space=\"preserve\"> {instr} </w:instrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>"
+    )
+}
+
+#[test]
+fn core_dates_ignore_element_names_inside_free_text_metadata() {
+    // #140: "Guide:created for review" in dc:title looked like a tag to
+    // the substring scanner, which returned "" and CREATEDATE fell back
+    // to the conversion clock.
+    let body = uncached_field_para("MadeQx", "CREATEDATE \\@ \"yyyy\"")
+        + &uncached_field_para("PrintQx", "PRINTDATE \\@ \"yyyy\"");
+    let pdf = docx_to_pdf(&minimal_docx_with_core_xml(
+        &body,
+        "<dc:title>Guide:created for review</dc:title>\
+         <dc:subject>see cp:lastPrinted notes</dc:subject>\
+         <dcterms:created xsi:type=\"dcterms:W3CDTF\">2018-07-04T15:30:00Z</dcterms:created>\
+         <cp:lastPrinted>2019-11-22T08:00:00Z</cp:lastPrinted>",
+    ))
+    .expect("convert core title trap");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("MadeQx 2018") || text.contains("MadeQx2018"),
+        "text={text}"
+    );
+    assert!(
+        text.contains("PrintQx 2019") || text.contains("PrintQx2019"),
+        "text={text}"
+    );
+}
+
+#[test]
+fn core_dates_apply_numeric_w3cdtf_offsets() {
+    // #140: +01:00 at 00:30 local is 23:30 UTC the previous day (and year).
+    let body = uncached_field_para("MadeOx", "CREATEDATE \\@ \"yyyy-MM-dd HH:mm\"");
+    let pdf = docx_to_pdf(&minimal_docx_with_core_props(
+        &body,
+        "2024-01-01T00:30:00+01:00",
+        "",
+        "",
+    ))
+    .expect("convert offset created");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("2023-12-31 23:30"),
+        "offset normalised to UTC; text={text}"
+    );
+}
+
 #[test]
 fn savedate_field_paints_core_modified() {
     // xml leftover: SAVEDATE (ECMA-376 17.16.5.64). DATE/TIME/CREATEDATE/
@@ -15447,6 +15722,47 @@ fn sectpr_ln_num_type_paints_margin_line_numbers() {
     );
 }
 
+fn ln_num_page_two_text(restart: &str) -> String {
+    let body = format!(
+        "<w:p><w:r><w:t>Aa</w:t></w:r></w:p><w:p><w:r><w:t>Bb</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>Cc</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p><w:p><w:r><w:t>Dd</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+           <w:lnNumType w:countBy=\"1\" {restart}/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("convert lnNumType break");
+    let pages = pdf_content_streams(&pdf);
+    assert_eq!(
+        pages.len(),
+        2,
+        "explicit break opens page 2; {:?}",
+        pages
+            .iter()
+            .map(|p| pdf_winansi_text(p.as_bytes()))
+            .collect::<Vec<_>>()
+    );
+    pdf_winansi_text(pages[1].as_bytes())
+}
+
+#[test]
+fn line_numbers_restart_after_an_explicit_page_break() {
+    // #142: restart defaults to newPage; `w:br type=page` pushed the page
+    // without the reset, so page 2 continued at 4.
+    let p2 = ln_num_page_two_text("");
+    assert!(
+        p2.contains('1') && !p2.contains('4'),
+        "newPage restarts at start; p2={p2}"
+    );
+    let p2 = ln_num_page_two_text("w:restart=\"newSection\"");
+    assert!(
+        p2.contains('4'),
+        "newSection keeps counting inside one section; p2={p2}"
+    );
+    let p2 = ln_num_page_two_text("w:restart=\"continuous\"");
+    assert!(p2.contains('4'), "continuous keeps counting; p2={p2}");
+}
+
 #[test]
 fn ul_trail_space_underlines_trailing_spaces_in_a_cell() {
     // xml leftover: w:compat/w:ulTrailSpace (ECMA-376 17.15.3.63).
@@ -15519,9 +15835,106 @@ fn space_for_ul_adds_descent_under_east_asian_underline() {
     };
     let off = gap("");
     let on = gap("<w:compat><w:spaceForUL/></w:compat>");
+    // cm translations are user-space points (the 0.24 scale is glyph
+    // space only), so the 2pt floor is compared directly.
     assert!(
-        on > off + 1.0,
+        on - off >= 2.0 - 0.01,
         "spaceForUL must add ≥2pt descent under underlined 漢字; off={off} on={on}"
+    );
+}
+
+#[test]
+fn space_for_ul_adds_descent_under_underlined_cjk_footnote_lines() {
+    // #144 (adjudication): notes had the same plain line box.
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r>\
+         <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr>\
+           <w:footnoteReference w:id=\"1\"/></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let notes = "<?xml version=\"1.0\"?>\
+         <w:footnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:footnote w:id=\"1\">\
+             <w:p><w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>J漢字</w:t></w:r></w:p>\
+             <w:p><w:r><w:t>Q</w:t></w:r></w:p>\
+           </w:footnote></w:footnotes>";
+    let gap = |settings: &str| -> f32 {
+        let docx = hf_docx(
+            body,
+            &[
+                ("rIdFootnotes", "footnotes", "footnotes.xml"),
+                ("rIdSet", "settings", "settings.xml"),
+            ],
+            &[
+                ("word/footnotes.xml", notes.to_string()),
+                (
+                    "word/settings.xml",
+                    format!(
+                        "<?xml version=\"1.0\"?><w:settings \
+                           xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{settings}</w:settings>"
+                    ),
+                ),
+            ],
+        );
+        let pdf = docx_to_pdf(&docx).expect("convert note spaceForUL");
+        let hay = String::from_utf8_lossy(&pdf);
+        let y = |g: &str| pdf_cm_tj_xy(&hay, g).first().map(|(_, y)| *y).expect(g);
+        y("J") - y("Q")
+    };
+    let off = gap("");
+    let on = gap("<w:compat><w:spaceForUL/></w:compat>");
+    assert!(
+        on - off >= 2.0 - 0.01,
+        "note line gets the descent; off={off} on={on}"
+    );
+}
+
+#[test]
+fn space_for_ul_adds_descent_to_wrapped_lines_in_table_cells() {
+    // #144: cells measured and painted with the plain line box. A narrow
+    // cell wraps one underlined CJK paragraph onto two lines (J then Q
+    // start each line); the next paragraph K follows.
+    let ul = "<w:rPr><w:u w:val=\"single\"/></w:rPr>";
+    let para = |t: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>{t}</w:p>"
+        )
+    };
+    let wrapped = para(&format!(
+        "<w:r>{ul}<w:t>J漢字漢字漢字</w:t></w:r><w:r>{ul}<w:t>Q漢字漢字漢字</w:t></w:r>"
+    ));
+    let next = para(&format!("<w:r>{ul}<w:t>K漢字</w:t></w:r>"));
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"1700\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"1700\"/></w:tblGrid>\
+           <w:tr><w:tc>{wrapped}{next}</w:tc></w:tr></w:tbl>\
+         <w:p><w:r><w:t>Z</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let ys = |settings: &str| -> [f32; 4] {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings))
+            .expect("convert cell spaceForUL");
+        let hay = String::from_utf8_lossy(&pdf);
+        ["J", "Q", "K", "Z"].map(|g| pdf_cm_tj_xy(&hay, g).first().map(|(_, y)| *y).expect(g))
+    };
+    let off = ys("");
+    let on = ys("<w:compat><w:spaceForUL/></w:compat>");
+    assert!(
+        off[0] > off[1] + 1.0,
+        "J and Q sit on separate wrapped lines; off={off:?}"
+    );
+    let gap = |v: [f32; 4], a: usize, b: usize| v[a] - v[b];
+    assert!(
+        gap(on, 0, 1) - gap(off, 0, 1) >= 2.0 - 0.01,
+        "wrapped line gets the descent; off={off:?} on={on:?}"
+    );
+    assert!(
+        gap(on, 1, 2) - gap(off, 1, 2) >= 2.0 - 0.01,
+        "last line of the paragraph too; off={off:?} on={on:?}"
+    );
+    assert!(
+        gap(on, 0, 3) - gap(off, 0, 3) >= 3.0 * 2.0 - 0.01,
+        "row height grows by all three descents, pushing the next body line; off={off:?} on={on:?}"
     );
 }
 
@@ -15553,10 +15966,12 @@ fn sectpr_doc_grid_lines_snaps_line_box_to_pitch() {
         .first()
         .map(|(_, y)| *y)
         .expect("marker Q");
+    // cm translations are user-space points; the 0.24 scale is glyph
+    // space only (#145).
     let gap = jy - qy;
     assert!(
-        gap > 24.0,
-        "docGrid type=lines linePitch=576 must snap to ~28.8pt, not natural ~13.4; gap={gap}"
+        (gap - 28.8).abs() < 0.05,
+        "docGrid type=lines linePitch=576 must snap to 28.8pt, not natural ~13.4; gap={gap}"
     );
 }
 
@@ -17077,8 +17492,10 @@ fn footnote_reference_marker_paints_after_mini_102() {
         painted.contains("SeeNoteHere"),
         "body must paint; painted={painted}"
     );
+    // The marker follows the body run in paint order (#26): a stray "1"
+    // elsewhere on the page cannot satisfy this.
     assert!(
-        painted.contains('1'),
+        painted.contains("SeeNoteHere.1"),
         "plan Step 7: in-text footnote marker paints; painted={painted}"
     );
 }

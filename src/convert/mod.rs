@@ -30,9 +30,9 @@ use font::{Face, FaceId, FaceRef, Fonts};
 pub use font::{FontReportEntry, FontStep, font_report_json};
 
 #[cfg(test)]
-fn fonts() -> &'static Fonts {
+fn fonts() -> &'static Fonts<'static> {
     use std::sync::LazyLock;
-    static FONTS: LazyLock<Fonts> = LazyLock::new(Fonts::new);
+    static FONTS: LazyLock<Fonts<'static>> = LazyLock::new(Fonts::new);
     &FONTS
 }
 use pdf::{Op, Page, PdfComment};
@@ -128,7 +128,8 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
         .ok_or(ConvertError::MissingDocument)?;
 
     let table = font_table::load_font_table(&pkg);
-    let fonts = Fonts::for_document(&pkg, &table);
+    let embedded = font_table::load_embedded_fonts(&pkg, &table);
+    let fonts = Fonts::for_document(&embedded);
     font::with_font_table(table, || {
         let markup = settings_track_revisions(&pkg);
         let core = load_core_dates(&pkg);
@@ -146,6 +147,7 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
             let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
             let mut blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, &fonts);
             let display = number_footnote_refs(&mut blocks);
+            resolve_cell_fields(&mut blocks);
             let footnotes = FootnoteCatalog {
                 notes: load_footnotes(&pkg, &main, &sheet),
                 display,
@@ -974,6 +976,11 @@ struct Watermark {
 struct CellPara {
     runs: Vec<TextRun>,
     style: ParaStyle,
+    /// `w:bookmarkStart` names inside this paragraph (REF text source).
+    bookmarks: Vec<String>,
+    /// Bookmarks on empty cell paragraphs dropped before this one: they
+    /// exist and land on this page, but carry no REF text.
+    blank_bookmarks: Vec<String>,
 }
 
 struct TableCell {
@@ -3495,8 +3502,6 @@ const IDEOGRAPH_STEMS: [char; 10] = ['甲', '乙', '丙', '丁', '戊', '己', '
 const IDEOGRAPH_BRANCHES: [char; 12] = [
     '子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥',
 ];
-/// Traditional legal digits 1–10. [MS-DOCX] U+58F9, U+8CB3, U+53C3, …
-const IDEOGRAPH_LEGAL: [char; 10] = ['壹', '貳', '參', '肆', '伍', '陸', '柒', '捌', '玖', '拾'];
 
 fn cycle_cjk(chars: &[char], n: u32) -> String {
     let i = n.saturating_sub(1) as usize % chars.len();
@@ -3509,21 +3514,51 @@ fn ideograph_zodiac_traditional_label(n: u32) -> String {
 }
 
 fn ideograph_legal_traditional_label(n: u32) -> String {
-    match n {
-        0 => "零".into(),
-        1..=10 => IDEOGRAPH_LEGAL[(n - 1) as usize].to_string(),
-        11..=19 => format!("拾{}", IDEOGRAPH_LEGAL[(n - 11) as usize]),
-        20..=99 => {
-            let tens = n / 10;
-            let ones = n % 10;
-            let mut s = format!("{}拾", IDEOGRAPH_LEGAL[(tens - 1) as usize]);
-            if ones > 0 {
-                s.push(IDEOGRAPH_LEGAL[(ones - 1) as usize]);
-            }
-            s
-        }
-        n => n.to_string(),
+    cjk_counting(n, true)
+}
+
+/// Positional CJK counting (十/百/千 and a myriad unit per 10⁴).
+/// `legal`: traditional financial forms — 壹 is written before 佰/仟/萬
+/// (only a leading 拾 below 20 stays bare) and one 零 marks a gap.
+/// Japanese counting drops 一 before 十/百/千 and writes no zero.
+fn cjk_counting(n: u32, legal: bool) -> String {
+    const JAPANESE: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+    // Traditional legal digits: [MS-DOCX] U+58F9, U+8CB3, U+53C3, …
+    const LEGAL: [char; 10] = ['零', '壹', '貳', '參', '肆', '伍', '陸', '柒', '捌', '玖'];
+    let (digits, units, myriad) = if legal {
+        (&LEGAL, ['拾', '佰', '仟'], '萬')
+    } else {
+        (&JAPANESE, ['十', '百', '千'], '万')
+    };
+    if n == 0 {
+        return digits[0].to_string();
     }
+    let mut out = String::new();
+    if n >= 10_000 {
+        out.push_str(&cjk_counting(n / 10_000, legal));
+        out.push(myriad);
+    }
+    let low = n % 10_000;
+    let mut gap = false;
+    for (place, div) in [(3usize, 1000u32), (2, 100), (1, 10), (0, 1)] {
+        let d = ((low / div) % 10) as usize;
+        if d == 0 {
+            gap |= !out.is_empty();
+            continue;
+        }
+        if gap && legal {
+            out.push(digits[0]);
+        }
+        gap = false;
+        let bare_one = d == 1 && place > 0 && (!legal || (out.is_empty() && n < 20));
+        if !bare_one {
+            out.push(digits[d]);
+        }
+        if place > 0 {
+            out.push(units[place - 1]);
+        }
+    }
+    out
 }
 
 fn ideograph_enclosed_circle_label(n: u32) -> String {
@@ -3536,25 +3571,10 @@ fn ideograph_enclosed_circle_label(n: u32) -> String {
     }
 }
 
-/// MS-DOCX japaneseCounting: 一, 二, …, 十, 十一 (not digit-wise 一〇).
+/// MS-DOCX japaneseCounting: 一, 二, …, 十, 十一, 百, 千, 一万 (not
+/// digit-wise 一〇).
 fn japanese_counting_label(n: u32) -> String {
-    const DIGITS: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
-    match n {
-        0 => "零".into(),
-        1..=9 => DIGITS[n as usize].to_string(),
-        10 => "十".into(),
-        11..=19 => format!("十{}", DIGITS[(n - 10) as usize]),
-        20..=99 => {
-            let tens = n / 10;
-            let ones = n % 10;
-            let mut s = format!("{}十", DIGITS[tens as usize]);
-            if ones > 0 {
-                s.push(DIGITS[ones as usize]);
-            }
-            s
-        }
-        n => n.to_string(),
-    }
+    cjk_counting(n, false)
 }
 
 /// MS-DOCX aiueo: half-width katakana ｱｲｳ… (U+FF71). 46-mora gojūon.
@@ -4720,11 +4740,13 @@ fn section_chrome(
     sect: NodeId,
     sheet: &StyleSheet,
 ) -> SectionChrome {
-    let header = pick_section_hf(pkg, main, dom, sect, "headerReference", sheet);
-    let footer = pick_section_hf(pkg, main, dom, sect, "footerReference", sheet);
-    let even_and_odd = settings_even_and_odd_headers(pkg);
-    let header_odd = header.even.is_some().then_some(header.odd);
-    let footer_odd = footer.even.is_some().then_some(footer.odd);
+    let ParityHf {
+        header,
+        footer,
+        even_and_odd,
+        header_odd,
+        footer_odd,
+    } = section_parity_hf(pkg, main, dom, sect, sheet);
     SectionChrome {
         page: apply_sect_pr(dom, sect, &sheet.defaults.page),
         header: header.start.runs,
@@ -4752,6 +4774,43 @@ fn section_chrome(
         space_for_ul: settings_space_for_ul(pkg),
         do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
         balance_sbcs_dbcs: settings_balance_sbcs_dbcs(pkg),
+    }
+}
+
+/// A section's picked header/footer plus the even/odd split both
+/// `section_chrome` and `first_section_hf` derive from them: the odd part
+/// only exists when an even part does.
+struct ParityHf {
+    header: PickedHf,
+    footer: PickedHf,
+    even_and_odd: bool,
+    header_odd: Option<ChromePart>,
+    footer_odd: Option<ChromePart>,
+}
+
+fn section_parity_hf(
+    pkg: &PartFs,
+    main: &str,
+    dom: &Dom,
+    sect: NodeId,
+    sheet: &StyleSheet,
+) -> ParityHf {
+    let mut header = pick_section_hf(pkg, main, dom, sect, "headerReference", sheet);
+    let mut footer = pick_section_hf(pkg, main, dom, sect, "footerReference", sheet);
+    let header_odd = header
+        .even
+        .is_some()
+        .then(|| std::mem::take(&mut header.odd));
+    let footer_odd = footer
+        .even
+        .is_some()
+        .then(|| std::mem::take(&mut footer.odd));
+    ParityHf {
+        header,
+        footer,
+        even_and_odd: settings_even_and_odd_headers(pkg),
+        header_odd,
+        footer_odd,
     }
 }
 
@@ -4996,7 +5055,7 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     base.iter().map(|c| c * scale).collect()
 }
 
-fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> f32 {
+fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: bool) -> f32 {
     let size = para
         .runs
         .iter()
@@ -5010,13 +5069,25 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> f32 {
         .map(|r| fonts.resolve(&r.style.family, r.style.bold, r.style.italic))
         .unwrap_or_else(|| FaceId::CarlitoRegular.into());
     let line_box = para_line_box(fonts.get(face_id), size, &para.style);
-    let nlines = wrap_runs(fonts, &para.runs, wrap_w, wrap_w, false)
-        .len()
-        .max(1);
-    para.style.before + nlines as f32 * line_box + para.style.after
+    let lines = wrap_runs(fonts, &para.runs, wrap_w, wrap_w, false);
+    let lines_h: f32 = lines
+        .iter()
+        .map(|line| line_box + ul_line_extra(line, size, space_for_ul))
+        .sum();
+    para.style.before + lines_h.max(line_box) + para.style.after
 }
 
-fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32]) -> f32 {
+/// `w:spaceForUL` descent under an underlined East Asian line (cells and
+/// notes; `emit_runs` adds the same to body lines).
+fn ul_line_extra(line: &[TextRun], size: f32, space_for_ul: bool) -> f32 {
+    if space_for_ul && line_has_underlined_cjk(line) {
+        space_for_ul_extra(size)
+    } else {
+        0.0
+    }
+}
+
+fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for_ul: bool) -> f32 {
     let cw: f32 = (0..cell.colspan)
         .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
         .sum();
@@ -5030,24 +5101,27 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32]) -> f32 {
             &CellPara {
                 runs: Vec::new(),
                 style,
+                bookmarks: Vec::new(),
+                blank_bookmarks: Vec::new(),
             },
             wrap_w,
+            space_for_ul,
         )
     } else {
         cell.paras
             .iter()
-            .map(|p| cell_para_height(fonts, p, wrap_w))
+            .map(|p| cell_para_height(fonts, p, wrap_w, space_for_ul))
             .sum()
     };
     let nested_h: f32 = cell
         .nested
         .iter()
-        .map(|b| nested_table_height(fonts, b, wrap_w))
+        .map(|b| nested_table_height(fonts, b, wrap_w, space_for_ul))
         .sum();
     cell.pad_t + paras_h + nested_h + cell.pad_b
 }
 
-fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32) -> f32 {
+fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: bool) -> f32 {
     let Block::Table {
         cols,
         rows,
@@ -5062,7 +5136,7 @@ fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32) -> f32 {
     let rows_h: f32 = rows
         .iter()
         .enumerate()
-        .map(|(ri, row)| table_row_height_pt(fonts, row, &col_w, geom, ri))
+        .map(|(ri, row)| table_row_height_pt(fonts, row, &col_w, geom, ri, space_for_ul))
         .sum();
     rows_h + style.after.max(4.0)
 }
@@ -5076,6 +5150,7 @@ fn table_row_height_pt(
     col_w: &[f32],
     geom: &TableGeom,
     ri: usize,
+    space_for_ul: bool,
 ) -> f32 {
     let spec = geom.row_min.get(ri).copied().unwrap_or(0.0);
     let exact = geom.row_exact.get(ri).copied().unwrap_or(false);
@@ -5085,7 +5160,7 @@ fn table_row_height_pt(
     }
     let content = row
         .iter()
-        .map(|cell| cell_content_height(fonts, cell, col_w))
+        .map(|cell| cell_content_height(fonts, cell, col_w, space_for_ul))
         .fold(0.0_f32, f32::max);
     content.max(spec)
 }
@@ -5117,14 +5192,20 @@ fn keep_lines_need_pt(
     para_first_line_pt(fonts, runs, style, grid_pitch) * lines.len() as f32
 }
 
-fn keep_next_follow_pt(fonts: &Fonts, avail: f32, block: &Block, grid_pitch: f32) -> f32 {
+fn keep_next_follow_pt(
+    fonts: &Fonts,
+    avail: f32,
+    block: &Block,
+    grid_pitch: f32,
+    space_for_ul: bool,
+) -> f32 {
     match block {
         Block::Table {
             cols, rows, geom, ..
         } => {
             let col_w = table_col_widths(cols, geom, avail);
             rows.first()
-                .map(|row| table_row_height_pt(fonts, row, &col_w, geom, 0))
+                .map(|row| table_row_height_pt(fonts, row, &col_w, geom, 0, space_for_ul))
                 .unwrap_or(0.0)
         }
         Block::Paragraph { runs, style, .. } => {
@@ -5424,38 +5505,107 @@ fn collect_bookmark_names(dom: &Dom, node: NodeId, want: &XName, out: &mut Vec<S
     }
 }
 
-fn document_bookmark_names(blocks: &[Block]) -> HashSet<String> {
-    let mut names = HashSet::new();
+/// Every bookmarked paragraph in document order, table cells (and their
+/// nested tables) included: `(own names, blank-paragraph names, runs)`.
+fn visit_bookmarked_paras<'b>(
+    blocks: &'b [Block],
+    visit: &mut impl FnMut(&'b [String], &'b [String], &'b [TextRun]),
+) {
     for block in blocks {
-        if let Block::Paragraph { bookmarks, .. } = block {
-            names.extend(bookmarks.iter().cloned());
+        match block {
+            Block::Paragraph {
+                bookmarks, runs, ..
+            } => visit(bookmarks, &[], runs),
+            Block::Table { rows, .. } => {
+                for cell in rows.iter().flatten() {
+                    // Cell paragraphs and nested tables in document order.
+                    for (pi, para) in cell.paras.iter().enumerate() {
+                        for (nested, _) in cell
+                            .nested
+                            .iter()
+                            .zip(&cell.nested_at)
+                            .filter(|(_, at)| **at == pi)
+                        {
+                            visit_bookmarked_paras(std::slice::from_ref(nested), visit);
+                        }
+                        visit(&para.bookmarks, &para.blank_bookmarks, &para.runs);
+                    }
+                    for (nested, _) in cell
+                        .nested
+                        .iter()
+                        .zip(&cell.nested_at)
+                        .filter(|(_, at)| **at >= cell.paras.len())
+                    {
+                        visit_bookmarked_paras(std::slice::from_ref(nested), visit);
+                    }
+                }
+            }
+            Block::PageBreak { .. } | Block::ColumnBreak => {}
         }
     }
+}
+
+fn document_bookmark_names(blocks: &[Block]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    visit_bookmarked_paras(blocks, &mut |own, blank, _| {
+        names.extend(own.iter().chain(blank).cloned());
+    });
     names
 }
 
 fn document_bookmark_texts(blocks: &[Block]) -> HashMap<String, String> {
     let mut texts = HashMap::new();
-    for block in blocks {
-        let Block::Paragraph {
-            bookmarks, runs, ..
-        } = block
-        else {
-            continue;
-        };
-        if bookmarks.is_empty() {
-            continue;
+    visit_bookmarked_paras(blocks, &mut |own, blank, runs| {
+        for name in blank {
+            texts.entry(name.clone()).or_insert_with(String::new);
+        }
+        if own.is_empty() {
+            return;
         }
         let text: String = runs
             .iter()
             .filter(|r| r.pageref.is_none() && r.ref_name.is_none())
             .map(|r| r.text.as_str())
             .collect();
-        for name in bookmarks {
+        for name in own {
             texts.entry(name.clone()).or_insert_with(|| text.clone());
         }
-    }
+    });
     texts
+}
+
+/// Resolve REF / missing PAGEREF / NUMWORDS results inside table cells
+/// before layout, so row heights and paint both see the result text
+/// (top-level paragraphs resolve in `emit_runs`).
+fn resolve_cell_fields(blocks: &mut [Block]) {
+    let known = document_bookmark_names(blocks);
+    let texts = document_bookmark_texts(blocks);
+    let words = document_word_count(blocks);
+    fn walk(
+        blocks: &mut [Block],
+        known: &HashSet<String>,
+        texts: &HashMap<String, String>,
+        words: u32,
+    ) {
+        for block in blocks {
+            let Block::Table { rows, .. } = block else {
+                continue;
+            };
+            for cell in rows.iter_mut().flatten() {
+                for para in &mut cell.paras {
+                    if para.runs.iter().any(|r| {
+                        r.pageref.is_some()
+                            || r.ref_name.is_some()
+                            || r.field == FieldKind::NumWords
+                    }) {
+                        para.runs = apply_field_results(&para.runs, known, texts, words);
+                    }
+                }
+                walk(&mut cell.nested, known, texts, words);
+            }
+        }
+    }
+    walk(blocks, &known, &texts, words);
 }
 
 fn run_word_count(runs: &[TextRun]) -> u32 {
@@ -5706,10 +5856,15 @@ fn core_dates() -> CoreDates {
 fn utc_now() -> CivilDateTime {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(0))
         .unwrap_or(0);
-    let (y, m, d) = civil_from_unix_days(i64::try_from(secs / 86_400).unwrap_or(0));
-    let tod = u32::try_from(secs % 86_400).unwrap_or(0);
+    civil_from_unix_secs(secs)
+}
+
+/// UTC civil time of a Unix timestamp (TIME/DATE are painted in UTC).
+fn civil_from_unix_secs(secs: i64) -> CivilDateTime {
+    let (y, m, d) = civil_from_unix_days(secs.div_euclid(86_400));
+    let tod = u32::try_from(secs.rem_euclid(86_400)).unwrap_or(0);
     CivilDateTime {
         y,
         m,
@@ -5720,59 +5875,87 @@ fn utc_now() -> CivilDateTime {
     }
 }
 
-fn xml_tagged_text<'a>(xml: &'a str, local: &str) -> Option<&'a str> {
-    let bytes = xml.as_bytes();
-    let mut from = 0;
-    while let Some(rel) = xml[from..].find(local) {
-        let at = from + rel;
-        let tagged = at == 0 || matches!(bytes.get(at - 1), Some(b':' | b'<'));
-        let after_name = at + local.len();
-        let rest = xml.get(after_name..)?;
-        if tagged
-            && (rest.starts_with('>') || rest.starts_with(' ') || rest.starts_with('/'))
-            && let Some(gt) = rest.find('>')
-        {
-            if rest.as_bytes().get(gt.saturating_sub(1)) == Some(&b'/') {
-                from = after_name + gt + 1;
-                continue;
-            }
-            let inner = &rest[gt + 1..];
-            let end = inner.find('<')?;
-            return Some(inner[..end].trim());
-        }
-        from = after_name;
-    }
-    None
+/// Howard Hinnant days_from_civil: UTC (year, month, day) → Unix epoch days.
+fn unix_days_from_civil(y: i32, m: u32, d: u32) -> i64 {
+    let y = i64::from(y) - i64::from(m <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let m = i64::from(m);
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
+fn two_digits(s: &str, at: usize) -> Option<u32> {
+    let v = s.get(at..at + 2)?;
+    v.bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| v.parse().ok())?
+}
+
+/// W3CDTF (`YYYY-MM-DD`, `…Thh:mm[:ss[.s+]]TZD`) as a UTC instant. A
+/// numeric `±hh:mm` zone is folded in; `Z` or no zone is UTC.
 fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
     let s = raw.trim();
-    if s.len() < 19 {
-        return None;
-    }
     let bytes = s.as_bytes();
-    if bytes[4] != b'-' || bytes[7] != b'-' || (bytes[10] != b'T' && bytes[10] != b' ') {
+    if s.len() < 10 || bytes[4] != b'-' || bytes[7] != b'-' {
         return None;
     }
-    Some(CivilDateTime {
-        y: s.get(0..4)?.parse().ok()?,
-        m: s.get(5..7)?.parse().ok()?,
-        d: s.get(8..10)?.parse().ok()?,
-        h: s.get(11..13)?.parse().ok()?,
-        min: s.get(14..16)?.parse().ok()?,
-        s: s.get(17..19)?.parse().ok()?,
-    })
+    let y: i32 = s.get(0..4)?.parse().ok()?;
+    let (m, d) = (two_digits(s, 5)?, two_digits(s, 8)?);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let (mut h, mut min, mut sec, mut rest) = (0, 0, 0, &s[10..]);
+    if let Some(t) = rest.strip_prefix(['T', ' ']) {
+        h = two_digits(t, 0)?;
+        if t.as_bytes().get(2) != Some(&b':') {
+            return None;
+        }
+        min = two_digits(t, 3)?;
+        rest = &t[5..];
+        if let Some(ss) = rest.strip_prefix(':') {
+            sec = two_digits(ss, 0)?;
+            rest = ss[2..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+        }
+    }
+    let offset_min: i64 = match rest.as_bytes().first() {
+        None | Some(b'Z') if rest.len() <= 1 => 0,
+        Some(sign @ (b'+' | b'-')) if rest.len() == 6 && rest.as_bytes()[3] == b':' => {
+            let v = i64::from(two_digits(rest, 1)? * 60 + two_digits(rest, 4)?);
+            if *sign == b'+' { v } else { -v }
+        }
+        _ => return None,
+    };
+    let local = unix_days_from_civil(y, m, d) * 86_400 + i64::from(h * 3600 + min * 60 + sec);
+    Some(civil_from_unix_secs(local - offset_min * 60))
+}
+
+/// `docProps/core.xml` dates, read as elements (a title that merely
+/// contains "created" is text, not a tag).
+fn core_dates_from_xml(xml: &str) -> CoreDates {
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(xml);
+    let Some(root) = dom.root(doc) else {
+        return CoreDates::default();
+    };
+    let date = |local: &str| {
+        (0..dom.child_count(root))
+            .map(|i| dom.child_at(root, i))
+            .find(|&n| local_name_is(&dom, n, local))
+            .and_then(|n| parse_w3cdtf(&element_text(&dom, n)))
+    };
+    CoreDates {
+        created: date("created"),
+        printed: date("lastPrinted"),
+        modified: date("modified"),
+    }
 }
 
 fn load_core_dates(pkg: &PartFs) -> CoreDates {
-    let Some(xml) = pkg.part_string("docProps/core.xml") else {
-        return CoreDates::default();
-    };
-    CoreDates {
-        created: xml_tagged_text(&xml, "created").and_then(parse_w3cdtf),
-        printed: xml_tagged_text(&xml, "lastPrinted").and_then(parse_w3cdtf),
-        modified: xml_tagged_text(&xml, "modified").and_then(parse_w3cdtf),
-    }
+    pkg.part_string("docProps/core.xml")
+        .map(|xml| core_dates_from_xml(&xml))
+        .unwrap_or_default()
 }
 
 /// Howard Hinnant civil_from_days: Unix epoch days → UTC (year, month, day).
@@ -5937,8 +6120,11 @@ fn count_run(chars: &[char], start: usize, want: char) -> usize {
 }
 
 fn datetime_field_text(instr: &str) -> String {
+    datetime_field_text_at(instr, utc_now())
+}
+
+fn datetime_field_text_at(instr: &str, now: CivilDateTime) -> String {
     let core = core_dates();
-    let now = utc_now();
     let dt = if is_createdate_field(instr) {
         core.created.unwrap_or(now)
     } else if is_printdate_field(instr) {
@@ -5948,8 +6134,9 @@ fn datetime_field_text(instr: &str) -> String {
     } else {
         now
     };
+    // Word's en-US short time (`h:mm tt`) paints "10:13 PM", uppercase.
     let default_pic = if is_time_field(instr) {
-        "h:mm am/pm"
+        "h:mm AM/PM"
     } else {
         "M/d/yyyy"
     };
@@ -6187,6 +6374,7 @@ fn table_block(
             let mut nested = Vec::new();
             let mut nested_at = Vec::new();
             let mut cell_align = Align::Left;
+            let mut blank_bookmarks = Vec::new();
             // Document order, with w:sdt content unwrapped in place.
             let mut ordered = Vec::new();
             cell_children_in_order(dom, cell, &mut ordered);
@@ -6204,6 +6392,7 @@ fn table_block(
                 }
                 let (pstyle, r) = para_base(dom, child, sheet, Some(table_para));
                 let (mark, _, _) = list_marker(dom, child, sheet, numbering);
+                let bookmarks = para_bookmark_names(dom, child);
                 let mut runs = collect_runs_in(
                     dom,
                     child,
@@ -6228,6 +6417,7 @@ fn table_block(
                     mark.is_empty() && runs.iter().all(|run| run.text.trim().is_empty());
                 let cell_rule = pstyle.border_bottom.map(|(c, w, _)| (c, w));
                 if empty_ink && cell_rule.is_none() {
+                    blank_bookmarks.extend(bookmarks);
                     continue;
                 }
                 if cell_paras.is_empty() {
@@ -6244,6 +6434,8 @@ fn table_block(
                 cell_paras.push(CellPara {
                     runs,
                     style: pstyle,
+                    bookmarks,
+                    blank_bookmarks: std::mem::take(&mut blank_bookmarks),
                 });
             }
             if cell_paras.is_empty() && nested.is_empty() {
@@ -6263,7 +6455,12 @@ fn table_block(
                 cell_paras.push(CellPara {
                     runs,
                     style: table_para.clone(),
+                    bookmarks: Vec::new(),
+                    blank_bookmarks: std::mem::take(&mut blank_bookmarks),
                 });
+            } else if let Some(last) = cell_paras.last_mut() {
+                // Trailing empty paragraphs: their bookmarks still exist.
+                last.blank_bookmarks.append(&mut blank_bookmarks);
             }
             let (colspan, vmerge) = cell_span(dom, cell);
             let (pad_l, pad_r) = cell_pad_h(dom, cell, tbl_pad_l, tbl_pad_r);
@@ -6726,6 +6923,8 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
                 p.line_mult = 1.0;
                 p
             },
+            bookmarks: Vec::new(),
+            blank_bookmarks: Vec::new(),
         }],
         colspan: 1,
         vmerge: VMerge::None,
@@ -9300,9 +9499,7 @@ fn attr_any<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
 }
 
 fn resolve_media(pkg: &PartFs, source_part: &str, rel_id: &str) -> Option<Vec<u8>> {
-    let rels = pkg.read_rels_for(source_part)?;
-    let rel = rels.items.iter().find(|item| item.id == rel_id)?;
-    let path = pkg.resolve_rel_target(source_part, &rel.target);
+    let path = rel_target_path(pkg, source_part, rel_id)?;
     pkg.part_bytes(&path).map(<[u8]>::to_vec)
 }
 
@@ -9444,11 +9641,13 @@ fn first_section_hf(
             ..Default::default()
         };
     };
-    let header = pick_section_hf(pkg, main, dom, sect, "headerReference", sheet);
-    let footer = pick_section_hf(pkg, main, dom, sect, "footerReference", sheet);
-    let even_and_odd = settings_even_and_odd_headers(pkg);
-    let header_odd = header.even.is_some().then_some(header.odd);
-    let footer_odd = footer.even.is_some().then_some(footer.odd);
+    let ParityHf {
+        header,
+        footer,
+        even_and_odd,
+        header_odd,
+        footer_odd,
+    } = section_parity_hf(pkg, main, dom, sect, sheet);
     HfChrome {
         header: header.start.runs,
         footer: footer.start.runs,
@@ -10078,7 +10277,7 @@ struct LineProbe {
 }
 
 struct Layout<'a> {
-    fonts: &'a Fonts,
+    fonts: &'a Fonts<'a>,
     page: PageSetup,
     pages: Vec<Page>,
     y: f32,
@@ -10197,7 +10396,7 @@ fn chrome_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
 
 impl<'a> Layout<'a> {
     fn new(
-        fonts: &'a Fonts,
+        fonts: &'a Fonts<'a>,
         page: PageSetup,
         hf: HfChrome,
         suppress_sp_bf_after_pg_brk: bool,
@@ -10563,6 +10762,11 @@ impl<'a> Layout<'a> {
             } else {
                 self.section_page = self.section_page.saturating_add(1);
                 self.promote_rest_chrome();
+                // restart=newPage: an explicit break is a new page too
+                // (apply_section already reset for a section break).
+                if self.page.ln_restart == 0 {
+                    self.ln_i = self.page.ln_start.max(1);
+                }
             }
             self.select_parity_chrome();
             self.apply_mirror_margins();
@@ -10720,10 +10924,13 @@ impl<'a> Layout<'a> {
             // Same measure paint_one_footnote wraps at: the note's own
             // w:ind narrows it, so reserving at the full width under-counts.
             let measure = (width - para.style.indent_left - para.style.indent_right).max(40.0);
-            let lines = wrap_runs(self.fonts, &para.runs, measure, measure, false)
-                .len()
-                .max(1);
-            h += para_line_box(self.fonts.get(fid), size, &para.style) * lines as f32;
+            let lines = wrap_runs(self.fonts, &para.runs, measure, measure, false);
+            let line_box = para_line_box(self.fonts.get(fid), size, &para.style);
+            h += line_box * lines.len().max(1) as f32;
+            h += lines
+                .iter()
+                .map(|line| ul_line_extra(line, size, self.space_for_ul))
+                .sum::<f32>();
             h += para.style.after;
         }
         h.max(10.0)
@@ -10822,7 +11029,8 @@ impl<'a> Layout<'a> {
                         .resolve(&r.style.family, r.style.bold, r.style.italic)
                 });
                 let metrics = self.fonts.get(fid);
-                let line_box = para_line_box(metrics, size, &para.style);
+                let line_box = para_line_box(metrics, size, &para.style)
+                    + ul_line_extra(line, size, self.space_for_ul);
                 let ascent = metrics.ascent_pt(size);
                 y -= ascent;
                 self.paint_line_with_tabs(line, self.flow_left() + indent, y);
@@ -13756,7 +13964,9 @@ impl<'a> Layout<'a> {
         let row_h: Vec<f32> = rows
             .iter()
             .enumerate()
-            .map(|(ri, row)| table_row_height_pt(self.fonts, row, &col_w, geom, ri))
+            .map(|(ri, row)| {
+                table_row_height_pt(self.fonts, row, &col_w, geom, ri, self.space_for_ul)
+            })
             .collect();
         let used: f32 = col_w.iter().sum();
         let shift = match style.align {
@@ -13912,7 +14122,9 @@ impl<'a> Layout<'a> {
                     let mut y_line = y_top - inset;
                     if cell.valign_center {
                         let content =
-                            cell_content_height(self.fonts, cell, &col_w) - cell.pad_t - cell.pad_b;
+                            cell_content_height(self.fonts, cell, &col_w, self.space_for_ul)
+                                - cell.pad_t
+                                - cell.pad_b;
                         y_line -= (h - cell.pad_t - cell.pad_b - content).max(0.0) / 2.0;
                     }
                     for (pi, (para, (size, line_box, face_id, lines))) in
@@ -13928,6 +14140,10 @@ impl<'a> Layout<'a> {
                             y_line -= used;
                         }
                         y_line -= para.style.before;
+                        let label = self.chap_page_label();
+                        for name in para.bookmarks.iter().chain(&para.blank_bookmarks) {
+                            self.bookmark_pages.insert(name.clone(), label.clone());
+                        }
                         let face = self.fonts.get(face_id);
                         let ascent = face.ascent_pt(size);
                         let lines = if lines.is_empty() {
@@ -13950,6 +14166,7 @@ impl<'a> Layout<'a> {
                                     color,
                                 });
                             }
+                            let line_box = line_box + ul_line_extra(&line, size, self.space_for_ul);
                             if line.iter().all(|r| r.text.trim().is_empty()) {
                                 y_line -= line_box;
                                 continue;
@@ -15073,7 +15290,15 @@ fn layout(
                     let own = para_first_line_pt(lay.fonts, runs, &style, pitch);
                     let follow = blocks
                         .get(i + 1)
-                        .map(|b| keep_next_follow_pt(lay.fonts, lay.content_width(), b, pitch))
+                        .map(|b| {
+                            keep_next_follow_pt(
+                                lay.fonts,
+                                lay.content_width(),
+                                b,
+                                pitch,
+                                lay.space_for_ul,
+                            )
+                        })
                         .unwrap_or(0.0);
                     if follow > 0.0 {
                         // +2pt breaks leftover==need ties so a heading is
@@ -17341,6 +17566,57 @@ mod page_num_fmt_labels {
         assert_eq!(ideograph_legal_traditional_label(2), "貳");
         assert_eq!(ideograph_legal_traditional_label(10), "拾");
         assert_eq!(ideograph_legal_traditional_label(11), "拾壹");
+        assert_eq!(ideograph_legal_traditional_label(20), "貳拾");
+        assert_eq!(ideograph_legal_traditional_label(99), "玖拾玖");
+    }
+
+    #[test]
+    fn ideograph_legal_traditional_counts_past_ninety_nine() {
+        // #157: 100+ fell through to Arabic "100". Financial numerals write
+        // the leading 壹 before 佰/仟/萬 and a single 零 across gaps.
+        for (n, want) in [
+            (100, "壹佰"),
+            (101, "壹佰零壹"),
+            (110, "壹佰壹拾"),
+            (111, "壹佰壹拾壹"),
+            (999, "玖佰玖拾玖"),
+            (1000, "壹仟"),
+            (1001, "壹仟零壹"),
+            (1010, "壹仟零壹拾"),
+            (10000, "壹萬"),
+            (10001, "壹萬零壹"),
+            (12345, "壹萬貳仟參佰肆拾伍"),
+        ] {
+            assert_eq!(ideograph_legal_traditional_label(n), want, "{n}");
+            assert_eq!(
+                format_num(NumFmt::IdeographLegalTraditional, n),
+                want,
+                "{n}"
+            );
+        }
+    }
+
+    #[test]
+    fn japanese_counting_counts_past_ninety_nine() {
+        // #158: 100+ fell through to Arabic. Japanese drops the leading 一
+        // before 十/百/千 (not before 万) and writes no zero.
+        for (n, want) in [
+            (99, "九十九"),
+            (100, "百"),
+            (101, "百一"),
+            (110, "百十"),
+            (111, "百十一"),
+            (200, "二百"),
+            (1000, "千"),
+            (1111, "千百十一"),
+            (2024, "二千二十四"),
+            (10000, "一万"),
+            (10010, "一万十"),
+            (100_000, "十万"),
+        ] {
+            assert_eq!(japanese_counting_label(n), want, "{n}");
+            assert_eq!(format_num(NumFmt::JapaneseCounting, n), want, "{n}");
+        }
     }
 
     #[test]
@@ -17405,8 +17681,13 @@ mod page_num_fmt_labels {
     #[test]
     fn decimal_enclosed_paren_and_fullstop() {
         assert_eq!(format_num(NumFmt::DecimalEnclosedParen, 1), "⑴");
+        assert_eq!(format_num(NumFmt::DecimalEnclosedParen, 2), "⑵");
+        assert_eq!(format_num(NumFmt::DecimalEnclosedParen, 20), "⒇");
         assert_eq!(format_num(NumFmt::DecimalEnclosedFullstop, 1), "⒈");
+        assert_eq!(format_num(NumFmt::DecimalEnclosedFullstop, 2), "⒉");
+        assert_eq!(format_num(NumFmt::DecimalEnclosedFullstop, 20), "⒛");
         assert_eq!(format_num(NumFmt::DecimalEnclosedParen, 21), "21");
+        assert_eq!(format_num(NumFmt::DecimalEnclosedFullstop, 21), "21");
     }
 
     #[test]
@@ -17416,6 +17697,12 @@ mod page_num_fmt_labels {
         assert_eq!(format_num(NumFmt::Hebrew1, 11), "יא");
         assert_eq!(format_num(NumFmt::Hebrew1, 15), "טו");
         assert_eq!(format_num(NumFmt::Hebrew1, 100), "ק");
+        // #161: 16 avoids the divine-name spelling like 15; 0 and >999
+        // fall back to decimal.
+        assert_eq!(format_num(NumFmt::Hebrew1, 16), "טז");
+        assert_eq!(format_num(NumFmt::Hebrew1, 0), "0");
+        assert_eq!(format_num(NumFmt::Hebrew1, 999), "תתקצט");
+        assert_eq!(format_num(NumFmt::Hebrew1, 1000), "1000");
     }
 
     #[test]
@@ -17941,6 +18228,76 @@ mod field_tests {
             "15 March 2020"
         );
         assert_eq!(format_date_picture("M/d/yyyy", 2020, 3, 15), "3/15/2020");
+    }
+
+    fn civil(y: i32, m: u32, d: u32, h: u32, min: u32, s: u32) -> CivilDateTime {
+        CivilDateTime { y, m, d, h, min, s }
+    }
+
+    #[test]
+    fn w3cdtf_offsets_fold_into_utc() {
+        // #140: numeric zones were dropped with everything past char 19.
+        assert_eq!(
+            parse_w3cdtf("2024-01-01T00:30:00+01:00"),
+            Some(civil(2023, 12, 31, 23, 30, 0))
+        );
+        assert_eq!(
+            parse_w3cdtf("2024-02-28T22:15:00-05:30"),
+            Some(civil(2024, 2, 29, 3, 45, 0)),
+            "negative offsets roll forward across a leap day"
+        );
+        assert_eq!(
+            parse_w3cdtf("2018-07-04T15:30:00.25Z"),
+            Some(civil(2018, 7, 4, 15, 30, 0))
+        );
+        assert_eq!(
+            parse_w3cdtf("2018-07-04T15:30Z"),
+            Some(civil(2018, 7, 4, 15, 30, 0))
+        );
+        assert_eq!(parse_w3cdtf("2018-07-04"), Some(civil(2018, 7, 4, 0, 0, 0)));
+        for bad in [
+            "",
+            "2018-07",
+            "2018-13-01",
+            "2018-07-04T1:30:00Z",
+            "2018-07-04T15:30:00+0100",
+            "2018-07-04T15:30:00Zjunk",
+        ] {
+            assert_eq!(parse_w3cdtf(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn core_dates_read_elements_not_text() {
+        let core = core_dates_from_xml(
+            r#"<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"><dc:title>Guide:created for review</dc:title><dc:description>&lt;cp:lastPrinted&gt;1999</dc:description><dcterms:created>2018-07-04T15:30:00Z</dcterms:created><cp:lastPrinted>2019-11-22T08:00:00Z</cp:lastPrinted></cp:coreProperties>"#,
+        );
+        assert_eq!(core.created, Some(civil(2018, 7, 4, 15, 30, 0)));
+        assert_eq!(core.printed, Some(civil(2019, 11, 22, 8, 0, 0)));
+        assert_eq!(core.modified, None);
+    }
+
+    #[test]
+    fn unix_seconds_map_to_utc_civil_time() {
+        assert_eq!(civil_from_unix_secs(0), civil(1970, 1, 1, 0, 0, 0));
+        assert_eq!(
+            civil_from_unix_secs(1_700_000_000),
+            civil(2023, 11, 14, 22, 13, 20)
+        );
+        assert_eq!(civil_from_unix_secs(-1), civil(1969, 12, 31, 23, 59, 59));
+        for days in [-719_468_i64, -1, 0, 59, 11_016, 19_782, 2_932_896] {
+            let (y, m, d) = civil_from_unix_days(days);
+            assert_eq!(unix_days_from_civil(y, m, d), days);
+        }
+    }
+
+    #[test]
+    fn time_field_paints_the_given_utc_instant() {
+        // #140: deterministic HHmm instead of "any four digits".
+        let now = civil(2023, 11, 14, 22, 13, 20);
+        assert_eq!(datetime_field_text_at(" TIME \\@ \"HHmm\" ", now), "2213");
+        assert_eq!(datetime_field_text_at(" TIME ", now), "10:13 PM");
+        assert_eq!(datetime_field_text_at(" DATE ", now), "11/14/2023");
     }
 
     #[test]

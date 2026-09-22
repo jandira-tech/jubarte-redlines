@@ -14,17 +14,28 @@ fn crate_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// `src/convert/*.rs` lines whose text matches a word-boundary `mini`
+/// Every `.rs` file below `dir`, nested modules included.
+fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.is_dir() {
+            rust_files(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// `src/convert/**/*.rs` lines whose text matches a word-boundary `mini`
 /// (the plan.md grep; excludes `minimum`).
 fn mini_sites(root: &Path) -> Vec<(String, usize, String)> {
     let dir = root.join("src/convert");
     let mut sites = Vec::new();
-    let mut files: Vec<_> = fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "rs"))
-        .collect();
+    let mut files = Vec::new();
+    rust_files(&dir, &mut files);
     files.sort();
     for path in files {
         let rel = path
@@ -185,47 +196,89 @@ fn tuning_audit_excerpt_covers_shifted_line() {
     assert_eq!(hit.class, 'b');
 }
 
+/// Step 8 helpers: each needs its own parsed table row, in the file that
+/// defines it, with an allowed class. Prose mentions do not count.
+const STEP8_HELPERS: [(&str, &str); 4] = [
+    ("word_device_track", "a"),
+    ("word_device_paint", "a"),
+    ("word_device_pt", "a"),
+    ("apply_latent_ppr", "bc"),
+];
+
+fn helper_problems(root: &Path, rows: &[AuditRow]) -> Vec<String> {
+    let mut problems = Vec::new();
+    for (symbol, classes) in STEP8_HELPERS {
+        let Some(row) = rows.iter().find(|row| row.symbol == symbol) else {
+            problems.push(format!("{symbol}: no table row"));
+            continue;
+        };
+        if !classes.contains(row.class) {
+            problems.push(format!("{symbol}: class {} not in {classes}", row.class));
+        }
+        if row.disposition.is_empty() {
+            problems.push(format!("{symbol}: empty disposition"));
+        }
+        let defines = fs::read_to_string(root.join(&row.file))
+            .is_ok_and(|text| text.contains(&format!("fn {symbol}(")));
+        if !defines {
+            problems.push(format!("{symbol}: {} does not define it", row.file));
+        }
+    }
+    problems
+}
+
 #[test]
 fn tuning_audit_starts_with_word_device_and_heading_gap() {
-    let body = fs::read_to_string(crate_root().join("TUNING_AUDIT.md")).unwrap_or_default();
+    let root = crate_root();
+    let body = fs::read_to_string(root.join("TUNING_AUDIT.md")).unwrap_or_default();
     assert!(
         !body.is_empty(),
         "TUNING_AUDIT.md must exist (plan Step 8 starts with word_device_* and heading gap)"
     );
-    for needle in [
-        "word_device_track",
-        "word_device_paint",
-        "word_device_pt",
-        "apply_latent_ppr",
-    ] {
-        assert!(
-            body.contains(needle),
-            "Step 8 must audit {needle}; table body missing the symbol"
-        );
+    let (_, rows) = audit_table(&body);
+    let problems = helper_problems(&root, &rows);
+    assert!(problems.is_empty(), "Step 8 helper rows: {problems:#?}");
+}
+
+#[test]
+fn helper_rows_reject_prose_only_reclassified_and_misfiled_helpers() {
+    // #109: substring needles passed with the word_device_pt row deleted
+    // (the intro prose names it) and with it reclassified.
+    let root = crate_root();
+    let full = fs::read_to_string(root.join("TUNING_AUDIT.md")).unwrap_or_default();
+    let without = |needle: &str| {
+        full.lines()
+            .filter(|l| !(l.trim_start().starts_with('|') && l.contains(needle)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let (_, rows) = audit_table(&without("| word_device_pt |"));
+    assert!(
+        helper_problems(&root, &rows)
+            .iter()
+            .any(|p| p.starts_with("word_device_pt: no table row")),
+        "a deleted row is caught even though prose still names the helper"
+    );
+    let (_, mut rows) = audit_table(&full);
+    for row in &mut rows {
+        if row.symbol == "word_device_pt" {
+            row.class = 'b';
+        }
+        if row.symbol == "apply_latent_ppr" {
+            row.file = "src/convert/font.rs".into();
+        }
     }
-    let mut saw_device_a = false;
-    let mut saw_latent = false;
-    for line in body.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with('|') {
-            continue;
-        }
-        let lower = trimmed.to_ascii_lowercase();
-        if lower.contains("word_device_track") || lower.contains("word_device_paint") {
-            assert!(
-                lower.contains("| a |") || lower.contains("| a|"),
-                "word_device_* is class (a) font-metric substitute: {line}"
-            );
-            saw_device_a = true;
-        }
-        if lower.contains("apply_latent_ppr") {
-            assert!(
-                lower.contains("| c |") || lower.contains("| c|") || lower.contains("| b |"),
-                "heading-gap apply_latent_ppr needs class b or c: {line}"
-            );
-            saw_latent = true;
-        }
-    }
-    assert!(saw_device_a, "word_device_* rows must be class a");
-    assert!(saw_latent, "apply_latent_ppr row must exist");
+    let problems = helper_problems(&root, &rows);
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.starts_with("word_device_pt: class b")),
+        "{problems:?}"
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.starts_with("apply_latent_ppr: src/convert/font.rs does not define")),
+        "{problems:?}"
+    );
 }
