@@ -66,7 +66,7 @@ Disposition is the action, not a score. Parked items stay parked; this table doe
 | src/convert/mod.rs | 3886 | mini 78, mini empty | b | Document-specific mini site; remeasure 398+76. // sample −2.5 (mini 78 and mini empty). Skip empty |
 | src/convert/mod.rs | 3952 | mini 59 | b | KEEP: ITT drop on named fixtures. // rewrite trPr/del rows — that was mini 59 (−5 ITT). |
 | src/convert/mod.rs | 4160 | mini 221–224 | b | KEEP: ITT drop on named fixtures. // (mini 221–224) dropped Cicero −0.027 ITT (2.6pt pad, >5px align). |
-| src/convert/mod.rs | 4165 | mini 430 | b | Document-specific mini site; remeasure 398+76. // Fixed L/R pad 0 (mini 430) was Word Test 1 x=90 (+0.059) but |
+| src/convert/mod.rs | 6728 | mini 430 | b | RETIRED by #120: fixed tables honour tblCellMar L/R and the Mode<15 edge pull uses the same mar_l (Test 8 R1C1 stays at x=90). Measured on the stack tip: file_134 +2.04, table_bookmark_end +2.92, 0 regressions over 474 (mini 430 had zeroed the pad instead). |
 | src/convert/mod.rs | 4329 | mini 59 | b | Document-specific mini site; remeasure 398+76. // lines — extra ink vs the oracle, not mini 59 (whole-row rewrite). |
 | src/convert/mod.rs | 4330 | mini 739 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Mini 739 repeated once per cellDel (Word 3 lines) but ITT-neg |
 | src/convert/mod.rs | 4488 | mini 401 | b | KEEP: measured gate. /// Body without pBdr stays collapsed (mini 401). Courier New body |
