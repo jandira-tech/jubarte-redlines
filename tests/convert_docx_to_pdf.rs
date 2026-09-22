@@ -4931,10 +4931,9 @@ fn four_row_table_stays_on_one_page() {
 }
 
 #[test]
-fn trailing_empty_cell_para_does_not_double_row() {
-    // Word cells end with an empty <w:p>. Joining that with \\n made every
-    // row two lines (table-median cluster dropped ~2–7 points; Strict01
-    // tables spilled). Skip empty cell paras; keep stacking real ones.
+fn trailing_empty_cell_para_is_a_word_line() {
+    // A cell's trailing empty <w:p> is a real paragraph: Word gives it a
+    // line (0126ebd8), so 30 two-paragraph rows are 60 lines, two pages.
     let mut body = String::from("<w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>");
     for i in 0..30 {
         body.push_str(&format!(
@@ -4948,8 +4947,8 @@ fn trailing_empty_cell_para_does_not_double_row() {
     let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert trailing empty cell p");
     assert_eq!(
         pdf_page_count(&pdf),
-        1,
-        "trailing empty cell para must not turn 30 single-line rows into two pages, got {}",
+        2,
+        "30 rows of text + empty paragraph are 60 Word lines, two pages; got {}",
         pdf_page_count(&pdf)
     );
 }
@@ -7696,14 +7695,19 @@ fn official_file_146_cambria_body_uses_word_auto_leading() {
         .map(|w| w[0] - w[1])
         .filter(|g| (10.0..14.5).contains(g))
         .collect();
-    let med = {
-        let mut g = gaps.clone();
-        g.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        g[g.len() / 2]
-    };
+    // The body pitch is the most frequent gap; cell and table edges add
+    // one-off gaps that a median would mix in.
+    let mut counts: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
+    for g in &gaps {
+        *counts.entry((g * 10.0).round() as i32).or_default() += 1;
+    }
+    let pitch = counts
+        .into_iter()
+        .max_by_key(|(g, n)| (*n, *g))
+        .map_or(0.0, |(g, _)| g as f32 / 10.0);
     assert!(
-        med >= 12.4,
-        "Cambria 11 auto must be size×1.15 not size×1; median gap={med} gaps={gaps:?}"
+        pitch >= 12.4,
+        "Cambria 11 auto must be size×1.15 not size×1; body pitch={pitch} gaps={gaps:?}"
     );
 }
 
@@ -18347,11 +18351,10 @@ fn table_default_cell_left_is_word_108_twips() {
 }
 
 #[test]
-fn table_cell_interior_empty_para_stays_skipped_after_mini_78() {
-    // Word file_146 code listing wants the interior blank (~24pt).
-    // Keeping interior empties (mini empty) was file_146 +3.0 but
-    // eigenpal_2 −8.3 / sample −2.5 and median 51.20→50.57. Skip all
-    // empty cell paras, including interior.
+fn table_cell_interior_empty_para_is_a_word_line() {
+    // Word file_146 code listing keeps the interior blank (~24pt), and
+    // fixtures_500 0126ebd8 menu cells space rows with empty paragraphs.
+    // Mini 78 skipped them for a bench score; Word paints the line.
     let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>\
          <w:tr><w:tc>\
            <w:p><w:r><w:rPr><w:rFonts w:ascii=\"Courier New\"/>\
@@ -18363,11 +18366,11 @@ fn table_cell_interior_empty_para_stays_skipped_after_mini_78() {
          </w:tc></w:tr></w:tbl><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert interior empty cell para");
     let ys = distinct_tf_ys(&pdf, "9.50 Tf");
-    assert_eq!(ys.len(), 2, "no painted blank line; ys={ys:?}");
+    assert_eq!(ys.len(), 2, "the blank line paints no glyphs; ys={ys:?}");
     let gap = (ys[0] - ys[1]).abs();
     assert!(
-        gap < 20.0,
-        "mini 78/empty interior blank was ITT-wrong; gap={gap} ys={ys:?}"
+        (22.0..=30.0).contains(&gap),
+        "Word keeps the interior blank line between the two code lines; gap={gap} ys={ys:?}"
     );
 }
 
@@ -25711,5 +25714,71 @@ fn an_installed_family_outside_the_catalogue_paints_its_own_face() {
     assert!(
         hay.contains("Tahoma"),
         "Tahoma runs must embed the installed Tahoma face"
+    );
+}
+
+#[test]
+fn an_empty_cell_paragraph_is_a_line() {
+    // fixtures_500 0126ebd8: menu cells alternate text and empty
+    // paragraphs; Word gives each empty one a full Arial 12 line (13.8pt),
+    // so rows are 27.6pt apart. Skipping them packed the menu onto two
+    // pages (Word three).
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+             <w:name w:val=\"Normal\"/>\
+             <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"24\"/></w:rPr></w:style>\
+         </w:styles>";
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>\
+         <w:p><w:r><w:t>Alpha</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr></w:p>\
+         <w:p><w:r><w:t>Bravo</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("convert empty cell para");
+    let hay = String::from_utf8_lossy(&pdf);
+    let a = pdf_tj_xy(&hay, "A").first().copied().expect("Alpha");
+    let b = pdf_tj_xy(&hay, "B").first().copied().expect("Bravo");
+    let gap = a.1 - b.1;
+    assert!(
+        (gap - 27.6).abs() < 0.3,
+        "Alpha→Bravo spans the empty line: 2 × 13.8; gap={gap}"
+    );
+}
+
+#[test]
+fn a_row_taller_than_the_page_rest_splits_across_pages() {
+    // fixtures_500 0126ebd8: a one-row menu table (trHeight 654pt,
+    // ~690pt of lines) follows a few paragraphs. Word breaks the row at
+    // the page end and continues it; moving the row whole to the next
+    // page left page 2 blank and pushed the document to four pages.
+    let mut body = String::from("<w:p><w:r><w:t>Intro</w:t></w:r></w:p>".repeat(10).as_str());
+    let cell: String = (0..60)
+        .map(|i| {
+            format!(
+                "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>item{i}</w:t></w:r></w:p>"
+            )
+        })
+        .collect();
+    body.push_str(&format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>{cell}</w:tc></w:tr></w:tbl>\
+         <w:p><w:r><w:t>Outro</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert tall row");
+    let pages = pdf_content_streams(&pdf);
+    let page1_lines = pages[0]
+        .lines()
+        .filter(|l| l.contains(" Tj") || l.contains(" TJ"))
+        .count();
+    assert!(
+        page1_lines > 20,
+        "the row starts on page 1 under the 10 intro lines; page 1 lines={page1_lines}"
+    );
+    assert_eq!(
+        pages.len(),
+        2,
+        "60 cell lines + 10 intro lines fill two pages"
     );
 }

@@ -885,6 +885,8 @@ const FOOTNOTE_SEP_GAP: f32 = 12.0;
 struct TableGeom {
     row_min: Vec<f32>,
     row_exact: Vec<bool>,
+    /// `w:trPr/w:cantSplit`: Word keeps the row on one page.
+    row_cant_split: Vec<bool>,
     pad_v: f32,
     width: TblWidth,
     /// No `tblStyle`. Shaded callouts keep docDefaults after + chrome
@@ -983,6 +985,7 @@ struct Watermark {
     rotate_deg: f32,
 }
 
+#[derive(Clone)]
 struct CellPara {
     runs: Vec<TextRun>,
     style: ParaStyle,
@@ -1024,6 +1027,43 @@ struct TableCell {
 impl TableCell {
     fn runs(&self) -> impl Iterator<Item = &TextRun> {
         self.paras.iter().flat_map(|p| p.runs.iter())
+    }
+
+    /// This cell's geometry with other paragraphs (one part of a split row).
+    fn with_paras(&self, paras: Vec<CellPara>) -> TableCell {
+        TableCell {
+            paras,
+            nested: Vec::new(),
+            nested_at: Vec::new(),
+            col: self.col,
+            colspan: self.colspan,
+            rowspan: self.rowspan,
+            fill: self.fill,
+            valign_center: self.valign_center,
+            align: self.align,
+            pad_l: self.pad_l,
+            pad_r: self.pad_r,
+            pad_t: self.pad_t,
+            pad_b: self.pad_b,
+            nowrap: self.nowrap,
+            borders: self.borders,
+            style_fill: self.style_fill,
+        }
+    }
+}
+
+/// A table row as laid out: the parsed row, or one part of it after a split.
+enum RowSrc<'r> {
+    Orig(&'r [TableCell]),
+    Owned(Vec<TableCell>),
+}
+
+impl RowSrc<'_> {
+    fn cells(&self) -> &[TableCell] {
+        match self {
+            Self::Orig(row) => row,
+            Self::Owned(row) => row,
+        }
     }
 }
 
@@ -6416,6 +6456,7 @@ fn table_block(
     let mut raw_rows: Vec<Vec<RawCell>> = Vec::new();
     let mut row_min = Vec::new();
     let mut row_exact = Vec::new();
+    let mut row_cant_split = Vec::new();
     let mut header_rows = 0usize;
     let mut still_header = true;
     // Direct `w:tr` only — descendants() would flatten nested tables into this one.
@@ -6462,19 +6503,21 @@ fn table_block(
                         toc: false,
                     },
                 );
-                // Word cells almost always end with an empty <w:p>.
-                // Counting that as a \\n doubled every row (table median).
-                // Interior empties are Word-taller (file_146 listing +3
-                // ITT) but shipping them dropped eigenpal_2 −8.3 /
-                // sample −2.5 (mini 78 and mini empty). Skip empty
-                // cell paras unless they paint `w:pBdr` (Sign-off
-                // signature line: empty p + bottom E2E8F0).
+                // An empty cell paragraph is a Word line like any other
+                // (fixtures_500 0126ebd8 menu rows are 27.6pt apart, not
+                // 13.8), sized from its mark's pPr/rPr.
                 let empty_ink =
                     mark.is_empty() && runs.iter().all(|run| run.text.trim().is_empty());
                 let cell_rule = pstyle.border_bottom.map(|(c, w, _)| (c, w));
                 if empty_ink && cell_rule.is_none() {
-                    blank_bookmarks.extend(bookmarks);
-                    continue;
+                    let mut mark_style = r.clone();
+                    if let Some(rpr) = dom
+                        .element(child, &W::p_pr())
+                        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+                    {
+                        apply_rpr(dom, rpr, &mut mark_style, &sheet.theme);
+                    }
+                    runs = vec![TextRun::new(" ", mark_style)];
                 }
                 if cell_paras.is_empty() {
                     cell_align = pstyle.align;
@@ -6550,6 +6593,11 @@ fn table_block(
             let (h, exact) = row_height_spec(dom, row);
             row_min.push(h);
             row_exact.push(exact);
+            row_cant_split.push(
+                first_named(dom, row, "trPr")
+                    .and_then(|pr| first_named(dom, pr, "cantSplit"))
+                    .is_some_and(|n| !val_is_false(dom, Some(n))),
+            );
             let hdr = first_named(dom, row, "trPr")
                 .and_then(|pr| first_named(dom, pr, "tblHeader"))
                 .is_some_and(|n| !val_is_false(dom, Some(n)));
@@ -6613,6 +6661,7 @@ fn table_block(
             TableGeom {
                 row_min,
                 row_exact,
+                row_cant_split,
                 pad_v: table_pad_v(dom, table),
                 width: table_pref_width(dom, table),
                 unstyled,
@@ -14187,8 +14236,30 @@ impl<'a> Layout<'a> {
         let color = [0.0, 0.0, 0.0];
         let header_n = geom.header_rows.min(rows.len());
         let header_h: f32 = row_h.iter().take(header_n).copied().sum();
-        for ri in 0..rows.len() {
-            let rh = row_h[ri];
+        // (cells, height, cantSplit, trHeight). A row split at a page end
+        // becomes two owned entries (fixtures_500 0126ebd8: Word breaks a
+        // 690pt menu row across pages; moving it whole left a blank page).
+        let mut work: Vec<(RowSrc<'_>, f32, bool, f32)> = rows
+            .iter()
+            .zip(&row_h)
+            .enumerate()
+            .map(|(i, (row, h))| {
+                let cant = geom.row_cant_split.get(i).copied().unwrap_or(false);
+                let min = geom.row_min.get(i).copied().unwrap_or(0.0);
+                (RowSrc::Orig(row), *h, cant, min)
+            })
+            .collect();
+        let mut ri = 0;
+        while ri < work.len() {
+            let splittable = self.nested_depth == 0 && ri >= header_n && !work[ri].2;
+            if splittable {
+                self.split_work_row(&mut work, ri, &col_w);
+            }
+            if splittable && self.y - work[ri].1 < self.body_floor && !self.at_page_top {
+                self.ensure(work[ri].1);
+                self.split_work_row(&mut work, ri, &col_w);
+            }
+            let rh = work[ri].1;
             let will_break = self.nested_depth == 0
                 && header_n > 0
                 && ri >= header_n
@@ -14201,8 +14272,8 @@ impl<'a> Layout<'a> {
                 vec![ri]
             };
             for ri in paint {
-                let row = &rows[ri];
-                let rh = row_h[ri];
+                let row = work[ri].0.cells();
+                let rh = work[ri].1;
                 self.at_page_top = false;
                 self.y -= rh;
                 let y_top = self.y + rh;
@@ -14211,7 +14282,12 @@ impl<'a> Layout<'a> {
                     let w: f32 = (0..cell.colspan)
                         .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
                         .sum();
-                    let h: f32 = row_h.iter().skip(ri).take(cell.rowspan.max(1)).sum();
+                    let h: f32 = work
+                        .iter()
+                        .skip(ri)
+                        .take(cell.rowspan.max(1))
+                        .map(|w| w.1)
+                        .sum();
                     let bottom = y_top - h;
                     let pad_l = cell.pad_l;
                     let pad_r = cell.pad_r;
@@ -14250,7 +14326,7 @@ impl<'a> Layout<'a> {
                             color: fill,
                         });
                     }
-                    let last_row = ri + cell.rowspan.max(1) >= rows.len();
+                    let last_row = ri + cell.rowspan.max(1) >= work.len();
                     let last_col = cell.col + cell.colspan >= col_w.len();
                     self.stroke_cell(
                         [x, bottom, w, h],
@@ -14375,12 +14451,61 @@ impl<'a> Layout<'a> {
                     self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
                 }
             }
+            ri += 1;
         }
         // Styled TableGrid / body tables keep 4pt chrome. Layout sets
         // after=10 only for unstyled callouts immediately before Heading*.
         // Do not drop unstyled after (file_146 heading 4pt): 12 tables × 4pt
         // packed official file_146 7→6pp.
         self.y -= style.after.max(4.0);
+    }
+
+    /// Splits `work[ri]` at the page end when it does not fit: each cell
+    /// keeps the paragraphs that fit, the rest continue as the next row.
+    /// Rows with rowspans, nested tables or vAlign center stay whole.
+    /// Word never breaks a row inside its trHeight: 0000c5b9's 160pt row
+    /// moves whole when 73pt remain, while 0126ebd8's 654pt row breaks
+    /// only past its minimum.
+    fn split_work_row(
+        &self,
+        work: &mut Vec<(RowSrc<'_>, f32, bool, f32)>,
+        ri: usize,
+        col_w: &[f32],
+    ) {
+        let room = self.y - self.body_floor;
+        let (row, rh, min) = (work[ri].0.cells(), work[ri].1, work[ri].3);
+        if rh <= room + 0.5
+            || room < 1.0
+            || room < min
+            || row
+                .iter()
+                .any(|c| c.rowspan > 1 || !c.nested.is_empty() || c.valign_center)
+        {
+            return;
+        }
+        let height =
+            |cell: &TableCell| cell_content_height(self.fonts, cell, col_w, self.space_for_ul);
+        let (mut head, mut tail) = (Vec::new(), Vec::new());
+        let (mut any_head, mut any_tail) = (false, false);
+        for cell in row {
+            let mut k = 0;
+            while k < cell.paras.len()
+                && height(&cell.with_paras(cell.paras[..=k].to_vec())) <= room
+            {
+                k += 1;
+            }
+            any_head |= k > 0;
+            any_tail |= k < cell.paras.len();
+            head.push(cell.with_paras(cell.paras[..k].to_vec()));
+            tail.push(cell.with_paras(cell.paras[k..].to_vec()));
+        }
+        if !any_head || !any_tail {
+            return;
+        }
+        let tail_h = tail.iter().map(height).fold(0.0_f32, f32::max);
+        // The head fills the page: its borders run to the bottom margin.
+        work[ri] = (RowSrc::Owned(head), room - 0.01, false, 0.0);
+        work.insert(ri + 1, (RowSrc::Owned(tail), tail_h, false, 0.0));
     }
 
     fn emit_nested_table(&mut self, block: &Block, left: f32, top: f32, avail: f32) -> f32 {
