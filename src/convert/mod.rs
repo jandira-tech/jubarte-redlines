@@ -812,7 +812,13 @@ enum Block {
     /// Hard page / next-page section break (`w:br type=page` or non-continuous `sectPr`).
     /// `next` is the following section's geometry + chrome (sd_2517 later
     /// sections are 1800-twip with their own footer; first is 2160/vAlign).
-    PageBreak { next: Option<Box<SectionChrome>> },
+    /// `manual` marks a run-level `w:br type=page`: the only break
+    /// `suppressSpBfAfterPgBrk` applies to (not `pageBreakBefore`, not the
+    /// break inserted before a Cover Pages SDT).
+    PageBreak {
+        next: Option<Box<SectionChrome>>,
+        manual: bool,
+    },
     /// `w:br type=column` — next newspaper column on this page (xml leftover).
     ColumnBreak,
 }
@@ -3820,39 +3826,65 @@ fn lvl_indent(dom: &Dom, lvl: NodeId) -> (f32, f32) {
     (left, hanging)
 }
 
+/// `word/settings.xml` parsed once per reader; `None` when the part is absent.
+fn settings_dom(pkg: &PartFs) -> Option<(Dom, NodeId)> {
+    let xml = pkg.part_string("word/settings.xml")?;
+    settings_dom_xml(&xml)
+}
+
+fn settings_dom_xml(xml: &str) -> Option<(Dom, NodeId)> {
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(xml);
+    let root = dom.root(doc)?;
+    Some((dom, root))
+}
+
+/// ST_OnOff `w:<local>` under `w:settings` (direct or inside `w:compat`):
+/// absent → off; present → on unless `w:val` is `0`/`false`/`off`
+/// (ECMA-376 17.17.4). Matched as elements, so quoting style, attribute
+/// order and look-alike names cannot flip it.
+fn settings_flag_xml(xml: &str, local: &str) -> bool {
+    settings_dom_xml(xml).is_some_and(|(dom, root)| {
+        dom.descendants(root, Some(&W::name(local)))
+            .into_iter()
+            .next()
+            .is_some_and(|n| !val_is_false(&dom, Some(n)))
+    })
+}
+
+fn settings_flag(pkg: &PartFs, local: &str) -> bool {
+    pkg.part_string("word/settings.xml")
+        .is_some_and(|xml| settings_flag_xml(&xml, local))
+}
+
 fn settings_track_revisions(pkg: &PartFs) -> bool {
-    let Some(xml) = pkg.part_string("word/settings.xml") else {
-        return false;
-    };
-    xml.contains("trackRevisions")
-        && !xml.contains("trackRevisions w:val=\"0\"")
-        && !xml.contains("trackRevisions w:val=\"false\"")
+    settings_flag(pkg, "trackRevisions")
 }
 
 /// Word `w:compat/w:suppressSpBfAfterPgBrk`: drop space-before after a
 /// hard `w:br type=page`. Absent (the default) keeps the before.
 fn settings_suppress_sp_bf_after_pg_brk(pkg: &PartFs) -> bool {
-    let Some(xml) = pkg.part_string("word/settings.xml") else {
-        return false;
-    };
-    xml.contains("suppressSpBfAfterPgBrk")
-        && !xml.contains("suppressSpBfAfterPgBrk w:val=\"0\"")
-        && !xml.contains("suppressSpBfAfterPgBrk w:val=\"false\"")
+    settings_flag(pkg, "suppressSpBfAfterPgBrk")
 }
 
 /// `w:compatSetting name="compatibilityMode"`. Absent → 12 (Word 2007),
 /// which uses the pre-2013 table-edge rule (plan xml 3.3).
 fn settings_compat_mode(pkg: &PartFs) -> u8 {
-    let Some(xml) = pkg.part_string("word/settings.xml") else {
+    pkg.part_string("word/settings.xml")
+        .map_or(12, |xml| settings_compat_mode_xml(&xml))
+}
+
+/// The setting is keyed by `name` *and* `uri`: another vendor's
+/// `compatibilityMode` under its own URI is not Word's.
+const WORD_COMPAT_SETTING_URI: &str = "http://schemas.microsoft.com/office/word";
+
+fn settings_compat_mode_xml(xml: &str) -> u8 {
+    let Some((dom, root)) = settings_dom_xml(xml) else {
         return 12;
     };
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let Some(root) = dom.root(doc) else {
-        return 12;
-    };
-    for node in descendants_local(&dom, root, "compatSetting") {
+    for node in dom.descendants(root, Some(&W::name("compatSetting"))) {
         if attr_any(&dom, node, "name") == Some("compatibilityMode")
+            && attr_any(&dom, node, "uri") == Some(WORD_COMPAT_SETTING_URI)
             && let Some(mode) = attr_any(&dom, node, "val").and_then(|s| s.parse().ok())
         {
             return mode;
@@ -3863,46 +3895,132 @@ fn settings_compat_mode(pkg: &PartFs) -> u8 {
 
 /// `w:evenAndOddHeaders`: type=even header/footer on even page numbers.
 fn settings_even_and_odd_headers(pkg: &PartFs) -> bool {
-    let Some(xml) = pkg.part_string("word/settings.xml") else {
-        return false;
-    };
-    xml.contains("evenAndOddHeaders")
-        && !xml.contains("evenAndOddHeaders w:val=\"0\"")
-        && !xml.contains("evenAndOddHeaders w:val=\"false\"")
+    settings_flag(pkg, "evenAndOddHeaders")
 }
 
 /// `w:mirrorMargins`: swap pgMar left/right on even page numbers.
 fn settings_mirror_margins(pkg: &PartFs) -> bool {
-    let Some(xml) = pkg.part_string("word/settings.xml") else {
-        return false;
-    };
-    xml.contains("mirrorMargins")
-        && !xml.contains("mirrorMargins w:val=\"0\"")
-        && !xml.contains("mirrorMargins w:val=\"false\"")
+    settings_flag(pkg, "mirrorMargins")
 }
 
 /// `w:compat/w:ulTrailSpace`: underline trailing spaces (ECMA-376 17.15.3.63).
 /// Omitted → off. Present (default on) paints the pad Word otherwise skips.
 fn settings_ul_trail_space(pkg: &PartFs) -> bool {
-    let Some(xml) = pkg.part_string("word/settings.xml") else {
-        return false;
-    };
-    xml.contains("ulTrailSpace")
-        && !xml.contains("ulTrailSpace w:val=\"0\"")
-        && !xml.contains("ulTrailSpace w:val=\"false\"")
-        && !xml.contains("ulTrailSpace w:val=\"off\"")
+    settings_flag(pkg, "ulTrailSpace")
 }
 
 /// `w:compat/w:spaceForUL`: extra descent under underlined East Asian
 /// (ECMA-376 17.15.3.40). Omitted → off. Present adds max(3% of size, 2pt).
 fn settings_space_for_ul(pkg: &PartFs) -> bool {
-    let Some(xml) = pkg.part_string("word/settings.xml") else {
-        return false;
-    };
-    xml.contains("spaceForUL")
-        && !xml.contains("spaceForUL w:val=\"0\"")
-        && !xml.contains("spaceForUL w:val=\"false\"")
-        && !xml.contains("spaceForUL w:val=\"off\"")
+    settings_flag(pkg, "spaceForUL")
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    fn settings(body: &str) -> String {
+        format!(r#"<w:settings xmlns:w="{W_NS}">{body}</w:settings>"#)
+    }
+
+    #[test]
+    fn on_off_flags_honour_every_false_spelling_and_quote_style() {
+        for local in [
+            "trackRevisions",
+            "suppressSpBfAfterPgBrk",
+            "evenAndOddHeaders",
+            "mirrorMargins",
+            "displayBackgroundShape",
+        ] {
+            assert!(!settings_flag_xml(&settings(""), local), "{local} absent");
+            assert!(settings_flag_xml(
+                &settings(&format!("<w:{local}/>")),
+                local
+            ));
+            assert!(settings_flag_xml(
+                &settings(&format!(r#"<w:{local} w:val="on"/>"#)),
+                local
+            ));
+            for off in [
+                r#"w:val="0""#,
+                r#"w:val="false""#,
+                r#"w:val="off""#,
+                "w:val='false'",
+                "w:val='off'",
+            ] {
+                assert!(
+                    !settings_flag_xml(&settings(&format!("<w:{local} {off}/>")), local),
+                    "{local} {off} is off"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compat_flags_are_read_inside_w_compat() {
+        for local in [
+            "ulTrailSpace",
+            "spaceForUL",
+            "doNotExpandShiftReturn",
+            "balanceSingleByteDoubleByteWidth",
+        ] {
+            let on = settings(&format!("<w:compat><w:{local}/></w:compat>"));
+            assert!(settings_flag_xml(&on, local), "{local}");
+            let off = settings(&format!("<w:compat><w:{local} w:val='0'/></w:compat>"));
+            assert!(!settings_flag_xml(&off, local), "{local} val='0'");
+        }
+    }
+
+    #[test]
+    fn flags_ignore_look_alike_names_and_foreign_namespaces() {
+        // Substring matching turned these on: a longer local name, and the
+        // same local name in another vendor's namespace.
+        let xml = settings(r#"<w:mirrorMarginsX/><x:evenAndOddHeaders xmlns:x="urn:not-word"/>"#);
+        assert!(!settings_flag_xml(&xml, "mirrorMargins"));
+        assert!(!settings_flag_xml(&xml, "evenAndOddHeaders"));
+    }
+
+    #[test]
+    fn compat_mode_requires_the_word_uri() {
+        let word = settings(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#,
+        );
+        assert_eq!(settings_compat_mode_xml(&word), 15);
+        let foreign = settings(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="urn:other-vendor" w:val="15"/></w:compat>"#,
+        );
+        assert_eq!(
+            settings_compat_mode_xml(&foreign),
+            12,
+            "foreign URI is not Word's mode"
+        );
+        assert_eq!(settings_compat_mode_xml(&settings("")), 12);
+    }
+
+    #[test]
+    fn character_spacing_reads_the_attribute_not_the_text() {
+        let kana =
+            settings(r#"<w:characterSpacingControl w:val="compressPunctuationAndJapaneseKana"/>"#);
+        assert!(matches!(
+            settings_character_spacing_xml(&kana),
+            CharacterSpacing::CompressPunctuationAndKana
+        ));
+        let punct = settings(r#"<w:characterSpacingControl w:val='compressPunctuation'/>"#);
+        assert!(matches!(
+            settings_character_spacing_xml(&punct),
+            CharacterSpacing::CompressPunctuation
+        ));
+        // The token elsewhere (a doc variable) is not the setting.
+        let decoy = settings(
+            r#"<w:characterSpacingControl w:val="doNotCompress"/><w:docVars><w:docVar w:name="n" w:val="compressPunctuation"/></w:docVars>"#,
+        );
+        assert!(matches!(
+            settings_character_spacing_xml(&decoy),
+            CharacterSpacing::DoNotCompress
+        ));
+    }
 }
 
 fn space_for_ul_extra(size: f32) -> f32 {
@@ -3912,25 +4030,13 @@ fn space_for_ul_extra(size: f32) -> f32 {
 /// `w:compat/w:doNotExpandShiftReturn` (ECMA-376 17.15.3.10).
 /// Present: a justified line ending at `w:br` is not expanded.
 fn settings_do_not_expand_shift_return(pkg: &PartFs) -> bool {
-    let Some(xml) = pkg.part_string("word/settings.xml") else {
-        return false;
-    };
-    xml.contains("doNotExpandShiftReturn")
-        && !xml.contains("doNotExpandShiftReturn w:val=\"0\"")
-        && !xml.contains("doNotExpandShiftReturn w:val=\"false\"")
-        && !xml.contains("doNotExpandShiftReturn w:val=\"off\"")
+    settings_flag(pkg, "doNotExpandShiftReturn")
 }
 
 /// `w:compat/w:balanceSingleByteDoubleByteWidth` (ECMA-376 17.15.3.3).
 /// Present: SBCS glyph advance is at least the font em (DBCS slot).
 fn settings_balance_sbcs_dbcs(pkg: &PartFs) -> bool {
-    let Some(xml) = pkg.part_string("word/settings.xml") else {
-        return false;
-    };
-    xml.contains("balanceSingleByteDoubleByteWidth")
-        && !xml.contains("balanceSingleByteDoubleByteWidth w:val=\"0\"")
-        && !xml.contains("balanceSingleByteDoubleByteWidth w:val=\"false\"")
-        && !xml.contains("balanceSingleByteDoubleByteWidth w:val=\"off\"")
+    settings_flag(pkg, "balanceSingleByteDoubleByteWidth")
 }
 
 fn line_has_underlined_cjk(line: &[TextRun]) -> bool {
@@ -3938,18 +4044,25 @@ fn line_has_underlined_cjk(line: &[TextRun]) -> bool {
         .any(|r| r.style.underline && r.text.chars().any(is_cjk))
 }
 
-/// `w:characterSpacingControl/@w:val`. Longer token first: `compressPunctuation`
-/// is a prefix of `compressPunctuationAndJapaneseKana`.
+/// `w:characterSpacingControl/@w:val` (ECMA-376 17.15.1.18).
 fn settings_character_spacing(pkg: &PartFs) -> CharacterSpacing {
-    let Some(xml) = pkg.part_string("word/settings.xml") else {
-        return CharacterSpacing::DoNotCompress;
-    };
-    if xml.contains("compressPunctuationAndJapaneseKana") {
-        CharacterSpacing::CompressPunctuationAndKana
-    } else if xml.contains("compressPunctuation") {
-        CharacterSpacing::CompressPunctuation
-    } else {
-        CharacterSpacing::DoNotCompress
+    pkg.part_string("word/settings.xml")
+        .map_or(CharacterSpacing::DoNotCompress, |xml| {
+            settings_character_spacing_xml(&xml)
+        })
+}
+
+fn settings_character_spacing_xml(xml: &str) -> CharacterSpacing {
+    let val = settings_dom_xml(xml).and_then(|(dom, root)| {
+        dom.descendants(root, Some(&W::name("characterSpacingControl")))
+            .into_iter()
+            .next()
+            .and_then(|n| dom.attribute(n, &W::val()).map(str::to_string))
+    });
+    match val.as_deref() {
+        Some("compressPunctuationAndJapaneseKana") => CharacterSpacing::CompressPunctuationAndKana,
+        Some("compressPunctuation") => CharacterSpacing::CompressPunctuation,
+        _ => CharacterSpacing::DoNotCompress,
     }
 }
 
@@ -3985,13 +4098,7 @@ fn character_spacing_scale(mode: CharacterSpacing, ch: char) -> f32 {
 /// `w:displayBackgroundShape`: paint `w:background` in print layout / PDF.
 /// Omitted → off (ECMA-376 17.15.1.26).
 fn settings_display_background_shape(pkg: &PartFs) -> bool {
-    let Some(xml) = pkg.part_string("word/settings.xml") else {
-        return false;
-    };
-    xml.contains("displayBackgroundShape")
-        && !xml.contains("displayBackgroundShape w:val=\"0\"")
-        && !xml.contains("displayBackgroundShape w:val=\"false\"")
-        && !xml.contains("displayBackgroundShape w:val=\"off\"")
+    settings_flag(pkg, "displayBackgroundShape")
 }
 
 fn document_background_color(dom: &Dom, body: NodeId) -> Option<[f32; 3]> {
@@ -4009,10 +4116,7 @@ fn page_background_fill(pkg: &PartFs, dom: &Dom, body: NodeId) -> Option<[f32; 3
 
 /// Word factory is 720 twips (0.5in). Strict01 writes `36pt`; mcdoc `420`.
 fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
-    let xml = pkg.part_string("word/settings.xml")?;
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc)?;
+    let (dom, root) = settings_dom(pkg)?;
     let stop = first_named(&dom, root, "defaultTabStop")?;
     attr_any(&dom, stop, "val")
         .and_then(parse_len)
@@ -4442,7 +4546,10 @@ fn walk_container(
         let child = dom.child_at(node, idx);
         if dom.name_is(child, &W::p()) {
             if para_base(dom, child, ctx.sheet, None).0.page_break_before && !blocks.is_empty() {
-                blocks.push(Block::PageBreak { next: None });
+                blocks.push(Block::PageBreak {
+                    next: None,
+                    manual: false,
+                });
             }
             let page_br = para_has_page_break(dom, child);
             let column_br = para_has_column_break(dom, child);
@@ -4469,7 +4576,10 @@ fn walk_container(
                 } else {
                     None
                 };
-                blocks.push(Block::PageBreak { next });
+                blocks.push(Block::PageBreak {
+                    next,
+                    manual: page_br,
+                });
             } else if column_br {
                 blocks.push(Block::ColumnBreak);
             }
@@ -4495,7 +4605,10 @@ fn walk_container(
                 && !blocks.is_empty()
                 && !matches!(blocks.last(), Some(Block::PageBreak { .. }))
             {
-                blocks.push(Block::PageBreak { next: None });
+                blocks.push(Block::PageBreak {
+                    next: None,
+                    manual: false,
+                });
             }
             walk_container(ctx, dom, content, numbering, blocks, endnotes);
         } else if dom.name_is(child, &W::sect_pr()) && !is_final_sect(ctx.sects, child) {
@@ -4503,7 +4616,10 @@ fn walk_container(
             if sect_starts_new_page(dom, child) {
                 let next = next_sect_pr(ctx.sects, child)
                     .map(|s| Box::new(section_chrome(ctx.pkg, ctx.main, dom, s, ctx.sheet)));
-                blocks.push(Block::PageBreak { next });
+                blocks.push(Block::PageBreak {
+                    next,
+                    manual: false,
+                });
             }
         }
     }
@@ -9791,7 +9907,7 @@ impl<'a> Layout<'a> {
         }
     }
 
-    fn hard_page_break(&mut self, next: Option<&SectionChrome>) {
+    fn hard_page_break(&mut self, next: Option<&SectionChrome>, manual: bool) {
         // Word: an empty `w:br type=page` that does not fit on a full page
         // starts on the next page and still breaks — one skipped page
         // (sd_2517 1-4 / 13-9). Only explicit page breaks (not sectPr).
@@ -9838,11 +9954,8 @@ impl<'a> Layout<'a> {
             self.y = self.page.height - self.body_top;
             self.page_has_body = false;
             self.at_page_top = true;
-            self.suppress_space_before = if next.is_some() {
-                false
-            } else {
-                self.suppress_sp_bf_after_pg_brk
-            };
+            self.suppress_space_before =
+                next.is_none() && manual && self.suppress_sp_bf_after_pg_brk;
             self.refresh_body_floor();
             self.chrome();
             self.chrome_end = self.current().ops.len();
@@ -14626,7 +14739,7 @@ fn layout(
                 borders,
                 geom,
             } => lay.emit_table(cols, rows, style, *borders, geom),
-            Block::PageBreak { next } => lay.hard_page_break(next.as_deref()),
+            Block::PageBreak { next, manual } => lay.hard_page_break(next.as_deref(), *manual),
             Block::ColumnBreak => lay.column_break(),
         }
     }
@@ -26162,7 +26275,7 @@ mod comments_spacing_tests {
         let blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, fonts());
         let br = blocks
             .iter()
-            .filter(|b| matches!(b, Block::PageBreak { next } if next.is_some()))
+            .filter(|b| matches!(b, Block::PageBreak { next, .. } if next.is_some()))
             .count();
         let any_br = blocks
             .iter()
@@ -26181,7 +26294,7 @@ mod comments_spacing_tests {
         let seq: Vec<bool> = blocks
             .iter()
             .filter_map(|b| match b {
-                Block::PageBreak { next } => Some(next.is_some()),
+                Block::PageBreak { next, .. } => Some(next.is_some()),
                 _ => None,
             })
             .collect();

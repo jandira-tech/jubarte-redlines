@@ -16307,6 +16307,48 @@ fn space_before_suppressed_after_hard_break_when_compat_set() {
 }
 
 #[test]
+fn space_before_kept_after_hard_break_when_compat_is_off() {
+    // ST_OnOff: w:val="off" is false; the setting must not read as present.
+    let body = format!(
+        "<w:p><w:r><w:t>FirstPage</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         {}{}",
+        heading16(480, "TopHead"),
+        letter_body_sect()
+    );
+    let y = heading16_y(&minimal_docx_with_settings(
+        &body,
+        "<w:compat><w:suppressSpBfAfterPgBrk w:val=\"off\"/></w:compat>",
+    ));
+    let top = page_top_16pt_y();
+    assert!(
+        top - y >= 20.0,
+        "suppressSpBfAfterPgBrk val=off keeps space-before=24pt; top={top} y={y}"
+    );
+}
+
+#[test]
+fn space_before_kept_after_page_break_before_when_compat_set() {
+    // The compat option names a manual page break (w:br type=page). A
+    // paragraph's own pageBreakBefore is not one and keeps its before.
+    let body = format!(
+        "<w:p><w:r><w:t>FirstPage</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pageBreakBefore/><w:spacing w:before=\"480\"/></w:pPr>\
+           <w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>TopHead</w:t></w:r></w:p>{}",
+        letter_body_sect()
+    );
+    let y = heading16_y(&minimal_docx_with_settings(
+        &body,
+        "<w:compat><w:suppressSpBfAfterPgBrk/></w:compat>",
+    ));
+    let top = page_top_16pt_y();
+    assert!(
+        top - y >= 20.0,
+        "pageBreakBefore keeps space-before=24pt under the compat option; top={top} y={y}"
+    );
+}
+
+#[test]
 fn contextual_spacing_keeps_same_style_list_on_one_page() {
     // comments / I_am_sharing cluster: ListBullet+ListNumber set
     // w:contextualSpacing. Soffice drops after=200 between adjacent
