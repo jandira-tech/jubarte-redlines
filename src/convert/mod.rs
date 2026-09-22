@@ -7607,7 +7607,7 @@ fn collect_runs_rec(
         return;
     }
     if let Some(text) = ctx.dom.text_value(node) {
-        if !text.trim().is_empty() && !ctx.dom.name_is(node, &W::del_text()) {
+        if is_run_text(ctx.dom, node, text) && !ctx.dom.name_is(node, &W::del_text()) {
             let mut style = ctx.base.clone();
             if ctx.math_vert != VertAlign::Baseline {
                 style.vert = ctx.math_vert;
@@ -7652,6 +7652,13 @@ fn para_keeps_xml_space(dom: &Dom, para: NodeId) -> bool {
     pbdr_edge(dom, ppr, "bottom").is_some()
 }
 
+/// Pretty-printed XML between elements is whitespace-only and is not text.
+/// A whitespace-only `w:t` is: `birds.` + `<w:t> </w:t>` + `We` is
+/// "birds. We" in Word (fixtures_500 014babb2 painted "birds.We").
+fn is_run_text(dom: &Dom, node: NodeId, text: &str) -> bool {
+    !text.trim().is_empty() || dom.parent(node).is_some_and(|p| dom.name_is(p, &W::t()))
+}
+
 fn visible_text(dom: &Dom, node: NodeId, mark: RevMark, preserve_ws: bool) -> String {
     let mut out = String::new();
     collect_visible(dom, node, &mut out, false);
@@ -7683,9 +7690,7 @@ fn collect_visible(dom: &Dom, node: NodeId, out: &mut String, in_del: bool) {
         return;
     }
     if let Some(text) = dom.text_value(node) {
-        // Pretty-printed XML between elements is whitespace-only; real
-        // `w:t` gaps keep their spaces because they sit next to letters.
-        if !in_del && !text.trim().is_empty() {
+        if !in_del && is_run_text(dom, node, text) {
             out.push_str(text);
         }
         return;
@@ -7743,7 +7748,8 @@ fn collapse_ws(text: &str) -> String {
     if leading && !out.is_empty() && !out.starts_with(' ') && !out.starts_with('\n') {
         out.insert(0, ' ');
     }
-    if space && !out.is_empty() && !out.ends_with(' ') && !out.ends_with('\n') {
+    // A whitespace-only run squeezes to one space, not to nothing.
+    if space && !out.ends_with(' ') && !out.ends_with('\n') {
         out.push(' ');
     }
     out

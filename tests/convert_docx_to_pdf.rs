@@ -25399,3 +25399,58 @@ fn inflate(data: &[u8]) -> Option<Vec<u8>> {
         })?;
     out.status.success().then_some(out.stdout)
 }
+
+fn footer_with_para(para: &str) -> Vec<u8> {
+    let footer = format!(
+        "<w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{para}</w:ftr>"
+    );
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer)],
+    ))
+    .expect("convert footer")
+}
+
+#[test]
+fn a_space_only_run_keeps_its_space() {
+    // fixtures_500 014babb2: `birds.` + `<w:t xml:space="preserve"> </w:t>` +
+    // `We` painted "birds.We". A lone-space w:t is text, not the
+    // pretty-print whitespace between elements; Word draws the gap.
+    let split = "<w:p><w:r><w:t>alpha.</w:t></w:r>\
+         <w:r><w:t xml:space=\"preserve\"> </w:t></w:r>\
+         <w:r><w:t>Beta</w:t></w:r></w:p>";
+    let joined = "<w:p><w:r><w:t xml:space=\"preserve\">alpha. </w:t></w:r>\
+         <w:r><w:t>Beta</w:t></w:r></w:p>";
+    let body = |p: &str| docx_to_pdf(&minimal_docx_body(p)).expect("convert");
+    assert_eq!(
+        pdf_content_streams(&body(split)),
+        pdf_content_streams(&body(joined)),
+        "body: a space in its own run paints like the same space inside a run"
+    );
+    // Footer runs paint one Tj per source run, so compare where Beta lands.
+    let beta_x = |pdf: Vec<u8>| {
+        let hay = pdf_content_streams(&pdf).concat();
+        let at = hay.find("(Beta) Tj").expect("Beta painted");
+        let cm = hay[..at].rfind(" cm ").expect("Beta cm");
+        let head = &hay[..cm];
+        let nums: Vec<f32> = head[head.rfind('q').unwrap_or(0) + 1..]
+            .split_whitespace()
+            .filter_map(|n| n.parse().ok())
+            .collect();
+        nums[nums.len() - 2]
+    };
+    let (split_x, joined_x) = (
+        beta_x(footer_with_para(split)),
+        beta_x(footer_with_para(joined)),
+    );
+    assert!(
+        (split_x - joined_x).abs() < 0.01,
+        "footer: Beta after a space-only run at x={split_x}, after an in-run space at x={joined_x}"
+    );
+}
