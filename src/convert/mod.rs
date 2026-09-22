@@ -628,8 +628,6 @@ struct RawStyle {
     based: Option<String>,
     ppr: Option<NodeId>,
     rpr: Option<NodeId>,
-    /// `w:link` counterpart (paragraph ↔ character). ECMA-376 17.7.4.6.
-    link: Option<String>,
 }
 
 struct Defaults {
@@ -1798,17 +1796,11 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             .and_then(|n| dom.attribute(n, &W::val()).map(str::to_string));
         let ppr = dom.element(style, &W::p_pr());
         let rpr = dom.element(style, &W::r_pr());
-        let link = first_named(&dom, style, "link")
-            .and_then(|n| dom.attribute(n, &W::val()).map(str::to_string));
-        raw.insert(
-            sid.to_string(),
-            RawStyle {
-                based,
-                ppr,
-                rpr,
-                link,
-            },
-        );
+        // `w:link` (ECMA-376 17.7.4.6) only pairs a paragraph and a
+        // character style in Word's UI; it imports no properties. Word
+        // paints I_am_sharing Heading1 in the paragraph style's 1F4E79,
+        // not linked Heading1Char's 365F91.
+        raw.insert(sid.to_string(), RawStyle { based, ppr, rpr });
     }
     let mut by_id = HashMap::new();
     let ids: Vec<String> = raw.keys().cloned().collect();
@@ -2020,34 +2012,7 @@ fn resolve_named(
     if let Some(node) = raw_style.rpr {
         apply_rpr(dom, node, &mut run, theme);
     }
-    if let Some(link_id) = raw_style.link.as_deref() {
-        apply_linked_char_rpr(dom, raw, theme, link_id, depth + 1, &mut run);
-    }
     (para, run)
-}
-
-/// Apply the linked character style's `basedOn` + `rPr` only. Do not follow
-/// that style's `w:link` (paragraph ↔ character pairs would recurse).
-fn apply_linked_char_rpr(
-    dom: &Dom,
-    raw: &std::collections::HashMap<String, RawStyle>,
-    theme: &ThemeFonts,
-    link_id: &str,
-    depth: u8,
-    run: &mut RunStyle,
-) {
-    if depth > 12 {
-        return;
-    }
-    let Some(linked) = raw.get(link_id) else {
-        return;
-    };
-    if let Some(base) = linked.based.as_deref() {
-        apply_linked_char_rpr(dom, raw, theme, base, depth + 1, run);
-    }
-    if let Some(node) = linked.rpr {
-        apply_rpr(dom, node, run, theme);
-    }
 }
 
 fn first_named(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {

@@ -14022,10 +14022,11 @@ fn linked_para_styles(with_link: bool) -> String {
 }
 
 #[test]
-fn paragraph_style_link_applies_linked_character_run_props() {
-    // xml leftover: styles.xml w:link (ECMA-376 17.7.4.6). A paragraph
-    // style with no rPr still takes the linked character style's face,
-    // size, bold, and color. rStyle overlay stays paint-only (KEEP).
+fn paragraph_style_link_imports_no_character_run_props() {
+    // ECMA-376 17.7.4.6: w:link pairs a paragraph and a character style in
+    // the UI; the paragraph keeps its own run properties. Word's
+    // I_am_sharing PDF paints Heading1 in the paragraph style's 1F4E79 (29
+    // fills), never linked Heading1Char's 365F91 on a heading.
     let body = "<w:p><w:pPr><w:pStyle w:val=\"LinkedPara\"/></w:pPr>\
          <w:r><w:t>LinkCharX</w:t></w:r></w:p>\
          <w:sectPr>\
@@ -14036,32 +14037,20 @@ fn paragraph_style_link_applies_linked_character_run_props() {
         .expect("convert linked paragraph style");
     let unlinked = docx_to_pdf(&docx_with_styles(body, &linked_para_styles(false)))
         .expect("convert unlinked paragraph style");
-    let linked_text = pdf_winansi_text(&linked);
     let hay = String::from_utf8_lossy(&linked);
     assert!(
-        linked_text.contains("LinkCharX"),
-        "linked pStyle must paint the run; text={linked_text}"
+        !hay.contains("1.000 0.000 0.000 rg"),
+        "the linked character style's red must not reach the paragraph"
     );
     assert!(
-        hay.contains("24.00 Tf") || hay.contains("24 Tf"),
-        "linked character sz=48 must paint 24pt; tail {}",
-        &hay[hay.len().saturating_sub(280)..]
+        !hay.contains("24.00 Tf") && !hay.contains("24 Tf"),
+        "the linked character style's 24pt must not reach the paragraph"
     );
-    assert!(
-        hay.contains("1.000 0.000 0.000 rg"),
-        "linked character color FF0000 must paint red; tail {}",
-        &hay[hay.len().saturating_sub(280)..]
-    );
-    assert!(
-        hay.contains("/Arial") || hay.contains("/LiberationSans"),
-        "linked character Arial must embed (Liberation Sans when DFonts absent); tail {}",
-        &hay[hay.len().saturating_sub(280)..]
-    );
-    let plain = String::from_utf8_lossy(&unlinked);
-    assert!(
-        !plain.contains("24.00 Tf") && !plain.contains("24 Tf"),
-        "without w:link the empty paragraph style must not take 24pt; tail {}",
-        &plain[plain.len().saturating_sub(280)..]
+    let strip = |pdf: &[u8]| pdf_content_streams(pdf).concat();
+    assert_eq!(
+        strip(&linked),
+        strip(&unlinked),
+        "w:link changes nothing on the page"
     );
 }
 
