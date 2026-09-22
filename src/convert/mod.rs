@@ -7568,12 +7568,15 @@ fn collect_textboxes(
         let text_anchor = shape_text_anchor(dom, shape);
         if empty && chart.is_none() {
             if fill.is_some() || line.is_some() {
-                let box_line =
-                    if matches!(geom, ShapeGeom::Box | ShapeGeom::RightArrow) && fill.is_some() {
-                        line
-                    } else {
-                        None
-                    };
+                // Preset polygons stroke their own closed outline in the
+                // line colour, filled or not. Box keeps its tuned 4-edge
+                // rules (KEEP 591), connectors their own stroke.
+                let polygon = geom_is_preset_polygon(geom);
+                let box_line = if polygon || (matches!(geom, ShapeGeom::Box) && fill.is_some()) {
+                    line
+                } else {
+                    None
+                };
                 out.push(LaidTextBox {
                     w,
                     h,
@@ -7581,8 +7584,7 @@ fn collect_textboxes(
                     slot,
                     chart: None,
                     stroke: line.is_some()
-                        && (fill.is_none()
-                            || matches!(geom, ShapeGeom::Box | ShapeGeom::RightArrow)),
+                        && (fill.is_none() || polygon || matches!(geom, ShapeGeom::Box)),
                     fill,
                     line: box_line,
                     line_width: shape_line_width(dom, shape, theme),
@@ -7665,7 +7667,9 @@ fn collect_textboxes(
                 && !shape_ln_is_nofill(dom, shape)
                 && (vml_slot.is_some() || !(fill.is_some() && line.is_none())),
             fill,
-            line: None,
+            // A text-bearing preset polygon still outlines in its own line
+            // colour; the rectangle keeps the tuned 0.6 black path.
+            line: line.filter(|_| geom_is_preset_polygon(geom)),
             line_width: 1.0,
             geom,
             reserve_only: false,
@@ -8962,12 +8966,38 @@ fn shape_line_width(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> f32 {
     }
 }
 
+/// Every preset whose outline is a polygon stroke (not the tuned Box
+/// rectangle, not the connectors that stroke themselves).
+fn geom_is_preset_polygon(geom: ShapeGeom) -> bool {
+    !matches!(
+        geom,
+        ShapeGeom::Box | ShapeGeom::BentConnector | ShapeGeom::CurvedConnector | ShapeGeom::Line
+    )
+}
+
+/// `node` sits inside an `a:ln` below `shape`: its fill paints the
+/// outline, never the shape body.
+fn under_line_props(dom: &Dom, shape: NodeId, node: NodeId) -> bool {
+    let mut n = dom.parent(node);
+    while let Some(p) = n {
+        if p == shape {
+            return false;
+        }
+        if local_name_is(dom, p, "ln") {
+            return true;
+        }
+        n = dom.parent(p);
+    }
+    false
+}
+
 fn shape_fill_color(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> Option<[f32; 3]> {
     if shape_has_no_fill(dom, shape) {
         return None;
     }
     if let Some(fill) = descendants_local(dom, shape, "solidFill")
         .into_iter()
+        .filter(|n| !under_line_props(dom, shape, *n))
         .find_map(|n| scheme_color(dom, n, theme))
     {
         return Some(fill);
@@ -8975,7 +9005,9 @@ fn shape_fill_color(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> Option<[f32
     // Cover-page wash (Strict01 Rectangle 466): gradFill stops → first stop.
     // Mini 715 two-stop Type 2 axial was Word-faithful but ITT-neg
     // (Strict01 family −0.092 / 8 drops 0 gains). Keep first-stop solid.
-    if let Some(gs) = descendants_local(dom, shape, "gs").into_iter().next()
+    if let Some(gs) = descendants_local(dom, shape, "gs")
+        .into_iter()
+        .find(|n| !under_line_props(dom, shape, *n))
         && let Some(fill) = scheme_color(dom, gs, theme)
     {
         return Some(fill);
@@ -12062,6 +12094,7 @@ impl<'a> Layout<'a> {
         if box_.reserve_only {
             return;
         }
+        let geom_ops = self.current().ops.len();
         if let Some(fill) = box_.fill {
             match box_.geom {
                 ShapeGeom::RightArrow => {
@@ -13221,6 +13254,48 @@ impl<'a> Layout<'a> {
                             }
                         }
                     }
+                }
+            }
+        }
+        // a:xfrm flipH / flipV mirror the whole preset geometry about the
+        // box centre (connectors apply their own flips).
+        if (box_.flip_h || box_.flip_v) && geom_is_preset_polygon(box_.geom) {
+            let (cx2, cy2) = (2.0 * x + dw, 2.0 * y + dh);
+            let (fh, fv) = (box_.flip_h, box_.flip_v);
+            let mx = |px: f32| if fh { cx2 - px } else { px };
+            let my = |py: f32| if fv { cy2 - py } else { py };
+            for op in &mut self.current().ops[geom_ops..] {
+                match op {
+                    Op::FillPoly { points, .. } | Op::StrokePoly { points, .. } => {
+                        for p in points.iter_mut() {
+                            *p = (mx(p.0), my(p.1));
+                        }
+                    }
+                    Op::Line { x1, y1, x2, y2, .. } => {
+                        (*x1, *y1, *x2, *y2) = (mx(*x1), my(*y1), mx(*x2), my(*y2));
+                    }
+                    Op::FillRect {
+                        x: rx, y: ry, w, h, ..
+                    }
+                    | Op::StrokeRect {
+                        x: rx, y: ry, w, h, ..
+                    } => {
+                        (*rx, *ry) = (
+                            mx(*rx + if fh { *w } else { 0.0 }),
+                            my(*ry + if fv { *h } else { 0.0 }),
+                        );
+                    }
+                    Op::Cubic {
+                        start, segments, ..
+                    } => {
+                        *start = (mx(start.0), my(start.1));
+                        for seg in segments.iter_mut() {
+                            for p in seg.iter_mut() {
+                                *p = (mx(p.0), my(p.1));
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

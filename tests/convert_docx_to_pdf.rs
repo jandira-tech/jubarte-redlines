@@ -1391,8 +1391,12 @@ fn src_rect_left_crop_scales_full_image_into_extent() {
     .expect("convert srcRect");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("21.60 0 0 10.80") || text.contains("21.60 0 0 21.60"),
-        "50% left crop doubles the painted width vs 10.80pt extent; snippet {}",
+        // l=50000: the uncropped half is stretched over the 10.80pt extent
+        // (width doubles, height kept) and shifted left by one extent so
+        // the right half shows. A uniform 21.60 scale or a missing shift
+        // (the cropped-away half in view) are both wrong.
+        text.contains("21.60 0 0 10.80 61.20"),
+        "50% left crop: 21.60 x 10.80 at x = 72 - 10.8; snippet {}",
         text.split("/Im")
             .nth(1)
             .unwrap_or(&text[text.len().saturating_sub(240)..])
@@ -11289,6 +11293,146 @@ fn anchor_top_aligned_to_the_page_sits_on_the_page_edge() {
         "<wp:positionV relativeFrom=\"page\"><wp:align>top</wp:align></wp:positionV>",
     ));
     assert!((y - (792.0 - 70.87)).abs() < 0.5, "page top: y={y}");
+}
+
+/// `prst` at page (15.75pt, 15.75pt), 141.73×70.87pt, with `sp_pr` inside
+/// wps:spPr after the geometry and `xfrm` attributes (e.g. flipV="1").
+fn preset_shape_styled(prst: &str, sp_pr: &str, xfrm: &str) -> String {
+    format!(
+        "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"page\"><wp:posOffset>200000</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"page\"><wp:posOffset>200000</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"1800000\" cy=\"900000\"/>\
+          <wp:wrapNone/>\
+          <wp:docPr id=\"1\" name=\"Preset\"/>\
+          <a:graphic><a:graphicData \
+            uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+            <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+              <wps:spPr><a:xfrm {xfrm}><a:ext cx=\"1800000\" cy=\"900000\"/></a:xfrm>\
+                <a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>{sp_pr}\
+              </wps:spPr>\
+            </wps:wsp>\
+          </a:graphicData></a:graphic>\
+        </wp:anchor></w:drawing></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>"
+    )
+}
+
+const RED_FILL: &str = "<a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill>";
+const BLUE_LINE: &str =
+    "<a:ln w=\"19050\"><a:solidFill><a:srgbClr val=\"0000FF\"/></a:solidFill></a:ln>";
+
+/// A closed `m … l … h S` path stroked in `rgb` (any vertex count).
+fn closed_stroke_in(hay: &str, rgb: &str) -> bool {
+    let needle = format!("{rgb} RG");
+    hay.lines()
+        .any(|l| l.contains(&needle) && l.contains(" h S") && l.matches(" l").count() >= 2)
+}
+
+/// Vertices of the first `r g b rg … h f` polygon.
+fn filled_polygon_points(hay: &str, rgb: &str) -> Vec<(f32, f32)> {
+    let line = hay
+        .lines()
+        .find(|l| l.contains(&format!("{rgb} rg")) && l.contains(" h f"))
+        .unwrap_or_else(|| panic!("filled {rgb} polygon"));
+    let nums: Vec<f32> = line
+        .split_whitespace()
+        .filter_map(|t| t.parse::<f32>().ok())
+        .skip(3)
+        .collect();
+    nums.chunks(2)
+        .filter(|c| c.len() == 2)
+        .map(|c| (c[0], c[1]))
+        .collect()
+}
+
+#[test]
+fn preset_polygons_stroke_their_explicit_outline() {
+    // Filled + a:ln and outline-only (noFill + a:ln): Word draws the
+    // preset's closed outline in the line colour for every polygon.
+    for prst in [
+        "pentagon",
+        "star8",
+        "hexagon",
+        "flowChartInputOutput",
+        "chevron",
+        "roundRect",
+    ] {
+        let filled = preset_shape_styled(prst, &format!("{RED_FILL}{BLUE_LINE}"), "");
+        let hay = String::from_utf8_lossy(&docx_to_pdf(&drawing_docx(&filled)).expect("convert"))
+            .into_owned();
+        assert!(pdf_has_filled_polygon(&hay), "{prst}: still filled");
+        assert!(
+            closed_stroke_in(&hay, "0.000 0.000 1.000"),
+            "{prst}: filled shape keeps its blue outline"
+        );
+        let outline = preset_shape_styled(prst, &format!("<a:noFill/>{BLUE_LINE}"), "");
+        let hay = String::from_utf8_lossy(&docx_to_pdf(&drawing_docx(&outline)).expect("convert"))
+            .into_owned();
+        assert!(
+            closed_stroke_in(&hay, "0.000 0.000 1.000"),
+            "{prst}: outline-only shape is visible"
+        );
+    }
+}
+
+#[test]
+fn line_colour_is_not_the_shape_fill() {
+    // No spPr fill and no style: the a:ln solidFill colours the outline
+    // only; harvesting it as the fill painted a solid blue hexagon.
+    let body = preset_shape_styled("hexagon", BLUE_LINE, "");
+    let hay =
+        String::from_utf8_lossy(&docx_to_pdf(&drawing_docx(&body)).expect("convert")).into_owned();
+    assert!(
+        !hay.lines()
+            .any(|l| l.contains("0.000 0.000 1.000 rg") && l.contains(" h f")),
+        "no blue fill"
+    );
+    assert!(closed_stroke_in(&hay, "0.000 0.000 1.000"), "blue outline");
+}
+
+#[test]
+fn flip_v_puts_the_triangle_apex_at_the_bottom() {
+    let body = preset_shape_styled("triangle", RED_FILL, "flipV=\"1\"");
+    let hay =
+        String::from_utf8_lossy(&docx_to_pdf(&drawing_docx(&body)).expect("convert")).into_owned();
+    let pts = filled_polygon_points(&hay, "1.000 0.000 0.000");
+    let (min_y, max_y) = pts
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), p| {
+            (a.min(p.1), b.max(p.1))
+        });
+    let at_bottom = pts.iter().filter(|p| (p.1 - min_y).abs() < 0.5).count();
+    let at_top = pts.iter().filter(|p| (p.1 - max_y).abs() < 0.5).count();
+    assert_eq!(
+        (at_bottom, at_top),
+        (1, 2),
+        "flipV: one apex at the bottom, the base on top; pts={pts:?}"
+    );
+}
+
+#[test]
+fn flip_h_mirrors_an_asymmetric_preset() {
+    // rtTriangle's right angle is bottom-left; flipH moves it right.
+    let plain = preset_shape_styled("rtTriangle", RED_FILL, "");
+    let flipped = preset_shape_styled("rtTriangle", RED_FILL, "flipH=\"1\"");
+    let pts = |b: &str| {
+        let hay =
+            String::from_utf8_lossy(&docx_to_pdf(&drawing_docx(b)).expect("convert")).into_owned();
+        filled_polygon_points(&hay, "1.000 0.000 0.000")
+    };
+    let mean_x = |p: &[(f32, f32)]| p.iter().map(|q| q.0).sum::<f32>() / p.len() as f32;
+    let centre = 15.75 + 141.73 / 2.0;
+    let (a, b) = (mean_x(&pts(&plain)), mean_x(&pts(&flipped)));
+    assert!(
+        a < centre && b > centre,
+        "flipH mirrors across the box centre: {a} vs {b}"
+    );
+    assert!(
+        ((a - centre) + (b - centre)).abs() < 0.5,
+        "exact mirror: {a} vs {b}"
+    );
 }
 
 #[test]
