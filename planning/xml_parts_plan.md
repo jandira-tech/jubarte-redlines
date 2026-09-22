@@ -147,7 +147,7 @@ numbering overrides and the footer block, each worth 1-3 points on one set.
 ## 3. Full implementation plans (D = 1.00, confidence high)
 
 Common to all four: engine code lives in `../jubarte-redlines/src/convert/`; every
-checkpoint runs `python3 sample50_check.py` (this directory) and ends with the
+checkpoint runs `python3 planning/sample50_check.py` (from the repository root) and ends with the
 both-set numbers appended to `report.md`; no per-face, per-size or per-document
 constant may be added to close a gap (plan.md ground rules).
 

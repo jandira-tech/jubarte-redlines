@@ -1,5 +1,5 @@
 {
- "jubarte": "/Users/arthrod/temp/T/jubarte-redlines/target/release/jubarte",
+ "jubarte": "target/release/jubarte",
  "mean": 37.565388748073616,
  "rows": {
   "source__Redline_CiceroDo_v_plate_30": {

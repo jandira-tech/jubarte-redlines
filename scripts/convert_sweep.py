@@ -15,7 +15,11 @@ Sibling checkouts (not vendored):
     python3 scripts/convert_sweep.py 398
     python3 scripts/convert_sweep.py 76 --fast          # skip case13 (205 pp)
     python3 scripts/convert_sweep.py 76 --compare tools/convert_baseline_76.tsv
+    python3 scripts/convert_sweep.py 76 --bless         # rewrite the baseline
 
+Scores go to stdout unless --out or --bless names a file; a plain sweep never
+rewrites the baseline it would ratchet against. A listed fixture without its
+DOCX/PDF pair, or a missing set in `both`, exits 2 before converting.
 Rasters are deleted after scoring. A row drop > 1.0 Jaccard, a mean drop
 > 0.2, or a convert failure is a regression (planning/plan.md ground rules).
 """
@@ -107,7 +111,24 @@ def discover_76_or_skip(
     cases = docxide_root / "tests" / "fixtures" / "cases"
     if not cases.is_dir():
         return [], f"missing {cases} (clone docxide-pdf next to jubarte-redlines)"
-    return discover_76(docxide_root, fast=fast), ""
+    jobs = discover_76(docxide_root, fast=fast)
+    found = {job.stem for job in jobs}
+    # A case is a member when it carries a Word reference.pdf (upstream
+    # case58/case65 are generator-only and have none).
+    incomplete = [
+        case.name
+        for case in sorted(cases.iterdir())
+        if (case / "reference.pdf").is_file()
+        and case.name not in found
+        and not (fast and case.name in FAST_SKIP)
+    ]
+    return jobs, _incomplete_reason(incomplete)
+
+
+def _incomplete_reason(stems: list[str]) -> str:
+    if not stems:
+        return ""
+    return f"incomplete fixtures (docx or reference pdf missing): {', '.join(stems)}"
 
 
 def _pool_dirs(kind: str, corpus_root: Path) -> tuple[Path, Path]:
@@ -121,28 +142,38 @@ def _pool_dirs(kind: str, corpus_root: Path) -> tuple[Path, Path]:
     raise ValueError(f"unknown fixture kind {kind!r}")
 
 
-def discover_398(corpus_root: Path) -> list[Job]:
+def _listed_398(corpus_root: Path) -> list[tuple[str, Path, Path]]:
     listing = corpus_root / FIXTURE_LIST
     if not listing.is_file():
         return []
-    jobs: list[Job] = []
+    rows: list[tuple[str, Path, Path]] = []
     for line in listing.read_text(encoding="utf-8").splitlines():
         if not line.strip() or line.startswith("#"):
             continue
         kind, stem = line.split("\t", 1)
         docx_dir, pdf_dir = _pool_dirs(kind, corpus_root)
-        docx = docx_dir / f"{stem}.docx"
-        ref = pdf_dir / f"{stem}.pdf"
-        if docx.is_file() and ref.is_file():
-            jobs.append(Job(stem=f"{kind}__{stem}", docx=docx, ref=ref))
-    return jobs
+        rows.append((f"{kind}__{stem}", docx_dir / f"{stem}.docx", pdf_dir / f"{stem}.pdf"))
+    return rows
+
+
+def discover_398(corpus_root: Path) -> list[Job]:
+    return [
+        Job(stem=stem, docx=docx, ref=ref)
+        for stem, docx, ref in _listed_398(corpus_root)
+        if docx.is_file() and ref.is_file()
+    ]
 
 
 def discover_398_or_skip(corpus_root: Path) -> tuple[list[Job], str]:
     listing = corpus_root / FIXTURE_LIST
     if not listing.is_file():
         return [], f"missing {listing} (clone neurotic_docx_bench next to jubarte-redlines)"
-    return discover_398(corpus_root), ""
+    incomplete = [
+        stem
+        for stem, docx, ref in _listed_398(corpus_root)
+        if not (docx.is_file() and ref.is_file())
+    ]
+    return discover_398(corpus_root), _incomplete_reason(incomplete)
 
 
 def write_tsv(rows: list[ScoreRow], path: Path) -> None:
@@ -186,8 +217,12 @@ def compare_to_baseline(
     deltas: list[float] = []
     for stem, brow in base_map.items():
         nrow = now_map.get(stem)
-        njac = 0.0 if nrow is None else nrow.jaccard
-        delta = njac - brow.jaccard
+        if nrow is None:
+            # A vanished row is a regression whatever its old score: a
+            # 0.5-Jaccard row would otherwise drop out inside max_drop.
+            regressions.append(stem)
+            continue
+        delta = nrow.jaccard - brow.jaccard
         deltas.append(delta)
         if delta < -max_drop:
             regressions.append(stem)
@@ -288,7 +323,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scorer", type=Path, default=DEFAULT_SCORER)
     parser.add_argument("--docxide", type=Path, default=DEFAULT_DOCXIDE)
     parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
-    parser.add_argument("--out", type=Path, help="write TSV here (default stdout + tools/)")
+    parser.add_argument("--out", type=Path, help="write TSV here (default stdout)")
+    parser.add_argument(
+        "--bless",
+        action="store_true",
+        help="rewrite tools/convert_baseline_{set}.tsv with this run",
+    )
     parser.add_argument("--compare", type=Path, help="baseline TSV to ratchet against")
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) // 2))
     parser.add_argument(
@@ -298,20 +338,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.bless and (args.set == "both" or args.out is not None):
+        print("--bless writes one set's tools/ baseline; drop --out and pick 76 or 398",
+              file=sys.stderr)
+        return 2
     jobs: list[Job] = []
     if args.set in ("76", "both"):
         found, reason = discover_76_or_skip(args.docxide, fast=args.fast)
         if reason:
             print(reason, file=sys.stderr)
-            if args.set == "76":
-                return 2
+            return 2
         jobs.extend(found)
     if args.set in ("398", "both"):
         found, reason = discover_398_or_skip(args.corpus)
         if reason:
             print(reason, file=sys.stderr)
-            if args.set == "398":
-                return 2
+            return 2
         jobs.extend(found)
 
     print(f"{len(jobs)} jobs", file=sys.stderr)
@@ -327,11 +369,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"missing scorer: {args.scorer}", file=sys.stderr)
         return 2
 
+    # Read the ratchet baseline before anything is written: --out may name
+    # the same file, and comparing a run against itself always passes.
+    base = read_tsv(args.compare) if args.compare else None
     rows, failed = convert_and_score(
         jobs, jubarte=args.jubarte, scorer=args.scorer, workers=args.workers
     )
     out = args.out
-    if out is None and args.set != "both" and args.compare is None:
+    if args.bless:
         out = JUBARTE / "tools" / f"convert_baseline_{args.set}.tsv"
     if out is not None:
         write_tsv(rows, out)
@@ -342,8 +387,7 @@ def main(argv: list[str] | None = None) -> int:
     if failed:
         print(f"convert failures: {failed}", file=sys.stderr)
 
-    if args.compare:
-        base = read_tsv(args.compare)
+    if base is not None:
         ratchet = compare_to_baseline(rows, base, failed=failed)
         print(
             f"mean J: baseline {ratchet.mean_base:.2f} -> now {ratchet.mean_now:.2f} "

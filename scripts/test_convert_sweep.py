@@ -12,7 +12,6 @@ a fake T/ tree and assert the contract the real sweep will use.
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import unittest
@@ -69,6 +68,18 @@ class Discover76Tests(unittest.TestCase):
         self.assertEqual(jobs, [])
         self.assertTrue(reason)
 
+    def test_reference_without_input_is_reported_not_dropped_silently(self) -> None:
+        # Membership is "has a Word reference.pdf": generator-only cases
+        # (upstream case58/case65) are not in the set, a reference whose
+        # input.docx vanished is an incomplete member.
+        self._case("case1")
+        self._case("case58", pdf=False)
+        self._case("case70", docx=False)
+        jobs, reason = cs.discover_76_or_skip(self.root / "docxide-pdf")
+        self.assertEqual([j.stem for j in jobs], ["case1"])
+        self.assertIn("case70", reason)
+        self.assertNotIn("case58", reason)
+
 
 class Discover398Tests(unittest.TestCase):
     def setUp(self) -> None:
@@ -107,6 +118,16 @@ class Discover398Tests(unittest.TestCase):
         jobs, reason = cs.discover_398_or_skip(self.corpus / "missing")
         self.assertEqual(jobs, [])
         self.assertTrue(reason)
+
+    def test_listed_fixture_without_files_is_reported(self) -> None:
+        _touch(self.corpus / "docx_source" / "alpha.docx")
+        _touch(self.corpus / "pdf_source" / "alpha.pdf")
+        _touch(self.corpus / "docx_source" / "beta.docx")
+        listing = self.corpus / "docx_to_pdf_no_redline_fixtures.txt"
+        listing.write_text("source\talpha\nsource\tbeta\n")
+        jobs, reason = cs.discover_398_or_skip(self.corpus)
+        self.assertEqual([j.stem for j in jobs], ["source__alpha"])
+        self.assertIn("source__beta", reason)
 
 
 class RatchetTests(unittest.TestCase):
@@ -161,6 +182,15 @@ class RatchetTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertLess(result.mean_delta, -0.2)
 
+    def test_missing_row_is_regression_even_below_one_point(self) -> None:
+        # A baseline row scoring under 1.0 Jaccard must not vanish from the
+        # sweep unnoticed: absence is a regression, not a -0.5 delta.
+        pad = [cs.ScoreRow(f"p{i}", 50.0, 80.0, 100.0) for i in range(10)]
+        base = [cs.ScoreRow("low", 0.5, 0.0, 0.0), *pad]
+        result = cs.compare_to_baseline(pad, base)
+        self.assertFalse(result.ok)
+        self.assertIn("low", result.regressions)
+
     def test_convert_failure_is_regression(self) -> None:
         result = cs.compare_to_baseline(
             [cs.ScoreRow("a", 50.0, 0.0, 0.0)],
@@ -171,44 +201,91 @@ class RatchetTests(unittest.TestCase):
 
 
 class MainOutputTests(unittest.TestCase):
-    def test_compare_without_out_writes_stdout_not_default_baseline(self) -> None:
-        row = cs.ScoreRow("case1", 50.0, 80.0, 100.0)
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            jubarte = root / "jubarte"
-            scorer = root / "scorer"
-            baseline = root / "baseline.tsv"
-            for path in (jubarte, scorer, baseline):
-                _touch(path)
-            job = cs.Job("case1", root / "input.docx", root / "reference.pdf")
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.jubarte = self.root / "jubarte"
+        self.scorer = self.root / "scorer"
+        self.baseline = self.root / "baseline.tsv"
+        for path in (self.jubarte, self.scorer):
+            _touch(path)
+        self.row = cs.ScoreRow("case1", 50.0, 80.0, 100.0)
+        self.job = cs.Job("case1", self.root / "input.docx", self.root / "reference.pdf")
 
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _main(self, *extra: str, rows=None, discover76=None, discover398=None) -> int:
+        rows = [self.row] if rows is None else rows
+        with (
+            mock.patch.object(
+                cs, "discover_76_or_skip", return_value=discover76 or ([self.job], "")
+            ),
+            mock.patch.object(
+                cs, "discover_398_or_skip", return_value=discover398 or ([], "")
+            ),
+            mock.patch.object(cs, "convert_and_score", return_value=(rows, [])),
+        ):
+            return cs.main(
+                ["--jubarte", str(self.jubarte), "--scorer", str(self.scorer), *extra]
+            )
+
+    def test_compare_without_out_writes_stdout_not_default_baseline(self) -> None:
+        cs.write_tsv([self.row], self.baseline)
+        with mock.patch.object(cs, "write_tsv") as write_tsv:
+            result = self._main("76", "--compare", str(self.baseline))
+        self.assertEqual(result, 0)
+        write_tsv.assert_called_once_with([self.row], Path("/dev/stdout"))
+
+    def test_plain_run_does_not_overwrite_the_baseline(self) -> None:
+        with mock.patch.object(cs, "write_tsv") as write_tsv:
+            result = self._main("76")
+        self.assertEqual(result, 0)
+        write_tsv.assert_called_once_with([self.row], Path("/dev/stdout"))
+
+    def test_bless_writes_the_tools_baseline(self) -> None:
+        with mock.patch.object(cs, "write_tsv") as write_tsv:
+            result = self._main("76", "--bless")
+        self.assertEqual(result, 0)
+        write_tsv.assert_called_once_with(
+            [self.row], cs.JUBARTE / "tools" / "convert_baseline_76.tsv"
+        )
+
+    def test_compare_reads_baseline_before_out_overwrites_it(self) -> None:
+        # --out == --compare must ratchet against the old rows, not the new.
+        cs.write_tsv([cs.ScoreRow("case1", 60.0, 80.0, 100.0)], self.baseline)
+        result = self._main(
+            "76", "--compare", str(self.baseline), "--out", str(self.baseline)
+        )
+        self.assertEqual(result, 1, "a 10-point drop must fail the ratchet")
+
+    def test_both_mode_fails_when_one_set_is_missing(self) -> None:
+        result = self._main(
+            "both", discover398=([], "missing corpus listing"), rows=[self.row]
+        )
+        self.assertEqual(result, 2)
+
+    def test_incomplete_set_fails_before_converting(self) -> None:
+        with mock.patch.object(cs, "convert_and_score") as convert:
             with (
-                mock.patch.object(cs, "discover_76_or_skip", return_value=([job], "")),
-                mock.patch.object(cs, "convert_and_score", return_value=([row], [])),
-                mock.patch.object(cs, "read_tsv", return_value=[row]),
-                mock.patch.object(cs, "write_tsv") as write_tsv,
+                mock.patch.object(
+                    cs,
+                    "discover_76_or_skip",
+                    return_value=([self.job], "incomplete fixtures: case58"),
+                ),
             ):
                 result = cs.main(
-                    [
-                        "76",
-                        "--jubarte",
-                        str(jubarte),
-                        "--scorer",
-                        str(scorer),
-                        "--compare",
-                        str(baseline),
-                    ]
+                    ["76", "--jubarte", str(self.jubarte), "--scorer", str(self.scorer)]
                 )
-
-        self.assertEqual(result, 0)
-        write_tsv.assert_called_once_with([row], Path("/dev/stdout"))
+        self.assertEqual(result, 2)
+        convert.assert_not_called()
 
 
 class LiveTreeTests(unittest.TestCase):
     """Skipped in CI when the sibling checkouts are absent."""
 
     def test_real_76_is_seventy_six_complete_pairs(self) -> None:
-        root = Path("/Users/arthrod/temp/T/docxide-pdf")
+        root = cs.DEFAULT_DOCXIDE
         if not (root / "tests" / "fixtures" / "cases").is_dir():
             self.skipTest("docxide-pdf sibling missing")
         jobs = cs.discover_76(root)
@@ -216,10 +293,7 @@ class LiveTreeTests(unittest.TestCase):
         self.assertTrue(all(j.docx.is_file() and j.ref.is_file() for j in jobs))
 
     def test_real_398_is_three_hundred_ninety_eight(self) -> None:
-        root = Path(
-            "/Users/arthrod/temp/T/neurotic_docx_bench/corpus/"
-            "no_comments_pdf_was_generated_by_word"
-        )
+        root = cs.DEFAULT_CORPUS
         if not (root / "docx_to_pdf_no_redline_fixtures.txt").is_file():
             self.skipTest("neurotic corpus sibling missing")
         jobs = cs.discover_398(root)

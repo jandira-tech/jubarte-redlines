@@ -121,3 +121,4 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 scripts/test_convert_sweep.py
+      - run: python3 planning/test_sample50_check.py

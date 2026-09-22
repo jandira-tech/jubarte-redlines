@@ -78,7 +78,7 @@ ignoring whether the markup accepts and rejects back to the right text.*
 
 | Stage | Implementation | Note |
 |---|---|---|
-| Pairs | `<base>_<next>` keys from `centralized_mapping.csv` (named + randomized) plus the SuperDoc pool; 763 scored in the published runs | randomized = renamed duplicates (point 6) |
+| Pairs | `<base>_<next>` keys from `centralized_mapping.csv` (named + randomized) plus the SuperDoc pool; 763 scored in the published runs | randomized pool reorders the shared document pool; 1 of 196 randomized pairs repeats a named pair (3.6) |
 | Candidate | tool writes a redline DOCX | |
 | Render | LibreOffice 26.2.4.2 headless -> PDF -> 144 DPI rasters, page-paired | deterministic: `noise_floor.json` sigma 1e-14 over 6 re-renders |
 | Oracle | Word's compare DOCX, rendered by the same LibreOffice | "the oracle DOCX through that pipeline scores 100" (README) |
@@ -107,7 +107,8 @@ mean 55.6, median 53.2, p10 42.4, p90 70.2, max 94.6. The docstring of `score_v2
 "a do-nothing candidate (the base rendered unchanged) historically scored ~68 mean,
 above half the leaderboard." Per-pair skill for jubarte cannot be computed from disk
 today (see limits), but the aggregate arithmetic is not in doubt: 84.5 raw on a floor
-of 55-68 is 30-45% of the way from nothing to perfect, not 84%.
+of 55.6-68 is 52-65% of the way from nothing to perfect
+((84.5 - 55.6) / 44.4 = 65%, (84.5 - 68) / 32 = 52%), not 84%.
 
 **3.2 Renderer.** `summary.json` of the LibreOffice-vs-Word study: oracle
 `pdf_redlines_randomized` (Word export), candidate

@@ -119,7 +119,8 @@ The 12 corpus documents that resolve to Cambria score like the docxide fixtures 
 (11.2), with line breaks 81-90% right and ink wrong. All 12 have Cambria in the
 oracle and Calibri in jubarte's output. Same defect, same signature, both corpora.
 This table is also the clearest picture of the overfit: jubarte is at 62 on the 298
-explicit-Calibri documents and at 25 on the other 99.
+explicit-Calibri documents and at 25 on the other 100 (the rows above list 93 of
+them, mean 27.5; 7 documents fall in no listed row).
 
 ## 4. Finding B: docxide-pdf is font-starved on this machine, in both benchmarks
 
@@ -533,7 +534,8 @@ page-1 rasters were deleted after measurement.
 
 Corpus prevalence is over all 398 sources (one Python pass over the DOCX XML).
 
-**A1. Word's recorded substitution ignored (15 of 40; 81 corpus documents carry an
+**A1. Word's recorded substitution ignored (13 of 40 carry an altName, plus 2
+no-record rows; 81 corpus documents carry an
 `altName`, 40 name fonts as CSS-style lists).** file_193, file_4, file_29, file_46,
 file_163, file_97, file_101, file_13, file_75, file_59, word_tolerated_misplaced_pgsz,
 font_family_demo, open_sans_font_demo, open_sans_font_demo_2, times_new_roman_font.
@@ -557,8 +559,9 @@ first (`src/fonts/mod.rs:434`, "it's the document's own record") and embeds Camb
 file_193 and Verdana for file_59, scoring 83.3 and 80.5 against jubarte's 3.7 and 6.7.
 jubarte has zero references to `fontTable` or `altName` in `src/convert`.
 
-Two of the fifteen (font_family_demo, open_sans_font_demo, from the un-randomized
-pool) have no `fontTable.xml` at all, and Word still rendered Cambria; docxide-pdf
+Two of the fifteen listed (font_family_demo, open_sans_font_demo, from the
+un-randomized pool) are not recorded-substitution cases: they have no
+`fontTable.xml` at all, and Word still rendered Cambria; docxide-pdf
 falls to Helvetica there and scores 14-17. So a second, evidence-based rule is needed
 for missing families with no altName (section 14).
 

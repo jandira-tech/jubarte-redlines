@@ -22,7 +22,7 @@ it is expected to move. Status column reflects the end of this session.
 | Word fonts | `/Applications/Microsoft Word.app/Contents/Resources/DFonts` (Aptos, Calibri, Cambria, ...); Arial / Times / Georgia / Verdana / Courier in `/System/Library/Fonts/Supplemental` |
 | Rasteriser / PDF tools | `mutool` (MuPDF) on PATH |
 | Redline benchmark assessment | `planning/redline_assessment.md` (evidence only; no changes proposed) |
-| Regression sample | `planning/sample50_check.py`, `planning/sample50.tsv`, `planning/sample50_baseline.json` (run from anywhere: `python3 /Users/arthrod/temp/T/jubarte-redlines/planning/sample50_check.py`) |
+| Regression sample | `planning/sample50_check.py`, `planning/sample50.tsv`, `planning/sample50_baseline.json` (run from the repository root: `python3 planning/sample50_check.py`) |
 
 ## Ground rules
 

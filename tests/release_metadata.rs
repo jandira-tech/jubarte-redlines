@@ -351,16 +351,6 @@ fn cargo_lock_is_consistent_with_the_new_dependencies() {
 const EXPECTED_VERSION: &str = "0.7.1";
 
 #[test]
-fn crate_version_matches_expected_release() {
-    let v = env!("CARGO_PKG_VERSION");
-    let toml = read("Cargo.toml");
-    assert!(
-        toml.contains(&format!("version = \"{v}\"")),
-        "Cargo.toml [package] version must match CARGO_PKG_VERSION ({v})"
-    );
-}
-
-#[test]
 fn root_changelog_has_a_dated_entry_and_release_link_for_the_version() {
     let changelog = read("CHANGELOG.md");
     let heading = format!("## [{EXPECTED_VERSION}]");

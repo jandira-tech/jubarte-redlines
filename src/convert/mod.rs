@@ -25681,19 +25681,29 @@ mod comments_spacing_tests {
         "../neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments.docx";
 
     /// Sibling `neurotic_docx_bench` fixtures exist locally, not in GitHub Actions.
+    /// Only an absent file skips; any other read error fails the test.
     fn sibling_bytes(path: &str) -> Option<Vec<u8>> {
         match std::fs::read(path) {
             Ok(bytes) => Some(bytes),
-            Err(_) => {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 eprintln!("skip: sibling fixture missing ({path})");
                 None
             }
+            Err(e) => panic!("sibling fixture unreadable ({path}): {e}"),
         }
     }
 
     #[test]
     fn sibling_bytes_none_when_missing() {
         assert!(sibling_bytes("definitely-not-a-docx-zzzz.docx").is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "sibling fixture unreadable")]
+    fn sibling_bytes_panics_on_errors_other_than_missing() {
+        // A directory (or a permission error) is not an absent sibling:
+        // skipping it would turn the caller into a silent pass.
+        let _ = sibling_bytes("src");
     }
 
     #[test]

@@ -20,10 +20,11 @@ macro_rules! sibling_bytes {
     ($path:expr) => {{
         match ::std::fs::read($path) {
             Ok(bytes) => bytes,
-            Err(_) => {
+            Err(e) if e.kind() == ::std::io::ErrorKind::NotFound => {
                 ::std::eprintln!("skip: sibling fixture missing ({})", $path);
                 return;
             }
+            Err(e) => ::std::panic!("sibling fixture unreadable ({}): {e}", $path),
         }
     }};
 }
