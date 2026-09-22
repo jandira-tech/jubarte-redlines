@@ -432,21 +432,44 @@ struct PageSetup {
     grid_char: f32,
 }
 
-#[derive(Clone, Copy)]
+/// The `w:val` line family of a page border edge. Art borders and the
+/// rarer compound lines paint as `Single`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BorderLine {
+    Single,
+    Double,
+    Dotted,
+    Dashed,
+}
+
+#[derive(Clone, Copy, Debug)]
 struct PageBorder {
     color: [f32; 3],
     width: f32,
     space: f32,
+    line: BorderLine,
 }
 
-#[derive(Clone, Copy, Default)]
+/// `w:pgBorders/@w:display` (ST_PageBorderDisplay).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum BorderDisplay {
+    #[default]
+    AllPages,
+    FirstPage,
+    NotFirstPage,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 struct PageBorders {
     top: Option<PageBorder>,
     left: Option<PageBorder>,
     bottom: Option<PageBorder>,
     right: Option<PageBorder>,
-    /// `w:pgBorders/@w:offsetFrom` — `page` vs `text`.
+    /// `w:pgBorders/@w:offsetFrom` is `page` (omitted means `text`).
     from_page: bool,
+    display: BorderDisplay,
+    /// `w:zOrder="back"`: under body ink. Word's default `front` paints over.
+    back: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1150,7 +1173,105 @@ enum ImageSlot {
         dist_t: f32,
         /// `wp:anchor/@distB` plus `effectExtent/@b`.
         dist_b: f32,
+        /// Horizontal `relativeFrom` (ST_RelFromH) for align-only anchors.
+        h_rel: RelFrame,
+        /// Vertical `relativeFrom` (ST_RelFromV): the frame of `v_align`
+        /// and of `v_off`.
+        v_rel: RelFrame,
+        /// posOffset from the top of a margin frame (`margin`,
+        /// `topMargin`, `bottomMargin`, inside/outside; table
+        /// `vertAnchor="margin"`). Page / paragraph offsets stay in
+        /// `page_y` / `para_y`.
+        v_off: Option<f32>,
     },
+}
+
+fn float_is_text_anchored(slot: ImageSlot) -> bool {
+    matches!(
+        slot,
+        ImageSlot::Float {
+            page_y: None,
+            v_off: None,
+            ..
+        }
+    )
+}
+
+/// An anchor's `relativeFrom` frame (ST_RelFromH / ST_RelFromV), one byte
+/// so `ImageSlot` stays small inside `Block`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RelFrame {
+    Page,
+    Margin,
+    Column,
+    Character,
+    LeftMargin,
+    RightMargin,
+    InsideMargin,
+    OutsideMargin,
+    Paragraph,
+    Line,
+    TopMargin,
+    BottomMargin,
+}
+
+impl RelFrame {
+    /// The ECMA-376 attribute value `resolve_anchor` matches on.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Page => "page",
+            Self::Margin => "margin",
+            Self::Column => "column",
+            Self::Character => "character",
+            Self::LeftMargin => "leftMargin",
+            Self::RightMargin => "rightMargin",
+            Self::InsideMargin => "insideMargin",
+            Self::OutsideMargin => "outsideMargin",
+            Self::Paragraph => "paragraph",
+            Self::Line => "line",
+            Self::TopMargin => "topMargin",
+            Self::BottomMargin => "bottomMargin",
+        }
+    }
+}
+
+/// DrawingML `wp:positionH/@relativeFrom`.
+fn rel_from_h(s: &str) -> RelFrame {
+    match s {
+        "page" => RelFrame::Page,
+        "margin" => RelFrame::Margin,
+        "character" => RelFrame::Character,
+        "leftMargin" => RelFrame::LeftMargin,
+        "rightMargin" => RelFrame::RightMargin,
+        "insideMargin" => RelFrame::InsideMargin,
+        "outsideMargin" => RelFrame::OutsideMargin,
+        _ => RelFrame::Column,
+    }
+}
+
+/// DrawingML `wp:positionV/@relativeFrom`.
+fn rel_from_v(s: &str) -> RelFrame {
+    match s {
+        "page" => RelFrame::Page,
+        "margin" => RelFrame::Margin,
+        "line" => RelFrame::Line,
+        "topMargin" => RelFrame::TopMargin,
+        "bottomMargin" => RelFrame::BottomMargin,
+        "insideMargin" => RelFrame::InsideMargin,
+        "outsideMargin" => RelFrame::OutsideMargin,
+        _ => RelFrame::Paragraph,
+    }
+}
+
+fn rel_is_margin_frame(v_rel: RelFrame) -> bool {
+    matches!(
+        v_rel,
+        RelFrame::Margin
+            | RelFrame::TopMargin
+            | RelFrame::BottomMargin
+            | RelFrame::InsideMargin
+            | RelFrame::OutsideMargin
+    )
 }
 
 /// Page/emit context for `resolve_anchor` (xml 3.4). PDF y is
@@ -1208,46 +1329,47 @@ struct AnchorSpec<'a> {
 fn resolve_anchor(ctx: &PlaceCtx, spec: &AnchorSpec<'_>) -> Placement {
     let w = spec.w;
     let h = spec.h;
-    let content_w = (ctx.page_w - ctx.margin_l - ctx.margin_r).max(0.0);
-    let (origin_x, avail_x) = match spec.h_from {
+    // Horizontal frame [left, right] (ST_RelFromH). leftMargin /
+    // rightMargin are the margin *areas*; inside/outside take the odd-page
+    // side (no mirror parity here).
+    let (left, right) = match spec.h_from {
         "page" => (0.0, ctx.page_w),
-        "margin" | "leftMargin" | "insideMargin" => (ctx.margin_l, content_w),
-        "column" => (
-            ctx.column_x,
-            (ctx.page_w - ctx.margin_r - ctx.column_x).max(0.0),
-        ),
-        "character" => (
-            ctx.cursor_x,
-            (ctx.page_w - ctx.margin_r - ctx.cursor_x).max(0.0),
-        ),
-        "rightMargin" | "outsideMargin" => (ctx.page_w - ctx.margin_r - w, content_w),
-        _ => (ctx.margin_l, content_w),
+        "leftMargin" | "insideMargin" => (0.0, ctx.margin_l),
+        "rightMargin" | "outsideMargin" => (ctx.page_w - ctx.margin_r, ctx.page_w),
+        "column" => (ctx.column_x, ctx.page_w - ctx.margin_r),
+        "character" => (ctx.cursor_x, ctx.page_w - ctx.margin_r),
+        _ => (ctx.margin_l, ctx.page_w - ctx.margin_r),
     };
+    // Alignment is by edges/centre even when the object is wider than
+    // its frame (a 144pt box right-aligned in a 72pt margin overhangs left).
     let x = if let Some(off) = spec.h_off {
-        origin_x + off
+        left + off
     } else {
         match spec.h_align {
-            Align::Right => origin_x + (avail_x - w).max(0.0),
-            Align::Center => origin_x + ((avail_x - w) * 0.5).max(0.0),
-            Align::Left | Align::Justify => origin_x,
+            Align::Right => right - w,
+            Align::Center => left + ((right - left) - w) * 0.5,
+            Align::Left | Align::Justify => left,
         }
     };
+    // Vertical frame [top, bottom] in PDF space (ST_RelFromV). Paragraph
+    // and line frames are their top edge. Offsets run downward from the
+    // frame top and are not clamped: posOffset is signed and may leave the
+    // page (Word clips at paint).
+    let (top, bottom) = match spec.v_from {
+        "page" => (ctx.page_h, 0.0),
+        "margin" => (ctx.page_h - ctx.margin_t, ctx.margin_b),
+        "topMargin" | "insideMargin" => (ctx.page_h, ctx.page_h - ctx.margin_t),
+        "bottomMargin" | "outsideMargin" => (ctx.margin_b, 0.0),
+        "line" => (ctx.line_top, ctx.line_top),
+        _ => (ctx.para_top, ctx.para_top),
+    };
     let y = if let Some(off) = spec.v_off {
-        match spec.v_from {
-            "page" => (ctx.page_h - off - h).max(0.0),
-            "margin" | "topMargin" | "insideMargin" => {
-                (ctx.page_h - ctx.margin_t - off - h).max(ctx.margin_b)
-            }
-            "paragraph" => (ctx.para_top - off - h).max(ctx.margin_b),
-            "line" => (ctx.line_top - off - h).max(ctx.margin_b),
-            "bottomMargin" | "outsideMargin" => ctx.margin_b + off,
-            _ => (ctx.para_top - off - h).max(ctx.margin_b),
-        }
+        top - off - h
     } else {
         match spec.v_align {
-            Align::Center => ((ctx.page_h - h) * 0.5).max(0.0),
-            Align::Right => ctx.margin_b,
-            Align::Left | Align::Justify => (ctx.page_h - ctx.margin_t - h).max(ctx.margin_b),
+            Align::Center => bottom + ((top - bottom) - h) * 0.5,
+            Align::Right => bottom,
+            Align::Left | Align::Justify => top - h,
         }
     };
     Placement {
@@ -1273,6 +1395,9 @@ fn spec_from_float(w: f32, h: f32, slot: ImageSlot) -> Option<AnchorSpec<'static
         dist_r,
         dist_t,
         dist_b,
+        h_rel,
+        v_rel,
+        v_off,
         ..
     } = slot
     else {
@@ -1283,14 +1408,16 @@ fn spec_from_float(w: f32, h: f32, slot: ImageSlot) -> Option<AnchorSpec<'static
     } else if let Some(cx) = col_x {
         ("column", Some(cx))
     } else {
-        ("margin", None)
+        (h_rel.as_str(), None)
     };
+    // An align-only anchor keeps its own frame (VML text-relative centre,
+    // DrawingML paragraph-relative centre), not a blanket "margin".
     let (v_from, v_off) = if let Some(py) = page_y {
         ("page", Some(py))
     } else if let Some(py) = para_y {
         ("paragraph", Some(py))
     } else {
-        ("margin", None)
+        (v_rel.as_str(), v_off)
     };
     let wrap = if wrap_top_bottom {
         WrapMode::TopBottom
@@ -2729,7 +2856,8 @@ fn snap_doc_grid(h: f32, pitch: f32) -> f32 {
 }
 
 fn parse_pg_borders(dom: &Dom, pb: NodeId) -> PageBorders {
-    let from_page = attr_any(dom, pb, "offsetFrom").unwrap_or("page") != "text";
+    // MS-OI29500 17.6.10: an omitted offsetFrom is `text`.
+    let from_page = attr_any(dom, pb, "offsetFrom") == Some("page");
     let edge = |name: &str| -> Option<PageBorder> {
         let el = first_named(dom, pb, name)?;
         let val = attr_any(dom, el, "val").unwrap_or("single");
@@ -2749,10 +2877,17 @@ fn parse_pg_borders(dom: &Dom, pb: NodeId) -> PageBorders {
         let space = attr_any(dom, el, "space")
             .and_then(|s| s.parse::<f32>().ok())
             .unwrap_or(24.0);
+        let line = match val {
+            "double" => BorderLine::Double,
+            "dotted" => BorderLine::Dotted,
+            "dashed" | "dashSmallGap" | "dotDash" | "dotDotDash" => BorderLine::Dashed,
+            _ => BorderLine::Single,
+        };
         Some(PageBorder {
             color,
             width,
             space,
+            line,
         })
     };
     PageBorders {
@@ -2761,6 +2896,54 @@ fn parse_pg_borders(dom: &Dom, pb: NodeId) -> PageBorders {
         bottom: edge("bottom"),
         right: edge("right"),
         from_page,
+        display: match attr_any(dom, pb, "display") {
+            Some("firstPage") => BorderDisplay::FirstPage,
+            Some("notFirstPage") => BorderDisplay::NotFirstPage,
+            _ => BorderDisplay::AllPages,
+        },
+        back: attr_any(dom, pb, "zOrder") == Some("back"),
+    }
+}
+
+#[cfg(test)]
+mod pg_border_tests {
+    use super::*;
+
+    fn parse(inner: &str) -> PageBorders {
+        let xml = format!(
+            r#"<w:pgBorders xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" {inner}</w:pgBorders>"#
+        );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let pb = dom.root(doc).expect("pgBorders");
+        parse_pg_borders(&dom, pb)
+    }
+
+    #[test]
+    fn omitted_offset_from_is_text_and_display_is_all_pages() {
+        let b = parse(r#"><w:top w:val="single" w:sz="8"/>"#);
+        assert!(!b.from_page);
+        assert_eq!(b.display, BorderDisplay::AllPages);
+        assert!(!b.back, "zOrder defaults to front");
+        let b = parse(
+            r#"w:offsetFrom="page" w:display="notFirstPage" w:zOrder="back"><w:top w:val="single"/>"#,
+        );
+        assert!(b.from_page);
+        assert_eq!(b.display, BorderDisplay::NotFirstPage);
+        assert!(b.back);
+    }
+
+    #[test]
+    fn edge_styles_and_nil_edges() {
+        let b = parse(
+            r#"><w:top w:val="double"/><w:left w:val="dotted"/><w:bottom w:val="dashSmallGap"/><w:right w:val="nil"/>"#,
+        );
+        assert_eq!(b.top.map(|e| e.line), Some(BorderLine::Double));
+        assert_eq!(b.left.map(|e| e.line), Some(BorderLine::Dotted));
+        assert_eq!(b.bottom.map(|e| e.line), Some(BorderLine::Dashed));
+        assert!(b.right.is_none(), "nil paints nothing");
+        let none = parse(r#"><w:top w:val="none"/>"#);
+        assert!(none.top.is_none());
     }
 }
 
@@ -4233,11 +4416,12 @@ fn part_xml_by_rel_kind(pkg: &PartFs, main: &str, kind: &str) -> Option<String> 
     pkg.part_string(&format!("word/{kind}.xml"))
 }
 
+/// Separator / continuation notes are chrome, not note text. Since plan
+/// Step 7, `paint_page_footnotes` draws the separator itself: a
+/// `FOOTNOTE_SEP_PT` rule from `margin_l` to `margin_l + FOOTNOTE_SEP_W`
+/// at `sep_y`, above the reserved note block (mini 619-622's content-
+/// driven 144x0.72 rule stays retired).
 fn note_is_structural(dom: &Dom, note: NodeId) -> bool {
-    // Mini 619–622: Word-faithful `w:separator` 144×0.72 (Strict01 p13)
-    // ITT-neg NR mean −0.0018 (8 Strict01-family −0.013, 0 gains) while
-    // RL mean +0.0324 (11 clone gains). KEEP-only forbids the NR drop.
-    // Do not retry.
     matches!(
         attr_any(dom, note, "type"),
         Some("separator" | "continuationSeparator" | "continuationNotice")
@@ -6231,6 +6415,18 @@ fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
         dist_r: dist("rightFromText"),
         dist_t: dist("topFromText"),
         dist_b: dist("bottomFromText"),
+        h_rel: match horz {
+            "page" => RelFrame::Page,
+            "margin" => RelFrame::Margin,
+            _ => RelFrame::Column,
+        },
+        v_rel: match vert {
+            "page" => RelFrame::Page,
+            "margin" => RelFrame::Margin,
+            _ => RelFrame::Paragraph,
+        },
+        // vertAnchor="margin" + tblpY: offset from the top margin.
+        v_off: (vert == "margin").then_some(y_pt).flatten(),
     })
 }
 
@@ -8047,7 +8243,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         w: 72.0,
                         h: 72.0,
                         kind: ImageKind::Broken,
-                        slot: vml_absolute_slot(dom, root).unwrap_or(ImageSlot::Flow),
+                        slot: vml_owner_slot(dom, im, root).unwrap_or(ImageSlot::Flow),
                         behind: false,
                         z: 0,
                         crop: None,
@@ -8055,13 +8251,13 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     });
                     continue;
                 };
-                let (w, h) = vml_extent_pt(dom, root);
+                let (w, h) = vml_owner_extent_pt(dom, im, root);
                 let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);
                 out.push(LaidImage {
                     w,
                     h,
                     kind,
-                    slot: vml_absolute_slot(dom, root).unwrap_or(ImageSlot::Flow),
+                    slot: vml_owner_slot(dom, im, root).unwrap_or(ImageSlot::Flow),
                     behind: false,
                     z: 0,
                     crop: None,
@@ -8214,6 +8410,20 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         dist_r: emu_pt("distR") + effect_pt("r"),
         dist_t: emu_pt("distT") + effect_pt("t"),
         dist_b: emu_pt("distB") + effect_pt("b"),
+        // A missing positionH/V keeps the old margin frame.
+        h_rel: if h_from.is_empty() {
+            RelFrame::Margin
+        } else {
+            rel_from_h(h_from)
+        },
+        v_rel: if v_from.is_empty() {
+            RelFrame::Margin
+        } else {
+            rel_from_v(v_from)
+        },
+        v_off: rel_is_margin_frame(rel_from_v(v_from))
+            .then(|| pos_offset_pt(dom, pv))
+            .flatten(),
     }
 }
 
@@ -8292,16 +8502,64 @@ fn vml_style_hidden(style: &str) -> bool {
 fn vml_absolute_slot(dom: &Dom, root: NodeId) -> Option<ImageSlot> {
     // Word parks wrapSquare-sibling editor chrome as `v:shape` with
     // position:absolute + margin-left/top (image_out DeepL "Subscribe").
-    for shape in descendants_local(dom, root, "shape") {
-        let Some(style) = attr_any(dom, shape, "style") else {
-            continue;
-        };
+    descendants_local(dom, root, "shape")
+        .into_iter()
+        .find_map(|shape| vml_shape_slot(dom, shape))
+}
+
+/// VML elements that carry their own `style` box (and so their own
+/// position) around a `v:imagedata`.
+const VML_BOXES: [&str; 6] = ["shape", "rect", "roundrect", "oval", "image", "group"];
+
+/// The slot of the VML shape that owns `im`: its nearest box ancestor
+/// (or an absolute `v:group` above it), never another shape in the same
+/// `w:pict`. Each VML shape positions independently in Word.
+fn vml_owner_slot(dom: &Dom, im: NodeId, root: NodeId) -> Option<ImageSlot> {
+    let mut node = dom.parent(im);
+    while let Some(n) = node {
+        if n == root {
+            break;
+        }
+        if VML_BOXES.iter().any(|l| local_name_is(dom, n, l))
+            && let Some(slot) = vml_shape_slot(dom, n)
+        {
+            return Some(slot);
+        }
+        node = dom.parent(n);
+    }
+    None
+}
+
+/// Width/height of the VML shape that owns `im`, falling back to the
+/// first sized shape in the pict.
+fn vml_owner_extent_pt(dom: &Dom, im: NodeId, root: NodeId) -> (f32, f32) {
+    let mut node = dom.parent(im);
+    while let Some(n) = node {
+        if n == root {
+            break;
+        }
+        if VML_BOXES.iter().any(|l| local_name_is(dom, n, l))
+            && let Some(style) = attr_any(dom, n, "style")
+            && let (Some(w), Some(h)) =
+                (vml_style_pt(style, "width"), vml_style_pt(style, "height"))
+        {
+            return (w, h);
+        }
+        node = dom.parent(n);
+    }
+    vml_extent_pt(dom, root)
+}
+
+/// One VML shape's `position:absolute` slot, or `None` when it flows.
+fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
+    {
+        let style = attr_any(dom, shape, "style")?;
         if vml_style_hidden(style) {
-            continue;
+            return None;
         }
         let lower = style.to_ascii_lowercase();
         if !lower.contains("position:absolute") && !lower.contains("position: absolute") {
-            continue;
+            return None;
         }
         let mx = vml_style_pt(style, "margin-left").unwrap_or(0.0);
         let my = vml_style_pt(style, "margin-top").unwrap_or(0.0);
@@ -8327,7 +8585,17 @@ fn vml_absolute_slot(dom: &Dom, root: NodeId) -> Option<ImageSlot> {
         let v_page = v_rel.is_empty() || v_rel == "page";
         let v_para = matches!(v_rel.as_str(), "text" | "paragraph" | "line");
         let wrap = vml_style_token(style, "mso-wrap-style").to_ascii_lowercase();
-        return Some(ImageSlot::Float {
+        let v_frame = match v_rel.as_str() {
+            "" | "page" => RelFrame::Page,
+            "margin" => RelFrame::Margin,
+            "line" => RelFrame::Line,
+            "top-margin-area" => RelFrame::TopMargin,
+            "bottom-margin-area" => RelFrame::BottomMargin,
+            "inner-margin-area" => RelFrame::InsideMargin,
+            "outer-margin-area" => RelFrame::OutsideMargin,
+            _ => RelFrame::Paragraph,
+        };
+        Some(ImageSlot::Float {
             align,
             page_x: (h_page && h_abs).then_some(mx),
             page_y: (v_page && v_abs).then_some(my),
@@ -8344,9 +8612,20 @@ fn vml_absolute_slot(dom: &Dom, root: NodeId) -> Option<ImageSlot> {
             dist_r: vml_style_pt(style, "mso-wrap-distance-right").unwrap_or(0.0),
             dist_t: vml_style_pt(style, "mso-wrap-distance-top").unwrap_or(0.0),
             dist_b: vml_style_pt(style, "mso-wrap-distance-bottom").unwrap_or(0.0),
-        });
+            h_rel: match h_rel.as_str() {
+                "" | "page" => RelFrame::Page,
+                "margin" => RelFrame::Margin,
+                "char" => RelFrame::Character,
+                "left-margin-area" => RelFrame::LeftMargin,
+                "right-margin-area" => RelFrame::RightMargin,
+                "inner-margin-area" => RelFrame::InsideMargin,
+                "outer-margin-area" => RelFrame::OutsideMargin,
+                _ => RelFrame::Column,
+            },
+            v_rel: v_frame,
+            v_off: (rel_is_margin_frame(v_frame) && v_abs).then_some(my),
+        })
     }
-    None
 }
 
 fn vml_extent_pt(dom: &Dom, root: NodeId) -> (f32, f32) {
@@ -9523,7 +9802,20 @@ fn collect_hf_rec(
 struct SideFloat {
     align: Align,
     inset: f32,
+    /// PDF top of the float band (the table top, or its tblpY position).
+    top: f32,
+    /// PDF bottom of the band: table bottom minus `bottomFromText`.
     bottom: f32,
+}
+
+/// The next paragraph's first line as `emit_runs` will place it:
+/// `top` after its effective space-before, `h` its real line box, and the
+/// full `before` a jump below a float would otherwise apply twice.
+#[derive(Clone, Copy, Default)]
+struct LineProbe {
+    top: f32,
+    h: f32,
+    before: f32,
 }
 
 struct Layout<'a> {
@@ -9594,6 +9886,12 @@ struct Layout<'a> {
     nested_depth: u8,
     /// Active wrapSquare-style float from a `tblpPr` table.
     side_float: Option<SideFloat>,
+    line_probe: LineProbe,
+    /// The current page is its section's first (pgBorders `display`).
+    section_first_page: bool,
+    /// zOrder=front page-border ops per page index, appended after the
+    /// body when layout finishes.
+    front_border_ops: Vec<(usize, Vec<Op>)>,
     /// PDF y of the current paragraph's first-line top (xml 3.4).
     para_top: f32,
     bookmark_pages: HashMap<String, String>,
@@ -9724,6 +10022,9 @@ impl<'a> Layout<'a> {
             last_style_id: String::new(),
             nested_depth: 0,
             side_float: None,
+            line_probe: LineProbe::default(),
+            section_first_page: true,
+            front_border_ops: Vec::new(),
             para_top: y,
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
@@ -9895,6 +10196,9 @@ impl<'a> Layout<'a> {
         self.patch_chap_page();
         self.section_page = self.section_page.saturating_add(1);
         self.pages.push(self.fresh_page());
+        // A floating table belongs to the page it was painted on.
+        self.side_float = None;
+        self.section_first_page = false;
         self.col_i = 0;
         if self.page.ln_restart == 0 {
             self.ln_i = self.page.ln_start.max(1);
@@ -9979,7 +10283,10 @@ impl<'a> Layout<'a> {
             }
             self.select_parity_chrome();
             self.apply_mirror_margins();
+            self.section_first_page = next.is_some();
             self.pages.push(self.fresh_page());
+            // A floating table belongs to the page it was painted on.
+            self.side_float = None;
             self.col_i = 0;
             self.y = self.page.height - self.body_top;
             self.page_has_body = false;
@@ -10127,15 +10434,12 @@ impl<'a> Layout<'a> {
                     self.fonts
                         .resolve(&r.style.family, r.style.bold, r.style.italic)
                 });
-            let lines = wrap_runs(
-                self.fonts,
-                &para.runs,
-                width.max(40.0),
-                width.max(40.0),
-                false,
-            )
-            .len()
-            .max(1);
+            // Same measure paint_one_footnote wraps at: the note's own
+            // w:ind narrows it, so reserving at the full width under-counts.
+            let measure = (width - para.style.indent_left - para.style.indent_right).max(40.0);
+            let lines = wrap_runs(self.fonts, &para.runs, measure, measure, false)
+                .len()
+                .max(1);
             h += para_line_box(self.fonts.get(fid), size, &para.style) * lines as f32;
             h += para.style.after;
         }
@@ -10254,9 +10558,32 @@ impl<'a> Layout<'a> {
         let (_, fy) = self.float_xy(dw, dh.max(1.0), slot);
         let top = fy + dh + dist_t;
         let bot = fy - dist_b;
-        let line_top = self.y;
-        let line_bot = self.y - 20.0;
+        // The real first line (face metrics, after space-before), not a
+        // fixed 20pt box from the pre-spacing cursor.
+        let line_top = self.line_probe.top;
+        let line_bot = line_top - self.line_probe.h;
         line_bot < top && line_top > bot
+    }
+
+    fn set_line_probe(&mut self, runs: &[TextRun], style: &ParaStyle) {
+        let before = if !self.at_page_top || !self.suppress_space_before {
+            style.before
+        } else {
+            0.0
+        };
+        self.line_probe = LineProbe {
+            top: self.y - before,
+            h: para_first_line_pt(self.fonts, runs, style, self.page.grid_pitch),
+            before: style.before,
+        };
+    }
+
+    /// The side float (floating table) band holds the probed line.
+    fn side_float_holds_line(&self) -> Option<SideFloat> {
+        self.side_float.filter(|sf| {
+            let top = self.line_probe.top;
+            top > sf.bottom + 0.5 && top - self.line_probe.h < sf.top + 0.5
+        })
     }
 
     /// wrapSquare bothSides: body measure shrinks by the float + distL/distR
@@ -10303,9 +10630,7 @@ impl<'a> Layout<'a> {
         for box_ in boxes {
             consider(box_.slot, box_.w, box_.h);
         }
-        if let Some(sf) = self.side_float
-            && self.y > sf.bottom + 0.5
-        {
+        if let Some(sf) = self.side_float_holds_line() {
             match sf.align {
                 Align::Right => right = right.max(sf.inset),
                 Align::Left => left = left.max(sf.inset),
@@ -10347,9 +10672,13 @@ impl<'a> Layout<'a> {
             consider(box_.slot, box_.w, box_.h);
         }
         if hit {
-            self.y = jump;
+            // emit_runs applies the full space-before next (at_page_top is
+            // cleared): start that far above so the line lands under the
+            // object instead of one before lower.
+            self.y = jump + self.line_probe.before;
             self.at_page_top = false;
             self.suppress_space_before = false;
+            self.line_probe.top = jump;
         }
     }
 
@@ -10369,13 +10698,18 @@ impl<'a> Layout<'a> {
             }
             let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
             let (_, fy) = self.float_xy(dw, dh.max(1.0), slot);
-            rem = rem.max((self.y - (fy - dist_b)).max(0.0));
+            rem = rem.max((self.line_probe.top - (fy - dist_b)).max(0.0));
         };
         for img in images {
             consider(img.slot, img.w, img.h);
         }
         for box_ in boxes {
             consider(box_.slot, box_.w, box_.h);
+        }
+        // A floating table narrows only the lines beside it: lines past
+        // its bottom return to the full measure (reflow_past_float).
+        if let Some(sf) = self.side_float_holds_line() {
+            rem = rem.max(self.line_probe.top - sf.bottom);
         }
         rem
     }
@@ -11387,6 +11721,8 @@ impl<'a> Layout<'a> {
             pct_y,
             pct_w,
             v_align,
+            v_rel,
+            v_off,
             ..
         } = slot
         else {
@@ -11429,15 +11765,59 @@ impl<'a> Layout<'a> {
             (_, _, Some(py)) => {
                 (self.page.height - self.body_top - py - dh).max(self.page.margin_b)
             }
-            _ => match v_align {
-                Align::Center => ((self.page.height - dh) * 0.5).max(0.0),
-                Align::Right => 0.0,
-                Align::Left | Align::Justify => {
-                    (self.page.height - self.page.margin_t - dh).max(self.page.margin_b)
+            // Margin-frame offset (tblpY with vertAnchor="margin",
+            // positionV relativeFrom="margin"/topMargin/...): from the
+            // frame's top, unclamped.
+            _ if v_off.is_some() => {
+                let (top, _) = self.anchor_v_frame(v_rel);
+                top - v_off.unwrap_or(0.0) - dh
+            }
+            // Alignment within the anchor's own frame: bottom relative to
+            // the margin is the bottom margin, not the page edge.
+            _ => {
+                let (top, bottom) = self.anchor_v_frame(v_rel);
+                match v_align {
+                    Align::Center => bottom + ((top - bottom) - dh) * 0.5,
+                    Align::Right => bottom,
+                    Align::Left | Align::Justify => top - dh,
                 }
-            },
+            }
         };
         (x, y)
+    }
+
+    /// PDF top of a floating (tblpPr) table: `tblpY` from its vertAnchor
+    /// (page, margin, or the text flow), not always the current cursor.
+    fn float_table_top(&self, slot: ImageSlot) -> f32 {
+        let ImageSlot::Float {
+            page_y,
+            para_y,
+            v_off,
+            ..
+        } = slot
+        else {
+            return self.y;
+        };
+        match (page_y, v_off, para_y) {
+            (Some(py), _, _) => self.page.height - py,
+            (_, Some(off), _) => self.page.height - self.page.margin_t - off,
+            (_, _, Some(py)) => self.y - py,
+            _ => self.y,
+        }
+    }
+
+    /// ST_RelFromV frame as PDF `(top, bottom)` on the current page.
+    fn anchor_v_frame(&self, v_rel: RelFrame) -> (f32, f32) {
+        let page = &self.page;
+        match v_rel {
+            RelFrame::Page => (page.height, 0.0),
+            RelFrame::TopMargin | RelFrame::InsideMargin => {
+                (page.height, page.height - page.margin_t)
+            }
+            RelFrame::BottomMargin | RelFrame::OutsideMargin => (page.margin_b, 0.0),
+            RelFrame::Paragraph | RelFrame::Line => (self.para_top, self.para_top),
+            _ => (page.height - page.margin_t, page.margin_b),
+        }
     }
 
     fn sized_wh(&self, slot: ImageSlot, w: f32, h: f32, min_w: f32, min_h: f32) -> (f32, f32) {
@@ -13486,6 +13866,10 @@ impl<'a> Layout<'a> {
             let used: f32 = col_w.iter().sum();
             let th: f32 = row_h.iter().sum();
             let (fx, _) = self.float_xy(used.max(1.0), th.max(1.0), slot);
+            let dist_b = match slot {
+                ImageSlot::Float { dist_b, .. } => dist_b,
+                ImageSlot::Flow => 0.0,
+            };
             let dist = match slot {
                 ImageSlot::Float {
                     align,
@@ -13505,7 +13889,7 @@ impl<'a> Layout<'a> {
                 ImageSlot::Float { align, .. } => align,
                 ImageSlot::Flow => Align::Left,
             };
-            let top = self.y;
+            let top = self.float_table_top(slot);
             let saved_y = self.y;
             let saved_ml = self.page.margin_l;
             let saved_mr = self.page.margin_r;
@@ -13521,10 +13905,20 @@ impl<'a> Layout<'a> {
             self.page.margin_l = saved_ml;
             self.page.margin_r = saved_mr;
             self.at_page_top = saved_top;
+            // Wrap geometry is per paragraph, not per line: a text-anchored
+            // table's band starts at the cursor so the following paragraph
+            // wraps from its first line (Word keeps that one line full when
+            // tblpY pushes the table below it; case45).
+            let band_top = if float_is_text_anchored(slot) {
+                saved_y
+            } else {
+                top
+            };
             self.side_float = Some(SideFloat {
                 align,
                 inset: used + dist,
-                bottom: top - th,
+                top: band_top,
+                bottom: top - th - dist_b,
             });
             return;
         }
@@ -14024,6 +14418,15 @@ impl<'a> Layout<'a> {
         if b.top.is_none() && b.left.is_none() && b.bottom.is_none() && b.right.is_none() {
             return;
         }
+        let shown = match b.display {
+            BorderDisplay::AllPages => true,
+            BorderDisplay::FirstPage => self.section_first_page,
+            BorderDisplay::NotFirstPage => !self.section_first_page,
+        };
+        if !shown {
+            return;
+        }
+        let start = self.current().ops.len();
         let pw = self.page.width;
         let ph = self.page.height;
         let ml = self.page.margin_l;
@@ -14073,16 +14476,77 @@ impl<'a> Layout<'a> {
             .map(|e| edge_y(e.space, false))
             .unwrap_or(0.0);
         if let Some(e) = b.top {
-            self.hairline_h(left, edge_y(e.space, true), right, e.width, e.color);
+            self.border_edge(
+                e,
+                (left, edge_y(e.space, true)),
+                (right, edge_y(e.space, true)),
+            );
         }
         if let Some(e) = b.bottom {
-            self.hairline_h(left, edge_y(e.space, false), right, e.width, e.color);
+            self.border_edge(
+                e,
+                (left, edge_y(e.space, false)),
+                (right, edge_y(e.space, false)),
+            );
         }
         if let Some(e) = b.left {
-            self.hairline_v(edge_x(e.space, true), bot, top, e.width, e.color);
+            self.border_edge(
+                e,
+                (edge_x(e.space, true), bot),
+                (edge_x(e.space, true), top),
+            );
         }
         if let Some(e) = b.right {
-            self.hairline_v(edge_x(e.space, false), bot, top, e.width, e.color);
+            self.border_edge(
+                e,
+                (edge_x(e.space, false), bot),
+                (edge_x(e.space, false), top),
+            );
+        }
+        if !b.back {
+            // zOrder front (the default): over body ink. Park the ops and
+            // append them when the page is complete.
+            let page = self.pages.len() - 1;
+            let ops: Vec<Op> = self.current().ops.drain(start..).collect();
+            self.front_border_ops.push((page, ops));
+        }
+    }
+
+    /// One page-border edge from `a` to `b` (axis-aligned) in its line style.
+    fn border_edge(&mut self, e: PageBorder, a: (f32, f32), b: (f32, f32)) {
+        let horizontal = (a.1 - b.1).abs() < 0.01;
+        let seg = |lay: &mut Self, p: f32, q: f32, off: f32| {
+            if horizontal {
+                lay.hairline_h(p, a.1 + off, q, e.width, e.color);
+            } else {
+                lay.hairline_v(a.0 + off, p, q, e.width, e.color);
+            }
+        };
+        let (from, to) = if horizontal {
+            (a.0.min(b.0), a.0.max(b.0))
+        } else {
+            (a.1.min(b.1), a.1.max(b.1))
+        };
+        let w = e.width.max(0.24);
+        match e.line {
+            BorderLine::Single => seg(self, from, to, 0.0),
+            BorderLine::Double => {
+                seg(self, from, to, w);
+                seg(self, from, to, -w);
+            }
+            BorderLine::Dotted | BorderLine::Dashed => {
+                let (on, off) = if e.line == BorderLine::Dotted {
+                    (w, w)
+                } else {
+                    (3.0 * w, 2.0 * w)
+                };
+                let (on, off) = (on.max(0.5), off.max(0.5));
+                let mut p = from;
+                while p < to {
+                    seg(self, p, (p + on).min(to), 0.0);
+                    p += on + off;
+                }
+            }
         }
     }
 
@@ -14748,6 +15212,7 @@ fn layout(
                     if lay.side_float.is_some_and(|sf| lay.y <= sf.bottom + 0.5) {
                         lay.side_float = None;
                     }
+                    lay.set_line_probe(runs, &style);
                     lay.apply_top_bottom_wrap(images, boxes);
                     let (wrap_left, wrap_right) = lay.wrap_square_inset(images, boxes);
                     let inset_h = lay.wrap_band_remaining(images, boxes);
@@ -14807,6 +15272,11 @@ fn layout(
     lay.patch_chap_page();
     lay.patch_pagerefs();
     patch_numpages(fonts, &mut lay.pages);
+    for (page, ops) in std::mem::take(&mut lay.front_border_ops) {
+        if let Some(p) = lay.pages.get_mut(page) {
+            p.ops.extend(ops);
+        }
+    }
     lay.pages
 }
 
@@ -18945,6 +19415,136 @@ mod drawing_tests {
             (p.y - 660.0).abs() < 0.01,
             "para_top 700 - h 40 = 660, got y={}",
             p.y
+        );
+    }
+
+    fn spec(
+        h_from: &'static str,
+        h_align: Align,
+        v_from: &'static str,
+        v_align: Align,
+    ) -> AnchorSpec<'static> {
+        AnchorSpec {
+            w: 144.0,
+            h: 72.0,
+            h_from,
+            h_align,
+            h_off: None,
+            v_from,
+            v_align,
+            v_off: None,
+            wrap: WrapMode::None,
+        }
+    }
+
+    #[test]
+    fn resolve_anchor_margin_areas_are_their_own_frames() {
+        // ST_RelFromH leftMargin / rightMargin are the margin *areas*.
+        let ctx = letter_ctx();
+        let right = resolve_anchor(
+            &ctx,
+            &spec("rightMargin", Align::Right, "page", Align::Left),
+        );
+        assert!(
+            (right.x - (612.0 - 144.0)).abs() < 0.01,
+            "flush with the page edge: x={}",
+            right.x
+        );
+        let left_off = resolve_anchor(
+            &ctx,
+            &AnchorSpec {
+                h_off: Some(10.0),
+                ..spec("rightMargin", Align::Left, "page", Align::Left)
+            },
+        );
+        assert!(
+            (left_off.x - (540.0 + 10.0)).abs() < 0.01,
+            "offset from the right-margin edge: x={}",
+            left_off.x
+        );
+        let lm = resolve_anchor(&ctx, &spec("leftMargin", Align::Left, "page", Align::Left));
+        assert!(
+            lm.x.abs() < 0.01,
+            "leftMargin starts at the page edge: x={}",
+            lm.x
+        );
+    }
+
+    #[test]
+    fn resolve_anchor_vertical_alignment_uses_its_frame() {
+        let ctx = letter_ctx();
+        let y =
+            |v_from, v_align| resolve_anchor(&ctx, &spec("margin", Align::Left, v_from, v_align)).y;
+        assert!(
+            (y("page", Align::Left) - (792.0 - 72.0)).abs() < 0.01,
+            "page top"
+        );
+        assert!(y("page", Align::Right).abs() < 0.01, "page bottom");
+        assert!(
+            (y("page", Align::Center) - 360.0).abs() < 0.01,
+            "page centre"
+        );
+        assert!(
+            (y("margin", Align::Center) - (72.0 + (648.0 - 72.0) / 2.0)).abs() < 0.01,
+            "margin centre"
+        );
+        assert!(
+            (y("margin", Align::Right) - 72.0).abs() < 0.01,
+            "margin bottom"
+        );
+        assert!(
+            (y("paragraph", Align::Left) - (700.0 - 72.0)).abs() < 0.01,
+            "paragraph top"
+        );
+        assert!(
+            (y("line", Align::Left) - (688.0 - 72.0)).abs() < 0.01,
+            "line top"
+        );
+        assert!(
+            (y("topMargin", Align::Right) - 720.0).abs() < 0.01,
+            "top-margin bottom"
+        );
+        assert!(
+            y("bottomMargin", Align::Right).abs() < 0.01,
+            "bottom-margin bottom"
+        );
+    }
+
+    #[test]
+    fn resolve_anchor_keeps_explicit_offsets_unclamped() {
+        // posOffset is signed and may run off the page; Word clips at paint.
+        let ctx = letter_ctx();
+        let low = resolve_anchor(
+            &ctx,
+            &AnchorSpec {
+                v_off: Some(780.0),
+                ..spec("page", Align::Left, "page", Align::Left)
+            },
+        );
+        assert!((low.y - (792.0 - 780.0 - 72.0)).abs() < 0.01, "y={}", low.y);
+        let above = resolve_anchor(
+            &ctx,
+            &AnchorSpec {
+                v_off: Some(-20.0),
+                ..spec("page", Align::Left, "margin", Align::Left)
+            },
+        );
+        assert!(
+            (above.y - (720.0 + 20.0 - 72.0)).abs() < 0.01,
+            "y={}",
+            above.y
+        );
+        let bottom = resolve_anchor(
+            &ctx,
+            &AnchorSpec {
+                v_off: Some(10.0),
+                ..spec("page", Align::Left, "bottomMargin", Align::Left)
+            },
+        );
+        assert!(
+            (bottom.y - (72.0 - 10.0 - 72.0)).abs() < 0.01,
+            "offsets run down from the bottom-margin top: y={}",
+            bottom.y
         );
     }
 

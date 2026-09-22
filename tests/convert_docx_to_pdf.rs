@@ -1208,47 +1208,11 @@ fn chart_docx(body: &str, chart_xml: &str) -> Vec<u8> {
 }
 
 fn footnote_docx(body: &str, footnotes_xml: &str) -> Vec<u8> {
-    let document = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
-           xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
-         <w:body>{body}</w:body></w:document>"
-    );
-    let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
-        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
-        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
-        <Override PartName=\"/word/document.xml\" \
-          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
-        <Override PartName=\"/word/footnotes.xml\" \
-          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml\"/>\
-        </Types>";
-    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
-        <Relationship Id=\"rId1\" \
-          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
-          Target=\"word/document.xml\"/>\
-        </Relationships>";
-    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
-        <Relationship Id=\"rIdFootnotes\" \
-          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes\" \
-          Target=\"footnotes.xml\"/>\
-        </Relationships>";
-    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-    let opts = SimpleFileOptions::default();
-    zip.start_file("[Content_Types].xml", opts).unwrap();
-    zip.write_all(content_types.as_bytes()).unwrap();
-    zip.start_file("_rels/.rels", opts).unwrap();
-    zip.write_all(rels.as_bytes()).unwrap();
-    zip.start_file("word/document.xml", opts).unwrap();
-    zip.write_all(document.as_bytes()).unwrap();
-    zip.start_file("word/_rels/document.xml.rels", opts)
-        .unwrap();
-    zip.write_all(doc_rels.as_bytes()).unwrap();
-    zip.start_file("word/footnotes.xml", opts).unwrap();
-    zip.write_all(footnotes_xml.as_bytes()).unwrap();
-    zip.finish().unwrap().into_inner()
+    hf_docx(
+        body,
+        &[("rIdFootnotes", "footnotes", "footnotes.xml")],
+        &[("word/footnotes.xml", footnotes_xml.to_string())],
+    )
 }
 
 fn sample_footnote_parts() -> (String, String) {
@@ -1476,6 +1440,45 @@ fn png_alpha_emits_smask() {
         text.contains("/DeviceGray"),
         "SMask is DeviceGray; tail {}",
         &text[text.len().saturating_sub(400)..]
+    );
+}
+
+fn image_cm_xy(pdf: &[u8], w: &str, h: &str) -> (f32, f32) {
+    let text = String::from_utf8_lossy(pdf);
+    let key = format!("{w} 0 0 {h} ");
+    let at = text
+        .find(&key)
+        .unwrap_or_else(|| panic!("image {w}x{h} painted"));
+    let nums: Vec<f32> = text[at + key.len()..]
+        .split_whitespace()
+        .take(2)
+        .filter_map(|v| v.parse().ok())
+        .collect();
+    (nums[0], nums[1])
+}
+
+#[test]
+fn vml_images_take_the_slot_of_their_own_shape() {
+    // One w:pict, two shapes: an absolute one at page (300,100) and an
+    // in-flow one. Each v:imagedata follows its owning shape; the flow
+    // image must not borrow the absolute shape's page position.
+    let body = "<w:p><w:r><w:pict>\
+           <v:shape style=\"position:absolute;margin-left:300pt;margin-top:100pt;width:100pt;height:50pt\">\
+             <v:imagedata r:id=\"rIdImg\"/></v:shape>\
+           <v:shape style=\"width:60pt;height:30pt\"><v:imagedata r:id=\"rIdImg\"/></v:shape>\
+         </w:pict></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert mixed VML pict");
+    let (ax, ay) = image_cm_xy(&pdf, "100.00", "50.00");
+    assert!(
+        (ax - 300.0).abs() < 0.5 && (ay - (792.0 - 100.0 - 50.0)).abs() < 0.5,
+        "absolute shape at page (300,100): {ax},{ay}"
+    );
+    let (fx, _) = image_cm_xy(&pdf, "60.00", "30.00");
+    assert!(
+        (fx - 72.0).abs() < 0.5,
+        "in-flow shape paints at the margin, x={fx}"
     );
 }
 
@@ -9499,9 +9502,83 @@ alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha</w:t></w:r></w:p>\
         xs.iter().any(|x| (390.0..430.0).contains(x)),
         "floating table sits on the right (~396); xs={xs:?}"
     );
+    // Lines restart at x=72; the first group is Lead plus the table's own
+    // Flt cell (painted at ~396), so the body lines are the rest.
+    let mut lines: Vec<Vec<f32>> = Vec::new();
+    for x in xs.iter().copied() {
+        if (x - 72.0).abs() < 0.5 || lines.is_empty() {
+            lines.push(Vec::new());
+        }
+        lines.last_mut().expect("line").push(x);
+    }
+    let ends: Vec<f32> = lines
+        .iter()
+        .skip(1)
+        .map(|l| l.iter().copied().fold(0.0_f32, f32::max))
+        .collect();
     assert!(
-        xs.iter().all(|x| *x < 387.0 || *x >= 390.0),
-        "following body wraps left of the 144pt right table + 9pt leftFromText; xs={xs:?}"
+        ends.iter().any(|e| *e > 300.0 && *e < 387.0),
+        "a body line beside the table stops left of it (144pt + 9pt leftFromText); ends={ends:?}"
+    );
+    assert!(
+        ends.iter().any(|e| *e > 400.0),
+        "lines below the table's bottom return to the full measure; ends={ends:?}"
+    );
+}
+
+fn float_table(tblpp: &str, text: &str) -> String {
+    format!(
+        "<w:tbl><w:tblPr><w:tblpPr {tblpp}/><w:tblW w:w=\"2880\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"2880\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:shd w:val=\"clear\" w:fill=\"FF0000\"/></w:tcPr>\
+             <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+    )
+}
+
+#[test]
+fn floating_table_honours_page_tblp_y() {
+    // vertAnchor=page tblpY=4320 (216pt): the table top is 216pt below the
+    // page top, not wherever the text cursor happened to be.
+    let body = format!(
+        "<w:p><w:r><w:t>Lead</w:t></w:r></w:p>{}<w:p><w:r><w:t>After</w:t></w:r></w:p>{}",
+        float_table(
+            "w:horzAnchor=\"margin\" w:vertAnchor=\"page\" w:tblpXSpec=\"right\" w:tblpY=\"4320\"",
+            "Flt"
+        ),
+        letter_body_sect()
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert page-anchored float");
+    let hay = String::from_utf8_lossy(&pdf);
+    let fills = pdf_fill_boxes_in(&hay, 1.0, 0.0, 0.0);
+    let top = fills
+        .iter()
+        .map(|(_, y, _, h)| y + h)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (top - 576.0).abs() < 1.5,
+        "table top at 792-216=576; fills={fills:?}"
+    );
+}
+
+#[test]
+fn floating_table_band_does_not_follow_a_page_break() {
+    // The side float belongs to its page: body after a hard break starts
+    // at the full left margin, not beside a table on the previous page.
+    let body = format!(
+        "{}<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         <w:p><w:r><w:t>Qafter</w:t></w:r></w:p>{}",
+        float_table(
+            "w:horzAnchor=\"margin\" w:vertAnchor=\"text\" w:tblpXSpec=\"left\" w:tblpY=\"0\" w:rightFromText=\"180\"",
+            "Flt"
+        ),
+        letter_body_sect()
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert float + page break");
+    assert_eq!(page_of(&pdf, "Q"), Some(1));
+    let (x, _) = glyph_xy(&pdf, "Q");
+    assert!(
+        (x - 72.0).abs() < 0.5,
+        "page 2 body starts at the margin: x={x}"
     );
 }
 
@@ -10871,6 +10948,134 @@ fn pg_borders_text_offset_sits_outside_the_margin() {
     );
 }
 
+fn pg_borders_body(pg_borders: &str, second_page: bool) -> String {
+    let br = if second_page {
+        "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p><w:p><w:r><w:t>Next</w:t></w:r></w:p>"
+    } else {
+        ""
+    };
+    format!(
+        "<w:p><w:r><w:t>Bordered</w:t></w:r></w:p>{br}\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+           {pg_borders}</w:sectPr>"
+    )
+}
+
+fn red_left_border_xs(pdf: &[u8]) -> Vec<f32> {
+    let hay = String::from_utf8_lossy(pdf);
+    pdf_fill_boxes_in(&hay, 1.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(_, _, w, h)| *w < 6.0 && *h > 400.0)
+        .map(|b| b.0)
+        .collect()
+}
+
+#[test]
+fn pg_borders_without_offset_from_measure_from_the_text() {
+    // MS-OI29500 17.6.10: an omitted offsetFrom is `text` (72 - 24 = 48).
+    let body = pg_borders_body(
+        "<w:pgBorders><w:left w:val=\"single\" w:sz=\"8\" w:space=\"24\" w:color=\"FF0000\"/></w:pgBorders>",
+        false,
+    );
+    let xs = red_left_border_xs(&docx_to_pdf(&minimal_docx_body(&body)).expect("convert"));
+    assert!(
+        xs.iter().any(|x| (x - 48.0).abs() < 1.0),
+        "text offset: xs={xs:?}"
+    );
+}
+
+#[test]
+fn pg_borders_display_first_page_only_paints_page_one() {
+    let body = pg_borders_body(
+        "<w:pgBorders w:display=\"firstPage\"><w:left w:val=\"single\" w:sz=\"8\" w:space=\"24\" w:color=\"FF0000\"/></w:pgBorders>",
+        true,
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert display firstPage");
+    let pages = pdf_content_streams(&pdf);
+    assert_eq!(pages.len(), 2);
+    let red = |p: &String| p.contains("1.000 0.000 0.000 rg");
+    assert!(
+        red(&pages[0]) && !red(&pages[1]),
+        "firstPage: border only on page 1"
+    );
+    let body = body.replace("firstPage", "notFirstPage");
+    let pages = pdf_content_streams(&docx_to_pdf(&minimal_docx_body(&body)).expect("convert"));
+    assert!(
+        !red(&pages[0]) && red(&pages[1]),
+        "notFirstPage: border only on page 2"
+    );
+}
+
+#[test]
+fn pg_borders_paint_in_front_of_body_ink_unless_z_order_back() {
+    // Word's default zOrder is front: the border is drawn after the text.
+    let body = pg_borders_body(
+        "<w:pgBorders><w:left w:val=\"single\" w:sz=\"8\" w:space=\"24\" w:color=\"FF0000\"/></w:pgBorders>",
+        false,
+    );
+    let page = &pdf_content_streams(&docx_to_pdf(&minimal_docx_body(&body)).expect("convert"))[0];
+    let border = page.find("1.000 0.000 0.000 rg").expect("border painted");
+    let last_text = page.rfind(") Tj").expect("text painted");
+    assert!(border > last_text, "front border follows the body ink");
+    let back = body.replace("<w:pgBorders>", "<w:pgBorders w:zOrder=\"back\">");
+    let page = &pdf_content_streams(&docx_to_pdf(&minimal_docx_body(&back)).expect("convert"))[0];
+    let border = page.find("1.000 0.000 0.000 rg").expect("border painted");
+    let first_text = page.find(") Tj").expect("text painted");
+    assert!(border < first_text, "zOrder=back stays under the body ink");
+}
+
+#[test]
+fn pg_borders_double_line_paints_two_rules() {
+    let body = pg_borders_body(
+        "<w:pgBorders><w:left w:val=\"double\" w:sz=\"8\" w:space=\"24\" w:color=\"FF0000\"/></w:pgBorders>",
+        false,
+    );
+    let xs = red_left_border_xs(&docx_to_pdf(&minimal_docx_body(&body)).expect("convert"));
+    assert_eq!(xs.len(), 2, "double = two parallel rules; xs={xs:?}");
+    assert!(
+        (xs[0] - xs[1]).abs() > 1.5,
+        "the rules are apart; xs={xs:?}"
+    );
+}
+
+#[test]
+fn indented_footnote_reserves_the_height_it_paints() {
+    // The note paragraph is indented 216pt + 144pt, so it wraps in a 108pt
+    // measure. Reserving its height at the full 468pt width left the
+    // painted lines running below the bottom margin.
+    let rows =
+        "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Row</w:t></w:r></w:p>".repeat(38);
+    let body = format!(
+        "{rows}<w:p><w:r><w:t>Ref</w:t></w:r>\
+           <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr><w:footnoteReference w:id=\"1\"/></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let words = "Zq ".repeat(60);
+    let notes = format!(
+        "<?xml version=\"1.0\"?>\
+         <w:footnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>\
+           <w:footnote w:id=\"1\"><w:p><w:pPr><w:ind w:left=\"4320\" w:right=\"2880\"/></w:pPr>\
+             <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr><w:footnoteRef/></w:r>\
+             <w:r><w:rPr><w:sz w:val=\"20\"/></w:rPr><w:t xml:space=\"preserve\"> {words}</w:t></w:r>\
+           </w:p></w:footnote></w:footnotes>"
+    );
+    let pdf = docx_to_pdf(&footnote_docx(&body, &notes)).expect("convert indented footnote");
+    let hay = String::from_utf8_lossy(&pdf);
+    let low = pdf_tj_xy(&hay, "Z")
+        .iter()
+        .chain(pdf_cm_tj_xy(&hay, "Z").iter())
+        .map(|(_, y)| *y)
+        .fold(f32::INFINITY, f32::min);
+    assert!(low.is_finite(), "note text painted");
+    assert!(
+        low >= 70.0,
+        "note lines stay above the 72pt bottom margin; lowest baseline {low}"
+    );
+}
+
 #[test]
 fn footnote_note_text_paints_at_page_bottom() {
     // plan Step 7 / case18,74,75,76: footnotes.xml text is reserved at
@@ -10903,8 +11108,8 @@ fn footnote_note_text_paints_at_page_bottom() {
         "body stays in the top band (letter 792, margin 72); body_y={body_y}"
     );
     assert!(
-        note_y < 150.0,
-        "note sits in the bottom margin band; note_y={note_y} body_y={body_y}"
+        (72.0..150.0).contains(&note_y),
+        "note sits in the bottom band, on or above the 72pt margin floor; note_y={note_y} body_y={body_y}"
     );
     assert!(
         body_y - note_y > 400.0,
@@ -10978,6 +11183,112 @@ fn preset_shape_body(prst: &str) -> String {
         </wp:anchor></w:drawing></w:r></w:p>\
         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>"
     )
+}
+
+/// A red 1800000×900000 EMU (141.73×70.87pt) rect anchored by `pos_v`,
+/// on a letter page with a 2in top and 0.5in bottom margin (so margin and
+/// page frames never share a centre).
+fn anchored_rect_body(pos_v: &str) -> String {
+    format!(
+        "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"page\"><wp:posOffset>200000</wp:posOffset></wp:positionH>\
+          {pos_v}\
+          <wp:extent cx=\"1800000\" cy=\"900000\"/>\
+          <wp:wrapNone/>\
+          <wp:docPr id=\"1\" name=\"Anchored\"/>\
+          <a:graphic><a:graphicData \
+            uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+            <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+              <wps:spPr><a:xfrm><a:ext cx=\"1800000\" cy=\"900000\"/></a:xfrm>\
+                <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>\
+                <a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill>\
+              </wps:spPr>\
+            </wps:wsp>\
+          </a:graphicData></a:graphic>\
+        </wp:anchor></w:drawing></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+          <w:pgMar w:top=\"2880\" w:right=\"1440\" w:bottom=\"720\" w:left=\"1440\"/></w:sectPr>"
+    )
+}
+
+fn red_box_bottom(body: &str) -> f32 {
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert anchored rect");
+    let hay = String::from_utf8_lossy(&pdf);
+    let boxes = pdf_fill_boxes_in(&hay, 1.0, 0.0, 0.0);
+    boxes
+        .iter()
+        .find(|(_, _, w, h)| (*w - 141.73).abs() < 1.0 && (*h - 70.87).abs() < 1.0)
+        .map(|b| b.1)
+        .unwrap_or_else(|| panic!("anchored red rect painted; boxes={boxes:?}"))
+}
+
+#[test]
+fn anchor_bottom_aligned_to_the_margin_sits_on_the_bottom_margin() {
+    // ST_RelFromV margin + align bottom: the box bottom is the bottom
+    // margin (36pt), not the page edge.
+    let y = red_box_bottom(&anchored_rect_body(
+        "<wp:positionV relativeFrom=\"margin\"><wp:align>bottom</wp:align></wp:positionV>",
+    ));
+    assert!((y - 36.0).abs() < 0.5, "bottom-aligned to margin: y={y}");
+}
+
+#[test]
+fn anchor_offset_from_the_margin_is_kept() {
+    // posOffset 720000 EMU (56.69pt) below the top margin.
+    let y = red_box_bottom(&anchored_rect_body(
+        "<wp:positionV relativeFrom=\"margin\"><wp:posOffset>720000</wp:posOffset></wp:positionV>",
+    ));
+    let want = 792.0 - 144.0 - 56.69 - 70.87;
+    assert!((y - want).abs() < 0.5, "margin offset: y={y} want={want}");
+}
+
+#[test]
+fn anchor_centred_on_the_margin_uses_the_margin_frame() {
+    let y = red_box_bottom(&anchored_rect_body(
+        "<wp:positionV relativeFrom=\"margin\"><wp:align>center</wp:align></wp:positionV>",
+    ));
+    let want = 36.0 + (612.0 - 70.87) / 2.0;
+    assert!((y - want).abs() < 0.5, "margin centre: y={y} want={want}");
+}
+
+#[test]
+fn anchored_picture_bottom_aligned_to_the_margin_sits_on_the_bottom_margin() {
+    // Pictures place through float_xy: bottom relative to the margin is
+    // the bottom margin (36pt here), not the page edge (y=0).
+    let body = "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"margin\"><wp:align>left</wp:align></wp:positionH>\
+          <wp:positionV relativeFrom=\"margin\"><wp:align>bottom</wp:align></wp:positionV>\
+          <wp:extent cx=\"1828800\" cy=\"914400\"/><wp:wrapNone/>\
+          <wp:docPr id=\"1\" name=\"Picture 1\"/>\
+          <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+            <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+              <pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"1828800\" cy=\"914400\"/></a:xfrm></pic:spPr></pic:pic>\
+          </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+          <w:pgMar w:top=\"2880\" w:right=\"1440\" w:bottom=\"720\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert anchored picture");
+    let text = String::from_utf8_lossy(&pdf);
+    let at = text.find("144.00 0 0 72.00 ").expect("picture cm painted");
+    let nums: Vec<f32> = text[at + "144.00 0 0 72.00 ".len()..]
+        .split_whitespace()
+        .take(2)
+        .filter_map(|v| v.parse().ok())
+        .collect();
+    assert!(
+        (nums[1] - 36.0).abs() < 0.5,
+        "picture bottom on the bottom margin: y={}",
+        nums[1]
+    );
+}
+
+#[test]
+fn anchor_top_aligned_to_the_page_sits_on_the_page_edge() {
+    let y = red_box_bottom(&anchored_rect_body(
+        "<wp:positionV relativeFrom=\"page\"><wp:align>top</wp:align></wp:positionV>",
+    ));
+    assert!((y - (792.0 - 70.87)).abs() < 0.5, "page top: y={y}");
 }
 
 #[test]
@@ -13442,14 +13753,18 @@ fn hf_docx(body: &str, rels: &[(&str, &str, &str)], parts: &[(&str, String)]) ->
            ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>",
     );
     for (name, _) in parts {
-        let kind = if name.contains("header") {
-            "header"
-        } else if name.contains("footer") {
-            "footer"
-        } else if name.contains("settings") {
-            "settings"
-        } else {
-            "footer"
+        // The part's own kind from its file stem: header1 → header,
+        // footnotes → footnotes (was: everything unknown was a footer).
+        let stem = name
+            .rsplit('/')
+            .next()
+            .unwrap_or(name)
+            .trim_end_matches(".xml")
+            .trim_end_matches(|c: char| c.is_ascii_digit());
+        let kind = match stem {
+            "header" | "footer" | "settings" | "footnotes" | "endnotes" | "comments"
+            | "numbering" | "styles" => stem,
+            _ => "footer",
         };
         types.push_str(&format!(
             "<Override PartName=\"/{name}\" \
@@ -16028,7 +16343,7 @@ fn endnote_reference_stays_unpainted_after_mini_487() {
 }
 
 #[test]
-fn footnotes_stay_unpainted_after_mini_94() {
+fn footnote_bodies_paint_at_page_bottom_after_mini_94() {
     // plan Step 7 retires mini 94: Word paints footnote bodies in the
     // bottom margin. Naive paint without reservation was ITT-wrong;
     // reserved floor + separator is the Word rule.
@@ -16051,7 +16366,7 @@ fn footnotes_stay_unpainted_after_mini_94() {
 }
 
 #[test]
-fn footnote_reference_stays_unpainted_after_mini_102() {
+fn footnote_reference_marker_paints_after_mini_102() {
     // plan Step 7 retires mini 102: Word paints the superscript marker.
     // Naive paint without a bottom reservation was ITT-wrong; with
     // reserved floor + separator the marker is required.
@@ -16060,7 +16375,7 @@ fn footnote_reference_stays_unpainted_after_mini_102() {
              <w:footnoteReference w:id=\"1\"/></w:r></w:p>\
          <w:sectPr/>";
     let notes = "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p/></w:footnote>\
-         <w:footnote w:id=\"1\"><w:p><w:r><w:t>Footnote body stays off.</w:t></w:r></w:p></w:footnote>";
+         <w:footnote w:id=\"1\"><w:p><w:r><w:t>Footnote body text.</w:t></w:r></w:p></w:footnote>";
     let pdf = docx_to_pdf(&footnotes_docx(body, notes)).expect("convert fn ref");
     let painted = pdf_winansi_text(&pdf);
     assert!(
@@ -16074,7 +16389,7 @@ fn footnote_reference_stays_unpainted_after_mini_102() {
 }
 
 #[test]
-fn official_potpourri_stays_five_pages_without_footnote_ink_after_mini_94() {
+fn official_potpourri_stays_five_pages_with_footnotes_after_mini_94() {
     // Word p1 paints "Footnote one…". Mini 94 painted without reserving
     // the bottom band (ITT-wrong). Plan Step 7 paints with reservation;
     // keep Word's 5pp.
