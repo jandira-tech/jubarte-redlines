@@ -177,6 +177,20 @@ enum Command {
 }
 
 /// No-clobber contract shared by every writing subcommand.
+/// Whether two CLI paths name the same file, whether or not it exists yet
+/// (`out.pdf` and `./out.pdf` do; the parent directory is canonicalized).
+fn same_path(a: &Path, b: &Path) -> bool {
+    fn key(p: &Path) -> Option<PathBuf> {
+        let name = p.file_name()?;
+        let parent = match p.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        Some(std::fs::canonicalize(parent).ok()?.join(name))
+    }
+    a == b || matches!((key(a), key(b)), (Some(x), Some(y)) if x == y)
+}
+
 fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
     if output.exists() && !force {
         return Err(format!(
@@ -214,6 +228,18 @@ fn run_convert(
     let output = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| file.with_extension("pdf"));
+    if let Some(report) = font_report {
+        // The report is written after the PDF (or the input is read first),
+        // so a shared path would silently replace one with the other.
+        for (other, what) in [(output.as_path(), "PDF output"), (file, "input")] {
+            if same_path(report, other) {
+                return Err(format!(
+                    "--font-report '{}' is the same file as the {what}",
+                    report.display()
+                ));
+            }
+        }
+    }
     ensure_writable(&output, force)?;
     if let Some(report) = font_report {
         ensure_writable(report, force)?;
@@ -721,6 +747,23 @@ mod tests {
             z.finish().unwrap();
         }
         buf
+    }
+
+    #[test]
+    fn convert_rejects_a_font_report_path_equal_to_the_pdf() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let docx = dir.path().join("in.docx");
+        let pdf = dir.path().join("out.pdf");
+        std::fs::write(&docx, tiny_docx_bytes("Calibri")).expect("docx");
+        let same = dir.path().join(".").join("out.pdf");
+        let err = run_convert(&docx, Some(&pdf), false, false, Some(&same))
+            .expect_err("report over the PDF must be refused");
+        assert!(err.contains("same file as the PDF output"), "{err}");
+        assert!(!pdf.exists(), "nothing is written when the paths collide");
+        let err = run_convert(&docx, Some(&pdf), false, false, Some(&docx))
+            .expect_err("report over the input must be refused");
+        assert!(err.contains("same file as the input"), "{err}");
+        assert!(std::fs::read(&docx).expect("docx").starts_with(b"PK"));
     }
 
     #[test]

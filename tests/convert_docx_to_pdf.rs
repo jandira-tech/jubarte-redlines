@@ -160,6 +160,81 @@ fn minimal_docx_with_settings(body: &str, settings: &str) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+/// Styles and fontTable at producer-chosen names, found only through the
+/// main part's relationships (OPC does not fix `word/styles.xml`).
+fn docx_with_renamed_parts(body: &str, styles: &str, font_table: &str) -> Vec<u8> {
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let document = format!(
+        "<?xml version=\"1.0\"?><w:document xmlns:w=\"{w}\"><w:body>{body}</w:body></w:document>"
+    );
+    let styles_xml =
+        format!("<?xml version=\"1.0\"?><w:styles xmlns:w=\"{w}\">{styles}</w:styles>");
+    let fonts_xml =
+        format!("<?xml version=\"1.0\"?><w:fonts xmlns:w=\"{w}\">{font_table}</w:fonts>");
+    let content_types = "<?xml version=\"1.0\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        <Override PartName=\"/word/parts/look.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/>\
+        <Override PartName=\"/word/parts/faces.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml\"/>\
+        </Types>";
+    let rels = "<?xml version=\"1.0\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/></Relationships>";
+    let doc_rels = "<?xml version=\"1.0\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdS\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" \
+          Target=\"parts/look.xml\"/>\
+        <Relationship Id=\"rIdF\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable\" \
+          Target=\"parts/faces.xml\"/></Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    for (name, xml) in [
+        ("[Content_Types].xml", content_types.to_string()),
+        ("_rels/.rels", rels.to_string()),
+        ("word/document.xml", document),
+        ("word/_rels/document.xml.rels", doc_rels.to_string()),
+        ("word/parts/look.xml", styles_xml),
+        ("word/parts/faces.xml", fonts_xml),
+    ] {
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(xml.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+#[test]
+fn styles_and_font_table_are_found_through_relationships() {
+    let docx = docx_with_renamed_parts(
+        "<w:p><w:r><w:t>Renamed</w:t></w:r></w:p>",
+        "<w:docDefaults><w:rPrDefault><w:rPr>\
+           <w:rFonts w:ascii=\"Unheard Of Sans\" w:hAnsi=\"Unheard Of Sans\"/>\
+           <w:sz w:val=\"40\"/></w:rPr></w:rPrDefault></w:docDefaults>",
+        "<w:font w:name=\"Unheard Of Sans\"><w:altName w:val=\"Arial\"/></w:font>",
+    );
+    let pdf = docx_to_pdf(&docx).expect("convert renamed parts");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("20.00 Tf") || text.contains("20.10 Tf"),
+        "docDefaults sz=40 from parts/look.xml must set 20pt; Tf ops: {:?}",
+        text.match_indices(" Tf")
+            .map(|(i, _)| &text[i.saturating_sub(8)..i])
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        text.contains("/LiberationSans") || text.contains("/Arial"),
+        "altName Arial from parts/faces.xml must pick the Arial face"
+    );
+}
+
 fn minimal_docx_with_core_props(
     body: &str,
     created: &str,
@@ -5656,7 +5731,32 @@ fn css_font_stack_unquoted_first_token_is_verdana() {
 }
 
 #[test]
-fn css_font_stack_altname_uses_recorded_verdana() {
+fn css_font_stack_with_unknown_first_token_uses_the_row_altname() {
+    // The first token is unknown, so only the fontTable row (keyed by the
+    // whole w:name, quotes included) can pick Arial.
+    let body = "<w:p><w:r>\
+           <w:rPr><w:rFonts w:ascii=\"&quot;Unheard Of&quot;, Geneva, sans-serif\" \
+             w:hAnsi=\"&quot;Unheard Of&quot;, Geneva, sans-serif\"/>\
+             <w:sz w:val=\"22\"/></w:rPr>\
+           <w:t>AltNameStack</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_with_font_table(
+        body,
+        "<w:font w:name=\"&quot;Unheard Of&quot;, Geneva, sans-serif\">\
+           <w:altName w:val=\"Arial\"/></w:font>",
+    ))
+    .expect("convert CSS stack with altName");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/LiberationSans") || text.contains("/Arial"),
+        "the list row's altName Arial must pick the Arial face; tail {}",
+        &text[text.len().saturating_sub(320)..]
+    );
+}
+
+#[test]
+fn css_font_stack_first_token_verdana_wins_before_the_table() {
+    // `Verdana` is a known first token: resolution returns before the
+    // fontTable row is consulted (Word Quartz evidence, font.rs).
     let path = std::path::Path::new(
         "/Applications/Microsoft Word.app/Contents/Resources/DFonts/Verdana.ttf",
     );
@@ -16307,6 +16407,191 @@ fn space_before_suppressed_after_hard_break_when_compat_set() {
 }
 
 #[test]
+fn table_properties_come_from_the_table_not_a_nested_table() {
+    // The outer table has no tblPr; its cell holds a table indented 144pt.
+    // Reading "the first tblPr below the outer w:tbl" borrowed that indent
+    // (and every other inner property) for the outer grid.
+    let nested = |inner_ind: u32| {
+        format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p><w:r><w:t>OuterCell</w:t></w:r></w:p>\
+                 <w:tbl><w:tblPr><w:tblInd w:w=\"{inner_ind}\" w:type=\"dxa\"/></w:tblPr>\
+                   <w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid>\
+                   <w:tr><w:tc><w:p><w:r><w:t>InnerCell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+                 <w:p/></w:tc></w:tr></w:tbl>{}",
+            letter_body_sect()
+        )
+    };
+    let x_of = |ind: u32| {
+        let pdf = docx_to_pdf(&minimal_docx_body(&nested(ind))).expect("convert nested");
+        glyph_xy(&pdf, "O").0
+    };
+    let (plain, indented) = (x_of(0), x_of(2880));
+    assert!(
+        (plain - indented).abs() < 0.5,
+        "the inner tblInd must not move the outer cell: {plain} vs {indented}"
+    );
+}
+
+#[test]
+fn cell_paragraph_style_keeps_the_table_style_spacing_it_does_not_set() {
+    // docDefaults after=200 / line=276; table style after=0 / line=240.
+    // A cell paragraph with pStyle=Body (which sets no spacing) must keep
+    // the table style's spacing, exactly like a cell paragraph with no
+    // pStyle. Replacing the accumulated style with Body's resolved
+    // docDefaults grew the row by 10pt + the 1.15 line.
+    let styles = "<?xml version=\"1.0\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:docDefaults><w:pPrDefault><w:pPr>\
+             <w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
+           </w:pPr></w:pPrDefault></w:docDefaults>\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+           <w:style w:type=\"paragraph\" w:styleId=\"Body\"><w:name w:val=\"Body\"/><w:basedOn w:val=\"Normal\"/></w:style>\
+           <w:style w:type=\"table\" w:styleId=\"Tight\"><w:name w:val=\"Tight\"/>\
+             <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:tblPr><w:tblBorders>\
+               <w:top w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+               <w:bottom w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+               <w:insideH w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+             </w:tblBorders></w:tblPr></w:style>\
+         </w:styles>";
+    let table = |ppr: &str| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblStyle w:val=\"Tight\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:p>{ppr}<w:r><w:t>One</w:t></w:r></w:p></w:tc></w:tr>\
+               <w:tr><w:tc><w:p>{ppr}<w:r><w:t>Two</w:t></w:r></w:p></w:tc></w:tr></w:tbl>{}",
+            letter_body_sect()
+        )
+    };
+    let row_h = |ppr: &str| {
+        let pdf = docx_to_pdf(&numbering_docx_with_styles(&table(ppr), None, Some(styles)))
+            .expect("convert table style spacing");
+        let ys = pdf_horiz_rule_ys(&pdf);
+        assert!(ys.len() >= 2, "row rules must paint; ys={ys:?}");
+        (ys[0] - ys[1]).abs()
+    };
+    let plain = row_h("");
+    let styled = row_h("<w:pPr><w:pStyle w:val=\"Body\"/></w:pPr>");
+    assert!(
+        (plain - styled).abs() < 0.5,
+        "pStyle=Body sets no spacing, so its rows match the plain rows: {plain} vs {styled}"
+    );
+}
+
+#[test]
+fn cell_blocks_paint_in_document_order() {
+    // A cell holding p, tbl, p paints Alpha above the inner table above
+    // Omega (PDF y grows upward).
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>Alpha</w:t></w:r></w:p>\
+             <w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+             <w:p><w:r><w:t>Omega</w:t></w:r></w:p>\
+           </w:tc></w:tr></w:tbl>{}",
+        letter_body_sect()
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert cell order");
+    let y = |glyph: &str| glyph_xy(&pdf, glyph).1;
+    let (alpha, inner, omega) = (y("A"), y("I"), y("O"));
+    assert!(
+        alpha > inner && inner > omega,
+        "cell order is Alpha, Inner, Omega top to bottom; y={alpha}/{inner}/{omega}"
+    );
+}
+
+#[test]
+fn cell_sdt_content_keeps_its_place() {
+    // A content control before a plain paragraph stays before it.
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:sdt><w:sdtPr/><w:sdtContent><w:p><w:r><w:t>First</w:t></w:r></w:p></w:sdtContent></w:sdt>\
+             <w:p><w:r><w:t>Second</w:t></w:r></w:p>\
+           </w:tc></w:tr></w:tbl>{}",
+        letter_body_sect()
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert cell sdt order");
+    let y = |glyph: &str| glyph_xy(&pdf, glyph).1;
+    assert!(y("F") > y("S"), "sdt paragraph stays above the next one");
+}
+
+/// Page index holding `glyph` (text paints glyph by glyph: `(K) Tj`).
+fn page_of(pdf: &[u8], glyph: &str) -> Option<usize> {
+    let needle = format!("({glyph}) Tj");
+    pdf_content_streams(pdf)
+        .iter()
+        .position(|page| page.contains(&needle))
+}
+
+/// Position of the first painted `glyph` (unique marker letter per test).
+fn glyph_xy(pdf: &[u8], glyph: &str) -> (f32, f32) {
+    let hay = String::from_utf8_lossy(pdf);
+    pdf_cm_tj_xy(&hay, glyph)
+        .first()
+        .copied()
+        .unwrap_or_else(|| panic!("glyph {glyph} painted"))
+}
+
+#[test]
+fn keep_next_reserves_the_real_line_box_of_the_next_paragraph() {
+    // ~40pt remain under the filler. The keepNext heading (11pt) plus the
+    // next paragraph's exact 60pt line cannot share them, so Word moves
+    // the heading. The old estimate (before + size × line_mult = 11pt)
+    // left it orphaned at the page bottom.
+    let body = format!(
+        "<w:p><w:pPr><w:spacing w:after=\"11892\"/></w:pPr><w:r><w:t>Filler</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:keepNext/><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>KeepHead</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:line=\"1200\" w:lineRule=\"exact\"/></w:pPr><w:r><w:t>TallNext</w:t></w:r></w:p>{}",
+        letter_body_sect()
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert keepNext");
+    assert_eq!(page_of(&pdf, "F"), Some(0));
+    assert_eq!(
+        page_of(&pdf, "N"),
+        Some(1),
+        "precondition: the tall line overflows"
+    );
+    assert_eq!(
+        page_of(&pdf, "K"),
+        Some(1),
+        "keepNext must carry the heading to the tall paragraph's page"
+    );
+}
+
+#[test]
+fn keep_lines_reserves_grid_snapped_line_boxes() {
+    // docGrid linePitch 36pt snaps each line to 36pt. A two-line keepLines
+    // paragraph needs 72pt+; the unsnapped estimate (~13.4pt a line) let
+    // it start in the last 54pt and split across the page break.
+    let words = "Wrap ".repeat(40);
+    let body = format!(
+        "<w:p><w:pPr><w:spacing w:after=\"360\"/></w:pPr><w:r><w:t>Filler</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:keepLines/><w:spacing w:after=\"0\"/></w:pPr>\
+           <w:r><w:t xml:space=\"preserve\">Qfirst {words}Zlast</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+           <w:docGrid w:type=\"lines\" w:linePitch=\"720\"/></w:sectPr>"
+    );
+    // 16 grid lines (576pt) + 18pt after leave 54pt: room for one 36pt
+    // line, not for the whole paragraph.
+    let filler =
+        "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Row</w:t></w:r></w:p>".repeat(15);
+    let body = body.replacen("<w:p>", &format!("{filler}<w:p>"), 1);
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert keepLines grid");
+    let first = page_of(&pdf, "Q").expect("Qfirst painted");
+    let last = page_of(&pdf, "Z").expect("Zlast painted");
+    assert_eq!(
+        first, last,
+        "keepLines must keep both grid lines on one page"
+    );
+    assert_eq!(first, 1, "the paragraph moves to page 2");
+}
+
+#[test]
 fn space_before_kept_after_hard_break_when_compat_is_off() {
     // ST_OnOff: w:val="off" is false; the setting must not read as present.
     let body = format!(
@@ -16630,9 +16915,16 @@ fn table_default_cell_left_is_word_108_twips() {
             starts.push(x);
         }
     }
+    // Pin the first cell's own text: the title paragraph is also at 72,
+    // so "any start at 72" would pass with the table misplaced.
+    let hay = String::from_utf8_lossy(&pdf);
+    let time_x = pdf_cm_tj_xy(&hay, "T")
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f32::INFINITY, f32::min);
     assert!(
-        starts.iter().any(|x| (*x - 72.0).abs() < 1.2),
-        "mode<15 pulls the table left by 108 twips so cell text aligns with body; starts={starts:?} xs={xs:?}"
+        (time_x - 72.0).abs() < 1.2,
+        "mode<15 pulls the table left by 108 twips so cell text aligns with body; Time x={time_x} xs={xs:?}"
     );
     assert!(
         starts.iter().all(|x| (*x - 77.4).abs() > 1.0),

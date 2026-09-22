@@ -71,8 +71,12 @@ impl FontTable {
     }
 }
 
+fn font_table_part(pkg: &PartFs) -> String {
+    super::main_rel_part(pkg, "fontTable", "word/fontTable.xml")
+}
+
 pub(crate) fn load_font_table(pkg: &PartFs) -> FontTable {
-    pkg.part_string("word/fontTable.xml")
+    pkg.part_string(&font_table_part(pkg))
         .map(|xml| parse_font_table_xml(&xml))
         .unwrap_or_default()
 }
@@ -195,10 +199,20 @@ pub(crate) fn deobfuscate_font(data: &mut [u8], key: &[u8; 16]) {
     }
 }
 
-/// De-obfuscate an `.odttf` (or leave a already-plain TTF alone).
+/// De-obfuscate an `.odttf`, or leave an already-plain TTF/OTF alone (an
+/// obfuscated header matches an sfnt tag only by a 2^-32 chance).
 pub(crate) fn deobfuscate_odttf(bytes: &[u8], font_key: &str) -> Vec<u8> {
     let mut data = bytes.to_vec();
-    if let Some(key) = parse_font_key(font_key) {
+    let plain_sfnt = [
+        &[0x00, 0x01, 0x00, 0x00][..],
+        b"OTTO",
+        b"true",
+        b"typ1",
+        b"ttcf",
+    ]
+    .iter()
+    .any(|tag| data.starts_with(tag));
+    if !plain_sfnt && let Some(key) = parse_font_key(font_key) {
         deobfuscate_font(&mut data, &key);
     }
     data
@@ -210,7 +224,8 @@ pub(crate) fn load_embedded_fonts(
     table: &FontTable,
 ) -> HashMap<(String, bool, bool), Vec<u8>> {
     let mut out = HashMap::new();
-    let rels = pkg.read_rels_for("word/fontTable.xml");
+    let part = font_table_part(pkg);
+    let rels = pkg.read_rels_for(&part);
     for entry in table.iter() {
         for (slot, (bold, italic)) in entry.embedded.iter().zip(EMBED_STYLES) {
             let Some((rid, font_key)) = slot else {
@@ -219,7 +234,7 @@ pub(crate) fn load_embedded_fonts(
             let Some(rel) = rels.and_then(|r| r.items.iter().find(|item| item.id == *rid)) else {
                 continue;
             };
-            let path = pkg.resolve_rel_target("word/fontTable.xml", &rel.target);
+            let path = pkg.resolve_rel_target(&part, &rel.target);
             let Some(raw) = pkg.part_bytes(&path) else {
                 continue;
             };
@@ -339,14 +354,70 @@ mod tests {
         assert!(parse_font_table_xml("<w:fonts/>").get("x").is_none());
     }
 
+    fn package(parts: &[(&str, &str)]) -> PartFs {
+        use std::io::{Cursor, Write};
+        let mut buf = Vec::new();
+        {
+            let mut z = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let opt = zip::write::SimpleFileOptions::default();
+            for (name, xml) in parts {
+                z.start_file(*name, opt).unwrap();
+                z.write_all(xml.as_bytes()).unwrap();
+            }
+            z.finish().unwrap();
+        }
+        PartFs::open(&buf).expect("package")
+    }
+
+    const CT: &str = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    const ROOT_RELS: &str = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdM" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    const DOC: &str = r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document>"#;
+
     #[test]
     fn load_font_table_missing_part_is_empty() {
-        // A package with no fontTable part must not fail conversion.
-        assert!(FontTable::default().get("Calibri").is_none());
+        // A real package with no fontTable part (and no relationship to one).
+        let pkg = package(&[
+            ("[Content_Types].xml", CT),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", DOC),
+        ]);
+        let table = load_font_table(&pkg);
+        assert_eq!(table.iter().count(), 0);
+        assert!(table.alt_name("Calibri").is_none());
+    }
+
+    #[test]
+    fn load_font_table_follows_the_font_table_relationship() {
+        let pkg = package(&[
+            ("[Content_Types].xml", CT),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", DOC),
+            (
+                "word/_rels/document.xml.rels",
+                r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdF" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="meta/faces.xml"/></Relationships>"#,
+            ),
+            (
+                "word/meta/faces.xml",
+                r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:font w:name="SomeRare"><w:altName w:val="Consolas"/></w:font></w:fonts>"#,
+            ),
+        ]);
+        assert_eq!(load_font_table(&pkg).alt_name("SomeRare"), Some("Consolas"));
     }
 
     const TEST_GUID: &str = "{00000000-0000-0000-0000-000000000001}";
     const LIBERATION_MONO: &[u8] = include_bytes!("../../assets/fonts/LiberationMono-Regular.ttf");
+
+    #[test]
+    fn deobfuscate_odttf_leaves_a_plain_ttf_alone() {
+        // Some producers embed the unobfuscated TTF and still write a
+        // fontKey; XORing it would corrupt the sfnt header.
+        let out = deobfuscate_odttf(LIBERATION_MONO, TEST_GUID);
+        assert_eq!(out, LIBERATION_MONO);
+        let key = parse_font_key(TEST_GUID).expect("guid");
+        let mut odttf = LIBERATION_MONO.to_vec();
+        deobfuscate_font(&mut odttf, &key);
+        assert_eq!(deobfuscate_odttf(&odttf, TEST_GUID), LIBERATION_MONO);
+    }
 
     #[test]
     fn parse_font_key_reverses_mixed_endian_guid() {

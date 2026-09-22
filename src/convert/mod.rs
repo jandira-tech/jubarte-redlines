@@ -950,8 +950,11 @@ struct CellPara {
 
 struct TableCell {
     paras: Vec<CellPara>,
-    /// Nested `w:tbl` in document order after the cell paragraphs.
+    /// Nested `w:tbl` blocks in document order.
     nested: Vec<Block>,
+    /// For each nested table, how many of `paras` precede it: a cell
+    /// `p, tbl, p` paints the table between its two paragraphs.
+    nested_at: Vec<usize>,
     col: usize,
     colspan: usize,
     rowspan: usize,
@@ -989,6 +992,7 @@ enum VMerge {
 struct RawCell {
     paras: Vec<CellPara>,
     nested: Vec<Block>,
+    nested_at: Vec<usize>,
     pref: PrefWidth,
     colspan: usize,
     vmerge: VMerge,
@@ -1565,7 +1569,7 @@ fn parse_len(s: &str) -> Option<f32> {
 
 fn load_theme(pkg: &PartFs) -> ThemeFonts {
     let Some(xml) = pkg
-        .part_string("word/theme/theme1.xml")
+        .part_string(&main_rel_part(pkg, "theme", "word/theme/theme1.xml"))
         .or_else(|| pkg.part_string("word/theme/theme2.xml"))
     else {
         return ThemeFonts::default();
@@ -1588,7 +1592,10 @@ fn parse_theme_xml(xml: &str) -> ThemeFonts {
             .descendants(parent, Some(&A::name(child_local)))
             .into_iter()
             .next()?;
-        attr_any(&dom, face, "typeface").map(str::to_string)
+        // Stock Word themes write `typeface=""` for unused ea/cs slots.
+        attr_any(&dom, face, "typeface")
+            .filter(|t| !t.trim().is_empty())
+            .map(str::to_string)
     };
     let mut colors = HashMap::new();
     if let Some(scheme) = dom
@@ -1729,7 +1736,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     let theme = load_theme(pkg);
     let mut defaults = Defaults::word();
     let mut raw: std::collections::HashMap<String, RawStyle> = std::collections::HashMap::new();
-    let Some(xml) = pkg.part_string("word/styles.xml") else {
+    let Some(xml) = pkg.part_string(&main_rel_part(pkg, "styles", "word/styles.xml")) else {
         return StyleSheet {
             defaults,
             by_id: HashMap::new(),
@@ -2091,15 +2098,10 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
     // Theme is otherwise the fallback when Word stored a slot and no
     // family name (comments Heading1 is majorHAnsi → major latin;
     // comments body is minorHAnsi → Aptos).
-    // Do not resolve Cambria/serif minor: factory docDefaults carry that
-    // slot. Word Quartz does paint Cambria for table_bookmark_end /
-    // file_134, but applying it (mini 90) also retargeted file_2 /
-    // file_41 onto Cambria size×1.15 boxes (~12.65) while Word's
-    // Cambria para gap is ~24.7 (line ~14.9 + after). Mini 396 on the
-    // 60-stem: NR +0.048 (table_bookmark +1.61 / file_134 +1.28, 0
-    // drops) but redline file_27_file_28 −2.85 (Word embeds Cambria;
-    // Quartz ITT prefers the Calibri line box). Keep the Aptos-only
-    // gate.
+    // A minor slot resolves to its theme face whatever that face is
+    // (Cambria included; see the minor branch below). The old Aptos-only
+    // gate (mini 90 / 396: file_2 / file_41 Cambria line boxes) is gone
+    // now that line boxes come from face metrics.
     let east_asia = attr_any(dom, fonts, "eastAsia");
     let east_asia_slot = attr_any(dom, fonts, "eastAsiaTheme");
     if let Some(name) = east_asia {
@@ -2386,26 +2388,28 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
         }
         let rule = attr_any(dom, sp, "lineRule").unwrap_or("auto");
         if let Some(line) = attr_any(dom, sp, "line") {
+            // Each lineRule owns the whole line model: a later layer (child
+            // style, direct pPr) must clear whatever an earlier one set.
             let unit = line.chars().any(|c| c.is_ascii_alphabetic());
-            if unit {
-                if let Some(pt) = parse_len(line) {
-                    if rule == "exact" {
-                        style.line_exact = Some(pt);
-                    } else {
-                        style.line_exact = None;
-                        style.line_mult = (pt / 11.0).max(0.8);
-                    }
-                }
-            } else if let Ok(v) = line.parse::<f32>() {
-                if rule == "exact" {
-                    style.line_exact = Some(twip(v));
-                } else {
-                    style.line_exact = None;
-                    if rule == "atLeast" {
-                        style.line_at_least = Some(twip(v));
+            let bare = if unit { None } else { line.parse::<f32>().ok() };
+            let spec = if unit {
+                parse_len(line)
+            } else {
+                bare.map(twip)
+            };
+            if let Some(pt) = spec {
+                style.line_exact = None;
+                style.line_at_least = None;
+                match rule {
+                    "exact" => style.line_exact = Some(pt),
+                    "atLeast" => {
+                        style.line_at_least = Some(pt);
                         style.line_mult = 1.0;
-                    } else {
-                        style.line_mult = v / 240.0;
+                    }
+                    // Unit-form auto (Strict01 `12.95pt`) keeps its 11pt
+                    // heuristic; bare auto is 240ths of a line.
+                    _ => {
+                        style.line_mult = bare.map_or((pt / 11.0).max(0.8), |v| v / 240.0);
                     }
                 }
             }
@@ -3641,7 +3645,8 @@ fn bullet_glyph(raw: &str) -> String {
 
 fn load_numbering(pkg: &PartFs) -> Numbering {
     let mut numbering = Numbering::default();
-    let Some(xml) = pkg.part_string("word/numbering.xml") else {
+    let numbering_part = main_rel_part(pkg, "numbering", "word/numbering.xml");
+    let Some(xml) = pkg.part_string(&numbering_part) else {
         return numbering;
     };
     let mut dom = Dom::new();
@@ -3662,7 +3667,7 @@ fn load_numbering(pkg: &PartFs) -> Numbering {
                     .find_map(|n| attr_any(&dom, n, "embed"))
             });
         if let Some(rid) = rid
-            && let Some(bytes) = resolve_media(pkg, "word/numbering.xml", rid)
+            && let Some(bytes) = resolve_media(pkg, &numbering_part, rid)
         {
             numbering.pic_bytes.insert(id, bytes);
         }
@@ -3828,7 +3833,7 @@ fn lvl_indent(dom: &Dom, lvl: NodeId) -> (f32, f32) {
 
 /// `word/settings.xml` parsed once per reader; `None` when the part is absent.
 fn settings_dom(pkg: &PartFs) -> Option<(Dom, NodeId)> {
-    let xml = pkg.part_string("word/settings.xml")?;
+    let xml = pkg.part_string(&settings_part(pkg))?;
     settings_dom_xml(&xml)
 }
 
@@ -3853,7 +3858,7 @@ fn settings_flag_xml(xml: &str, local: &str) -> bool {
 }
 
 fn settings_flag(pkg: &PartFs, local: &str) -> bool {
-    pkg.part_string("word/settings.xml")
+    pkg.part_string(&settings_part(pkg))
         .is_some_and(|xml| settings_flag_xml(&xml, local))
 }
 
@@ -3870,7 +3875,7 @@ fn settings_suppress_sp_bf_after_pg_brk(pkg: &PartFs) -> bool {
 /// `w:compatSetting name="compatibilityMode"`. Absent → 12 (Word 2007),
 /// which uses the pre-2013 table-edge rule (plan xml 3.3).
 fn settings_compat_mode(pkg: &PartFs) -> u8 {
-    pkg.part_string("word/settings.xml")
+    pkg.part_string(&settings_part(pkg))
         .map_or(12, |xml| settings_compat_mode_xml(&xml))
 }
 
@@ -4046,7 +4051,7 @@ fn line_has_underlined_cjk(line: &[TextRun]) -> bool {
 
 /// `w:characterSpacingControl/@w:val` (ECMA-376 17.15.1.18).
 fn settings_character_spacing(pkg: &PartFs) -> CharacterSpacing {
-    pkg.part_string("word/settings.xml")
+    pkg.part_string(&settings_part(pkg))
         .map_or(CharacterSpacing::DoNotCompress, |xml| {
             settings_character_spacing_xml(&xml)
         })
@@ -4863,7 +4868,23 @@ fn table_row_height_pt(
     content.max(spec)
 }
 
-fn keep_lines_need_pt(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle, width: f32) -> f32 {
+/// One line box of a paragraph as `emit_runs` lays it out: `para_line_box`
+/// for its first run's face at its largest size, snapped to the docGrid.
+fn para_first_line_pt(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle, grid_pitch: f32) -> f32 {
+    let size = runs.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
+    let face = runs.first().map_or(FaceId::CarlitoRegular.into(), |r| {
+        fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
+    });
+    snap_doc_grid(para_line_box(fonts.get(face), size, style), grid_pitch)
+}
+
+fn keep_lines_need_pt(
+    fonts: &Fonts,
+    runs: &[TextRun],
+    style: &ParaStyle,
+    width: f32,
+    grid_pitch: f32,
+) -> f32 {
     if !style.keep_lines {
         return 0.0;
     }
@@ -4871,15 +4892,10 @@ fn keep_lines_need_pt(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle, width:
     if lines.len() <= 1 {
         return 0.0;
     }
-    let size = runs.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
-    let face = runs.first().map_or(FaceId::CarlitoRegular.into(), |r| {
-        fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
-    });
-    let line_h = para_line_box(fonts.get(face), size, style);
-    line_h * lines.len() as f32
+    para_first_line_pt(fonts, runs, style, grid_pitch) * lines.len() as f32
 }
 
-fn keep_next_follow_pt(fonts: &Fonts, avail: f32, block: &Block) -> f32 {
+fn keep_next_follow_pt(fonts: &Fonts, avail: f32, block: &Block, grid_pitch: f32) -> f32 {
     match block {
         Block::Table {
             cols, rows, geom, ..
@@ -4890,13 +4906,7 @@ fn keep_next_follow_pt(fonts: &Fonts, avail: f32, block: &Block) -> f32 {
                 .unwrap_or(0.0)
         }
         Block::Paragraph { runs, style, .. } => {
-            let sz = runs.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
-            let line_mult = if style.line_mult > 0.0 {
-                style.line_mult
-            } else {
-                1.0
-            };
-            style.before + sz * line_mult
+            style.before + para_first_line_pt(fonts, runs, style, grid_pitch)
         }
         Block::PageBreak { .. } | Block::ColumnBreak => 0.0,
     }
@@ -4912,6 +4922,24 @@ fn block_is_blank(block: &Block) -> bool {
         } => images.is_empty() && boxes.is_empty() && runs.iter().all(|r| r.text.trim().is_empty()),
         Block::Table { rows, .. } => rows.is_empty(),
         Block::PageBreak { .. } | Block::ColumnBreak => true,
+    }
+}
+
+/// Word layers docDefaults + Normal < table style < paragraph style. A
+/// resolved named style still carries the docDefaults/Normal values it did
+/// not set itself; those must not override the table style's spacing.
+fn keep_table_spacing_unset_by_style(pstyle: &mut ParaStyle, table: &ParaStyle, base: &ParaStyle) {
+    if pstyle.after == base.after {
+        pstyle.after = table.after;
+    }
+    if pstyle.before == base.before {
+        pstyle.before = table.before;
+    }
+    let line = |s: &ParaStyle| (s.line_mult, s.line_exact, s.line_at_least);
+    if line(pstyle) == line(base) {
+        pstyle.line_mult = table.line_mult;
+        pstyle.line_exact = table.line_exact;
+        pstyle.line_at_least = table.line_at_least;
     }
 }
 
@@ -4940,6 +4968,9 @@ fn para_base(
         if let Some(named) = sheet.by_id.get(sid) {
             pstyle = named.para.clone();
             rstyle = named.run.clone();
+            if let Some(t) = table_para {
+                keep_table_spacing_unset_by_style(&mut pstyle, t, &sheet.defaults.para);
+            }
         } else {
             // Word still applies latent built-in heading spacing when the
             // style is referenced but omitted from styles.xml (the
@@ -5770,7 +5801,7 @@ fn list_marker(
 }
 
 fn table_style_id(dom: &Dom, table: NodeId) -> Option<&str> {
-    let pr = first_named(dom, table, "tblPr")?;
+    let pr = table_pr(dom, table)?;
     first_named(dom, pr, "tblStyle").and_then(|n| dom.attribute(n, &W::val()))
 }
 
@@ -5780,7 +5811,7 @@ fn table_look(dom: &Dom, table: NodeId) -> TblLook {
         first_col: false,
         no_h_band: false,
     };
-    let Some(pr) = first_named(dom, table, "tblPr") else {
+    let Some(pr) = table_pr(dom, table) else {
         return look;
     };
     let Some(el) = first_named(dom, pr, "tblLook") else {
@@ -5929,26 +5960,17 @@ fn table_block(
             row_has_cell_del |= cell_is_deleted(dom, cell);
             let mut cell_paras = Vec::new();
             let mut nested = Vec::new();
+            let mut nested_at = Vec::new();
             let mut cell_align = Align::Left;
-            let mut queue: Vec<NodeId> = (0..dom.child_count(cell))
-                .map(|i| dom.child_at(cell, i))
-                .collect();
-            let mut qi = 0;
-            while qi < queue.len() {
-                let child = queue[qi];
-                qi += 1;
-                if dom.name_is(child, &W::sdt()) {
-                    if let Some(content) = dom.element(child, &W::sdt_content()) {
-                        for i in 0..dom.child_count(content) {
-                            queue.push(dom.child_at(content, i));
-                        }
-                    }
-                    continue;
-                }
+            // Document order, with w:sdt content unwrapped in place.
+            let mut ordered = Vec::new();
+            cell_children_in_order(dom, cell, &mut ordered);
+            for child in ordered {
                 if dom.name_is(child, &W::tbl()) {
                     let block = table_block(dom, child, sheet, numbering, authors, comments);
                     if !block_is_blank(&block) {
                         nested.push(block);
+                        nested_at.push(cell_paras.len());
                     }
                     continue;
                 }
@@ -6024,6 +6046,7 @@ fn table_block(
             cells.push(RawCell {
                 paras: cell_paras,
                 nested,
+                nested_at,
                 pref: cell_pref_width(dom, cell),
                 colspan,
                 vmerge,
@@ -6091,7 +6114,7 @@ fn table_block(
     );
     tstyle.after = 0.0;
     tstyle.before = 0.0;
-    if let Some(pr) = first_named(dom, table, "tblPr")
+    if let Some(pr) = table_pr(dom, table)
         && let Some(jc) = first_named(dom, pr, "jc")
         && let Some(val) = attr_any(dom, jc, "val")
     {
@@ -6101,7 +6124,7 @@ fn table_block(
             _ => Align::Left,
         };
     }
-    let direct_borders = first_named(dom, table, "tblPr").and_then(|pr| parse_tbl_borders(dom, pr));
+    let direct_borders = table_pr(dom, table).and_then(|pr| parse_tbl_borders(dom, pr));
     let unstyled = tdef.is_none();
     Block::Table {
         cols,
@@ -6139,8 +6162,29 @@ fn row_height_spec(dom: &Dom, row: NodeId) -> (f32, bool) {
     (val, exact)
 }
 
+/// Children of a table cell in document order; `w:sdt` content is
+/// unwrapped in place (not appended after the cell's other children).
+fn cell_children_in_order(dom: &Dom, node: NodeId, out: &mut Vec<NodeId>) {
+    for i in 0..dom.child_count(node) {
+        let child = dom.child_at(node, i);
+        if dom.name_is(child, &W::sdt()) {
+            if let Some(content) = dom.element(child, &W::sdt_content()) {
+                cell_children_in_order(dom, content, out);
+            }
+        } else {
+            out.push(child);
+        }
+    }
+}
+
+/// The table's own `w:tblPr` (a direct child). A descendant search would
+/// return a nested table's properties when the outer table has none.
+fn table_pr(dom: &Dom, table: NodeId) -> Option<NodeId> {
+    direct_named(dom, table, "tblPr")
+}
+
 fn table_ind(dom: &Dom, table: NodeId) -> f32 {
-    let Some(pr) = first_named(dom, table, "tblPr") else {
+    let Some(pr) = table_pr(dom, table) else {
         return 0.0;
     };
     let Some(ind) = first_named(dom, pr, "tblInd") else {
@@ -6153,7 +6197,7 @@ fn table_ind(dom: &Dom, table: NodeId) -> f32 {
 }
 
 fn table_pref_width(dom: &Dom, table: NodeId) -> TblWidth {
-    let Some(pr) = first_named(dom, table, "tblPr") else {
+    let Some(pr) = table_pr(dom, table) else {
         return TblWidth::Grid;
     };
     let Some(tw) = first_named(dom, pr, "tblW") else {
@@ -6172,7 +6216,7 @@ fn table_pref_width(dom: &Dom, table: NodeId) -> TblWidth {
 }
 
 fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
-    let pr = first_named(dom, table, "tblPr")?;
+    let pr = table_pr(dom, table)?;
     let p = first_named(dom, pr, "tblpPr")?;
     let horz = attr_any(dom, p, "horzAnchor").unwrap_or("text");
     let vert = attr_any(dom, p, "vertAnchor").unwrap_or("text");
@@ -6226,7 +6270,7 @@ fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
 }
 
 fn table_layout_fixed(dom: &Dom, table: NodeId) -> bool {
-    first_named(dom, table, "tblPr")
+    table_pr(dom, table)
         .and_then(|pr| first_named(dom, pr, "tblLayout"))
         .and_then(|n| attr_any(dom, n, "type"))
         .is_some_and(|v| v.eq_ignore_ascii_case("fixed"))
@@ -6236,7 +6280,7 @@ fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
     // Word default cell mar is 108 twips L/R (meeting_agenda cluster).
     // tblCellMar overrides (sample_document code cells are 10 twips).
     let default = twip(108.0);
-    let Some(pr) = first_named(dom, table, "tblPr") else {
+    let Some(pr) = table_pr(dom, table) else {
         return (default, default);
     };
     let Some(mar) = first_named(dom, pr, "tblCellMar") else {
@@ -6283,7 +6327,7 @@ fn cell_pad_h(dom: &Dom, cell: NodeId, table_l: f32, table_r: f32) -> (f32, f32)
 }
 
 fn table_pad_tb(dom: &Dom, table: NodeId) -> (f32, f32) {
-    let Some(pr) = first_named(dom, table, "tblPr") else {
+    let Some(pr) = table_pr(dom, table) else {
         return (0.0, 0.0);
     };
     let Some(mar) = first_named(dom, pr, "tblCellMar") else {
@@ -6435,6 +6479,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
     RawCell {
         pref: PrefWidth::Auto,
         nested: Vec::new(),
+        nested_at: Vec::new(),
         paras: vec![CellPara {
             runs: vec![TextRun::new("Deleted Cells", style)],
             style: {
@@ -6515,6 +6560,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
             origins[ri].push(TableCell {
                 paras: raw.paras,
                 nested: raw.nested,
+                nested_at: raw.nested_at,
                 col,
                 colspan: span,
                 rowspan: 1,
@@ -9013,7 +9059,7 @@ fn hf_table_width_pt(dom: &Dom, table: NodeId) -> f32 {
 fn collect_hf_tables(dom: &Dom, root: NodeId) -> Vec<ChromeTable> {
     let mut out = Vec::new();
     for tbl in dom.descendants(root, Some(&W::tbl())) {
-        let Some(pr) = first_named(dom, tbl, "tblPr") else {
+        let Some(pr) = table_pr(dom, tbl) else {
             continue;
         };
         let Some(borders) = parse_tbl_borders(dom, pr) else {
@@ -9156,6 +9202,25 @@ fn rel_target_path(pkg: &PartFs, source: &str, rid: &str) -> Option<String> {
     let rels = pkg.read_rels_for(source)?;
     let rel = rels.items.iter().find(|item| item.id == rid)?;
     Some(pkg.resolve_rel_target(source, &rel.target))
+}
+
+/// A main-document part found the OPC way, by relationship type
+/// (`…/relationships/<kind>`, transitional or strict), falling back to
+/// Word's conventional name. Other producers may name these parts freely.
+pub(crate) fn main_rel_part(pkg: &PartFs, kind: &str, fallback: &str) -> String {
+    let suffix = format!("/{kind}");
+    pkg.main_document_part()
+        .and_then(|main| {
+            let rel = pkg.read_rels_for(&main)?.items.iter().find(|r| {
+                r.rel_type.ends_with(&suffix) && r.target_mode.as_deref() != Some("External")
+            })?;
+            Some(pkg.resolve_rel_target(&main, &rel.target))
+        })
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn settings_part(pkg: &PartFs) -> String {
+    main_rel_part(pkg, "settings", "word/settings.xml")
 }
 
 fn parse_header_watermark(dom: &Dom, root: NodeId) -> Option<Watermark> {
@@ -13579,9 +13644,18 @@ impl<'a> Layout<'a> {
                             cell_content_height(self.fonts, cell, &col_w) - cell.pad_t - cell.pad_b;
                         y_line -= (h - cell.pad_t - cell.pad_b - content).max(0.0) / 2.0;
                     }
-                    for (para, (size, line_box, face_id, lines)) in
-                        cell.paras.iter().zip(para_lines)
+                    for (pi, (para, (size, line_box, face_id, lines))) in
+                        cell.paras.iter().zip(para_lines).enumerate()
                     {
+                        for (nested, _) in cell
+                            .nested
+                            .iter()
+                            .zip(&cell.nested_at)
+                            .filter(|(_, at)| **at == pi)
+                        {
+                            let used = self.emit_nested_table(nested, x + pad_l, y_line, wrap_w);
+                            y_line -= used;
+                        }
                         y_line -= para.style.before;
                         let face = self.fonts.get(face_id);
                         let ascent = face.ascent_pt(size);
@@ -13659,7 +13733,12 @@ impl<'a> Layout<'a> {
                         }
                         y_line -= para.style.after;
                     }
-                    for nested in &cell.nested {
+                    for (nested, _) in cell
+                        .nested
+                        .iter()
+                        .zip(&cell.nested_at)
+                        .filter(|(_, at)| **at >= cell.paras.len())
+                    {
                         let used = self.emit_nested_table(nested, x + pad_l, y_line, wrap_w);
                         y_line -= used;
                     }
@@ -14637,16 +14716,17 @@ fn layout(
                     style.before = 0.0;
                 }
                 if style.keep_next {
-                    let sz = runs.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
+                    let pitch = lay.page.grid_pitch;
+                    let own = para_first_line_pt(lay.fonts, runs, &style, pitch);
                     let follow = blocks
                         .get(i + 1)
-                        .map(|b| keep_next_follow_pt(lay.fonts, lay.content_width(), b))
+                        .map(|b| keep_next_follow_pt(lay.fonts, lay.content_width(), b, pitch))
                         .unwrap_or(0.0);
                     if follow > 0.0 {
                         // +2pt breaks leftover==need ties so a heading is
                         // not orphaned above a table row that then wraps
                         // (comments-lots Heading1 + capability header).
-                        lay.ensure(style.before + sz * 1.2 + 8.0 + follow + 2.0);
+                        lay.ensure(style.before + own + 8.0 + follow + 2.0);
                     }
                 }
                 if style.keep_lines {
@@ -14656,7 +14736,8 @@ fn layout(
                     // keepLines-only. Do not retry ungated widowControl.
                     let width =
                         (lay.content_width() - style.indent_left - style.indent_right).max(40.0);
-                    let need = keep_lines_need_pt(lay.fonts, runs, &style, width);
+                    let need =
+                        keep_lines_need_pt(lay.fonts, runs, &style, width, lay.page.grid_pitch);
                     let page_h = (lay.page.height - lay.body_top - lay.body_floor).max(1.0);
                     if need > 0.0 && need < page_h {
                         lay.ensure(style.before + need);
@@ -17830,6 +17911,38 @@ mod theme_slot_tests {
     fn hint_east_asia_is_recorded() {
         let style = style_from_rfonts(r#"w:hint="eastAsia""#, &theme_with_east_asia());
         assert_eq!(style.hint, FontHint::EastAsia);
+    }
+
+    #[test]
+    fn empty_theme_typefaces_are_absent_not_empty_families() {
+        // Word writes `<a:ea typeface=""/>` / `<a:cs typeface=""/>` in its
+        // stock themes; an empty minor latin is legal too. None of them may
+        // become a "" family (which resolves as an unknown face).
+        let xml = r#"<?xml version="1.0"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <a:themeElements><a:fontScheme name="Office">
+    <a:majorFont><a:latin typeface=" "/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
+    <a:minorFont><a:latin typeface=""/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
+  </a:fontScheme></a:themeElements>
+</a:theme>"#;
+        let theme = parse_theme_xml(xml);
+        assert_eq!(theme.major, None);
+        assert_eq!(theme.minor, None);
+        assert_eq!(theme.minor_ea, None);
+        assert_eq!(theme.minor_cs, None);
+        let style = style_from_rfonts(
+            r#"w:asciiTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi" w:eastAsiaTheme="minorEastAsia""#,
+            &theme,
+        );
+        assert_eq!(
+            style.family,
+            Defaults::word().run.family,
+            "an empty minor slot keeps the inherited family"
+        );
+        assert_eq!(
+            style.family_ea, None,
+            "an empty ea slot sets no East Asian face"
+        );
     }
 
     #[test]
@@ -26460,5 +26573,47 @@ mod comments_spacing_tests {
         let natural = face.single_line_pt(11.0);
         assert!(natural < 30.0, "precondition natural={natural}");
         assert!((super::para_line_box(face, 11.0, &style) - 30.0).abs() < 0.01);
+    }
+
+    fn apply_spacing(style: &mut super::ParaStyle, attrs: &str) {
+        let xml = format!(
+            r#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:spacing {attrs}/></w:pPr>"#
+        );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let ppr = dom.root(doc).expect("pPr");
+        super::apply_ppr(&dom, ppr, style);
+    }
+
+    #[test]
+    fn a_later_line_rule_replaces_an_inherited_at_least() {
+        // Style chains and direct formatting apply pPr layers to one
+        // ParaStyle: the last lineRule wins, whatever came before.
+        let mut style = super::Defaults::word().para;
+        apply_spacing(&mut style, r#"w:line="600" w:lineRule="atLeast""#);
+        assert_eq!(style.line_at_least, Some(30.0));
+        apply_spacing(&mut style, r#"w:line="240" w:lineRule="auto""#);
+        assert_eq!(style.line_at_least, None, "auto clears atLeast");
+        assert!((style.line_mult - 1.0).abs() < 1e-6);
+        apply_spacing(&mut style, r#"w:line="600" w:lineRule="atLeast""#);
+        apply_spacing(&mut style, r#"w:line="400" w:lineRule="exact""#);
+        assert_eq!(style.line_at_least, None, "exact clears atLeast");
+        apply_spacing(&mut style, r#"w:line="276""#);
+        assert_eq!(style.line_exact, None);
+        assert_eq!(style.line_at_least, None, "an omitted rule is auto");
+    }
+
+    #[test]
+    fn unit_form_at_least_keeps_its_minimum() {
+        // ISO Strict writes `w:line="30pt"`; atLeast is max(natural, 30).
+        let fonts = fonts();
+        let face = fonts.get(FaceId::CarlitoRegular);
+        let mut style = super::Defaults::word().para;
+        apply_spacing(&mut style, r#"w:line="30pt" w:lineRule="atLeast""#);
+        assert_eq!(style.line_at_least, Some(30.0));
+        assert!((super::para_line_box(face, 11.0, &style) - 30.0).abs() < 0.01);
+        let big = face.single_line_pt(40.0);
+        assert!(big > 30.0, "precondition natural={big}");
+        assert!((super::para_line_box(face, 40.0, &style) - big).abs() < 0.01);
     }
 }

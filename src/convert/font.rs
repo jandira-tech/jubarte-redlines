@@ -18,13 +18,30 @@ thread_local! {
         RefCell::new(super::font_table::FontTable::default());
 }
 
+/// Puts the previous thread-local value back when dropped, so a scope
+/// that unwinds (a panicking conversion caught by a test harness or a
+/// long-lived host) cannot leak its state into the next conversion.
+struct RestoreOnDrop<'a, T> {
+    slot: &'a RefCell<T>,
+    prev: Option<T>,
+}
+
+impl<T> Drop for RestoreOnDrop<'_, T> {
+    fn drop(&mut self) {
+        if let Some(prev) = self.prev.take() {
+            self.slot.replace(prev);
+        }
+    }
+}
+
 /// Install `table` for the duration of `f` so `Fonts::resolve` honours altName.
 pub(crate) fn with_font_table<T>(table: super::font_table::FontTable, f: impl FnOnce() -> T) -> T {
     ACTIVE_FONT_TABLE.with(|slot| {
-        let prev = slot.replace(table);
-        let out = f();
-        slot.replace(prev);
-        out
+        let _restore = RestoreOnDrop {
+            slot,
+            prev: Some(slot.replace(table)),
+        };
+        f()
     })
 }
 
@@ -36,8 +53,12 @@ thread_local! {
 /// inside `f` (plan Step 2f).
 pub(crate) fn with_font_report<T>(f: impl FnOnce() -> T) -> (T, Vec<FontReportEntry>) {
     FONT_REPORT.with(|slot| {
-        let prev = slot.replace(Some(Vec::new()));
+        let mut restore = RestoreOnDrop {
+            slot,
+            prev: Some(slot.replace(Some(Vec::new()))),
+        };
         let out = f();
+        let prev = restore.prev.take().flatten();
         let report = slot.replace(prev).unwrap_or_default();
         (out, report)
     })
@@ -960,16 +981,10 @@ impl Fonts {
         catalogue().get(Self::id_from_key(key))
     }
 
+    /// Unknown families fall back to the Cambria face of the same style,
+    /// as [`Self::face_from_physical`] does (not always Cambria Regular).
     fn id_from_key(key: &FaceKey) -> FaceId {
-        Self::mapped_face(
-            &key.family
-                .to_ascii_lowercase()
-                .replace([' ', '-'], "")
-                .replace("mt", ""),
-            key.bold,
-            key.italic,
-        )
-        .unwrap_or(FaceId::CambriaRegular)
+        Self::face_from_physical(&key.family, key.bold, key.italic)
     }
 
     pub(crate) fn resolve(&self, family: &str, bold: bool, italic: bool) -> FaceRef {
@@ -1048,6 +1063,8 @@ impl Fonts {
         self.resolve_walk(family, bold, italic, table, &mut visited)
     }
 
+    /// Follow `family` through the font table. Iterative: an altName chain
+    /// is bounded by the table's size, never by the call stack.
     fn resolve_walk(
         &self,
         family: &str,
@@ -1056,51 +1073,64 @@ impl Fonts {
         table: &super::font_table::FontTable,
         visited: &mut HashSet<String>,
     ) -> (FaceId, FontStep) {
-        // Word splits rFonts on comma but does not CSS-unquote. Evidence
-        // (Quartz PDFs): `Verdana, Geneva, sans-serif` → Verdana;
-        // `"Times New Roman", Times, serif` → Cambria, because the first
-        // token still carries the quote characters and is not TNR.
-        let primary = family_token(family);
-        let quoted = primary.starts_with('"') || primary.starts_with('\'');
-        if !quoted {
-            let key = primary
-                .to_ascii_lowercase()
-                .replace([' ', '-'], "")
-                .replace("mt", "");
-            if let Some(id) = Self::mapped_face(&key, bold, italic) {
-                return (id, Self::catalogue_step(id));
+        let mut current = family;
+        let mut via_alt = false;
+        let (id, step) = loop {
+            // Word splits rFonts on comma but does not CSS-unquote. Evidence
+            // (Quartz PDFs): `Verdana, Geneva, sans-serif` → Verdana;
+            // `"Times New Roman", Times, serif` → Cambria, because the first
+            // token still carries the quote characters and is not TNR.
+            let primary = family_token(current);
+            let quoted = primary.starts_with('"') || primary.starts_with('\'');
+            if !quoted {
+                let key = primary
+                    .to_ascii_lowercase()
+                    .replace([' ', '-'], "")
+                    .replace("mt", "");
+                if let Some(id) = Self::mapped_face(&key, bold, italic) {
+                    break (id, Self::catalogue_step(id));
+                }
             }
-        }
-        let visit_key = primary.to_ascii_lowercase();
-        if !visited.insert(visit_key) {
-            return (
+            let visit_key = primary.to_ascii_lowercase();
+            if !visited.insert(visit_key) {
+                break (
+                    Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
+                    FontStep::Unknown,
+                );
+            }
+            // Word records its substitution against the whole `w:name`, so a
+            // CSS-style list row (`"Foo", Bar, serif`) is keyed by the full
+            // string, not by its first token.
+            let whole = current.trim();
+            let alt = table
+                .alt_name(primary)
+                .or_else(|| (whole != primary).then(|| table.alt_name(whole)).flatten());
+            if let Some(alt) = alt {
+                current = alt;
+                via_alt = true;
+                continue;
+            }
+            if let Some(physical) = super::word_subst::lookup_physical(primary) {
+                break (
+                    Self::face_from_physical(&physical, bold, italic),
+                    FontStep::WordSubstitution,
+                );
+            }
+            if let Some(entry) = table.get(primary) {
+                let generic = super::word_subst::generic_physical(entry.family, entry.pitch);
+                if !generic.is_empty() {
+                    break (
+                        Self::face_from_physical(generic, bold, italic),
+                        FontStep::Generic,
+                    );
+                }
+            }
+            break (
                 Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
                 FontStep::Unknown,
             );
-        }
-        if let Some(alt) = table.alt_name(primary) {
-            let (id, _) = self.resolve_walk(alt, bold, italic, table, visited);
-            return (id, FontStep::AltName);
-        }
-        if let Some(physical) = super::word_subst::lookup_physical(primary) {
-            return (
-                Self::face_from_physical(&physical, bold, italic),
-                FontStep::WordSubstitution,
-            );
-        }
-        if let Some(entry) = table.get(primary) {
-            let generic = super::word_subst::generic_physical(entry.family, entry.pitch);
-            if !generic.is_empty() {
-                return (
-                    Self::face_from_physical(generic, bold, italic),
-                    FontStep::Generic,
-                );
-            }
-        }
-        (
-            Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
-            FontStep::Unknown,
-        )
+        };
+        (id, if via_alt { FontStep::AltName } else { step })
     }
 
     fn catalogue_step(id: FaceId) -> FontStep {
@@ -1419,12 +1449,22 @@ fn cloud_font_override(id: FaceId) -> Option<PathBuf> {
 fn ttf_postscript_name(bytes: &[u8]) -> Option<String> {
     let face = ttf_parser::Face::parse(bytes, 0).ok()?;
     let name = face.tables().name?;
-    name.names.into_iter().find_map(|n| {
-        if n.name_id != ttf_parser::name_id::POST_SCRIPT_NAME || !n.is_unicode() {
-            return None;
-        }
-        n.to_string()
-    })
+    let records: Vec<_> = name
+        .names
+        .into_iter()
+        .filter(|n| n.name_id == ttf_parser::name_id::POST_SCRIPT_NAME)
+        .collect();
+    records
+        .iter()
+        .find_map(|n| if n.is_unicode() { n.to_string() } else { None })
+        .or_else(|| records.iter().find_map(|n| ascii_record_name(n.name)))
+}
+
+/// Name ID 6 is printable ASCII by definition (OpenType `name`), so a
+/// Macintosh-Roman or other 8-bit record decodes byte for byte.
+fn ascii_record_name(raw: &[u8]) -> Option<String> {
+    (!raw.is_empty() && raw.iter().all(|b| (0x21..=0x7e).contains(b)))
+        .then(|| String::from_utf8_lossy(raw).into_owned())
 }
 
 fn sanitize_pdf_name(name: &str) -> String {
@@ -1999,6 +2039,123 @@ mod tests {
                 fonts.resolve_in("ghosta", bold, italic, &table),
                 expected,
                 "style must survive a case-insensitive multi-hop altName lookup"
+            );
+        }
+    }
+
+    #[test]
+    fn postscript_name_decodes_eight_bit_records() {
+        assert_eq!(
+            ascii_record_name(b"PressStart2P-Regular").as_deref(),
+            Some("PressStart2P-Regular")
+        );
+        assert_eq!(ascii_record_name(b""), None);
+        assert_eq!(
+            ascii_record_name(b"Has Space"),
+            None,
+            "PostScript names have no spaces"
+        );
+        assert_eq!(ascii_record_name(&[0xC3, 0xA9]), None);
+        assert_eq!(
+            ttf_postscript_name(FaceId::MonoRegular.bytes()).as_deref(),
+            Some("LiberationMono"),
+            "Unicode records still win"
+        );
+    }
+
+    #[test]
+    fn font_table_scope_is_restored_after_a_panicking_conversion() {
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="SomeRare"><w:altName w:val="Arial"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_font_table(table, || panic!("conversion failed mid-document"))
+        }));
+        assert!(caught.is_err());
+        assert_eq!(
+            fonts.resolve("SomeRare", false, false),
+            FaceId::CambriaRegular,
+            "a panicking conversion must not leave its altName table installed"
+        );
+    }
+
+    #[test]
+    fn font_report_scope_is_restored_after_a_panic() {
+        let fonts = Fonts::new();
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_font_report(|| {
+                let _ = fonts.resolve("Calibri", false, false);
+                panic!("conversion failed mid-document")
+            })
+        }));
+        assert!(caught.is_err());
+        assert!(
+            FONT_REPORT.with(|slot| slot.borrow().is_none()),
+            "a panicking conversion must not leave a report collector installed"
+        );
+    }
+
+    #[test]
+    fn long_alt_name_chain_resolves_without_deep_recursion() {
+        // 20k chained rows; a recursive walk needs megabytes of stack.
+        let mut xml = String::from(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+        );
+        for i in 0..20_000 {
+            write!(
+                xml,
+                r#"<w:font w:name="Chain{i}"><w:altName w:val="Chain{}"/></w:font>"#,
+                i + 1
+            )
+            .unwrap();
+        }
+        xml.push_str(
+            r#"<w:font w:name="Chain20000"><w:altName w:val="Consolas"/></w:font></w:fonts>"#,
+        );
+        let table = super::super::font_table::parse_font_table_xml(&xml);
+        let face = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || Fonts::new().resolve_in("Chain0", false, false, &table))
+            .unwrap()
+            .join()
+            .expect("resolution must not overflow a 256 KiB stack");
+        assert_eq!(face, FaceId::ConsolasRegular);
+    }
+
+    #[test]
+    fn css_list_row_is_found_by_its_full_name() {
+        // Word writes the altName against the whole w:name, quotes and all.
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="&quot;Unheard Of&quot;, Other, serif"><w:altName w:val="Consolas"/></w:font>
+               </w:fonts>"#,
+        );
+        let (face, step) =
+            Fonts::new().resolve_in_step(r#""Unheard Of", Other, serif"#, false, false, &table);
+        assert_eq!(face, FaceId::ConsolasRegular);
+        assert_eq!(step, FontStep::AltName);
+    }
+
+    #[test]
+    fn unknown_face_key_keeps_its_style() {
+        for (bold, italic, expected) in [
+            (false, false, FaceId::CambriaRegular),
+            (true, false, FaceId::CambriaBold),
+            (false, true, FaceId::CambriaItalic),
+            (true, true, FaceId::CambriaBoldItalic),
+        ] {
+            let key = FaceKey {
+                family: "Definitely Not A Font".into(),
+                bold,
+                italic,
+            };
+            assert_eq!(
+                Fonts::id_from_key(&key),
+                expected,
+                "bold={bold} italic={italic}"
             );
         }
     }

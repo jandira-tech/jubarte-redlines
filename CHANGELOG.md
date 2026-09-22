@@ -43,7 +43,7 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   checkouts rather than vendoring 46 MB of cases. `planning/sample50_check.py`
   is the 50-row smoke after every engine change. Baselines from jubarte 0.9.0:
   76 mean Jaccard **13.74** (median 8.86), 398 mean Jaccard **53.10**
-  (median 43.50). No converter behaviour change in this commit.
+  (median 43.50). The gate itself does not change converter output.
 
 ### Fixed
 
