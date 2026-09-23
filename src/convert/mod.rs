@@ -1191,6 +1191,10 @@ struct LaidImage {
     /// An inline picture directly in a header/footer paragraph, so in the
     /// part's line flow (003982453's text-box picture is not).
     chrome_flow: bool,
+    /// A chrome picture paragraph's auto multiple above single: the extra
+    /// `(mult - 1)` lines of its mark's face go under the picture
+    /// (00e901c5's 48.2pt logo at 1.3 lines stands 52.6pt).
+    chrome_leading: Option<(f32, RunStyle)>,
     /// `pic:spPr/a:ln`: Word strokes the picture's own outline (000f5278's
     /// QR code has a black frame).
     outline: Option<([f32; 3], f32)>,
@@ -5321,7 +5325,12 @@ fn face_lacks_ink(face: &Face, text: &str) -> bool {
 }
 
 fn line_fit_need(natural: f32, ascent: f32, style: &ParaStyle, line_box: f32) -> f32 {
-    let need = if style.line_exact.is_none() && style.line_at_least.is_none() {
+    // An exact line is its box: Word clips the glyph tops of a short one
+    // rather than moving it (001a915a's 4pt closing paragraph).
+    if style.line_exact.is_some() {
+        return line_box;
+    }
+    let need = if style.line_at_least.is_none() {
         line_box.min(natural)
     } else {
         line_box
@@ -5824,6 +5833,22 @@ fn paragraph_block(
     let sheet = ctx.sheet;
     let (mut pstyle, rstyle) = para_base(dom, para, sheet, None);
     let (marker, num_id, ilvl) = list_marker(dom, para, sheet, numbering);
+    // numId=0 over a numbered style removes the list and the style's list
+    // indent with it (000ebd12 Förslagstext: ind 397/397 renders flush
+    // left in Word). A direct w:ind still wins.
+    if num_id == "0" {
+        let ppr = dom.element(para, &W::p_pr());
+        let style_numbered = ppr
+            .and_then(|ppr| first_named(dom, ppr, "pStyle"))
+            .and_then(|ps| dom.attribute(ps, &W::val()))
+            .and_then(|sid| sheet.by_id.get(sid))
+            .is_some_and(|named| named.num_id.as_deref().is_some_and(|id| id != "0"));
+        let direct_ind = ppr.and_then(|ppr| first_named(dom, ppr, "ind")).is_some();
+        if style_numbered && !direct_ind {
+            pstyle.indent_left = 0.0;
+            pstyle.indent_first = 0.0;
+        }
+    }
     let pic = numbering.pic_image(&num_id, ilvl);
     let pic_extent = numbering.pic_extent(&num_id, ilvl);
     if pstyle.outline_lvl.is_some() && !num_id.is_empty() {
@@ -5935,6 +5960,7 @@ fn paragraph_block(
                 chrome_align: Align::Left,
                 chrome_lead: false,
                 chrome_flow: false,
+                chrome_leading: None,
                 outline: None,
             },
         );
@@ -9209,6 +9235,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
+                        chrome_leading: None,
                         outline: picture_outline(dom, drawing),
                     });
                 } else {
@@ -9224,6 +9251,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
+                        chrome_leading: None,
                         outline: None,
                     });
                 }
@@ -9258,6 +9286,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
+                        chrome_leading: None,
                         outline: None,
                     });
                     continue;
@@ -9276,6 +9305,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_align: Align::Left,
                     chrome_lead: false,
                     chrome_flow: false,
+                    chrome_leading: None,
                     outline: None,
                 });
             }
@@ -10602,7 +10632,21 @@ fn load_chrome_part(
         if hf_para_is_shape_text(&part_dom, para) {
             continue;
         }
-        let jc = para_base(&part_dom, para, sheet, None).0.align;
+        let (pstyle, prun) = para_base(&part_dom, para, sheet, None);
+        let jc = pstyle.align;
+        let leading = (pstyle.line_exact.is_none()
+            && pstyle.line_at_least.is_none()
+            && pstyle.line_mult > 1.0)
+            .then(|| {
+                let mut mark = prun.clone();
+                if let Some(rpr) = part_dom
+                    .element(para, &W::p_pr())
+                    .and_then(|ppr| part_dom.element(ppr, &W::r_pr()))
+                {
+                    apply_rpr(&part_dom, rpr, &mut mark, &sheet.theme);
+                }
+                (pstyle.line_mult - 1.0, mark)
+            });
         let lead = !seen_text;
         // Only a picture-only paragraph stands as its own line; a picture
         // sharing a line with text (000e002d's logo + tabbed title) stays
@@ -10636,6 +10680,9 @@ fn load_chrome_part(
                     img.chrome_align = jc;
                     img.chrome_lead = lead;
                     img.chrome_flow = flow && matches!(img.slot, ImageSlot::Flow);
+                    if img.chrome_flow {
+                        img.chrome_leading.clone_from(&leading);
+                    }
                     img
                 }),
         );
@@ -10915,6 +10962,9 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
     let mut runs = Vec::new();
     let mut pending = Vec::new();
     let mut prev: Option<std::rc::Rc<ParaStyle>> = None;
+    // The paragraph before this one, painted or empty: a trailing empty
+    // paragraph sits max(its after, this before) below it.
+    let mut last: Option<std::rc::Rc<ParaStyle>> = None;
     for para in dom.descendants(node, Some(&W::p())) {
         if hf_para_is_shape_text(dom, para) || hf_para_in_table(dom, node, para) {
             continue;
@@ -10924,9 +10974,30 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
         let mut scan = FieldScan::default();
         let mut line = Vec::new();
         collect_hf_rec(dom, para, &prun, theme, &mut scan, &mut line);
+        let border = hf_border_pad(last.as_deref(), &pstyle);
         if line.iter().all(|r| r.text.trim().is_empty()) {
             if hf_para_is_bare_line(dom, node, para) {
-                pending.push(empty_break(para, &pstyle, &prun));
+                let mut first = empty_break(para, &pstyle, &prun);
+                if !runs.is_empty()
+                    && let Some(p) = last.as_deref()
+                {
+                    first.para_gap = if same_contextual_pair(p, &pstyle) {
+                        0.0
+                    } else {
+                        f32::max(p.after, pstyle.before)
+                    };
+                }
+                first.para_gap += border;
+                pending.push(first);
+                // Each w:br in it is one more line (000ebd12's closing
+                // FSHNormL paragraph is a break line plus its mark's line).
+                let breaks: usize = line.iter().map(|r| r.text.matches('\n').count()).sum();
+                for _ in 0..breaks {
+                    let mut extra = empty_break(para, &pstyle, &prun);
+                    extra.para_gap = 0.0;
+                    pending.push(extra);
+                }
+                last = Some(pstyle);
             }
             continue;
         }
@@ -10934,6 +11005,14 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
             run.hf_para = Some(pstyle.clone());
         }
         if runs.is_empty() {
+            // Below leading empty paragraphs the text keeps its before,
+            // less what the last one's after already gave (000ebd12's
+            // "Enskild motion" before=2pt under the logo's empty line).
+            if let Some(br) = pending.last_mut()
+                && let Some(p) = last.as_deref()
+            {
+                br.para_gap += (pstyle.before - p.after).max(0.0) + border;
+            }
             runs.append(&mut pending);
         } else {
             pending.clear();
@@ -10944,16 +11023,26 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
                 Some(p) if same_contextual_pair(p, &pstyle) => 0.0,
                 Some(p) => f32::max(p.after, pstyle.before),
                 None => pstyle.before,
-            };
+            } + border;
             runs.push(br);
         }
         runs.extend(line);
-        prev = Some(pstyle);
+        prev = Some(pstyle.clone());
+        last = Some(pstyle);
     }
     // A part of only empty paragraphs (0003b3ae's blank first-page
     // header) is still their stacked lines: Word starts the body below.
     runs.append(&mut pending);
     runs
+}
+
+/// Width + space of a header/footer paragraph's top border, unless the
+/// paragraph above carries the same one (one box, one rule).
+fn hf_border_pad(above: Option<&ParaStyle>, para: &ParaStyle) -> f32 {
+    match para.border_top {
+        Some(edge) if above.is_none_or(|a| a.border_top != Some(edge)) => edge.1 + edge.2,
+        _ => 0.0,
+    }
 }
 
 /// Table-cell paragraphs belong to the part's laid-out tables.
@@ -11000,7 +11089,37 @@ fn hf_para_is_bare_line(dom: &Dom, root: NodeId, para: NodeId) -> bool {
     false
 }
 
-fn hf_styled_lines(runs: &[TextRun]) -> Vec<(Vec<TextRun>, f32)> {
+/// Header/footer lines: one per paragraph, wrapped at `width` less the
+/// paragraph's indents (0078c7c2's 24pt title is two lines in Word). A
+/// paragraph with tabs keeps its one tab-laid line.
+fn hf_styled_lines(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<(Vec<TextRun>, f32)> {
+    let mut out = Vec::new();
+    for (line, gap) in hf_paragraph_lines(runs) {
+        let room = line
+            .iter()
+            .find_map(|r| r.hf_para.as_deref())
+            .map_or(width, |p| width - p.indent_left - p.indent_right);
+        let pieces = if line.iter().any(|r| r.text.contains('\t')) {
+            Vec::new()
+        } else {
+            wrap_runs(fonts, &line, room, room, false)
+        };
+        if pieces.len() < 2 {
+            out.push((line, gap));
+            continue;
+        }
+        let last = pieces.len() - 1;
+        out.extend(
+            pieces
+                .into_iter()
+                .enumerate()
+                .map(|(i, piece)| (piece, if i == last { gap } else { 0.0 })),
+        );
+    }
+    out
+}
+
+fn hf_paragraph_lines(runs: &[TextRun]) -> Vec<(Vec<TextRun>, f32)> {
     let mut lines = vec![(Vec::new(), 0.0)];
     for run in runs {
         if run.text == HF_LINE_BREAK {
@@ -11204,6 +11323,9 @@ struct Layout<'a> {
     /// Active wrapSquare-style float from a `tblpPr` table.
     side_float: Option<SideFloat>,
     line_probe: LineProbe,
+    /// Pen end and baseline of the last painted body line: where an
+    /// inline picture that fits in that line sits.
+    last_line_end: Option<(f32, f32)>,
     /// The current page is its section's first (pgBorders `display`).
     section_first_page: bool,
     /// zOrder=front page-border ops per page index, appended after the
@@ -11229,12 +11351,27 @@ struct Layout<'a> {
     ln_i: u32,
 }
 
-fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
-    let size = runs
+/// Point size of a header/footer line: its tallest text run, else its
+/// break mark's (00049f27's 10pt footer lines are 11.5pt apart, not an
+/// 11pt floor's 12.65).
+fn chrome_size(runs: &[TextRun]) -> f32 {
+    let text = runs
         .iter()
         .filter(|r| r.text != HF_LINE_BREAK)
         .map(|r| r.style.size)
-        .fold(11.0_f32, f32::max);
+        .fold(0.0_f32, f32::max);
+    let any = runs.iter().map(|r| r.style.size).fold(0.0_f32, f32::max);
+    if text > 0.0 {
+        text
+    } else if any > 0.0 {
+        any
+    } else {
+        11.0
+    }
+}
+
+fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
+    let size = chrome_size(runs);
     let fid = runs
         .iter()
         .find(|r| r.text != HF_LINE_BREAK)
@@ -11246,12 +11383,22 @@ fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
 
 /// Height of a header/footer's inline pictures: their line stands as
 /// tall as the tallest (00afb3e6's 71.6pt logo pushes the body down).
-fn chrome_images_h(images: &[LaidImage]) -> f32 {
+fn chrome_images_h(fonts: &Fonts, images: &[LaidImage]) -> f32 {
     images
         .iter()
         .filter(|img| img.chrome_flow)
-        .map(|img| img.h)
+        .map(|img| chrome_pic_line(fonts, img))
         .fold(0.0_f32, f32::max)
+}
+
+/// A chrome picture paragraph's line: the picture plus its multiple's
+/// extra leading.
+fn chrome_pic_line(fonts: &Fonts, img: &LaidImage) -> f32 {
+    img.h
+        + img.chrome_leading.as_ref().map_or(0.0, |(extra, mark)| {
+            let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
+            extra * face.single_line_pt(mark.size)
+        })
 }
 
 /// Header/footer band: its stacked lines plus its laid-out tables.
@@ -11265,7 +11412,7 @@ fn chrome_band(
     let lines = if runs.is_empty() {
         0.0
     } else {
-        chrome_line_pt(fonts, runs)
+        chrome_line_pt(fonts, runs, avail)
     };
     lines + chrome_tables_h(fonts, tables, avail, space_for_ul, None)
 }
@@ -11304,11 +11451,7 @@ fn table_rows_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: boo
 /// `(ascent, line box)` of one header/footer line from its own largest
 /// run: a 19pt title line is taller than the 11pt line above it.
 fn chrome_line_metrics(fonts: &Fonts, line: &[TextRun]) -> (f32, f32) {
-    let size = line
-        .iter()
-        .filter(|r| r.text != HF_LINE_BREAK)
-        .map(|r| r.style.size)
-        .fold(11.0_f32, f32::max);
+    let size = chrome_size(line);
     let fid = line
         .iter()
         .find(|r| r.text != HF_LINE_BREAK)
@@ -11317,15 +11460,27 @@ fn chrome_line_metrics(fonts: &Fonts, line: &[TextRun]) -> (f32, f32) {
         });
     let face = fonts.get(fid);
     // The paragraph's line rule (exact 19.5 titles), as in the body.
-    let line_box = line.iter().find_map(|r| r.hf_para.as_deref()).map_or_else(
+    let para = line.iter().find_map(|r| r.hf_para.as_deref());
+    let line_box = para.map_or_else(
         || chrome_one_line_pt(fonts, line),
         |p| para_line_box(face, size, p),
     );
-    (face.ascent_pt(size), line_box)
+    let ascent = face.ascent_pt(size);
+    let drop = if para.is_some_and(|p| p.line_exact.is_some()) {
+        exact_baseline(line_box)
+    } else {
+        ascent
+    };
+    (drop, line_box)
 }
 
-fn chrome_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
-    let lines = hf_styled_lines(runs);
+/// Baseline depth of an exact line: Word puts it 4/5 down the box.
+fn exact_baseline(line_box: f32) -> f32 {
+    line_box * 0.8
+}
+
+fn chrome_line_pt(fonts: &Fonts, runs: &[TextRun], width: f32) -> f32 {
+    let lines = hf_styled_lines(fonts, runs, width);
     let heights: f32 = lines
         .iter()
         .map(|(line, _)| chrome_line_metrics(fonts, line).1)
@@ -11345,21 +11500,41 @@ fn chrome_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
     } else {
         heights
     };
-    lines_h + gaps + lead + trail
+    lines_h + gaps + lead + trail + hf_opening_pad(runs) + hf_closing_after(runs)
+}
+
+/// The part's last paragraph's after, empty or not: it closes the band
+/// (000799b5's two 8pt-after empty paragraphs; 00157a50's text paragraph
+/// with after=3pt starts the body 3pt lower).
+fn hf_closing_after(runs: &[TextRun]) -> f32 {
+    runs.last()
+        .and_then(|r| r.hf_para.as_deref())
+        .map_or(0.0, |p| p.after)
+}
+
+/// Top border width + space of a part whose first paragraph paints text
+/// (006cfed2's footer rule stands 1pt over "CONFIDENTIEL").
+fn hf_opening_pad(runs: &[TextRun]) -> f32 {
+    runs.first()
+        .filter(|r| r.text != HF_LINE_BREAK)
+        .and_then(|r| r.hf_para.as_deref())
+        .map_or(0.0, |p| hf_border_pad(None, p))
+}
+
+/// One empty header/footer paragraph line: its mark's line box.
+fn hf_break_box(fonts: &Fonts, r: &TextRun) -> f32 {
+    let face = fonts.get(fonts.resolve(&r.style.family, r.style.bold, r.style.italic));
+    let natural = face.single_line_pt(r.style.size).max(r.style.size);
+    r.hf_para
+        .as_deref()
+        .map_or(natural, |p| para_line_box(face, r.style.size, p))
 }
 
 /// Height of the empty paragraphs above the first and below the last
 /// painted header/footer line (see `collect_hf_runs`).
 /// Each empty paragraph's line is its own mark's line box.
 fn chrome_empty_pads(fonts: &Fonts, runs: &[TextRun]) -> (f32, f32) {
-    let line = |r: &TextRun| {
-        let face = fonts.get(fonts.resolve(&r.style.family, r.style.bold, r.style.italic));
-        let natural = face.single_line_pt(r.style.size).max(r.style.size);
-        r.hf_para
-            .as_deref()
-            .map_or(natural, |p| para_line_box(face, r.style.size, p))
-            + r.para_gap
-    };
+    let line = |r: &TextRun| hf_break_box(fonts, r) + r.para_gap;
     let lead: f32 = runs
         .iter()
         .take_while(|r| r.text == HF_LINE_BREAK)
@@ -11368,7 +11543,7 @@ fn chrome_empty_pads(fonts: &Fonts, runs: &[TextRun]) -> (f32, f32) {
     if runs.iter().all(|r| r.text == HF_LINE_BREAK) {
         return (lead, 0.0);
     }
-    let trail = runs
+    let trail: f32 = runs
         .iter()
         .rev()
         .take_while(|r| r.text == HF_LINE_BREAK)
@@ -11389,9 +11564,9 @@ impl<'a> Layout<'a> {
         let footer = hf.footer;
         let avail = page.width - page.margin_l - page.margin_r;
         let header_band = chrome_band(fonts, &header, &hf.header_tables, avail, hf.space_for_ul)
-            + chrome_images_h(&hf.header_images);
+            + chrome_images_h(fonts, &hf.header_images);
         let footer_band = chrome_band(fonts, &footer, &hf.footer_tables, avail, hf.space_for_ul)
-            + chrome_images_h(&hf.footer_images);
+            + chrome_images_h(fonts, &hf.footer_images);
         // Word starts the body at max(w:top, w:header + header line).
         // comments-lots: top=46.8 sits inside the 10.5pt header (36+~12),
         // so the 30pt title glyph-top is 48.63 not 46.8. Skipping the
@@ -11462,6 +11637,7 @@ impl<'a> Layout<'a> {
             nested_depth: 0,
             side_float: None,
             line_probe: LineProbe::default(),
+            last_line_end: None,
             section_first_page: true,
             front_border_ops: Vec::new(),
             para_top: y,
@@ -11560,7 +11736,7 @@ impl<'a> Layout<'a> {
             &self.header_tables,
             self.page.width - self.page.margin_l - self.page.margin_r,
             self.space_for_ul,
-        ) + chrome_images_h(&self.header_images);
+        ) + chrome_images_h(self.fonts, &self.header_images);
         self.body_top = if header_band <= 0.0 || self.page.top_exact {
             self.page.margin_t
         } else {
@@ -11982,7 +12158,7 @@ impl<'a> Layout<'a> {
             &self.footer_tables,
             self.page.width - self.page.margin_l - self.page.margin_r,
             self.space_for_ul,
-        ) + chrome_images_h(&self.footer_images);
+        ) + chrome_images_h(self.fonts, &self.footer_images);
         if self.page.bottom_exact {
             return self.page.margin_b;
         }
@@ -12509,7 +12685,15 @@ impl<'a> Layout<'a> {
                     color: fill,
                 });
             }
-            self.y -= grid_pad + ascent;
+            // An exact line's baseline is 4/5 down its box whatever the
+            // face (00080142 Arial exact 12: 9.53; 000e618d Tahoma exact
+            // 14: 11.23; 0015b689 SimHei exact 25: 19.92).
+            let drop = if style.line_exact.is_some() {
+                exact_baseline(line_box)
+            } else {
+                ascent
+            };
+            self.y -= grid_pad + drop;
             let line_w = self.line_width_pt(line);
             let first_extra = if line_i == 0 && marker.is_none() {
                 style.indent_first
@@ -12559,10 +12743,11 @@ impl<'a> Layout<'a> {
                 self.paint_line_with_tabs(line, x, baseline);
             }
             self.paint_line_number(baseline);
+            self.last_line_end = Some((x + line_w, baseline));
             // An exact line is exactly its pitch even under a taller face
             // (0016d88a's exact 10.6pt lines of 10.5pt MS Mincho).
             self.y -= if style.line_exact.is_some() {
-                line_box - ascent
+                line_box - drop
             } else {
                 (line_box - grid_pad - ascent).max(1.0)
             };
@@ -12624,6 +12809,21 @@ impl<'a> Layout<'a> {
             h: thick,
             color,
         });
+    }
+
+    /// A header/footer paragraph's top rule, standing `space` above the
+    /// text top it opens. Word runs it 1.44pt past each margin (000ebd12
+    /// FSHNormL 83.5–511.7 on 85.05/510.25 margins).
+    fn hf_top_rule(&mut self, above: Option<&ParaStyle>, para: &ParaStyle, text_top: f32) {
+        if hf_border_pad(above, para) <= 0.0 {
+            return;
+        }
+        let Some((color, width, space)) = para.border_top else {
+            return;
+        };
+        let x1 = self.page.margin_l + para.indent_left - 1.44;
+        let x2 = self.page.width - self.page.margin_r - para.indent_right + 1.44;
+        self.hairline_h(x1, text_top + space + width * 0.5, x2, width, color);
     }
 
     fn hairline_v(&mut self, x: f32, y1: f32, y2: f32, width: f32, color: [f32; 3]) {
@@ -12831,8 +13031,11 @@ impl<'a> Layout<'a> {
         let Some(stop) = right else {
             return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
         };
+        // A right stop the paragraph never tabs to is just a stop: the
+        // first line still loses its firstLine indent (000ebd12 Normal
+        // right tab at 9072tw ran "önska i" 13pt into the margin).
         let Some((prefix, suffix)) = peel_trailing_tab(body) else {
-            return wrap_runs_marked(self.fonts, body, width, width, list);
+            return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
         };
         // Missing PAGEREF is Word's long Error! string, not a 9-1 page
         // number. Subtracting its width from the TOC column packed the
@@ -15966,7 +16169,7 @@ impl<'a> Layout<'a> {
             let text_h = if self.header.is_empty() {
                 0.0
             } else {
-                chrome_line_pt(self.fonts, &self.header)
+                chrome_line_pt(self.fonts, &self.header, self.content_width())
             };
             let mut top = self.page.height - self.page.header.max(0.0) - head_before - text_h;
             for table in tables.iter().filter(|t| !t.before_text) {
@@ -15984,20 +16187,48 @@ impl<'a> Layout<'a> {
                 .header_images
                 .iter()
                 .filter(|img| img.chrome_lead && img.chrome_flow)
-                .map(|img| img.h)
+                .map(|img| chrome_pic_line(self.fonts, img))
                 .fold(0.0_f32, f32::max);
-            let mut top =
-                self.page.height - self.page.header.max(0.0) - lead - head_before - pics_h;
+            let mut top = self.page.height
+                - self.page.header.max(0.0)
+                - lead
+                - head_before
+                - pics_h
+                - hf_opening_pad(&header);
             let mut y = top;
-            for (line, gap) in hf_styled_lines(&header) {
+            let mut above: Option<std::rc::Rc<ParaStyle>> = None;
+            for (line, gap) in hf_styled_lines(self.fonts, &header, self.content_width()) {
                 let (ascent, line_h) = chrome_line_metrics(self.fonts, &line);
                 y = top - ascent;
-                let align = line
-                    .first()
-                    .and_then(|r| r.hf_para.as_ref())
-                    .map_or(self.header_align, |p| p.align);
+                let para = line.iter().find_map(|r| r.hf_para.clone());
+                if let Some(p) = para.as_ref() {
+                    self.hf_top_rule(above.as_deref(), p, top);
+                }
+                let align = para.as_ref().map_or(self.header_align, |p| p.align);
                 self.draw_line_of_runs(&line, y, align);
                 top -= line_h + gap;
+                if para.is_some() {
+                    above = para;
+                }
+            }
+            // Trailing empty paragraphs stack below the text; the first of
+            // each still owns its top border (000ebd12 FSHNormL rule).
+            let trail_at = header
+                .iter()
+                .rposition(|r| r.text != HF_LINE_BREAK)
+                .map_or(header.len(), |i| i + 1);
+            for (i, r) in header[trail_at..].iter().enumerate() {
+                if i > 0 {
+                    top -= r.para_gap;
+                }
+                if let Some(p) = r.hf_para.as_ref() {
+                    let opens = above.as_ref().is_none_or(|a| !std::rc::Rc::ptr_eq(a, p));
+                    if opens {
+                        self.hf_top_rule(above.as_deref(), p, top);
+                    }
+                    above = Some(p.clone());
+                }
+                top -= hf_break_box(self.fonts, r);
             }
             if let Some((color, width)) = self.header_bottom {
                 // Word file_146 header E2E8F0 is 70.56–541.44, but chrome
@@ -16016,7 +16247,7 @@ impl<'a> Layout<'a> {
             let text_h = if self.footer.is_empty() {
                 0.0
             } else {
-                chrome_line_pt(self.fonts, &self.footer)
+                chrome_line_pt(self.fonts, &self.footer, self.content_width())
             };
             for img in &images {
                 let lift = if img.chrome_lead { text_h } else { 0.0 };
@@ -16046,7 +16277,7 @@ impl<'a> Layout<'a> {
             let text_h = if self.footer.is_empty() {
                 0.0
             } else {
-                chrome_line_pt(self.fonts, &self.footer)
+                chrome_line_pt(self.fonts, &self.footer, self.content_width())
             };
             let before = chrome_tables_h(self.fonts, &tables, avail, self.space_for_ul, Some(true));
             let mut top = self.page.footer.max(0.0) + foot_after + text_h + before;
@@ -16059,15 +16290,11 @@ impl<'a> Layout<'a> {
         self.page_has_body = had_body;
         if !self.footer.is_empty() {
             let footer = self.resolve_fields(&self.footer.clone(), page_no);
-            let lines = hf_styled_lines(&footer);
+            let lines = hf_styled_lines(self.fonts, &footer, self.content_width());
             let n = lines.len();
             // The last line's face sets the baseline above w:footer.
             let last = lines.last().map_or(&footer[..], |(line, _)| &line[..]);
-            let size = last
-                .iter()
-                .filter(|r| r.text != HF_LINE_BREAK)
-                .map(|r| r.style.size)
-                .fold(11.0_f32, f32::max);
+            let size = chrome_size(last);
             let fid = last.iter().find(|r| r.text != HF_LINE_BREAK).map_or(
                 FaceId::CarlitoRegular.into(),
                 |r| {
@@ -16084,11 +16311,12 @@ impl<'a> Layout<'a> {
                 .footer_images
                 .iter()
                 .filter(|img| !img.chrome_lead && img.chrome_flow)
-                .map(|img| img.h)
+                .map(|img| chrome_pic_line(self.fonts, img))
                 .fold(0.0_f32, f32::max);
             let base = self.page.footer.max(12.0)
                 + self.fonts.get(fid).descent_pt(size)
                 + trail
+                + hf_closing_after(&footer)
                 + foot_after
                 + pics_below;
             // Baselines upward: line i sits above line i+1 by i+1's ascent,
@@ -16103,7 +16331,16 @@ impl<'a> Layout<'a> {
                     baselines[i + 1] + metrics[i + 1].0 + metrics[i].1 + lines[i].1 - metrics[i].0;
             }
             let above = baselines.first().copied().unwrap_or(0.0);
-            if let Some((color, width)) = self.footer_top {
+            let opening = footer
+                .first()
+                .filter(|r| r.text != HF_LINE_BREAK)
+                .and_then(|r| r.hf_para.clone())
+                .filter(|p| p.border_top.is_some());
+            if let Some(p) = opening {
+                // The rule stands its space over the first line's top.
+                let line_top = base + above + metrics.first().map_or(0.0, |m| m.0);
+                self.hf_top_rule(None, &p, line_top);
+            } else if let Some((color, width)) = self.footer_top {
                 let top = base + above + 10.0;
                 // mini 244 chrome outset ITT-neg; keep content box.
                 let x1 = self.page.margin_l;
@@ -17091,10 +17328,29 @@ fn layout(
                 }
                 // Inline pictures share lines like text (0034561f's three
                 // cover pictures sit side by side); floats place themselves.
-                let inline: Vec<&LaidImage> = images
+                let mut inline: Vec<&LaidImage> = images
                     .iter()
                     .filter(|img| matches!(img.slot, ImageSlot::Flow))
                     .collect();
+                // One no taller than the text sits on the last line's
+                // baseline and adds no height (0005cabe's 0.24pt dot pushed
+                // the page's last line over).
+                if has_ink && let Some((mut x, baseline)) = lay.last_line_end.take() {
+                    let em = runs
+                        .iter()
+                        .filter(|r| !r.text.trim().is_empty())
+                        .map(|r| r.style.size)
+                        .fold(0.0_f32, f32::max);
+                    inline.retain(|img| {
+                        let (dw, dh) = lay.image_wh(img);
+                        if dh > em {
+                            return true;
+                        }
+                        lay.push_image(img, x, baseline, dw, dh);
+                        x += dw;
+                        false
+                    });
+                }
                 lay.emit_inline_pictures(&inline, &style);
                 for img in images
                     .iter()
