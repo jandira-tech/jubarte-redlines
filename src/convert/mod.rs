@@ -11828,6 +11828,46 @@ impl<'a> Layout<'a> {
         });
     }
 
+    /// No right tab: a hanging label whose tab lands on the left indent
+    /// takes the gutter, and the text after it wraps at the full measure
+    /// (fixtures_500 00b7801e "Monday 7/22⇥Chicken Wings, Spicy Chicken
+    /// Wings," is one Word line). Otherwise the first line's measure is
+    /// the body width less its own first-line indent.
+    fn wrap_hanging_or_first(
+        &self,
+        body: &[TextRun],
+        style: &ParaStyle,
+        has_marker: bool,
+        width: f32,
+        list: bool,
+    ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
+        if has_marker {
+            return wrap_runs_marked(self.fonts, body, width, width, list);
+        }
+        let hanging = -style.indent_first;
+        if hanging > 0.0
+            && let Some((head, desc)) = peel_leading_tab(body)
+        {
+            let head_w: f32 = head
+                .iter()
+                .map(|r| self.run_width_pt(r, r.text.trim_end_matches('\t')))
+                .sum();
+            if head_w < hanging {
+                let (mut lines, mut ends) = wrap_runs_marked(self.fonts, &desc, width, width, list);
+                if lines.is_empty() {
+                    lines.push(Vec::new());
+                    ends.push(false);
+                }
+                let mut first = head;
+                first.append(&mut lines[0]);
+                lines[0] = first;
+                return (lines, ends);
+            }
+        }
+        let first_w = (width - style.indent_first).max(40.0);
+        wrap_runs_marked(self.fonts, body, first_w, width, list)
+    }
+
     fn wrap_para_runs(
         &self,
         body: &[TextRun],
@@ -11845,7 +11885,7 @@ impl<'a> Layout<'a> {
             .rev()
             .find(|t| t.align == TabAlign::Right);
         let Some(stop) = right else {
-            return wrap_runs_marked(self.fonts, body, width, width, list);
+            return self.wrap_hanging_or_first(body, style, has_marker, width, list);
         };
         let Some((prefix, suffix)) = peel_trailing_tab(body) else {
             return wrap_runs_marked(self.fonts, body, width, width, list);

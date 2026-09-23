@@ -25907,3 +25907,26 @@ fn an_inline_picture_line_ends_at_the_picture_bottom() {
         "next baseline is one ascent under the picture; gap={gap}"
     );
 }
+
+#[test]
+fn a_hanging_label_keeps_the_full_measure_for_its_text() {
+    // fixtures_500 00b7801e: ind left=2880 hanging=2880, "Monday 7/22⇥"
+    // in the gutter. The text after the tab has the whole 288pt measure;
+    // counting the label against it wrapped "Wings," onto a second line.
+    let b = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+         <w:b/><w:sz w:val=\"28\"/></w:rPr>";
+    let body = format!(
+        "<w:p><w:pPr><w:ind w:left=\"2880\" w:hanging=\"2880\"/></w:pPr>\
+           <w:r>{b}<w:t>Monday 7/22</w:t></w:r><w:r>{b}<w:tab/></w:r>\
+           <w:r>{b}<w:t>Chicken Wings, Spicy Chicken Wings,</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1800\" w:bottom=\"1440\" w:left=\"1800\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert hanging label");
+    let ys = text_baselines(&pdf);
+    assert_eq!(
+        ys.len(),
+        1,
+        "label and 228pt of text fit one line; ys={ys:?}"
+    );
+}
