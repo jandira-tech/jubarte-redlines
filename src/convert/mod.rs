@@ -937,6 +937,9 @@ struct TableGeom {
     /// Painted table-level horizontal rule widths `[top, insideH,
     /// bottom]`; Word stacks each into the row it bounds.
     rules: [f32; 3],
+    /// Rows needed more columns than tblGrid has (All Markup's Deleted
+    /// Cells column): the padded grid is ours, so it scales to fit.
+    grid_padded: bool,
     /// `w:tblLayout w:type=fixed`.
     fixed: bool,
     /// `w:tblpPr` floating table (xml 3.3 ckpt 5).
@@ -5227,7 +5230,16 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     // written, even past the margins (000aba38's 488.9pt grid in a 481.9pt
     // measure ends at 539.5 in Word, not shrunk to 533).
     if !geom.fixed && matches!(geom.width, TblWidth::Grid) {
-        return cols.to_vec();
+        if !geom.grid_padded {
+            return cols.to_vec();
+        }
+        let target = grid_total.min(avail).max(0.0);
+        let scale = if grid_total > 0.0 {
+            target / grid_total
+        } else {
+            1.0
+        };
+        return cols.iter().map(|c| c * scale).collect();
     }
     let target = match geom.width {
         TblWidth::Grid => grid_total,
@@ -6903,6 +6915,7 @@ fn table_block(
         }
     }
     let mut occupancy = 0usize;
+    let grid_len = cols.len();
     for row in &raw_rows {
         occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());
     }
@@ -6973,6 +6986,7 @@ fn table_block(
                 fixed,
                 float: table_float(dom, table),
                 rules,
+                grid_padded: grid_len > 0 && grid_len < occupancy,
             })
         },
     }
