@@ -25956,3 +25956,37 @@ fn a_num_lvl_override_replaces_the_abstract_level() {
         "the num's own level paints PART 1; text={text:?}"
     );
 }
+
+#[test]
+fn a_header_table_lays_its_cells_out_in_a_row() {
+    // fixtures_500 0005052e: the header is a one-row table (Doküman |
+    // Revizyon | Sayfa No). Its cell paragraphs were stacked as header
+    // lines, one under another, pushing the body 60pt down.
+    let cell = |t: &str| format!("<w:tc><w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc>");
+    let header = format!(
+        "<w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+         <w:tr>{}{}{}</w:tr></w:tbl><w:p/></w:hdr>",
+        cell("Qone"),
+        cell("Qtwo"),
+        cell("Qthree")
+    );
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", header)],
+    ))
+    .expect("convert header table");
+    let hay = String::from_utf8_lossy(&pdf);
+    let ys: Vec<f32> = pdf_tj_xy(&hay, "Q").into_iter().map(|p| p.1).collect();
+    assert_eq!(ys.len(), 3, "three header cells paint; ys={ys:?}");
+    assert!(
+        ys.iter().all(|y| (y - ys[0]).abs() < 0.5),
+        "the cells share one row baseline; ys={ys:?}"
+    );
+}

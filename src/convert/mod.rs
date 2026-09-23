@@ -9917,6 +9917,11 @@ fn chrome_present(part: &ChromePart) -> bool {
 
 #[derive(Clone)]
 struct ChromeTable {
+    /// The laid-out table (0005052e's Doküman/Revizyon header row). Its
+    /// cells paint themselves; the border fields below are then unused.
+    block: Option<std::rc::Rc<Block>>,
+    /// No text paragraph precedes it in the part.
+    before_text: bool,
     w: f32,
     h: f32,
     color: [f32; 3],
@@ -9945,31 +9950,67 @@ fn hf_table_width_pt(dom: &Dom, table: NodeId) -> f32 {
     }
 }
 
-fn collect_hf_tables(dom: &Dom, root: NodeId) -> Vec<ChromeTable> {
+/// Top-level header/footer tables, laid out like body tables. Word draws
+/// 0005052e's "Doküman | Revizyon | Sayfa No" as one row; stacking the
+/// cell paragraphs as header lines put them in a column and pushed the
+/// body 60pt down.
+fn collect_hf_tables(
+    pkg: &PartFs,
+    path: &str,
+    dom: &Dom,
+    root: NodeId,
+    sheet: &StyleSheet,
+) -> Vec<ChromeTable> {
+    let first_text = dom
+        .descendants(root, Some(&W::p()))
+        .into_iter()
+        .filter(|p| hf_node_is_top_level(dom, root, *p))
+        .find(|p| !element_text(dom, *p).trim().is_empty())
+        .map(|p| p.0);
     let mut out = Vec::new();
     for tbl in dom.descendants(root, Some(&W::tbl())) {
-        let Some(pr) = table_pr(dom, tbl) else {
-            continue;
-        };
-        let Some(borders) = parse_tbl_borders(dom, pr) else {
-            continue;
-        };
-        if !(borders.top || borders.bottom || borders.left || borders.right) {
+        if !hf_node_is_top_level(dom, root, tbl) {
             continue;
         }
-        let rows = dom.elements(tbl, Some(&W::tr())).len().max(1) as f32;
+        let borders = table_pr(dom, tbl).and_then(|pr| parse_tbl_borders(dom, pr));
+        let block = table_block(
+            dom,
+            tbl,
+            sheet,
+            &mut Numbering::default(),
+            &mut AuthorColors::default(),
+            &HashMap::new(),
+            Some((pkg, path)),
+        );
         out.push(ChromeTable {
+            block: Some(std::rc::Rc::new(block)),
+            before_text: first_text.is_none_or(|t| tbl.0 < t),
             w: hf_table_width_pt(dom, tbl),
-            h: 16.0 * rows,
-            color: borders.color,
-            width: borders.width,
-            top: borders.top,
-            bottom: borders.bottom,
-            left: borders.left,
-            right: borders.right,
+            h: 0.0,
+            color: borders.map_or([0.0; 3], |b| b.color),
+            width: borders.map_or(0.0, |b| b.width),
+            top: false,
+            bottom: false,
+            left: false,
+            right: false,
         });
     }
     out
+}
+
+/// A direct child of the part (or of an sdt in it), not inside a table.
+fn hf_node_is_top_level(dom: &Dom, root: NodeId, node: NodeId) -> bool {
+    let mut cur = dom.parent(node);
+    while let Some(id) = cur {
+        if id == root {
+            return true;
+        }
+        if !(dom.name_is(id, &W::sdt()) || dom.name_is(id, &W::sdt_content())) {
+            return false;
+        }
+        cur = dom.parent(id);
+    }
+    false
 }
 
 fn pick_section_hf(
@@ -10089,7 +10130,7 @@ fn load_chrome_part(
         align,
         watermark: parse_header_watermark(&part_dom, root),
         images,
-        tables: collect_hf_tables(&part_dom, root),
+        tables: collect_hf_tables(pkg, &path, &part_dom, root, sheet),
     }
 }
 
@@ -10319,22 +10360,18 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts)
         br.para_gap = hf_para_spacing(dom, para, "before") + hf_para_spacing(dom, para, "after");
         br
     };
-    // Header/footer tables still stack their cell paragraphs as lines
-    // (fixtures_500 0005052e: Word puts Doküman/Revizyon on one row), which
-    // already over-counts the band; padding it too pushed the body 32pt.
-    let has_table = !dom.descendants(node, Some(&W::tbl())).is_empty();
     let mut runs = Vec::new();
     let mut pending = Vec::new();
     let mut prev_after = 0.0;
     for para in dom.descendants(node, Some(&W::p())) {
-        if hf_para_is_shape_text(dom, para) {
+        if hf_para_is_shape_text(dom, para) || hf_para_in_table(dom, node, para) {
             continue;
         }
         let mut scan = FieldScan::default();
         let mut line = Vec::new();
         collect_hf_rec(dom, para, base, theme, &mut scan, &mut line);
         if line.iter().all(|r| r.text.trim().is_empty()) {
-            if !has_table && hf_para_is_bare_line(dom, node, para) {
+            if hf_para_is_bare_line(dom, node, para) {
                 pending.push(empty_break(para));
             }
             continue;
@@ -10354,6 +10391,21 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts)
     // header) is still their stacked lines: Word starts the body below.
     runs.append(&mut pending);
     runs
+}
+
+/// Table-cell paragraphs belong to the part's laid-out tables.
+fn hf_para_in_table(dom: &Dom, root: NodeId, para: NodeId) -> bool {
+    let mut cur = dom.parent(para);
+    while let Some(id) = cur {
+        if id == root {
+            return false;
+        }
+        if dom.name_is(id, &W::tbl()) {
+            return true;
+        }
+        cur = dom.parent(id);
+    }
+    false
 }
 
 fn hf_para_is_bare_line(dom: &Dom, root: NodeId, para: NodeId) -> bool {
@@ -10630,6 +10682,53 @@ fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
     fonts.get(fid).single_line_pt(size).max(size)
 }
 
+/// Header/footer band: its stacked lines plus its laid-out tables.
+fn chrome_band(
+    fonts: &Fonts,
+    runs: &[TextRun],
+    tables: &[ChromeTable],
+    avail: f32,
+    space_for_ul: bool,
+) -> f32 {
+    let lines = if runs.is_empty() {
+        0.0
+    } else {
+        chrome_line_pt(fonts, runs)
+    };
+    lines + chrome_tables_h(fonts, tables, avail, space_for_ul, None)
+}
+
+/// Height of the part's laid-out tables (`before`: only those before or
+/// after its text).
+fn chrome_tables_h(
+    fonts: &Fonts,
+    tables: &[ChromeTable],
+    avail: f32,
+    space_for_ul: bool,
+    before: Option<bool>,
+) -> f32 {
+    tables
+        .iter()
+        .filter(|t| before.is_none_or(|b| t.before_text == b))
+        .filter_map(|t| t.block.as_deref())
+        .map(|b| table_rows_height(fonts, b, avail, space_for_ul))
+        .sum()
+}
+
+fn table_rows_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: bool) -> f32 {
+    let Block::Table {
+        cols, rows, geom, ..
+    } = block
+    else {
+        return 0.0;
+    };
+    let col_w = table_col_widths(cols, geom, avail);
+    rows.iter()
+        .enumerate()
+        .map(|(ri, row)| table_row_height_pt(fonts, row, &col_w, geom, ri, space_for_ul))
+        .sum()
+}
+
 fn chrome_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
     let lines = hf_styled_lines(runs);
     let one = chrome_one_line_pt(fonts, runs);
@@ -10685,23 +10784,16 @@ impl<'a> Layout<'a> {
     ) -> Self {
         let header = hf.header;
         let footer = hf.footer;
-        let header_band = if header.is_empty() {
-            0.0
-        } else {
-            chrome_line_pt(fonts, &header)
-        };
-        let footer_band = if footer.is_empty() {
-            0.0
-        } else {
-            chrome_line_pt(fonts, &footer)
-        };
+        let avail = page.width - page.margin_l - page.margin_r;
+        let header_band = chrome_band(fonts, &header, &hf.header_tables, avail, hf.space_for_ul);
+        let footer_band = chrome_band(fonts, &footer, &hf.footer_tables, avail, hf.space_for_ul);
         // Word starts the body at max(w:top, w:header + header line).
         // comments-lots: top=46.8 sits inside the 10.5pt header (36+~12),
         // so the 30pt title glyph-top is 48.63 not 46.8. Skipping the
         // band whenever top>header (the old comments_pgmar lock) left
         // that 1.8pt overlap. Adding the band on a 9pp doc must not
         // spill a tenth page.
-        let body_top = if header.is_empty() || page.top_exact {
+        let body_top = if header_band <= 0.0 || page.top_exact {
             page.margin_t
         } else {
             page.margin_t.max(page.header + header_band)
@@ -10858,12 +10950,14 @@ impl<'a> Layout<'a> {
     /// Body top from the header now in force (its line band below
     /// `pgMar/@w:header`, never above the top margin).
     fn refresh_body_top(&mut self) {
-        let header_band = if self.header.is_empty() {
-            0.0
-        } else {
-            chrome_line_pt(self.fonts, &self.header)
-        };
-        self.body_top = if self.header.is_empty() || self.page.top_exact {
+        let header_band = chrome_band(
+            self.fonts,
+            &self.header,
+            &self.header_tables,
+            self.page.width - self.page.margin_l - self.page.margin_r,
+            self.space_for_ul,
+        );
+        self.body_top = if header_band <= 0.0 || self.page.top_exact {
             self.page.margin_t
         } else {
             self.page.margin_t.max(self.page.header + header_band)
@@ -11160,11 +11254,13 @@ impl<'a> Layout<'a> {
     }
 
     fn chrome_floor(&self) -> f32 {
-        let footer_band = if self.footer.is_empty() {
-            0.0
-        } else {
-            chrome_line_pt(self.fonts, &self.footer)
-        };
+        let footer_band = chrome_band(
+            self.fonts,
+            &self.footer,
+            &self.footer_tables,
+            self.page.width - self.page.margin_l - self.page.margin_r,
+            self.space_for_ul,
+        );
         if self.page.bottom_exact {
             return self.page.margin_b;
         }
@@ -14888,10 +14984,38 @@ impl<'a> Layout<'a> {
             }
             self.header_images = images;
         }
+        let avail = self.content_width();
+        let head_before = chrome_tables_h(
+            self.fonts,
+            &self.header_tables,
+            avail,
+            self.space_for_ul,
+            Some(true),
+        );
+        // Chrome tables paint through emit_table, which marks body ink.
+        let had_body = self.page_has_body;
         if !self.header_tables.is_empty() {
             let tables = self.header_tables.clone();
+            let mut top = self.page.height - self.page.header.max(10.0);
             for table in &tables {
-                self.emit_chrome_table(table, true);
+                match table.block.as_deref() {
+                    Some(block) if table.before_text => {
+                        top -= self.emit_nested_table(block, self.page.margin_l, top, avail);
+                    }
+                    Some(_) => {}
+                    None => self.emit_chrome_table(table, true),
+                }
+            }
+            let text_h = if self.header.is_empty() {
+                0.0
+            } else {
+                chrome_line_pt(self.fonts, &self.header)
+            };
+            let mut top = self.page.height - self.page.header.max(10.0) - head_before - text_h;
+            for table in tables.iter().filter(|t| !t.before_text) {
+                if let Some(block) = table.block.as_deref() {
+                    top -= self.emit_nested_table(block, self.page.margin_l, top, avail);
+                }
             }
         }
         if !self.header.is_empty() {
@@ -14911,7 +15035,7 @@ impl<'a> Layout<'a> {
             );
             let ascent = self.fonts.get(fid).ascent_pt(size);
             let (lead, _) = chrome_empty_pads(self.fonts, &header);
-            let mut y = self.page.height - self.page.header.max(10.0) - ascent - lead;
+            let mut y = self.page.height - self.page.header.max(10.0) - ascent - lead - head_before;
             let header_lines = hf_styled_lines(&header);
             for (i, (line, _)) in header_lines.iter().enumerate() {
                 if i > 0 {
@@ -14937,12 +15061,39 @@ impl<'a> Layout<'a> {
             }
             self.footer_images = images;
         }
+        let foot_after = chrome_tables_h(
+            self.fonts,
+            &self.footer_tables,
+            avail,
+            self.space_for_ul,
+            Some(false),
+        );
         if !self.footer_tables.is_empty() {
             let tables = self.footer_tables.clone();
+            let mut top = self.page.footer.max(10.0) + foot_after;
             for table in &tables {
-                self.emit_chrome_table(table, false);
+                match table.block.as_deref() {
+                    Some(block) if !table.before_text => {
+                        top -= self.emit_nested_table(block, self.page.margin_l, top, avail);
+                    }
+                    Some(_) => {}
+                    None => self.emit_chrome_table(table, false),
+                }
+            }
+            let text_h = if self.footer.is_empty() {
+                0.0
+            } else {
+                chrome_line_pt(self.fonts, &self.footer)
+            };
+            let before = chrome_tables_h(self.fonts, &tables, avail, self.space_for_ul, Some(true));
+            let mut top = self.page.footer.max(10.0) + foot_after + text_h + before;
+            for table in tables.iter().filter(|t| t.before_text) {
+                if let Some(block) = table.block.as_deref() {
+                    top -= self.emit_nested_table(block, self.page.margin_l, top, avail);
+                }
             }
         }
+        self.page_has_body = had_body;
         if !self.footer.is_empty() {
             let footer = self.resolve_fields(&self.footer.clone(), page_no);
             let lines = hf_styled_lines(&footer);
@@ -14964,7 +15115,10 @@ impl<'a> Layout<'a> {
             // (comments-lots Word top y=743). Using it as the baseline
             // sat the cap-height 7pt high (Td 36).
             let (_, trail) = chrome_empty_pads(self.fonts, &footer);
-            let base = self.page.footer.max(12.0) + self.fonts.get(fid).descent_pt(size) + trail;
+            let base = self.page.footer.max(12.0)
+                + self.fonts.get(fid).descent_pt(size)
+                + trail
+                + foot_after;
             let above: f32 = lines
                 .iter()
                 .take(n.saturating_sub(1))
