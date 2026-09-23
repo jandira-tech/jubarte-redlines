@@ -859,6 +859,22 @@ fn a_mixed_face_line_is_the_tallest_ascent_over_the_deepest_descent() {
 }
 
 #[test]
+fn a_word_longer_than_the_line_breaks_at_the_edge() {
+    // fixtures_500 001472bb: Word breaks a word longer than the whole line
+    // at the character that reaches the edge; we let it run past the
+    // margin. (Table cells autofit their longest word instead.)
+    let word = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".repeat(4);
+    let body = format!(
+        r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr><w:r><w:t>{word}</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("long word");
+    let mut ys = text_baselines(&pdf);
+    ys.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.1);
+    assert!(ys.len() >= 2, "the 104-letter word wraps; ys={ys:?}");
+}
+
+#[test]
 fn direct_ind_left_keeps_the_numbering_level_hanging() {
     // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
     // paragraph overrides only the left edge; Word keeps the level's

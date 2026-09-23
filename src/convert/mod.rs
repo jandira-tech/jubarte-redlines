@@ -17928,15 +17928,58 @@ fn wrap_runs_segment(
             w = pos - start - x;
         }
         let limit = if line_i == 0 { first_width } else { width };
-        // Unbreakable tokens wider than the cell overflow (Test 7).
-        // Character-break was ITT-wrong: file_196 13→15pp and
-        // file_100/115/185/196 ~−24 ITT even when gated to tables.
         let squeezed = tabs.is_some_and(|t| x + w - limit <= t.squeeze * line_spaces);
         if !is_space && x + w > limit && x > 0.0 && !squeezed {
             lines.push(Vec::new());
             line_i += 1;
             x = 0.0;
             line_spaces = 0.0;
+        }
+        // A word wider than the whole line breaks at the character that
+        // reaches the edge (001472bb). A
+        // run that overshoots by a hair (002ed0b9's dotted fill-in lines,
+        // one line in Word) is measurement noise, not a break.
+        let limit = if line_i == 0 { first_width } else { width };
+        // Body lines only: a table column autofits its longest word
+        // (0129b302's "19.720.000"), and CJK text already breaks per
+        // character where our fallback faces run wide (002c5410).
+        let cjk = unit.iter().any(|(_, tok, _)| tok.chars().any(is_cjk));
+        if tabs.is_some() && !cjk && !is_space && w > limit * 1.02 && limit > 0.0 {
+            for (run, tok, _) in unit {
+                let fid = fonts.resolve(
+                    paint_family(&run.style, tok),
+                    run.style.bold,
+                    run.style.italic,
+                );
+                let face = fonts.get(fid);
+                let size = run.style.layout_size();
+                for ch in tok.chars() {
+                    let piece = ch.to_string();
+                    let cw = face.width_pt(&piece, size) * run.style.hscale();
+                    let limit = if line_i == 0 { first_width } else { width };
+                    if x + cw > limit && x > 0.0 {
+                        lines.push(Vec::new());
+                        line_i += 1;
+                        x = 0.0;
+                        line_spaces = 0.0;
+                    }
+                    x += cw;
+                    if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
+                        && style_eq(&last.style, &run.style)
+                        && last.pageref.is_none()
+                        && last.ref_name.is_none()
+                        && last.footnote_id.is_none()
+                        && run.pageref.is_none()
+                        && run.ref_name.is_none()
+                        && run.footnote_id.is_none()
+                    {
+                        last.text.push(ch);
+                    } else if let Some(line) = lines.last_mut() {
+                        line.push(run.with_text(piece));
+                    }
+                }
+            }
+            continue;
         }
         if is_space && unit.iter().all(|(_, tok, _)| !tok.contains('\t')) {
             line_spaces += w;
