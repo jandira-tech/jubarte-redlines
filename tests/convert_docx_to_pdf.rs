@@ -2181,6 +2181,38 @@ fn floating_anchors_do_not_force_a_second_page() {
 }
 
 #[test]
+fn float_only_paragraph_is_a_line_of_its_mark() {
+    // fixtures_500 0004c94c: a paragraph holding only an anchored emblem
+    // is still a line sized by its mark (Arial 9, 10.35pt). With no text
+    // run it fell to the factory Calibri 11 line (13.43pt) and the page
+    // ran 2.7pt long, spilling a blank page.
+    let img = blip(
+        "254000",
+        "254000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"page\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"page\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:wrapNone/>",
+        "</wp:anchor>",
+    );
+    let mark = r#"<w:pPr><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="18"/></w:rPr></w:pPr>"#;
+    let next_y = |first: &str| {
+        let docx = drawing_docx(&format!(
+            "<w:p>{mark}{first}</w:p><w:p><w:r><w:t>Next</w:t></w:r></w:p><w:sectPr/>"
+        ));
+        let pdf = docx_to_pdf(&docx).expect("float para");
+        text_baselines(&pdf).into_iter().fold(f32::MAX, f32::min)
+    };
+    let plain = next_y("");
+    let with_float = next_y(&format!("<w:r>{img}</w:r>"));
+    assert!(
+        (plain - with_float).abs() < 0.1,
+        "the float adds no height to its mark's line; plain={plain} float={with_float}"
+    );
+}
+
+#[test]
 fn wrap_square_dist_l_keeps_text_left_of_a_right_float() {
     // Strict01 / ole / image_out: wp:anchor distL=114300 (9pt) + wrapSquare
     // bothSides. Word wraps body beside the float, not under it. A 144pt

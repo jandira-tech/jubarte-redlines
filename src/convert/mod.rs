@@ -5857,7 +5857,12 @@ fn paragraph_block(
         .filter(|rpr| {
             first_named(dom, *rpr, "sz").is_some() || first_named(dom, *rpr, "rFonts").is_some()
         });
-    if runs.is_empty() && images.is_empty() && boxes.is_empty() {
+    // A floating picture takes no line space: its paragraph is still a
+    // line of its mark (0004c94c's emblem paragraph is Arial 9, 10.35pt).
+    let floats_only = images
+        .iter()
+        .all(|img| !matches!(img.slot, ImageSlot::Flow));
+    if runs.is_empty() && floats_only && boxes.is_empty() {
         if let Some(rpr) = mark_rpr {
             let mut mark = rstyle.clone();
             apply_rpr(dom, rpr, &mut mark, &sheet.theme);
