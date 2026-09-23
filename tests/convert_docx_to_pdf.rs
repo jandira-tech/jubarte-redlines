@@ -1456,6 +1456,49 @@ fn blip(cx: &str, cy: &str, inner_open: &str, inner_close: &str) -> String {
 }
 
 #[test]
+fn an_outlined_picture_takes_its_line_once() {
+    // fixtures_500 000f5278: an inline picture with an a:ln outline was
+    // laid out twice, as the picture and as an empty stroked box under
+    // it, so its page ran 188pt long.
+    let pic = |ln: &str| {
+        format!(
+            "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+               <wp:extent cx=\"914400\" cy=\"914400\"/>\
+               <wp:docPr id=\"1\" name=\"Picture 0\" descr=\"dot.png\"/>\
+               <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+                 <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+                   <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>{ln}</pic:spPr></pic:pic>\
+               </a:graphicData></a:graphic></wp:inline></w:drawing>"
+        )
+    };
+    let after = |ln: &str| {
+        let body = format!(
+            "<w:p><w:r>{}</w:r></w:p><w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>",
+            pic(ln)
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("outlined picture");
+        text_baselines(&pdf).into_iter().fold(f32::MAX, f32::min)
+    };
+    let plain = after("");
+    let outlined = after("<a:ln><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill></a:ln>");
+    assert!(
+        (plain - outlined).abs() < 0.5,
+        "the outline adds no second box; plain={plain} outlined={outlined}"
+    );
+    // The outline frames the picture itself: a 0.75pt black 72pt square.
+    let body = format!(
+        "<w:p><w:r>{}</w:r></w:p><w:sectPr/>",
+        pic("<a:ln><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill></a:ln>")
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("outline frame");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("0.75 w 0.000 0.000 0.000 RG") && hay.contains("72.00 72.00 re S"),
+        "the picture's own frame is stroked"
+    );
+}
+
+#[test]
 fn inline_extent_is_written_to_pdf_cm() {
     // 137160 EMU = 10.8 pt. The previous default (missing unnamespaced cx/cy)
     // emitted q 200.00 0 0 120.00.

@@ -1191,6 +1191,9 @@ struct LaidImage {
     /// An inline picture directly in a header/footer paragraph, so in the
     /// part's line flow (003982453's text-box picture is not).
     chrome_flow: bool,
+    /// `pic:spPr/a:ln`: Word strokes the picture's own outline (000f5278's
+    /// QR code has a black frame).
+    outline: Option<([f32; 3], f32)>,
 }
 
 struct LaidTextBox {
@@ -5932,6 +5935,7 @@ fn paragraph_block(
                 chrome_align: Align::Left,
                 chrome_lead: false,
                 chrome_flow: false,
+                outline: None,
             },
         );
     }
@@ -8410,6 +8414,13 @@ fn collect_textboxes(
         {
             continue;
         }
+        // A picture is collect_images' to lay out: its a:ln outline is not a
+        // second, empty stroked box (000f5278's QR code ran 188pt long).
+        if dom.name_is(shape, &W::drawing())
+            && graphic_data_uri_contains(dom, shape, "drawingml/2006/picture")
+        {
+            continue;
+        }
         let txbx = first_named_any(dom, shape, "txbxContent").or_else(|| {
             dom.descendants(shape, Some(&W::txbx_content()))
                 .into_iter()
@@ -9198,6 +9209,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
+                        outline: picture_outline(dom, drawing),
                     });
                 } else {
                     out.push(LaidImage {
@@ -9212,6 +9224,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
+                        outline: None,
                     });
                 }
             }
@@ -9245,6 +9258,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
+                        outline: None,
                     });
                     continue;
                 };
@@ -9262,12 +9276,28 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_align: Align::Left,
                     chrome_lead: false,
                     chrome_flow: false,
+                    outline: None,
                 });
             }
         }
     }
     out.sort_by_key(|im| (!im.behind, im.z));
     out
+}
+
+/// A picture's `pic:spPr/a:ln` outline: colour and width (Word's picture
+/// default is 0.75pt when `w` is absent). None for `a:noFill` or no line.
+fn picture_outline(dom: &Dom, drawing: NodeId) -> Option<([f32; 3], f32)> {
+    let sp = descendants_local(dom, drawing, "spPr").into_iter().next()?;
+    let ln = first_named_any(dom, sp, "ln")?;
+    if !descendants_local(dom, ln, "noFill").is_empty() {
+        return None;
+    }
+    let color = scheme_color(dom, ln, &ThemeFonts::default())?;
+    let width = attr_any(dom, ln, "w")
+        .and_then(|w| w.parse::<f32>().ok())
+        .map_or(0.75, |w| w / 12700.0);
+    Some((color, width))
 }
 
 /// EMU → PDF points. `wp:extent` / `a:ext` store `cx`/`cy` with no namespace.
@@ -13623,6 +13653,16 @@ impl<'a> Layout<'a> {
                 width: 0.75,
                 color: [0.6, 0.6, 0.6],
             }),
+        }
+        if let Some((color, width)) = img.outline {
+            self.current().ops.push(Op::StrokeRect {
+                x,
+                y,
+                w: dw,
+                h: dh,
+                width,
+                color,
+            });
         }
     }
 
