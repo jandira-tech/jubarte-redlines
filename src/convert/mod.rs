@@ -7855,7 +7855,11 @@ fn collect_runs_rec(
             collect_visible(ctx.dom, node, &mut out, false);
             out
         };
-        let mut text = rev_text(&raw, mark, ctx.in_table || ctx.keep_xml_space);
+        let mut text = rev_text(
+            &raw,
+            mark,
+            ctx.in_table || ctx.keep_xml_space || run_preserves_space(ctx.dom, node),
+        );
         if style.caps && !style.small_caps {
             text = text.to_uppercase();
         }
@@ -8007,8 +8011,13 @@ fn collect_runs_rec(
             if mark != RevMark::None {
                 apply_rev(&mut style, mark, ctx.authors.color(author));
             }
+            // Word paints every space of an xml:space="preserve" w:t
+            // (003dd497's "1-8" + 19 spaces sets the step column).
+            let preserved = ctx.dom.parent(node).is_some_and(|t| {
+                ctx.dom.attribute(t, &XNamespace::xml().name("space")) == Some("preserve")
+            });
             let mut run = TextRun::new(
-                rev_text(text, mark, ctx.in_table || ctx.keep_xml_space),
+                rev_text(text, mark, ctx.in_table || ctx.keep_xml_space || preserved),
                 style,
             );
             run.rev = mark != RevMark::None;

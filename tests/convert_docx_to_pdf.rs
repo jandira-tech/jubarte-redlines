@@ -5237,9 +5237,8 @@ fn official_sample_iter2_github_underline_stops_before_cell_edge() {
 
 #[test]
 fn preserved_trailing_spaces_push_the_next_run() {
-    // sample_document / eigenpal npm|github cells: generator padding
-    // (`npm               `) is xml:space=preserve. soffice still paints
-    // one word-gap, not 15 spaces (that ran the github underline off-page).
+    // `npm               ` is xml:space=preserve: Word paints all 15
+    // spaces before the next run (soffice paints one word-gap).
     let body = "<w:p>\
            <w:r><w:t xml:space=\"preserve\">npm               </w:t></w:r>\
            <w:r><w:rPr><w:sz w:val=\"28\"/><w:color w:val=\"FF0000\"/></w:rPr>\
@@ -5250,17 +5249,17 @@ fn preserved_trailing_spaces_push_the_next_run() {
     let x_x = pdf_tf_xs(&pdf, "14.00 Tf");
     assert!(!npm_x.is_empty() && !x_x.is_empty(), "npm+X must paint");
     let gap = x_x[0] - npm_x[0];
+    // npm (20.3) + 15 Calibri 11 spaces (2.49 each).
     assert!(
-        (12.0..36.0).contains(&gap),
-        "generator padding after npm is one word-gap, gap={gap} npm={npm_x:?} x={x_x:?}"
+        (gap - (20.3 + 15.0 * 2.49)).abs() < 0.3,
+        "the 15 preserved spaces push X, gap={gap} npm={npm_x:?} x={x_x:?}"
     );
 }
 
 #[test]
-fn generator_preserve_padding_is_one_word_gap() {
-    // sample/eigenpal: every run is xml:space=preserve with ~9–15 trailing
-    // spaces of generator padding. soffice paints one word-gap; keeping all
-    // of them blew wrap (8 stems ~38.8) and ran the github underline off-page.
+fn generator_preserve_padding_is_painted_in_full() {
+    // xml:space=preserve padding is painted in full by Word (soffice paints
+    // one word-gap): "Hello" + 9 spaces puts World 5 glyphs + 9 spaces on.
     let body = "<w:p>\
            <w:r><w:t xml:space=\"preserve\">Hello         </w:t></w:r>\
            <w:r><w:rPr><w:sz w:val=\"28\"/></w:rPr>\
@@ -5275,8 +5274,8 @@ fn generator_preserve_padding_is_one_word_gap() {
     );
     let gap = world[0] - hello[0];
     assert!(
-        (20.0..42.0).contains(&gap),
-        "generator padding must collapse to one space, gap={gap} hello={hello:?} world={world:?}"
+        gap > 42.0,
+        "all nine preserved spaces paint, gap={gap} hello={hello:?} world={world:?}"
     );
 }
 
@@ -7617,6 +7616,22 @@ fn black_circle_bullet_hangs_its_text_at_the_indent() {
 }
 
 #[test]
+fn body_preserved_space_padding_is_painted() {
+    // fixtures_500 003dd497: "1-8" + 19 xml:space="preserve" spaces +
+    // " (Stomp"; Word paints every space ("(" 70pt right of "1").
+    let body = r#"<w:p><w:r><w:t>A</w:t></w:r><w:r><w:t xml:space="preserve">          </w:t></w:r><w:r><w:t>B</w:t></w:r></w:p><w:sectPr/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("padded body");
+    let mut xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // Calibri 11: B sits ten 2.49pt spaces after A (A spans 72..78.36).
+    let b = xs.last().copied().unwrap_or(0.0);
+    assert!(
+        (b - (78.36 + 24.9)).abs() < 0.3,
+        "the ten preserved spaces paint; B at {b}; xs={xs:?}"
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables
@@ -8114,9 +8129,10 @@ fn official_sample_npm_package_sits_after_label() {
 }
 
 #[test]
-fn courier_body_xml_space_stays_one_line_after_mini_520() {
-    // Word-faithful Courier pads wrapped this string to 2 lines (mini 520)
-    // and ITT-neg'd sample/eigenpal −7. Stay collapsed (1 line).
+fn courier_body_xml_space_padding_wraps_like_word() {
+    // Word paints the Courier pads and wraps this string to 2 lines; the
+    // one-line collapse was a score lock (mini 520). fixtures_500: painting
+    // preserved padding lifted 62 of 245 files (003dd497, 00152ef0).
     let courier = "<w:p><w:r><w:rPr>\
            <w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\"/>\
            <w:sz w:val=\"24\"/></w:rPr>\
@@ -8131,8 +8147,8 @@ fn courier_body_xml_space_stays_one_line_after_mini_520() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         lines.len(),
-        1,
-        "mini 520: Courier body xml:space stays one line; ys={lines:?}"
+        2,
+        "the Courier pads push the tail onto a second line; ys={lines:?}"
     );
 }
 
