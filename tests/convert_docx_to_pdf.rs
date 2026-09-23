@@ -7785,6 +7785,24 @@ fn hanging_indent_is_an_implicit_tab_stop() {
 }
 
 #[test]
+fn an_empty_line_after_a_break_takes_the_break_runs_font() {
+    // fixtures_500 0072d3b3: a double-spaced 12pt Times paragraph ends in
+    // w:br; Word's empty last line is 2 x 13.8, not the 11pt Calibri
+    // fallback's 2 x 13.43.
+    let times = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let sp = r#"<w:pPr><w:spacing w:after="0" w:line="480" w:lineRule="auto"/></w:pPr>"#;
+    let body = format!(
+        r#"<w:p>{sp}<w:r>{times}<w:t>Alpha</w:t></w:r><w:r>{times}<w:br/></w:r></w:p><w:p>{sp}<w:r>{times}<w:t>Beta</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let ys = text_baselines(&docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("br line"));
+    let gap = ys[0] - ys[ys.len() - 1];
+    assert!(
+        (gap - 55.2).abs() < 0.1,
+        "Alpha's line plus the empty Times line: 2 x 27.6; gap={gap} ys={ys:?}"
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables

@@ -16324,15 +16324,16 @@ fn wrap_runs_marked(
         }
         for part in parts {
             segments.push(Vec::new());
-            if !part.is_empty() {
-                let mut piece = run.with_text(part);
-                piece.comments.clear();
-                piece.pageref = None;
-                piece.ref_name = None;
-                piece.ref_copy_text = false;
-                piece.footnote_id = None;
-                segments.last_mut().expect("segment").push(piece);
-            }
+            // A line opened by a break keeps the break's run even when
+            // empty: its height is that run's font (0072d3b3's trailing
+            // w:br line is Times 12, not the 11pt fallback).
+            let mut piece = run.with_text(part);
+            piece.comments.clear();
+            piece.pageref = None;
+            piece.ref_name = None;
+            piece.ref_copy_text = false;
+            piece.footnote_id = None;
+            segments.last_mut().expect("segment").push(piece);
         }
     }
     let mut lines = Vec::new();
@@ -16447,7 +16448,12 @@ fn wrap_runs_segment(
         }
     }
     if lines.len() == 1 && lines[0].is_empty() {
-        lines[0].push(TextRun::new(String::new(), default_run_style()));
+        // An empty line keeps its own run's style (the break that opened
+        // it), not the 11pt fallback (0072d3b3).
+        let style = runs
+            .first()
+            .map_or_else(default_run_style, |r| r.style.clone());
+        lines[0].push(TextRun::new(String::new(), style));
     }
     lines
 }
