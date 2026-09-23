@@ -26096,3 +26096,22 @@ fn a_too_tall_unbreakable_row_on_an_empty_page_does_not_leave_it_blank() {
         "Word 00f45b1b is 2 pages, none blank"
     );
 }
+
+#[test]
+fn an_inline_picture_wider_than_the_column_keeps_its_size() {
+    // fixtures_500 0033befc: a scanned title page stored as a 601pt-wide
+    // inline VML picture on an A4 page. Word paints the stored extent and
+    // lets it run past the margin; shrinking it to the page drew the scan
+    // 15% small (0.057 -> 0.546).
+    let body = "<w:p><w:r><w:pict>\
+           <v:shape style=\"width:600pt;height:300pt\"><v:imagedata r:id=\"rIdImg\"/></v:shape>\
+         </w:pict></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert wide inline picture");
+    let (x, _) = image_cm_xy(&pdf, "600.00", "300.00");
+    assert!(
+        (x - 72.0).abs() < 0.5,
+        "full-size picture at the margin; x={x}"
+    );
+}

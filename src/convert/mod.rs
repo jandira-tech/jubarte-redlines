@@ -12865,15 +12865,10 @@ impl<'a> Layout<'a> {
                     .unwrap_or_else(|| img.h.max(1.0));
                 (dw, dh)
             }
-            ImageSlot::Flow => {
-                let max_w = (self.page.width - self.page.margin_l).max(1.0);
-                let dw = img.w.min(max_w).max(1.0);
-                let mut dh = img.h.max(1.0);
-                if img.w > max_w && img.w > 0.0 {
-                    dh *= max_w / img.w;
-                }
-                (dw, dh)
-            }
+            // Word paints an inline picture at its stored extent, running
+            // past the margin when it is wider than the column (fixtures_500
+            // 0033befc's 601pt scan on an A4 page); it does not rescale.
+            ImageSlot::Flow => (img.w.max(1.0), img.h.max(1.0)),
         }
     }
 
