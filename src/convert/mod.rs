@@ -4012,26 +4012,6 @@ fn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Nu
             let ilvl = attr_any(&dom, lvl, "ilvl")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
-            let fmt = first_named(&dom, lvl, "numFmt")
-                .and_then(|n| dom.attribute(n, &W::val()))
-                .unwrap_or("decimal");
-            let text = first_named(&dom, lvl, "lvlText")
-                .and_then(|n| dom.attribute(n, &W::val()))
-                .unwrap_or("%1.")
-                .to_string();
-            let start = first_named(&dom, lvl, "start")
-                .and_then(|n| dom.attribute(n, &W::val()))
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(1);
-            let (left, hanging) = lvl_indent(&dom, lvl);
-            let family = lvl_marker_family(&dom, lvl);
-            let (size, underline, bold, italic) = lvl_marker_rpr(&dom, lvl);
-            let suff_nothing = first_named(&dom, lvl, "suff")
-                .and_then(|n| attr_any(&dom, n, "val"))
-                .is_some_and(|v| v.eq_ignore_ascii_case("nothing"));
-            let tab_stops = first_named(&dom, lvl, "pPr")
-                .map(|ppr| parse_tab_stops(&dom, ppr))
-                .unwrap_or_default();
             if let Some(v) = first_named(&dom, lvl, "lvlRestart")
                 .and_then(|n| attr_any(&dom, n, "val"))
                 .and_then(|s| s.parse().ok())
@@ -4047,28 +4027,7 @@ fn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Nu
             {
                 numbering.lvl_pic.insert((aid.to_string(), ilvl), pic);
             }
-            lvls.insert(
-                ilvl,
-                NumLevel {
-                    fmt: parse_num_fmt(fmt),
-                    text,
-                    start,
-                    left,
-                    hanging,
-                    family,
-                    suff_nothing,
-                    jc_right: first_named(&dom, lvl, "lvlJc")
-                        .and_then(|n| attr_any(&dom, n, "val"))
-                        .is_some_and(|v| {
-                            v.eq_ignore_ascii_case("right") || v.eq_ignore_ascii_case("end")
-                        }),
-                    tab_stops,
-                    size,
-                    underline,
-                    bold,
-                    italic,
-                },
-            );
+            lvls.insert(ilvl, parse_num_level(&dom, lvl));
         }
         numbering.levels.insert(aid.to_string(), lvls);
     }
@@ -4086,6 +4045,48 @@ fn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Nu
             });
         let Some(aid) = aid else {
             continue;
+        };
+        // Full `lvlOverride/w:lvl` replacements give this num its own level
+        // table (014caa99 "PART %2" over the abstract's "%2.").
+        let overrides: Vec<(u32, NumLevel)> = dom
+            .descendants(num, Some(&W::name("lvlOverride")))
+            .into_iter()
+            .filter_map(|ov| {
+                let ilvl = attr_any(&dom, ov, "ilvl")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                first_named(&dom, ov, "lvl").map(|lvl| (ilvl, parse_num_level(&dom, lvl)))
+            })
+            .collect();
+        let aid = if overrides.is_empty() {
+            aid
+        } else {
+            let own = format!("{aid}@{nid}");
+            let mut lvls = numbering.levels.get(&aid).cloned().unwrap_or_default();
+            lvls.extend(overrides);
+            numbering.levels.insert(own.clone(), lvls);
+            let copy = |set: &mut HashMap<(String, u32), u32>| {
+                let rows: Vec<_> = set
+                    .iter()
+                    .filter(|((a, _), _)| *a == aid)
+                    .map(|((_, l), v)| (*l, *v))
+                    .collect();
+                for (l, v) in rows {
+                    set.insert((own.clone(), l), v);
+                }
+            };
+            copy(&mut numbering.restarts);
+            copy(&mut numbering.lvl_pic);
+            let lgl: Vec<u32> = numbering
+                .is_lgl
+                .iter()
+                .filter(|(a, _)| *a == aid)
+                .map(|(_, l)| *l)
+                .collect();
+            for l in lgl {
+                numbering.is_lgl.insert((own.clone(), l));
+            }
+            own
         };
         numbering.instances.insert(nid.to_string(), aid);
         for ov in dom.descendants(num, Some(&W::name("lvlOverride"))) {
@@ -4114,6 +4115,47 @@ fn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Nu
         }
     }
     numbering
+}
+
+/// One `w:lvl` (an abstract level or a `w:lvlOverride` replacement).
+fn parse_num_level(dom: &Dom, lvl: NodeId) -> NumLevel {
+    let fmt = first_named(dom, lvl, "numFmt")
+        .and_then(|n| dom.attribute(n, &W::val()))
+        .unwrap_or("decimal");
+    let text = first_named(dom, lvl, "lvlText")
+        .and_then(|n| dom.attribute(n, &W::val()))
+        .unwrap_or("%1.")
+        .to_string();
+    let start = first_named(dom, lvl, "start")
+        .and_then(|n| dom.attribute(n, &W::val()))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let (left, hanging) = lvl_indent(dom, lvl);
+    let family = lvl_marker_family(dom, lvl);
+    let (size, underline, bold, italic) = lvl_marker_rpr(dom, lvl);
+    let suff_nothing = first_named(dom, lvl, "suff")
+        .and_then(|n| attr_any(dom, n, "val"))
+        .is_some_and(|v| v.eq_ignore_ascii_case("nothing"));
+    let tab_stops = first_named(dom, lvl, "pPr")
+        .map(|ppr| parse_tab_stops(dom, ppr))
+        .unwrap_or_default();
+    NumLevel {
+        fmt: parse_num_fmt(fmt),
+        text,
+        start,
+        left,
+        hanging,
+        family,
+        suff_nothing,
+        jc_right: first_named(dom, lvl, "lvlJc")
+            .and_then(|n| attr_any(dom, n, "val"))
+            .is_some_and(|v| v.eq_ignore_ascii_case("right") || v.eq_ignore_ascii_case("end")),
+        tab_stops,
+        size,
+        underline,
+        bold,
+        italic,
+    }
 }
 
 fn lvl_marker_family(dom: &Dom, lvl: NodeId) -> String {

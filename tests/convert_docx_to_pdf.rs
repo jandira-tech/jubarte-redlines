@@ -25930,3 +25930,29 @@ fn a_hanging_label_keeps_the_full_measure_for_its_text() {
         "label and 228pt of text fit one line; ys={ys:?}"
     );
 }
+
+#[test]
+fn a_num_lvl_override_replaces_the_abstract_level() {
+    // fixtures_500 014caa99: numId 2 overrides every level with its own
+    // w:lvl ("PART %2", "%2.0%3", "%4."). We kept the abstract's generic
+    // a./i./1. levels, so "PART 1 GENERAL" painted as "b. PART 1".
+    let numbering = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="1">
+    <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%1."/></w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="2"><w:abstractNumId w:val="1"/>
+    <w:lvlOverride w:ilvl="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>
+      <w:lvlText w:val="PART %1"/></w:lvl></w:lvlOverride>
+  </w:num>
+</w:numbering>"#;
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"2\"/></w:numPr></w:pPr>\
+         <w:r><w:t>GENERAL</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(body, Some(numbering), None))
+        .expect("convert lvlOverride list");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("PART 1") && !text.contains("a."),
+        "the num's own level paints PART 1; text={text:?}"
+    );
+}
