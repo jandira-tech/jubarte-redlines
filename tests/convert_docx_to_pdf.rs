@@ -16671,6 +16671,42 @@ fn a_header_picture_line_keeps_its_multiple_extra() {
 }
 
 #[test]
+fn a_header_picture_beside_text_shares_its_line() {
+    // A header paragraph holding a 72pt inline picture and "Title" is one
+    // line: the picture and the text stand on the same baseline. The
+    // picture-only test read element_text of the w:p (always empty), so
+    // every picture paragraph stacked above its own text.
+    let inner = format!(
+        r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr>{HEADER_INLINE_DOT}<w:r><w:t>Title</w:t></w:r></w:p>"#
+    );
+    let pdf = docx_to_pdf(&header_part_docx_at(&inner, 720)).expect("pic beside text");
+    let head = text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max);
+    // Header at 36pt from the top of a 792pt page: the picture's bottom is
+    // at 792 - 36 - 72 = 684.
+    assert!(
+        (head - 684.0).abs() < 1.0,
+        "Title stands on the picture's baseline; head={head}"
+    );
+}
+
+#[test]
+fn text_box_text_does_not_make_a_header_picture_share_a_line() {
+    // fixtures_500 0017dd5f: the footer's right-aligned logo paragraph
+    // also holds a shape whose text box carries the page number. That text
+    // is the box's, not the paragraph's: the logo still stands alone and
+    // follows jc=right (Word x=466.4).
+    let inner = format!(
+        r#"<w:p><w:pPr><w:jc w:val="right"/></w:pPr>{HEADER_INLINE_DOT}<w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" style="width:20pt;height:10pt"><v:textbox><w:txbxContent><w:p><w:r><w:t>1</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#
+    );
+    let pdf = docx_to_pdf(&header_part_docx_at(&inner, 720)).expect("logo with boxed number");
+    let boxes = pdf_image_boxes(&pdf);
+    assert!(
+        boxes.iter().any(|b| (b.0 - 468.0).abs() < 0.5),
+        "the logo right-aligns at 468; boxes={boxes:?}"
+    );
+}
+
+#[test]
 fn header_table_cell_picture_paints_once() {
     // The header table lays its cell picture out itself; the loose-picture
     // pass painted it again at the header's flow origin (fixtures_500

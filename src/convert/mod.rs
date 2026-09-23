@@ -867,6 +867,10 @@ struct TextRun {
     /// Empty marker for the `w:br` that ends a line: its run's font sizes
     /// that line (00accd5b's 13.5pt break run under 10pt text).
     ends_line: bool,
+    /// Header/footer run: the tallest inline picture sharing its
+    /// paragraph. The picture stands on the line's baseline, so the line
+    /// is at least that tall above it.
+    hf_pic_h: f32,
 }
 
 impl TextRun {
@@ -886,6 +890,7 @@ impl TextRun {
             para_gap: 0.0,
             hf_para: None,
             ends_line: false,
+            hf_pic_h: 0.0,
         }
     }
 
@@ -9071,6 +9076,16 @@ fn w_text(dom: &Dom, node: NodeId) -> String {
         .collect()
 }
 
+/// A paragraph's own words: `w_text` without the text of text boxes it
+/// hosts (0017dd5f's footer logo shape carries the page number).
+fn para_own_text(dom: &Dom, para: NodeId) -> String {
+    dom.descendants(para, Some(&W::t()))
+        .into_iter()
+        .filter(|t| dom.ancestors(*t, Some(&W::txbx_content())).is_empty())
+        .map(|t| element_text(dom, t))
+        .collect()
+}
+
 fn element_text(dom: &Dom, node: NodeId) -> String {
     let mut out = String::new();
     for i in 0..dom.child_count(node) {
@@ -10841,7 +10856,7 @@ fn load_chrome_part(
         // Only a picture-only paragraph stands as its own line; a picture
         // sharing a line with text (000e002d's logo + tabbed title) stays
         // with the text.
-        let flow = element_text(&part_dom, para).trim().is_empty()
+        let flow = para_own_text(&part_dom, para).trim().is_empty()
             && part_dom
                 .descendants(para, Some(&WP::name("inline")))
                 .into_iter()
@@ -10851,7 +10866,7 @@ fn load_chrome_part(
                         .is_empty()
                 });
         if !hf_para_in_table(&part_dom, root, para)
-            && !element_text(&part_dom, para).trim().is_empty()
+            && !para_own_text(&part_dom, para).trim().is_empty()
         {
             seen_text = true;
         }
@@ -11191,8 +11206,10 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
             }
             continue;
         }
+        let pic_h = hf_inline_pic_h(dom, para);
         for run in &mut line {
             run.hf_para = Some(pstyle.clone());
+            run.hf_pic_h = pic_h;
         }
         if runs.is_empty() {
             // Below leading empty paragraphs the text keeps its before,
@@ -11233,6 +11250,21 @@ fn hf_border_pad(above: Option<&ParaStyle>, para: &ParaStyle) -> f32 {
         Some(edge) if above.is_none_or(|a| a.border_top != Some(edge)) => edge.1 + edge.2,
         _ => 0.0,
     }
+}
+
+/// The tallest inline picture directly in a chrome paragraph (text-box
+/// pictures excluded), from its `wp:extent`.
+fn hf_inline_pic_h(dom: &Dom, para: NodeId) -> f32 {
+    dom.descendants(para, Some(&WP::name("inline")))
+        .into_iter()
+        .filter(|inl| {
+            dom.ancestors(*inl, Some(&W::name("txbxContent")))
+                .is_empty()
+        })
+        .filter_map(|inl| first_named_any(dom, inl, "extent"))
+        .filter_map(|ext| attr_any(dom, ext, "cy").and_then(|v| v.parse::<f32>().ok()))
+        .map(|cy| cy / 12700.0)
+        .fold(0.0_f32, f32::max)
 }
 
 /// Table-cell paragraphs belong to the part's laid-out tables.
@@ -11661,6 +11693,11 @@ fn chrome_line_metrics(fonts: &Fonts, line: &[TextRun]) -> (f32, f32) {
     } else {
         ascent
     };
+    // An inline picture sharing the line stands on its baseline.
+    let pic = line.iter().map(|r| r.hf_pic_h).fold(0.0_f32, f32::max);
+    if pic > drop && para.is_none_or(|p| p.line_exact.is_none()) {
+        return (pic, line_box + pic - drop);
+    }
     (drop, line_box)
 }
 
