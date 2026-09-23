@@ -19947,8 +19947,8 @@ mod field_tests {
         let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
         let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
         assert_eq!(
-            joined, "no backend required ",
-            "generator xml:space padding collapses to one trailing space, got {joined:?}"
+            joined, "no backend required           ",
+            "xml:space padding is kept as Word paints it, got {joined:?}"
         );
     }
 
@@ -19976,10 +19976,10 @@ mod field_tests {
     }
 
     #[test]
-    fn body_multi_run_generator_xml_space_stays_collapsed_after_mini_401() {
-        // Word-faithful keep of Suggestion-mode pads (`Editing         `)
-        // put file_146 Serialises on page 2 but mini 401 dropped the
-        // sample/eigenpal clones −6.8 ITT (NR mean −0.341 / median −1.53).
+    fn body_multi_run_generator_xml_space_is_kept() {
+        // Word paints Suggestion-mode pads (`Editing         `); the
+        // collapse was a score lock (mini 401). fixtures_500: painting
+        // preserved padding lifted 62 of 245 files.
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body><w:p>
@@ -20000,18 +20000,14 @@ mod field_tests {
         let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
         let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
         assert!(
-            !joined.contains("Editing         "),
-            "mini 401: body generator pad stays collapsed, got {joined:?}"
-        );
-        assert!(
-            joined.contains("Editing "),
-            "collapse keeps one space, got {joined:?}"
+            joined.contains("Editing         and"),
+            "every preserved pad space is kept, got {joined:?}"
         );
     }
 
     #[test]
-    fn body_hello_xml_space_padding_stays_collapsed() {
-        // eigenpal / sample_document: keeping Hello-padding dropped ~6 ITT.
+    fn body_hello_xml_space_padding_is_kept() {
+        // Word paints all of a preserved run's padding.
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body><w:p>
@@ -20028,8 +20024,8 @@ mod field_tests {
         let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
         let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
         assert_eq!(
-            joined, "Hello ",
-            "Hello pad must stay collapsed, got {joined:?}"
+            joined, "Hello         ",
+            "Hello pad is kept, got {joined:?}"
         );
     }
 
@@ -20091,11 +20087,9 @@ mod field_tests {
     }
 
     #[test]
-    fn courier_body_xml_space_stays_collapsed_after_mini_520() {
-        // Word-faithful keep of file_69 Courier pads wrapped Serialises
-        // onto page 2 (Word) but mini 520 ITT-neg: NR 59.4772→59.0833 /
-        // median 53.4527→51.5568. file_69/78 +6.2; sample/eigenpal clones
-        // −7. Same packing class as mini 401. Stay collapsed.
+    fn courier_body_xml_space_is_kept() {
+        // Word keeps file_69's Courier pads (and wraps Serialises onto
+        // page 2); the collapse was a score lock (mini 520).
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body><w:p>
@@ -20115,8 +20109,8 @@ mod field_tests {
         let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
         let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
         assert_eq!(
-            joined, "WYSIWYG .docx editor",
-            "mini 520: Courier body xml:space stays collapsed, got {joined:?}"
+            joined, "WYSIWYG         .docx         editor",
+            "Courier body xml:space pads are kept, got {joined:?}"
         );
     }
 }
