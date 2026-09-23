@@ -15229,7 +15229,14 @@ impl<'a> Layout<'a> {
             0.0
         };
         let ind = if centred { 0.0 } else { geom.tbl_ind };
-        let table_left = self.page.margin_l + shift + ind - pull;
+        // A table in flow starts at its column (000876cd's column-two
+        // table); the floating pass below sets margin_l to the float box.
+        let origin = if self.nested_depth > 0 {
+            self.page.margin_l
+        } else {
+            self.flow_left()
+        };
+        let table_left = origin + shift + ind - pull;
         if let Some(slot) = geom.float
             && self.nested_depth == 0
         {

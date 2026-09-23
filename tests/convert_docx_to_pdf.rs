@@ -17216,6 +17216,20 @@ fn bottom_aligned_cell_text_sits_on_the_row_floor() {
 }
 
 #[test]
+fn a_table_in_the_second_column_starts_at_that_column() {
+    // fixtures_500 000876cd: after a column break the table belongs to
+    // column two; we drew it from the page margin, over column one.
+    let body = r#"<w:p><w:r><w:t>Left</w:t></w:r></w:p><w:p><w:r><w:br w:type="column"/></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Right</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/><w:cols w:num="2" w:space="720"/></w:sectPr>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("column table");
+    let xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    // Column two starts at 72 + (468 - 36) / 2 + 36 = 324pt.
+    assert!(
+        xs.iter().any(|x| *x > 320.0),
+        "the table's text sits in column two; xs={xs:?}"
+    );
+}
+
+#[test]
 fn a_table_adds_no_space_below_its_last_row() {
     // fixtures_500 001f4e98: the paragraph after a table starts at the
     // table's bottom edge in Word; a flat 4pt after every table pushed its
