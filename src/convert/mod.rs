@@ -11913,11 +11913,21 @@ struct Layout<'a> {
 /// break mark's (00049f27's 10pt footer lines are 11.5pt apart, not an
 /// 11pt floor's 12.65).
 fn chrome_size(runs: &[TextRun]) -> f32 {
+    // Whitespace-only runs (000f8dcd's 18pt tab runs) do not size a line,
+    // as in the body.
+    let inked = runs
+        .iter()
+        .filter(|r| !r.text.trim().is_empty())
+        .map(|r| r.style.size)
+        .fold(0.0_f32, f32::max);
     let text = runs
         .iter()
         .filter(|r| r.text != HF_LINE_BREAK)
         .map(|r| r.style.size)
         .fold(0.0_f32, f32::max);
+    if inked > 0.0 {
+        return inked;
+    }
     let any = runs.iter().map(|r| r.style.size).fold(0.0_f32, f32::max);
     if text > 0.0 {
         text
@@ -11932,7 +11942,8 @@ fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
     let size = chrome_size(runs);
     let fid = runs
         .iter()
-        .find(|r| r.text != HF_LINE_BREAK)
+        .find(|r| !r.text.trim().is_empty())
+        .or_else(|| runs.iter().find(|r| r.text != HF_LINE_BREAK))
         .map_or(FaceId::CarlitoRegular.into(), |r| {
             fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
         });
@@ -12012,7 +12023,8 @@ fn chrome_line_metrics(fonts: &Fonts, line: &[TextRun]) -> (f32, f32) {
     let size = chrome_size(line);
     let fid = line
         .iter()
-        .find(|r| r.text != HF_LINE_BREAK)
+        .find(|r| !r.text.trim().is_empty())
+        .or_else(|| line.iter().find(|r| r.text != HF_LINE_BREAK))
         .map_or(FaceId::CarlitoRegular.into(), |r| {
             fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
         });
@@ -16795,6 +16807,21 @@ impl<'a> Layout<'a> {
     }
 
     fn draw_line_of_runs(&mut self, runs: &[TextRun], y: f32, align: Align) {
+        // A tab moves to its paragraph's stops; it paints no glyph
+        // (000f8dcd's email line ended in two .notdef boxes).
+        let tabbed = runs.iter().any(|r| r.text.contains('\t'));
+        if tabbed && matches!(align, Align::Left | Align::Justify) {
+            let para = runs.iter().find_map(|r| r.hf_para.clone());
+            let stops = para
+                .as_ref()
+                .map(|p| p.tab_stops.clone())
+                .unwrap_or_default();
+            let indent = para.as_ref().map_or(0.0, |p| p.indent_left);
+            let saved = std::mem::replace(&mut self.tab_stops, stops);
+            self.paint_line_with_tabs(runs, self.page.margin_l + indent, y);
+            self.tab_stops = saved;
+            return;
+        }
         let width = self.content_width();
         let line_w: f32 = runs
             .iter()
@@ -16804,8 +16831,10 @@ impl<'a> Layout<'a> {
                     .resolve(&r.style.family, r.style.bold, r.style.italic);
                 // NUMPAGES is painted as @@N@@ then patched to the real
                 // count. Measuring the mark (~45pt) shoved I_am_sharing
-                // "Page 1 of 9" to x=470 vs Word 509.
-                let measure = chrome_measure_text(&r.text);
+                // "Page 1 of 9" to x=470 vs Word 509. A tab in an aligned
+                // line is not a glyph.
+                let text = r.text.replace('\t', "");
+                let measure = chrome_measure_text(&text);
                 self.fonts.get(f).width_pt(measure, r.style.layout_size())
             })
             .sum();
@@ -16816,6 +16845,13 @@ impl<'a> Layout<'a> {
         };
         let mut x = self.page.margin_l + extra;
         for run in runs {
+            let untabbed;
+            let run = if run.text.contains('\t') {
+                untabbed = run.with_text(run.text.replace('\t', ""));
+                &untabbed
+            } else {
+                run
+            };
             if run.text.is_empty() {
                 continue;
             }

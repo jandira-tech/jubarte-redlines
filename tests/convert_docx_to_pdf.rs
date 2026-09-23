@@ -16852,6 +16852,33 @@ fn text_box_text_does_not_make_a_header_picture_share_a_line() {
 }
 
 #[test]
+fn header_tabs_advance_without_painting_and_do_not_size_the_line() {
+    // fixtures_500 000f8dcd: the header's email line ends in two 18pt bold
+    // tab runs. Word paints no glyph for them and keeps the 10pt line; we
+    // painted two .notdef boxes and sized the line at 18pt.
+    let line = |tail: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:t>Mail</w:t></w:r>{tail}</w:p>"#
+        )
+    };
+    let tabs = r#"<w:r><w:rPr><w:b/><w:sz w:val="36"/></w:rPr><w:tab/></w:r><w:r><w:rPr><w:b/><w:sz w:val="36"/></w:rPr><w:tab/></w:r>"#;
+    let bare = docx_to_pdf(&header_part_docx_at(&line(""), 720)).expect("bare");
+    let tabbed = docx_to_pdf(&header_part_docx_at(&line(tabs), 720)).expect("tabbed");
+    let head = |pdf: &[u8]| text_baselines(pdf).into_iter().fold(f32::MIN, f32::max);
+    assert!(
+        (head(&bare) - head(&tabbed)).abs() < 0.05,
+        "the tab runs do not size the line; bare={} tabbed={}",
+        head(&bare),
+        head(&tabbed)
+    );
+    let text: String = pdf_content_streams(&tabbed)
+        .iter()
+        .map(|s| stream_glyph_text(s))
+        .collect();
+    assert!(!text.contains('\t'), "no glyph for a tab; text={text:?}");
+}
+
+#[test]
 fn header_table_cell_picture_paints_once() {
     // The header table lays its cell picture out itself; the loose-picture
     // pass painted it again at the header's flow origin (fixtures_500
