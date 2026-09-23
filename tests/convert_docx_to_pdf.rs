@@ -25124,10 +25124,14 @@ fn w14_text_outline_stays_fill_only_after_mini_371() {
 }
 
 #[test]
-fn ms_gothic_ballot_box_stays_unpainted_after_mini_372() {
-    // Aptos last-resort for U+2610 (mini 372) was Word-shaped but
-    // ITT-neg: Strict01 family −0.0008 (Aptos ballot ≠ MS Gothic).
-    // Keep Calibri→Arial miss / skip gid 0. Not an MS Gothic FaceId.
+fn ms_gothic_ballot_box_paints_in_word_s_ms_gothic() {
+    // Word paints MS Gothic's U+2610 as an 11.04pt hollow box. The old lock
+    // kept it unpainted (mini 372: an Aptos stand-in was ITT-neg); with
+    // Word's own MS Gothic loaded from its DFonts the box is Word's glyph.
+    let msgothic = "/Applications/Microsoft Word.app/Contents/Resources/DFonts/msgothic.ttc";
+    if !std::path::Path::new(msgothic).is_file() {
+        return;
+    }
     let body = "<w:p><w:r>\
            <w:rPr><w:rFonts w:ascii=\"MS Gothic\" w:hAnsi=\"MS Gothic\"/>\
              <w:sz w:val=\"22\"/></w:rPr>\
@@ -25135,9 +25139,10 @@ fn ms_gothic_ballot_box_stays_unpainted_after_mini_372() {
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert MS Gothic ballot lock");
     let cids = pdf_cid_hex_tjs(&pdf);
     let ink = cids.iter().filter(|h| h.chars().any(|c| c != '0')).count();
-    assert_eq!(
-        ink, 0,
-        "mini 372 Aptos ☐ ITT-neg; keep unpainted; cids={cids:?}"
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        ink > 0 || hay.contains("MS-Gothic"),
+        "☐ paints in MS Gothic; cids={cids:?}"
     );
 }
 

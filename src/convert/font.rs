@@ -951,6 +951,38 @@ impl<'a> Fonts<'a> {
         );
     }
 
+    /// Word's face for an East Asian family it does not have: Microsoft
+    /// YaHei for Chinese (0025b0d3's absent 標楷體, the 方正 families),
+    /// Yu Gothic for Japanese (font-table charset 80 or kana in the name).
+    fn cjk_fallback_index(
+        &self,
+        family: &str,
+        bold: bool,
+        table: &super::font_table::FontTable,
+    ) -> Option<u16> {
+        let charset = table.get(family).and_then(|e| e.charset.as_deref());
+        let east_asian_charset = matches!(charset, Some("80" | "86" | "88" | "81"));
+        if !east_asian_charset && !family.chars().any(is_cjk_name_char) {
+            return None;
+        }
+        let japanese = charset == Some("80")
+            || family.chars().any(|c| {
+                ('\u{3040}'..='\u{30FF}').contains(&c) || ('\u{FF66}'..='\u{FF9F}').contains(&c)
+            });
+        let key = if japanese {
+            CJK_FALLBACK_JA
+        } else {
+            CJK_FALLBACK
+        };
+        self.embedded_index(key, bold, false)
+    }
+
+    /// The CJK fallback face for a glyph the resolved face lacks.
+    pub(crate) fn cjk_glyph_fallback(&self, bold: bool) -> Option<FaceRef> {
+        self.embedded_index(CJK_FALLBACK, bold, false)
+            .map(FaceRef::Embedded)
+    }
+
     fn embedded_index(&self, family: &str, bold: bool, italic: bool) -> Option<u16> {
         let exact = FaceKey {
             family: family.to_ascii_lowercase(),
@@ -1031,6 +1063,20 @@ impl<'a> Fonts<'a> {
                     bold,
                     italic,
                     synthetic: (bold || italic) && !exact,
+                },
+            );
+        }
+        if let Some(idx) = self.cjk_fallback_index(primary, bold, table) {
+            let face = FaceRef::Embedded(idx);
+            return (
+                face,
+                FontReportEntry {
+                    requested: family.to_string(),
+                    step: FontStep::Generic,
+                    physical: self.get(face).pdf_name().to_string(),
+                    bold,
+                    italic,
+                    synthetic: false,
                 },
             );
         }
@@ -1592,6 +1638,39 @@ const CJK_FAMILIES: &[(&[&str], &[&str])] = &[
         &["dengxian", "等线", "dengxianlight"],
         &["deng", "dengb", "dengl"],
     ),
+    (
+        &[
+            "hg創英角ｺﾞｼｯｸub",
+            "hgp創英角ｺﾞｼｯｸub",
+            "hgs創英角ｺﾞｼｯｸub",
+            "hgsoeikakugothicub",
+            "hgpsoeikakugothicub",
+            "hgssoeikakugothicub",
+        ],
+        &["hgrsgu"],
+    ),
+    (
+        &[
+            "hgｺﾞｼｯｸe",
+            "hgpｺﾞｼｯｸe",
+            "hgsｺﾞｼｯｸe",
+            "hggothice",
+            "hgpgothice",
+            "hgsgothice",
+        ],
+        &["hgrge"],
+    ),
+    (
+        &[
+            "hg明朝e",
+            "hgp明朝e",
+            "hgs明朝e",
+            "hgminchoe",
+            "hgpminchoe",
+            "hgsminchoe",
+        ],
+        &["hgrme"],
+    ),
 ];
 
 fn cjk_file_stems(family: &str) -> &'static [&'static str] {
@@ -1726,12 +1805,49 @@ fn ttc_face_bytes(ttc: &[u8], index: u32) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Embedded-map keys of the East Asian fallback faces (see
+/// `Fonts::cjk_fallback_index`); no document family can be named this.
+pub(crate) const CJK_FALLBACK: &str = "@cjk";
+pub(crate) const CJK_FALLBACK_JA: &str = "@cjk-ja";
+
+fn is_cjk_name_char(c: char) -> bool {
+    matches!(c as u32, 0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF66..=0xFF9F)
+}
+
+/// Loads Word's East Asian fallback faces (YaHei, Yu Gothic) for a
+/// document that has East Asian text.
+pub(crate) fn add_cjk_fallbacks(embedded: &mut EmbeddedFonts) {
+    for (key, family, stems) in [
+        (CJK_FALLBACK, "Microsoft YaHei", &["msyh", "msyhbd"][..]),
+        (CJK_FALLBACK_JA, "Yu Gothic", &["yugothr", "yugothb"][..]),
+    ] {
+        for ((bold, italic), bytes) in cjk_family_faces(family, stems) {
+            embedded.insert((key.to_string(), bold, italic), bytes);
+        }
+    }
+}
+
 /// Adds the installed faces of every font-table family that the catalogue
 /// does not cover and the document does not embed.
 pub(crate) fn add_installed_faces(
     embedded: &mut EmbeddedFonts,
     table: &super::font_table::FontTable,
+    extra: &[String],
 ) {
+    // East Asian families named only in styles or the theme ("宋体" as the
+    // theme's Hans font) are not in the font table but Word draws them.
+    for name in extra {
+        let lower = name.to_ascii_lowercase();
+        if table.get(name).is_some()
+            || cjk_file_stems(name).is_empty()
+            || embedded.keys().any(|(f, _, _)| *f == lower)
+        {
+            continue;
+        }
+        for ((bold, italic), bytes) in cjk_family_faces(name, cjk_file_stems(name)) {
+            embedded.insert((lower.clone(), bold, italic), bytes);
+        }
+    }
     for entry in table.iter() {
         let lower = entry.name.to_ascii_lowercase();
         if catalogue_paints_family(&entry.name) || embedded.keys().any(|(f, _, _)| *f == lower) {
@@ -2142,6 +2258,40 @@ mod tests {
             face_family_names(&pface, ttf_parser::name_id::FAMILY)
                 .contains(&"mspmincho".to_string()),
             "the collection's second face, not the first"
+        );
+    }
+
+    #[test]
+    fn missing_east_asian_family_falls_to_word_s_cjk_face() {
+        // fixtures_500 0025b0d3: 標楷體 (charset 88) is not installed;
+        // Word draws it in Microsoft YaHei. A Japanese family Word lacks
+        // (0041d394's HGP行書体, charset 80) is Yu Gothic.
+        let dfonts = "/Applications/Microsoft Word.app/Contents/Resources/DFonts";
+        if !Path::new(dfonts).join("msyh.ttc").is_file()
+            || !Path::new(dfonts).join("YuGothR.ttc").is_file()
+        {
+            return;
+        }
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="標楷體"><w:charset w:val="88"/><w:family w:val="script"/><w:pitch w:val="fixed"/></w:font>
+                 <w:font w:name="HGP行書体"><w:charset w:val="80"/><w:family w:val="script"/></w:font>
+                 <w:font w:name="SomeLatin"><w:family w:val="swiss"/></w:font>
+               </w:fonts>"#,
+        );
+        let mut embedded = EmbeddedFonts::new();
+        add_cjk_fallbacks(&mut embedded);
+        let fonts = Fonts::for_document(&embedded);
+        let physical = |family: &str| {
+            let (face, _) = fonts.classify_in(family, false, false, &table);
+            fonts.get(face).pdf_name().to_string()
+        };
+        assert_eq!(physical("標楷體"), "MicrosoftYaHei");
+        assert!(physical("HGP行書体").starts_with("YuGothic"));
+        assert_eq!(
+            physical("SomeLatin"),
+            "ArialMT",
+            "Latin families are untouched"
         );
     }
 

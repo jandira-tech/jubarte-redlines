@@ -129,7 +129,16 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
 
     let table = font_table::load_font_table(&pkg);
     let mut embedded = font_table::load_embedded_fonts(&pkg, &table);
-    font::add_installed_faces(&mut embedded, &table);
+    let mut family_names = rfont_names(&xml);
+    for part in ["word/styles.xml", "word/theme/theme1.xml"] {
+        if let Some(text) = pkg.part_string(part) {
+            family_names.extend(rfont_names(&text));
+        }
+    }
+    font::add_installed_faces(&mut embedded, &table, &family_names);
+    if xml.chars().any(is_cjk) {
+        font::add_cjk_fallbacks(&mut embedded);
+    }
     let fonts = Fonts::for_document(&embedded);
     font::with_font_table(table, || {
         let markup = settings_track_revisions(&pkg);
@@ -2494,6 +2503,33 @@ fn theme_script_face(theme: &ThemeFonts, slot: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Font family names a part's markup mentions (`w:rFonts` slots, theme
+/// `typeface`s), deduplicated.
+fn rfont_names(xml: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for key in [
+        "w:ascii=\"",
+        "w:hAnsi=\"",
+        "w:eastAsia=\"",
+        "w:cs=\"",
+        "typeface=\"",
+    ] {
+        let mut rest = xml;
+        while let Some(at) = rest.find(key) {
+            rest = &rest[at + key.len()..];
+            let Some(end) = rest.find('"') else {
+                break;
+            };
+            let name = &rest[..end];
+            if !name.is_empty() && !out.iter().any(|n| n == name) {
+                out.push(name.to_string());
+            }
+            rest = &rest[end..];
+        }
+    }
+    out
 }
 
 fn is_cjk(c: char) -> bool {
@@ -11747,11 +11783,18 @@ impl<'a> Layout<'a> {
             // fallback (paint_run): 019f3137's "●" in an absent Noto Sans
             // Symbols is Arial in Word, not the 12.25pt stand-in.
             if face_lacks_ink(face, &run.text) {
-                face = self.fonts.get(if run.style.bold {
-                    FaceId::SansBold
-                } else {
-                    FaceId::SansRegular
-                });
+                face = match self
+                    .fonts
+                    .cjk_glyph_fallback(run.style.bold)
+                    .filter(|_| run.text.chars().any(is_cjk))
+                {
+                    Some(cjk) => self.fonts.get(cjk),
+                    None => self.fonts.get(if run.style.bold {
+                        FaceId::SansBold
+                    } else {
+                        FaceId::SansRegular
+                    }),
+                };
             }
             natural = natural.max(face.single_line_pt(size));
             ascent = ascent.max(face.ascent_pt(size));
@@ -13105,7 +13148,15 @@ impl<'a> Layout<'a> {
         let chars: Vec<char> = run.text.chars().collect();
         let ink_missing = shaped_lacks_ink(&chars, &shaped);
         if ink_missing {
-            fid = if run.style.bold {
+            // East Asian text falls back to Word's CJK face, not Arial,
+            // which has no Han glyphs (0025b0d3's text vanished).
+            fid = if let Some(cjk) = self
+                .fonts
+                .cjk_glyph_fallback(run.style.bold)
+                .filter(|_| run.text.chars().any(is_cjk))
+            {
+                cjk
+            } else if run.style.bold {
                 FaceId::SansBold.into()
             } else {
                 FaceId::SansRegular.into()
