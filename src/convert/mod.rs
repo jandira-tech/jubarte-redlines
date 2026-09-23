@@ -5632,8 +5632,15 @@ fn row_top_rule(row: &[TableCell], geom: &TableGeom, ri: usize) -> f32 {
 
 /// One line box of a paragraph as `emit_runs` lays it out: `para_line_box`
 /// for its first run's face at its largest size, snapped to the docGrid.
+/// The largest point size among `runs` (11 when there are none). An 11pt
+/// floor overstated 8pt keepNext headings and small text-box lines.
+fn runs_size(runs: &[TextRun]) -> f32 {
+    let size = runs.iter().map(|r| r.style.size).fold(0.0_f32, f32::max);
+    if size > 0.0 { size } else { 11.0 }
+}
+
 fn para_first_line_pt(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle, grid_pitch: f32) -> f32 {
-    let size = runs.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
+    let size = runs_size(runs);
     let face = runs.first().map_or(FaceId::CarlitoRegular.into(), |r| {
         fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
     });
@@ -5666,6 +5673,7 @@ fn keep_next_follow_pt(
     block: &Block,
     grid_pitch: f32,
     space_for_ul: bool,
+    para_lines: usize,
 ) -> f32 {
     match block {
         Block::Table {
@@ -5677,7 +5685,29 @@ fn keep_next_follow_pt(
                 .unwrap_or(0.0)
         }
         Block::Paragraph { runs, style, .. } => {
-            style.before + para_first_line_pt(fonts, runs, style, grid_pitch)
+            // Widow/orphan control keeps a 2–3 line paragraph whole and
+            // leaves at least 2 lines of a longer one (011c597c's AFG.316
+            // moves with its 3-line body).
+            let lines = if style.widow_control {
+                match para_lines {
+                    n @ 2..=3 => n,
+                    n if n > 3 => 2,
+                    _ => 1,
+                }
+            } else {
+                1
+            };
+            // The last kept line fits on its single height, as in the
+            // layout (an auto multiple's extra leading may hang into the
+            // margin; 00e68cc4's Motivering keeps two 1.5 lines).
+            let line = para_first_line_pt(fonts, runs, style, grid_pitch);
+            let size = runs_size(runs);
+            let face = runs.first().map_or(FaceId::CarlitoRegular.into(), |r| {
+                fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
+            });
+            let face = fonts.get(face);
+            let last = line_fit_need(face.single_line_pt(size), 0.0, style, line);
+            style.before + line * (lines - 1) as f32 + last
         }
         Block::PageBreak { .. } | Block::ColumnBreak => 0.0,
     }
@@ -12515,7 +12545,7 @@ impl<'a> Layout<'a> {
         let mut used = 0.0;
         let mut n = 0usize;
         for line in &lines {
-            let size = line.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
+            let size = runs_size(line);
             let face = line.first().map_or(FaceId::CarlitoRegular.into(), |r| {
                 self.fonts
                     .resolve(&r.style.family, r.style.bold, r.style.italic)
@@ -13010,6 +13040,28 @@ impl<'a> Layout<'a> {
         let first_w = (width - style.indent_first).max(40.0);
         let first_tabs = tabs(indent + style.indent_first);
         wrap_runs_tabbed(self.fonts, body, first_w, width, list, Some(&first_tabs))
+    }
+
+    /// Lines `emit_runs` would lay `runs` out in (tabs, markers and
+    /// hanging indents included), for keepNext's widow arithmetic: a TOC
+    /// entry with a dot-leader tab is one line, not a plain-wrap three.
+    fn para_line_count(&mut self, runs: &[TextRun], style: &ParaStyle, list: bool) -> usize {
+        let hanging = if style.indent_first < 0.0 {
+            -style.indent_first
+        } else {
+            0.0
+        };
+        let (marker, body) = split_hanging_marker(runs, hanging > 0.0);
+        let indent = style.indent_left + if list { 18.0 } else { 0.0 };
+        let width = (self.content_width() - indent - style.indent_right).max(40.0);
+        // Measured with the follower's own tab stops.
+        let stops = std::mem::replace(&mut self.tab_stops, style.tab_stops.clone());
+        let n = self
+            .wrap_para_runs(body, style, indent, marker.is_some(), width, list)
+            .0
+            .len();
+        self.tab_stops = stops;
+        n
     }
 
     fn wrap_para_runs(
@@ -14887,7 +14939,7 @@ impl<'a> Layout<'a> {
         let lines = wrap_runs(self.fonts, &box_.runs, inner, inner, false);
         let mut content_h = 0.0;
         for line in &lines {
-            let size = line.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
+            let size = runs_size(line);
             let fid = line.first().map_or(FaceId::CarlitoRegular.into(), |r| {
                 self.fonts
                     .resolve(&r.style.family, r.style.bold, r.style.italic)
@@ -14904,7 +14956,7 @@ impl<'a> Layout<'a> {
             ty -= box_.text_dy;
         }
         for line in lines {
-            let size = line.iter().map(|r| r.style.size).fold(11.0_f32, f32::max);
+            let size = runs_size(&line);
             let fid = line.first().map_or(FaceId::CarlitoRegular.into(), |r| {
                 self.fonts
                     .resolve(&r.style.family, r.style.bold, r.style.italic)
@@ -17242,20 +17294,34 @@ fn layout(
                     let follow = blocks
                         .get(i + 1)
                         .map(|b| {
+                            let para_lines = match b {
+                                Block::Paragraph {
+                                    runs, style, list, ..
+                                } => lay.para_line_count(runs, style, *list),
+                                _ => 1,
+                            };
                             keep_next_follow_pt(
                                 lay.fonts,
                                 lay.content_width(),
                                 b,
                                 pitch,
                                 lay.space_for_ul,
+                                para_lines,
                             )
                         })
                         .unwrap_or(0.0);
                     if follow > 0.0 {
                         // +2pt breaks leftover==need ties so a heading is
                         // not orphaned above a table row that then wraps
-                        // (comments-lots Heading1 + capability header).
-                        lay.ensure(style.before + own + style.after + follow + 2.0);
+                        // (comments-lots Heading1 + capability header). A
+                        // following paragraph's line is exact: two 8pt
+                        // lines fit in 21pt.
+                        let tie = if matches!(blocks.get(i + 1), Some(Block::Table { .. })) {
+                            2.0
+                        } else {
+                            0.0
+                        };
+                        lay.ensure(style.before + own + style.after + follow + tie);
                     }
                 }
                 if style.keep_lines {

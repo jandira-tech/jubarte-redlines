@@ -673,6 +673,95 @@ fn a_short_exact_line_fits_on_its_box_not_its_ascent() {
 }
 
 #[test]
+fn a_small_keep_next_heading_measures_its_own_size() {
+    // keepNext measured the heading and the next line at an 11pt floor
+    // and added a 2pt tie pad meant for a following table: two 8pt lines
+    // (about 20pt) with 21pt left moved to page 2.
+    let sp = "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>";
+    let body = format!(
+        "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"12540\" w:lineRule=\"exact\"/></w:pPr><w:r><w:t>Fill</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:keepNext/>{sp}</w:pPr><w:r><w:rPr><w:sz w:val=\"16\"/></w:rPr><w:t>Heading</w:t></w:r></w:p>\
+         <w:p><w:pPr>{sp}</w:pPr><w:r><w:rPr><w:sz w:val=\"16\"/></w:rPr><w:t>Next</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("keep next");
+    assert_eq!(pdf_mediaboxes(&pdf).len(), 1, "two 8pt lines fit in 21pt");
+}
+
+#[test]
+fn keep_next_brings_the_lines_widow_control_keeps_together() {
+    // fixtures_500 011c597c: AFG.316 (keepNext) above a 3-line paragraph
+    // with room for the heading and two lines. Widow/orphan control keeps
+    // a 3-line paragraph whole, so Word moves the heading to the next
+    // page; a 5-line paragraph can leave 2 lines behind, so it stays.
+    let sp = "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"exact\"/>";
+    let pages = |lines: usize| {
+        let words = "word ".repeat(lines * 14 - 5);
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"12240\" w:lineRule=\"exact\"/></w:pPr><w:r><w:t>Fill</w:t></w:r></w:p>\
+             <w:p><w:pPr><w:keepNext/>{sp}</w:pPr><w:r><w:t>Heading</w:t></w:r></w:p>\
+             <w:p><w:pPr>{sp}</w:pPr><w:r><w:t>{words}</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("widow keep");
+        let streams = pdf_content_streams(&pdf);
+        // Glyphs sit at `... x y cm`: the y is the token before cm.
+        let mut ys: Vec<i32> = streams[0]
+            .lines()
+            .filter(|l| l.contains(" Tj") || l.contains(" TJ"))
+            .filter_map(|l| {
+                let head = &l[..l.find(" cm ")?];
+                head.split_whitespace().next_back()?.parse::<f32>().ok()
+            })
+            .map(|y| (y * 10.0).round() as i32)
+            .collect();
+        ys.sort_unstable();
+        ys.dedup();
+        ys.len()
+    };
+    assert_eq!(
+        pages(3),
+        1,
+        "a 3-line follower keeps whole: the heading moves"
+    );
+    assert_eq!(
+        pages(5),
+        4,
+        "a 5-line follower leaves two lines: the heading stays"
+    );
+}
+
+#[test]
+fn keep_next_lets_the_last_kept_line_hang_its_leading() {
+    // fixtures_500 00e68cc4: Motivering (keepNext) keeps two 1.5-spaced
+    // body lines on the page in Word; the last one fits on its single
+    // height, as the layout itself fits it. Charging it the full 1.5 box
+    // moved the heading to the next page.
+    let body = format!(
+        "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"12000\" w:lineRule=\"exact\"/></w:pPr><w:r><w:t>Fill</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:keepNext/><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"exact\"/></w:pPr><w:r><w:t>Heading</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"360\" w:lineRule=\"auto\"/></w:pPr><w:r><w:t>{}</w:t></w:r></w:p><w:sectPr/>",
+        "word ".repeat(65)
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("hang keep");
+    let streams = pdf_content_streams(&pdf);
+    let mut ys: Vec<i32> = streams[0]
+        .lines()
+        .filter(|l| l.contains(" Tj") || l.contains(" TJ"))
+        .filter_map(|l| {
+            let head = &l[..l.find(" cm ")?];
+            head.split_whitespace().next_back()?.parse::<f32>().ok()
+        })
+        .map(|y| (y * 10.0).round() as i32)
+        .collect();
+    ys.sort_unstable();
+    ys.dedup();
+    assert_eq!(
+        ys.len(),
+        4,
+        "Fill, the heading and two body lines stay on page 1"
+    );
+}
+
+#[test]
 fn direct_ind_left_keeps_the_numbering_level_hanging() {
     // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
     // paragraph overrides only the left edge; Word keeps the level's
