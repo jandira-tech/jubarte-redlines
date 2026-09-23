@@ -12597,8 +12597,10 @@ impl<'a> Layout<'a> {
             .chain(marker)
             .filter(|r| !r.text.trim().is_empty() || r.ends_line)
             .collect();
+        // A whitespace-only line is sized next to its mark: the last run
+        // (000ed6bb's 12pt tab then 10pt tabs is a 10pt line in Word).
         let runs: Vec<&TextRun> = if inked.is_empty() {
-            line.iter().chain(marker).take(1).collect()
+            line.last().or(marker).into_iter().collect()
         } else {
             inked
         };

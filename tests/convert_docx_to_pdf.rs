@@ -875,6 +875,30 @@ fn a_word_longer_than_the_line_breaks_at_the_edge() {
 }
 
 #[test]
+fn a_tab_only_line_takes_the_size_next_to_its_mark() {
+    // fixtures_500 000ed6bb: a paragraph of six tab runs, the first 12pt and
+    // the rest (and the mark) 10pt, is a 10pt line in Word (11.5pt TNR);
+    // we sized it by its first run (13.8pt).
+    let sp = r#"<w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>"#;
+    let pitch = |tabs: &str| {
+        let body = format!(
+            r#"<w:p><w:pPr>{sp}</w:pPr><w:r><w:t>Top</w:t></w:r></w:p><w:p><w:pPr>{sp}</w:pPr>{tabs}</w:p><w:p><w:pPr>{sp}</w:pPr><w:r><w:t>Low</w:t></w:r></w:p><w:sectPr/>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("tab line");
+        pdf_glyph_text_xy(&pdf, "Top").expect("Top").1
+            - pdf_glyph_text_xy(&pdf, "Low").expect("Low").1
+    };
+    let small = pitch(r#"<w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:tab/></w:r>"#);
+    let mixed = pitch(
+        r#"<w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:tab/></w:r><w:r><w:rPr><w:sz w:val="20"/></w:rPr><w:tab/></w:r>"#,
+    );
+    assert!(
+        (small - mixed).abs() < 0.05,
+        "the tab line keeps its mark-side 10pt size; small={small} mixed={mixed}"
+    );
+}
+
+#[test]
 fn direct_ind_left_keeps_the_numbering_level_hanging() {
     // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
     // paragraph overrides only the left edge; Word keeps the level's
