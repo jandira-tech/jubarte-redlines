@@ -26012,3 +26012,23 @@ fn gdi_external_leading_sits_above_the_first_baseline() {
         "first baseline {top}, Word {want}"
     );
 }
+
+#[test]
+fn a_pbdr_edge_of_val_none_paints_nothing() {
+    // fixtures_500 0036eb25: Normal's pBdr lists every edge as
+    // val="none" sz="0"; each paragraph was boxed in black.
+    let body = "<w:p><w:pPr><w:pBdr>\
+           <w:top w:val=\"none\" w:sz=\"0\" w:space=\"0\" w:color=\"auto\"/>\
+           <w:left w:val=\"none\" w:sz=\"0\" w:space=\"0\" w:color=\"auto\"/>\
+           <w:bottom w:val=\"nil\"/>\
+           <w:right w:val=\"none\" w:sz=\"0\" w:space=\"0\" w:color=\"auto\"/>\
+         </w:pBdr></w:pPr><w:r><w:t>Unboxed</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert pBdr none");
+    let rules = pdf_horiz_rule_ys(&pdf);
+    assert!(
+        rules.is_empty(),
+        "none/nil edges draw no rule; rules={rules:?}"
+    );
+}

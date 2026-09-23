@@ -2634,17 +2634,20 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
             }
         }
     }
-    if let Some(border) = pbdr_edge(dom, ppr, "top") {
-        style.border_top = Some(border);
+    // A listed edge replaces the inherited one, a none/nil edge clears it.
+    let listed =
+        |edge| first_named(dom, ppr, "pBdr").is_some_and(|b| first_named(dom, b, edge).is_some());
+    if listed("top") {
+        style.border_top = pbdr_edge(dom, ppr, "top");
     }
-    if let Some(border) = pbdr_edge(dom, ppr, "left") {
-        style.border_left = Some(border);
+    if listed("left") {
+        style.border_left = pbdr_edge(dom, ppr, "left");
     }
-    if let Some(border) = pbdr_edge(dom, ppr, "bottom") {
-        style.border_bottom = Some(border);
+    if listed("bottom") {
+        style.border_bottom = pbdr_edge(dom, ppr, "bottom");
     }
-    if let Some(border) = pbdr_edge(dom, ppr, "right") {
-        style.border_right = Some(border);
+    if listed("right") {
+        style.border_right = pbdr_edge(dom, ppr, "right");
     }
     if let Some(ind) = first_named(dom, ppr, "ind") {
         if let Some(left) = attr_any(dom, ind, "left")
@@ -10299,6 +10302,10 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
 fn pbdr_edge(dom: &Dom, ppr: NodeId, edge: &str) -> Option<([f32; 3], f32, f32)> {
     let pbdr = first_named(dom, ppr, "pBdr")?;
     let el = first_named(dom, pbdr, edge)?;
+    // val none/nil is no border (0036eb25's Normal lists all four).
+    if matches!(attr_any(dom, el, "val"), Some("none" | "nil")) {
+        return None;
+    }
     let color = attr_any(dom, el, "color")
         .and_then(parse_hex_color)
         .unwrap_or([0.0, 0.0, 0.0]);
