@@ -247,6 +247,10 @@ struct RunStyle {
     caps: bool,
     /// `w:smallCaps`: lowercase → capital glyphs at 80% size.
     small_caps: bool,
+    /// `w:b` / `w:i` named by some rPr (style or direct): a table style's
+    /// conditional bold/italic ranks below them (00319da4's b=0 runs).
+    bold_set: bool,
+    italic_set: bool,
     /// Size that sizes the line box when `size` is a rendering reduction
     /// (a small-caps piece keeps its run's authored size); 0 = `size`.
     box_size: f32,
@@ -735,6 +739,8 @@ impl Defaults {
                 caps: false,
                 small_caps: false,
                 box_size: 0.0,
+                bold_set: false,
+                italic_set: false,
                 offset: 0.0,
                 vert: VertAlign::Baseline,
                 kern_half: 0,
@@ -1059,6 +1065,9 @@ struct TableCell {
     colspan: usize,
     rowspan: usize,
     fill: Option<[f32; 3]>,
+    /// The cell's own `w:shd` (even `fill="auto"`): the table style's
+    /// conditional shading does not apply (00319da4).
+    fill_explicit: bool,
     valign_center: bool,
     /// `w:vAlign="bottom"`: content sits on the row floor (0090ba78).
     valign_bottom: bool,
@@ -1096,6 +1105,7 @@ impl TableCell {
             colspan: self.colspan,
             rowspan: self.rowspan,
             fill: self.fill,
+            fill_explicit: self.fill_explicit,
             valign_center: self.valign_center,
             valign_bottom: self.valign_bottom,
             align: self.align,
@@ -1141,6 +1151,7 @@ struct RawCell {
     colspan: usize,
     vmerge: VMerge,
     fill: Option<[f32; 3]>,
+    fill_explicit: bool,
     valign_center: bool,
     valign_bottom: bool,
     align: Align,
@@ -2582,9 +2593,11 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     apply_theme_script_fonts(style, theme);
     if first_named(dom, rpr, "b").is_some() {
         style.bold = !val_is_false(dom, first_named(dom, rpr, "b"));
+        style.bold_set = true;
     }
     if first_named(dom, rpr, "i").is_some() {
         style.italic = !val_is_false(dom, first_named(dom, rpr, "i"));
+        style.italic_set = true;
     }
     if first_named(dom, rpr, "u").is_some() {
         let val = first_named(dom, rpr, "u").and_then(|n| dom.attribute(n, &W::val()));
@@ -6755,7 +6768,7 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
             if header {
                 fill = tdef.first_row_fill;
             }
-            if cell.fill.is_none() {
+            if cell.fill.is_none() && !cell.fill_explicit {
                 cell.fill = fill;
                 cell.style_fill = fill.is_some();
             }
@@ -6763,7 +6776,9 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
             if header_bold || col0 {
                 for para in &mut cell.paras {
                     for run in &mut para.runs {
-                        run.style.bold = true;
+                        if !run.style.bold_set {
+                            run.style.bold = true;
+                        }
                     }
                 }
             }
@@ -6771,7 +6786,9 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
             if header_italic || col0_italic {
                 for para in &mut cell.paras {
                     for run in &mut para.runs {
-                        run.style.italic = true;
+                        if !run.style.italic_set {
+                            run.style.italic = true;
+                        }
                     }
                 }
             }
@@ -6988,6 +7005,9 @@ fn table_block(
                 colspan,
                 vmerge,
                 fill: cell_fill(dom, cell),
+                fill_explicit: first_named(dom, cell, "tcPr")
+                    .and_then(|pr| first_named(dom, pr, "shd"))
+                    .is_some(),
                 valign_center: cell_valign_is(dom, cell, "center"),
                 valign_bottom: cell_valign_is(dom, cell, "bottom"),
                 align: cell_align,
@@ -7485,6 +7505,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
         colspan: 1,
         vmerge: VMerge::None,
         fill: None,
+        fill_explicit: false,
         valign_center: false,
         valign_bottom: false,
         align: Align::Left,
@@ -7575,6 +7596,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
                 colspan: span,
                 rowspan: 1,
                 fill: raw.fill,
+                fill_explicit: raw.fill_explicit,
                 valign_center: raw.valign_center,
                 valign_bottom: raw.valign_bottom,
                 align: raw.align,
@@ -16370,6 +16392,8 @@ fn default_run_style() -> RunStyle {
         caps: false,
         small_caps: false,
         box_size: 0.0,
+        bold_set: false,
+        italic_set: false,
         offset: 0.0,
         vert: VertAlign::Baseline,
         kern_half: 0,

@@ -10748,6 +10748,49 @@ fn tbl_style_band_emits_fill_rect() {
 }
 
 #[test]
+fn direct_cell_formatting_beats_the_table_style_first_row() {
+    // fixtures_500 00319da4: a firstRow style (bold, D9D9D9 shading) under
+    // cells with a direct <w:shd w:fill="auto"/> and runs with <w:b w:val="0"/>.
+    // Word paints neither the shading nor the bold; the table style's
+    // properties rank below paragraph and run formatting.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"table\" w:styleId=\"Grid\">\
+            <w:tblStylePr w:type=\"firstRow\"><w:rPr><w:b/></w:rPr>\
+              <w:tcPr><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"D9D9D9\"/></w:tcPr>\
+            </w:tblStylePr>\
+          </w:style>\
+        </w:styles>";
+    let table = |tcpr: &str, rpr: &str| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblStyle w:val=\"Grid\"/><w:tblLook w:firstRow=\"1\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+             <w:tr><w:tc><w:tcPr>{tcpr}</w:tcPr><w:p><w:r><w:rPr>{rpr}</w:rPr><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr>\
+             </w:tbl><w:sectPr/>"
+        )
+    };
+    let pdf = |body: String| {
+        let bytes = docx_to_pdf(&docx_with_styles(&body, styles)).expect("first row");
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    let styled = pdf(table("", ""));
+    assert!(
+        styled.contains("0.851 0.851 0.851 rg"),
+        "the style shades a bare cell"
+    );
+    assert!(styled.contains("Bold"), "the style bolds a bare run");
+    let direct = pdf(table(
+        r#"<w:shd w:val="clear" w:color="auto" w:fill="auto"/>"#,
+        r#"<w:b w:val="0"/>"#,
+    ));
+    assert!(
+        !direct.contains("0.851 0.851 0.851 rg"),
+        "a direct fill=auto wins"
+    );
+    assert!(!direct.contains("Bold"), "a direct b=0 wins");
+}
+
+#[test]
 fn tbl_look_last_row_off_still_paints_lastrow_fill_after_mini_338() {
     // ECMA tblLook lastRow=0 should keep band1Horz on the last body
     // row (comments-lots MediumList2). Gating last_row_fill (mini
