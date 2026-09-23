@@ -10674,10 +10674,7 @@ fn hf_para_is_bare_line(dom: &Dom, root: NodeId, para: NodeId) -> bool {
             return !dom.descendants(para, None).into_iter().any(|d| {
                 dom.name_is(d, &W::pict())
                     || (dom.name_is(d, &W::drawing())
-                        && dom
-                            .descendants(d, Some(&WP::name("inline")))
-                            .first()
-                            .is_some())
+                        && !dom.descendants(d, Some(&WP::name("inline"))).is_empty())
             });
         }
         if !(dom.name_is(id, &W::sdt()) || dom.name_is(id, &W::sdt_content())) {
