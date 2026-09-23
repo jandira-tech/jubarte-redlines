@@ -5206,7 +5206,14 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
     let images_h: f32 = para
         .images
         .iter()
-        .map(|img| cell_image_wh(img, wrap_w).1)
+        .map(|img| {
+            let (_, _, drop, room) = cell_image_place(img, para.style.align);
+            if room {
+                cell_image_wh(img, wrap_w).1 + drop
+            } else {
+                0.0
+            }
+        })
         .sum();
     let text_h = if cell_para_is_image_only(para) {
         0.0
@@ -5216,10 +5223,52 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
     para.style.before + images_h + text_h + para.style.after
 }
 
+/// Pictures a cell lays out: inline ones, and anchors positioned against
+/// the cell (column/paragraph), which Word keeps inside it (fixtures_500
+/// 017abe40 layoutInCell column-centred photos). Page-positioned anchors
+/// stay out.
+fn cell_holds_image(img: &LaidImage) -> bool {
+    match img.slot {
+        ImageSlot::Flow => true,
+        ImageSlot::Float {
+            page_x,
+            page_y,
+            pct_x,
+            pct_y,
+            ..
+        } => page_x.is_none() && page_y.is_none() && pct_x.is_none() && pct_y.is_none(),
+    }
+}
+
+/// (horizontal alignment, offset from the cell's text left, drop from the
+/// paragraph top, takes room) for a cell picture. wrapNone/behind anchors
+/// (004796b5's stamp) float over the text without growing the cell.
+fn cell_image_place(img: &LaidImage, para_align: Align) -> (Align, Option<f32>, f32, bool) {
+    match img.slot {
+        ImageSlot::Flow => (para_align, None, 0.0, true),
+        ImageSlot::Float {
+            align,
+            col_x,
+            para_y,
+            wrap_square,
+            wrap_top_bottom,
+            ..
+        } => (
+            align,
+            col_x,
+            para_y.unwrap_or(0.0).max(0.0),
+            !img.behind && (wrap_square || wrap_top_bottom),
+        ),
+    }
+}
+
 /// A cell paragraph whose only content is inline pictures: its line is
 /// the pictures' height, not a text line plus the pictures.
 fn cell_para_is_image_only(para: &CellPara) -> bool {
-    !para.images.is_empty() && para.runs.iter().all(|r| r.text.trim().is_empty())
+    para.images
+        .iter()
+        .any(|img| cell_image_place(img, para.style.align).3)
+        && para.runs.iter().all(|r| r.text.trim().is_empty())
 }
 
 /// An inline cell picture shrunk to the cell's text width.
@@ -6589,7 +6638,7 @@ fn table_block(
                     .map(|(pkg, part)| collect_images(pkg, part, dom, child))
                     .unwrap_or_default()
                     .into_iter()
-                    .filter(|img| matches!(img.slot, ImageSlot::Flow))
+                    .filter(cell_holds_image)
                     .collect();
                 let empty_ink =
                     mark.is_empty() && runs.iter().all(|run| run.text.trim().is_empty());
@@ -14621,14 +14670,22 @@ impl<'a> Layout<'a> {
                         y_line -= para.style.before;
                         for img in &para.images {
                             let (dw, dh) = cell_image_wh(img, wrap_w);
+                            let (align, col_x, drop, room) =
+                                cell_image_place(img, para.style.align);
                             let inner = (w - pad_l - pad_r).max(0.0);
-                            let extra = match para.style.align {
+                            let extra = col_x.unwrap_or(match align {
                                 Align::Center => ((inner - dw) / 2.0).max(0.0),
                                 Align::Right => (inner - dw).max(0.0),
                                 Align::Left | Align::Justify => 0.0,
-                            };
-                            self.push_image(img, x + pad_l + extra, y_line - dh, dw, dh);
-                            y_line -= dh;
+                            });
+                            let ix = x + pad_l + extra;
+                            if room {
+                                y_line -= drop;
+                                self.push_image(img, ix, y_line - dh, dw, dh);
+                                y_line -= dh;
+                            } else {
+                                self.push_image(img, ix, y_line - drop - dh, dw, dh);
+                            }
                         }
                         let label = self.chap_page_label();
                         for name in para.bookmarks.iter().chain(&para.blank_bookmarks) {

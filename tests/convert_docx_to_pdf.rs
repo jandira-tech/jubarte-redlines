@@ -26032,3 +26032,40 @@ fn a_pbdr_edge_of_val_none_paints_nothing() {
         "none/nil edges draw no rule; rules={rules:?}"
     );
 }
+
+#[test]
+fn a_column_anchored_picture_in_a_cell_paints_inside_it() {
+    // fixtures_500 017abe40: photos anchored layoutInCell, positionH
+    // column/center, positionV paragraph. Word keeps them in the cell and
+    // grows the row; cells dropped every anchored picture (0.110 -> 0.760).
+    let pic = "<w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:simplePos x=\"0\" y=\"0\"/>\
+          <wp:positionH relativeFrom=\"column\"><wp:align>center</wp:align></wp:positionH>\
+          <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"1524000\" cy=\"762000\"/><wp:wrapSquare wrapText=\"largest\"/>\
+          <wp:docPr id=\"1\" name=\"Bild1\"/>\
+          <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+            <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+              <pic:spPr><a:xfrm><a:ext cx=\"1524000\" cy=\"762000\"/></a:xfrm>\
+              <a:prstGeom prst=\"rect\"/></pic:spPr></pic:pic>\
+          </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>";
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"5000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:p><w:r><w:t>Label</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p>{pic}</w:p></w:tc></w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert anchored cell picture");
+    let (x, y) = image_cm_xy(&pdf, "120.00", "60.00");
+    // Second cell spans 222..472pt; a 120pt picture centred sits near 287.
+    assert!(
+        x > 240.0 && x + 120.0 < 472.0,
+        "picture centred in the cell; x={x}"
+    );
+    assert!(
+        (y - (720.0 - 60.0)).abs() < 3.0,
+        "picture top at the row top; y={y}"
+    );
+}
