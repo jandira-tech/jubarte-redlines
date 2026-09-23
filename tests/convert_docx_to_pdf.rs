@@ -3580,7 +3580,7 @@ fn hanging_list_pair_count(lines: &[Vec<f32>]) -> usize {
 
 fn list_number_fixture(body: &str) -> Vec<u8> {
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
           <w:style w:type=\"paragraph\" w:styleId=\"ListNumber\">\
             <w:pPr><w:numPr><w:numId w:val=\"2\"/></w:numPr></w:pPr>\
           </w:style>\
@@ -4318,7 +4318,7 @@ fn unstyled_tblcellmar_80_stays_replaced_after_mini_92() {
     // and was ITT-wrong on the official fixture itself. Keep max().
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-           <w:docDefaults><w:pPrDefault><w:pPr>\
+           <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
              <w:spacing w:after=\"120\" w:line=\"240\" w:lineRule=\"atLeast\"/>\
            </w:pPr></w:pPrDefault></w:docDefaults>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
@@ -4607,7 +4607,7 @@ fn body_then_heading1_uses_word_max_spacing() {
     // Word uses max=18pt; mini 209–212 max dropped no-redline −0.057.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-           <w:docDefaults><w:pPrDefault><w:pPr>\
+           <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
              <w:spacing w:after=\"160\" w:line=\"240\" w:lineRule=\"auto\"/>\
            </w:pPr></w:pPrDefault></w:docDefaults>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
@@ -7115,6 +7115,103 @@ fn tbl_ind_mode15_sits_at_indent_without_cell_margin() {
 }
 
 #[test]
+fn fixed_table_spanned_first_cell_keeps_the_grid_split() {
+    // A first-row gridSpan=2 tcW 1662 over grid 1231/431 keeps the grid
+    // split; halving it made column one 41.5pt instead of Word's 61.55
+    // (fixtures_500 0005052e header: "BGYS.F-06" wrapped).
+    let bdr = r#"<w:tblBorders><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders>"#;
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="1662" w:type="dxa"/>{bdr}<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="1231"/><w:gridCol w:w="431"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1662" w:type="dxa"/><w:gridSpan w:val="2"/></w:tcPr><w:p/></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w="1231" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="431" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+    );
+    let pdf =
+        docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("convert spanned fixed table");
+    let mut rules = pdf_vertical_rule_xs(&pdf);
+    rules.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    rules.dedup_by(|a, b| (*a - *b).abs() < 0.3);
+    let left = rules.first().copied().unwrap_or(0.0);
+    assert!(
+        rules.iter().any(|x| ((x - left) - 61.55).abs() < 0.3),
+        "column one is the 1231-twip grid column; rules={rules:?}"
+    );
+}
+
+#[test]
+fn styles_without_any_size_paint_word_ten_point() {
+    // With styles.xml present and no w:sz anywhere, Word's run size is
+    // the OOXML default 10pt, not the synthetic Calibri-11 new-document
+    // default (fixtures_500 003c9ddd rows were 0.65pt too tall).
+    let styles = |sz: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+               <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>{sz}</w:rPr></w:rPrDefault></w:docDefaults>\
+               <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+             </w:styles>"
+        )
+    };
+    let body = "<w:p><w:r><w:t>Sized by default</w:t></w:r></w:p><w:p><w:r><w:t>Second line</w:t></w:r></w:p><w:sectPr/>";
+    let implicit = docx_to_pdf(&docx_with_styles(body, &styles(""))).expect("no sz");
+    let explicit =
+        docx_to_pdf(&docx_with_styles(body, &styles("<w:sz w:val=\"20\"/>"))).expect("sz 20");
+    assert_eq!(
+        pdf_content_streams(&implicit),
+        pdf_content_streams(&explicit),
+        "no w:sz must paint exactly like an explicit 10pt"
+    );
+}
+
+#[test]
+fn bordered_row_pitch_adds_the_horizontal_rule() {
+    // Word stacks each row's horizontal rule on top of its height: 0.5pt
+    // rules make the pitch trHeight/content + 0.5 (fixtures_500 0005052e
+    // 397 twips -> 20.35pt; 003c9ddd 3 + 11.5 + 0.5 = 15.0).
+    let table = |bdr: &str| {
+        let row = |t: &str| {
+            format!(
+                "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc></w:tr>"
+            )
+        };
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"3000\" w:type=\"dxa\"/>{bdr}</w:tblPr><w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid>{}{}{}</w:tbl><w:p/>",
+            row("one"),
+            row("two"),
+            row("three")
+        )
+    };
+    let ruled = r#"<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders>"#;
+    let pitch = |pdf: &[u8]| {
+        let ys = text_baselines(pdf);
+        assert!(ys.len() >= 3, "three rows paint; ys={ys:?}");
+        (ys[0] - ys[2]) / 2.0
+    };
+    let with = pitch(&docx_to_pdf(&minimal_docx_with_settings(&table(ruled), "")).expect("ruled"));
+    let without = pitch(&docx_to_pdf(&minimal_docx_with_settings(&table(""), "")).expect("bare"));
+    assert!(
+        ((with - without) - 0.5).abs() < 0.05,
+        "0.5pt rules add 0.5pt per row; with={with} without={without}"
+    );
+}
+
+#[test]
+fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
+    // Word centres the whole table in the measure; the mode < 15 pull by
+    // the left cell margin only applies to left-aligned tables
+    // (fixtures_500 0005052e: the pulled table sat 3.5pt left of Word).
+    let body = r#"<w:tbl><w:tblPr><w:tblW w:w="4320" w:type="dxa"/><w:jc w:val="center"/><w:tblBorders><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="4320"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4320" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(
+        body,
+        r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"/></w:compat>"#,
+    ))
+    .expect("convert centered mode14 table");
+    let rules = pdf_vertical_rule_xs(&pdf);
+    assert!(
+        rules.iter().any(|x| (197.5..=198.5).contains(x))
+            && rules.iter().any(|x| (413.5..=414.5).contains(x)),
+        "216pt table centred in 72..540 spans 198..414; rules={rules:?}"
+    );
+}
+
+#[test]
 fn official_table_bookmark_test_two_fourth_col_sits_at_word_540() {
     // Word Test 2 (8.33in): four 150pt columns, R1C4 at x=540. Capping
     // 12000 twips to the 432pt measure packed C4 at ~419 (span 324).
@@ -7202,7 +7299,7 @@ fn official_table_bookmark_end_keeps_seven_tests_on_page_one() {
 fn line240_table_style(style_id: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
            <w:style w:type=\"table\" w:styleId=\"{style_id}\">\
              <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
            </w:style>\
@@ -10432,7 +10529,7 @@ fn official_i_am_sharing_executive_stays_black_after_mini_112() {
 fn medium_shading_accent1_styles() -> &'static str {
     // comments-lots MediumShading1-Accent1: firstRow 4F81BD, band1Horz D3DFEE.
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
           <w:style w:type=\"table\" w:styleId=\"MediumShading1-Accent1\">\
             <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
             <w:tblPr><w:tblStyleRowBandSize w:val=\"1\"/></w:tblPr>\
@@ -10617,7 +10714,7 @@ fn grid_table4_accent1_styles() -> &'static str {
     // rPr color FFFFFF. Header cells have no direct w:color; Word paints
     // Region/Q1 white on the dark fill. We currently leave them black.
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
           <w:style w:type=\"table\" w:styleId=\"GridTable4-Accent1\">\
             <w:tblPr><w:tblBorders>\
               <w:top w:val=\"single\" w:sz=\"4\" w:color=\"45B0E1\"/>\
@@ -14667,7 +14764,22 @@ fn even_and_odd_headers_use_even_ref_on_even_pages() {
     );
 }
 
+const HEADER_INLINE_DOT: &str = "<w:r><w:drawing><wp:inline>\
+             <wp:extent cx=\"914400\" cy=\"914400\"/>\
+             <wp:docPr id=\"1\" name=\"Picture 1\"/>\
+             <a:graphic><a:graphicData \
+               uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+               <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+             </a:graphicData></a:graphic>\
+           </wp:inline></w:drawing></w:r>";
+
 fn header_image_docx() -> Vec<u8> {
+    header_part_docx(&format!("<w:p>{HEADER_INLINE_DOT}</w:p>"))
+}
+
+/// A one-paragraph body whose default header holds `inner` (header1.xml
+/// with an `rIdImg` 1×1 PNG relationship).
+fn header_part_docx(inner: &str) -> Vec<u8> {
     // xml leftover: images in headers. The blip lives on header1.xml.rels,
     // not document.xml.rels; collect_hf_runs currently skips w:drawing.
     let document = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
@@ -14680,20 +14792,14 @@ fn header_image_docx() -> Vec<u8> {
              <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
                w:header=\"720\" w:footer=\"720\"/></w:sectPr>\
          </w:body></w:document>";
-    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+    let header = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
            xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
            xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
            xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
-           xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
-           <w:p><w:r><w:drawing><wp:inline>\
-             <wp:extent cx=\"914400\" cy=\"914400\"/>\
-             <wp:docPr id=\"1\" name=\"Picture 1\"/>\
-             <a:graphic><a:graphicData \
-               uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
-               <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
-             </a:graphicData></a:graphic>\
-           </wp:inline></w:drawing></w:r></w:p></w:hdr>";
+           xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">{inner}</w:hdr>"
+    );
     let types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
         <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
@@ -14756,6 +14862,24 @@ fn header_inline_image_paints_in_the_header_band() {
         "header blip must embed as a 1×1 image XObject; tail {}",
         &hay[hay.len().saturating_sub(320)..]
     );
+}
+
+#[test]
+fn header_table_cell_picture_paints_once() {
+    // The header table lays its cell picture out itself; the loose-picture
+    // pass painted it again at the header's flow origin (fixtures_500
+    // 0005052e: a second logo in the page corner).
+    let pdf = docx_to_pdf(&header_part_docx(&format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>\
+         <w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+         <w:p>{HEADER_INLINE_DOT}</w:p></w:tc></w:tr></w:tbl><w:p/>"
+    )))
+    .expect("convert header table picture");
+    let draws: usize = pdf_content_streams(&pdf)
+        .iter()
+        .map(|page| page.matches(" Do").count())
+        .sum();
+    assert_eq!(draws, 1, "one picture, one Do");
 }
 
 fn chrome_drawing(cx: u32) -> String {
@@ -18280,7 +18404,7 @@ fn table_default_cell_left_is_word_108_twips() {
     // lines up with body at the margin (plan xml 3.3 ckpt 1).
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-           <w:docDefaults><w:pPrDefault><w:pPr>\
+           <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
              <w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
            </w:pPr></w:pPrDefault></w:docDefaults>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
@@ -18953,7 +19077,7 @@ fn table_title_empty_para_keeps_grid_on_soffice_baseline() {
     // sits ~5pt too low (ink_f1 0.39). Soffice title→cell baseline ≈ 51.4pt.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-           <w:docDefaults><w:pPrDefault><w:pPr>\
+           <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
              <w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
            </w:pPr></w:pPrDefault></w:docDefaults>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
@@ -19843,7 +19967,7 @@ fn tblw_pct_sixty_stretches_narrow_grid() {
 
 fn table_grid_line240_styles() -> String {
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
              <w:name w:val=\"Normal\"/></w:style>\
            <w:style w:type=\"paragraph\" w:styleId=\"Heading2\">\
@@ -22465,7 +22589,7 @@ fn numbering_start_indent_nests_ilvl_past_listparagraph() {
     // ListParagraph also carries w:ind w:start="720". Numbering must win
     // so ilvl 1 sits 18pt to the right of ilvl 0.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
            <w:style w:type=\"paragraph\" w:styleId=\"ListParagraph\">\
              <w:basedOn w:val=\"Normal\"/>\
              <w:pPr><w:ind w:start=\"720\"/><w:contextualSpacing/></w:pPr>\

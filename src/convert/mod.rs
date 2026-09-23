@@ -847,7 +847,7 @@ enum Block {
         rows: Vec<Vec<TableCell>>,
         style: ParaStyle,
         borders: Option<TblBorders>,
-        geom: TableGeom,
+        geom: Box<TableGeom>,
     },
     /// Hard page / next-page section break (`w:br type=page` or non-continuous `sectPr`).
     /// `next` is the following section's geometry + chrome (sd_2517 later
@@ -903,8 +903,11 @@ struct TableGeom {
     tbl_ind: f32,
     /// Table-level left cell margin used by the Word edge rule.
     mar_l: f32,
-    /// First-row `tcW` preferred widths (spanned cells split evenly).
+    /// First-row `tcW` preferred widths (spans shared by the grid).
     pref: Vec<PrefWidth>,
+    /// Painted table-level horizontal rule widths `[top, insideH]`; Word
+    /// stacks a row's rule on top of its height.
+    rules: [f32; 2],
     /// `w:tblLayout w:type=fixed`.
     fixed: bool,
     /// `w:tblpPr` floating table (xml 3.3 ckpt 5).
@@ -1966,6 +1969,9 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     // Same for the Word-2013 276/240 line: with no `w:line` anywhere Word
     // is single-spaced (fixtures_500 003599e1 TNR 13 lines 14.88pt apart).
     defaults.para.line_mult = 1.0;
+    // And the size: with no `w:sz` anywhere Word runs at the OOXML
+    // default 10pt, not the new-document 11 (fixtures_500 003c9ddd).
+    defaults.run.size = 10.0;
     if let Some(dd) = dom
         .descendants(root, Some(&W::name("docDefaults")))
         .into_iter()
@@ -5367,7 +5373,17 @@ fn table_row_height_pt(
         .iter()
         .map(|cell| cell_content_height(fonts, cell, col_w, space_for_ul))
         .fold(0.0_f32, f32::max);
-    content.max(spec)
+    // The rule above the row: a cell restating its borders owns its top
+    // edge; otherwise the table's top (first row) or insideH applies.
+    let table_rule = geom.rules[usize::from(ri > 0)];
+    let rule = row
+        .iter()
+        .map(|cell| {
+            cell.borders
+                .map_or(table_rule, |cb| cb.top.map_or(0.0, |(_, w)| w))
+        })
+        .fold(0.0_f32, f32::max);
+    content.max(spec) + rule
 }
 
 /// One line box of a paragraph as `emit_runs` lays it out: `para_line_box`
@@ -6759,7 +6775,7 @@ fn table_block(
     if cols.is_empty() && occupancy > 0 {
         cols = vec![80.0; occupancy];
     }
-    let pref = first_row_pref(&raw_rows, cols.len());
+    let pref = first_row_pref(&raw_rows, &cols);
     let fixed = table_layout_fixed(dom, table);
     let mut rows = resolve_table_merges(raw_rows);
     if let Some(ref style) = tdef {
@@ -6788,13 +6804,19 @@ fn table_block(
     }
     let direct_borders = table_pr(dom, table).and_then(|pr| parse_tbl_borders(dom, pr));
     let unstyled = tdef.is_none();
+    let rules = direct_borders
+        .or_else(|| tdef.as_ref().and_then(|t| t.borders))
+        .map_or([0.0; 2], |b| {
+            let on = |edge: bool| if edge { b.width } else { 0.0 };
+            [on(b.top), on(b.inside_h)]
+        });
     Block::Table {
         cols,
         rows,
         style: tstyle,
         borders: direct_borders.or_else(|| tdef.and_then(|t| t.borders)),
         geom: {
-            TableGeom {
+            Box::new(TableGeom {
                 row_min,
                 row_exact,
                 row_cant_split,
@@ -6808,7 +6830,8 @@ fn table_block(
                 pref,
                 fixed,
                 float: table_float(dom, table),
-            }
+                rules,
+            })
         },
     }
 }
@@ -7086,32 +7109,36 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
     }
 }
 
-fn first_row_pref(raw_rows: &[Vec<RawCell>], ncols: usize) -> Vec<PrefWidth> {
-    let mut pref = vec![PrefWidth::Auto; ncols];
+/// First-row preferred widths per grid column. A spanned cell's width is
+/// shared in proportion to the grid columns it covers (0005052e: tcW 1662
+/// over grid 1231/431), evenly only when that grid is empty.
+fn first_row_pref(raw_rows: &[Vec<RawCell>], grid: &[f32]) -> Vec<PrefWidth> {
+    let mut pref = vec![PrefWidth::Auto; grid.len()];
     let Some(row) = raw_rows.first() else {
         return pref;
     };
     let mut col = 0usize;
     for cell in row {
         let span = cell.colspan.max(1);
-        match cell.pref {
-            PrefWidth::Dxa(w) => {
-                let each = w / span as f32;
-                for i in 0..span {
-                    if let Some(slot) = pref.get_mut(col + i) {
-                        *slot = PrefWidth::Dxa(each);
-                    }
-                }
+        let covered: f32 = (col..col + span)
+            .map(|i| grid.get(i).copied().unwrap_or(0.0))
+            .sum();
+        let share = |i: usize| {
+            if covered > 0.0 {
+                grid.get(col + i).copied().unwrap_or(0.0) / covered
+            } else {
+                1.0 / span as f32
             }
-            PrefWidth::Pct(p) => {
-                let each = p / span as f32;
-                for i in 0..span {
-                    if let Some(slot) = pref.get_mut(col + i) {
-                        *slot = PrefWidth::Pct(each);
-                    }
-                }
+        };
+        for i in 0..span {
+            let Some(slot) = pref.get_mut(col + i) else {
+                continue;
+            };
+            match cell.pref {
+                PrefWidth::Dxa(w) => *slot = PrefWidth::Dxa(w * share(i)),
+                PrefWidth::Pct(p) => *slot = PrefWidth::Pct(p * share(i)),
+                PrefWidth::Auto => {}
             }
-            PrefWidth::Auto => {}
         }
         col += span;
     }
@@ -10168,7 +10195,18 @@ fn load_chrome_part(
         if hf_para_is_shape_text(&part_dom, para) {
             continue;
         }
-        images.extend(collect_images(pkg, &path, &part_dom, para));
+        // A top-level chrome table lays out the pictures its cells hold
+        // (0005052e painted the logo twice); page-anchored ones stay here.
+        let table_owned = hf_para_in_table(&part_dom, root, para)
+            && part_dom
+                .ancestors(para, Some(&W::tbl()))
+                .first()
+                .is_some_and(|t| hf_node_is_top_level(&part_dom, root, *t));
+        images.extend(
+            collect_images(pkg, &path, &part_dom, para)
+                .into_iter()
+                .filter(|img| !(table_owned && cell_holds_image(img))),
+        );
     }
     let align = first_para_align(&part_dom, root);
     let edge = if local.starts_with("header") {
@@ -14475,13 +14513,16 @@ impl<'a> Layout<'a> {
             Align::Left | Align::Justify => 0.0,
         };
         // Word mode < 15: border at margin + tblInd - left cell mar so
-        // cell text lines up with body. Mode 15: margin + tblInd.
-        let pull = if self.compat_mode < 15 {
+        // cell text lines up with body. Mode 15: margin + tblInd. A
+        // centred table is centred whole: no pull, no tblInd (0005052e).
+        let centred = matches!(style.align, Align::Center);
+        let pull = if self.compat_mode < 15 && !centred {
             geom.mar_l
         } else {
             0.0
         };
-        let table_left = self.page.margin_l + shift + geom.tbl_ind - pull;
+        let ind = if centred { 0.0 } else { geom.tbl_ind };
+        let table_left = self.page.margin_l + shift + ind - pull;
         if let Some(slot) = geom.float
             && self.nested_depth == 0
         {
