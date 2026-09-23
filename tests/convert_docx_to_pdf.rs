@@ -1484,6 +1484,32 @@ fn binary_streams_are_deflated_even_without_compress() {
 }
 
 #[test]
+fn a_left_margin_relative_anchor_offsets_from_the_page_edge() {
+    // fixtures_500 000ebd12: the header logo sits at positionH
+    // relativeFrom="leftMargin" 5688965 EMU (447.95pt). The leftMargin frame
+    // starts at the page edge, so Word paints it at x=447.95; we fell back
+    // to the left margin (72pt).
+    let img = blip(
+        "914400",
+        "914400",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"leftMargin\"><wp:posOffset>5688965</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"topMargin\"><wp:posOffset>431800</wp:posOffset></wp:positionV>\
+           <wp:wrapNone/>",
+        "</wp:anchor>",
+    );
+    let body = format!("<w:p><w:r>{img}</w:r><w:r><w:t>Text</w:t></w:r></w:p><w:sectPr/>");
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("leftMargin anchor");
+    let boxes = pdf_image_boxes(&pdf);
+    let (x, _, _, _) = *boxes.first().expect("the picture paints");
+    assert!(
+        (x - 447.95).abs() < 0.5,
+        "x from the page edge; boxes={boxes:?}"
+    );
+}
+
+#[test]
 fn an_outlined_picture_takes_its_line_once() {
     // fixtures_500 000f5278: an inline picture with an a:ln outline was
     // laid out twice, as the picture and as an empty stroked box under
@@ -16025,6 +16051,25 @@ fn header_text_box_picture_does_not_push_the_body() {
     assert!(
         (body(&with_box) - body(&plain)).abs() < 1.0,
         "the text-box picture leaves the body where it was; with_box={with_box:?} plain={plain:?}"
+    );
+}
+
+#[test]
+fn a_floating_header_picture_takes_its_anchor_position() {
+    // fixtures_500 000ebd12: the first-page header logo is anchored at
+    // leftMargin 447.95pt / topMargin 34pt; header pictures were always
+    // painted at the left margin on the header line.
+    let inner = r#"<w:p><w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="leftMargin"><wp:posOffset>5688965</wp:posOffset></wp:positionH><wp:positionV relativeFrom="topMargin"><wp:posOffset>431800</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="Logo"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#;
+    let pdf = docx_to_pdf(&header_part_docx_at(inner, 720)).expect("header anchor");
+    let boxes = pdf_image_boxes(&pdf);
+    let (x, y, _, _) = *boxes.first().expect("the logo paints");
+    assert!(
+        (x - 447.95).abs() < 0.5,
+        "x from the page edge; boxes={boxes:?}"
+    );
+    assert!(
+        (y - 686.0).abs() < 0.5,
+        "34pt from the page top; boxes={boxes:?}"
     );
 }
 

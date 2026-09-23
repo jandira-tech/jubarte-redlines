@@ -9421,8 +9421,14 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
     };
     ImageSlot::Float {
         align,
-        page_x: (h_from == "page").then(|| pos_offset_pt(dom, ph)).flatten(),
-        page_y: (v_from == "page").then(|| pos_offset_pt(dom, pv)).flatten(),
+        // The leftMargin / insideMargin and topMargin frames start at the
+        // page edge (000ebd12's header logo: leftMargin 447.95pt).
+        page_x: matches!(h_from, "page" | "leftMargin" | "insideMargin")
+            .then(|| pos_offset_pt(dom, ph))
+            .flatten(),
+        page_y: matches!(v_from, "page" | "topMargin")
+            .then(|| pos_offset_pt(dom, pv))
+            .flatten(),
         col_x: matches!(h_from, "column" | "margin" | "character")
             .then(|| pos_offset_pt(dom, ph))
             .flatten(),
@@ -13761,12 +13767,22 @@ impl<'a> Layout<'a> {
 
     fn emit_chrome_image(&mut self, img: &LaidImage, in_header: bool, dx: f32, lift: f32) -> f32 {
         let (dw, dh) = self.image_wh(img);
-        let x = self.page.margin_l + dx;
-        let y = if in_header {
+        let mut x = self.page.margin_l + dx;
+        let mut y = if in_header {
             self.page.height - self.page.header.max(0.0) - dh
         } else {
             self.page.footer.max(0.0) + lift
         };
+        // A floating header/footer picture sits at its anchor, not on the
+        // part's line (000ebd12's logo: leftMargin 447.95pt, topMargin 34pt).
+        if let ImageSlot::Float { page_y, para_y, .. } = img.slot {
+            x = self.float_xy(dw, dh, img.slot).0;
+            if let Some(top) = page_y {
+                y = self.page.height - top - dh;
+            } else if in_header {
+                y = self.page.height - self.page.header.max(0.0) - para_y.unwrap_or(0.0) - dh;
+            }
+        }
         match &img.kind {
             ImageKind::Jpeg {
                 width,
