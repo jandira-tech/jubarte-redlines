@@ -7771,6 +7771,20 @@ fn justified_first_line_stops_at_the_margin_despite_its_indent() {
 }
 
 #[test]
+fn hanging_indent_is_an_implicit_tab_stop() {
+    // fixtures_500 00b7801e: "Monday 7/22<tab>Chicken Wings" with a 2880
+    // twip hanging indent; Word tabs to the indent (216), not the next
+    // default stop.
+    let body = r#"<w:p><w:pPr><w:ind w:left="2880" w:hanging="2880"/></w:pPr><w:r><w:t>Mon</w:t></w:r><w:r><w:tab/><w:t>Chicken</w:t></w:r></w:p><w:sectPr/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("hanging tab");
+    let xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    assert!(
+        xs.iter().any(|x| (x - 216.0).abs() < 0.1),
+        "Chicken starts at the 144pt hanging indent; xs={xs:?}"
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables

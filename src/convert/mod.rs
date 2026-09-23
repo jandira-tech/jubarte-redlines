@@ -12077,6 +12077,29 @@ impl<'a> Layout<'a> {
         self.last_style_id.clone_from(&style.style_id);
         self.page_has_body = true;
         self.tab_stops.clone_from(&style.tab_stops);
+        // A hanging indent is an implicit left tab stop at the indent
+        // (00b7801e: "Monday 7/22<tab>" lands on the wrapped lines' edge).
+        if style.indent_first < 0.0
+            && style.indent_left > 0.0
+            && !self
+                .tab_stops
+                .iter()
+                .any(|t| (t.pos - style.indent_left).abs() < 0.5)
+        {
+            let at = self
+                .tab_stops
+                .iter()
+                .position(|t| t.pos > style.indent_left)
+                .unwrap_or(self.tab_stops.len());
+            self.tab_stops.insert(
+                at,
+                TabStop {
+                    pos: style.indent_left,
+                    align: TabAlign::Left,
+                    leader: TabLeader::None,
+                },
+            );
+        }
         // Word suppresses Spacing Before only when the paragraph arrived
         // at the page top by overflow (plan Step 3 / Finding C). Document
         // start, nextPage sectPr, and a hard page break still apply it
