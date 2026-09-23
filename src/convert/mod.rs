@@ -643,6 +643,10 @@ struct StyleSheet {
     by_id: std::collections::HashMap<String, NamedStyle>,
     tables: HashMap<String, TblStyle>,
     theme: ThemeFonts,
+    /// Undefined built-in styles (Heading1…) take Word's latent look: with
+    /// no styles part, or one that declares w:latentStyles. A styles part
+    /// without them leaves an undefined heading as Normal (000312ea).
+    latent: bool,
 }
 
 #[derive(Clone)]
@@ -2023,6 +2027,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             by_id: HashMap::new(),
             tables: HashMap::new(),
             theme,
+            latent: true,
         };
     };
     let mut dom = Dom::new();
@@ -2033,6 +2038,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             by_id: HashMap::new(),
             tables: HashMap::new(),
             theme,
+            latent: true,
         };
     };
     // styles.xml is present. Do not keep the synthetic Word-2007 after=200
@@ -2127,6 +2133,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         by_id,
         tables,
         theme,
+        latent: xml.contains("latentStyles"),
     }
 }
 
@@ -5723,7 +5730,9 @@ fn para_base(
             // Word still applies latent built-in heading spacing when the
             // style is referenced but omitted from styles.xml (the
             // heading_*_style_demo fixtures). Direct pPr below wins.
-            apply_latent_ppr(sid, &mut pstyle, &mut rstyle, &sheet.theme);
+            if sheet.latent {
+                apply_latent_ppr(sid, &mut pstyle, &mut rstyle, &sheet.theme);
+            }
         }
         pstyle.style_id = sid.to_string();
     }
@@ -27009,6 +27018,7 @@ mod table_tests {
             by_id: HashMap::new(),
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
+            latent: true,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -27063,6 +27073,7 @@ mod table_tests {
             by_id: HashMap::new(),
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
+            latent: true,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -27104,6 +27115,7 @@ mod table_tests {
             by_id: HashMap::new(),
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
+            latent: true,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -27169,6 +27181,7 @@ mod table_tests {
             by_id: HashMap::new(),
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
+            latent: true,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -27219,6 +27232,7 @@ mod table_tests {
             by_id: HashMap::new(),
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
+            latent: true,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -27284,6 +27298,7 @@ mod table_tests {
             by_id: HashMap::new(),
             tables,
             theme: ThemeFonts::default(),
+            latent: true,
         }
     }
 

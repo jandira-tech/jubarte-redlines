@@ -6092,10 +6092,12 @@ fn heading1_ascii_theme_major_embeds_theme_calibri_not_body_aptos() {
 
 #[test]
 fn latent_heading1_uses_theme_major_fourteen_pt_bold() {
-    // xml_parts_plan latent built-ins: Heading1 omitted from styles.xml
-    // still gets Word's 2007 Cambria 14pt bold (not docDefaults 11pt).
+    // xml_parts_plan latent built-ins: Heading1 omitted from a styles.xml
+    // that declares w:latentStyles gets Word's 2007 Cambria 14pt bold (not
+    // docDefaults 11pt). Without latentStyles it is Normal (000312ea).
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:latentStyles w:defLockedState=\"0\" w:count=\"376\"/>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
              <w:name w:val=\"Normal\"/>\
            </w:style>\
@@ -6131,6 +6133,7 @@ fn latent_title_subtitle_heading2_to_4_use_word_2007_run_props() {
     // Heading3/4 spacing (before=10 after=0) already ships; this is face/size.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:latentStyles w:defLockedState=\"0\" w:count=\"376\"/>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
              <w:name w:val=\"Normal\"/>\
            </w:style>\
@@ -6184,6 +6187,7 @@ fn latent_heading5_and_6_use_theme_major_italic_and_regular() {
     // Size matches docDefaults, so the italic face is the distinctive Tf.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:latentStyles w:defLockedState=\"0\" w:count=\"376\"/>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
              <w:name w:val=\"Normal\"/>\
            </w:style>\
@@ -10745,6 +10749,24 @@ fn tbl_style_band_emits_fill_rect() {
         "D3DFEE band fill must be painted; tail {}",
         &text[text.len().saturating_sub(280)..]
     );
+}
+
+#[test]
+fn an_undefined_heading_style_is_normal_text() {
+    // fixtures_500 000312ea (and 5 more): pStyle Heading1/2/3 with no
+    // definition and no w:latentStyles in styles.xml. Word sets them as
+    // Normal (Arial 10); we painted the built-in Cambria 14 bold.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+            <w:sz w:val=\"20\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr><w:r><w:t>Head</w:t></w:r></w:p><w:sectPr/>";
+    let bytes = docx_to_pdf(&docx_with_styles(body, styles)).expect("undefined heading");
+    let hay = String::from_utf8_lossy(&bytes);
+    assert!(!hay.contains("Cambria"), "no built-in heading face");
+    assert!(!hay.contains("Bold"), "no built-in heading bold");
 }
 
 #[test]
