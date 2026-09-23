@@ -7818,6 +7818,20 @@ fn horizontally_scaled_text_wraps_at_its_scaled_width() {
 }
 
 #[test]
+fn centred_table_wider_than_the_column_overhangs_both_sides() {
+    // fixtures_500 00afb3e6: a 534.75pt jc=center table in a 468pt measure;
+    // Word centres it (left edge 38.6), not pinned to the left margin.
+    let body = r#"<w:tbl><w:tblPr><w:tblW w:w="11000" w:type="dxa"/><w:jc w:val="center"/><w:tblLayout w:type="fixed"/><w:tblBorders><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="11000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="11000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("wide centred table");
+    let rules = pdf_vertical_rule_xs(&pdf);
+    assert!(
+        rules.iter().any(|x| (x - 31.0).abs() < 0.5)
+            && rules.iter().any(|x| (x - 581.0).abs() < 0.5),
+        "the 550pt table spans 31..581; rules={rules:?}"
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables
@@ -15560,6 +15574,47 @@ fn header_lines_keep_their_own_paragraph_alignment() {
     assert!(
         xy.len() >= 2 && xy[0].0 > 400.0 && (xy[1].0 - 72.0).abs() < 0.5,
         "each header line uses its own jc; xy={xy:?}"
+    );
+}
+
+#[test]
+fn header_logo_paragraph_is_centred_and_pushes_the_body() {
+    // fixtures_500 00afb3e6: the header is one centred paragraph holding a
+    // 72pt-tall inline logo; Word centres it and starts the body below it
+    // (header 36 + 72 = 108), not at the smaller top margin.
+    let inner = format!(r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr>{HEADER_INLINE_DOT}</w:p>"#);
+    let pdf = docx_to_pdf(&header_part_docx_at(&inner, 720)).expect("header logo");
+    let boxes = pdf_image_boxes(&pdf);
+    assert!(
+        boxes.first().is_some_and(|b| (b.0 - 270.0).abs() < 0.1),
+        "the logo is centred in 72..540; boxes={boxes:?}"
+    );
+    let body_top = text_baselines(&pdf).first().copied().unwrap_or(f32::MAX);
+    assert!(
+        body_top < 792.0 - 108.0,
+        "the body starts below the logo band; body baseline={body_top}"
+    );
+}
+
+#[test]
+fn header_text_box_picture_does_not_push_the_body() {
+    // fixtures_500 003982453: an inline picture inside an anchored header
+    // text box is not in the header's line flow; counting it pushed every
+    // body page 61pt down.
+    let inner = format!(
+        r#"<w:p><w:r><w:drawing><wp:anchor simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="1828800"/><wp:wrapNone/><wp:docPr id="9" name="Box"/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:spPr><a:xfrm><a:ext cx="1828800" cy="1828800"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p>{HEADER_INLINE_DOT}</w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#
+    );
+    let with_box = text_baselines(&docx_to_pdf(&header_part_docx_at(&inner, 720)).expect("box"));
+    let plain = text_baselines(&docx_to_pdf(&header_part_docx_at("<w:p/>", 720)).expect("plain"));
+    let body = |ys: &[f32]| {
+        ys.iter()
+            .copied()
+            .filter(|y| *y < 740.0)
+            .fold(f32::MIN, f32::max)
+    };
+    assert!(
+        (body(&with_box) - body(&plain)).abs() < 1.0,
+        "the text-box picture leaves the body where it was; with_box={with_box:?} plain={plain:?}"
     );
 }
 

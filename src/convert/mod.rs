@@ -1143,6 +1143,13 @@ struct LaidImage {
     crop: Option<[f32; 4]>,
     /// `a:xfrm/@rot` degrees (60000ths in OOXML). 0 = unrotated.
     rotate_deg: f32,
+    /// Header/footer picture: its paragraph's jc, and whether it comes
+    /// before the part's text (00afb3e6's centred logo opens the header).
+    chrome_align: Align,
+    chrome_lead: bool,
+    /// An inline picture directly in a header/footer paragraph, so in the
+    /// part's line flow (003982453's text-box picture is not).
+    chrome_flow: bool,
 }
 
 struct LaidTextBox {
@@ -5780,6 +5787,9 @@ fn paragraph_block(
                 z: 0,
                 crop: None,
                 rotate_deg: 0.0,
+                chrome_align: Align::Left,
+                chrome_lead: false,
+                chrome_flow: false,
             },
         );
     }
@@ -9026,6 +9036,9 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         z,
                         crop: src_rect_frac(dom, drawing),
                         rotate_deg: drawing_rotate_deg(dom, drawing),
+                        chrome_align: Align::Left,
+                        chrome_lead: false,
+                        chrome_flow: false,
                     });
                 } else {
                     out.push(LaidImage {
@@ -9037,6 +9050,9 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         z,
                         crop: None,
                         rotate_deg: drawing_rotate_deg(dom, drawing),
+                        chrome_align: Align::Left,
+                        chrome_lead: false,
+                        chrome_flow: false,
                     });
                 }
             }
@@ -9067,6 +9083,9 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         z: 0,
                         crop: None,
                         rotate_deg: 0.0,
+                        chrome_align: Align::Left,
+                        chrome_lead: false,
+                        chrome_flow: false,
                     });
                     continue;
                 };
@@ -9081,6 +9100,9 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     z: 0,
                     crop: None,
                     rotate_deg: 0.0,
+                    chrome_align: Align::Left,
+                    chrome_lead: false,
+                    chrome_flow: false,
                 });
             }
         }
@@ -10384,9 +10406,29 @@ fn load_chrome_part(
     };
     let runs = collect_hf_runs(&part_dom, root, sheet);
     let mut images = Vec::new();
+    let mut seen_text = false;
     for para in part_dom.descendants(root, Some(&W::p())) {
         if hf_para_is_shape_text(&part_dom, para) {
             continue;
+        }
+        let jc = para_base(&part_dom, para, sheet, None).0.align;
+        let lead = !seen_text;
+        // Only a picture-only paragraph stands as its own line; a picture
+        // sharing a line with text (000e002d's logo + tabbed title) stays
+        // with the text.
+        let flow = element_text(&part_dom, para).trim().is_empty()
+            && part_dom
+                .descendants(para, Some(&WP::name("inline")))
+                .into_iter()
+                .any(|inl| {
+                    part_dom
+                        .ancestors(inl, Some(&W::name("txbxContent")))
+                        .is_empty()
+                });
+        if !hf_para_in_table(&part_dom, root, para)
+            && !element_text(&part_dom, para).trim().is_empty()
+        {
+            seen_text = true;
         }
         // A top-level chrome table lays out the pictures its cells hold
         // (0005052e painted the logo twice); page-anchored ones stay here.
@@ -10398,7 +10440,13 @@ fn load_chrome_part(
         images.extend(
             collect_images(pkg, &path, &part_dom, para)
                 .into_iter()
-                .filter(|img| !(table_owned && cell_holds_image(img))),
+                .filter(|img| !(table_owned && cell_holds_image(img)))
+                .map(|mut img| {
+                    img.chrome_align = jc;
+                    img.chrome_lead = lead;
+                    img.chrome_flow = flow && matches!(img.slot, ImageSlot::Flow);
+                    img
+                }),
         );
     }
     let align = first_para_align(&part_dom, root);
@@ -11006,6 +11054,16 @@ fn chrome_one_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
     fonts.get(fid).single_line_pt(size).max(size)
 }
 
+/// Height of a header/footer's inline pictures: their line stands as
+/// tall as the tallest (00afb3e6's 71.6pt logo pushes the body down).
+fn chrome_images_h(images: &[LaidImage]) -> f32 {
+    images
+        .iter()
+        .filter(|img| img.chrome_flow)
+        .map(|img| img.h)
+        .fold(0.0_f32, f32::max)
+}
+
 /// Header/footer band: its stacked lines plus its laid-out tables.
 fn chrome_band(
     fonts: &Fonts,
@@ -11140,8 +11198,10 @@ impl<'a> Layout<'a> {
         let header = hf.header;
         let footer = hf.footer;
         let avail = page.width - page.margin_l - page.margin_r;
-        let header_band = chrome_band(fonts, &header, &hf.header_tables, avail, hf.space_for_ul);
-        let footer_band = chrome_band(fonts, &footer, &hf.footer_tables, avail, hf.space_for_ul);
+        let header_band = chrome_band(fonts, &header, &hf.header_tables, avail, hf.space_for_ul)
+            + chrome_images_h(&hf.header_images);
+        let footer_band = chrome_band(fonts, &footer, &hf.footer_tables, avail, hf.space_for_ul)
+            + chrome_images_h(&hf.footer_images);
         // Word starts the body at max(w:top, w:header + header line).
         // comments-lots: top=46.8 sits inside the 10.5pt header (36+~12),
         // so the 30pt title glyph-top is 48.63 not 46.8. Skipping the
@@ -11312,7 +11372,7 @@ impl<'a> Layout<'a> {
             &self.header_tables,
             self.page.width - self.page.margin_l - self.page.margin_r,
             self.space_for_ul,
-        );
+        ) + chrome_images_h(&self.header_images);
         self.body_top = if header_band <= 0.0 || self.page.top_exact {
             self.page.margin_t
         } else {
@@ -11683,7 +11743,7 @@ impl<'a> Layout<'a> {
             &self.footer_tables,
             self.page.width - self.page.margin_l - self.page.margin_r,
             self.space_for_ul,
-        );
+        ) + chrome_images_h(&self.footer_images);
         if self.page.bottom_exact {
             return self.page.margin_b;
         }
@@ -13410,13 +13470,32 @@ impl<'a> Layout<'a> {
     /// Paint one header/footer inline image `dx` after the previous ones
     /// (inline images flow left to right; they no longer stack on one
     /// spot). Returns the width it used.
-    fn emit_chrome_image(&mut self, img: &LaidImage, in_header: bool, dx: f32) -> f32 {
+    /// Where a header/footer's inline pictures start: their paragraph's
+    /// jc over the pictures' total width (00afb3e6's logo is centred).
+    fn chrome_images_dx(&self, images: &[LaidImage]) -> f32 {
+        let total: f32 = images
+            .iter()
+            .filter(|img| img.chrome_flow)
+            .map(|img| self.image_wh(img).0)
+            .sum();
+        if total <= 0.0 {
+            return 0.0;
+        }
+        let spare = (self.content_width() - total).max(0.0);
+        match images.first().map_or(Align::Left, |img| img.chrome_align) {
+            Align::Center => spare * 0.5,
+            Align::Right => spare,
+            Align::Left | Align::Justify => 0.0,
+        }
+    }
+
+    fn emit_chrome_image(&mut self, img: &LaidImage, in_header: bool, dx: f32, lift: f32) -> f32 {
         let (dw, dh) = self.image_wh(img);
         let x = self.page.margin_l + dx;
         let y = if in_header {
             self.page.height - self.page.header.max(0.0) - dh
         } else {
-            self.page.footer.max(0.0)
+            self.page.footer.max(0.0) + lift
         };
         match &img.kind {
             ImageKind::Jpeg {
@@ -14938,8 +15017,10 @@ impl<'a> Layout<'a> {
             })
             .collect();
         let used: f32 = col_w.iter().sum();
+        // A centred table wider than the measure overhangs both sides
+        // (00afb3e6's 534.75pt table starts at 38.6 in a 72..540 measure).
         let shift = match style.align {
-            Align::Center => ((avail - used) / 2.0).max(0.0),
+            Align::Center => (avail - used) / 2.0,
             Align::Right => (avail - used).max(0.0),
             Align::Left | Align::Justify => 0.0,
         };
@@ -15557,9 +15638,9 @@ impl<'a> Layout<'a> {
             // Moved out and back (not cloned): the vector owns image bytes
             // and chrome() runs on every page.
             let images = std::mem::take(&mut self.header_images);
-            let mut dx = 0.0;
+            let mut dx = self.chrome_images_dx(&images);
             for img in &images {
-                dx += self.emit_chrome_image(img, true, dx);
+                dx += self.emit_chrome_image(img, true, dx, 0.0);
             }
             self.header_images = images;
         }
@@ -15601,7 +15682,15 @@ impl<'a> Layout<'a> {
             let header = self.resolve_fields(&self.header.clone(), page_no);
             let (lead, _) = chrome_empty_pads(self.fonts, &header);
             // Each line: its own height and its paragraph's jc.
-            let mut top = self.page.height - self.page.header.max(0.0) - lead - head_before;
+            // Text follows the pictures of a paragraph that opens the part.
+            let pics_h = self
+                .header_images
+                .iter()
+                .filter(|img| img.chrome_lead && img.chrome_flow)
+                .map(|img| img.h)
+                .fold(0.0_f32, f32::max);
+            let mut top =
+                self.page.height - self.page.header.max(0.0) - lead - head_before - pics_h;
             let mut y = top;
             for (line, gap) in hf_styled_lines(&header) {
                 let (ascent, line_h) = chrome_line_metrics(self.fonts, &line);
@@ -15625,9 +15714,16 @@ impl<'a> Layout<'a> {
         }
         if !self.footer_images.is_empty() {
             let images = std::mem::take(&mut self.footer_images);
-            let mut dx = 0.0;
+            let mut dx = self.chrome_images_dx(&images);
+            // A footer picture that opens the part sits above its text.
+            let text_h = if self.footer.is_empty() {
+                0.0
+            } else {
+                chrome_line_pt(self.fonts, &self.footer)
+            };
             for img in &images {
-                dx += self.emit_chrome_image(img, false, dx);
+                let lift = if img.chrome_lead { text_h } else { 0.0 };
+                dx += self.emit_chrome_image(img, false, dx, lift);
             }
             self.footer_images = images;
         }
@@ -15686,10 +15782,18 @@ impl<'a> Layout<'a> {
             // (comments-lots Word top y=743). Using it as the baseline
             // sat the cap-height 7pt high (Td 36).
             let (_, trail) = chrome_empty_pads(self.fonts, &footer);
+            // Text stands on the pictures of a paragraph that ends the part.
+            let pics_below = self
+                .footer_images
+                .iter()
+                .filter(|img| !img.chrome_lead && img.chrome_flow)
+                .map(|img| img.h)
+                .fold(0.0_f32, f32::max);
             let base = self.page.footer.max(12.0)
                 + self.fonts.get(fid).descent_pt(size)
                 + trail
-                + foot_after;
+                + foot_after
+                + pics_below;
             // Baselines upward: line i sits above line i+1 by i+1's ascent,
             // i's own box and the gap between them, less i's ascent.
             let metrics: Vec<(f32, f32)> = lines
