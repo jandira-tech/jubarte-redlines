@@ -7937,6 +7937,31 @@ fn kern_two_kerns_body_text_like_word() {
 }
 
 #[test]
+fn word_2013_justified_line_squeezes_its_spaces_to_keep_a_word() {
+    // fixtures_500 00044aa0 (compatibilityMode 15): a justified 458pt line
+    // stays on a 451pt measure; Word narrowed its spaces. Calibrated on
+    // Word's line breaks in 96 compat-15 documents: up to a quarter of
+    // the line's space width. Word 2010 (14) and older break as before.
+    let words = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et quis";
+    let lines = |mode: &str| {
+        let body = format!(
+            r#"<w:p><w:pPr><w:spacing w:after="0"/><w:jc w:val="both"/></w:pPr><w:r><w:t>{words}</w:t></w:r></w:p><w:sectPr/>"#
+        );
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("squeeze");
+        text_baselines(&pdf).len()
+    };
+    assert_eq!(
+        lines("15"),
+        1,
+        "471.9pt of text fits 468pt by squeezing 15 spaces"
+    );
+    assert_eq!(lines("14"), 2, "Word 2010 layout does not squeeze");
+}
+
+#[test]
 fn justified_first_line_stops_at_the_margin_despite_its_indent() {
     // fixtures_500 00189e50: a justified paragraph with firstLine=720; its
     // first line was stretched to the full measure and ran 36pt past the

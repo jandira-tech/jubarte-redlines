@@ -12405,11 +12405,17 @@ impl<'a> Layout<'a> {
             // Word leftover / inter-word gaps (TJ ≈ -55 at 11.04). Trailing
             // wrap space is not a gap and is not in the measured line.
             let trail = trailing_ws_pt(self.fonts, line);
-            let justify_left = (measure - (line_w - trail).max(0.0)).max(0.0);
-            let justify = matches!(style.align, Align::Justify)
-                && line_i + 1 < lines.len()
-                && justify_left > 0.5
-                && !(self.do_not_expand_shift_return && ends_br.get(line_i) == Some(&true));
+            let fill = measure - (line_w - trail).max(0.0);
+            // A justified line Word kept by squeezing its spaces paints them
+            // narrower, even on the paragraph's last line (00044aa0).
+            let squeeze_line =
+                matches!(style.align, Align::Justify) && self.compat_mode >= 15 && fill < -0.05;
+            let justify_left = if squeeze_line { fill } else { fill.max(0.0) };
+            let justify = squeeze_line
+                || (matches!(style.align, Align::Justify)
+                    && line_i + 1 < lines.len()
+                    && justify_left > 0.5
+                    && !(self.do_not_expand_shift_return && ends_br.get(line_i) == Some(&true)));
             let x = self.flow_left() + indent + extra + first_extra;
             let baseline = self.y;
             if line_i == 0
@@ -12638,11 +12644,21 @@ impl<'a> Layout<'a> {
         width: f32,
         list: bool,
     ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
+        // Word 2013+ layout (compatibilityMode 15) keeps a justified line's
+        // last word by narrowing its spaces, up to a quarter of their width
+        // (00044aa0; the fraction that best reproduces Word's line breaks in
+        // the 96 compat-15 fixtures). Older modes break as before.
+        let squeeze = if matches!(style.align, Align::Justify) && self.compat_mode >= 15 {
+            0.25
+        } else {
+            0.0
+        };
         let tabs = |first_start: f32| WrapTabs {
             stops: &self.tab_stops,
             default_tab: self.page.default_tab,
             first_start,
             start: indent,
+            squeeze,
         };
         if has_marker {
             return wrap_runs_tabbed(self.fonts, body, width, width, list, Some(&tabs(indent)));
@@ -16556,6 +16572,9 @@ struct WrapTabs<'a> {
     default_tab: f32,
     first_start: f32,
     start: f32,
+    /// Fraction of a line's inter-word space a justified line may give up
+    /// to keep one more word (0 when the paragraph is not justified).
+    squeeze: f32,
 }
 
 fn wrap_runs_tabbed(
@@ -16600,6 +16619,7 @@ fn wrap_runs_tabbed(
             default_tab: t.default_tab,
             first_start: if i == 0 { t.first_start } else { t.start },
             start: t.start,
+            squeeze: t.squeeze,
         });
         let wrapped = wrap_runs_segment(fonts, seg, fw, width, list && i == 0, seg_tabs.as_ref());
         let more = i + 1 < segments.len();
@@ -16681,6 +16701,7 @@ fn wrap_runs_segment(
             }
         }
     }
+    let mut line_spaces = 0.0_f32;
     for (unit, is_space) in units {
         let mut w: f32 = unit.iter().map(|(_, _, w)| w).sum();
         // A tab jumps to the next stop from where it stands (00996ee5's
@@ -16710,10 +16731,15 @@ fn wrap_runs_segment(
         // Unbreakable tokens wider than the cell overflow (Test 7).
         // Character-break was ITT-wrong: file_196 13→15pp and
         // file_100/115/185/196 ~−24 ITT even when gated to tables.
-        if !is_space && x + w > limit && x > 0.0 {
+        let squeezed = tabs.is_some_and(|t| x + w - limit <= t.squeeze * line_spaces);
+        if !is_space && x + w > limit && x > 0.0 && !squeezed {
             lines.push(Vec::new());
             line_i += 1;
             x = 0.0;
+            line_spaces = 0.0;
+        }
+        if is_space && unit.iter().all(|(_, tok, _)| !tok.contains('\t')) {
+            line_spaces += w;
         }
         x += w;
         for (run, tok, _) in unit {
