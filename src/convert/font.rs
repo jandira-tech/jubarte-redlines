@@ -641,6 +641,9 @@ pub(crate) struct Face<'a> {
     /// lineGap (typo when USE_TYPO_METRICS is set). GDI reaches the same
     /// total as win height + external leading.
     line_height: f32,
+    /// hhea descender (typo with USE_TYPO_METRICS): `line_height`'s part
+    /// below the baseline.
+    line_descent: f32,
     /// Win ascent when USE_TYPO_METRICS is unset (Liberation ↔ Arial).
     paint_ascent: f32,
     pub bbox: [i16; 4],
@@ -689,6 +692,9 @@ impl<'a> Face<'a> {
         // vs 1.13) and Arial (1.09 vs 1.15) against Word's line.
         let line_height =
             f32::from(face.ascender()) - f32::from(face.descender()) + f32::from(face.line_gap());
+        // The line's part below the baseline, from the same table as its
+        // height (Courier's typo descender under-sizes it).
+        let line_descent = f32::from(face.descender()).abs();
         // GDI puts the external leading (hhea total − win total) above the
         // text: Word's first TNR 12 baseline is winAscent + 0.51pt down.
         let paint_ascent = face
@@ -730,6 +736,7 @@ impl<'a> Face<'a> {
             upem,
             descent,
             line_height,
+            line_descent,
             paint_ascent,
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
@@ -774,6 +781,12 @@ impl<'a> Face<'a> {
 
     pub(crate) fn single_line_pt(&self, size: f32) -> f32 {
         self.line_height * size / self.upem
+    }
+
+    /// The single line's part below the baseline (hhea descender, the same
+    /// table as `single_line_pt`).
+    pub(crate) fn line_descent_pt(&self, size: f32) -> f32 {
+        self.line_descent * size / self.upem
     }
 
     pub(crate) fn glyphs(&self, text: &str) -> Vec<u16> {

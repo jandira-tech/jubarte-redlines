@@ -872,6 +872,9 @@ struct TextRun {
     /// paragraph. The picture stands on the line's baseline, so the line
     /// is at least that tall above it.
     hf_pic_h: f32,
+    /// The paragraph's list number/bullet: its descent does not deepen
+    /// the line (0021f639's Courier "o" keeps TNR's pitch).
+    list_marker: bool,
 }
 
 impl TextRun {
@@ -892,6 +895,7 @@ impl TextRun {
             hf_para: None,
             ends_line: false,
             hf_pic_h: 0.0,
+            list_marker: false,
         }
     }
 
@@ -6021,7 +6025,9 @@ fn paragraph_block(
             merge_tab_stops(&mut pstyle.tab_stops, &lvl.tab_stops);
         }
         if pic.is_none() {
-            runs.insert(0, TextRun::new(marker, marker_style));
+            let mut mark = TextRun::new(marker, marker_style);
+            mark.list_marker = true;
+            runs.insert(0, mark);
         }
         // addition_removal p3: Word paints ListBullet • in #D13438 with
         // the delText. The marker is synthesized from paragraph rstyle
@@ -12571,7 +12577,15 @@ impl<'a> Layout<'a> {
         } else {
             inked
         };
-        let mut natural = 0.0_f32;
+        // Word's line is the taller of its tallest single line and the
+        // tallest part above the baseline (list marker included) over the
+        // text's deepest part below it. Word PDFs: Symbol bullets over
+        // Roboto 12 = 12.06 + 2.93 = 15.0 (001cc92b); Calibri marker over
+        // Arial 10 = Calibri's 12.2; Courier "o" over TNR 11 = TNR's 12.65
+        // (0021f639); Symbol over TNR 12 = 14.7.
+        let mut up = 0.0_f32;
+        let mut down = 0.0_f32;
+        let mut single = 0.0_f32;
         let mut ascent = 0.0_f32;
         for run in &runs {
             // 000f4c0b's all-lowercase small-caps line is a 12pt line.
@@ -12604,9 +12618,29 @@ impl<'a> Layout<'a> {
                     }),
                 };
             }
-            natural = natural.max(face.single_line_pt(size));
+            single = single.max(face.single_line_pt(size));
+            let below = face.line_descent_pt(size);
+            up = up.max(face.single_line_pt(size) - below);
+            let is_marker = run.list_marker || marker.is_some_and(|m| std::ptr::eq(m, *run));
+            if !is_marker {
+                down = down.max(below);
+            }
             ascent = ascent.max(face.ascent_pt(size));
         }
+        // Weights and styles of one family keep their taller single line
+        // (00053b6b's Comic Sans MS regular + bold); the split only applies
+        // across different families.
+        let one_family = runs
+            .iter()
+            .map(|r| paint_family(&r.style, &r.text).to_ascii_lowercase())
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            <= 1;
+        let mut natural = if one_family {
+            single
+        } else {
+            single.max(up + down)
+        };
         if runs.is_empty() {
             let face = self.fonts.get(FaceId::CarlitoRegular);
             natural = face.single_line_pt(11.0);

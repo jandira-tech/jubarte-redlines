@@ -840,6 +840,25 @@ fn a_continuous_section_switches_to_its_columns_mid_page() {
 }
 
 #[test]
+fn a_mixed_face_line_is_the_tallest_ascent_over_the_deepest_descent() {
+    // fixtures_500 001cc92b: Symbol bullets over Roboto 12 lines stack
+    // 15.05pt apart in Word: Symbol's part above the baseline (12.12) over
+    // Roboto's descent (2.93), not the taller single line (Symbol 14.71).
+    // Under TNR 12 the same rule gives Word's 14.7 (TNR's 2.6 descent).
+    let para = r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol"/><w:sz w:val="24"/></w:rPr><w:t>·</w:t></w:r><w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve"> Calibri text</w:t></w:r></w:p>"#;
+    let body = format!("{para}{para}<w:sectPr/>");
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("mixed faces");
+    let mut ys = text_baselines(&pdf);
+    ys.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.1);
+    let pitch = ys[0] - ys[1];
+    assert!(
+        pitch > 15.0 && pitch < 15.6,
+        "Symbol's ascent over Calibri's descent (~15.3); pitch={pitch} ys={ys:?}"
+    );
+}
+
+#[test]
 fn direct_ind_left_keeps_the_numbering_level_hanging() {
     // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
     // paragraph overrides only the left edge; Word keeps the level's
