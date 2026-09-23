@@ -7693,6 +7693,23 @@ fn autospacing_is_dropped_at_a_cells_edges() {
 }
 
 #[test]
+fn autospacing_before_is_dropped_at_the_page_top() {
+    // fixtures_500 00accd5b: the first paragraph has beforeAutospacing;
+    // Word's title sits 14pt higher than with the auto space applied.
+    let top = |sp: &str| {
+        let body =
+            format!(r#"<w:p><w:pPr>{sp}</w:pPr><w:r><w:t>Title</w:t></w:r></w:p><w:sectPr/>"#);
+        text_baselines(&docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("auto top"))[0]
+    };
+    let auto = top(r#"<w:spacing w:before="100" w:beforeAutospacing="1" w:after="0"/>"#);
+    let none = top(r#"<w:spacing w:before="0" w:after="0"/>"#);
+    assert!(
+        (auto - none).abs() < 0.05,
+        "no auto space above the first line of a page; auto={auto} none={none}"
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables

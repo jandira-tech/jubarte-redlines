@@ -12010,7 +12010,10 @@ impl<'a> Layout<'a> {
         // at the page top by overflow (plan Step 3 / Finding C). Document
         // start, nextPage sectPr, and a hard page break still apply it
         // unless `suppressSpBfAfterPgBrk` is set.
-        if !self.at_page_top || !self.suppress_space_before {
+        // HTML auto spacing never opens a page (00accd5b's first title
+        // sits 14pt higher in Word).
+        let auto_at_top = self.at_page_top && style.before_auto;
+        if (!self.at_page_top || !self.suppress_space_before) && !auto_at_top {
             self.y -= style.before;
         }
         self.at_page_top = false;
