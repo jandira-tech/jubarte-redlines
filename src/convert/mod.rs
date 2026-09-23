@@ -1035,6 +1035,9 @@ struct TableCell {
     /// `tcMar` bottom (falls back to `tblCellMar`).
     pad_b: f32,
     nowrap: bool,
+    /// `w:hideMark`: an empty cell's end-of-cell mark does not size its
+    /// row (003dd497's spacer rows collapse to their trHeight).
+    hide_mark: bool,
     borders: Option<CellBorders>,
     /// Fill came from `tblStylePr` (GridTable4 band1Horz), not direct
     /// `tcPr/shd`. Word paints that shd at cell height with x-inset
@@ -1064,6 +1067,7 @@ impl TableCell {
             pad_t: self.pad_t,
             pad_b: self.pad_b,
             nowrap: self.nowrap,
+            hide_mark: self.hide_mark,
             borders: self.borders,
             style_fill: self.style_fill,
         }
@@ -1107,6 +1111,7 @@ struct RawCell {
     pad_t: f32,
     pad_b: f32,
     nowrap: bool,
+    hide_mark: bool,
     borders: Option<CellBorders>,
 }
 
@@ -5334,6 +5339,15 @@ fn ul_line_extra(line: &[TextRun], size: f32, space_for_ul: bool) -> f32 {
 }
 
 fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for_ul: bool) -> f32 {
+    // An empty w:hideMark cell's end-of-cell mark does not size the row.
+    let empty = cell.nested.is_empty()
+        && cell
+            .paras
+            .iter()
+            .all(|p| p.images.is_empty() && p.runs.iter().all(|r| r.text.trim().is_empty()));
+    if cell.hide_mark && empty {
+        return cell.pad_t + cell.pad_b;
+    }
     let cw: f32 = (0..cell.colspan)
         .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
         .sum();
@@ -6815,6 +6829,9 @@ fn table_block(
                 pad_t,
                 pad_b,
                 nowrap: cell_nowrap(dom, cell) && !fixed_width_cell(dom, table, cell),
+                hide_mark: first_named(dom, cell, "tcPr")
+                    .and_then(|pr| direct_named(dom, pr, "hideMark"))
+                    .is_some_and(|n| !val_is_false(dom, Some(n))),
                 borders,
             });
         }
@@ -7306,6 +7323,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
         pad_t: 0.0,
         pad_b: 0.0,
         nowrap: true,
+        hide_mark: false,
         borders: None,
     }
 }
@@ -7394,6 +7412,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
                 pad_t: raw.pad_t,
                 pad_b: raw.pad_b,
                 nowrap: raw.nowrap,
+                hide_mark: raw.hide_mark,
                 borders: raw.borders,
                 style_fill: false,
             });

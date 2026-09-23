@@ -7632,6 +7632,34 @@ fn body_preserved_space_padding_is_painted() {
 }
 
 #[test]
+fn hidemark_empty_cells_do_not_size_their_row() {
+    // fixtures_500 003dd497: three empty rows whose cells are w:hideMark
+    // (trHeight 15 twips); Word ignores their end-of-cell marks and the
+    // rows nearly vanish, so the text after the table sits ~40pt higher.
+    let rows = |hide: bool| {
+        let hm = if hide { "<w:hideMark/>" } else { "" };
+        let cell = format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/>{hm}</w:tcPr><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:rPr><w:sz w:val="24"/></w:rPr></w:pPr></w:p></w:tc>"#
+        );
+        let row = format!(r#"<w:tr><w:trPr><w:trHeight w:val="15"/></w:trPr>{cell}</w:tr>"#);
+        format!(
+            r#"<w:p><w:r><w:t>Top</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>{row}{row}{row}</w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>"#
+        )
+    };
+    let span = |hide: bool| {
+        let ys = text_baselines(
+            &docx_to_pdf(&minimal_docx_with_settings(&rows(hide), "")).expect("hideMark"),
+        );
+        ys[0] - ys[ys.len() - 1]
+    };
+    let (hidden, shown) = (span(true), span(false));
+    assert!(
+        shown - hidden > 30.0,
+        "hideMark empty rows collapse; hidden={hidden} shown={shown}"
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables
