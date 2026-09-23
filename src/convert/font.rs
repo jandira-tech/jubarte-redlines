@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 thread_local! {
     static ACTIVE_FONT_TABLE: RefCell<super::font_table::FontTable> =
@@ -899,7 +899,9 @@ impl Catalogue {
 
 /// A document's decoded embedded fonts (`.odttf`), keyed by
 /// (family, bold, italic). The conversion owns them; [`Fonts`] borrows.
-pub(crate) type EmbeddedFonts = HashMap<(String, bool, bool), Vec<u8>>;
+/// Values are shared: installed faces come from a process-wide cache and
+/// one face can answer to a family and its altName.
+pub(crate) type EmbeddedFonts = HashMap<(String, bool, bool), Arc<[u8]>>;
 
 /// Bundled catalogue plus per-document embedded faces (`.odttf`).
 pub(crate) struct Fonts<'a> {
@@ -920,7 +922,7 @@ impl<'a> Fonts<'a> {
     pub(crate) fn for_document(embedded: &'a EmbeddedFonts) -> Self {
         let mut fonts = Self::new();
         for ((family, bold, italic), bytes) in embedded {
-            fonts.insert_embedded(family, *bold, *italic, bytes);
+            fonts.insert_embedded(family, *bold, *italic, bytes.as_ref());
         }
         fonts
     }
@@ -932,6 +934,15 @@ impl<'a> Fonts<'a> {
         italic: bool,
         bytes: &'a [u8],
     ) {
+        // PDF FontFile2 carries TrueType outlines only: a CFF face (an .otf
+        // or a CFF .odttf) would reach the writer unembeddable. Such a family
+        // resolves as if the face were absent.
+        if ttf_parser::Face::parse(bytes, 0)
+            .ok()
+            .is_none_or(|face| face.tables().glyf.is_none())
+        {
+            return;
+        }
         let ps = ttf_postscript_name(bytes).unwrap_or_else(|| family.to_string());
         let Some(face) = Face::from_bytes(FaceId::CarlitoRegular, bytes, sanitize_pdf_name(&ps))
         else {
@@ -1514,7 +1525,7 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
             .join(family);
         dirs.push(cloud);
     }
-    let mut out: Vec<((bool, bool), Vec<u8>)> = Vec::new();
+    let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
     for dir in dirs {
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
@@ -1533,15 +1544,13 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
             let Ok(bytes) = fs::read(&path) else {
                 continue;
             };
-            let Some(style) = face_family_style(&bytes, family) else {
+            let Some((pass, style)) = face_family_style(&bytes, family) else {
                 continue;
             };
-            if out.iter().all(|(s, _)| *s != style) {
-                out.push((style, bytes));
-            }
+            found.push((pass, style, bytes));
         }
     }
-    out
+    pick_ranked_faces(found)
 }
 
 /// A family name folded for comparison: full-width Latin to ASCII (the
@@ -1735,6 +1744,9 @@ fn cjk_family_faces(family: &str, stems: &[&str]) -> Vec<((bool, bool), Vec<u8>)
             let Ok(face) = ttf_parser::Face::parse(&bytes, index) else {
                 continue;
             };
+            if face.tables().glyf.is_none() {
+                continue;
+            }
             let pass = if face_family_names(&face, ttf_parser::name_id::FAMILY).contains(&want) {
                 0
             } else if face_family_names(&face, ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
@@ -1758,16 +1770,7 @@ fn cjk_family_faces(family: &str, stems: &[&str]) -> Vec<((bool, bool), Vec<u8>)
             found.push((pass, style, data));
         }
     }
-    let Some(best) = found.iter().map(|(pass, _, _)| *pass).min() else {
-        return Vec::new();
-    };
-    let mut out: Vec<((bool, bool), Vec<u8>)> = Vec::new();
-    for (pass, style, data) in found {
-        if pass == best && out.iter().all(|(s, _)| *s != style) {
-            out.push((style, data));
-        }
-    }
-    out
+    pick_ranked_faces(found)
 }
 
 /// One face of a TrueType collection as a standalone sfnt: the face's
@@ -1814,6 +1817,29 @@ fn is_cjk_name_char(c: char) -> bool {
     matches!(c as u32, 0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF66..=0xFF9F)
 }
 
+type SharedFaces = Vec<((bool, bool), Arc<[u8]>)>;
+
+/// Installed-face lookups, cached for the process: a long-lived caller
+/// (the Python and WASM bindings) would otherwise re-read 10-20 MB font
+/// collections for every conversion.
+fn cached_faces(key: &str, load: impl FnOnce() -> Vec<((bool, bool), Vec<u8>)>) -> SharedFaces {
+    static CACHE: LazyLock<Mutex<HashMap<String, SharedFaces>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    if let Ok(cache) = CACHE.lock()
+        && let Some(faces) = cache.get(key)
+    {
+        return faces.clone();
+    }
+    let faces: SharedFaces = load()
+        .into_iter()
+        .map(|(style, bytes)| (style, Arc::from(bytes)))
+        .collect();
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(key.to_string(), faces.clone());
+    }
+    faces
+}
+
 /// Loads Word's East Asian fallback faces (YaHei, Yu Gothic) for a
 /// document that has East Asian text.
 pub(crate) fn add_cjk_fallbacks(embedded: &mut EmbeddedFonts) {
@@ -1821,7 +1847,7 @@ pub(crate) fn add_cjk_fallbacks(embedded: &mut EmbeddedFonts) {
         (CJK_FALLBACK, "Microsoft YaHei", &["msyh", "msyhbd"][..]),
         (CJK_FALLBACK_JA, "Yu Gothic", &["yugothr", "yugothb"][..]),
     ] {
-        for ((bold, italic), bytes) in cjk_family_faces(family, stems) {
+        for ((bold, italic), bytes) in cached_faces(key, || cjk_family_faces(family, stems)) {
             embedded.insert((key.to_string(), bold, italic), bytes);
         }
     }
@@ -1844,7 +1870,8 @@ pub(crate) fn add_installed_faces(
         {
             continue;
         }
-        for ((bold, italic), bytes) in cjk_family_faces(name, cjk_file_stems(name)) {
+        let faces = cached_faces(name, || cjk_family_faces(name, cjk_file_stems(name)));
+        for ((bold, italic), bytes) in faces {
             embedded.insert((lower.clone(), bold, italic), bytes);
         }
     }
@@ -1853,7 +1880,7 @@ pub(crate) fn add_installed_faces(
         if catalogue_paints_family(&entry.name) || embedded.keys().any(|(f, _, _)| *f == lower) {
             continue;
         }
-        let faces = installed_family_faces(&entry.name);
+        let faces = cached_faces(&entry.name, || installed_family_faces(&entry.name));
         // Runs may name the family by its altName ("MS Mincho" for the
         // table's "ＭＳ 明朝"); the same faces answer to both.
         if let Some(alt) = entry.alt_name.as_deref()
@@ -1862,7 +1889,7 @@ pub(crate) fn add_installed_faces(
             let alt = alt.to_ascii_lowercase();
             if embedded.keys().all(|(f, _, _)| *f != alt) {
                 for ((bold, italic), bytes) in &faces {
-                    embedded.insert((alt.clone(), *bold, *italic), bytes.clone());
+                    embedded.insert((alt.clone(), *bold, *italic), Arc::clone(bytes));
                 }
             }
         }
@@ -1894,15 +1921,41 @@ fn catalogue_paints_family(family: &str) -> bool {
 }
 
 /// (bold, italic) when the font's own family name is `family`.
-fn face_family_style(bytes: &[u8], family: &str) -> Option<(bool, bool)> {
+/// One face per (bold, italic): the best-ranked candidate (lower pass),
+/// path order breaking ties. A typographic-family (ID 16) match never
+/// takes a style an ID 1 match fills (Roboto Black vs Roboto Regular).
+fn pick_ranked_faces(mut found: Vec<(u8, (bool, bool), Vec<u8>)>) -> Vec<((bool, bool), Vec<u8>)> {
+    found.sort_by_key(|(pass, _, _)| *pass);
+    let mut out: Vec<((bool, bool), Vec<u8>)> = Vec::new();
+    for (_, style, bytes) in found {
+        if out.iter().all(|(s, _)| *s != style) {
+            out.push((style, bytes));
+        }
+    }
+    out
+}
+
+/// (pass, (bold, italic)) when the font's own family name is `family`:
+/// pass 0 for name ID 1, 1 for the typographic ID 16 only. A face without
+/// TrueType outlines is skipped: PDF FontFile2 cannot carry CFF.
+fn face_family_style(bytes: &[u8], family: &str) -> Option<(u8, (bool, bool))> {
     let face = ttf_parser::Face::parse(bytes, 0).ok()?;
-    let named = face.names().into_iter().any(|n| {
-        (n.name_id == ttf_parser::name_id::FAMILY
-            || n.name_id == ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
-            && n.to_string()
-                .is_some_and(|f| f.eq_ignore_ascii_case(family))
-    });
-    named.then(|| (face.is_bold(), face.is_italic()))
+    face.tables().glyf?;
+    let has = |id: u16| {
+        face.names().into_iter().any(|n| {
+            n.name_id == id
+                && n.to_string()
+                    .is_some_and(|f| f.eq_ignore_ascii_case(family))
+        })
+    };
+    let pass = if has(ttf_parser::name_id::FAMILY) {
+        0
+    } else if has(ttf_parser::name_id::TYPOGRAPHIC_FAMILY) {
+        1
+    } else {
+        return None;
+    };
+    Some((pass, (face.is_bold(), face.is_italic())))
 }
 
 fn cloud_font_override(id: FaceId) -> Option<PathBuf> {
@@ -2225,6 +2278,56 @@ mod tests {
     }
 
     #[test]
+    fn installed_faces_are_read_once_per_process() {
+        // CodeRabbit #166: every conversion re-read the 10-20 MB collections.
+        let first = cached_faces("@test-cache-key", || {
+            vec![((false, false), b"face".to_vec())]
+        });
+        let second = cached_faces("@test-cache-key", || panic!("loaded twice"));
+        assert!(
+            Arc::ptr_eq(&first[0].1, &second[0].1),
+            "one shared allocation"
+        );
+    }
+
+    #[test]
+    fn a_cff_face_is_not_embedded() {
+        // CodeRabbit #166: the PDF writer emits FontFile2 (TrueType); a CFF
+        // .otf would be embedded as an unreadable program. It is refused.
+        let otf = "/System/Library/Fonts/Supplemental/STIXSizOneSymBol.otf";
+        let Ok(bytes) = fs::read(otf) else {
+            return;
+        };
+        let parsed = ttf_parser::Face::parse(&bytes, 0).expect("STIX parses");
+        assert!(parsed.tables().glyf.is_none(), "a CFF face");
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("stix", false, false, &bytes);
+        assert!(fonts.embedded_index("stix", false, false).is_none());
+    }
+
+    #[test]
+    fn a_family_name_match_outranks_a_typographic_one_per_style() {
+        // CodeRabbit #166: Roboto-Black.ttf (ID 1 "Roboto Black", ID 16
+        // "Roboto") sorts before Roboto-Regular.ttf and took the regular
+        // slot. Pass 0 (ID 1) beats pass 1 (ID 16) per style; path order
+        // decides within a pass.
+        let found = vec![
+            (1, (false, false), b"black".to_vec()),
+            (1, (true, false), b"heavy".to_vec()),
+            (0, (false, false), b"regular".to_vec()),
+            (0, (false, false), b"regular2".to_vec()),
+        ];
+        let picked = pick_ranked_faces(found);
+        assert_eq!(
+            picked,
+            vec![
+                ((false, false), b"regular".to_vec()),
+                ((true, false), b"heavy".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
     fn fold_family_maps_full_width_names_to_their_ascii_key() {
         assert_eq!(fold_family("ＭＳ 明朝"), "ms明朝");
         assert_eq!(fold_family("MS Mincho"), "msmincho");
@@ -2358,7 +2461,7 @@ mod tests {
         // (same allocation), which the compiler ties to the Fonts value.
         let embedded: EmbeddedFonts = HashMap::from([(
             ("Press Start 2P".to_string(), false, false),
-            FaceId::MonoRegular.bytes().to_vec(),
+            Arc::from(FaceId::MonoRegular.bytes()),
         )]);
         let fonts = Fonts::for_document(&embedded);
         let face = fonts.resolve("Press Start 2P", false, false);
