@@ -10448,10 +10448,10 @@ fn pick_section_hf(
     } else {
         first.clone()
     };
-    // An explicit first-page reference wins even when its part is blank:
-    // that is how 0016811c hides the page number on page 1.
-    let first_explicit = sect_has_typed_ref(dom, sect, local, "first");
-    if sect_title_pg(dom, sect) && (first_explicit || chrome_present(&first)) {
+    // titlePg gives page 1 the first-page part, blank when the section has
+    // none: 0016811c hides its page number with an explicit blank one, and
+    // 000105a2 (default reference only) has no header on page 1 in Word.
+    if sect_title_pg(dom, sect) {
         let mut first = first;
         if first.watermark.is_none() {
             first.watermark = default.watermark.clone();

@@ -15515,6 +15515,36 @@ fn titlepg_uses_first_header_on_page_one_then_default() {
     );
 }
 
+#[test]
+fn titlepg_without_a_first_header_leaves_page_one_bare() {
+    // fixtures_500 000105a2: titlePg with only a default header. Word's
+    // first page has no header (the first-page header is empty); we
+    // painted the default one and its band pushed page one down 5pt.
+    let body = "<w:p><w:r><w:t>PageOneBody</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         <w:p><w:r><w:t>PageTwoBody</w:t></w:r></w:p>\
+         <w:sectPr>\
+           <w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:titlePg/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", hf_part("hdr", 22, "DefaultHdr"))],
+    ))
+    .expect("convert titlePg default-only");
+    let pages = pdf_content_streams(&pdf);
+    let p1 = pdf_winansi_text(pages[0].as_bytes());
+    let p2 = pdf_winansi_text(pages[1].as_bytes());
+    assert!(!p1.contains("DefaultHdr"), "page 1 is bare; p1={p1}");
+    assert!(
+        p2.contains("DefaultHdr"),
+        "page 2 has the default header; p2={p2}"
+    );
+}
+
 fn even_odd_settings() -> String {
     "<?xml version=\"1.0\"?>\
      <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
