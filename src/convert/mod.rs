@@ -331,6 +331,10 @@ struct ParaStyle {
     align: Align,
     after: f32,
     before: f32,
+    /// `w:beforeAutospacing` / `w:afterAutospacing` set this side's 14pt
+    /// (a cell's outer auto space is dropped, 0129b302).
+    before_auto: bool,
+    after_auto: bool,
     line_mult: f32,
     /// `w:spacing w:lineRule="exact"` in points. Word uses this as the
     /// line box (sd_2517 Ttulo1 line=400 → 20pt), not size×(line/11).
@@ -715,6 +719,8 @@ impl Defaults {
                 align: Align::Left,
                 after: 10.0,
                 before: 0.0,
+                before_auto: false,
+                after_auto: false,
                 line_mult: 276.0 / 240.0,
                 line_exact: None,
                 line_at_least: None,
@@ -2635,17 +2641,21 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
         // ISO Strict (Strict01) writes `8pt` / `12.95pt`. Bare numbers are twips.
         if let Some(after) = attr_any(dom, sp, "after").and_then(parse_len) {
             style.after = after;
+            style.after_auto = false;
         }
         if let Some(before) = attr_any(dom, sp, "before").and_then(parse_len) {
             style.before = before;
+            style.before_auto = false;
         }
         // HTML auto spacing (fixtures_500 00a46590) replaces the twips with
         // 14pt; Word keeps the w:before/w:after only as a fallback.
         if is_auto_spacing(dom, sp, "beforeAutospacing") {
             style.before = 14.0;
+            style.before_auto = true;
         }
         if is_auto_spacing(dom, sp, "afterAutospacing") {
             style.after = 14.0;
+            style.after_auto = true;
         }
         let rule = attr_any(dom, sp, "lineRule").unwrap_or("auto");
         if let Some(line) = attr_any(dom, sp, "line") {
@@ -6798,6 +6808,18 @@ fn table_block(
                 // Trailing empty paragraphs: their bookmarks still exist.
                 last.blank_bookmarks.append(&mut blank_bookmarks);
             }
+            // HTML auto spacing does not reach a cell's edges: Word drops
+            // the first paragraph's auto before and the last one's after.
+            if let Some(first) = cell_paras.first_mut()
+                && first.style.before_auto
+            {
+                first.style.before = 0.0;
+            }
+            if let Some(last) = cell_paras.last_mut()
+                && last.style.after_auto
+            {
+                last.style.after = 0.0;
+            }
             let (colspan, vmerge) = cell_span(dom, cell);
             let borders = parse_tc_borders(dom, cell).or_else(|| {
                 row_borders.map(|b| {
@@ -10517,6 +10539,8 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         align: Align::Left,
         after: 0.0,
         before: 0.0,
+        before_auto: false,
+        after_auto: false,
         line_mult: 1.0,
         line_exact: None,
         line_at_least: None,

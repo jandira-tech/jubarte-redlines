@@ -7660,6 +7660,39 @@ fn hidemark_empty_cells_do_not_size_their_row() {
 }
 
 #[test]
+fn autospacing_is_dropped_at_a_cells_edges() {
+    // fixtures_500 0129b302: cell paragraphs with before/afterAutospacing
+    // (no table style). Word drops the auto space before a cell's first
+    // paragraph and after its last (rows 27pt shorter than 14+14 added).
+    let row = |auto: bool| {
+        let sp = if auto {
+            r#"<w:spacing w:before="100" w:beforeAutospacing="1" w:after="100" w:afterAutospacing="1" w:line="240" w:lineRule="auto"/>"#
+        } else {
+            r#"<w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>"#
+        };
+        format!(
+            r#"<w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:pPr>{sp}</w:pPr><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr>"#
+        )
+    };
+    let span = |auto: bool| {
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>{}{}</w:tbl><w:p/>"#,
+            row(auto),
+            row(auto)
+        );
+        let ys = text_baselines(
+            &docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("autospacing cell"),
+        );
+        ys[0] - ys[1]
+    };
+    let (auto, plain) = (span(true), span(false));
+    assert!(
+        (auto - plain).abs() < 0.05,
+        "one-paragraph cells lose both auto spaces; auto={auto} plain={plain}"
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables
