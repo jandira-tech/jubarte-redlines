@@ -7803,6 +7803,21 @@ fn an_empty_line_after_a_break_takes_the_break_runs_font() {
 }
 
 #[test]
+fn horizontally_scaled_text_wraps_at_its_scaled_width() {
+    // fixtures_500 001f4e98: a w:w=105 title wraps sooner in Word. At
+    // w:w=200 a ~300pt sentence no longer fits the 468pt measure.
+    let words = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima";
+    let lines = |w: u32| {
+        let body = format!(
+            r#"<w:p><w:r><w:rPr><w:w w:val="{w}"/></w:rPr><w:t>{words}</w:t></w:r></w:p><w:sectPr/>"#
+        );
+        text_baselines(&docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("scaled")).len()
+    };
+    assert_eq!(lines(100), 1, "unscaled it is one line");
+    assert!(lines(200) >= 2, "at 200% it wraps");
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables

@@ -291,6 +291,12 @@ impl RunStyle {
         }
     }
 
+    /// `w:w` horizontal scale: advances widen by it when measuring as
+    /// well as painting (001f4e98's 105% title wraps sooner).
+    fn hscale(&self) -> f32 {
+        if self.scale > 0.0 { self.scale } else { 1.0 }
+    }
+
     fn paint_size(&self) -> f32 {
         let raw = self.layout_size();
         // potpourri / file_170 Subtitle is Aptos 14. Word Quartz 13.92
@@ -12672,8 +12678,8 @@ impl<'a> Layout<'a> {
         let kern = run.style.kerns_at(size);
         let shaped = face.shape_kern(text, size, kern);
         let advs = self.spaced_glyph_advances(text, &shaped, size);
-        let w: f32 =
-            advs.iter().sum::<f32>() + run.style.track * shaped.len().saturating_sub(1) as f32;
+        let w: f32 = advs.iter().sum::<f32>() * run.style.hscale()
+            + run.style.track * shaped.len().saturating_sub(1) as f32;
         if w > 0.05 || text.chars().all(char::is_whitespace) {
             return w;
         }
@@ -12904,11 +12910,7 @@ impl<'a> Layout<'a> {
             face = self.fonts.get(fid);
             shaped = face.shape_kern(&run.text, lsize, kern);
         }
-        let scale = if run.style.scale > 0.0 {
-            run.style.scale
-        } else {
-            1.0
-        };
+        let scale = run.style.hscale();
         let advs = self.spaced_glyph_advances(&run.text, &shaped, lsize);
         let w: f32 = advs.iter().map(|a| *a * scale).sum::<f32>()
             + run.style.track * shaped.len().saturating_sub(1) as f32;
@@ -16400,7 +16402,7 @@ fn wrap_runs_segment(
                     );
                     let face = fonts.get(fid);
                     let size = run.style.layout_size();
-                    face.width_pt_kern(tok, size, run.style.kerns_at(size))
+                    face.width_pt_kern(tok, size, run.style.kerns_at(size)) * run.style.hscale()
                 };
                 let is_space = tok.chars().all(char::is_whitespace);
                 let glue = open
