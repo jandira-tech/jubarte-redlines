@@ -1087,6 +1087,9 @@ impl<'a> Fonts<'a> {
     ) -> (FaceId, FontStep) {
         let mut current = family;
         let mut via_alt = false;
+        // The generic of a name the altName chain passed through: a chain
+        // that dead-ends (Myriad Pro → absent Segoe UI) keeps it.
+        let mut chain_generic = "";
         let (id, step) = loop {
             // Word splits rFonts on comma but does not CSS-unquote. Evidence
             // (Quartz PDFs): `Verdana, Geneva, sans-serif` → Verdana;
@@ -1114,6 +1117,11 @@ impl<'a> Fonts<'a> {
             // CSS-style list row (`"Foo", Bar, serif`) is keyed by the full
             // string, not by its first token.
             let whole = current.trim();
+            if chain_generic.is_empty()
+                && let Some(entry) = table.get(primary)
+            {
+                chain_generic = super::word_subst::generic_physical(entry.family, entry.pitch);
+            }
             let alt = table
                 .alt_name(primary)
                 .or_else(|| (whole != primary).then(|| table.alt_name(whole)).flatten());
@@ -1128,14 +1136,11 @@ impl<'a> Fonts<'a> {
                     FontStep::WordSubstitution,
                 );
             }
-            if let Some(entry) = table.get(primary) {
-                let generic = super::word_subst::generic_physical(entry.family, entry.pitch);
-                if !generic.is_empty() {
-                    break (
-                        Self::face_from_physical(generic, bold, italic),
-                        FontStep::Generic,
-                    );
-                }
+            if !chain_generic.is_empty() {
+                break (
+                    Self::face_from_physical(chain_generic, bold, italic),
+                    FontStep::Generic,
+                );
             }
             break (
                 Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
@@ -1852,6 +1857,23 @@ mod tests {
         assert_eq!(
             fonts.resolve_in("SomeFixed", false, false, &table),
             FaceId::MonoRegular
+        );
+    }
+
+    #[test]
+    fn resolve_dead_end_altname_keeps_the_original_generic() {
+        // fixtures_500 019d9ee6: Myriad Pro (swiss) → altName Segoe UI,
+        // which is neither installed nor in the table. Word paints Arial,
+        // the swiss generic, not the unknown-family Cambria.
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="SomeMyriad"><w:altName w:val="SomeSegoe"/><w:family w:val="swiss"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("SomeMyriad", false, false, &table),
+            FaceId::SansRegular
         );
     }
 
