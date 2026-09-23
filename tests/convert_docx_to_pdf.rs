@@ -7383,6 +7383,44 @@ fn identical_pbdr_paragraphs_share_one_box() {
     );
 }
 
+/// `(x, y, w, h)` of every `… w 0 0 h x y cm /ImN Do` image placement.
+fn pdf_image_boxes(pdf: &[u8]) -> Vec<(f32, f32, f32, f32)> {
+    let mut out = Vec::new();
+    for stream in pdf_content_streams(pdf) {
+        let mut from = 0;
+        while let Some(rel) = stream[from..].find(" cm /Im") {
+            let at = from + rel;
+            let nums: Vec<f32> = stream[..at]
+                .split_whitespace()
+                .rev()
+                .take(6)
+                .filter_map(|n| n.parse().ok())
+                .collect();
+            if let [y, x, h, _, _, w] = nums[..] {
+                out.push((x, y, w, h));
+            }
+            from = at + 7;
+        }
+    }
+    out
+}
+
+#[test]
+fn paragraph_anchor_offsets_from_its_own_paragraph() {
+    // fixtures_500 0004c94c: positionV relativeFrom="paragraph" -6.1pt on
+    // the second paragraph; Word measures from that paragraph's top, not
+    // the body top (our logo sat 10.5pt above Word's).
+    let body = r#"<w:p><w:r><w:t>Above</w:t></w:r></w:p><w:p><w:r><w:drawing><wp:anchor simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapNone/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p><w:sectPr/>"#;
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("paragraph anchor");
+    let boxes = pdf_image_boxes(&pdf);
+    let top = boxes.first().map(|(_, y, _, h)| y + h).unwrap_or(0.0);
+    // No styles.xml: Word's new-document line 276 (15.44) + after 10.
+    assert!(
+        (top - (720.0 - 15.44 - 10.0)).abs() < 0.1,
+        "the picture hangs from paragraph two's top (694.56); top={top} boxes={boxes:?}"
+    );
+}
+
 #[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by

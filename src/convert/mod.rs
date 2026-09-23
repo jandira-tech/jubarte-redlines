@@ -12920,9 +12920,9 @@ impl<'a> Layout<'a> {
         let y = match (pct_y, page_y, para_y) {
             (Some(pct), _, _) => ((1.0 - pct) * self.page.height - dh).max(0.0),
             (_, Some(py), _) => (self.page.height - py - dh).max(0.0),
-            (_, _, Some(py)) => {
-                (self.page.height - self.body_top - py - dh).max(self.page.margin_b)
-            }
+            // positionV relativeFrom="paragraph": from the anchoring
+            // paragraph's top (0004c94c logo sat 10.5pt high off body top).
+            (_, _, Some(py)) => (self.para_top - py - dh).max(self.page.margin_b),
             // Margin-frame offset (tblpY with vertAnchor="margin",
             // positionV relativeFrom="margin"/topMargin/...): from the
             // frame's top, unclamped.
