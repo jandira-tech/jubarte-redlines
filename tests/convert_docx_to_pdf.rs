@@ -14822,11 +14822,15 @@ fn watermark_washout_uses_fill_alpha() {
     );
 }
 
+/// A one-line header/footer part, single-spaced like Word's built-in
+/// Header/Footer styles (the styles-less fixture would otherwise take the
+/// new-document Normal's 1.15 line and 10pt after).
 fn hf_part(tag: &str, half_points: u32, text: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:{tag} xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-           <w:p><w:r><w:rPr><w:sz w:val=\"{half_points}\"/></w:rPr>\
+           <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:rPr><w:sz w:val=\"{half_points}\"/></w:rPr>\
              <w:t>{text}</w:t></w:r></w:p></w:{tag}>"
     )
 }
@@ -15290,6 +15294,24 @@ fn header_leading_preserved_spaces_indent_the_text() {
     assert!(
         hay.contains("(      Hdr) Tj"),
         "the six preserved spaces paint; streams lack them"
+    );
+}
+
+#[test]
+fn header_lines_keep_their_own_paragraph_alignment() {
+    // fixtures_500 000ebd12: a right-aligned logo paragraph opens the
+    // header; the title paragraphs below it are left-aligned in Word, not
+    // all pushed right by the first paragraph's jc.
+    let inner = r#"<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t>Righty</w:t></w:r></w:p><w:p><w:r><w:t>Lefty</w:t></w:r></w:p>"#;
+    let pdf = docx_to_pdf(&header_part_docx_at(inner, 720)).expect("header jc");
+    // Paint order: the right-aligned line, then the left one.
+    let xy: Vec<(f32, f32)> = pdf_content_streams(&pdf)
+        .iter()
+        .flat_map(|page| pdf_device_xy(page, "46 Tf"))
+        .collect();
+    assert!(
+        xy.len() >= 2 && xy[0].0 > 400.0 && (xy[1].0 - 72.0).abs() < 0.5,
+        "each header line uses its own jc; xy={xy:?}"
     );
 }
 
@@ -26054,15 +26076,17 @@ fn a_leading_empty_footer_paragraph_raises_the_body_floor() {
     // Family Trust" and PAGE. Word stacks every paragraph, so the footer
     // top is its full height above w:footer and the body stops there;
     // the empty paragraph was dropped and every page took one extra
-    // line. Three empties: 36 + 3 + 5×13.8 = 108pt.
+    // line. Three empties: 36 + 3 + 5×13.8 = 108pt. (sd_2517's footer
+    // style has after=0; this styles-less fixture states it.)
+    let sp = "<w:spacing w:after=\"0\"/>";
     let times = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
          <w:sz w:val=\"24\"/></w:rPr>";
     let footer = format!(
         "<w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-         <w:p><w:pPr><w:spacing w:before=\"60\"/>{times}</w:pPr></w:p>\
-         <w:p><w:pPr>{times}</w:pPr></w:p><w:p><w:pPr>{times}</w:pPr></w:p>\
-         <w:p><w:r>{times}<w:t>Trust</w:t></w:r></w:p>\
-         <w:p><w:r>{times}<w:t>page</w:t></w:r></w:p></w:ftr>"
+         <w:p><w:pPr><w:spacing w:before=\"60\" w:after=\"0\"/>{times}</w:pPr></w:p>\
+         <w:p><w:pPr>{sp}{times}</w:pPr></w:p><w:p><w:pPr>{sp}{times}</w:pPr></w:p>\
+         <w:p><w:pPr>{sp}</w:pPr><w:r>{times}<w:t>Trust</w:t></w:r></w:p>\
+         <w:p><w:pPr>{sp}</w:pPr><w:r>{times}<w:t>page</w:t></w:r></w:p></w:ftr>"
     );
     let mut body = String::new();
     for i in 0..70 {
@@ -26412,13 +26436,15 @@ fn a_blank_first_page_header_suppresses_the_default_on_page_one() {
 fn a_header_of_only_empty_paragraphs_still_pushes_the_body() {
     // fixtures_500 0003b3ae: the blank first-page header is three empty
     // paragraphs. Word stacks them from w:header (36pt) down, so the body
-    // starts at 36 + 3 × 13.8 = 77.4pt, below the 72pt margin.
+    // starts at 36 + 3 × 13.8 = 77.4pt, below the 72pt margin. (Its styles
+    // have after=0; this styles-less fixture states it.)
+    let sp = "<w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>";
     let times = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
          <w:sz w:val=\"24\"/></w:rPr>";
     let header = format!(
         "<w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-         <w:p><w:pPr>{times}</w:pPr></w:p><w:p><w:pPr>{times}</w:pPr></w:p>\
-         <w:p><w:pPr>{times}</w:pPr></w:p></w:hdr>"
+         <w:p><w:pPr>{sp}{times}</w:pPr></w:p><w:p><w:pPr>{sp}{times}</w:pPr></w:p>\
+         <w:p><w:pPr>{sp}{times}</w:pPr></w:p></w:hdr>"
     );
     let body = format!(
         "<w:p><w:r>{times}<w:t>Body</w:t></w:r></w:p>\
