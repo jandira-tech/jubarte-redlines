@@ -7832,6 +7832,22 @@ fn centred_table_wider_than_the_column_overhangs_both_sides() {
 }
 
 #[test]
+fn autofit_table_keeps_a_grid_wider_than_the_measure() {
+    // fixtures_500 000aba38: tblW auto, grid 3227+6551 twips (488.9pt) in a
+    // 481.9pt measure; Word keeps the grid (right edge 539.5), it does not
+    // shrink the table to the margins.
+    let body = r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="10000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="10000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("wide autofit");
+    let mut rules = pdf_vertical_rule_xs(&pdf);
+    rules.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let span = rules.last().copied().unwrap_or(0.0) - rules.first().copied().unwrap_or(0.0);
+    assert!(
+        (span - 500.0).abs() < 0.5,
+        "the 10000-twip grid stays 500pt wide; rules={rules:?}"
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables

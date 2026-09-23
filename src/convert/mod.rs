@@ -5223,15 +5223,11 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     let n = cols.len();
     let grid_total: f32 = cols.iter().sum();
     // tblW=auto: Word's tblGrid is the last autofit cache. Overlaying
-    // first-row tcW (mini 342) dropped comments-lots. Keep the cache.
+    // first-row tcW (mini 342) dropped comments-lots. Keep the cache as
+    // written, even past the margins (000aba38's 488.9pt grid in a 481.9pt
+    // measure ends at 539.5 in Word, not shrunk to 533).
     if !geom.fixed && matches!(geom.width, TblWidth::Grid) {
-        let target = grid_total.min(avail).max(0.0);
-        let scale = if grid_total > 0.0 {
-            target / grid_total
-        } else {
-            1.0
-        };
-        return cols.iter().map(|c| c * scale).collect();
+        return cols.to_vec();
     }
     let target = match geom.width {
         TblWidth::Grid => grid_total,
