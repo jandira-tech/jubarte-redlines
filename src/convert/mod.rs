@@ -5199,6 +5199,19 @@ fn para_line_box(metrics: &Face, size: f32, style: &ParaStyle) -> f32 {
     }
 }
 
+/// Height a line needs above the page floor. The extra leading of an
+/// auto multiple (1.5, double) sits below the text and may hang into the
+/// bottom margin: Word keeps a 1.5-spaced line whose text fits
+/// (fixtures_500 000ca4c1's four trailing blank lines stay on page one).
+fn line_fit_need(metrics: &Face, size: f32, style: &ParaStyle, line_box: f32) -> f32 {
+    let need = if style.line_exact.is_none() && style.line_at_least.is_none() {
+        line_box.min(metrics.single_line_pt(if size > 0.0 { size } else { 11.0 }))
+    } else {
+        line_box
+    };
+    need.max(metrics.ascent_pt(size) + 2.0)
+}
+
 fn is_toc_style(style: &ParaStyle) -> bool {
     // Word built-in toc 1..9 (`TOC1` / localized `Sumrio2`). Not
     // DocumentTOC (exact 20pt title) and not body Times.
@@ -11631,7 +11644,7 @@ impl<'a> Layout<'a> {
             );
             let metrics = self.fonts.get(face);
             let line_box = snap_doc_grid(para_line_box(metrics, size, style), self.page.grid_pitch);
-            if y - line_box.max(metrics.ascent_pt(size) + 2.0) < self.body_floor {
+            if y - line_fit_need(metrics, size, style, line_box) < self.body_floor {
                 break;
             }
             y -= line_box;
@@ -12266,7 +12279,7 @@ impl<'a> Layout<'a> {
                 }
                 self.claim_line_footnotes(line);
             }
-            self.ensure(line_box.max(ascent + 2.0));
+            self.ensure(line_fit_need(metrics, size, style, line_box));
             if let Some(fill) = style.fill {
                 let fx = self.flow_left() + style.indent_left;
                 let fw = (self.content_width() - style.indent_left - style.indent_right).max(1.0);

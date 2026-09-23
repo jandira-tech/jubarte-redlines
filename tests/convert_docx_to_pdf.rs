@@ -7748,6 +7748,32 @@ fn widow_control_moves_a_lone_first_line_to_the_next_page() {
 }
 
 #[test]
+fn one_and_a_half_line_keeps_its_text_on_the_page_when_only_leading_overflows() {
+    // fixtures_500 000ca4c1: the extra leading of an auto multiple sits
+    // below the text and may hang into the bottom margin. Word keeps the
+    // 1.5-spaced trailing lines on page one; we opened a blank page two.
+    // 632pt of exact fillers leave 16pt: room for a single Calibri 11 line
+    // (13.4pt) but not for its 1.5 box (20.1pt).
+    let mut body = String::new();
+    for i in 0..8 {
+        body.push_str(&format!(
+            r#"<w:p><w:pPr><w:spacing w:after="0" w:line="1440" w:lineRule="exact"/></w:pPr><w:r><w:t>Fill{i}</w:t></w:r></w:p>"#
+        ));
+    }
+    body.push_str(
+        r#"<w:p><w:pPr><w:spacing w:after="0" w:line="1120" w:lineRule="exact"/></w:pPr><w:r><w:t>Fill8</w:t></w:r></w:p>
+           <w:p><w:pPr><w:spacing w:after="0" w:line="360" w:lineRule="auto"/></w:pPr><w:r><w:t>Tail</w:t></w:r></w:p>
+           <w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>"#,
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("1.5 tail");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        1,
+        "the 1.5-spaced tail line's text fits above the floor"
+    );
+}
+
+#[test]
 fn justified_first_line_stops_at_the_margin_despite_its_indent() {
     // fixtures_500 00189e50: a justified paragraph with firstLine=720; its
     // first line was stretched to the full measure and ran 36pt past the
