@@ -238,6 +238,9 @@ struct RunStyle {
     caps: bool,
     /// `w:smallCaps`: lowercase → capital glyphs at 80% size.
     small_caps: bool,
+    /// Size that sizes the line box when `size` is a rendering reduction
+    /// (a small-caps piece keeps its run's authored size); 0 = `size`.
+    box_size: f32,
     /// Manual raise/lower in points (`w:position`, half-points).
     offset: f32,
     vert: VertAlign,
@@ -719,6 +722,7 @@ impl Defaults {
                 scale: 1.0,
                 caps: false,
                 small_caps: false,
+                box_size: 0.0,
                 offset: 0.0,
                 vert: VertAlign::Baseline,
                 kern_half: 0,
@@ -5183,7 +5187,10 @@ fn leftover_break_heading(style_id: &str) -> bool {
 /// use the same formula (plan Step 4 / Finding D).
 fn para_line_box(metrics: &Face, size: f32, style: &ParaStyle) -> f32 {
     let size = if size > 0.0 { size } else { 11.0 };
-    let natural = metrics.single_line_pt(size);
+    line_box_from_natural(metrics.single_line_pt(size), style)
+}
+
+fn line_box_from_natural(natural: f32, style: &ParaStyle) -> f32 {
     if let Some(exact) = style.line_exact {
         exact
     } else if let Some(at_least) = style.line_at_least {
@@ -5202,13 +5209,30 @@ fn para_line_box(metrics: &Face, size: f32, style: &ParaStyle) -> f32 {
 /// auto multiple (1.5, double) sits below the text and may hang into the
 /// bottom margin: Word keeps a 1.5-spaced line whose text fits
 /// (fixtures_500 000ca4c1's four trailing blank lines stay on page one).
-fn line_fit_need(metrics: &Face, size: f32, style: &ParaStyle, line_box: f32) -> f32 {
+/// A non-space character shaped to .notdef: paint_run falls back.
+fn shaped_lacks_ink(chars: &[char], shaped: &[(u16, f32)]) -> bool {
+    if chars.len() == shaped.len() {
+        chars
+            .iter()
+            .zip(shaped.iter())
+            .any(|(ch, (gid, _))| !ch.is_whitespace() && *gid == 0)
+    } else {
+        chars.iter().any(|ch| !ch.is_whitespace()) && shaped.iter().any(|(gid, _)| *gid == 0)
+    }
+}
+
+fn face_lacks_ink(face: &Face, text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    shaped_lacks_ink(&chars, &face.shape(text, 11.0))
+}
+
+fn line_fit_need(natural: f32, ascent: f32, style: &ParaStyle, line_box: f32) -> f32 {
     let need = if style.line_exact.is_none() && style.line_at_least.is_none() {
-        line_box.min(metrics.single_line_pt(if size > 0.0 { size } else { 11.0 }))
+        line_box.min(natural)
     } else {
         line_box
     };
-    need.max(metrics.ascent_pt(size) + 2.0)
+    need.max(ascent + 2.0)
 }
 
 fn is_toc_style(style: &ParaStyle) -> bool {
@@ -11631,22 +11655,10 @@ impl<'a> Layout<'a> {
         let mut y = self.y;
         let mut fit = 0usize;
         for (line_i, line) in lines.iter().enumerate() {
-            let size = line
-                .iter()
-                .chain(marker.filter(|_| line_i == 0))
-                .map(|r| r.style.size)
-                .fold(0.0_f32, f32::max);
-            let size = if size > 0.0 { size } else { 11.0 };
-            let face = line.first().or(marker.filter(|_| line_i == 0)).map_or(
-                FaceId::CarlitoRegular.into(),
-                |first| {
-                    self.fonts
-                        .resolve(&first.style.family, first.style.bold, first.style.italic)
-                },
-            );
-            let metrics = self.fonts.get(face);
-            let line_box = snap_doc_grid(para_line_box(metrics, size, style), self.page.grid_pitch);
-            if y - line_fit_need(metrics, size, style, line_box) < self.body_floor {
+            let (natural, ascent) = self.line_face_metrics(line, marker.filter(|_| line_i == 0));
+            let line_box =
+                snap_doc_grid(line_box_from_natural(natural, style), self.page.grid_pitch);
+            if y - line_fit_need(natural, ascent, style, line_box) < self.body_floor {
                 break;
             }
             y -= line_box;
@@ -11663,6 +11675,60 @@ impl<'a> Layout<'a> {
             return Some(if n >= 4 { n - 2 } else { 0 });
         }
         None
+    }
+
+    /// Word sizes a line by its tallest face: the single-line height and
+    /// ascent are the max over the line's runs and its list marker
+    /// (011c597c's Symbol bullets make 14.7pt lines under Times 12).
+    fn line_face_metrics(&self, line: &[TextRun], marker: Option<&TextRun>) -> (f32, f32) {
+        // Whitespace-only runs do not size the line: a trailing Calibri
+        // space (002919b3) or an Aptos tab between Times TOC text keeps
+        // Word's Times line.
+        let inked: Vec<&TextRun> = line
+            .iter()
+            .chain(marker)
+            .filter(|r| !r.text.trim().is_empty())
+            .collect();
+        let runs: Vec<&TextRun> = if inked.is_empty() {
+            line.iter().chain(marker).take(1).collect()
+        } else {
+            inked
+        };
+        let mut natural = 0.0_f32;
+        let mut ascent = 0.0_f32;
+        for run in &runs {
+            // 000f4c0b's all-lowercase small-caps line is a 12pt line.
+            let size = if run.style.box_size > 0.0 {
+                run.style.box_size
+            } else if run.style.size > 0.0 {
+                run.style.size
+            } else {
+                11.0
+            };
+            let mut face = self.fonts.get(self.fonts.resolve(
+                paint_family(&run.style, &run.text),
+                run.style.bold,
+                run.style.italic,
+            ));
+            // A glyph the face lacks paints, and sizes the line, in the
+            // fallback (paint_run): 019f3137's "●" in an absent Noto Sans
+            // Symbols is Arial in Word, not the 12.25pt stand-in.
+            if face_lacks_ink(face, &run.text) {
+                face = self.fonts.get(if run.style.bold {
+                    FaceId::SansBold
+                } else {
+                    FaceId::SansRegular
+                });
+            }
+            natural = natural.max(face.single_line_pt(size));
+            ascent = ascent.max(face.ascent_pt(size));
+        }
+        if runs.is_empty() {
+            let face = self.fonts.get(FaceId::CarlitoRegular);
+            natural = face.single_line_pt(11.0);
+            ascent = face.ascent_pt(11.0);
+        }
+        (natural, ascent)
     }
 
     /// Break the flow the way `ensure` does: next column, else next page.
@@ -12251,13 +12317,7 @@ impl<'a> Layout<'a> {
                 .map(|r| r.style.size)
                 .fold(0.0_f32, f32::max);
             let size = if size > 0.0 { size } else { 11.0 };
-            let face = if let Some(first) = line.first().or(marker.filter(|_| line_i == 0)) {
-                self.fonts
-                    .resolve(&first.style.family, first.style.bold, first.style.italic)
-            } else {
-                FaceId::CarlitoRegular.into()
-            };
-            let metrics = self.fonts.get(face);
+            let (natural, ascent) = self.line_face_metrics(line, marker.filter(|_| line_i == 0));
             if style.empty_toc_field && line.iter().all(|r| r.text.trim().is_empty()) {
                 // Mini 504 collapse-to-zero ITT-neg. Do not use ascent
                 // leftover (that re-inflates to ~ascent+1). Word Tip y≈93
@@ -12267,12 +12327,11 @@ impl<'a> Layout<'a> {
                 self.y -= box_h;
                 continue;
             }
-            let mut line_box = para_line_box(metrics, size, style);
+            let mut line_box = line_box_from_natural(natural, style);
             if self.space_for_ul && line_has_underlined_cjk(line) {
                 line_box += space_for_ul_extra(size);
             }
             line_box = snap_doc_grid(line_box, self.page.grid_pitch);
-            let ascent = metrics.ascent_pt(size);
             let fn_h = self.added_footnote_h(line);
             if fn_h > 0.0 {
                 let new_floor = self.chrome_floor() + self.footnote_block_h() + fn_h;
@@ -12281,7 +12340,7 @@ impl<'a> Layout<'a> {
                 }
                 self.claim_line_footnotes(line);
             }
-            self.ensure(line_fit_need(metrics, size, style, line_box));
+            self.ensure(line_fit_need(natural, ascent, style, line_box));
             if let Some(fill) = style.fill {
                 let fx = self.flow_left() + style.indent_left;
                 let fw = (self.content_width() - style.indent_left - style.indent_right).max(1.0);
@@ -12986,15 +13045,7 @@ impl<'a> Layout<'a> {
         let kern = run.style.kerns_at(lsize);
         let mut shaped = face.shape_kern(&run.text, lsize, kern);
         let chars: Vec<char> = run.text.chars().collect();
-        let ink_missing = if chars.len() == shaped.len() {
-            chars
-                .iter()
-                .zip(shaped.iter())
-                .any(|(ch, (gid, _))| !ch.is_whitespace() && *gid == 0)
-        } else {
-            run.text.chars().any(|ch| !ch.is_whitespace())
-                && shaped.iter().any(|(gid, _)| *gid == 0)
-        };
+        let ink_missing = shaped_lacks_ink(&chars, &shaped);
         if ink_missing {
             fid = if run.style.bold {
                 FaceId::SansBold.into()
@@ -16197,6 +16248,7 @@ fn default_run_style() -> RunStyle {
         scale: 1.0,
         caps: false,
         small_caps: false,
+        box_size: 0.0,
         offset: 0.0,
         vert: VertAlign::Baseline,
         kern_half: 0,
@@ -16217,6 +16269,7 @@ fn small_caps_pieces(text: &str, style: &RunStyle) -> Vec<(String, RunStyle)> {
         let mut st = style.clone();
         st.small_caps = false;
         st.size = if small { reduced } else { full };
+        st.box_size = full;
         out.push((std::mem::take(buf), st));
     };
     for ch in text.chars() {

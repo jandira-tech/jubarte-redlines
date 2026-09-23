@@ -616,6 +616,63 @@ fn direct_ind_left_keeps_the_numbering_level_hanging() {
 }
 
 #[test]
+fn all_lowercase_small_caps_line_keeps_its_authored_height() {
+    // fixtures_500 000f4c0b: small caps paint lowercase at 80%, but the
+    // run is still 12pt; its line is a 12pt line, not a 9.6pt one.
+    let para = r#"<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:smallCaps/><w:sz w:val="24"/></w:rPr><w:t>interculturalidad</w:t></w:r></w:p>"#;
+    let body = format!("{para}{para}{para}<w:sectPr/>");
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("small caps");
+    let ys = text_baselines(&pdf);
+    assert!(ys.len() >= 3, "three lines; ys={ys:?}");
+    let pitch = ys[0] - ys[1];
+    assert!(
+        (pitch - 13.8).abs() < 0.1,
+        "Arial 12 line despite 9.6pt glyphs; pitch={pitch}"
+    );
+}
+
+#[test]
+fn line_height_is_the_tallest_face_including_the_marker() {
+    // fixtures_500 011c597c / 0103f846: Word sizes a line by its tallest
+    // face. A Calibri-font marker (12.2pt at 10pt) over Arial 10 body
+    // (11.5pt) makes 12.2pt item lines; a trailing Calibri space does not
+    // (002919b3), it hangs past the line.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
+              <w:lvlText w:val=\"o\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\
+              <w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/></w:rPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let arial = r#"<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="20"/></w:rPr>"#;
+    let calibri =
+        r#"<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="20"/></w:rPr>"#;
+    let item = format!(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/>{arial}</w:pPr><w:r>{arial}<w:t>Item</w:t></w:r></w:p>"#
+    );
+    let plain = format!(
+        r#"<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r>{arial}<w:t>Plain</w:t></w:r><w:r>{calibri}<w:t xml:space="preserve"> </w:t></w:r></w:p>"#
+    );
+    let body = format!("{item}{item}{item}{plain}{plain}{plain}<w:sectPr/>");
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("line faces");
+    let ys = text_baselines(&pdf);
+    assert!(ys.len() >= 6, "six lines; ys={ys:?}");
+    let item_pitch = ys[0] - ys[1];
+    let plain_pitch = ys[4] - ys[5];
+    assert!(
+        (item_pitch - 12.21).abs() < 0.1,
+        "a Calibri marker makes a 12.2pt line; pitch={item_pitch} ys={ys:?}"
+    );
+    assert!(
+        (plain_pitch - 11.5).abs() < 0.1,
+        "a trailing Calibri space leaves the Arial line at 11.5pt; pitch={plain_pitch}"
+    );
+}
+
+#[test]
 fn numbering_start_override_restarts_the_second_instance() {
     // xml_parts_plan numbering leftovers: w:lvlOverride/w:startOverride
     // on a second w:num sharing the abstract. Without it, CharlieOV
