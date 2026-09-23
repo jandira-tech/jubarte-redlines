@@ -3013,6 +3013,8 @@ fn text_box_paragraphs_lay_out_as_paragraphs_inside_the_insets() {
             let x = nums.next()?.parse::<f32>().ok()?;
             Some((x, y))
         })
+        // The box spans x 15.75..252; the host paragraph's mark line is at 72.
+        .filter(|g| g.0 < 60.0)
         .collect();
     let mut ys: Vec<i32> = glyphs.iter().map(|g| (g.1 * 10.0).round() as i32).collect();
     ys.sort_unstable();
@@ -3111,6 +3113,38 @@ fn a_group_paints_each_shape_in_its_own_place() {
     assert!(
         hay.contains("0.000 0.000 1.000 rg 200.00 592.00 100.00 100.00 re f"),
         "the rectangle fills the right half"
+    );
+}
+
+#[test]
+fn a_paragraph_holding_only_floating_text_boxes_is_a_line_of_its_mark() {
+    // fixtures_500 00bf6b4c: an org chart hangs its boxes off empty 20pt
+    // paragraphs. Word gives each paragraph its 20pt mark line; a floating
+    // text box stopped us adding the mark, the paragraphs shrank and every
+    // box anchored below sat ~60pt high.
+    let box_run = "<w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"page\"><wp:posOffset>4000000</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"600000\" cy=\"300000\"/><wp:wrapNone/><wp:docPr id=\"1\" name=\"B\"/>\
+          <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+            <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+              <wps:spPr><a:xfrm><a:ext cx=\"600000\" cy=\"300000\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr>\
+              <wps:txbx><w:txbxContent><w:p><w:r><w:t>Box</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/>\
+            </wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>";
+    let mark = r#"<w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/><w:rPr><w:sz w:val="40"/></w:rPr></w:pPr>"#;
+    let doc = |host: &str| {
+        let body = format!(
+            "<w:p>{mark}{host}</w:p><w:p>{mark}{host}</w:p><w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("floats only");
+        pdf_literal_td_xy(&pdf, "After").expect("After").1
+    };
+    let bare = doc("");
+    let boxed = doc(box_run);
+    assert!(
+        (bare - boxed).abs() < 0.05,
+        "floating boxes leave the 20pt mark lines alone; bare={bare} boxed={boxed}"
     );
 }
 
@@ -16876,6 +16910,61 @@ fn header_tabs_advance_without_painting_and_do_not_size_the_line() {
         .map(|s| stream_glyph_text(s))
         .collect();
     assert!(!text.contains('\t'), "no glyph for a tab; text={text:?}");
+}
+
+#[test]
+fn a_right_aligned_header_line_keeps_its_right_indent() {
+    // fixtures_500 00ad6ec7: "WN U-75" is jc=right with ind right=2160 in
+    // the header; Word ends it 108pt inside the right margin. We aligned
+    // header lines across the whole text width.
+    let x = |ind: &str| {
+        let inner = format!(
+            r#"<w:p><w:pPr><w:ind {ind}/><w:jc w:val="right"/></w:pPr><w:r><w:t>Head</w:t></w:r></w:p>"#
+        );
+        let pdf = docx_to_pdf(&header_part_docx_at(&inner, 720)).expect("indented header");
+        pdf_glyph_text_xy(&pdf, "Head").expect("Head").0
+    };
+    let flush = x("");
+    let indented = x(r#"w:right="2160""#);
+    assert!(
+        (flush - indented - 108.0).abs() < 0.05,
+        "the right indent moves the line 108pt in; flush={flush} indented={indented}"
+    );
+}
+
+#[test]
+fn an_empty_header_paragraph_between_text_is_a_line() {
+    // fixtures_500 00ad6ec7: empty and tab-only header paragraphs between
+    // "WN U-75" and "Fifth Revision" are lines in Word; we dropped them and
+    // pulled the rest of the header (and the body) up.
+    let sp = r#"<w:spacing w:before="0" w:after="0" w:line="300" w:lineRule="exact"/>"#;
+    let inner = |middle: &str| {
+        format!(
+            r#"<w:p><w:pPr>{sp}</w:pPr><w:r><w:t>Top</w:t></w:r></w:p>{middle}<w:p><w:pPr>{sp}</w:pPr><w:r><w:t>Low</w:t></w:r></w:p>"#
+        )
+    };
+    let gap = |middle: &str| {
+        let pdf = docx_to_pdf(&header_part_docx_at(&inner(middle), 720)).expect("middle empty");
+        pdf_glyph_text_xy(&pdf, "Top").expect("Top").1
+            - pdf_glyph_text_xy(&pdf, "Low").expect("Low").1
+    };
+    let empty = format!(r#"<w:p><w:pPr>{sp}</w:pPr></w:p>"#);
+    let tab = format!(r#"<w:p><w:pPr>{sp}</w:pPr><w:r><w:tab/></w:r></w:p>"#);
+    assert!(
+        (gap("") - 15.0).abs() < 0.05,
+        "adjacent lines are 15pt apart; gap={}",
+        gap("")
+    );
+    assert!(
+        (gap(&empty) - 30.0).abs() < 0.05,
+        "an empty paragraph is a line; gap={}",
+        gap(&empty)
+    );
+    assert!(
+        (gap(&tab) - 30.0).abs() < 0.05,
+        "a tab-only paragraph is a line; gap={}",
+        gap(&tab)
+    );
 }
 
 #[test]

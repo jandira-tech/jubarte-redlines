@@ -6108,7 +6108,10 @@ fn paragraph_block(
     let floats_only = images
         .iter()
         .all(|img| !matches!(img.slot, ImageSlot::Flow));
-    if runs.is_empty() && floats_only && boxes.is_empty() {
+    // Floating text boxes take no line space either (00bf6b4c's org chart
+    // hangs its boxes off empty 20pt paragraphs).
+    let boxes_float = boxes.iter().all(|b| !matches!(b.slot, ImageSlot::Flow));
+    if runs.is_empty() && floats_only && boxes_float {
         if let Some(rpr) = mark_rpr {
             let mut mark = rstyle.clone();
             apply_rpr(dom, rpr, &mut mark, &sheet.theme);
@@ -11499,7 +11502,6 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
     };
     let mut runs = Vec::new();
     let mut pending = Vec::new();
-    let mut prev: Option<std::rc::Rc<ParaStyle>> = None;
     // The paragraph before this one, painted or empty: a trailing empty
     // paragraph sits max(its after, this before) below it.
     let mut last: Option<std::rc::Rc<ParaStyle>> = None;
@@ -11555,11 +11557,20 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
             }
             runs.append(&mut pending);
         } else {
-            pending.clear();
+            // Empty paragraphs between text are lines too (00ad6ec7's blank
+            // and tab-only header paragraphs): each keeps its break and
+            // stands as an empty line of its mark.
+            for br in pending.drain(..) {
+                let mut mark = TextRun::new("", br.style.clone());
+                mark.hf_para = br.hf_para.clone();
+                mark.ends_line = true;
+                runs.push(br);
+                runs.push(mark);
+            }
             let mut br = TextRun::new(HF_LINE_BREAK, prun.clone());
             // Word's inter-paragraph space is max(after, next.before),
             // none between contextual same-style paragraphs.
-            br.para_gap = match prev.as_deref() {
+            br.para_gap = match last.as_deref() {
                 Some(p) if same_contextual_pair(p, &pstyle) => 0.0,
                 Some(p) => f32::max(p.after, pstyle.before),
                 None => pstyle.before,
@@ -11567,7 +11578,6 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
             runs.push(br);
         }
         runs.extend(line);
-        prev = Some(pstyle.clone());
         last = Some(pstyle);
     }
     // A part of only empty paragraphs (0003b3ae's blank first-page
@@ -11686,7 +11696,10 @@ fn hf_paragraph_lines(runs: &[TextRun]) -> Vec<(Vec<TextRun>, f32)> {
             line.0.push(run.clone());
         }
     }
-    lines.retain(|(line, _)| line.iter().any(|r| !r.text.trim().is_empty()));
+    lines.retain(|(line, _)| {
+        line.iter()
+            .any(|r| !r.text.trim().is_empty() || r.ends_line)
+    });
     lines
 }
 
@@ -16822,7 +16835,13 @@ impl<'a> Layout<'a> {
             self.tab_stops = saved;
             return;
         }
-        let width = self.content_width();
+        // The paragraph's side indents bound the line (00ad6ec7's jc=right
+        // "WN U-75" ends 108pt inside the margin with ind right=2160).
+        let (ind_l, ind_r) = runs
+            .iter()
+            .find_map(|r| r.hf_para.as_deref())
+            .map_or((0.0, 0.0), |p| (p.indent_left, p.indent_right));
+        let width = self.content_width() - ind_l - ind_r;
         let line_w: f32 = runs
             .iter()
             .map(|r| {
@@ -16843,7 +16862,7 @@ impl<'a> Layout<'a> {
             Align::Center => ((width - line_w) / 2.0).max(0.0),
             Align::Right => (width - line_w).max(0.0),
         };
-        let mut x = self.page.margin_l + extra;
+        let mut x = self.page.margin_l + ind_l + extra;
         for run in runs {
             let untabbed;
             let run = if run.text.contains('\t') {
