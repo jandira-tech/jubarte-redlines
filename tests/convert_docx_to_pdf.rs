@@ -633,6 +633,22 @@ fn all_lowercase_small_caps_line_keeps_its_authored_height() {
 }
 
 #[test]
+fn a_line_break_run_sizes_the_line_it_ends() {
+    // fixtures_500 00accd5b: "FK Nebužely …" then a 13.5pt run holding
+    // <w:br/>; Word's first line is 13.5pt tall (the gap to the next line
+    // is 26.9pt), we sized it by the 10pt text alone (23.0).
+    let body = r#"<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:t>Top</w:t></w:r><w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:br/></w:r><w:r><w:t>Bottom</w:t></w:r></w:p><w:sectPr/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("br size");
+    let ys = text_baselines(&pdf);
+    let pitch = ys[0] - ys[1];
+    // Calibri 20 line 24.41 + Calibri 11 ascent 10.47 - Calibri 20 ascent 19.04.
+    assert!(
+        (pitch - 15.84).abs() < 0.3,
+        "the break's 20pt run sizes line one; pitch={pitch} ys={ys:?}"
+    );
+}
+
+#[test]
 fn line_height_is_the_tallest_face_including_the_marker() {
     // fixtures_500 011c597c / 0103f846: Word sizes a line by its tallest
     // face. A Calibri-font marker (12.2pt at 10pt) over Arial 10 body

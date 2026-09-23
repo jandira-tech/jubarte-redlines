@@ -860,6 +860,9 @@ struct TextRun {
     /// takes its jc and line rule from it (000ebd12's right logo line over
     /// left 19.5pt-exact titles).
     hf_para: Option<std::rc::Rc<ParaStyle>>,
+    /// Empty marker for the `w:br` that ends a line: its run's font sizes
+    /// that line (00accd5b's 13.5pt break run under 10pt text).
+    ends_line: bool,
 }
 
 impl TextRun {
@@ -878,6 +881,7 @@ impl TextRun {
             note_ref: false,
             para_gap: 0.0,
             hf_para: None,
+            ends_line: false,
         }
     }
 
@@ -11788,7 +11792,7 @@ impl<'a> Layout<'a> {
         let inked: Vec<&TextRun> = line
             .iter()
             .chain(marker)
-            .filter(|r| !r.text.trim().is_empty())
+            .filter(|r| !r.text.trim().is_empty() || r.ends_line)
             .collect();
         let runs: Vec<&TextRun> = if inked.is_empty() {
             line.iter().chain(marker).take(1).collect()
@@ -16682,6 +16686,8 @@ fn wrap_runs_tabbed(
     tabs: Option<&WrapTabs<'_>>,
 ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
     let mut segments: Vec<Vec<TextRun>> = vec![Vec::new()];
+    // The run holding each break, per ended segment.
+    let mut breaks: Vec<TextRun> = Vec::new();
     for run in runs {
         let mut parts = run.text.split('\n');
         if let Some(first) = parts.next()
@@ -16693,6 +16699,13 @@ fn wrap_runs_tabbed(
                 .push(run.with_text(first));
         }
         for part in parts {
+            let mut marker = run.with_text("");
+            marker.comments.clear();
+            marker.pageref = None;
+            marker.ref_name = None;
+            marker.footnote_id = None;
+            marker.ends_line = true;
+            breaks.push(marker);
             segments.push(Vec::new());
             // A line opened by a break keeps the break's run even when
             // empty: its height is that run's font (0072d3b3's trailing
@@ -16720,7 +16733,13 @@ fn wrap_runs_tabbed(
         let wrapped = wrap_runs_segment(fonts, seg, fw, width, list && i == 0, seg_tabs.as_ref());
         let more = i + 1 < segments.len();
         let n = wrapped.len();
-        for (j, line) in wrapped.into_iter().enumerate() {
+        for (j, mut line) in wrapped.into_iter().enumerate() {
+            if more
+                && j + 1 == n
+                && let Some(marker) = breaks.get(i)
+            {
+                line.push(marker.clone());
+            }
             lines.push(line);
             ends_br.push(more && j + 1 == n);
         }
