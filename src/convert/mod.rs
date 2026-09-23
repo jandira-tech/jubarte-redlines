@@ -335,6 +335,9 @@ struct ParaStyle {
     /// (a cell's outer auto space is dropped, 0129b302).
     before_auto: bool,
     after_auto: bool,
+    /// `w:widowControl`: on unless a style or pPr turns it off (Word's
+    /// default; 00182e72 moves a lone first line to the next page).
+    widow_control: bool,
     line_mult: f32,
     /// `w:spacing w:lineRule="exact"` in points. Word uses this as the
     /// line box (sd_2517 Ttulo1 line=400 → 20pt), not size×(line/11).
@@ -721,6 +724,7 @@ impl Defaults {
                 before: 0.0,
                 before_auto: false,
                 after_auto: false,
+                widow_control: true,
                 line_mult: 276.0 / 240.0,
                 line_exact: None,
                 line_at_least: None,
@@ -2636,6 +2640,9 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
             "both" | "distribute" => Align::Justify,
             _ => Align::Left,
         };
+    }
+    if let Some(wc) = direct_named(dom, ppr, "widowControl") {
+        style.widow_control = !val_is_false(dom, Some(wc));
     }
     if let Some(sp) = first_named(dom, ppr, "spacing") {
         // ISO Strict (Strict01) writes `8pt` / `12.95pt`. Bare numbers are twips.
@@ -10541,6 +10548,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         before: 0.0,
         before_auto: false,
         after_auto: false,
+        widow_control: true,
         line_mult: 1.0,
         line_exact: None,
         line_at_least: None,
@@ -11513,6 +11521,69 @@ impl<'a> Layout<'a> {
         self.last_break_was_section = next.is_some();
     }
 
+    /// Word widow/orphan control: a paragraph split across pages keeps at
+    /// least two lines on each side. Returns the line index to break
+    /// before (0 moves the whole paragraph), or None.
+    fn widow_break(
+        &self,
+        lines: &[Vec<TextRun>],
+        marker: Option<&TextRun>,
+        style: &ParaStyle,
+    ) -> Option<usize> {
+        if !style.widow_control || self.nested_depth > 0 || lines.len() < 2 {
+            return None;
+        }
+        let untouched = (self.page.height - self.body_top - self.y).abs() < 0.5;
+        if untouched {
+            return None;
+        }
+        let mut y = self.y;
+        let mut fit = 0usize;
+        for (line_i, line) in lines.iter().enumerate() {
+            let size = line
+                .iter()
+                .chain(marker.filter(|_| line_i == 0))
+                .map(|r| r.style.size)
+                .fold(0.0_f32, f32::max);
+            let size = if size > 0.0 { size } else { 11.0 };
+            let face = line.first().or(marker.filter(|_| line_i == 0)).map_or(
+                FaceId::CarlitoRegular.into(),
+                |first| {
+                    self.fonts
+                        .resolve(&first.style.family, first.style.bold, first.style.italic)
+                },
+            );
+            let metrics = self.fonts.get(face);
+            let line_box = snap_doc_grid(para_line_box(metrics, size, style), self.page.grid_pitch);
+            if y - line_box.max(metrics.ascent_pt(size) + 2.0) < self.body_floor {
+                break;
+            }
+            y -= line_box;
+            fit += 1;
+        }
+        let n = lines.len();
+        if fit >= n || fit == 0 {
+            return None;
+        }
+        if fit < 2 {
+            return Some(0);
+        }
+        if n - fit < 2 {
+            return Some(if n >= 4 { n - 2 } else { 0 });
+        }
+        None
+    }
+
+    /// Break the flow the way `ensure` does: next column, else next page.
+    fn flow_break(&mut self) {
+        if self.page.col_count > 1 && self.col_i + 1 < self.page.col_count {
+            self.column_break();
+        } else {
+            self.new_page();
+        }
+        self.page_has_body = true;
+    }
+
     fn ensure(&mut self, need: f32) {
         if self.nested_depth > 0 {
             return;
@@ -12051,7 +12122,11 @@ impl<'a> Layout<'a> {
             lines = self.reflow_past_float(lines, style, full_width, inset_h);
             ends_br = vec![false; lines.len()];
         }
+        let widow_break = self.widow_break(&lines, marker, style);
         for (line_i, line) in lines.iter().enumerate() {
+            if widow_break == Some(line_i) {
+                self.flow_break();
+            }
             // Layout uses the authored point size so line boxes stay on
             // the Word heading/body grid. Tf/advances use paint_size()
             // (300dpi snap: 16→16.08). Snapping the line box dropped

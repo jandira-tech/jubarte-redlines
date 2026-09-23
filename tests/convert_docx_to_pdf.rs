@@ -3244,11 +3244,10 @@ fn keeplines_moves_wrapped_para_off_the_widow_line() {
 }
 
 #[test]
-fn widow_control_stays_off_after_mini_627() {
-    // Word default w:widowControl is on. Mini 627–630 did that: NR
-    // +0.323/+0.417 (35 gains / eigenpal_2 −1.69) but RL mean −0.006
-    // (file_100_file_101 −6.23). KEEP-only forbids the RL drop. Keep
-    // keepLines-only. Do not retry.
+fn widow_control_moves_a_two_line_paragraph_whole() {
+    // Word's default w:widowControl is on: a two-line paragraph whose first
+    // line would sit alone on the page floor moves to the next page
+    // (fixtures_500 00182e72; the off-lock was mini 627's score).
     let mut body = String::new();
     for i in 0..8 {
         body.push_str(&format!(
@@ -3278,8 +3277,8 @@ fn widow_control_stays_off_after_mini_627() {
         .map(|(_, y)| y)
         .fold(f32::NEG_INFINITY, f32::max);
     assert!(
-        one_y < 200.0,
-        "mini 627 widowControl ITT-neg; AlphaOne stays on the floor; AlphaOne={one_y} BetaTwo={two_y}"
+        one_y > 600.0,
+        "AlphaOne leaves the floor and opens page 2; AlphaOne={one_y} BetaTwo={two_y}"
     );
 }
 
@@ -7706,6 +7705,24 @@ fn autospacing_before_is_dropped_at_the_page_top() {
     assert!(
         (auto - none).abs() < 0.05,
         "no auto space above the first line of a page; auto={auto} none={none}"
+    );
+}
+
+#[test]
+fn widow_control_moves_a_lone_first_line_to_the_next_page() {
+    // fixtures_500 00182e72: a two-line paragraph whose first line fits at
+    // the page foot; Word (widow control on by default) moves it whole.
+    let filler: String = (0..47)
+        .map(|i| format!(r#"<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:t>Line {i}</w:t></w:r></w:p>"#))
+        .collect();
+    let two = r#"<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:t>Alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha omega</w:t></w:r></w:p>"#;
+    let body = format!("{filler}{two}<w:sectPr/>");
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("widow");
+    let pages = pdf_content_streams(&pdf);
+    assert!(pages.len() >= 2, "the text runs onto a second page");
+    assert!(
+        !pages[0].contains("(Alpha)") && !pages[0].contains("(A)"),
+        "the paragraph's first line is not left alone on page 1"
     );
 }
 
@@ -18246,18 +18263,17 @@ fn official_strict01_matches_word_thirteen_pages() {
 }
 
 #[test]
-fn official_strict01_long_video_para_stays_orphan_after_mini_627() {
+fn official_strict01_long_video_para_starts_page_two() {
     // Word p1 ends at the list; the after=480 Video paragraph starts on
-    // p2. Mini 627–630 widowControl lifted it (Word-faithful) but
-    // ITT-neg RL mean −0.006 (file_100_file_101 −6.23). Do not retry.
+    // p2 (widow control, Word's default).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
     let pages = pdf_content_streams(&pdf);
     let p1 = pdf_winansi_text(pages[0].as_bytes());
     assert!(
-        p1.contains("point. When you click Online Video"),
-        "mini 627 widowControl ITT-neg; p1 orphan stays; p1={p1}"
+        !p1.contains("point. When you click Online Video"),
+        "the Video paragraph's first line is not orphaned on p1; p1={p1}"
     );
 }
 
