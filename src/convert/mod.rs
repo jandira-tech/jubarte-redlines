@@ -1060,6 +1060,8 @@ struct TableCell {
     rowspan: usize,
     fill: Option<[f32; 3]>,
     valign_center: bool,
+    /// `w:vAlign="bottom"`: content sits on the row floor (0090ba78).
+    valign_bottom: bool,
     /// First ink paragraph `w:jc` (file_34 header Feature is center).
     align: Align,
     pad_l: f32,
@@ -1095,6 +1097,7 @@ impl TableCell {
             rowspan: self.rowspan,
             fill: self.fill,
             valign_center: self.valign_center,
+            valign_bottom: self.valign_bottom,
             align: self.align,
             pad_l: self.pad_l,
             pad_r: self.pad_r,
@@ -1139,6 +1142,7 @@ struct RawCell {
     vmerge: VMerge,
     fill: Option<[f32; 3]>,
     valign_center: bool,
+    valign_bottom: bool,
     align: Align,
     pad_l: f32,
     pad_r: f32,
@@ -6984,7 +6988,8 @@ fn table_block(
                 colspan,
                 vmerge,
                 fill: cell_fill(dom, cell),
-                valign_center: cell_valign_center(dom, cell),
+                valign_center: cell_valign_is(dom, cell, "center"),
+                valign_bottom: cell_valign_is(dom, cell, "bottom"),
                 align: cell_align,
                 pad_l,
                 pad_r,
@@ -7481,6 +7486,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
         vmerge: VMerge::None,
         fill: None,
         valign_center: false,
+        valign_bottom: false,
         align: Align::Left,
         pad_l: twip(108.0),
         pad_r: twip(108.0),
@@ -7492,13 +7498,13 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
     }
 }
 
-fn cell_valign_center(dom: &Dom, cell: NodeId) -> bool {
+fn cell_valign_is(dom: &Dom, cell: NodeId, want: &str) -> bool {
     let Some(pr) = first_named(dom, cell, "tcPr") else {
         return false;
     };
     first_named(dom, pr, "vAlign")
         .and_then(|n| attr_any(dom, n, "val"))
-        .is_some_and(|v| v.eq_ignore_ascii_case("center"))
+        .is_some_and(|v| v.eq_ignore_ascii_case(want))
 }
 
 fn cell_nowrap(dom: &Dom, cell: NodeId) -> bool {
@@ -7570,6 +7576,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
                 rowspan: 1,
                 fill: raw.fill,
                 valign_center: raw.valign_center,
+                valign_bottom: raw.valign_bottom,
                 align: raw.align,
                 pad_l: raw.pad_l,
                 pad_r: raw.pad_r,
@@ -15398,12 +15405,17 @@ impl<'a> Layout<'a> {
                     );
                     // Content starts below the row's top rule.
                     let mut y_line = y_top - rule - inset;
-                    if cell.valign_center {
+                    if cell.valign_center || cell.valign_bottom {
                         let content =
                             cell_content_height(self.fonts, cell, &col_w, self.space_for_ul)
                                 - cell.pad_t
                                 - cell.pad_b;
-                        y_line -= (h - cell.pad_t - cell.pad_b - content).max(0.0) / 2.0;
+                        let slack = (h - cell.pad_t - cell.pad_b - content).max(0.0);
+                        y_line -= if cell.valign_bottom {
+                            slack
+                        } else {
+                            slack / 2.0
+                        };
                     }
                     for (pi, (para, (size, line_box, face_id, lines))) in
                         cell.paras.iter().zip(para_lines).enumerate()
@@ -15557,11 +15569,10 @@ impl<'a> Layout<'a> {
             }
             ri += 1;
         }
-        // Styled TableGrid / body tables keep 4pt chrome. Layout sets
-        // after=10 only for unstyled callouts immediately before Heading*.
-        // Do not drop unstyled after (file_146 heading 4pt): 12 tables × 4pt
-        // packed official file_146 7→6pp.
-        self.y -= style.after.max(4.0);
+        // Word starts the next block at the table's bottom edge (001f4e98);
+        // the flat 4pt floor here was an old-corpus page-count tune. Layout
+        // still sets after=10 for unstyled callouts before Heading*.
+        self.y -= style.after;
     }
 
     /// Splits `work[ri]` at the page end when it does not fit: each cell
@@ -15581,9 +15592,9 @@ impl<'a> Layout<'a> {
         if rh <= room + 0.5
             || room < 1.0
             || room < min
-            || row
-                .iter()
-                .any(|c| c.rowspan > 1 || !c.nested.is_empty() || c.valign_center)
+            || row.iter().any(|c| {
+                c.rowspan > 1 || !c.nested.is_empty() || c.valign_center || c.valign_bottom
+            })
         {
             return;
         }

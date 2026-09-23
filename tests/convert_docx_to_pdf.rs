@@ -10510,9 +10510,10 @@ fn unstyled_table_then_body_keeps_compact_after() {
 }
 
 #[test]
-fn unstyled_table_then_heading_keeps_four_pt_chrome_after_mini_tblafter() {
-    // file_146 heading is 4pt below Word, but dropping unstyled
-    // after.max(4) (12 tables × 4pt) packed official file_146 7→6pp.
+fn unstyled_table_then_heading_starts_at_the_table_edge() {
+    // The flat after.max(4) was known to put file_146's heading 4pt below
+    // Word (kept for an old-corpus page count). Word starts the next block
+    // at the table's bottom edge (fixtures_500 001f4e98).
     let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"4680\"/></w:tblGrid>\
          <w:tr><w:tc><w:tcPr><w:shd w:val=\"clear\" w:fill=\"FF0000\"/></w:tcPr>\
            <w:p><w:r><w:rPr><w:sz w:val=\"22\"/></w:rPr>\
@@ -10532,8 +10533,8 @@ fn unstyled_table_then_heading_keeps_four_pt_chrome_after_mini_tblafter() {
     );
     let gap = ys[0] - ys[1];
     assert!(
-        (32.0..=38.0).contains(&gap),
-        "table then heading is cell line box + table after.max(4) + before=15; gap={gap} ys={ys:?}"
+        (28.0..=33.0).contains(&gap),
+        "table then heading is the cell's line box + before=15, no table chrome; gap={gap} ys={ys:?}"
     );
 }
 
@@ -17192,6 +17193,48 @@ fn a_section_break_takes_the_type_of_the_section_it_starts() {
         "a continuous section 2 does not break"
     );
     assert_eq!(pages(continuous, ""), 2, "a nextPage section 2 breaks");
+}
+
+#[test]
+fn bottom_aligned_cell_text_sits_on_the_row_floor() {
+    // fixtures_500 0090ba78: vAlign=bottom cells in a 13.5pt row hold an
+    // 11.5pt Arial line; Word sets it 2pt down. We only knew center.
+    let first = |valign: &str| {
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="3000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val="600"/></w:trPr><w:tc><w:tcPr>{valign}</w:tcPr><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("valign");
+        text_baselines(&pdf)[0]
+    };
+    let top = first("");
+    let bottom = first(r#"<w:vAlign w:val="bottom"/>"#);
+    // 30pt row, Calibri 11 line 13.43: the text drops 16.57pt.
+    assert!(
+        (top - bottom - 16.57).abs() < 0.3,
+        "bottom-aligned text drops by the row's leftover; top={top} bottom={bottom}"
+    );
+}
+
+#[test]
+fn a_table_adds_no_space_below_its_last_row() {
+    // fixtures_500 001f4e98: the paragraph after a table starts at the
+    // table's bottom edge in Word; a flat 4pt after every table pushed its
+    // page one line long.
+    let after = |lead: &str| {
+        let body = format!(
+            r#"{lead}<w:p><w:pPr><w:spacing w:before="{before}" w:after="0"/></w:pPr><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>"#,
+            before = if lead.is_empty() { 400 } else { 0 }
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("table gap");
+        text_baselines(&pdf).into_iter().fold(f32::MAX, f32::min)
+    };
+    let table = r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val="400" w:hRule="exact"/></w:trPr><w:tc><w:p/></w:tc></w:tr></w:tbl>"#;
+    let spaced = after("");
+    let tabled = after(table);
+    assert!(
+        (spaced - tabled).abs() < 0.2,
+        "a 20pt table and 20pt of space before place the line alike; {spaced} vs {tabled}"
+    );
 }
 
 #[test]
