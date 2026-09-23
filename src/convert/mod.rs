@@ -9951,7 +9951,10 @@ fn pick_section_hf(
     } else {
         first.clone()
     };
-    if sect_title_pg(dom, sect) && chrome_present(&first) {
+    // An explicit first-page reference wins even when its part is blank:
+    // that is how 0016811c hides the page number on page 1.
+    let first_explicit = sect_has_typed_ref(dom, sect, local, "first");
+    if sect_title_pg(dom, sect) && (first_explicit || chrome_present(&first)) {
         let mut first = first;
         if first.watermark.is_none() {
             first.watermark = default.watermark.clone();
@@ -10263,7 +10266,14 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts)
     // so its top is one line higher and each page ends a line sooner.
     // It rides as a bare HF_LINE_BREAK whose para_gap is its own spacing.
     let empty_break = |para: NodeId| {
-        let mut br = TextRun::new(HF_LINE_BREAK, base.clone());
+        let mut mark = base.clone();
+        if let Some(rpr) = dom
+            .element(para, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        {
+            apply_rpr(dom, rpr, &mut mark, theme);
+        }
+        let mut br = TextRun::new(HF_LINE_BREAK, mark);
         br.para_gap = hf_para_spacing(dom, para, "before") + hf_para_spacing(dom, para, "after");
         br
     };
@@ -10298,9 +10308,9 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts)
         runs.extend(line);
         prev_after = hf_para_spacing(dom, para, "after");
     }
-    if runs.iter().any(|r| r.text != HF_LINE_BREAK) {
-        runs.append(&mut pending);
-    }
+    // A part of only empty paragraphs (0003b3ae's blank first-page
+    // header) is still their stacked lines: Word starts the body below.
+    runs.append(&mut pending);
     runs
 }
 
@@ -10587,20 +10597,39 @@ fn chrome_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
         .take(lines.len().saturating_sub(1))
         .map(|(_, gap)| *gap)
         .sum();
-    let (lead, trail) = chrome_empty_pads(runs, one);
+    let (lead, trail) = chrome_empty_pads(fonts, runs);
+    if runs.iter().all(|r| r.text == HF_LINE_BREAK) {
+        return lead;
+    }
     one * n + gaps + lead + trail
 }
 
 /// Height of the empty paragraphs above the first and below the last
 /// painted header/footer line (see `collect_hf_runs`).
-fn chrome_empty_pads(runs: &[TextRun], one: f32) -> (f32, f32) {
-    let pad = |it: &mut dyn Iterator<Item = &TextRun>| -> f32 {
-        it.take_while(|r| r.text == HF_LINE_BREAK)
-            .map(|r| one + r.para_gap)
-            .sum()
+/// Each empty paragraph's line is its own mark's line box.
+fn chrome_empty_pads(fonts: &Fonts, runs: &[TextRun]) -> (f32, f32) {
+    let line = |r: &TextRun| {
+        let face = fonts.resolve(&r.style.family, r.style.bold, r.style.italic);
+        fonts
+            .get(face)
+            .single_line_pt(r.style.size)
+            .max(r.style.size)
+            + r.para_gap
     };
-    let lead = pad(&mut runs.iter());
-    let trail = pad(&mut runs.iter().rev());
+    let lead: f32 = runs
+        .iter()
+        .take_while(|r| r.text == HF_LINE_BREAK)
+        .map(line)
+        .sum();
+    if runs.iter().all(|r| r.text == HF_LINE_BREAK) {
+        return (lead, 0.0);
+    }
+    let trail = runs
+        .iter()
+        .rev()
+        .take_while(|r| r.text == HF_LINE_BREAK)
+        .map(line)
+        .sum();
     (lead, trail)
 }
 
@@ -12663,12 +12692,13 @@ impl<'a> Layout<'a> {
         self.page_has_body = true;
         let (dw, dh) = self.image_wh(img);
         let (x, y) = match img.slot {
+            // An inline picture's bottom is its line's baseline: Word adds
+            // no flat gap (fixtures_500 0003b3ae title sits 11.3pt below
+            // the coat of arms; +4pt pushed every picture paragraph down).
             ImageSlot::Flow => {
-                self.ensure(dh + 4.0);
+                self.ensure(dh);
                 self.y -= dh;
-                let pos = (self.page.margin_l, self.y);
-                self.y -= 4.0;
-                pos
+                (self.page.margin_l, self.y)
             }
             slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
         };
@@ -14798,7 +14828,7 @@ impl<'a> Layout<'a> {
                 },
             );
             let ascent = self.fonts.get(fid).ascent_pt(size);
-            let (lead, _) = chrome_empty_pads(&header, one);
+            let (lead, _) = chrome_empty_pads(self.fonts, &header);
             let mut y = self.page.height - self.page.header.max(10.0) - ascent - lead;
             let header_lines = hf_styled_lines(&header);
             for (i, (line, _)) in header_lines.iter().enumerate() {
@@ -14851,7 +14881,7 @@ impl<'a> Layout<'a> {
             // w:footer is from the page bottom to the bottom of the footer
             // (comments-lots Word top y=743). Using it as the baseline
             // sat the cap-height 7pt high (Td 36).
-            let (_, trail) = chrome_empty_pads(&footer, one);
+            let (_, trail) = chrome_empty_pads(self.fonts, &footer);
             let base = self.page.footer.max(12.0) + self.fonts.get(fid).descent_pt(size) + trail;
             let above: f32 = lines
                 .iter()

@@ -25798,9 +25798,112 @@ fn an_inline_picture_in_a_table_cell_paints() {
     let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert picture in cell");
     let (x, y) = image_cm_xy(&pdf, "120.00", "60.00");
     // Second column starts at 72 + 100pt; the picture's top is the row top.
-    assert!(x > 170.0 && x < 180.0, "picture sits in the second cell; x={x}");
-    assert!((y - (720.0 - 60.0)).abs() < 2.0, "picture top is the row top; y={y}");
+    assert!(
+        x > 170.0 && x < 180.0,
+        "picture sits in the second cell; x={x}"
+    );
+    assert!(
+        (y - (720.0 - 60.0)).abs() < 2.0,
+        "picture top is the row top; y={y}"
+    );
     let hay = String::from_utf8_lossy(&pdf);
-    let after = pdf_tj_xy(&hay, "A").iter().map(|p| p.1).fold(f32::MAX, f32::min);
-    assert!(after < 720.0 - 60.0, "the row grows to hold the picture; After y={after}");
+    let after = pdf_tj_xy(&hay, "A")
+        .iter()
+        .map(|p| p.1)
+        .fold(f32::MAX, f32::min);
+    assert!(
+        after < 720.0 - 60.0,
+        "the row grows to hold the picture; After y={after}"
+    );
+}
+
+#[test]
+fn a_blank_first_page_header_suppresses_the_default_on_page_one() {
+    // fixtures_500 0016811c: titlePg with an explicit, empty first-page
+    // header and footer — the usual way to hide the page number on page 1.
+    // A blank first part fell back to the default PAGE header, painting
+    // "1" top and bottom and pushing the body down.
+    let hdr = |text: &str| {
+        format!(
+            "<w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:p>{text}</w:p></w:hdr>"
+        )
+    };
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:headerReference w:type=\"first\" r:id=\"rIdH2\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/><w:titlePg/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdH2", "header", "header2.xml"),
+        ],
+        &[
+            ("word/header1.xml", hdr("<w:r><w:t>Zdefault</w:t></w:r>")),
+            ("word/header2.xml", hdr("")),
+        ],
+    ))
+    .expect("convert blank first header");
+    let text = pdf_winansi_text(&pdf);
+    assert!(text.contains("Body"), "body paints; text={text:?}");
+    assert!(
+        !text.contains("Zdefault"),
+        "page 1 uses the blank first-page header, not the default; text={text:?}"
+    );
+}
+
+#[test]
+fn a_header_of_only_empty_paragraphs_still_pushes_the_body() {
+    // fixtures_500 0003b3ae: the blank first-page header is three empty
+    // paragraphs. Word stacks them from w:header (36pt) down, so the body
+    // starts at 36 + 3 × 13.8 = 77.4pt, below the 72pt margin.
+    let times = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+         <w:sz w:val=\"24\"/></w:rPr>";
+    let header = format!(
+        "<w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:p><w:pPr>{times}</w:pPr></w:p><w:p><w:pPr>{times}</w:pPr></w:p>\
+         <w:p><w:pPr>{times}</w:pPr></w:p></w:hdr>"
+    );
+    let body = format!(
+        "<w:p><w:r>{times}<w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", header)],
+    ))
+    .expect("convert blank header");
+    let top = text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max);
+    assert!(
+        (top - (792.0 - 77.4 - 10.69)).abs() < 1.0,
+        "body's first baseline sits under the 77.4pt header band; top={top}"
+    );
+}
+
+#[test]
+fn an_inline_picture_line_ends_at_the_picture_bottom() {
+    // fixtures_500 0003b3ae: the title's baseline is 11.3pt under the
+    // coat of arms (its TNR ascent plus a hairline). A flat 4pt gap under
+    // every in-flow picture pushed all following text down.
+    let body = "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:pict>\
+           <v:shape style=\"width:60pt;height:30pt\"><v:imagedata r:id=\"rIdImg\"/></v:shape>\
+         </w:pict></w:r></w:p>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert picture then text");
+    let (_, img_y) = image_cm_xy(&pdf, "60.00", "30.00");
+    let after = text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max);
+    let gap = img_y - after;
+    assert!(
+        gap < 12.5,
+        "next baseline is one ascent under the picture; gap={gap}"
+    );
 }
