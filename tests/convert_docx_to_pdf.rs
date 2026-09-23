@@ -7336,6 +7336,53 @@ fn centred_cell_line_ignores_its_trailing_space() {
     );
 }
 
+fn pbdr_para(text: &str, bdr: bool) -> String {
+    let b = if bdr {
+        r#"<w:pBdr><w:top w:val="single" w:sz="4" w:space="1" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:space="1" w:color="000000"/></w:pBdr>"#
+    } else {
+        ""
+    };
+    format!(r#"<w:p><w:pPr>{b}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#)
+}
+
+#[test]
+fn pbdr_space_and_width_add_to_the_paragraph() {
+    // fixtures_500 003c9ddd "ROZPIS SÚŤAŽE" box: top/bottom space=1 sz=4.
+    // Word stacks 1 + 0.5 above the text and 1 + 0.5 below it (288dpi
+    // scan: rules at 131.75 / 148.0 around the text, heading below).
+    let ys = |bdr: bool| {
+        let body = format!("{}{}", pbdr_para("Boxed", bdr), pbdr_para("Next", false));
+        text_baselines(&docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("pbdr"))
+    };
+    let (with, without) = (ys(true), ys(false));
+    assert!(
+        ((without[0] - with[0]) - 1.5).abs() < 0.05,
+        "the top rule lowers the text by 1.5; with={with:?} without={without:?}"
+    );
+    assert!(
+        (((with[0] - with[1]) - (without[0] - without[1])) - 1.5).abs() < 0.05,
+        "the bottom rule adds 1.5 before the next paragraph; with={with:?} without={without:?}"
+    );
+}
+
+#[test]
+fn identical_pbdr_paragraphs_share_one_box() {
+    // Word groups consecutive paragraphs with the same borders: only the
+    // group's first has the top rule and only its last the bottom one.
+    let gap = |bdr: bool| {
+        let body = format!("{}{}", pbdr_para("One", bdr), pbdr_para("Two", bdr));
+        let ys = text_baselines(
+            &docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("pbdr group"),
+        );
+        ys[0] - ys[1]
+    };
+    let (with, without) = (gap(true), gap(false));
+    assert!(
+        (with - without).abs() < 0.05,
+        "no rules between grouped paragraphs; with={with} without={without}"
+    );
+}
+
 #[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
@@ -13732,11 +13779,10 @@ fn pbdr_bottom_stays_content_box_after_mini_outset() {
 }
 
 #[test]
-fn pbdr_bottom_space_stays_hardcoded_two_after_mini_440() {
-    // ECMA T/B w:space (file_146 heading space=4) is Word-faithful but
-    // mini 440 ITT-neg: NR 59.4648/53.4491 vs KEEP 59.4511/53.4527
-    // (median −0.004, Strict01 family −0.059, file_146 −0.006). Keep
-    // the hardcoded 2pt content-box fudge.
+fn pbdr_bottom_space_sits_between_text_and_rule() {
+    // ECMA T/B w:space is the gap between the text and the rule (Word:
+    // fixtures_500 003c9ddd box). The old hardcoded 2pt was a score lock
+    // (mini 440).
     let mk = |space: &str| {
         format!(
             "<w:p><w:pPr><w:pBdr>\
@@ -13761,18 +13807,15 @@ fn pbdr_bottom_space_stays_hardcoded_two_after_mini_440() {
         "both space variants must paint a bottom rule; tight={yt} wide={yw}"
     );
     assert!(
-        (yt - yw).abs() < 0.5,
-        "mini 440 T/B space was ITT-neg; keep hardcoded 2pt; tight={yt} wide={yw}"
+        ((yt - yw) - 16.0).abs() < 0.1,
+        "space 18 vs 2 moves the rule 16pt down; tight={yt} wide={yw}"
     );
 }
 
 #[test]
-fn intensequote_pbdr_bottom_stays_hardcoded_two_after_mini_480() {
-    // comments-lots / I_am_sharing IntenseQuote pBdr bottom space=4 is
-    // Word-faithful (Quartz gap 8.88pt vs hardcoded 2pt = 6.88pt) but
-    // mini 480–483 ITT-neg: NR 59.4662/53.4527 16 comments-lots drops
-    // 0 gains vs KEEP 472; RL 55.5291/49.659 mean −0.0001 / median
-    // −0.0002, 24 drops 0 gains (I_am_sharing −0.0014). Keep 2pt.
+fn intensequote_pbdr_bottom_space_is_the_word_gap() {
+    // IntenseQuote pBdr bottom space is Word's text-to-rule gap, as for
+    // any paragraph; the hardcoded 2pt was a score lock (mini 480).
     let mk = |space: &str| {
         format!(
             "<w:p><w:pPr><w:pStyle w:val=\"IntenseQuote\"/><w:pBdr>\
@@ -13797,8 +13840,8 @@ fn intensequote_pbdr_bottom_stays_hardcoded_two_after_mini_480() {
         "both IntenseQuote space variants must paint a bottom rule; tight={yt} wide={yw}"
     );
     assert!(
-        (yt - yw).abs() < 0.5,
-        "mini 480 IntenseQuote T/B space was ITT-neg; keep hardcoded 2pt; tight={yt} wide={yw}"
+        ((yt - yw) - 16.0).abs() < 0.1,
+        "IntenseQuote space 18 vs 2 moves the rule 16pt down; tight={yt} wide={yw}"
     );
 }
 

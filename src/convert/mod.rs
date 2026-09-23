@@ -10473,6 +10473,24 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
     style.align
 }
 
+/// Word groups consecutive paragraphs whose borders and indents match
+/// into one box.
+fn same_pbdr(a: &ParaStyle, b: &ParaStyle) -> bool {
+    let has = |p: &ParaStyle| {
+        p.border_top.is_some()
+            || p.border_bottom.is_some()
+            || p.border_left.is_some()
+            || p.border_right.is_some()
+    };
+    has(a)
+        && a.border_top == b.border_top
+        && a.border_bottom == b.border_bottom
+        && a.border_left == b.border_left
+        && a.border_right == b.border_right
+        && a.indent_left == b.indent_left
+        && a.indent_right == b.indent_right
+}
+
 fn pbdr_edge(dom: &Dom, ppr: NodeId, edge: &str) -> Option<([f32; 3], f32, f32)> {
     let pbdr = first_named(dom, ppr, "pBdr")?;
     let el = first_named(dom, pbdr, edge)?;
@@ -10835,6 +10853,9 @@ struct Layout<'a> {
     front_border_ops: Vec<(usize, Vec<Op>)>,
     /// PDF y of the current paragraph's first-line top (xml 3.4).
     para_top: f32,
+    /// This paragraph's pBdr joins the previous / next paragraph's box
+    /// (Word groups identical borders; set by the block loop).
+    pbdr_joins: (bool, bool),
     bookmark_pages: HashMap<String, String>,
     pageref_ops: Vec<(usize, usize, String)>,
     /// Bookmark names present in the DOCX (before layout pages exist).
@@ -11044,6 +11065,7 @@ impl<'a> Layout<'a> {
             section_first_page: true,
             front_border_ops: Vec::new(),
             para_top: y,
+            pbdr_joins: (false, false),
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
             known_bookmarks: HashSet::new(),
@@ -11856,6 +11878,15 @@ impl<'a> Layout<'a> {
         }
         self.at_page_top = false;
         self.suppress_space_before = false;
+        // An unjoined top border stacks its space and width above the text
+        // (003c9ddd box: 1 + 0.5); the bottom one below it.
+        let (joined_above, joined_below) = self.pbdr_joins;
+        let bdr_top = style.border_top.filter(|_| !joined_above);
+        let bdr_bottom = style.border_bottom.filter(|_| !joined_below);
+        let box_top = self.y;
+        if let Some((_, width, space)) = bdr_top {
+            self.y -= space + width;
+        }
         self.para_top = self.y;
         let y_top = self.y;
         let hanging = if style.indent_first < 0.0 {
@@ -11981,9 +12012,24 @@ impl<'a> Layout<'a> {
         // file_146 +0.026 but redline mean −0.020 (comments-lots family
         // −0.48). Keep painting every pBdr.
         self.paint_tab_bars(y_top, self.y);
-        self.paint_pbdr(style, y_top, self.y);
+        let text_bottom = self.y;
+        if let Some((_, width, space)) = bdr_bottom {
+            self.y -= space + width;
+        }
+        let box_bottom = if joined_below {
+            self.y - style.after
+        } else {
+            self.y
+        };
+        self.paint_pbdr(
+            style,
+            box_top,
+            box_bottom,
+            bdr_top.is_some(),
+            bdr_bottom.is_some(),
+        );
         if runs.iter().any(|r| r.rev) {
-            self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
+            self.paint_rev_bar(self.rev_bar_x(), text_bottom, y_top);
         }
         self.y -= style.after;
     }
@@ -12032,30 +12078,25 @@ impl<'a> Layout<'a> {
         });
     }
 
-    fn paint_pbdr(&mut self, style: &ParaStyle, y_top: f32, y_bot: f32) {
-        // Do not consume extra leading — sample_document is already
-        // 3pp vs soffice 3; space="4" lives inside the after gap.
-        // Honoring T/B w:space (mini 440) was Word-shaped (file_146
-        // heading space=4) but ITT-neg: NR mean +0.014 / median −0.004,
-        // Strict01 family −0.059, file_146 −0.006. Gated IntenseQuote
-        // space=4 (mini 480–483) was also ITT-neg: NR 16 comments-lots
-        // drops 0 gains; RL mean −0.0001 / 24 drops (I_am_sharing
-        // −0.0014). Keep hardcoded 2pt.
+    /// Paint a paragraph box between `box_top` and `box_bottom`. The top
+    /// rule hangs from the box top and the bottom rule stands on the box
+    /// bottom, each only when this paragraph owns that edge of its group.
+    fn paint_pbdr(
+        &mut self,
+        style: &ParaStyle,
+        box_top: f32,
+        box_bottom: f32,
+        top_on: bool,
+        bottom_on: bool,
+    ) {
         // Word IntenseQuote (comments-lots p2) paints the rule at
         // w:ind left/right, not the page margins (~90pt extra ink).
-        // Do not outset 1.44pt / 6px@300dpi (mini 225–228): Word
-        // file_146 E2E8F0 is 70.56–541.44, but the global outset was
-        // no-redline mean −0.0001 (file_134 −0.003). Keep the content
-        // box (72×468).
         let x1 = self.page.margin_l + style.indent_left;
         let x2 = self.page.width - self.page.margin_r - style.indent_right;
-        let top = y_top.max(y_bot);
-        let bot = y_top.min(y_bot) - 2.0;
+        let top = box_top.max(box_bottom);
+        let bot = box_top.min(box_bottom);
         // 4-edge box (file_22 / sd_2517 quotes): T/B rules meet the L/R
-        // verticals (Word 93.36–518.88). KEEP 441 space-only was 94.75.
-        // Word's extra 1.44pt Quartz outset is gated to 4-edge — mini
-        // 225 applied it to bottom-only file_146 E2E8F0 (content-box
-        // lock) and ITT-neg file_134 −0.003. Not mini 440 T/B space.
+        // verticals (Word 93.36–518.88), with Word's 1.44pt outset.
         let four_edge = style.border_top.is_some()
             && style.border_bottom.is_some()
             && style.border_left.is_some()
@@ -12065,11 +12106,11 @@ impl<'a> Layout<'a> {
             (Some((_, _, ls)), Some((_, _, rs))) => (x1 - ls - quartz, x2 + rs + quartz),
             _ => (x1, x2),
         };
-        if let Some((color, width, _)) = style.border_top {
-            self.hairline_h(hx1, top, hx2, width, color);
+        if let Some((color, width, _)) = style.border_top.filter(|_| top_on) {
+            self.hairline_h(hx1, top - width * 0.5, hx2, width, color);
         }
-        if let Some((color, width, _)) = style.border_bottom {
-            self.hairline_h(hx1, bot, hx2, width, color);
+        if let Some((color, width, _)) = style.border_bottom.filter(|_| bottom_on) {
+            self.hairline_h(hx1, bot + width * 0.5, hx2, width, color);
         }
         // sd_2517 / file_22 TextHeading2 4-edge: left/right space=4.
         // Word box 93.36–518.88 vs indent-only 99–513 (5.6pt / 11px
@@ -16233,7 +16274,10 @@ fn layout(
                     lay.apply_top_bottom_wrap(images, boxes);
                     let (wrap_left, wrap_right) = lay.wrap_square_inset(images, boxes);
                     let inset_h = lay.wrap_band_remaining(images, boxes);
+                    let joins = |other: Option<&Block>| matches!(other, Some(Block::Paragraph { style: o, .. }) if same_pbdr(o, &style));
+                    lay.pbdr_joins = (i > 0 && joins(blocks.get(i - 1)), joins(blocks.get(i + 1)));
                     lay.emit_runs(runs, &style, *list, wrap_left, wrap_right, inset_h);
+                    lay.pbdr_joins = (false, false);
                 } else if !lay.at_page_top || !lay.suppress_space_before {
                     lay.y -= style.before;
                     lay.at_page_top = false;
