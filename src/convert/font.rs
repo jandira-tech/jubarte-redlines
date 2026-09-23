@@ -689,12 +689,18 @@ impl<'a> Face<'a> {
         // vs 1.13) and Arial (1.09 vs 1.15) against Word's line.
         let line_height =
             f32::from(face.ascender()) - f32::from(face.descender()) + f32::from(face.line_gap());
+        // GDI puts the external leading (hhea total − win total) above the
+        // text: Word's first TNR 12 baseline is winAscent + 0.51pt down.
         let paint_ascent = face
             .tables()
             .os2
             .filter(|os2| !os2.use_typographic_metrics())
-            .map(|os2| f32::from(os2.windows_ascender()))
-            .filter(|win| *win > 0.0)
+            .filter(|os2| os2.windows_ascender() > 0)
+            .map(|os2| {
+                let win_asc = f32::from(os2.windows_ascender());
+                let win_total = win_asc + f32::from(os2.windows_descender()).abs();
+                win_asc + (line_height - win_total).max(0.0)
+            })
             .unwrap_or(ascent);
         let glyph_count = face.number_of_glyphs();
         let mut widths = vec![0u16; glyph_count as usize];

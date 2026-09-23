@@ -25990,3 +25990,25 @@ fn a_header_table_lays_its_cells_out_in_a_row() {
         "the cells share one row baseline; ys={ys:?}"
     );
 }
+
+#[test]
+fn gdi_external_leading_sits_above_the_first_baseline() {
+    // Word lays text out with GDI metrics: the external leading
+    // (hhea total − win total, TNR 87 units = 0.51pt at 12) goes above
+    // the text, so the first baseline is top + winAscent + 0.51.
+    // fixtures_500 014babb2 / 00189e50 baselines sat 0.5–1pt high.
+    if !std::path::Path::new("/System/Library/Fonts/Supplemental/Times New Roman.ttf").is_file() {
+        return;
+    }
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+         <w:sz w:val=\"24\"/></w:rPr><w:t>Top</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert TNR top line");
+    let top = text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max);
+    let want = 792.0 - 72.0 - (1825.0 + 87.0) * 12.0 / 2048.0;
+    assert!(
+        (top - want).abs() < 0.1,
+        "first baseline {top}, Word {want}"
+    );
+}
