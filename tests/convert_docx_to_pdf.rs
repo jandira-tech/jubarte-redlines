@@ -815,6 +815,31 @@ fn a_centred_line_ignores_its_trailing_spaces() {
 }
 
 #[test]
+fn a_continuous_section_switches_to_its_columns_mid_page() {
+    // fixtures_500 00eae782: after the title, a continuous section with
+    // two columns starts mid-page. Word sets the rest in two columns from
+    // there; we kept one full-width column for the whole document.
+    let sp = r#"<w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="exact"/>"#;
+    let body = format!(
+        r#"<w:p><w:pPr>{sp}</w:pPr><w:r><w:t>Top</w:t></w:r></w:p>
+        <w:p><w:pPr>{sp}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/><w:cols w:space="720"/></w:sectPr></w:pPr></w:p>
+        <w:p><w:pPr>{sp}</w:pPr><w:r><w:t>LeftCol</w:t></w:r><w:r><w:br w:type="column"/></w:r></w:p>
+        <w:p><w:pPr>{sp}</w:pPr><w:r><w:t>RightCol</w:t></w:r></w:p>
+        <w:sectPr><w:type w:val="continuous"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/><w:cols w:num="2" w:space="720"/></w:sectPr>"#
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("continuous cols");
+    let (lx, ly) = pdf_literal_td_xy(&pdf, "LeftCol").expect("LeftCol");
+    let (rx, ry) = pdf_literal_td_xy(&pdf, "RightCol").expect("RightCol");
+    // Columns: (468 - 36) / 2 = 216 wide, the second at 72 + 216 + 36.
+    assert!((lx - 72.0).abs() < 0.5, "LeftCol in column 1; lx={lx}");
+    assert!((rx - 324.0).abs() < 0.5, "RightCol in column 2; rx={rx}");
+    assert!(
+        (ry - ly).abs() < 0.5,
+        "column 2 starts where the section did, not at the page top; ly={ly} ry={ry}"
+    );
+}
+
+#[test]
 fn direct_ind_left_keeps_the_numbering_level_hanging() {
     // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
     // paragraph overrides only the left edge; Word keeps the level's

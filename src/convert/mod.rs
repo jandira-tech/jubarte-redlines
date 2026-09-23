@@ -931,6 +931,10 @@ enum Block {
     },
     /// `w:br type=column` — next newspaper column on this page (xml leftover).
     ColumnBreak,
+    /// A continuous section starts here: its columns and left/right margins
+    /// apply from this line of the page, top/bottom from the next page
+    /// (00eae782's two-column body under a one-column title).
+    SectionCols { page: Box<PageSetup> },
 }
 
 /// One paragraph of a `w:footnote` (plan Step 7).
@@ -5087,7 +5091,7 @@ fn visit_runs_mut_inner(blocks: &mut [Block], f: &mut impl FnMut(&mut TextRun)) 
                     }
                 }
             }
-            Block::PageBreak { .. } | Block::ColumnBreak => {}
+            Block::PageBreak { .. } | Block::ColumnBreak | Block::SectionCols { .. } => {}
         }
     }
 }
@@ -5234,6 +5238,28 @@ fn walk_container(
             } else if column_br {
                 blocks.push(Block::ColumnBreak);
             }
+            // Only a change of columns or side margins is a mid-page event;
+            // a same-shape continuous section leaves the flow untouched.
+            if !sect_br
+                && let Some(here) = sect_here.filter(|s| !is_final_sect(ctx.sects, *s))
+                && let Some(next) = next_sect_pr(ctx.sects, here)
+            {
+                let base = &ctx.sheet.defaults.page;
+                let (was, page) = (
+                    apply_sect_pr(dom, here, base),
+                    apply_sect_pr(dom, next, base),
+                );
+                let cols = |p: &PageSetup| (p.col_count.max(1), p.col_custom, p.col_w);
+                let moved = cols(&was) != cols(&page)
+                    || (page.col_count > 1 && (was.col_space - page.col_space).abs() > 0.01)
+                    || (was.margin_l - page.margin_l).abs() > 0.01
+                    || (was.margin_r - page.margin_r).abs() > 0.01;
+                if moved {
+                    blocks.push(Block::SectionCols {
+                        page: Box::new(page),
+                    });
+                }
+            }
         } else if dom.name_is(child, &W::tbl()) {
             // Endnote references in cells count, in document order.
             endnotes.observe_para(dom, child);
@@ -5314,7 +5340,10 @@ fn sect_starts_new_page(dom: &Dom, sect: NodeId) -> bool {
 fn block_para_style(block: &Block) -> Option<&ParaStyle> {
     match block {
         Block::Paragraph { style, .. } => Some(style),
-        Block::Table { .. } | Block::PageBreak { .. } | Block::ColumnBreak => None,
+        Block::Table { .. }
+        | Block::PageBreak { .. }
+        | Block::ColumnBreak
+        | Block::SectionCols { .. } => None,
     }
 }
 
@@ -5757,7 +5786,7 @@ fn keep_next_follow_pt(
             let last = line_fit_need(face.single_line_pt(size), 0.0, style, line);
             style.before + line * (lines - 1) as f32 + last
         }
-        Block::PageBreak { .. } | Block::ColumnBreak => 0.0,
+        Block::PageBreak { .. } | Block::ColumnBreak | Block::SectionCols { .. } => 0.0,
     }
 }
 
@@ -5770,7 +5799,7 @@ fn block_is_blank(block: &Block) -> bool {
             ..
         } => images.is_empty() && boxes.is_empty() && runs.iter().all(|r| r.text.trim().is_empty()),
         Block::Table { rows, .. } => rows.is_empty(),
-        Block::PageBreak { .. } | Block::ColumnBreak => true,
+        Block::PageBreak { .. } | Block::ColumnBreak | Block::SectionCols { .. } => true,
     }
 }
 
@@ -6148,7 +6177,7 @@ fn visit_bookmarked_paras<'b>(
                     }
                 }
             }
-            Block::PageBreak { .. } | Block::ColumnBreak => {}
+            Block::PageBreak { .. } | Block::ColumnBreak | Block::SectionCols { .. } => {}
         }
     }
 }
@@ -6238,7 +6267,7 @@ fn document_word_count(blocks: &[Block]) -> u32 {
                     }
                 }
             }
-            Block::PageBreak { .. } | Block::ColumnBreak => {}
+            Block::PageBreak { .. } | Block::ColumnBreak | Block::SectionCols { .. } => {}
         }
     }
     n
@@ -11827,6 +11856,9 @@ struct Layout<'a> {
     do_not_expand_shift_return: bool,
     /// Current newspaper column (0-based) when `page.col_count` > 1.
     col_i: u8,
+    /// Where a continuous section's columns began on this page: a column
+    /// break returns there, not to the page top.
+    col_top: Option<f32>,
     margin_l0: f32,
     margin_r0: f32,
     placed_comments: HashSet<String>,
@@ -12154,6 +12186,7 @@ impl<'a> Layout<'a> {
             space_for_ul: hf.space_for_ul,
             do_not_expand_shift_return: hf.do_not_expand_shift_return,
             col_i: 0,
+            col_top: None,
             margin_l0: page.margin_l,
             margin_r0: page.margin_r,
             placed_comments: HashSet::new(),
@@ -12364,6 +12397,7 @@ impl<'a> Layout<'a> {
         self.side_float = None;
         self.section_first_page = false;
         self.col_i = 0;
+        self.col_top = None;
         if self.page.ln_restart == 0 {
             self.ln_i = self.page.ln_start.max(1);
         }
@@ -12459,6 +12493,7 @@ impl<'a> Layout<'a> {
             // A floating table belongs to the page it was painted on.
             self.side_float = None;
             self.col_i = 0;
+            self.col_top = None;
             self.y = self.page.height - self.body_top;
             self.page_has_body = false;
             self.at_page_top = true;
@@ -12612,11 +12647,29 @@ impl<'a> Layout<'a> {
         self.page_has_body = true;
     }
 
+    /// A continuous section begins on this line: its columns and left/right
+    /// margins apply at once; its top/bottom wait for the next page (the
+    /// floor is fixed when a page starts).
+    fn start_continuous_section(&mut self, next: &PageSetup) {
+        self.page.col_count = next.col_count;
+        self.page.col_space = next.col_space;
+        self.page.col_custom = next.col_custom;
+        self.page.col_w = next.col_w;
+        self.page.margin_l = next.margin_l;
+        self.page.margin_r = next.margin_r;
+        self.page.margin_t = next.margin_t;
+        self.page.margin_b = next.margin_b;
+        self.margin_l0 = next.margin_l;
+        self.margin_r0 = next.margin_r;
+        self.col_i = 0;
+        self.col_top = (next.col_count > 1).then_some(self.y);
+    }
+
     fn column_break(&mut self) {
         let n = self.page.col_count.max(1);
         if self.col_i + 1 < n {
             self.col_i += 1;
-            self.y = self.page.height - self.body_top;
+            self.y = self.col_top.unwrap_or(self.page.height - self.body_top);
             self.at_page_top = true;
             self.page_has_body = true;
         } else {
@@ -18049,6 +18102,7 @@ fn layout(
             } => lay.emit_table(cols, rows, style, *borders, geom),
             Block::PageBreak { next, manual } => lay.hard_page_break(next.as_deref(), *manual),
             Block::ColumnBreak => lay.column_break(),
+            Block::SectionCols { page } => lay.start_continuous_section(page),
         }
     }
     if lay.pages.iter().all(|p| p.ops.is_empty()) {
@@ -28033,7 +28087,10 @@ mod table_tests {
                     "inner tbl is a nested Block, not flattened rows"
                 );
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+            Block::Paragraph { .. }
+            | Block::PageBreak { .. }
+            | Block::ColumnBreak
+            | Block::SectionCols { .. } => {
                 panic!("expected table")
             }
         }
@@ -28083,7 +28140,10 @@ mod table_tests {
             Block::Table { rows, .. } => {
                 assert_eq!(rows.len(), 2, "Word still paints deleted TableGrid");
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+            Block::Paragraph { .. }
+            | Block::PageBreak { .. }
+            | Block::ColumnBreak
+            | Block::SectionCols { .. } => {
                 panic!("expected table")
             }
         }
@@ -28129,7 +28189,10 @@ mod table_tests {
                     style.line_mult
                 );
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+            Block::Paragraph { .. }
+            | Block::PageBreak { .. }
+            | Block::ColumnBreak
+            | Block::SectionCols { .. } => {
                 panic!("expected table")
             }
         }
@@ -28200,7 +28263,10 @@ mod table_tests {
                 assert_eq!(six.rowspan, 2);
                 assert_eq!(rows[2].len(), 2, "continue cell is not a new origin");
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+            Block::Paragraph { .. }
+            | Block::PageBreak { .. }
+            | Block::ColumnBreak
+            | Block::SectionCols { .. } => {
                 panic!("expected table")
             }
         }
@@ -28245,7 +28311,10 @@ mod table_tests {
                 assert!((fill[1] - 0xEA as f32 / 255.0).abs() < 0.01);
                 assert!((fill[2] - 0xF7 as f32 / 255.0).abs() < 0.01);
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+            Block::Paragraph { .. }
+            | Block::PageBreak { .. }
+            | Block::ColumnBreak
+            | Block::SectionCols { .. } => {
                 panic!("expected table")
             }
         }
@@ -28358,7 +28427,10 @@ mod table_tests {
                 assert!(b.top && b.bottom && !b.left && !b.inside_v);
                 assert!((style.line_mult - 1.0).abs() < 0.02);
             }
-            Block::Paragraph { .. } | Block::PageBreak { .. } | Block::ColumnBreak => {
+            Block::Paragraph { .. }
+            | Block::PageBreak { .. }
+            | Block::ColumnBreak
+            | Block::SectionCols { .. } => {
                 panic!("expected table")
             }
         }
