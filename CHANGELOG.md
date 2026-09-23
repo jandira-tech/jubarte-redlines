@@ -15,6 +15,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-22
+
 ### Added
 
 - **`word/fontTable.xml` altName.** Unknown requested families now follow
@@ -47,6 +49,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- **A space-only run keeps its space.** `birds.` + `<w:t xml:space="preserve"> </w:t>`
+  + `We` painted "birds.We": whitespace collapsing squeezed a lone-space run to
+  nothing, and the pretty-print filter treated whitespace inside `w:t` as
+  XML indentation. Body and header/footer text both keep the gap now.
 - **CI on GitHub Actions.** `cargo fmt` wraps two `finalize.rs` lines; tests
   that `std::fs::read` sibling `../neurotic_docx_bench` fixtures now skip when
   that checkout is absent (Actions has no sibling). `deny.toml` ignores
@@ -431,6 +437,8 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.9.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.1
+[0.9.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.0
 [0.8.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.8.0
 [0.7.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.1
 [0.7.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.7.0

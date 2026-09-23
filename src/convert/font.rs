@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 thread_local! {
     static ACTIVE_FONT_TABLE: RefCell<super::font_table::FontTable> =
@@ -636,9 +636,11 @@ pub(crate) struct Face<'a> {
     buzz: Option<rustybuzz::Face<'a>>,
     pdf_name: String,
     pub upem: f32,
-    pub ascent: f32,
     pub descent: f32,
-    pub line_gap: f32,
+    /// Word's single line in font units: hhea ascender − descender +
+    /// lineGap (typo when USE_TYPO_METRICS is set). GDI reaches the same
+    /// total as win height + external leading.
+    line_height: f32,
     /// Win ascent when USE_TYPO_METRICS is unset (Liberation ↔ Arial).
     paint_ascent: f32,
     pub bbox: [i16; 4],
@@ -682,16 +684,23 @@ impl<'a> Face<'a> {
             face.typographic_descender()
                 .unwrap_or_else(|| face.descender()),
         );
-        let line_gap = f32::from(
-            face.typographic_line_gap()
-                .unwrap_or_else(|| face.line_gap()),
-        );
+        // ttf-parser's ascender/descender/line_gap are hhea unless the font
+        // sets USE_TYPO_METRICS. Typo metrics under-size Courier (0.80 em
+        // vs 1.13) and Arial (1.09 vs 1.15) against Word's line.
+        let line_height =
+            f32::from(face.ascender()) - f32::from(face.descender()) + f32::from(face.line_gap());
+        // GDI puts the external leading (hhea total − win total) above the
+        // text: Word's first TNR 12 baseline is winAscent + 0.51pt down.
         let paint_ascent = face
             .tables()
             .os2
             .filter(|os2| !os2.use_typographic_metrics())
-            .map(|os2| f32::from(os2.windows_ascender()))
-            .filter(|win| *win > 0.0)
+            .filter(|os2| os2.windows_ascender() > 0)
+            .map(|os2| {
+                let win_asc = f32::from(os2.windows_ascender());
+                let win_total = win_asc + f32::from(os2.windows_descender()).abs();
+                win_asc + (line_height - win_total).max(0.0)
+            })
             .unwrap_or(ascent);
         let glyph_count = face.number_of_glyphs();
         let mut widths = vec![0u16; glyph_count as usize];
@@ -719,9 +728,8 @@ impl<'a> Face<'a> {
             buzz,
             pdf_name,
             upem,
-            ascent,
             descent,
-            line_gap,
+            line_height,
             paint_ascent,
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
@@ -765,7 +773,7 @@ impl<'a> Face<'a> {
     }
 
     pub(crate) fn single_line_pt(&self, size: f32) -> f32 {
-        (self.ascent + self.descent.abs() + self.line_gap) * size / self.upem
+        self.line_height * size / self.upem
     }
 
     pub(crate) fn glyphs(&self, text: &str) -> Vec<u16> {
@@ -891,7 +899,9 @@ impl Catalogue {
 
 /// A document's decoded embedded fonts (`.odttf`), keyed by
 /// (family, bold, italic). The conversion owns them; [`Fonts`] borrows.
-pub(crate) type EmbeddedFonts = HashMap<(String, bool, bool), Vec<u8>>;
+/// Values are shared: installed faces come from a process-wide cache and
+/// one face can answer to a family and its altName.
+pub(crate) type EmbeddedFonts = HashMap<(String, bool, bool), Arc<[u8]>>;
 
 /// Bundled catalogue plus per-document embedded faces (`.odttf`).
 pub(crate) struct Fonts<'a> {
@@ -912,7 +922,7 @@ impl<'a> Fonts<'a> {
     pub(crate) fn for_document(embedded: &'a EmbeddedFonts) -> Self {
         let mut fonts = Self::new();
         for ((family, bold, italic), bytes) in embedded {
-            fonts.insert_embedded(family, *bold, *italic, bytes);
+            fonts.insert_embedded(family, *bold, *italic, bytes.as_ref());
         }
         fonts
     }
@@ -924,6 +934,15 @@ impl<'a> Fonts<'a> {
         italic: bool,
         bytes: &'a [u8],
     ) {
+        // PDF FontFile2 carries TrueType outlines only: a CFF face (an .otf
+        // or a CFF .odttf) would reach the writer unembeddable. Such a family
+        // resolves as if the face were absent.
+        if ttf_parser::Face::parse(bytes, 0)
+            .ok()
+            .is_none_or(|face| face.tables().glyf.is_none())
+        {
+            return;
+        }
         let ps = ttf_postscript_name(bytes).unwrap_or_else(|| family.to_string());
         let Some(face) = Face::from_bytes(FaceId::CarlitoRegular, bytes, sanitize_pdf_name(&ps))
         else {
@@ -941,6 +960,38 @@ impl<'a> Fonts<'a> {
             },
             idx,
         );
+    }
+
+    /// Word's face for an East Asian family it does not have: Microsoft
+    /// YaHei for Chinese (0025b0d3's absent 標楷體, the 方正 families),
+    /// Yu Gothic for Japanese (font-table charset 80 or kana in the name).
+    fn cjk_fallback_index(
+        &self,
+        family: &str,
+        bold: bool,
+        table: &super::font_table::FontTable,
+    ) -> Option<u16> {
+        let charset = table.get(family).and_then(|e| e.charset.as_deref());
+        let east_asian_charset = matches!(charset, Some("80" | "86" | "88" | "81"));
+        if !east_asian_charset && !family.chars().any(is_cjk_name_char) {
+            return None;
+        }
+        let japanese = charset == Some("80")
+            || family.chars().any(|c| {
+                ('\u{3040}'..='\u{30FF}').contains(&c) || ('\u{FF66}'..='\u{FF9F}').contains(&c)
+            });
+        let key = if japanese {
+            CJK_FALLBACK_JA
+        } else {
+            CJK_FALLBACK
+        };
+        self.embedded_index(key, bold, false)
+    }
+
+    /// The CJK fallback face for a glyph the resolved face lacks.
+    pub(crate) fn cjk_glyph_fallback(&self, bold: bool) -> Option<FaceRef> {
+        self.embedded_index(CJK_FALLBACK, bold, false)
+            .map(FaceRef::Embedded)
     }
 
     fn embedded_index(&self, family: &str, bold: bool, italic: bool) -> Option<u16> {
@@ -1026,6 +1077,20 @@ impl<'a> Fonts<'a> {
                 },
             );
         }
+        if let Some(idx) = self.cjk_fallback_index(primary, bold, table) {
+            let face = FaceRef::Embedded(idx);
+            return (
+                face,
+                FontReportEntry {
+                    requested: family.to_string(),
+                    step: FontStep::Generic,
+                    physical: self.get(face).pdf_name().to_string(),
+                    bold,
+                    italic,
+                    synthetic: false,
+                },
+            );
+        }
         let (id, step) = self.resolve_in_step(family, bold, italic, table);
         let face = FaceRef::Catalogue(id);
         (
@@ -1079,6 +1144,9 @@ impl<'a> Fonts<'a> {
     ) -> (FaceId, FontStep) {
         let mut current = family;
         let mut via_alt = false;
+        // The generic of a name the altName chain passed through: a chain
+        // that dead-ends (Myriad Pro → absent Segoe UI) keeps it.
+        let mut chain_generic = "";
         let (id, step) = loop {
             // Word splits rFonts on comma but does not CSS-unquote. Evidence
             // (Quartz PDFs): `Verdana, Geneva, sans-serif` → Verdana;
@@ -1106,6 +1174,11 @@ impl<'a> Fonts<'a> {
             // CSS-style list row (`"Foo", Bar, serif`) is keyed by the full
             // string, not by its first token.
             let whole = current.trim();
+            if chain_generic.is_empty()
+                && let Some(entry) = table.get(primary)
+            {
+                chain_generic = super::word_subst::generic_physical(entry.family, entry.pitch);
+            }
             let alt = table
                 .alt_name(primary)
                 .or_else(|| (whole != primary).then(|| table.alt_name(whole)).flatten());
@@ -1120,14 +1193,11 @@ impl<'a> Fonts<'a> {
                     FontStep::WordSubstitution,
                 );
             }
-            if let Some(entry) = table.get(primary) {
-                let generic = super::word_subst::generic_physical(entry.family, entry.pitch);
-                if !generic.is_empty() {
-                    break (
-                        Self::face_from_physical(generic, bold, italic),
-                        FontStep::Generic,
-                    );
-                }
+            if !chain_generic.is_empty() {
+                break (
+                    Self::face_from_physical(chain_generic, bold, italic),
+                    FontStep::Generic,
+                );
             }
             break (
                 Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
@@ -1135,6 +1205,21 @@ impl<'a> Fonts<'a> {
             );
         };
         (id, if via_alt { FontStep::AltName } else { step })
+    }
+
+    /// `family` names an installed catalogue face directly (the report's
+    /// `explicit` step, no altName / substitution / generic hop).
+    pub(crate) fn is_installed_family(family: &str) -> bool {
+        let primary = family_token(family);
+        if primary.starts_with('"') || primary.starts_with('\'') {
+            return false;
+        }
+        let key = primary
+            .to_ascii_lowercase()
+            .replace([' ', '-'], "")
+            .replace("mt", "");
+        Self::mapped_face(&key, false, false)
+            .is_some_and(|id| Self::catalogue_step(id) == FontStep::Explicit)
     }
 
     fn catalogue_step(id: FaceId) -> FontStep {
@@ -1378,10 +1463,22 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
         "/System/Library/Fonts/Supplemental",
         "/Library/Fonts",
     ];
-    let dirs = if id == FaceId::Symbol {
-        WORD_DIRS
-    } else {
-        DIRS
+    // Times New Roman: Word draws the installed macOS face (5.01, hhea
+    // lineGap 87 → 13.8pt at 12) over its private DFonts copy (7.0,
+    // lineGap 0 → 13.29); fixtures_500 014babb2 double lines are 27.6pt.
+    const INSTALLED_FIRST: &[&str] = &[
+        "/System/Library/Fonts/Supplemental",
+        "/Library/Fonts",
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
+        "/Library/Fonts/Microsoft",
+    ];
+    let dirs = match id {
+        FaceId::Symbol => WORD_DIRS,
+        FaceId::SerifRegular
+        | FaceId::SerifBold
+        | FaceId::SerifItalic
+        | FaceId::SerifBoldItalic => INSTALLED_FIRST,
+        _ => DIRS,
     };
     for dir in dirs {
         for name in names {
@@ -1392,6 +1489,473 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
         }
     }
     cloud_font_override(id)
+}
+
+/// Installed faces for a family the catalogue has no slot for, keyed by
+/// (bold, italic). Word draws these with the real file (fixtures_500:
+/// Tahoma in 158 documents, Segoe UI from Word's cloud-font cache,
+/// Century Gothic in DFonts); we painted them as Arial or Calibri.
+/// Candidates are files whose normalised name starts with the family's,
+/// confirmed against the font's own family name.
+pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>)> {
+    let stems = cjk_file_stems(family);
+    if !stems.is_empty() {
+        return cjk_family_faces(family, stems);
+    }
+    const DIRS: &[&str] = &[
+        "/System/Library/Fonts/Supplemental",
+        "/Library/Fonts",
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
+        "/Library/Fonts/Microsoft",
+    ];
+    let norm = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    let key = norm(family);
+    if key.len() < 3 {
+        return Vec::new();
+    }
+    let mut dirs: Vec<PathBuf> = DIRS.iter().map(PathBuf::from).collect();
+    if let Some(home) = std::env::var_os("HOME") {
+        let cloud = PathBuf::from(home)
+            .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts")
+            .join(family);
+        dirs.push(cloud);
+    }
+    let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
+    for dir in dirs {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        paths.sort();
+        for path in paths {
+            let is_font = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("ttf") || e.eq_ignore_ascii_case("otf"));
+            let stem = path.file_stem().and_then(|s| s.to_str()).map(norm);
+            if !is_font || !stem.is_some_and(|s| s.starts_with(&key)) {
+                continue;
+            }
+            let Ok(bytes) = fs::read(&path) else {
+                continue;
+            };
+            let Some((pass, style)) = face_family_style(&bytes, family) else {
+                continue;
+            };
+            found.push((pass, style, bytes));
+        }
+    }
+    pick_ranked_faces(found)
+}
+
+/// A family name folded for comparison: full-width Latin to ASCII (the
+/// Japanese "ＭＳ 明朝" is MS Mincho's own name), ASCII lowercase, and no
+/// spaces, underscores or hyphens.
+fn fold_family(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+            _ => c,
+        })
+        .filter(|c| !c.is_whitespace() && *c != '_' && *c != '-')
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// East Asian families Word ships in its DFonts, by every name documents
+/// use for them, and the file stems that hold them. Word draws these real
+/// faces (fixtures_500: MS Mincho in 21 documents, YaHei 16, JhengHei 12,
+/// Yu Gothic 11); we had no face for them and their text vanished.
+const CJK_FAMILIES: &[(&[&str], &[&str])] = &[
+    (
+        &["msmincho", "ms明朝", "mspmincho", "msp明朝"],
+        &["msmincho"],
+    ),
+    (
+        &[
+            "msgothic",
+            "msゴシック",
+            "mspgothic",
+            "mspゴシック",
+            "msuigothic",
+        ],
+        &["msgothic"],
+    ),
+    (
+        &[
+            "yugothic",
+            "游ゴシック",
+            "yugothicui",
+            "yugothicmedium",
+            "yugothiclight",
+            "游ゴシックmedium",
+            "游ゴシックlight",
+        ],
+        &["yugothr", "yugothm", "yugothb", "yugothl"],
+    ),
+    (
+        &[
+            "yumincho",
+            "游明朝",
+            "yuminchodemibold",
+            "yumincholight",
+            "游明朝demibold",
+            "游明朝light",
+        ],
+        &["yumin", "yumindb", "yuminl"],
+    ),
+    (&["meiryo", "メイリオ", "meiryoui"], &["meiryo", "meiryob"]),
+    (
+        &[
+            "microsoftyahei",
+            "微软雅黑",
+            "microsoftyaheiui",
+            "microsoftyaheilight",
+        ],
+        &["msyh", "msyhbd", "msyhl"],
+    ),
+    (
+        &["microsoftjhenghei", "微軟正黑體", "microsoftjhengheiui"],
+        &["msjh", "msjhbd"],
+    ),
+    (&["simsun", "宋体", "nsimsun", "新宋体"], &["simsun"]),
+    (&["simhei", "黑体"], &["simhei"]),
+    (
+        &["fangsong", "仿宋", "fangsonggb2312", "仿宋gb2312"],
+        &["fangsong"],
+    ),
+    (&["kaiti", "楷体", "kaitigb2312", "楷体gb2312"], &["kaiti"]),
+    (
+        &["mingliu", "細明體", "pmingliu", "新細明體", "mingliuhkscs"],
+        &["mingliu", "mingliub"],
+    ),
+    (
+        &["batang", "바탕", "batangche", "gungsuh", "궁서"],
+        &["batang"],
+    ),
+    (
+        &["gulim", "굴림", "gulimche", "dotum", "돋움", "dotumche"],
+        &["gulim"],
+    ),
+    (&["malgungothic", "맑은고딕"], &["malgun", "malgunbd"]),
+    (
+        &["dengxian", "等线", "dengxianlight"],
+        &["deng", "dengb", "dengl"],
+    ),
+    (
+        &[
+            "hg創英角ｺﾞｼｯｸub",
+            "hgp創英角ｺﾞｼｯｸub",
+            "hgs創英角ｺﾞｼｯｸub",
+            "hgsoeikakugothicub",
+            "hgpsoeikakugothicub",
+            "hgssoeikakugothicub",
+        ],
+        &["hgrsgu"],
+    ),
+    (
+        &[
+            "hgｺﾞｼｯｸe",
+            "hgpｺﾞｼｯｸe",
+            "hgsｺﾞｼｯｸe",
+            "hggothice",
+            "hgpgothice",
+            "hgsgothice",
+        ],
+        &["hgrge"],
+    ),
+    (
+        &[
+            "hg明朝e",
+            "hgp明朝e",
+            "hgs明朝e",
+            "hgminchoe",
+            "hgpminchoe",
+            "hgsminchoe",
+        ],
+        &["hgrme"],
+    ),
+];
+
+fn cjk_file_stems(family: &str) -> &'static [&'static str] {
+    let key = fold_family(family);
+    CJK_FAMILIES
+        .iter()
+        .find(|(names, _)| names.contains(&key.as_str()))
+        .map_or(&[], |(_, stems)| stems)
+}
+
+/// Family names (name IDs `id`) of one face, folded, in every language.
+fn face_family_names(face: &ttf_parser::Face<'_>, id: u16) -> Vec<String> {
+    face.names()
+        .into_iter()
+        .filter(|n| n.name_id == id)
+        .filter_map(|n| n.to_string())
+        .map(|n| fold_family(&n))
+        .collect()
+}
+
+/// The faces of an East Asian family from Word's DFonts. A collection
+/// (`.ttc`) holds several families (MS Mincho / MS PMincho); the face whose
+/// own family name is the requested one wins, name ID 1 before the
+/// typographic ID 16 (Yu Gothic Medium is ID 1 "Yu Gothic Medium"). A name
+/// no face carries (FangSong_GB2312) takes the group's first face.
+fn cjk_family_faces(family: &str, stems: &[&str]) -> Vec<((bool, bool), Vec<u8>)> {
+    const DIRS: &[&str] = &[
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
+        "/Library/Fonts/Microsoft",
+        "/Library/Fonts",
+    ];
+    let want = fold_family(family);
+    let mut files: Vec<(usize, PathBuf)> = Vec::new();
+    for dir in DIRS {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for path in entries.flatten().map(|e| e.path()) {
+            let ext_ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                ["ttf", "otf", "ttc"]
+                    .iter()
+                    .any(|x| e.eq_ignore_ascii_case(x))
+            });
+            let stem = path.file_stem().and_then(|s| s.to_str()).map(fold_family);
+            if let (true, Some(stem)) = (ext_ok, stem)
+                && let Some(rank) = stems.iter().position(|s| *s == stem)
+                && files.iter().all(|(_, p)| p.file_name() != path.file_name())
+            {
+                files.push((rank, path));
+            }
+        }
+    }
+    files.sort();
+    // (pass, style, bytes): pass 0 = ID 1 match, 1 = ID 16, 2 = fallback.
+    let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
+    for (rank, path) in &files {
+        let Ok(bytes) = fs::read(path) else {
+            continue;
+        };
+        let count = ttf_parser::fonts_in_collection(&bytes).unwrap_or(1);
+        for index in 0..count {
+            let Ok(face) = ttf_parser::Face::parse(&bytes, index) else {
+                continue;
+            };
+            if face.tables().glyf.is_none() {
+                continue;
+            }
+            let pass = if face_family_names(&face, ttf_parser::name_id::FAMILY).contains(&want) {
+                0
+            } else if face_family_names(&face, ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
+                .contains(&want)
+            {
+                1
+            } else if *rank == 0 && index == 0 {
+                2
+            } else {
+                continue;
+            };
+            let style = (face.is_bold(), face.is_italic());
+            let data = if count > 1 {
+                match ttc_face_bytes(&bytes, index) {
+                    Some(data) => data,
+                    None => continue,
+                }
+            } else {
+                bytes.clone()
+            };
+            found.push((pass, style, data));
+        }
+    }
+    pick_ranked_faces(found)
+}
+
+/// One face of a TrueType collection as a standalone sfnt: the face's
+/// table directory with its tables copied after it (PDF `FontFile2`
+/// cannot hold a collection).
+fn ttc_face_bytes(ttc: &[u8], index: u32) -> Option<Vec<u8>> {
+    let u32_at = |at: usize| -> Option<u32> {
+        ttc.get(at..at + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    if ttc.get(0..4)? != b"ttcf" {
+        return None;
+    }
+    let dir = usize::try_from(u32_at(12 + 4 * usize::try_from(index).ok()?)?).ok()?;
+    let num_tables = usize::from(u16::from_be_bytes([*ttc.get(dir + 4)?, *ttc.get(dir + 5)?]));
+    let header_len = 12 + 16 * num_tables;
+    let mut out = ttc.get(dir..dir + 12)?.to_vec();
+    let mut records = Vec::with_capacity(16 * num_tables);
+    let mut data: Vec<u8> = Vec::new();
+    for t in 0..num_tables {
+        let rec = dir + 12 + 16 * t;
+        let offset = usize::try_from(u32_at(rec + 8)?).ok()?;
+        let length = usize::try_from(u32_at(rec + 12)?).ok()?;
+        let new_offset = u32::try_from(header_len + data.len()).ok()?;
+        records.extend_from_slice(ttc.get(rec..rec + 8)?);
+        records.extend_from_slice(&new_offset.to_be_bytes());
+        records.extend_from_slice(ttc.get(rec + 12..rec + 16)?);
+        data.extend_from_slice(ttc.get(offset..offset + length)?);
+        while !data.len().is_multiple_of(4) {
+            data.push(0);
+        }
+    }
+    out.extend_from_slice(&records);
+    out.extend_from_slice(&data);
+    Some(out)
+}
+
+/// Embedded-map keys of the East Asian fallback faces (see
+/// `Fonts::cjk_fallback_index`); no document family can be named this.
+pub(crate) const CJK_FALLBACK: &str = "@cjk";
+pub(crate) const CJK_FALLBACK_JA: &str = "@cjk-ja";
+
+fn is_cjk_name_char(c: char) -> bool {
+    matches!(c as u32, 0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF66..=0xFF9F)
+}
+
+type SharedFaces = Vec<((bool, bool), Arc<[u8]>)>;
+
+/// Installed-face lookups, cached for the process: a long-lived caller
+/// (the Python and WASM bindings) would otherwise re-read 10-20 MB font
+/// collections for every conversion.
+fn cached_faces(key: &str, load: impl FnOnce() -> Vec<((bool, bool), Vec<u8>)>) -> SharedFaces {
+    static CACHE: LazyLock<Mutex<HashMap<String, SharedFaces>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    if let Ok(cache) = CACHE.lock()
+        && let Some(faces) = cache.get(key)
+    {
+        return faces.clone();
+    }
+    let faces: SharedFaces = load()
+        .into_iter()
+        .map(|(style, bytes)| (style, Arc::from(bytes)))
+        .collect();
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(key.to_string(), faces.clone());
+    }
+    faces
+}
+
+/// Loads Word's East Asian fallback faces (YaHei, Yu Gothic) for a
+/// document that has East Asian text.
+pub(crate) fn add_cjk_fallbacks(embedded: &mut EmbeddedFonts) {
+    for (key, family, stems) in [
+        (CJK_FALLBACK, "Microsoft YaHei", &["msyh", "msyhbd"][..]),
+        (CJK_FALLBACK_JA, "Yu Gothic", &["yugothr", "yugothb"][..]),
+    ] {
+        for ((bold, italic), bytes) in cached_faces(key, || cjk_family_faces(family, stems)) {
+            embedded.insert((key.to_string(), bold, italic), bytes);
+        }
+    }
+}
+
+/// Adds the installed faces of every font-table family that the catalogue
+/// does not cover and the document does not embed.
+pub(crate) fn add_installed_faces(
+    embedded: &mut EmbeddedFonts,
+    table: &super::font_table::FontTable,
+    extra: &[String],
+) {
+    // East Asian families named only in styles or the theme ("宋体" as the
+    // theme's Hans font) are not in the font table but Word draws them.
+    for name in extra {
+        let lower = name.to_ascii_lowercase();
+        if table.get(name).is_some()
+            || cjk_file_stems(name).is_empty()
+            || embedded.keys().any(|(f, _, _)| *f == lower)
+        {
+            continue;
+        }
+        let faces = cached_faces(name, || cjk_family_faces(name, cjk_file_stems(name)));
+        for ((bold, italic), bytes) in faces {
+            embedded.insert((lower.clone(), bold, italic), bytes);
+        }
+    }
+    for entry in table.iter() {
+        let lower = entry.name.to_ascii_lowercase();
+        if catalogue_paints_family(&entry.name) || embedded.keys().any(|(f, _, _)| *f == lower) {
+            continue;
+        }
+        let faces = cached_faces(&entry.name, || installed_family_faces(&entry.name));
+        // Runs may name the family by its altName ("MS Mincho" for the
+        // table's "ＭＳ 明朝"); the same faces answer to both.
+        if let Some(alt) = entry.alt_name.as_deref()
+            && !cjk_file_stems(&entry.name).is_empty()
+        {
+            let alt = alt.to_ascii_lowercase();
+            if embedded.keys().all(|(f, _, _)| *f != alt) {
+                for ((bold, italic), bytes) in &faces {
+                    embedded.insert((alt.clone(), *bold, *italic), Arc::clone(bytes));
+                }
+            }
+        }
+        for ((bold, italic), bytes) in faces {
+            embedded.insert((lower.clone(), bold, italic), bytes);
+        }
+    }
+}
+
+/// The catalogue slot for `family` really is that family, not a stand-in
+/// (Tahoma, Trebuchet and Roboto all fold into the Arial slot).
+fn catalogue_paints_family(family: &str) -> bool {
+    let norm = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    let key = FaceKey {
+        family: family.to_ascii_lowercase(),
+        bold: false,
+        italic: false,
+    };
+    let face = catalogue().get(Fonts::id_from_key(&key));
+    // A name with no ASCII letters ("ＭＳ 明朝") folds to "", which every
+    // catalogue name starts with; no catalogue slot is that family.
+    let want = norm(family);
+    !want.is_empty() && norm(face.pdf_name()).starts_with(&want)
+}
+
+/// (bold, italic) when the font's own family name is `family`.
+/// One face per (bold, italic): the best-ranked candidate (lower pass),
+/// path order breaking ties. A typographic-family (ID 16) match never
+/// takes a style an ID 1 match fills (Roboto Black vs Roboto Regular).
+fn pick_ranked_faces(mut found: Vec<(u8, (bool, bool), Vec<u8>)>) -> Vec<((bool, bool), Vec<u8>)> {
+    found.sort_by_key(|(pass, _, _)| *pass);
+    let mut out: Vec<((bool, bool), Vec<u8>)> = Vec::new();
+    for (_, style, bytes) in found {
+        if out.iter().all(|(s, _)| *s != style) {
+            out.push((style, bytes));
+        }
+    }
+    out
+}
+
+/// (pass, (bold, italic)) when the font's own family name is `family`:
+/// pass 0 for name ID 1, 1 for the typographic ID 16 only. A face without
+/// TrueType outlines is skipped: PDF FontFile2 cannot carry CFF.
+fn face_family_style(bytes: &[u8], family: &str) -> Option<(u8, (bool, bool))> {
+    let face = ttf_parser::Face::parse(bytes, 0).ok()?;
+    face.tables().glyf?;
+    let has = |id: u16| {
+        face.names().into_iter().any(|n| {
+            n.name_id == id
+                && n.to_string()
+                    .is_some_and(|f| f.eq_ignore_ascii_case(family))
+        })
+    };
+    let pass = if has(ttf_parser::name_id::FAMILY) {
+        0
+    } else if has(ttf_parser::name_id::TYPOGRAPHIC_FAMILY) {
+        1
+    } else {
+        return None;
+    };
+    Some((pass, (face.is_bold(), face.is_italic())))
 }
 
 fn cloud_font_override(id: FaceId) -> Option<PathBuf> {
@@ -1714,6 +2278,144 @@ mod tests {
     }
 
     #[test]
+    fn installed_faces_are_read_once_per_process() {
+        // CodeRabbit #166: every conversion re-read the 10-20 MB collections.
+        let first = cached_faces("@test-cache-key", || {
+            vec![((false, false), b"face".to_vec())]
+        });
+        let second = cached_faces("@test-cache-key", || panic!("loaded twice"));
+        assert!(
+            Arc::ptr_eq(&first[0].1, &second[0].1),
+            "one shared allocation"
+        );
+    }
+
+    #[test]
+    fn a_cff_face_is_not_embedded() {
+        // CodeRabbit #166: the PDF writer emits FontFile2 (TrueType); a CFF
+        // .otf would be embedded as an unreadable program. It is refused.
+        let otf = "/System/Library/Fonts/Supplemental/STIXSizOneSymBol.otf";
+        let Ok(bytes) = fs::read(otf) else {
+            return;
+        };
+        let parsed = ttf_parser::Face::parse(&bytes, 0).expect("STIX parses");
+        assert!(parsed.tables().glyf.is_none(), "a CFF face");
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("stix", false, false, &bytes);
+        assert!(fonts.embedded_index("stix", false, false).is_none());
+    }
+
+    #[test]
+    fn a_family_name_match_outranks_a_typographic_one_per_style() {
+        // CodeRabbit #166: Roboto-Black.ttf (ID 1 "Roboto Black", ID 16
+        // "Roboto") sorts before Roboto-Regular.ttf and took the regular
+        // slot. Pass 0 (ID 1) beats pass 1 (ID 16) per style; path order
+        // decides within a pass.
+        let found = vec![
+            (1, (false, false), b"black".to_vec()),
+            (1, (true, false), b"heavy".to_vec()),
+            (0, (false, false), b"regular".to_vec()),
+            (0, (false, false), b"regular2".to_vec()),
+        ];
+        let picked = pick_ranked_faces(found);
+        assert_eq!(
+            picked,
+            vec![
+                ((false, false), b"regular".to_vec()),
+                ((true, false), b"heavy".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn fold_family_maps_full_width_names_to_their_ascii_key() {
+        assert_eq!(fold_family("ＭＳ 明朝"), "ms明朝");
+        assert_eq!(fold_family("MS Mincho"), "msmincho");
+        assert_eq!(fold_family("FangSong_GB2312"), "fangsonggb2312");
+        assert_eq!(cjk_file_stems("ＭＳ ゴシック"), &["msgothic"]);
+        assert!(cjk_file_stems("Calibri").is_empty());
+    }
+
+    #[test]
+    fn cjk_family_takes_its_own_face_out_of_word_s_collection() {
+        // fixtures_500 0016d88a: "ＭＳ 明朝" text vanished (no face held
+        // its glyphs). Word draws msmincho.ttc face 0, MS Mincho.
+        let ttc = "/Applications/Microsoft Word.app/Contents/Resources/DFonts/msmincho.ttc";
+        if !Path::new(ttc).is_file() {
+            return;
+        }
+        let faces = installed_family_faces("ＭＳ 明朝");
+        let (_, bytes) = faces
+            .iter()
+            .find(|(style, _)| *style == (false, false))
+            .expect("a regular MS Mincho face");
+        let face = ttf_parser::Face::parse(bytes, 0).expect("standalone sfnt");
+        assert!(
+            face_family_names(&face, ttf_parser::name_id::FAMILY).contains(&"msmincho".to_string())
+        );
+        assert!(face.glyph_index('明').is_some(), "CJK glyphs present");
+        let pfaces = installed_family_faces("MS PMincho");
+        let (_, pbytes) = pfaces.first().expect("MS PMincho face");
+        let pface = ttf_parser::Face::parse(pbytes, 0).expect("standalone sfnt");
+        assert!(
+            face_family_names(&pface, ttf_parser::name_id::FAMILY)
+                .contains(&"mspmincho".to_string()),
+            "the collection's second face, not the first"
+        );
+    }
+
+    #[test]
+    fn missing_east_asian_family_falls_to_word_s_cjk_face() {
+        // fixtures_500 0025b0d3: 標楷體 (charset 88) is not installed;
+        // Word draws it in Microsoft YaHei. A Japanese family Word lacks
+        // (0041d394's HGP行書体, charset 80) is Yu Gothic.
+        let dfonts = "/Applications/Microsoft Word.app/Contents/Resources/DFonts";
+        if !Path::new(dfonts).join("msyh.ttc").is_file()
+            || !Path::new(dfonts).join("YuGothR.ttc").is_file()
+        {
+            return;
+        }
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="標楷體"><w:charset w:val="88"/><w:family w:val="script"/><w:pitch w:val="fixed"/></w:font>
+                 <w:font w:name="HGP行書体"><w:charset w:val="80"/><w:family w:val="script"/></w:font>
+                 <w:font w:name="SomeLatin"><w:family w:val="swiss"/></w:font>
+               </w:fonts>"#,
+        );
+        let mut embedded = EmbeddedFonts::new();
+        add_cjk_fallbacks(&mut embedded);
+        let fonts = Fonts::for_document(&embedded);
+        let physical = |family: &str| {
+            let (face, _) = fonts.classify_in(family, false, false, &table);
+            fonts.get(face).pdf_name().to_string()
+        };
+        assert_eq!(physical("標楷體"), "MicrosoftYaHei");
+        assert!(physical("HGP行書体").starts_with("YuGothic"));
+        assert_eq!(
+            physical("SomeLatin"),
+            "ArialMT",
+            "Latin families are untouched"
+        );
+    }
+
+    #[test]
+    fn resolve_dead_end_altname_keeps_the_original_generic() {
+        // fixtures_500 019d9ee6: Myriad Pro (swiss) → altName Segoe UI,
+        // which is neither installed nor in the table. Word paints Arial,
+        // the swiss generic, not the unknown-family Cambria.
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="SomeMyriad"><w:altName w:val="SomeSegoe"/><w:family w:val="swiss"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("SomeMyriad", false, false, &table),
+            FaceId::SansRegular
+        );
+    }
+
+    #[test]
     fn resolve_altname_cycle_falls_back() {
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -1759,7 +2461,7 @@ mod tests {
         // (same allocation), which the compiler ties to the Fonts value.
         let embedded: EmbeddedFonts = HashMap::from([(
             ("Press Start 2P".to_string(), false, false),
-            FaceId::MonoRegular.bytes().to_vec(),
+            Arc::from(FaceId::MonoRegular.bytes()),
         )]);
         let fonts = Fonts::for_document(&embedded);
         let face = fonts.resolve("Press Start 2P", false, false);
@@ -2028,6 +2730,42 @@ mod tests {
                 "style must survive a case-insensitive multi-hop altName lookup"
             );
         }
+    }
+
+    #[test]
+    fn times_new_roman_uses_the_installed_face_word_uses() {
+        // fixtures_500 014babb2: Word's double-spaced Times 12 lines are
+        // 27.6pt apart (13.8 single). macOS Supplemental Times New Roman
+        // 5.01 has hhea lineGap 87 (13.80); Word's private DFonts copy 7.0
+        // has lineGap 0 (13.29). Word draws with the installed face.
+        if !Path::new("/System/Library/Fonts/Supplemental/Times New Roman.ttf").is_file() {
+            return;
+        }
+        let fonts = Fonts::new();
+        let times = fonts.get(FaceId::SerifRegular);
+        assert!(
+            (times.single_line_pt(12.0) - 13.8).abs() < 0.02,
+            "Times 12 single line {}",
+            times.single_line_pt(12.0)
+        );
+    }
+
+    #[test]
+    fn single_line_is_the_hhea_line_not_the_typo_line() {
+        // Word's single line is hhea ascender - descender + lineGap (GDI:
+        // win height + external leading). Typo metrics differ for Courier
+        // (0.80 em) and Arial (1.09 em); Word's file_146 Courier 9.5 lines
+        // are 10.8pt apart (1.133 em), and Arial 11 is 12.65pt.
+        let fonts = Fonts::new();
+        let mono = fonts.get(FaceId::MonoRegular);
+        assert!((mono.single_line_pt(9.5) - 9.5 * 2320.0 / 2048.0).abs() < 0.02);
+        let sans = fonts.get(FaceId::SansRegular);
+        assert!((sans.single_line_pt(11.0) - 11.0 * 2355.0 / 2048.0).abs() < 0.02);
+        let carlito = fonts.get(FaceId::CarlitoRegular);
+        assert!(
+            (carlito.single_line_pt(11.0) - 11.0 * 2500.0 / 2048.0).abs() < 0.02,
+            "Calibri/Carlito hhea equals typo: unchanged at 13.43"
+        );
     }
 
     #[test]

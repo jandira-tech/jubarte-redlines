@@ -219,10 +219,7 @@ pub(crate) fn deobfuscate_odttf(bytes: &[u8], font_key: &str) -> Vec<u8> {
 }
 
 /// `(lowercase family, bold, italic) → deobfuscated TTF bytes`.
-pub(crate) fn load_embedded_fonts(
-    pkg: &PartFs,
-    table: &FontTable,
-) -> HashMap<(String, bool, bool), Vec<u8>> {
+pub(crate) fn load_embedded_fonts(pkg: &PartFs, table: &FontTable) -> super::font::EmbeddedFonts {
     let mut out = HashMap::new();
     let part = font_table_part(pkg);
     let rels = pkg.read_rels_for(&part);
@@ -242,7 +239,7 @@ pub(crate) fn load_embedded_fonts(
             if ttf_parser::Face::parse(&data, 0).is_err() {
                 continue;
             }
-            out.insert((entry.name.to_ascii_lowercase(), bold, italic), data);
+            out.insert((entry.name.to_ascii_lowercase(), bold, italic), data.into());
         }
     }
     out
