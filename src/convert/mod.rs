@@ -11232,7 +11232,11 @@ impl<'a> Layout<'a> {
             return;
         }
         let floor = self.body_floor;
-        if self.y - need < floor {
+        // Nothing placed yet (cursor at the body top): breaking would only
+        // leave a blank page before an object taller than the page
+        // (fixtures_500 00f45b1b's one-row brochure). Word starts it here.
+        let untouched = (self.page.height - self.body_top - self.y).abs() < 0.5;
+        if self.y - need < floor && !untouched {
             if self.page.col_count > 1 && self.col_i + 1 < self.page.col_count {
                 self.column_break();
             } else {

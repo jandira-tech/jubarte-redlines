@@ -26069,3 +26069,30 @@ fn a_column_anchored_picture_in_a_cell_paints_inside_it() {
         "picture top at the row top; y={y}"
     );
 }
+
+#[test]
+fn a_too_tall_unbreakable_row_on_an_empty_page_does_not_leave_it_blank() {
+    // fixtures_500 00f45b1b: the landscape brochure is one table row whose
+    // cells hold nested tables (so it cannot split). ensure() broke the
+    // still-untouched first page and left it blank; Word starts the row on
+    // page 1 and the document is 2 pages.
+    let path = "../neurotic_docx_bench/grok_run/fixtures_500/00f45b1b7812db57f5a024f116de6c6f0cfab5b79c9bc33657a6be57657d181d.docx";
+    if !std::path::Path::new(path).is_file() {
+        return;
+    }
+    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert 00f45b1b");
+    let pages = pdf_content_streams(&pdf);
+    let page1_lines = pages[0]
+        .lines()
+        .filter(|l| l.contains(" Tj") || l.contains(" TJ"))
+        .count();
+    assert!(
+        page1_lines > 10,
+        "page 1 holds the brochure; lines={page1_lines}"
+    );
+    assert_eq!(
+        pdf_page_count(&pdf),
+        2,
+        "Word 00f45b1b is 2 pages, none blank"
+    );
+}
