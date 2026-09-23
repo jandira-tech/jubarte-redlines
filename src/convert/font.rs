@@ -1199,6 +1199,18 @@ impl<'a> Fonts<'a> {
                     FontStep::Generic,
                 );
             }
+            // An unknown face Word knows nothing about (family="auto", no
+            // panose) paints in the document's default font: 010300e3's
+            // Serenity and 00b5aa69's Shivaji01 are Calibri there.
+            if let Some(entry) = table.get(primary)
+                && matches!(entry.family, super::font_table::FontFamilyClass::Auto)
+                && entry.panose.is_none_or(|p| p.iter().all(|b| *b == 0))
+                && let Some(default) = table.default_family()
+                && !default.eq_ignore_ascii_case(primary)
+            {
+                current = default;
+                continue;
+            }
             break (
                 Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
                 FontStep::Unknown,

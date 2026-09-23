@@ -127,7 +127,8 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
         .next()
         .ok_or(ConvertError::MissingDocument)?;
 
-    let table = font_table::load_font_table(&pkg);
+    let mut table = font_table::load_font_table(&pkg);
+    table.set_default_family(&load_stylesheet(&pkg).defaults.run.family);
     let mut embedded = font_table::load_embedded_fonts(&pkg, &table);
     let mut family_names = rfont_names(&xml);
     for part in ["word/styles.xml", "word/theme/theme1.xml"] {
@@ -13227,15 +13228,17 @@ impl<'a> Layout<'a> {
             // The first line's measure starts at its own indent (00189e50's
             // justified firstLine=720 line ran 36pt past the margin).
             let measure = width - first_extra;
-            let leftover = (measure - line_w).max(0.0);
+            // Word leftover / inter-word gaps (TJ ≈ -55 at 11.04). Trailing
+            // wrap space is not a gap and is not in the measured line: it
+            // hangs past a centred or right line too (010300e3's 90pt
+            // "Pierce " centres on "Pierce").
+            let trail = trailing_ws_pt(self.fonts, line);
+            let leftover = (measure - (line_w - trail).max(0.0)).max(0.0);
             let extra = match style.align {
                 Align::Left | Align::Justify => 0.0,
                 Align::Center => leftover / 2.0,
                 Align::Right => leftover,
             };
-            // Word leftover / inter-word gaps (TJ ≈ -55 at 11.04). Trailing
-            // wrap space is not a gap and is not in the measured line.
-            let trail = trailing_ws_pt(self.fonts, line);
             let fill = measure - (line_w - trail).max(0.0);
             // A justified line Word kept by squeezing its spaces paints them
             // narrower, even on the paragraph's last line (00044aa0).

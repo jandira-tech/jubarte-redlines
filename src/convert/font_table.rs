@@ -48,9 +48,20 @@ pub(crate) struct FontEntry {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FontTable {
     map: HashMap<String, FontEntry>,
+    /// The document's default Latin family (docDefaults, theme resolved):
+    /// Word paints an unknown family="auto" face in it.
+    default_family: Option<String>,
 }
 
 impl FontTable {
+    pub(crate) fn set_default_family(&mut self, family: &str) {
+        self.default_family = Some(family.to_string());
+    }
+
+    pub(crate) fn default_family(&self) -> Option<&str> {
+        self.default_family.as_deref()
+    }
+
     pub(crate) fn get(&self, name: &str) -> Option<&FontEntry> {
         self.map.get(name).or_else(|| {
             self.map
@@ -131,7 +142,10 @@ pub(crate) fn parse_font_table_xml(xml: &str) -> FontTable {
             },
         );
     }
-    FontTable { map }
+    FontTable {
+        map,
+        default_family: None,
+    }
 }
 
 fn parse_family(val: &str) -> FontFamilyClass {

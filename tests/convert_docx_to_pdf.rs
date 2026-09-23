@@ -795,6 +795,26 @@ fn a_page_gutter_widens_the_binding_margin() {
 }
 
 #[test]
+fn a_centred_line_ignores_its_trailing_spaces() {
+    // fixtures_500 010300e3: "Pierce Blick" (90pt) wraps after "Pierce ";
+    // Word centres "Pierce" without the trailing space (x=183.0), we
+    // centred the space too and sat 10.3pt left.
+    let x = |text: &str| {
+        let body = format!(
+            r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t xml:space="preserve">{text}</w:t><w:br/><w:t>BBB</w:t></w:r></w:p><w:sectPr/>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("centred");
+        pdf_literal_td_xy(&pdf, "AAA").expect("AAA").0
+    };
+    let bare = x("AAA");
+    let spaced = x("AAA    ");
+    assert!(
+        (bare - spaced).abs() < 0.05,
+        "trailing spaces do not move a centred line; bare={bare} spaced={spaced}"
+    );
+}
+
+#[test]
 fn direct_ind_left_keeps_the_numbering_level_hanging() {
     // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
     // paragraph overrides only the left edge; Word keeps the level's
@@ -26788,6 +26808,27 @@ fn wps_body_pr_tins_sets_the_text_top() {
     assert!(
         (y_lo - y_hi - 10.8).abs() < 0.05,
         "tIns 14.4 vs 3.6 lowers the text 10.8pt; y_lo={y_lo} y_hi={y_hi}"
+    );
+}
+
+#[test]
+fn an_unknown_auto_family_font_falls_back_to_the_document_default() {
+    // fixtures_500 010300e3 (Serenity) and 00b5aa69 (Shivaji01): a font
+    // that is not installed, whose fontTable entry is family="auto" with
+    // no panose or altName, paints in the document's default font
+    // (Calibri there). We fell back to Cambria.
+    let table = r#"<w:font w:name="Serenity"><w:panose1 w:val="00000000000000000000"/><w:charset w:val="00"/><w:family w:val="auto"/><w:pitch w:val="variable"/></w:font>"#;
+    let body = r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="Serenity" w:hAnsi="Serenity"/></w:rPr><w:t>Pierce</w:t></w:r></w:p><w:sectPr/>"#;
+    let styles = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/></w:rPr></w:rPrDefault></w:docDefaults>"#;
+    let pdf = docx_to_pdf(&docx_with_renamed_parts(body, styles, table)).expect("serenity");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        !hay.contains("/BaseFont /Cambria"),
+        "Serenity is not Cambria"
+    );
+    assert!(
+        hay.contains("Calibri") || hay.contains("Carlito"),
+        "Serenity paints in the default Calibri"
     );
 }
 
