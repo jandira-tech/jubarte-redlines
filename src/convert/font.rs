@@ -1518,15 +1518,17 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
     if key.len() < 3 {
         return Vec::new();
     }
-    let mut dirs: Vec<PathBuf> = DIRS.iter().map(PathBuf::from).collect();
+    // (dir, whole folder is the family): Word's cloud-font cache keeps each
+    // family in its own folder under numeric file names (Poppins/2397….ttf).
+    let mut dirs: Vec<(PathBuf, bool)> = DIRS.iter().map(|d| (PathBuf::from(d), false)).collect();
     if let Some(home) = std::env::var_os("HOME") {
         let cloud = PathBuf::from(home)
             .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts")
             .join(family);
-        dirs.push(cloud);
+        dirs.push((cloud, true));
     }
     let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
-    for dir in dirs {
+    for (dir, family_folder) in dirs {
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
@@ -1538,7 +1540,7 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
                 .and_then(|e| e.to_str())
                 .is_some_and(|e| e.eq_ignore_ascii_case("ttf") || e.eq_ignore_ascii_case("otf"));
             let stem = path.file_stem().and_then(|s| s.to_str()).map(norm);
-            if !is_font || !stem.is_some_and(|s| s.starts_with(&key)) {
+            if !is_font || !(family_folder || stem.is_some_and(|s| s.starts_with(&key))) {
                 continue;
             }
             let Ok(bytes) = fs::read(&path) else {
@@ -2287,6 +2289,26 @@ mod tests {
         assert!(
             Arc::ptr_eq(&first[0].1, &second[0].1),
             "one shared allocation"
+        );
+    }
+
+    #[test]
+    fn word_cloud_fonts_are_found_despite_numeric_file_names() {
+        // fixtures_500 014b42f2 / 01635d97: Poppins and Lato live in Word's
+        // cloud-font cache as <family>/<number>.ttf; the file-stem prefix
+        // filter rejected them and the text fell to Cambria.
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let dir = PathBuf::from(home)
+            .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/Poppins");
+        if !dir.is_dir() {
+            return;
+        }
+        let faces = installed_family_faces("Poppins");
+        assert!(
+            faces.iter().any(|(style, _)| *style == (false, false)),
+            "a regular Poppins face from the cloud cache"
         );
     }
 
