@@ -762,6 +762,39 @@ fn keep_next_lets_the_last_kept_line_hang_its_leading() {
 }
 
 #[test]
+fn a_page_gutter_widens_the_binding_margin() {
+    // fixtures_500 007cf2e2: pgMar left=1418 gutter=567. Word starts every
+    // line at 70.9 + 28.35 = 99.25; we ignored the gutter.
+    let body = |gutter: &str| {
+        format!(
+            "<w:p><w:r><w:t>Gutter</w:t></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" {gutter}/></w:sectPr>"
+        )
+    };
+    let x = |gutter: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body(gutter), "")).expect("gutter");
+        // Glyphs sit at `... x y cm`.
+        pdf_content_streams(&pdf)
+            .iter()
+            .flat_map(|st| st.lines().map(str::to_owned).collect::<Vec<_>>())
+            .filter(|l| l.contains(" Tj") || l.contains(" TJ"))
+            .filter_map(|l| {
+                let head = &l[..l.find(" cm ")?];
+                let mut nums = head.split_whitespace().rev();
+                nums.next();
+                nums.next()?.parse::<f32>().ok()
+            })
+            .fold(f32::MAX, f32::min)
+    };
+    let plain = x("");
+    let bound = x("w:gutter=\"567\"");
+    assert!(
+        (bound - plain - 28.35).abs() < 0.05,
+        "the gutter adds to the left margin; plain={plain} bound={bound}"
+    );
+}
+
+#[test]
 fn direct_ind_left_keeps_the_numbering_level_hanging() {
     // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
     // paragraph overrides only the left edge; Word keeps the level's
@@ -2798,17 +2831,16 @@ fn official_mcdoc_hello_does_not_stack_lins_on_firstline_after_mini_414() {
 }
 
 #[test]
-fn official_image_out_subscribe_stays_pad4_after_mini_417() {
-    // Word Subscribe x≈195.12 wants ECMA/VML default lIns=7.2. Ungated
-    // stack was mini 414 mcdoc −1.83; unindented-only was mini 417 RL
-    // mean −0.024 (Strict01 clones −0.30, file_100 family −0.20). Keep
-    // pad=4 (x≈191.95).
+fn official_image_out_subscribe_sits_at_the_default_left_inset() {
+    // Word paints "Subscribe" at x≈195.12: the VML text box's default
+    // lIns=7.2. The old 4pt pad (x≈191.95, mini 417) was tuned to ITT and
+    // contradicted Word; text boxes now lay out inside their insets.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/image_out_of_folder.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert image_out_of_folder");
     let (x, y) = pdf_literal_td_xy(&pdf, "Subscribe").expect("Subscribe Td");
     assert!(
-        x > 189.0 && x < 193.5,
-        "mini 417 ITT-neg default lIns; keep pad=4 x≈191.95; x={x}"
+        (x - 195.12).abs() < 0.2,
+        "Word's default lIns puts Subscribe at 195.12; x={x}"
     );
     assert!(y > 790.0, "overlay y KEEP; y={y}");
 }
@@ -2877,6 +2909,63 @@ fn text_box_txbx_content_emits_a_bordered_box() {
         text.contains("0.60 w"),
         "textbox must stroke a border, stream tail {}",
         &text[text.len().saturating_sub(240)..]
+    );
+}
+
+#[test]
+fn text_box_paragraphs_lay_out_as_paragraphs_inside_the_insets() {
+    // fixtures_500 010300e3: a letter in a text box. Word lays each
+    // paragraph out (its own line, spacing, jc) inside bodyPr's default
+    // 7.2pt/3.6pt insets; we ran the paragraphs together on one line
+    // ("Dear Ms. Smith:Are you ...") 4pt from the edge.
+    let body = "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"page\"><wp:posOffset>200000</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"page\"><wp:posOffset>200000</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"3000000\" cy=\"1200000\"/>\
+          <wp:wrapNone/>\
+          <wp:docPr id=\"1\" name=\"Letter\"/>\
+          <a:graphic><a:graphicData \
+            uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+            <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+              <wps:spPr><a:xfrm><a:ext cx=\"3000000\" cy=\"1200000\"/></a:xfrm>\
+                <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr>\
+              <wps:txbx><w:txbxContent>\
+                <w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"exact\"/></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p>\
+                <w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"exact\"/></w:pPr><w:r><w:t>Beta</w:t></w:r></w:p>\
+              </w:txbxContent></wps:txbx>\
+              <wps:bodyPr/>\
+            </wps:wsp></a:graphicData></a:graphic>\
+        </wp:anchor></w:drawing></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("text box paragraphs");
+    let glyphs: Vec<(f32, f32)> = pdf_content_streams(&pdf)
+        .iter()
+        .flat_map(|st| st.lines().map(str::to_owned).collect::<Vec<_>>())
+        .filter(|l| l.contains(" Tj") || l.contains(" TJ"))
+        .filter_map(|l| {
+            let head = &l[..l.find(" cm ")?];
+            let mut nums = head.split_whitespace().rev();
+            let y = nums.next()?.parse::<f32>().ok()?;
+            let x = nums.next()?.parse::<f32>().ok()?;
+            Some((x, y))
+        })
+        .collect();
+    let mut ys: Vec<i32> = glyphs.iter().map(|g| (g.1 * 10.0).round() as i32).collect();
+    ys.sort_unstable();
+    ys.dedup();
+    assert_eq!(
+        ys.len(),
+        2,
+        "Alpha and Beta are two lines; glyphs={glyphs:?}"
+    );
+    assert!(
+        (ys[1] - ys[0] - 120).abs() <= 1,
+        "one exact 12pt line apart; ys={ys:?}"
+    );
+    let x0 = glyphs.iter().map(|g| g.0).fold(f32::MAX, f32::min);
+    assert!(
+        (x0 - (15.75 + 7.2)).abs() < 0.05,
+        "text starts at the 7.2pt left inset; x0={x0}"
     );
 }
 
@@ -7258,7 +7347,9 @@ fn pdf_valax_digit_xs(hay: &str) -> Vec<f32> {
 fn pdf_literal_td_xy(pdf: &[u8], needle: &str) -> Option<(f32, f32)> {
     let hay = String::from_utf8_lossy(pdf);
     let pat = format!("({needle}");
-    let idx = hay.find(&pat)?;
+    let Some(idx) = hay.find(&pat) else {
+        return pdf_glyph_text_xy(pdf, needle);
+    };
     let before = &hay[..idx];
     let td = before.rfind(" Td")?;
     let nums: Vec<f32> = before[td.saturating_sub(48)..td]
@@ -7270,6 +7361,58 @@ fn pdf_literal_td_xy(pdf: &[u8], needle: &str) -> Option<(f32, f32)> {
     } else {
         None
     }
+}
+
+/// A page stream's painted literals joined in order: whole-run `(text) Tj`
+/// and glyph-by-glyph layout alike read as the page's text.
+fn stream_glyph_text(stream: &str) -> String {
+    stream
+        .lines()
+        .filter_map(|l| {
+            let close = l.rfind(") Tj")?;
+            let open = l[..close].find('(')?;
+            Some(l[open + 1..close].to_string())
+        })
+        .collect()
+}
+
+/// Where `needle` starts when the layout paints it glyph by glyph
+/// (`x y Td (c) Tj`, or `q .. x y cm BT .. (c) Tj ET Q` when snapped): the
+/// glyphs join in stream order.
+fn pdf_glyph_text_xy(pdf: &[u8], needle: &str) -> Option<(f32, f32)> {
+    let mut text = String::new();
+    let mut at: Vec<(f32, f32)> = Vec::new();
+    for stream in pdf_content_streams(pdf) {
+        for line in stream.lines().filter(|l| l.contains(") Tj")) {
+            // `x y cm` places a snapped glyph; otherwise `x y Td` does.
+            let key = if line.contains(" cm ") { " cm " } else { " Td" };
+            let Some(end) = line.find(key) else {
+                continue;
+            };
+            let head = &line[..end];
+            let mut nums = head.split_whitespace().rev();
+            let y = nums.next().and_then(|v| v.parse::<f32>().ok());
+            let x = nums.next().and_then(|v| v.parse::<f32>().ok());
+            let (Some(x), Some(y)) = (x, y) else {
+                continue;
+            };
+            let open = line.find('(');
+            let close = line.rfind(") Tj");
+            let (Some(open), Some(close)) = (open, close) else {
+                continue;
+            };
+            for ch in line[open + 1..close]
+                .replace("\\(", "(")
+                .replace("\\)", ")")
+                .chars()
+            {
+                text.push(ch);
+                at.push((x, y));
+            }
+        }
+    }
+    let byte = text.find(needle)?;
+    at.get(text[..byte].chars().count()).copied()
 }
 
 fn pdf_literal_td_y(pdf: &[u8], needle: &str) -> Option<f32> {
@@ -18729,7 +18872,10 @@ fn official_strict01_landscape_cover_has_no_confidential_watermark() {
     );
     let cover = pages
         .iter()
-        .find(|p| p.contains("interesting abstract") || p.contains("Eric White"))
+        .find(|p| {
+            let text = stream_glyph_text(p);
+            text.contains("interesting abstract") || text.contains("Eric White")
+        })
         .expect("cover page stream");
     assert!(
         !cover.contains("CONFIDENTIAL"),
@@ -26334,15 +26480,11 @@ fn wps_body_pr_anchor_b_sits_below_anchor_t() {
 }
 
 #[test]
-fn wps_anchor_b_spacing_before_stays_clipped_after_mini_545() {
+fn wps_anchor_b_paints_the_abstract_at_the_box_bottom() {
     // Strict01 Rectangle 467: wrapNone, bodyPr anchor=b, first-para
     // w:spacing before=240, Abstract w:sdt. Word paints "This is my
-    // interesting abstract." Unclipping Bottom+text_dy (mini 545) was
-    // Word-shaped but ITT-neg: NR 59.9205→59.9141, 8 Strict01-family
-    // drops (−0.048) 0 gains. Left-aligned pad=4 at y=170 vs Word
-    // centered 485/147. Quartz prefers the clip. Do not retry unclip,
-    // jc=center in the box, or tIns/bIns (mini 510). KEEP 506 BotZZ
-    // (no before) still paints.
+    // interesting abstract." at the bottom of the box; the old clip
+    // (mini 545) was ITT tuning that dropped Word's text.
     let body = "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
           behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
           <wp:positionH relativeFrom=\"page\"><wp:posOffset>200000</wp:posOffset></wp:positionH>\
@@ -26370,10 +26512,11 @@ fn wps_anchor_b_spacing_before_stays_clipped_after_mini_545() {
         </wp:anchor></w:drawing></w:r></w:p>\
         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>";
     let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert abstract box");
+    // The box spans y 579.4..776.25; anchor=b keeps the text in its lower half.
+    let y = pdf_literal_td_y(&pdf, "AbstractHere").expect("Word paints the abstract");
     assert!(
-        pdf_literal_td_y(&pdf, "AbstractHere").is_none(),
-        "mini 545 ITT-neg unclip; keep Bottom+before clip; got {:?}",
-        pdf_literal_td_y(&pdf, "AbstractHere")
+        y > 579.4 && y < 677.8,
+        "anchor=b sits the abstract in the box's lower half; y={y}"
     );
 }
 
@@ -26479,7 +26622,7 @@ fn official_strict01_author_box_skips_nofill_ln_hairline() {
     );
     let author = pages
         .iter()
-        .find(|p| p.contains("(Eric White)"))
+        .find(|p| stream_glyph_text(p).contains("Eric White"))
         .expect("Eric White on cover");
     assert!(
         !author.contains("0.60 w 0.000 0.000 0.000 RG 360.36"),
@@ -26489,12 +26632,10 @@ fn official_strict01_author_box_skips_nofill_ln_hairline() {
 }
 
 #[test]
-fn wps_body_pr_tins_stays_four_pt_pad_after_mini_510() {
-    // Strict01 abstract txbx: tIns=182880 (14.4pt). Honoring tIns/bIns
-    // (mini 510) was Word-shaped but ITT-neg: NR 59.4725→59.466, 8
-    // Strict01-family drops 0 gains (−0.049). Default tIns=3.6 vs pad=4
-    // undid KEEP 506 anchor. Quartz prefers 4pt chrome. Do not retry.
-    // Do not honor lIns (mini 414/417).
+fn wps_body_pr_tins_sets_the_text_top() {
+    // Strict01 abstract txbx: tIns=182880 (14.4pt). Word lays the text
+    // out inside bodyPr's insets; the old 4pt pad (mini 510) was ITT
+    // tuning that contradicted Word.
     let box_xml = |text: &str, tins: &str, x_off: &str| {
         format!(
             "<w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
@@ -26528,8 +26669,8 @@ fn wps_body_pr_tins_stays_four_pt_pad_after_mini_510() {
     let y_lo = pdf_literal_td_y(&pdf, "InsLo").expect("InsLo Td");
     let y_hi = pdf_literal_td_y(&pdf, "InsHi").expect("InsHi Td");
     assert!(
-        (y_lo - y_hi).abs() < 1.0,
-        "mini 510 ITT-neg tIns; keep pad=4; y_lo={y_lo} y_hi={y_hi}"
+        (y_lo - y_hi - 10.8).abs() < 0.05,
+        "tIns 14.4 vs 3.6 lowers the text 10.8pt; y_lo={y_lo} y_hi={y_hi}"
     );
 }
 

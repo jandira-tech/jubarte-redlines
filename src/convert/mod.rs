@@ -148,6 +148,7 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
             if let Some(tab) = settings_default_tab_pt(&pkg) {
                 sheet.defaults.page.default_tab = tab;
             }
+            sheet.defaults.page.gutter_at_top = settings_flag(&pkg, "gutterAtTop");
             // Word Save-as-PDF All Markup (file_27): gray balloon pasteboard + scale.
             // Ins-only trackRevisions (file_6) stays full-page / 0.24 cm.
             if markup && document_wants_markup_pane(&pkg, &main) {
@@ -456,6 +457,8 @@ struct PageSetup {
     /// laid-out letter page and paint a gray balloon pasteboard (file_27).
     /// Must not shrink wrap/`margin_r` or 30pt titles wrap (12→14pp).
     balloon_gutter: f32,
+    /// `w:settings/w:gutterAtTop`: the binding gutter joins the top margin.
+    gutter_at_top: bool,
     /// `w:settings/w:defaultTabStop` (pt). Factory 720 twips = 0.5in.
     default_tab: f32,
     /// `w:sectPr/w:pgBorders` (plan Step 7 / case68).
@@ -798,6 +801,7 @@ impl Defaults {
                 chap_style: None,
                 chap_sep: "-",
                 balloon_gutter: 0.0,
+                gutter_at_top: false,
                 default_tab: 36.0,
                 borders: PageBorders::default(),
                 col_count: 1,
@@ -1251,7 +1255,16 @@ struct LaidTextBox {
     /// `a:prstGeom/a:avLst` guide values (`fmla="val N"`) for presets
     /// drawn through `preset_geom`.
     adj: Vec<(String, f64)>,
+    /// The text box's own paragraphs with their resolved styles: laid out
+    /// like body paragraphs inside `insets` (010300e3's letter). Empty
+    /// keeps the flat-run label path (charts, diagrams, linked boxes).
+    paras: Vec<(Vec<TextRun>, ParaStyle)>,
+    /// `bodyPr` lIns/tIns/rIns/bIns (VML `v:textbox/@inset`), points.
+    insets: [f32; 4],
 }
+
+/// Word's default text box insets: 0.1in left/right, 0.05in top/bottom.
+const TXBX_INSETS: [f32; 4] = [7.2, 3.6, 7.2, 3.6];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TextAnchor {
@@ -2998,6 +3011,23 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
         }
         if let Some(v) = attr_any(dom, mar, "footer").and_then(parse_len) {
             page.footer = v;
+        }
+        // The binding gutter widens the left margin (right with
+        // rtlGutter, top with settings gutterAtTop): 007cf2e2's left=1418
+        // gutter=567 text starts at 99.25.
+        if let Some(g) = attr_any(dom, mar, "gutter")
+            .and_then(parse_len)
+            .filter(|g| *g > 0.0)
+        {
+            let rtl = first_named(dom, sect, "rtlGutter")
+                .is_some_and(|n| attr_any(dom, n, "val").is_none_or(|v| v != "0" && v != "false"));
+            if page.gutter_at_top {
+                page.margin_t += g;
+            } else if rtl {
+                page.margin_r += g;
+            } else {
+                page.margin_l += g;
+            }
         }
     }
     page.valign_center = first_named(dom, sect, "vAlign")
@@ -5995,7 +6025,14 @@ fn paragraph_block(
             },
         );
     }
-    let boxes = collect_textboxes(Some((ctx.pkg, ctx.main)), dom, para, &rstyle, &sheet.theme);
+    let boxes = collect_textboxes_styled(
+        Some((ctx.pkg, ctx.main)),
+        dom,
+        para,
+        &rstyle,
+        &sheet.theme,
+        Some(sheet),
+    );
     // Word paints empty TitlePage/DocumentTitle with the style's rPr
     // (Arial 18 / exact 20 / after 24). Factory Calibri 11 stretched
     // DocumentTitle→date to 88pt and dropped the cover's 18pt spaces.
@@ -8446,12 +8483,26 @@ fn collapse_ws(text: &str) -> String {
     out
 }
 
+#[cfg(test)]
 fn collect_textboxes(
     src: Option<(&PartFs, &str)>,
     dom: &Dom,
     para: NodeId,
     base: &RunStyle,
     theme: &ThemeFonts,
+) -> Vec<LaidTextBox> {
+    collect_textboxes_styled(src, dom, para, base, theme, None)
+}
+
+/// `collect_textboxes` with the document's styles, so each text box
+/// paragraph keeps its own style, spacing and jc.
+fn collect_textboxes_styled(
+    src: Option<(&PartFs, &str)>,
+    dom: &Dom,
+    para: NodeId,
+    base: &RunStyle,
+    theme: &ThemeFonts,
+    sheet: Option<&StyleSheet>,
 ) -> Vec<LaidTextBox> {
     let mut out = Vec::new();
     let shapes = shape_roots(dom, para);
@@ -8489,6 +8540,12 @@ fn collect_textboxes(
         let mut text_dy = txbx
             .map(|n| first_para_spacing_before(dom, n))
             .unwrap_or(0.0);
+        let paras = match (sheet, txbx) {
+            (Some(sheet), Some(n)) if txbx_lays_out_paragraphs(dom, shape, n) => {
+                txbx_paragraphs(dom, n, sheet, theme)
+            }
+            _ => Vec::new(),
+        };
         if runs.iter().all(|r| r.text.trim().is_empty()) {
             let (linked, dx, dy) = linked_txbx_content(src, dom, shape, base, theme);
             runs = linked;
@@ -8573,6 +8630,8 @@ fn collect_textboxes(
                     text_dy: 0.0,
                     text_anchor,
                     adj: preset_adjustments(dom, shape),
+                    paras: Vec::new(),
+                    insets: TXBX_INSETS,
                 });
                 continue;
             }
@@ -8608,6 +8667,8 @@ fn collect_textboxes(
                     text_dy: 0.0,
                     text_anchor,
                     adj: preset_adjustments(dom, shape),
+                    paras: Vec::new(),
+                    insets: TXBX_INSETS,
                 });
                 continue;
             }
@@ -8658,6 +8719,8 @@ fn collect_textboxes(
             text_dy,
             text_anchor,
             adj: preset_adjustments(dom, shape),
+            paras,
+            insets: textbox_insets(dom, shape),
         });
     }
     // WrapNone accent fills on the same paragraph as an inline chart
@@ -8674,6 +8737,94 @@ fn collect_textboxes(
     // stays under the dark abstract header (467).
     out.sort_by_key(|b| (!b.behind, b.z));
     out
+}
+
+/// A horizontal text box holding only paragraphs lays them out as body
+/// paragraphs; tables and vertical text keep the flat-run path.
+fn txbx_lays_out_paragraphs(dom: &Dom, shape: NodeId, txbx: NodeId) -> bool {
+    // bodyPr is wps:, outside first_named_any's namespaces.
+    let horizontal = descendants_local(dom, shape, "bodyPr")
+        .first()
+        .and_then(|b| attr_any(dom, *b, "vert"))
+        .is_none_or(|v| v == "horz");
+    horizontal
+        && dom.descendants(txbx, Some(&W::tbl())).is_empty()
+        && dom
+            .descendants(txbx, Some(&W::p()))
+            .iter()
+            .any(|p| !w_text(dom, *p).trim().is_empty())
+}
+
+/// The text box's own paragraphs, each from its own style.
+fn txbx_paragraphs(
+    dom: &Dom,
+    txbx: NodeId,
+    sheet: &StyleSheet,
+    theme: &ThemeFonts,
+) -> Vec<(Vec<TextRun>, ParaStyle)> {
+    dom.descendants(txbx, Some(&W::p()))
+        .into_iter()
+        .filter(|p| {
+            dom.ancestors(*p, Some(&W::txbx_content()))
+                .first()
+                .is_none_or(|a| *a == txbx)
+        })
+        .map(|p| {
+            let (style, run) = para_base(dom, p, sheet, None);
+            let mut runs = collect_runs(dom, p, &run, theme);
+            // An empty paragraph is a line of its mark (010300e3's 8pt
+            // blank between "Dear Ms. Smith:" and the letter).
+            if runs.is_empty() {
+                let mut mark = run;
+                if let Some(rpr) = dom
+                    .element(p, &W::p_pr())
+                    .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+                {
+                    apply_rpr(dom, rpr, &mut mark, theme);
+                }
+                runs.push(TextRun::new(" ", mark));
+            }
+            (runs, style)
+        })
+        .collect()
+}
+
+/// `bodyPr` insets (EMU) or VML `v:textbox/@inset`, defaulting to Word's.
+fn textbox_insets(dom: &Dom, shape: NodeId) -> [f32; 4] {
+    let mut ins = TXBX_INSETS;
+    if let Some(body) = descendants_local(dom, shape, "bodyPr").first().copied() {
+        for (i, key) in ["lIns", "tIns", "rIns", "bIns"].iter().enumerate() {
+            if let Some(v) = attr_any(dom, body, key).and_then(|v| v.parse::<f32>().ok()) {
+                ins[i] = v / 12700.0;
+            }
+        }
+    } else if let Some(tb) = descendants_local(dom, shape, "textbox").first()
+        && let Some(raw) = attr_any(dom, *tb, "inset")
+    {
+        for (i, part) in raw.split(',').take(4).enumerate() {
+            if let Some(v) = vml_len_pt(part.trim()) {
+                ins[i] = v;
+            }
+        }
+    }
+    ins
+}
+
+/// A VML length (`0.1in`, `7.2pt`, `2mm`, `0.5cm`, bare EMU) in points.
+fn vml_len_pt(raw: &str) -> Option<f32> {
+    let (num, unit) = raw
+        .find(|c: char| c.is_ascii_alphabetic())
+        .map_or((raw, ""), |i| raw.split_at(i));
+    let v: f32 = num.trim().parse().ok()?;
+    Some(match unit {
+        "in" => v * 72.0,
+        "pt" => v,
+        "cm" => v * 72.0 / 2.54,
+        "mm" => v * 72.0 / 25.4,
+        "px" => v * 0.75,
+        "" => v / 12700.0,
+        _ => return None,
+    })
 }
 
 /// Word 2008+ can park textbox paragraphs in `word/txbxN.xml` and leave
@@ -8908,6 +9059,15 @@ fn descendants_local(dom: &Dom, node: NodeId, local: &str) -> Vec<NodeId> {
     dom.descendants(node, None)
         .into_iter()
         .filter(|&n| local_name_is(dom, n, local))
+        .collect()
+}
+
+/// The `w:t` text under `node` (a paragraph's words; `element_text` reads
+/// only the node's own text children, so it is empty for a `w:p`).
+fn w_text(dom: &Dom, node: NodeId) -> String {
+    dom.descendants(node, Some(&W::t()))
+        .into_iter()
+        .map(|t| element_text(dom, t))
         .collect()
 }
 
@@ -14929,6 +15089,10 @@ impl<'a> Layout<'a> {
             self.emit_diag_shapes(x, y, dh, &box_.diag_shapes);
             return;
         }
+        if !box_.paras.is_empty() {
+            self.emit_textbox_paras(box_, x, y, dw, dh);
+            return;
+        }
         let pad = 4.0;
         let dx = if box_.text_dx > 0.0 {
             box_.text_dx
@@ -14990,6 +15154,83 @@ impl<'a> Layout<'a> {
             }
             ty -= 2.0;
         }
+    }
+
+    /// Lay a text box's paragraphs out like body paragraphs inside its
+    /// insets: the flow is pointed at the box, page breaks are off, the
+    /// anchor moves the finished block, and lines past the bottom are
+    /// hidden as Word hides overflow.
+    fn emit_textbox_paras(&mut self, box_: &LaidTextBox, x: f32, y: f32, dw: f32, dh: f32) {
+        let [li, ti, ri, bi] = box_.insets;
+        let saved = (
+            self.y,
+            self.page.margin_l,
+            self.page.margin_r,
+            self.page.col_count,
+            self.col_i,
+            self.at_page_top,
+            self.suppress_space_before,
+        );
+        let stops = std::mem::take(&mut self.tab_stops);
+        let last_style = std::mem::take(&mut self.last_style_id);
+        // The host paragraph's anchors still read its own top and probe.
+        let para_state = (
+            self.para_top,
+            self.line_probe,
+            self.pbdr_joins,
+            self.last_line_end,
+        );
+        self.page.margin_l = x + li;
+        self.page.margin_r = self.page.width - (x + dw - ri);
+        self.page.col_count = 1;
+        self.col_i = 0;
+        self.at_page_top = false;
+        self.suppress_space_before = false;
+        self.nested_depth = self.nested_depth.saturating_add(1);
+        let top = y + dh - ti;
+        self.y = top;
+        let start = self.current().ops.len();
+        for (runs, style) in &box_.paras {
+            self.emit_runs(runs, style, false, 0.0, 0.0, 0.0);
+        }
+        let used = top - self.y;
+        let room = dh - ti - bi;
+        let dy = match box_.text_anchor {
+            TextAnchor::Top => 0.0,
+            TextAnchor::Center => -((room - used) * 0.5).max(0.0),
+            TextAnchor::Bottom => -(room - used).max(0.0),
+        };
+        let floor = y + bi;
+        let ops = &mut self.current().ops;
+        for op in ops[start..].iter_mut() {
+            op.shift_y(dy);
+        }
+        let mut i = start;
+        while i < ops.len() {
+            if matches!(ops[i], Op::Text { y: ty, .. } if ty < floor) {
+                ops.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+        self.nested_depth = self.nested_depth.saturating_sub(1);
+        self.tab_stops = stops;
+        self.last_style_id = last_style;
+        (
+            self.para_top,
+            self.line_probe,
+            self.pbdr_joins,
+            self.last_line_end,
+        ) = para_state;
+        (
+            self.y,
+            self.page.margin_l,
+            self.page.margin_r,
+            self.page.col_count,
+            self.col_i,
+            self.at_page_top,
+            self.suppress_space_before,
+        ) = saved;
     }
 
     fn emit_diag_shapes(&mut self, x: f32, y: f32, dh: f32, shapes: &[DiagShape]) {

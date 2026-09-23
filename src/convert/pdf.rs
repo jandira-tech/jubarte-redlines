@@ -193,6 +193,36 @@ fn markup_chrome(width: f32, height: f32) -> Option<MarkupChrome> {
 }
 
 impl Op {
+    /// Move the op `dy` points up the page (negative: down).
+    pub(crate) fn shift_y(&mut self, dy: f32) {
+        match self {
+            Op::Text { y, .. }
+            | Op::FillRect { y, .. }
+            | Op::StrokeRect { y, .. }
+            | Op::Jpeg { y, .. }
+            | Op::Rgb { y, .. }
+            | Op::Watermark { y, .. } => *y += dy,
+            Op::Line { y1, y2, .. } => {
+                *y1 += dy;
+                *y2 += dy;
+            }
+            Op::FillPoly { points, .. } | Op::StrokePoly { points, .. } => {
+                points.iter_mut().for_each(|p| p.1 += dy);
+            }
+            Op::FillPath { contours, .. } => contours.iter_mut().flatten().for_each(|p| p.1 += dy),
+            Op::StrokePath { subpaths, .. } => subpaths
+                .iter_mut()
+                .flat_map(|(pts, _)| pts.iter_mut())
+                .for_each(|p| p.1 += dy),
+            Op::Cubic {
+                start, segments, ..
+            } => {
+                start.1 += dy;
+                segments.iter_mut().flatten().for_each(|p| p.1 += dy);
+            }
+        }
+    }
+
     pub(crate) fn text(
         face: impl Into<FaceRef>,
         size: f32,
