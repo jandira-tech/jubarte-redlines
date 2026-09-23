@@ -1266,6 +1266,18 @@ struct LaidTextBox {
     paras: Vec<(Vec<TextRun>, ParaStyle)>,
     /// `bodyPr` lIns/tIns/rIns/bIns (VML `v:textbox/@inset`), points.
     insets: [f32; 4],
+    /// `a:custGeom`: the shape's own paths (010300e3's icons).
+    custom: Option<std::rc::Rc<preset_geom::CustomGeom>>,
+    /// A `wpg:wgp` group's shapes, each painted in its own part of the box
+    /// (010300e3's traced signature is a group of custom paths).
+    group: Vec<GroupChild>,
+}
+
+/// One shape of a group: its box as fractions of the group's box (x, y
+/// from the top-left, w, h) and its own geometry.
+struct GroupChild {
+    frac: [f32; 4],
+    shape: LaidTextBox,
 }
 
 /// Word's default text box insets: 0.1in left/right, 0.05in top/bottom.
@@ -8601,12 +8613,28 @@ fn collect_textboxes_styled(
         let (flip_h, flip_v) = shape_flip(dom, shape);
         let tail_end = shape_has_tail_end(dom, shape);
         let text_anchor = shape_text_anchor(dom, shape);
+        let group = group_children(dom, shape, theme);
+        // A group paints its shapes, not one box from its first child.
+        let custom = if group.is_empty() {
+            cust_geom(dom, shape).map(std::rc::Rc::new)
+        } else {
+            None
+        };
+        if !group.is_empty() {
+            fill = None;
+        }
+        let line = if group.is_empty() { line } else { None };
+        if empty && chart.is_none() && !group.is_empty() {
+            out.push(group_box(w, h, slot, geom, behind, z, group));
+            continue;
+        }
         if empty && chart.is_none() {
             if fill.is_some() || line.is_some() {
                 // Preset polygons stroke their own closed outline in the
                 // line colour, filled or not. Box keeps its tuned 4-edge
-                // rules (KEEP 591), connectors their own stroke.
-                let polygon = geom_is_preset_polygon(geom);
+                // rules (KEEP 591), connectors their own stroke. A custom
+                // path strokes itself like a polygon.
+                let polygon = geom_is_preset_polygon(geom) || custom.is_some();
                 let box_line = if polygon || (matches!(geom, ShapeGeom::Box) && fill.is_some()) {
                     line
                 } else {
@@ -8637,6 +8665,8 @@ fn collect_textboxes_styled(
                     adj: preset_adjustments(dom, shape),
                     paras: Vec::new(),
                     insets: TXBX_INSETS,
+                    custom: custom.clone(),
+                    group: Vec::new(),
                 });
                 continue;
             }
@@ -8674,6 +8704,8 @@ fn collect_textboxes_styled(
                     adj: preset_adjustments(dom, shape),
                     paras: Vec::new(),
                     insets: TXBX_INSETS,
+                    custom: custom.clone(),
+                    group: Vec::new(),
                 });
                 continue;
             }
@@ -8726,6 +8758,8 @@ fn collect_textboxes_styled(
             adj: preset_adjustments(dom, shape),
             paras,
             insets: textbox_insets(dom, shape),
+            custom,
+            group,
         });
     }
     // WrapNone accent fills on the same paragraph as an inline chart
@@ -8742,6 +8776,269 @@ fn collect_textboxes_styled(
     // stays under the dark abstract header (467).
     out.sort_by_key(|b| (!b.behind, b.z));
     out
+}
+
+/// A group's own box: no geometry of its own, its shapes in `group`.
+fn group_box(
+    w: f32,
+    h: f32,
+    slot: ImageSlot,
+    geom: ShapeGeom,
+    behind: bool,
+    z: u32,
+    group: Vec<GroupChild>,
+) -> LaidTextBox {
+    LaidTextBox {
+        w,
+        h,
+        runs: Vec::new(),
+        slot,
+        chart: None,
+        stroke: false,
+        fill: None,
+        line: None,
+        line_width: 1.0,
+        geom,
+        reserve_only: false,
+        behind,
+        z,
+        flip_h: false,
+        flip_v: false,
+        tail_end: false,
+        diag_shapes: Vec::new(),
+        text_dx: 0.0,
+        text_dy: 0.0,
+        text_anchor: TextAnchor::Top,
+        adj: Vec::new(),
+        paras: Vec::new(),
+        insets: TXBX_INSETS,
+        custom: None,
+        group,
+    }
+}
+
+/// The shapes of the drawing's `wpg:wgp` group (nested groups flattened),
+/// each placed through the group's `chOff`/`chExt` child space.
+fn group_children(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> Vec<GroupChild> {
+    let mut out = Vec::new();
+    if let Some(wgp) = descendants_local(dom, shape, "wgp").into_iter().next() {
+        collect_group(dom, wgp, [0.0, 0.0, 1.0, 1.0], theme, &mut out);
+    }
+    out
+}
+
+/// `(off x, off y, ext cx, ext cy)` of an `a:xfrm`, EMU.
+fn xfrm_box(dom: &Dom, xfrm: NodeId) -> Option<[f64; 4]> {
+    let num = |node: Option<NodeId>, key: &str| {
+        node.and_then(|n| attr_any(dom, n, key))
+            .and_then(|v| v.parse::<f64>().ok())
+    };
+    let off = descendants_local(dom, xfrm, "off").into_iter().next();
+    let ext = descendants_local(dom, xfrm, "ext").into_iter().next();
+    Some([
+        num(off, "x").unwrap_or(0.0),
+        num(off, "y").unwrap_or(0.0),
+        num(ext, "cx")?,
+        num(ext, "cy")?,
+    ])
+}
+
+fn collect_group(
+    dom: &Dom,
+    grp: NodeId,
+    frac: [f32; 4],
+    theme: &ThemeFonts,
+    out: &mut Vec<GroupChild>,
+) {
+    let children: Vec<NodeId> = (0..dom.child_count(grp))
+        .map(|i| dom.child_at(grp, i))
+        .collect();
+    let Some(xfrm) = children
+        .iter()
+        .find(|c| local_name_is(dom, **c, "grpSpPr"))
+        .and_then(|pr| descendants_local(dom, *pr, "xfrm").into_iter().next())
+    else {
+        return;
+    };
+    let num = |local: &str, key: &str| {
+        descendants_local(dom, xfrm, local)
+            .into_iter()
+            .next()
+            .and_then(|n| attr_any(dom, n, key))
+            .and_then(|v| v.parse::<f64>().ok())
+    };
+    let Some(ext) = xfrm_box(dom, xfrm) else {
+        return;
+    };
+    let (cox, coy) = (
+        num("chOff", "x").unwrap_or(0.0),
+        num("chOff", "y").unwrap_or(0.0),
+    );
+    let cex = num("chExt", "cx").filter(|v| *v > 0.0).unwrap_or(ext[2]);
+    let cey = num("chExt", "cy").filter(|v| *v > 0.0).unwrap_or(ext[3]);
+    if cex <= 0.0 || cey <= 0.0 {
+        return;
+    }
+    let place = |b: [f64; 4]| -> [f32; 4] {
+        let fx = ((b[0] - cox) / cex) as f32;
+        let fy = ((b[1] - coy) / cey) as f32;
+        let fw = (b[2] / cex) as f32;
+        let fh = (b[3] / cey) as f32;
+        [
+            frac[0] + fx * frac[2],
+            frac[1] + fy * frac[3],
+            fw * frac[2],
+            fh * frac[3],
+        ]
+    };
+    for child in children {
+        if local_name_is(dom, child, "grpSp") {
+            let sub = (0..dom.child_count(child))
+                .map(|i| dom.child_at(child, i))
+                .find(|c| local_name_is(dom, *c, "grpSpPr"))
+                .and_then(|pr| descendants_local(dom, pr, "xfrm").into_iter().next())
+                .and_then(|x| xfrm_box(dom, x));
+            if let Some(b) = sub {
+                collect_group(dom, child, place(b), theme, out);
+            }
+        } else if local_name_is(dom, child, "wsp") {
+            let Some(b) = descendants_local(dom, child, "xfrm")
+                .into_iter()
+                .next()
+                .and_then(|x| xfrm_box(dom, x))
+            else {
+                continue;
+            };
+            let geom = shape_geom(dom, child);
+            let fill = shape_fill_color(dom, child, theme);
+            let line = shape_line_color(dom, child, theme);
+            let custom = cust_geom(dom, child).map(std::rc::Rc::new);
+            let polygon = geom_is_preset_polygon(geom) || custom.is_some();
+            let (flip_h, flip_v) = shape_flip(dom, child);
+            let mut shape = group_box(
+                (b[2] / 12700.0) as f32,
+                (b[3] / 12700.0) as f32,
+                ImageSlot::Flow,
+                geom,
+                false,
+                0,
+                Vec::new(),
+            );
+            shape.fill = fill;
+            shape.line = line.filter(|_| polygon || matches!(geom, ShapeGeom::Box));
+            shape.stroke = line.is_some() && !shape_ln_is_nofill(dom, child);
+            shape.line_width = shape_line_width(dom, child, theme);
+            shape.custom = custom;
+            shape.adj = preset_adjustments(dom, child);
+            shape.flip_h = flip_h;
+            shape.flip_v = flip_v;
+            out.push(GroupChild {
+                frac: place(b),
+                shape,
+            });
+        }
+    }
+}
+
+/// `a:custGeom` as guides and paths (ECMA-376 §20.1.9.8): the evaluator
+/// flattens it like a preset.
+fn cust_geom(dom: &Dom, shape: NodeId) -> Option<preset_geom::CustomGeom> {
+    use preset_geom::{CustomGeom, CustomPath, Fill, OwnedCmd};
+    let cg = descendants_local(dom, shape, "custGeom")
+        .into_iter()
+        .next()?;
+    let guides = |list: &str| -> Vec<(String, String)> {
+        descendants_local(dom, cg, list)
+            .first()
+            .map(|l| {
+                descendants_local(dom, *l, "gd")
+                    .into_iter()
+                    .filter_map(|gd| {
+                        Some((
+                            attr_any(dom, gd, "name")?.to_string(),
+                            attr_any(dom, gd, "fmla")?.to_string(),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let pts = |node: NodeId| -> Vec<String> {
+        descendants_local(dom, node, "pt")
+            .into_iter()
+            .flat_map(|pt| {
+                [
+                    attr_any(dom, pt, "x").unwrap_or("0").to_string(),
+                    attr_any(dom, pt, "y").unwrap_or("0").to_string(),
+                ]
+            })
+            .collect()
+    };
+    let list = descendants_local(dom, cg, "pathLst").into_iter().next()?;
+    // A path without w/h draws in the shape's own EMU extent.
+    let ext = descendants_local(dom, shape, "ext")
+        .into_iter()
+        .find(|e| attr_any(dom, *e, "cx").is_some());
+    let extent = |key: &str| {
+        ext.and_then(|e| attr_any(dom, e, key))
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
+    };
+    let mut paths = Vec::new();
+    for path in (0..dom.child_count(list))
+        .map(|i| dom.child_at(list, i))
+        .filter(|n| local_name_is(dom, *n, "path"))
+    {
+        let num = |key: &str| {
+            attr_any(dom, path, key)
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.0)
+        };
+        let fill = match attr_any(dom, path, "fill").unwrap_or("norm") {
+            "none" => Fill::None,
+            "lighten" => Fill::Lighten,
+            "lightenLess" => Fill::LightenLess,
+            "darken" => Fill::Darken,
+            "darkenLess" => Fill::DarkenLess,
+            _ => Fill::Norm,
+        };
+        let stroke = attr_any(dom, path, "stroke").is_none_or(|v| v != "0" && v != "false");
+        let mut cmds = Vec::new();
+        for i in 0..dom.child_count(path) {
+            let node = dom.child_at(path, i);
+            let p = pts(node);
+            let cmd = if local_name_is(dom, node, "moveTo") && p.len() >= 2 {
+                OwnedCmd::M(p[0].clone(), p[1].clone())
+            } else if local_name_is(dom, node, "lnTo") && p.len() >= 2 {
+                OwnedCmd::L(p[0].clone(), p[1].clone())
+            } else if local_name_is(dom, node, "cubicBezTo") && p.len() >= 6 {
+                OwnedCmd::C(std::array::from_fn(|k| p[k].clone()))
+            } else if local_name_is(dom, node, "quadBezTo") && p.len() >= 4 {
+                OwnedCmd::Q(std::array::from_fn(|k| p[k].clone()))
+            } else if local_name_is(dom, node, "arcTo") {
+                let a = |key: &str| attr_any(dom, node, key).unwrap_or("0").to_string();
+                OwnedCmd::A(a("wR"), a("hR"), a("stAng"), a("swAng"))
+            } else if local_name_is(dom, node, "close") {
+                OwnedCmd::Z
+            } else {
+                continue;
+            };
+            cmds.push(cmd);
+        }
+        let space = |v: f64, key: &str| if v > 0.0 { v } else { extent(key) };
+        paths.push(CustomPath {
+            w: space(num("w"), "cx"),
+            h: space(num("h"), "cy"),
+            fill,
+            stroke,
+            cmds,
+        });
+    }
+    (!paths.is_empty()).then(|| CustomGeom {
+        av: guides("avLst"),
+        gd: guides("gdLst"),
+        paths,
+    })
 }
 
 /// A horizontal text box holding only paragraphs lays them out as body
@@ -14312,19 +14609,24 @@ impl<'a> Layout<'a> {
     /// open.
     fn paint_preset_paths(
         &mut self,
-        def: &preset_geom::Preset,
+        paths: Vec<preset_geom::EvalPath>,
         box_: &LaidTextBox,
-        (x, y, dw, dh): (f32, f32, f32, f32),
+        (x, y, dh): (f32, f32, f32),
+        even_odd: bool,
     ) {
         let map = |(px, py): (f32, f32)| (x + px, y + dh - py);
-        for path in preset_geom::evaluate(def, dw, dh, &box_.adj) {
+        for path in paths {
             if let Some(color) = box_.fill.and_then(|f| path.fill.shade(f)) {
                 let contours = path
                     .subpaths
                     .iter()
                     .map(|s| s.pts.iter().copied().map(map).collect())
                     .collect();
-                self.current().ops.push(Op::FillPath { contours, color });
+                self.current().ops.push(Op::FillPath {
+                    contours,
+                    color,
+                    even_odd,
+                });
             }
             if path.stroke
                 && box_.stroke
@@ -14344,52 +14646,17 @@ impl<'a> Layout<'a> {
         }
     }
 
-    fn emit_textbox(&mut self, box_: &LaidTextBox) {
-        self.page_has_body = true;
-        let min_dim = if box_.reserve_only || box_.fill.is_some() {
-            1.0
-        } else {
-            16.0
-        };
-        let min_w = if box_.reserve_only || box_.fill.is_some() {
-            1.0
-        } else {
-            24.0
-        };
-        let (sized_w, sized_h) = self.sized_wh(box_.slot, box_.w, box_.h, min_w, min_dim);
-        let (x, y, dw, dh) = match box_.slot {
-            ImageSlot::Flow => {
-                self.ensure(sized_h + 4.0);
-                self.y -= sized_h;
-                let pos = (self.page.margin_l, self.y);
-                // Rectangle 3 reserve_only (Strict01 167pt hole) then
-                // Chart 1: Word ChartSpace PDF y≈291.8 / fitz 248.2.
-                // 4pt after the hole parked it at 288.9 / 251.1. KEEP
-                // 631 title y+dh-19 compensated that 3pt. Mini 623
-                // after=8 stays. Images keep 4pt (emit_image).
-                self.y -= if box_.reserve_only { 1.0 } else { 4.0 };
-                (pos.0, pos.1, sized_w, sized_h)
-            }
-            slot @ ImageSlot::Float { pct_x, pct_y, .. } if pct_x.is_some() || pct_y.is_some() => {
-                let (x, y) = self.float_xy(sized_w, sized_h, slot);
-                (x, y, sized_w, sized_h)
-            }
-            slot @ ImageSlot::Float { .. } => {
-                let spec = spec_from_float(sized_w, sized_h, slot).expect("float slot");
-                let p = resolve_anchor(&self.place_ctx(), &spec);
-                match p.wrap {
-                    WrapMode::None | WrapMode::Square { .. } | WrapMode::TopBottom => {}
-                }
-                (p.x, p.y, p.w, p.h)
-            }
-        };
-        if box_.reserve_only {
-            return;
-        }
+    /// Paint `box_`'s own geometry (preset, custom path or box) in the
+    /// rectangle `x, y, dw, dh` (PDF space, `y` at the bottom).
+    fn paint_box_geom(&mut self, box_: &LaidTextBox, x: f32, y: f32, dw: f32, dh: f32) {
         let geom_ops = self.current().ops.len();
         let preset_def = geom_preset_name(box_.geom).and_then(preset_geom::preset);
-        if let Some(def) = preset_def {
-            self.paint_preset_paths(def, box_, (x, y, dw, dh));
+        if let Some(custom) = &box_.custom {
+            let paths = preset_geom::evaluate_custom(custom, dw, dh);
+            self.paint_preset_paths(paths, box_, (x, y, dh), true);
+        } else if let Some(def) = preset_def {
+            let paths = preset_geom::evaluate(def, dw, dh, &box_.adj);
+            self.paint_preset_paths(paths, box_, (x, y, dh), false);
         } else {
             if let Some(fill) = box_.fill {
                 match box_.geom {
@@ -15111,6 +15378,56 @@ impl<'a> Layout<'a> {
                     _ => {}
                 }
             }
+        }
+    }
+
+    fn emit_textbox(&mut self, box_: &LaidTextBox) {
+        self.page_has_body = true;
+        let min_dim = if box_.reserve_only || box_.fill.is_some() {
+            1.0
+        } else {
+            16.0
+        };
+        let min_w = if box_.reserve_only || box_.fill.is_some() {
+            1.0
+        } else {
+            24.0
+        };
+        let (sized_w, sized_h) = self.sized_wh(box_.slot, box_.w, box_.h, min_w, min_dim);
+        let (x, y, dw, dh) = match box_.slot {
+            ImageSlot::Flow => {
+                self.ensure(sized_h + 4.0);
+                self.y -= sized_h;
+                let pos = (self.page.margin_l, self.y);
+                // Rectangle 3 reserve_only (Strict01 167pt hole) then
+                // Chart 1: Word ChartSpace PDF y≈291.8 / fitz 248.2.
+                // 4pt after the hole parked it at 288.9 / 251.1. KEEP
+                // 631 title y+dh-19 compensated that 3pt. Mini 623
+                // after=8 stays. Images keep 4pt (emit_image).
+                self.y -= if box_.reserve_only { 1.0 } else { 4.0 };
+                (pos.0, pos.1, sized_w, sized_h)
+            }
+            slot @ ImageSlot::Float { pct_x, pct_y, .. } if pct_x.is_some() || pct_y.is_some() => {
+                let (x, y) = self.float_xy(sized_w, sized_h, slot);
+                (x, y, sized_w, sized_h)
+            }
+            slot @ ImageSlot::Float { .. } => {
+                let spec = spec_from_float(sized_w, sized_h, slot).expect("float slot");
+                let p = resolve_anchor(&self.place_ctx(), &spec);
+                match p.wrap {
+                    WrapMode::None | WrapMode::Square { .. } | WrapMode::TopBottom => {}
+                }
+                (p.x, p.y, p.w, p.h)
+            }
+        };
+        if box_.reserve_only {
+            return;
+        }
+        self.paint_box_geom(box_, x, y, dw, dh);
+        for child in &box_.group {
+            let [fx, fy, fw, fh] = child.frac;
+            let (cw, ch) = (dw * fw, dh * fh);
+            self.paint_box_geom(&child.shape, x + dw * fx, y + dh - dh * fy - ch, cw, ch);
         }
         if let Some(chart) = &box_.chart {
             match chart.kind {

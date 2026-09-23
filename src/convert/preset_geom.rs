@@ -70,6 +70,78 @@ pub(crate) struct Preset {
     pub paths: &'static [PathDef],
 }
 
+/// A path command borrowed from a preset or from a document's
+/// `a:custGeom`, so one evaluator serves both.
+#[derive(Clone, Copy)]
+enum CmdRef<'a> {
+    M(&'a str, &'a str),
+    L(&'a str, &'a str),
+    A(&'a str, &'a str, &'a str, &'a str),
+    C([&'a str; 6]),
+    Q([&'a str; 4]),
+    Z,
+}
+
+impl Cmd {
+    fn view(&self) -> CmdRef<'static> {
+        match *self {
+            Cmd::M(x, y) => CmdRef::M(x, y),
+            Cmd::L(x, y) => CmdRef::L(x, y),
+            Cmd::A(a, b, c, d) => CmdRef::A(a, b, c, d),
+            Cmd::C(p) => CmdRef::C(p),
+            Cmd::Q(p) => CmdRef::Q(p),
+            Cmd::Z => CmdRef::Z,
+        }
+    }
+}
+
+/// One `a:custGeom` path command; operands are guide names or numbers.
+pub(crate) enum OwnedCmd {
+    M(String, String),
+    L(String, String),
+    A(String, String, String, String),
+    C([String; 6]),
+    Q([String; 4]),
+    Z,
+}
+
+impl OwnedCmd {
+    fn view(&self) -> CmdRef<'_> {
+        match self {
+            OwnedCmd::M(x, y) => CmdRef::M(x, y),
+            OwnedCmd::L(x, y) => CmdRef::L(x, y),
+            OwnedCmd::A(a, b, c, d) => CmdRef::A(a, b, c, d),
+            OwnedCmd::C(p) => CmdRef::C(p.each_ref().map(String::as_str)),
+            OwnedCmd::Q(p) => CmdRef::Q(p.each_ref().map(String::as_str)),
+            OwnedCmd::Z => CmdRef::Z,
+        }
+    }
+}
+
+/// One `a:custGeom/a:pathLst/a:path`.
+pub(crate) struct CustomPath {
+    pub w: f64,
+    pub h: f64,
+    pub fill: Fill,
+    pub stroke: bool,
+    pub cmds: Vec<OwnedCmd>,
+}
+
+/// A document's `a:custGeom`: guides and paths like a preset's.
+pub(crate) struct CustomGeom {
+    pub av: Vec<(String, String)>,
+    pub gd: Vec<(String, String)>,
+    pub paths: Vec<CustomPath>,
+}
+
+struct PathView<'a> {
+    w: f64,
+    h: f64,
+    fill: Fill,
+    stroke: bool,
+    cmds: Vec<CmdRef<'a>>,
+}
+
 /// A flattened subpath in shape space (pt, y down).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Subpath {
@@ -99,7 +171,13 @@ fn rad_ang(r: f64) -> f64 {
 }
 
 /// Guide values for a `w`×`h` shape with `adj` overrides (`a:avLst`).
-fn guides(preset: &Preset, w: f64, h: f64, adj: &[(String, f64)]) -> HashMap<String, f64> {
+fn guides(
+    av: &[(&str, &str)],
+    gd: &[(&str, &str)],
+    w: f64,
+    h: f64,
+    adj: &[(String, f64)],
+) -> HashMap<String, f64> {
     let mut g: HashMap<String, f64> = HashMap::new();
     let ss = w.min(h);
     for (name, v) in [
@@ -128,14 +206,14 @@ fn guides(preset: &Preset, w: f64, h: f64, adj: &[(String, f64)]) -> HashMap<Str
         g.insert(format!("hd{n}"), h / f64::from(n));
         g.insert(format!("ssd{n}"), ss / f64::from(n));
     }
-    for (name, fmla) in preset.av {
+    for (name, fmla) in av {
         let v = adj
             .iter()
             .find(|(k, _)| k == name)
             .map_or_else(|| formula(fmla, &g), |(_, v)| *v);
         g.insert((*name).to_string(), v);
     }
-    for (name, fmla) in preset.gd {
+    for (name, fmla) in gd {
         let v = formula(fmla, &g);
         g.insert((*name).to_string(), v);
     }
@@ -212,11 +290,52 @@ fn param_angle(a: f64, wr: f64, hr: f64) -> f64 {
 
 /// Evaluate `preset` for a `w`×`h` box (points) with `a:avLst` overrides.
 pub(crate) fn evaluate(preset: &Preset, w: f32, h: f32, adj: &[(String, f64)]) -> Vec<EvalPath> {
+    let paths: Vec<PathView<'static>> = preset
+        .paths
+        .iter()
+        .map(|p| PathView {
+            w: p.w,
+            h: p.h,
+            fill: p.fill,
+            stroke: p.stroke,
+            cmds: p.cmds.iter().map(Cmd::view).collect(),
+        })
+        .collect();
+    evaluate_views(preset.av, preset.gd, &paths, w, h, adj)
+}
+
+/// Evaluate a document's `a:custGeom` for a `w`×`h` box (points).
+pub(crate) fn evaluate_custom(geom: &CustomGeom, w: f32, h: f32) -> Vec<EvalPath> {
+    fn pairs(v: &[(String, String)]) -> Vec<(&str, &str)> {
+        v.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect()
+    }
+    let paths: Vec<PathView<'_>> = geom
+        .paths
+        .iter()
+        .map(|p| PathView {
+            w: p.w,
+            h: p.h,
+            fill: p.fill,
+            stroke: p.stroke,
+            cmds: p.cmds.iter().map(OwnedCmd::view).collect(),
+        })
+        .collect();
+    evaluate_views(&pairs(&geom.av), &pairs(&geom.gd), &paths, w, h, &[])
+}
+
+fn evaluate_views(
+    av: &[(&str, &str)],
+    gd: &[(&str, &str)],
+    paths: &[PathView<'_>],
+    w: f32,
+    h: f32,
+    adj: &[(String, f64)],
+) -> Vec<EvalPath> {
     let (w, h) = (f64::from(w.max(0.01)), f64::from(h.max(0.01)));
-    let g = guides(preset, w, h, adj);
+    let g = guides(av, gd, w, h, adj);
     let val = |tok: &str| operand(tok, &g);
     let mut out = Vec::new();
-    for path in preset.paths {
+    for path in paths {
         let sx = if path.w > 0.0 { w / path.w } else { 1.0 };
         let sy = if path.h > 0.0 { h / path.h } else { 1.0 };
         let pt = |x: f64, y: f64| ((x * sx) as f32, (y * sy) as f32);
@@ -229,14 +348,14 @@ pub(crate) fn evaluate(preset: &Preset, w: f32, h: f32, adj: &[(String, f64)]) -
                 closed: false,
             });
         };
-        for cmd in path.cmds {
-            match cmd {
-                Cmd::M(x, y) => {
+        for cmd in &path.cmds {
+            match *cmd {
+                CmdRef::M(x, y) => {
                     cur = (val(x), val(y));
                     start = cur;
                     begin(&mut subpaths, cur);
                 }
-                Cmd::L(x, y) => {
+                CmdRef::L(x, y) => {
                     cur = (val(x), val(y));
                     if subpaths.is_empty() {
                         begin(&mut subpaths, cur);
@@ -244,7 +363,7 @@ pub(crate) fn evaluate(preset: &Preset, w: f32, h: f32, adj: &[(String, f64)]) -
                         s.pts.push(pt(cur.0, cur.1));
                     }
                 }
-                Cmd::A(wr, hr, st, sw) => {
+                CmdRef::A(wr, hr, st, sw) => {
                     let (wr, hr) = (val(wr), val(hr));
                     let (st, sw) = (ang_rad(val(st)), ang_rad(val(sw)));
                     let t0 = param_angle(st, wr, hr);
@@ -271,7 +390,7 @@ pub(crate) fn evaluate(preset: &Preset, w: f32, h: f32, adj: &[(String, f64)]) -
                         }
                     }
                 }
-                Cmd::C(p) => {
+                CmdRef::C(p) => {
                     let c1 = (val(p[0]), val(p[1]));
                     let c2 = (val(p[2]), val(p[3]));
                     let e = (val(p[4]), val(p[5]));
@@ -296,7 +415,7 @@ pub(crate) fn evaluate(preset: &Preset, w: f32, h: f32, adj: &[(String, f64)]) -
                     }
                     cur = e;
                 }
-                Cmd::Q(p) => {
+                CmdRef::Q(p) => {
                     let c = (val(p[0]), val(p[1]));
                     let e = (val(p[2]), val(p[3]));
                     let p0 = cur;
@@ -314,7 +433,7 @@ pub(crate) fn evaluate(preset: &Preset, w: f32, h: f32, adj: &[(String, f64)]) -
                     }
                     cur = e;
                 }
-                Cmd::Z => {
+                CmdRef::Z => {
                     if let Some(s) = subpaths.last_mut() {
                         s.closed = true;
                     }

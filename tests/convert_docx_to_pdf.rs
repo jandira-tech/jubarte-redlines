@@ -2970,6 +2970,87 @@ fn text_box_paragraphs_lay_out_as_paragraphs_inside_the_insets() {
 }
 
 #[test]
+fn a_custom_geometry_shape_paints_its_own_path() {
+    // fixtures_500 010300e3: the contact icons and the signature are
+    // a:custGeom paths. We painted each as a filled box (solid squares
+    // where Word draws the icon).
+    let body = "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"1270000\" cy=\"1270000\"/>\
+          <wp:wrapNone/>\
+          <wp:docPr id=\"1\" name=\"Icon\"/>\
+          <a:graphic><a:graphicData \
+            uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+            <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+              <wps:spPr><a:xfrm><a:ext cx=\"1270000\" cy=\"1270000\"/></a:xfrm>\
+                <a:custGeom><a:avLst/><a:gdLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/>\
+                  <a:pathLst><a:path w=\"100\" h=\"100\">\
+                    <a:moveTo><a:pt x=\"0\" y=\"0\"/></a:moveTo>\
+                    <a:lnTo><a:pt x=\"100\" y=\"0\"/></a:lnTo>\
+                    <a:lnTo><a:pt x=\"0\" y=\"100\"/></a:lnTo>\
+                    <a:close/></a:path></a:pathLst></a:custGeom>\
+                <a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill><a:ln><a:noFill/></a:ln></wps:spPr>\
+              <wps:bodyPr/>\
+            </wps:wsp></a:graphicData></a:graphic>\
+        </wp:anchor></w:drawing></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("custom geometry");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        !hay.contains("1.000 0.000 0.000 rg 100.00 592.00 100.00 100.00 re f"),
+        "the icon is not a filled box"
+    );
+    // Box 100..200 x, 592..692 y (PDF): the triangle's corners.
+    assert!(
+        hay.contains("1.000 0.000 0.000 rg 100.00 692.00 m 200.00 692.00 l 100.00 592.00 l h f*"),
+        "the custom path fills as drawn, even-odd like Office; tail {}",
+        &hay[hay.find("1.000 0.000 0.000 rg").unwrap_or(0)..][..120.min(hay.len())]
+    );
+}
+
+#[test]
+fn a_group_paints_each_shape_in_its_own_place() {
+    // fixtures_500 010300e3: the signature is a wpg:wgp of custom paths.
+    // We painted the group as one box with its first shape's path
+    // stretched over it (a solid blob where Word draws the strokes).
+    let tri = "<a:custGeom><a:avLst/><a:gdLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/>\
+          <a:pathLst><a:path w=\"100\" h=\"100\"><a:moveTo><a:pt x=\"0\" y=\"0\"/></a:moveTo>\
+          <a:lnTo><a:pt x=\"100\" y=\"0\"/></a:lnTo><a:lnTo><a:pt x=\"0\" y=\"100\"/></a:lnTo>\
+          <a:close/></a:path></a:pathLst></a:custGeom>";
+    let body = format!(
+        "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"2540000\" cy=\"1270000\"/><wp:wrapNone/><wp:docPr id=\"1\" name=\"Group\"/>\
+          <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">\
+            <wpg:wgp xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\" \
+              xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+              <wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"2540000\" cy=\"1270000\"/>\
+                <a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"200\" cy=\"100\"/></a:xfrm></wpg:grpSpPr>\
+              <wps:wsp><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"100\" cy=\"100\"/></a:xfrm>{tri}\
+                <a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill><a:ln><a:noFill/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp>\
+              <wps:wsp><wps:spPr><a:xfrm><a:off x=\"100\" y=\"0\"/><a:ext cx=\"100\" cy=\"100\"/></a:xfrm>\
+                <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>\
+                <a:solidFill><a:srgbClr val=\"0000FF\"/></a:solidFill><a:ln><a:noFill/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp>\
+            </wpg:wgp></a:graphicData></a:graphic>\
+        </wp:anchor></w:drawing></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("group");
+    let hay = String::from_utf8_lossy(&pdf);
+    // Group box: x 100..300, y 592..692 (PDF). Left half: the triangle.
+    assert!(
+        hay.contains("1.000 0.000 0.000 rg 100.00 692.00 m 200.00 692.00 l 100.00 592.00 l h f*"),
+        "the triangle fills the group's left half"
+    );
+    assert!(
+        hay.contains("0.000 0.000 1.000 rg 200.00 592.00 100.00 100.00 re f"),
+        "the rectangle fills the right half"
+    );
+}
+
+#[test]
 fn shape_ln_w_stays_six_after_mini_511() {
     // Strict01 live a:ln w=6350 (0.50pt). Honoring XML width (mini 511)
     // was Word-shaped but ITT-neg: NR 59.4725→59.4716, 8 Strict01-family

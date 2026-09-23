@@ -67,6 +67,9 @@ pub(crate) enum Op {
     FillPath {
         contours: Vec<Vec<(f32, f32)>>,
         color: [f32; 3],
+        /// Even-odd (`f*`): Office fills `a:custGeom` paths alternately, so
+        /// a traced signature's crossing strokes stay thin outlines.
+        even_odd: bool,
     },
     /// Stroked subpaths; `true` closes one (`h`). Open ones keep the
     /// preset's open outline (brackets, braces) without a closing chord.
@@ -561,7 +564,11 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         stream.push_str(" h f\n");
                     }
                 }
-                Op::FillPath { contours, color } => {
+                Op::FillPath {
+                    contours,
+                    color,
+                    even_odd,
+                } => {
                     let mut body = String::new();
                     for c in contours.iter().filter(|c| c.len() >= 2) {
                         for (i, (x, y)) in c.iter().enumerate() {
@@ -574,10 +581,11 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     }
                     if !body.is_empty() {
                         stream.push_str(&format!(
-                            "{r:.3} {g:.3} {b:.3} rg{body} f\n",
+                            "{r:.3} {g:.3} {b:.3} rg{body} {op}\n",
                             r = color[0],
                             g = color[1],
                             b = color[2],
+                            op = if *even_odd { "f*" } else { "f" },
                         ));
                     }
                 }
