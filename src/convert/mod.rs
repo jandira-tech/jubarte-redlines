@@ -278,13 +278,21 @@ fn family_is_aptos(family: &str) -> bool {
 }
 
 impl RunStyle {
-    fn paint_size(&self) -> f32 {
-        let raw = match self.vert {
+    /// The size Word lays glyphs out at: the authored size (scaled for
+    /// super/subscript). Advances and line widths use it; only the glyph
+    /// outlines are drawn at `paint_size` (fixtures_500 0036eb25: 10pt
+    /// runs span Word's 10pt advances while painting at 42 ppem).
+    fn layout_size(&self) -> f32 {
+        match self.vert {
             VertAlign::Super | VertAlign::Sub | VertAlign::StackNum | VertAlign::StackDen => {
                 self.size * 0.65
             }
             VertAlign::Baseline => self.size,
-        };
+        }
+    }
+
+    fn paint_size(&self) -> f32 {
+        let raw = self.layout_size();
         // potpourri / file_170 Subtitle is Aptos 14. Word Quartz 13.92
         // (58 ppem). Calibri 14 (mini 522) and Arial 14 (heading_3)
         // stay unsnapped.
@@ -12444,7 +12452,7 @@ impl<'a> Layout<'a> {
             run.style.italic,
         );
         let face = self.fonts.get(fid);
-        let size = run.style.paint_size();
+        let size = run.style.layout_size();
         let kern = run.style.kerns_at(size);
         let shaped = face.shape_kern(text, size, kern);
         let advs = self.spaced_glyph_advances(text, &shaped, size);
@@ -12476,7 +12484,7 @@ impl<'a> Layout<'a> {
     fn paint_tab_leader(&mut self, x0: f32, x1: f32, y: f32, style: &RunStyle, mark: &str) {
         let fid = self.fonts.resolve(&style.family, style.bold, style.italic);
         let face = self.fonts.get(fid);
-        let size = style.paint_size();
+        let size = style.layout_size();
         let dw = face.width_pt(mark, size);
         if dw < 0.4 {
             return;
@@ -12655,10 +12663,12 @@ impl<'a> Layout<'a> {
             }
             return xcur;
         }
+        // Outlines at the device size, advances at the layout size.
         let size = run.style.paint_size();
+        let lsize = run.style.layout_size();
         let y = run.style.paint_y(y);
-        let kern = run.style.kerns_at(size);
-        let mut shaped = face.shape_kern(&run.text, size, kern);
+        let kern = run.style.kerns_at(lsize);
+        let mut shaped = face.shape_kern(&run.text, lsize, kern);
         let chars: Vec<char> = run.text.chars().collect();
         let ink_missing = if chars.len() == shaped.len() {
             chars
@@ -12676,14 +12686,14 @@ impl<'a> Layout<'a> {
                 FaceId::SansRegular.into()
             };
             face = self.fonts.get(fid);
-            shaped = face.shape_kern(&run.text, size, kern);
+            shaped = face.shape_kern(&run.text, lsize, kern);
         }
         let scale = if run.style.scale > 0.0 {
             run.style.scale
         } else {
             1.0
         };
-        let advs = self.spaced_glyph_advances(&run.text, &shaped, size);
+        let advs = self.spaced_glyph_advances(&run.text, &shaped, lsize);
         let w: f32 = advs.iter().map(|a| *a * scale).sum::<f32>()
             + run.style.track * shaped.len().saturating_sub(1) as f32;
         let w = self.clip_width(x, w);
@@ -14074,7 +14084,7 @@ impl<'a> Layout<'a> {
                     .resolve(&run.style.family, run.style.bold, run.style.italic);
                 let face = self.fonts.get(rid);
                 let size = run.style.paint_size();
-                let w = face.width_pt(&run.text, size);
+                let w = face.width_pt(&run.text, run.style.layout_size());
                 self.current().ops.push(Op::text(
                     rid,
                     size,
@@ -14965,7 +14975,7 @@ impl<'a> Layout<'a> {
                                         run.style.bold,
                                         run.style.italic,
                                     );
-                                    self.fonts.get(fid).width_pt(text, run.style.paint_size())
+                                    self.fonts.get(fid).width_pt(text, run.style.layout_size())
                                 })
                                 .sum();
                             let inner =
@@ -15206,7 +15216,7 @@ impl<'a> Layout<'a> {
                 // count. Measuring the mark (~45pt) shoved I_am_sharing
                 // "Page 1 of 9" to x=470 vs Word 509.
                 let measure = chrome_measure_text(&r.text);
-                self.fonts.get(f).width_pt(measure, r.style.paint_size())
+                self.fonts.get(f).width_pt(measure, r.style.layout_size())
             })
             .sum();
         let extra = match align {
@@ -15226,7 +15236,7 @@ impl<'a> Layout<'a> {
             let size = run.style.paint_size();
             // Same measure as line_w: @@N@@/@@P@@ are patched after paint,
             // so advancing by the mark shoved file_146 "7·" 42pt apart.
-            let w = face.width_pt(chrome_measure_text(&run.text), size);
+            let w = face.width_pt(chrome_measure_text(&run.text), run.style.layout_size());
             self.current().ops.push(Op::text(
                 fid,
                 size,
@@ -15950,7 +15960,7 @@ fn trailing_ws_pt(fonts: &Fonts, line: &[TextRun]) -> f32 {
     for run in line.iter().rev() {
         let fid = fonts.resolve(&run.style.family, run.style.bold, run.style.italic);
         let face = fonts.get(fid);
-        let paint = run.style.paint_size();
+        let paint = run.style.layout_size();
         let trimmed = run.text.trim_end_matches(char::is_whitespace);
         if trimmed.len() < run.text.len() {
             extra += face.width_pt(&run.text[trimmed.len()..], paint);
@@ -16117,7 +16127,7 @@ fn wrap_runs_segment(
                         run.style.italic,
                     );
                     let face = fonts.get(fid);
-                    let size = run.style.paint_size();
+                    let size = run.style.layout_size();
                     face.width_pt_kern(tok, size, run.style.kerns_at(size))
                 };
                 let is_space = tok.chars().all(char::is_whitespace);
@@ -18849,7 +18859,7 @@ mod theme_slot_tests {
     fn body_width(text: &str) -> f32 {
         let style = Defaults::word().run;
         let fid = fonts().resolve(&style.family, false, false);
-        fonts().get(fid).width_pt(text, style.paint_size())
+        fonts().get(fid).width_pt(text, style.layout_size())
     }
 
     #[test]

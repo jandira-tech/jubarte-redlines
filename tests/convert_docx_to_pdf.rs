@@ -7497,6 +7497,28 @@ fn cell_negative_right_indent_widens_the_measure() {
 }
 
 #[test]
+fn ten_point_glyphs_advance_at_ten_not_the_device_size() {
+    // Word paints 10pt at 42 ppem (10.08) but lays glyphs out at 10pt:
+    // fixtures_500 0036eb25 "vennootschap" spans 67.9 in Word, 68.3 at
+    // 10.08 advances, which wrapped "(plaats)" off a full line.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"20\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:r><w:t>nnnnnnnnnn</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("ten point run");
+    let mut xs = pdf_tf_xs(&pdf, "10.08 Tf");
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // Arial 'n' advances 1139/2048 em: 5.5615pt at 10pt, 5.606 at 10.08.
+    let step = (xs[xs.len() - 1] - xs[0]) / (xs.len() - 1) as f32;
+    assert!(
+        (step - 5.5615).abs() < 0.005,
+        "glyphs step at the 10pt advance; step={step} xs={xs:?}"
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables
