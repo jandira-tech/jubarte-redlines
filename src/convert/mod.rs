@@ -11815,6 +11815,16 @@ struct SideFloat {
 }
 
 /// The next paragraph's first line as `emit_runs` will place it:
+/// How wrapSquare floats narrow a paragraph: `left`/`right` insets, the
+/// band's bottom `until` and its top `from`, both below the first line's top.
+#[derive(Clone, Copy, Default)]
+struct FloatWrap {
+    left: f32,
+    right: f32,
+    until: f32,
+    from: f32,
+}
+
 /// `top` after its effective space-before, `h` its real line box, and the
 /// full `before` a jump below a float would otherwise apply twice.
 #[derive(Clone, Copy, Default)]
@@ -12963,18 +12973,23 @@ impl<'a> Layout<'a> {
     }
 
     fn wrap_band_hits_line(&self, slot: ImageSlot, w: f32, h: f32) -> bool {
+        // The real first line (face metrics, after space-before), not a
+        // fixed 20pt box from the pre-spacing cursor.
+        self.wrap_band(slot, w, h)
+            .is_some_and(|(from, _)| from < self.line_probe.h)
+    }
+
+    /// The float's wrap band as offsets below the probed first line's
+    /// top, when any of it lies at or below that line.
+    fn wrap_band(&self, slot: ImageSlot, w: f32, h: f32) -> Option<(f32, f32)> {
         let ImageSlot::Float { dist_t, dist_b, .. } = slot else {
-            return false;
+            return None;
         };
         let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
         let (_, fy) = self.float_xy(dw, dh.max(1.0), slot);
-        let top = fy + dh + dist_t;
-        let bot = fy - dist_b;
-        // The real first line (face metrics, after space-before), not a
-        // fixed 20pt box from the pre-spacing cursor.
-        let line_top = self.line_probe.top;
-        let line_bot = line_top - self.line_probe.h;
-        line_bot < top && line_top > bot
+        let from = self.line_probe.top - (fy + dh + dist_t);
+        let to = self.line_probe.top - (fy - dist_b);
+        (to > 0.0).then_some((from, to))
     }
 
     fn set_line_probe(&mut self, runs: &[TextRun], style: &ParaStyle) {
@@ -13001,9 +13016,13 @@ impl<'a> Layout<'a> {
     /// wrapSquare bothSides: body measure shrinks by the float + distL/distR
     /// on lines whose vertical band intersects the float (xml 3.4 ckpt 4).
     /// Full-width page banners (image_out 841pt) have no side room — skip.
-    fn wrap_square_inset(&self, images: &[LaidImage], boxes: &[LaidTextBox]) -> (f32, f32) {
+    fn wrap_square_inset(&self, images: &[LaidImage], boxes: &[LaidTextBox]) -> (f32, f32, f32) {
         let mut left = 0.0_f32;
         let mut right = 0.0_f32;
+        // How far below the first line's top the narrowing starts: 0 when
+        // a float holds that line, else the nearest lower band beside it.
+        let mut first_hit = false;
+        let mut from_min = f32::MAX;
         let max_side = self.content_width() * 0.7;
         let mut consider = |slot: ImageSlot, w: f32, h: f32| {
             let ImageSlot::Float {
@@ -13011,6 +13030,9 @@ impl<'a> Layout<'a> {
                 wrap_square,
                 dist_l,
                 dist_r,
+                page_x,
+                col_x,
+                pct_x,
                 ..
             } = slot
             else {
@@ -13019,21 +13041,40 @@ impl<'a> Layout<'a> {
             if !wrap_square {
                 return;
             }
-            if !self.wrap_band_hits_line(slot, w, h) {
+            let Some((from, _)) = self.wrap_band(slot, w, h) else {
                 return;
-            }
+            };
+            let hits = from < self.line_probe.h;
             let (dw, _) = self.sized_wh(slot, w, h, 1.0, 1.0);
             if dw >= max_side {
                 return;
             }
-            match align {
-                Align::Right => right = right.max(dw + dist_l),
-                Align::Left => left = left.max(dw + dist_r),
-                Align::Center | Align::Justify => {
-                    let (fx, _) = self.float_xy(dw, h.max(1.0), slot);
-                    let avail = (fx - dist_l - self.page.margin_l).max(0.0);
-                    right = right.max((self.content_width() - avail).max(0.0));
+            let (fx, _) = self.float_xy(dw, h.max(1.0), slot);
+            let text_room = (fx - dist_l - self.page.margin_l).max(0.0);
+            // A float placed by offset keeps text on its roomier side
+            // (001c1554's picture 490pt into the column wraps text left).
+            let placed = page_x.is_some() || col_x.is_some() || pct_x.is_some();
+            let right_room = self.page.margin_l + self.content_width() - (fx + dw + dist_r);
+            let text_left = match align {
+                Align::Right => Some(dw + dist_l),
+                Align::Left if placed && text_room > right_room => {
+                    Some((self.content_width() - text_room).max(0.0))
                 }
+                Align::Left => None,
+                Align::Center | Align::Justify => Some((self.content_width() - text_room).max(0.0)),
+            };
+            // A lower band narrows only lines on the right-hand wrap.
+            if !hits && text_left.is_none() {
+                return;
+            }
+            match text_left {
+                Some(inset) => right = right.max(inset),
+                None => left = left.max(dw + dist_r),
+            }
+            if hits {
+                first_hit = true;
+            } else {
+                from_min = from_min.min(from);
             }
         };
         for img in images {
@@ -13043,13 +13084,19 @@ impl<'a> Layout<'a> {
             consider(box_.slot, box_.w, box_.h);
         }
         if let Some(sf) = self.side_float_holds_line() {
+            first_hit = true;
             match sf.align {
                 Align::Right => right = right.max(sf.inset),
                 Align::Left => left = left.max(sf.inset),
                 Align::Center | Align::Justify => {}
             }
         }
-        (left, right)
+        let from = if first_hit || from_min == f32::MAX {
+            0.0
+        } else {
+            from_min
+        };
+        (left, right, from)
     }
 
     /// A floating table that leaves no room beside it (00319da4's
@@ -13112,20 +13159,16 @@ impl<'a> Layout<'a> {
     fn wrap_band_remaining(&self, images: &[LaidImage], boxes: &[LaidTextBox]) -> f32 {
         let mut rem = 0.0_f32;
         let mut consider = |slot: ImageSlot, w: f32, h: f32| {
-            let ImageSlot::Float {
-                wrap_square,
-                dist_b,
-                ..
-            } = slot
-            else {
+            let ImageSlot::Float { wrap_square, .. } = slot else {
                 return;
             };
-            if !wrap_square || !self.wrap_band_hits_line(slot, w, h) {
+            if !wrap_square {
                 return;
             }
-            let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
-            let (_, fy) = self.float_xy(dw, dh.max(1.0), slot);
-            rem = rem.max((self.line_probe.top - (fy - dist_b)).max(0.0));
+            let Some((_, to)) = self.wrap_band(slot, w, h) else {
+                return;
+            };
+            rem = rem.max(to);
         };
         for img in images {
             consider(img.slot, img.w, img.h);
@@ -13141,25 +13184,33 @@ impl<'a> Layout<'a> {
         rem
     }
 
+    /// The box a wrapped line takes, for sizing it against a float band.
+    fn band_line_h(&self, line: &[TextRun], style: &ParaStyle) -> f32 {
+        let size = runs_size(line);
+        let face = line.first().map_or(FaceId::CarlitoRegular.into(), |r| {
+            self.fonts
+                .resolve(&r.style.family, r.style.bold, r.style.italic)
+        });
+        para_line_box(self.fonts.get(face), size, style)
+    }
+
+    /// Lines past the float band rewrap at the full measure; also returns
+    /// how many leading lines stay narrowed beside it.
     fn reflow_past_float(
         &self,
         lines: Vec<Vec<TextRun>>,
         style: &ParaStyle,
         full_width: f32,
         inset_h: f32,
-    ) -> Vec<Vec<TextRun>> {
+    ) -> (Vec<Vec<TextRun>>, usize) {
         if lines.len() <= 1 || inset_h <= 0.5 {
-            return lines;
+            let n = lines.len();
+            return (lines, n);
         }
         let mut used = 0.0;
         let mut n = 0usize;
         for line in &lines {
-            let size = runs_size(line);
-            let face = line.first().map_or(FaceId::CarlitoRegular.into(), |r| {
-                self.fonts
-                    .resolve(&r.style.family, r.style.bold, r.style.italic)
-            });
-            let lh = para_line_box(self.fonts.get(face), size, style);
+            let lh = self.band_line_h(line, style);
             if n > 0 && used + lh > inset_h {
                 break;
             }
@@ -13167,25 +13218,23 @@ impl<'a> Layout<'a> {
             n += 1;
         }
         if n >= lines.len() {
-            return lines;
+            return (lines, n);
         }
         let mut out = lines[..n].to_vec();
         let rest: Vec<TextRun> = lines[n..].iter().flatten().cloned().collect();
         if rest.iter().any(|r| !r.text.trim().is_empty()) {
             out.extend(wrap_runs(self.fonts, &rest, full_width, full_width, false));
         }
-        out
+        (out, n)
     }
 
-    fn emit_runs(
-        &mut self,
-        runs: &[TextRun],
-        style: &ParaStyle,
-        list: bool,
-        wrap_left: f32,
-        wrap_right: f32,
-        inset_h: f32,
-    ) {
+    fn emit_runs(&mut self, runs: &[TextRun], style: &ParaStyle, list: bool, wrap: FloatWrap) {
+        let FloatWrap {
+            left: wrap_left,
+            right: wrap_right,
+            until: inset_h,
+            from: inset_from,
+        } = wrap;
         let rewritten = apply_field_results(
             runs,
             &self.known_bookmarks,
@@ -13254,16 +13303,52 @@ impl<'a> Layout<'a> {
         // left, matching Word/soffice `w:ind w:left w:hanging` + num tab.
         // wrapSquare distL/distR shrink the remaining measure so text does
         // not run under the float (Strict01 / ole / image_out).
-        let width = (self.content_width() - indent - style.indent_right - wrap_right).max(40.0);
+        // The float's edge and the right indent both bound the line: the
+        // nearer one wins (001c1554's 28pt indent sits inside the float's;
+        // 00dd70e6's negative indent with no float keeps its overhang).
+        let right_bound = if wrap_right > 0.0 {
+            style.indent_right.max(wrap_right)
+        } else {
+            style.indent_right
+        };
+        let width = (self.content_width() - indent - right_bound).max(40.0);
         let full_width = (self.content_width() - indent - style.indent_right).max(40.0);
-        let (mut lines, mut ends_br) =
-            self.wrap_para_runs(body, style, indent, marker.is_some(), width, list);
-        if inset_h > 0.5
+        let reflow = inset_h > 0.5
             && wrap_right > 0.5
-            && self.tab_stops.iter().all(|t| t.align != TabAlign::Right)
-        {
-            lines = self.reflow_past_float(lines, style, full_width, inset_h);
+            && self.tab_stops.iter().all(|t| t.align != TabAlign::Right);
+        // Lines at these indices measure `width`; the rest the full measure.
+        let mut narrow = 0..usize::MAX;
+        let (mut lines, mut ends_br) = if reflow && inset_from > 0.5 {
+            self.wrap_para_runs(body, style, indent, marker.is_some(), full_width, list)
+        } else {
+            self.wrap_para_runs(body, style, indent, marker.is_some(), width, list)
+        };
+        if reflow && inset_from > 0.5 {
+            // A band lower in the paragraph (001c1554) leaves the lines
+            // above it at the full measure.
+            let mut used = 0.0;
+            let mut k = 0usize;
+            while k < lines.len() && used + self.band_line_h(&lines[k], style) <= inset_from {
+                used += self.band_line_h(&lines[k], style);
+                k += 1;
+            }
+            if k < lines.len() {
+                let rest: Vec<TextRun> = lines[k..].iter().flatten().cloned().collect();
+                let beside = wrap_runs(self.fonts, &rest, width, width, false);
+                let (beside, n) = self.reflow_past_float(beside, style, full_width, inset_h - used);
+                lines.truncate(k);
+                lines.extend(beside);
+                ends_br.truncate(k);
+                ends_br.resize(lines.len(), false);
+                narrow = k..k + n;
+            } else {
+                narrow = 0..0;
+            }
+        } else if reflow {
+            let (reflowed, n) = self.reflow_past_float(lines, style, full_width, inset_h);
+            lines = reflowed;
             ends_br = vec![false; lines.len()];
+            narrow = 0..n;
         }
         let widow_break = self.widow_break(&lines, marker, style);
         for (line_i, line) in lines.iter().enumerate() {
@@ -13341,7 +13426,12 @@ impl<'a> Layout<'a> {
             };
             // The first line's measure starts at its own indent (00189e50's
             // justified firstLine=720 line ran 36pt past the margin).
-            let measure = width - first_extra;
+            let line_measure = if narrow.contains(&line_i) {
+                width
+            } else {
+                full_width
+            };
+            let measure = line_measure - first_extra;
             // Word leftover / inter-word gaps (TJ ≈ -55 at 11.04). Trailing
             // wrap space is not a gap and is not in the measured line: it
             // hangs past a centred or right line too (010300e3's 90pt
@@ -15662,7 +15752,7 @@ impl<'a> Layout<'a> {
         self.y = top;
         let start = self.current().ops.len();
         for (runs, style) in &box_.paras {
-            self.emit_runs(runs, style, false, 0.0, 0.0, 0.0);
+            self.emit_runs(runs, style, false, FloatWrap::default());
         }
         let used = top - self.y;
         let room = dh - ti - bi;
@@ -18169,11 +18259,17 @@ fn layout(
                     lay.set_line_probe(runs, &style);
                     lay.clear_full_width_side_float(runs, &style);
                     lay.apply_top_bottom_wrap(images, boxes);
-                    let (wrap_left, wrap_right) = lay.wrap_square_inset(images, boxes);
-                    let inset_h = lay.wrap_band_remaining(images, boxes);
+                    let (left, right, from) = lay.wrap_square_inset(images, boxes);
+                    let until = lay.wrap_band_remaining(images, boxes);
                     let joins = |other: Option<&Block>| matches!(other, Some(Block::Paragraph { style: o, .. }) if same_pbdr(o, &style));
                     lay.pbdr_joins = (i > 0 && joins(blocks.get(i - 1)), joins(blocks.get(i + 1)));
-                    lay.emit_runs(runs, &style, *list, wrap_left, wrap_right, inset_h);
+                    let wrap = FloatWrap {
+                        left,
+                        right,
+                        until,
+                        from,
+                    };
+                    lay.emit_runs(runs, &style, *list, wrap);
                     lay.pbdr_joins = (false, false);
                 } else if !lay.at_page_top || !lay.suppress_space_before {
                     lay.y -= style.before;

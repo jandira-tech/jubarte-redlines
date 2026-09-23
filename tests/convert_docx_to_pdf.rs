@@ -2726,6 +2726,63 @@ fn wrap_square_dist_l_keeps_text_left_of_a_right_float() {
 }
 
 #[test]
+fn a_float_lower_in_the_paragraph_narrows_only_the_lines_beside_it() {
+    // fixtures_500 001c1554: a column-offset picture 59pt below its
+    // paragraph's top (wrapThrough, distL 9pt). Word runs the first lines
+    // full width, stops the lines beside it left of the picture, then
+    // returns to the full measure. We ran every line under the picture.
+    let img = blip(
+        "1270000",
+        "1270000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>4318000</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>762000</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let words: Vec<String> = (0..400).map(|i| format!("x{i:03}")).collect();
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r>{img}</w:r><w:r><w:t>{}</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        words.join(" ")
+    ));
+    let pdf = docx_to_pdf(&docx).expect("convert lower float");
+    // The furthest word start on each baseline.
+    let mut rows: Vec<(f32, f32)> = Vec::new();
+    for w in &words {
+        let Some((x, y)) = pdf_glyph_text_xy(&pdf, w) else {
+            continue;
+        };
+        match rows.iter_mut().find(|(ry, _)| (ry - y).abs() < 1.0) {
+            Some(row) => row.1 = row.1.max(x),
+            None => rows.push((y, x)),
+        }
+    }
+    let top = rows.iter().map(|r| r.0).fold(f32::MIN, f32::max);
+    let reach = |lo: f32, hi: f32| {
+        rows.iter()
+            .filter(|(y, _)| (lo..hi).contains(&(top - y)))
+            .map(|r| r.1)
+            .fold(0.0_f32, f32::max)
+    };
+    // The picture spans 60..160pt below the paragraph top, from x=412.
+    assert!(
+        reach(0.0, 30.0) > 440.0,
+        "first lines run full width; rows={rows:?}"
+    );
+    assert!(
+        reach(70.0, 140.0) < 385.0,
+        "lines beside the picture stop before 412-9; rows={rows:?}"
+    );
+    assert!(
+        reach(180.0, 240.0) > 440.0,
+        "lines past it run full width; rows={rows:?}"
+    );
+}
+
+#[test]
 fn wrap_square_effect_extent_l_adds_to_dist_l() {
     // Strict01 Text Box 2 wrapSquare: effectExtent r="22860" / b="11430"
     // on top of distL/R=114300. Convert only read distL/R. effectExtent l
