@@ -2726,6 +2726,34 @@ fn wrap_square_dist_l_keeps_text_left_of_a_right_float() {
 }
 
 #[test]
+fn no_footer_leaves_the_footer_distance_to_the_body() {
+    // fixtures_500 001c1554: pgMar bottom=426 footer=708 and no footer
+    // part. Word fills down to the 21.3pt bottom margin (its last empty
+    // line sits at 804pt of 842); a 35.4pt footer floor pushed it over.
+    let pages = |n: usize, footer: u32| {
+        let lines: String = (0..n)
+            .map(|i| format!("<w:p><w:r><w:t>Line {i}</w:t></w:r></w:p>"))
+            .collect();
+        let docx = minimal_docx_body(&format!(
+            "{lines}<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+               <w:pgMar w:top=\"709\" w:right=\"1440\" w:bottom=\"426\" w:left=\"1440\" \
+                 w:header=\"708\" w:footer=\"{footer}\" w:gutter=\"0\"/></w:sectPr>"
+        ));
+        pdf_page_count(&docx_to_pdf(&docx).expect("convert footer distance"))
+    };
+    // The most lines one page holds above the bare 21.3pt margin.
+    let fit = (10..120)
+        .take_while(|n| pages(*n, 0) == 1)
+        .last()
+        .expect("some lines fit");
+    assert_eq!(
+        pages(fit, 708),
+        1,
+        "no footer part: the footer distance reserves nothing ({fit} lines)"
+    );
+}
+
+#[test]
 fn a_float_lower_in_the_paragraph_narrows_only_the_lines_beside_it() {
     // fixtures_500 001c1554: a column-offset picture 59pt below its
     // paragraph's top (wrapThrough, distL 9pt). Word runs the first lines
@@ -2775,6 +2803,11 @@ fn a_float_lower_in_the_paragraph_narrows_only_the_lines_beside_it() {
     assert!(
         reach(70.0, 140.0) < 385.0,
         "lines beside the picture stop before 412-9; rows={rows:?}"
+    );
+    // A line starting above the band's foot still meets the picture.
+    assert!(
+        reach(150.0, 158.0) < 385.0,
+        "the line overlapping the band's foot stays narrow; rows={rows:?}"
     );
     assert!(
         reach(180.0, 240.0) > 440.0,

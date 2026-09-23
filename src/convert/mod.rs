@@ -12176,7 +12176,7 @@ impl<'a> Layout<'a> {
         } else {
             page.margin_t.max(page.header + header_band)
         };
-        let body_floor = if page.bottom_exact {
+        let body_floor = if page.bottom_exact || footer_band <= 0.0 {
             page.margin_b
         } else {
             page.margin_b.max(page.footer + footer_band)
@@ -12808,7 +12808,9 @@ impl<'a> Layout<'a> {
             self.page.width - self.page.margin_l - self.page.margin_r,
             self.space_for_ul,
         ) + chrome_images_h(self.fonts, &self.footer_images);
-        if self.page.bottom_exact {
+        // An empty footer reserves nothing: 001c1554 (footer 708, bottom
+        // 426, no footer part) fills to the 21.3pt margin.
+        if self.page.bottom_exact || footer_band <= 0.0 {
             return self.page.margin_b;
         }
         self.page.margin_b.max(self.page.footer + footer_band)
@@ -13209,12 +13211,13 @@ impl<'a> Layout<'a> {
         }
         let mut used = 0.0;
         let mut n = 0usize;
+        // A line that starts above the band's foot meets the float
+        // (001c1554's "concepción" line overlaps the picture's last 18pt).
         for line in &lines {
-            let lh = self.band_line_h(line, style);
-            if n > 0 && used + lh > inset_h {
+            if n > 0 && used >= inset_h - 0.01 {
                 break;
             }
-            used += lh;
+            used += self.band_line_h(line, style);
             n += 1;
         }
         if n >= lines.len() {
@@ -17644,8 +17647,9 @@ fn style_eq(a: &RunStyle, b: &RunStyle) -> bool {
         && a.vert == b.vert
 }
 
-/// Word wraps `https://…/en-us/…` at `/` and `-` (comments-lots appendix).
-/// Keep `://` intact. Not generic character-break (Test 7 / mini 57).
+/// Word wraps `https://…/en-us/…` after `-` (comments-lots appendix), never
+/// after `/`: 0 of fixtures_500's 34 mid-URL breaks (001c1554 moves the
+/// whole URL down). Not generic character-break (Test 7 / mini 57).
 fn url_wrap_pieces(tok: &str) -> Vec<&str> {
     if !tok.contains("://") {
         return vec![tok];
@@ -17656,7 +17660,7 @@ fn url_wrap_pieces(tok: &str) -> Vec<&str> {
     let mut i = scheme_end;
     while let Some(ch) = tok[i..].chars().next() {
         let n = ch.len_utf8();
-        if ch == '/' || ch == '-' {
+        if ch == '-' {
             out.push(&tok[start..i + n]);
             start = i + n;
         }
@@ -27381,7 +27385,27 @@ mod drawing_tests {
     }
 
     #[test]
-    fn wrap_runs_breaks_https_url_at_slash_or_hyphen() {
+    fn wrap_runs_keeps_a_url_whole_across_its_slashes() {
+        // fixtures_500 001c1554: Word never breaks a URL after `/` (0 of
+        // 34 mid-URL breaks in fixtures_500; 24 after `-`, 10 at the
+        // edge). "…2024:  https://drive.google.com/" | "drive/…" was ours;
+        // Word moves the whole URL down.
+        let fonts = Fonts::new();
+        let text = "Adviento 2024: https://drive.google.com/drive/folders/1_jNG4oVykh98IEmHS";
+        let run = TextRun::new(text.to_string(), default_run_style());
+        let lines = wrap_runs(&fonts, std::slice::from_ref(&run), 300.0, 300.0, false);
+        let joined: Vec<String> = lines
+            .iter()
+            .map(|l| l.iter().map(|r| r.text.as_str()).collect())
+            .collect();
+        assert!(
+            !joined[0].contains("https"),
+            "the URL moves down whole; {joined:?}"
+        );
+    }
+
+    #[test]
+    fn wrap_runs_breaks_https_url_at_hyphen() {
         // comments-lots appendix: Word wraps
         // `https://learn.microsoft.com/en-` then `us/purview/…`.
         // Whole-token overflow (Test 7 lock) parks the Copilot URL as
