@@ -988,6 +988,8 @@ struct Watermark {
 #[derive(Clone)]
 struct CellPara {
     runs: Vec<TextRun>,
+    /// Inline pictures (fixtures_500 000ae863 map photos in cells).
+    images: Vec<LaidImage>,
     style: ParaStyle,
     /// `w:bookmarkStart` names inside this paragraph (REF text source).
     bookmarks: Vec<String>,
@@ -4719,6 +4721,7 @@ fn push_endnote_blocks(
                 numbering,
                 &mut ctx.authors.borrow_mut(),
                 &ctx.comments,
+                None,
             );
             if !block_is_blank(&block) {
                 blocks.push(block);
@@ -4968,6 +4971,7 @@ fn walk_container(
                 numbering,
                 &mut ctx.authors.borrow_mut(),
                 &ctx.comments,
+                Some((ctx.pkg, ctx.main)),
             );
             if !block_is_blank(&block) {
                 blocks.push(block);
@@ -5154,7 +5158,33 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
         .iter()
         .map(|line| line_box + ul_line_extra(line, size, space_for_ul))
         .sum();
-    para.style.before + lines_h.max(line_box) + para.style.after
+    let images_h: f32 = para
+        .images
+        .iter()
+        .map(|img| cell_image_wh(img, wrap_w).1)
+        .sum();
+    let text_h = if cell_para_is_image_only(para) {
+        0.0
+    } else {
+        lines_h.max(line_box)
+    };
+    para.style.before + images_h + text_h + para.style.after
+}
+
+/// A cell paragraph whose only content is inline pictures: its line is
+/// the pictures' height, not a text line plus the pictures.
+fn cell_para_is_image_only(para: &CellPara) -> bool {
+    !para.images.is_empty() && para.runs.iter().all(|r| r.text.trim().is_empty())
+}
+
+/// An inline cell picture shrunk to the cell's text width.
+fn cell_image_wh(img: &LaidImage, wrap_w: f32) -> (f32, f32) {
+    let (w, h) = (img.w.max(1.0), img.h.max(1.0));
+    if w > wrap_w && wrap_w > 1.0 {
+        (wrap_w, h * wrap_w / w)
+    } else {
+        (w, h)
+    }
 }
 
 /// `w:spaceForUL` descent under an underlined East Asian line (cells and
@@ -5180,6 +5210,7 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
             fonts,
             &CellPara {
                 runs: Vec::new(),
+                images: Vec::new(),
                 style,
                 bookmarks: Vec::new(),
                 blank_bookmarks: Vec::new(),
@@ -6423,6 +6454,8 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
     }
 }
 
+/// `media` is the package and part whose rels resolve inline cell
+/// pictures (`None` where they cannot: endnotes, unit tests).
 fn table_block(
     dom: &Dom,
     table: NodeId,
@@ -6430,6 +6463,7 @@ fn table_block(
     numbering: &mut Numbering,
     authors: &mut AuthorColors,
     comments: &HashMap<String, CommentRec>,
+    media: Option<(&PartFs, &str)>,
 ) -> Block {
     let look = table_look(dom, table);
     let tdef = table_style_id(dom, table).and_then(|id| sheet.tables.get(id).cloned());
@@ -6477,7 +6511,7 @@ fn table_block(
             cell_children_in_order(dom, cell, &mut ordered);
             for child in ordered {
                 if dom.name_is(child, &W::tbl()) {
-                    let block = table_block(dom, child, sheet, numbering, authors, comments);
+                    let block = table_block(dom, child, sheet, numbering, authors, comments, media);
                     if !block_is_blank(&block) {
                         nested.push(block);
                         nested_at.push(cell_paras.len());
@@ -6506,10 +6540,16 @@ fn table_block(
                 // An empty cell paragraph is a Word line like any other
                 // (fixtures_500 0126ebd8 menu rows are 27.6pt apart, not
                 // 13.8), sized from its mark's pPr/rPr.
+                let images: Vec<LaidImage> = media
+                    .map(|(pkg, part)| collect_images(pkg, part, dom, child))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|img| matches!(img.slot, ImageSlot::Flow))
+                    .collect();
                 let empty_ink =
                     mark.is_empty() && runs.iter().all(|run| run.text.trim().is_empty());
                 let cell_rule = pstyle.border_bottom.map(|(c, w, _)| (c, w));
-                if empty_ink && cell_rule.is_none() {
+                if empty_ink && cell_rule.is_none() && images.is_empty() {
                     let mut mark_style = r.clone();
                     if let Some(rpr) = dom
                         .element(child, &W::p_pr())
@@ -6532,6 +6572,7 @@ fn table_block(
                 }
                 cell_paras.push(CellPara {
                     runs,
+                    images,
                     style: pstyle,
                     bookmarks,
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
@@ -6553,6 +6594,7 @@ fn table_block(
                 );
                 cell_paras.push(CellPara {
                     runs,
+                    images: Vec::new(),
                     style: table_para.clone(),
                     bookmarks: Vec::new(),
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
@@ -7015,6 +7057,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
         nested_at: Vec::new(),
         paras: vec![CellPara {
             runs: vec![TextRun::new("Deleted Cells", style)],
+            images: Vec::new(),
             style: {
                 let mut p = Defaults::word().para;
                 p.before = 0.0;
@@ -12567,19 +12610,8 @@ impl<'a> Layout<'a> {
         }
     }
 
-    fn emit_image(&mut self, img: &LaidImage) {
-        self.page_has_body = true;
-        let (dw, dh) = self.image_wh(img);
-        let (x, y) = match img.slot {
-            ImageSlot::Flow => {
-                self.ensure(dh + 4.0);
-                self.y -= dh;
-                let pos = (self.page.margin_l, self.y);
-                self.y -= 4.0;
-                pos
-            }
-            slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
-        };
+    /// One picture's paint op at (x, y) bottom-left, dw × dh.
+    fn push_image(&mut self, img: &LaidImage, x: f32, y: f32, dw: f32, dh: f32) {
         match &img.kind {
             ImageKind::Jpeg {
                 width,
@@ -12625,6 +12657,22 @@ impl<'a> Layout<'a> {
                 color: [0.6, 0.6, 0.6],
             }),
         }
+    }
+
+    fn emit_image(&mut self, img: &LaidImage) {
+        self.page_has_body = true;
+        let (dw, dh) = self.image_wh(img);
+        let (x, y) = match img.slot {
+            ImageSlot::Flow => {
+                self.ensure(dh + 4.0);
+                self.y -= dh;
+                let pos = (self.page.margin_l, self.y);
+                self.y -= 4.0;
+                pos
+            }
+            slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
+        };
+        self.push_image(img, x, y, dw, dh);
     }
 
     /// Paint one header/footer inline image `dx` after the previous ones
@@ -14356,13 +14404,26 @@ impl<'a> Layout<'a> {
                             y_line -= used;
                         }
                         y_line -= para.style.before;
+                        for img in &para.images {
+                            let (dw, dh) = cell_image_wh(img, wrap_w);
+                            let inner = (w - pad_l - pad_r).max(0.0);
+                            let extra = match para.style.align {
+                                Align::Center => ((inner - dw) / 2.0).max(0.0),
+                                Align::Right => (inner - dw).max(0.0),
+                                Align::Left | Align::Justify => 0.0,
+                            };
+                            self.push_image(img, x + pad_l + extra, y_line - dh, dw, dh);
+                            y_line -= dh;
+                        }
                         let label = self.chap_page_label();
                         for name in para.bookmarks.iter().chain(&para.blank_bookmarks) {
                             self.bookmark_pages.insert(name.clone(), label.clone());
                         }
                         let face = self.fonts.get(face_id);
                         let ascent = face.ascent_pt(size);
-                        let lines = if lines.is_empty() {
+                        let lines = if cell_para_is_image_only(para) {
+                            Vec::new()
+                        } else if lines.is_empty() {
                             vec![Vec::new()]
                         } else {
                             lines
@@ -25688,6 +25749,7 @@ mod table_tests {
             &mut numbering,
             &mut AuthorColors::default(),
             &HashMap::new(),
+            None,
         ) {
             Block::Table { rows, .. } => {
                 assert_eq!(rows.len(), 1, "outer table has one row");
@@ -25741,6 +25803,7 @@ mod table_tests {
             &mut numbering,
             &mut AuthorColors::default(),
             &HashMap::new(),
+            None,
         ) {
             Block::Table { rows, .. } => {
                 assert_eq!(rows.len(), 2, "Word still paints deleted TableGrid");
@@ -25781,6 +25844,7 @@ mod table_tests {
             &mut numbering,
             &mut AuthorColors::default(),
             &HashMap::new(),
+            None,
         ) {
             Block::Table { style, .. } => {
                 assert!(
@@ -25845,6 +25909,7 @@ mod table_tests {
             &mut numbering,
             &mut AuthorColors::default(),
             &HashMap::new(),
+            None,
         ) {
             Block::Table { rows, cols, .. } => {
                 assert_eq!(cols.len(), 4);
@@ -25894,6 +25959,7 @@ mod table_tests {
             &mut numbering,
             &mut AuthorColors::default(),
             &HashMap::new(),
+            None,
         ) {
             Block::Table { rows, .. } => {
                 let fill = rows[0][0].fill.expect("fill");
@@ -25992,6 +26058,7 @@ mod table_tests {
             &mut numbering,
             &mut AuthorColors::default(),
             &HashMap::new(),
+            None,
         ) {
             Block::Table {
                 rows,

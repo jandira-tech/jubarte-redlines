@@ -25782,3 +25782,25 @@ fn a_row_taller_than_the_page_rest_splits_across_pages() {
         "60 cell lines + 10 intro lines fill two pages"
     );
 }
+
+#[test]
+fn an_inline_picture_in_a_table_cell_paints() {
+    // fixtures_500 000ae863: each row holds a map photo (VML v:imagedata
+    // in a w:pict) beside the address cell. Cell paragraphs kept only
+    // their text, so every photo was missing (Jaccard 0.019).
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:p><w:r><w:t>Address</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:pict><v:shape style=\"width:120pt;height:60pt\">\
+             <v:imagedata r:id=\"rIdImg\"/></v:shape></w:pict></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert picture in cell");
+    let (x, y) = image_cm_xy(&pdf, "120.00", "60.00");
+    // Second column starts at 72 + 100pt; the picture's top is the row top.
+    assert!(x > 170.0 && x < 180.0, "picture sits in the second cell; x={x}");
+    assert!((y - (720.0 - 60.0)).abs() < 2.0, "picture top is the row top; y={y}");
+    let hay = String::from_utf8_lossy(&pdf);
+    let after = pdf_tj_xy(&hay, "A").iter().map(|p| p.1).fold(f32::MAX, f32::min);
+    assert!(after < 720.0 - 60.0, "the row grows to hold the picture; After y={after}");
+}
