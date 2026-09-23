@@ -64,8 +64,8 @@ impl std::error::Error for ConvertError {}
 /// How `docx_to_pdf` writes the PDF's stream objects.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PdfOptions {
-    /// Deflate content streams, raw image samples, and embedded font files
-    /// (`/Filter /FlateDecode`).
+    /// Deflate content streams (`/Filter /FlateDecode`). Image samples and
+    /// font programs are binary and always deflate.
     ///
     /// Off by default, because an uncompressed stream is plain text: it is
     /// what the conversion suite asserts on and what makes a generated page

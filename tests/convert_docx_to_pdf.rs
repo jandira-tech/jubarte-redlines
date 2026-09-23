@@ -1456,6 +1456,34 @@ fn blip(cx: &str, cy: &str, inner_open: &str, inner_close: &str) -> String {
 }
 
 #[test]
+fn binary_streams_are_deflated_even_without_compress() {
+    // fixtures_500 000f5278 wrote a 25 MB PDF: image samples and font
+    // programs were stored raw unless --compress. They are binary (nothing
+    // greps them), so they always deflate; content streams stay readable.
+    let body = format!(
+        "<w:p><w:r>{}</w:r><w:r><w:t>Text</w:t></w:r></w:p><w:sectPr/>",
+        blip(
+            "914400",
+            "914400",
+            "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+            "</wp:inline>"
+        )
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("deflate");
+    let hay = String::from_utf8_lossy(&pdf);
+    let image = hay.find("/Subtype /Image").expect("an image XObject");
+    let dict_end = hay[image..].find(">>").map_or(hay.len(), |e| image + e);
+    assert!(
+        hay[image..dict_end].contains("/FlateDecode"),
+        "image samples deflate"
+    );
+    assert!(
+        hay.contains("(Text) Tj") || hay.contains("Tj"),
+        "content stays readable"
+    );
+}
+
+#[test]
 fn an_outlined_picture_takes_its_line_once() {
     // fixtures_500 000f5278: an inline picture with an a:ln outline was
     // laid out twice, as the picture and as an empty stroked box under
@@ -1907,9 +1935,16 @@ fn emf_blip_paints_rgb_ink() {
         "EMF must be painted as a PDF image; tail {}",
         &text[text.len().saturating_sub(280)..]
     );
+    // The raster carries the grid rules (D4D4D4). Its EXTTEXTOUTW digits are
+    // not painted yet (metafile emf_text_tests lock); this assertion used
+    // to pass on the stream's trailing newline byte, not on ink.
     assert!(
-        rgb_image_has_dark_samples(&pdf),
-        "rasterized EMF must contain ink"
+        pdf_image_samples(&pdf).iter().any(|rgb| rgb
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .any(|&[r, g, b]| r < 230 && r == g && g == b)),
+        "rasterized EMF must contain its grid rules"
     );
 }
 
@@ -1956,10 +1991,13 @@ fn tiff_blip_paints_rgb_ink() {
     );
 }
 
-fn rgb_image_has_dark_samples(pdf: &[u8]) -> bool {
+/// The sample bytes of every image XObject we emit, inflated when the
+/// stream is `/FlateDecode` (image samples always deflate).
+fn pdf_image_samples(pdf: &[u8]) -> Vec<Vec<u8>> {
     // Match the exact XObject header we emit so embedded TTF bytes cannot
     // be mistaken for an image stream.
     const MARK: &[u8] = b"/Type /XObject /Subtype /Image /Width ";
+    let mut out = Vec::new();
     let mut from = 0;
     while from + MARK.len() < pdf.len() {
         let Some(rel) = pdf[from..]
@@ -1979,50 +2017,36 @@ fn rgb_image_has_dark_samples(pdf: &[u8]) -> bool {
                 .windows(9)
                 .position(|window| window == b"endstream")
                 .unwrap_or(data.len().min(200_000));
-            if data[..end].iter().any(|&b| b < 200) {
-                return true;
+            let header = &pdf[at..at + stream_at];
+            if header.windows(12).any(|w| w == b"/FlateDecode") {
+                let mut samples = Vec::new();
+                let _ = flate2::read::ZlibDecoder::new(&data[..end]).read_to_end(&mut samples);
+                out.push(samples);
+            } else {
+                out.push(data[..end].to_vec());
             }
         }
         from = at + MARK.len();
     }
-    false
+    out
+}
+
+fn rgb_image_has_dark_samples(pdf: &[u8]) -> bool {
+    pdf_image_samples(pdf)
+        .iter()
+        .any(|samples| samples.iter().any(|&b| b < 200))
 }
 
 fn rgb_image_has_light_gray_fill(pdf: &[u8]) -> bool {
-    const MARK: &[u8] = b"/Type /XObject /Subtype /Image /Width ";
-    let mut from = 0;
-    while from + MARK.len() < pdf.len() {
-        let Some(rel) = pdf[from..]
-            .windows(MARK.len())
-            .position(|window| window == MARK)
-        else {
-            break;
-        };
-        let at = from + rel;
-        let header_end = pdf.len().min(at + 400);
-        if let Some(stream_at) = pdf[at..header_end]
-            .windows(7)
-            .position(|window| window == b"stream\n")
-        {
-            let data = &pdf[at + stream_at + 7..];
-            let end = data
-                .windows(9)
-                .position(|window| window == b"endstream")
-                .unwrap_or(data.len().min(200_000));
-            let rgb = &data[..end];
-            let mut gray = 0_u32;
-            for &[r, g, b] in rgb.as_chunks::<3>().0 {
-                if (200..=235).contains(&r) && r.abs_diff(g) < 16 && g.abs_diff(b) < 16 {
-                    gray += 1;
-                }
-            }
-            if gray >= 80 {
-                return true;
+    pdf_image_samples(pdf).iter().any(|rgb| {
+        let mut gray = 0_u32;
+        for &[r, g, b] in rgb.as_chunks::<3>().0 {
+            if (200..=235).contains(&r) && r.abs_diff(g) < 16 && g.abs_diff(b) < 16 {
+                gray += 1;
             }
         }
-        from = at + MARK.len();
-    }
-    false
+        gray >= 80
+    })
 }
 
 #[test]
@@ -26644,9 +26668,15 @@ fn compress_option_deflates_streams_and_default_leaves_them_plain() {
 
     let plain = docx_to_pdf(&docx).expect("convert");
     let plain_text = String::from_utf8_lossy(&plain);
+    // Font programs and image samples always deflate (binary, nobody greps
+    // them); the default leaves every content stream plain.
+    let pages_plain = plain_text
+        .split("stream\n")
+        .filter(|part| part.contains(" Tf"))
+        .count();
     assert!(
-        !plain_text.contains("/FlateDecode"),
-        "the default must not deflate anything"
+        pages_plain > 0,
+        "the default content stream stays plain text"
     );
     assert!(
         plain_text.contains(" Tf"),

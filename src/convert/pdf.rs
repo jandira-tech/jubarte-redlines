@@ -280,9 +280,12 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         let file_id = objs.len() + 1;
         let used_gids = face_used_glyphs(face, *face_id, pages);
         let program = subset_keep_gids(face.bytes(), &used_gids);
+        // Font programs and image samples are binary: nothing greps them,
+        // so they always deflate (000f5278 was a 25 MB PDF with them raw).
+        // Content streams follow `options.compress`.
         objs.push(font_file_obj(
             program.as_deref().unwrap_or(face.bytes()),
-            options.compress,
+            true,
         ));
         let desc_id = objs.len() + 1;
         objs.push(font_descriptor_obj(face, file_id));
@@ -339,11 +342,11 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     img_n += 1;
                     let smask = alpha.as_ref().map(|plane| {
                         let sid = objs.len() + 1;
-                        objs.push(gray_xobject(*width, *height, plane, options.compress));
+                        objs.push(gray_xobject(*width, *height, plane, true));
                         sid
                     });
                     let id = objs.len() + 1;
-                    objs.push(rgb_xobject(*width, *height, bytes, options.compress, smask));
+                    objs.push(rgb_xobject(*width, *height, bytes, true, smask));
                     xobjects.push_str(&format!("/Im{img_n} {id} 0 R "));
                 }
                 Op::Watermark { .. } => has_watermark = true,
