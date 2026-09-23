@@ -7383,10 +7383,11 @@ fn identical_pbdr_paragraphs_share_one_box() {
     );
 }
 
-/// `(x, y, w, h)` of every `… w 0 0 h x y cm /ImN Do` image placement.
+/// `(x, y, w, h)` of every `… w 0 0 h x y cm /ImN Do` image placement
+/// (whole file: an image-only page has no `Tf` content stream).
 fn pdf_image_boxes(pdf: &[u8]) -> Vec<(f32, f32, f32, f32)> {
     let mut out = Vec::new();
-    for stream in pdf_content_streams(pdf) {
+    for stream in [String::from_utf8_lossy(pdf).into_owned()] {
         let mut from = 0;
         while let Some(rel) = stream[from..].find(" cm /Im") {
             let at = from + rel;
@@ -7403,6 +7404,28 @@ fn pdf_image_boxes(pdf: &[u8]) -> Vec<(f32, f32, f32, f32)> {
         }
     }
     out
+}
+
+#[test]
+fn inline_picture_follows_its_paragraph_alignment() {
+    // fixtures_500 0016811c: the coat of arms is an inline picture in a
+    // jc=center paragraph; Word centres it (it sat on the left margin).
+    let body = |jc: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:jc w:val="{jc}"/></w:pPr><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p><w:sectPr/>"#
+        )
+    };
+    let x = |jc: &str| {
+        let pdf = docx_to_pdf(&drawing_docx(&body(jc))).expect("aligned inline picture");
+        pdf_image_boxes(&pdf).first().map(|b| b.0).unwrap_or(-1.0)
+    };
+    assert!((x("left") - 72.0).abs() < 0.05, "left: {}", x("left"));
+    assert!(
+        (x("center") - 270.0).abs() < 0.05,
+        "centre of 72..540: {}",
+        x("center")
+    );
+    assert!((x("right") - 468.0).abs() < 0.05, "right: {}", x("right"));
 }
 
 #[test]
@@ -7515,6 +7538,35 @@ fn ten_point_glyphs_advance_at_ten_not_the_device_size() {
     assert!(
         (step - 5.5615).abs() < 0.005,
         "glyphs step at the 10pt advance; step={step} xs={xs:?}"
+    );
+}
+
+#[test]
+fn blank_continuous_section_break_paragraph_takes_no_line() {
+    // fixtures_500 0016811c: an empty paragraph holding a continuous
+    // sectPr (line 360) sits between "Vilnius" and the body; Word's gap is
+    // 20.5pt shorter than stacking it as a 1.5-spaced line.
+    let gap = |with_sect: bool| {
+        let sect = if with_sect {
+            r#"<w:sectPr><w:type w:val="continuous"/></w:sectPr>"#
+        } else {
+            ""
+        };
+        let body = format!(
+            r#"<w:p><w:r><w:t>Above</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:line="360" w:lineRule="auto"/>{sect}<w:rPr><w:sz w:val="24"/></w:rPr></w:pPr></w:p><w:p><w:r><w:t>Below</w:t></w:r></w:p><w:sectPr/>"#
+        );
+        let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+            <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+              <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"24\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+              <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+            </w:styles>";
+        let ys = text_baselines(&docx_to_pdf(&docx_with_styles(&body, styles)).expect("sect para"));
+        ys[0] - ys[ys.len() - 1]
+    };
+    let (with, plain) = (gap(true), gap(false));
+    assert!(
+        plain - with > 10.0,
+        "the section-break paragraph adds no line; with={with} plain={plain}"
     );
 }
 

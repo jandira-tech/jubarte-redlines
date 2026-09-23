@@ -5017,7 +5017,11 @@ fn walk_container(
             endnotes.observe_para(dom, child);
             let block = paragraph_block(ctx, dom, child, false, numbering);
             let blank = block_is_blank(&block);
-            if !blank || (!page_br && !sect_br && !column_br) {
+            // A blank paragraph that only carries a section break is no
+            // line, continuous breaks included (0016811c: Word's gap has
+            // no room for its 1.5-spaced mark).
+            let sect_mark = sect_here.is_some_and(|s| !is_final_sect(ctx.sects, s));
+            if !blank || (!page_br && !sect_br && !column_br && !sect_mark) {
                 blocks.push(block);
             }
             if let Some(s) = sect_here.filter(|s| !is_final_sect(ctx.sects, *s)) {
@@ -13118,7 +13122,10 @@ impl<'a> Layout<'a> {
         }
     }
 
-    fn emit_image(&mut self, img: &LaidImage) {
+    /// Paint `img` for a paragraph styled `style`: an inline picture sits
+    /// at the paragraph's indent and follows its jc (0016811c's centred
+    /// coat of arms).
+    fn emit_image_in(&mut self, img: &LaidImage, style: &ParaStyle) {
         self.page_has_body = true;
         let (dw, dh) = self.image_wh(img);
         let (x, y) = match img.slot {
@@ -13128,7 +13135,17 @@ impl<'a> Layout<'a> {
             ImageSlot::Flow => {
                 self.ensure(dh);
                 self.y -= dh;
-                (self.page.margin_l, self.y)
+                let left = self.page.margin_l + style.indent_left;
+                let room = self.content_width() - style.indent_left - style.indent_right;
+                // A picture wider than its line starts at the indent and
+                // overflows right (0033befc's 601pt scan).
+                let spare = (room - dw).max(0.0);
+                let x = match style.align {
+                    Align::Center => left + spare * 0.5,
+                    Align::Right => left + spare,
+                    Align::Left | Align::Justify => left,
+                };
+                (x, self.y)
             }
             slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
         };
@@ -16331,7 +16348,7 @@ fn layout(
                     lay.suppress_space_before = false;
                 }
                 for img in images {
-                    lay.emit_image(img);
+                    lay.emit_image_in(img, &style);
                 }
                 for box_ in boxes {
                     lay.emit_textbox(box_);
