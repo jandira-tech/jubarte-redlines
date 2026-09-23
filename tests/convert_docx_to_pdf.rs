@@ -17150,6 +17150,26 @@ fn doc_grid_leaves_exact_and_unsnapped_lines_alone() {
 }
 
 #[test]
+fn doc_grid_centres_the_line_in_its_snapped_box() {
+    // fixtures_500 00d2ca27: under docGrid lines Word centres a line's text
+    // in its grid-snapped box (TNR 12 double lines on a 15.6pt grid start
+    // 8.7pt down). Calibri 11 (13.43pt) on an 18pt grid: 2.28pt down.
+    let first = |grid: &str| {
+        let body = format!(
+            r#"<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:t>Line</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>{grid}</w:sectPr>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("grid centre");
+        text_baselines(&pdf)[0]
+    };
+    let plain = first("");
+    let grid = first(r#"<w:docGrid w:type="lines" w:linePitch="360"/>"#);
+    assert!(
+        (plain - grid - 2.28).abs() < 0.1,
+        "the text sits (18 - 13.43) / 2 lower; plain={plain} grid={grid}"
+    );
+}
+
+#[test]
 fn sectpr_doc_grid_chars_adds_char_space() {
     // sectPr w:docGrid charSpace is in 4096ths of a point (ECMA-376
     // 17.6.5): fixtures_500 0016d88a's -4301 makes Word's 10.5pt CJK
@@ -17183,10 +17203,12 @@ fn sectpr_doc_grid_chars_adds_char_space() {
 }
 
 #[test]
-fn balance_sbcs_dbcs_stretches_ascii_to_em() {
-    // xml leftover: w:compat/w:balanceSingleByteDoubleByteWidth
-    // (ECMA-376 17.15.3.3). SBCS advances match the font em (DBCS slot).
-    // "I" is ~3pt naturally; balanced it occupies ~11pt.
+fn balance_sbcs_dbcs_leaves_latin_advances_alone() {
+    // w:compat/w:balanceSingleByteDoubleByteWidth (ECMA-376 17.15.3.3)
+    // balances half- and full-width East Asian glyphs; it does not make a
+    // proportional Latin face monospaced. fixtures_500 00d2ca27 (on, TNR
+    // body) is set at natural advances by Word; stretching every ASCII
+    // glyph to the em spread its text across the page (39 of the 500 set it).
     let body = "<w:p>\
            <w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr>\
            <w:r><w:t>IJ</w:t></w:r>\
@@ -17210,8 +17232,8 @@ fn balance_sbcs_dbcs_stretches_ascii_to_em() {
         .map(|(x, _)| *x)
         .expect("marker J");
     assert!(
-        jx - ix > 8.0,
-        "balanceSingleByteDoubleByteWidth must stretch I to the em; I={ix} J={jx} dx={}",
+        jx - ix < 4.0,
+        "I keeps its ~2.8pt advance with balancing on; I={ix} J={jx} dx={}",
         jx - ix
     );
 }
@@ -21462,6 +21484,9 @@ fn docdefaults_minor_hansi_aptos_embeds_liberation_sans() {
 #[test]
 fn jpan_script_font_embeds_over_generic_ea() {
     // xml 3.2 ckpt 3: a:font script=Jpan beats generic a:ea when lang is ja-JP.
+    // The hint decides ambiguous characters only (ECMA-376 17.3.2.26; Word
+    // sets 00d2ca27's hinted Latin letters in the Latin face), so the probe
+    // text is curly quotes and an ellipsis.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
@@ -21480,7 +21505,7 @@ fn jpan_script_font_embeds_over_generic_ea() {
     let body = "<w:p><w:r><w:rPr>\
          <w:rFonts w:ascii=\"Calibri\" w:eastAsiaTheme=\"minorEastAsia\" w:hint=\"eastAsia\"/>\
          <w:lang w:eastAsia=\"ja-JP\"/>\
-         </w:rPr><w:t>HelloEA</w:t></w:r></w:p><w:sectPr/>";
+         </w:rPr><w:t>“…”</w:t></w:r></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&docx_with_styles_and_theme(body, styles, theme))
         .expect("convert Jpan script font");
     let text = String::from_utf8_lossy(&pdf);
@@ -21493,7 +21518,8 @@ fn jpan_script_font_embeds_over_generic_ea() {
 
 #[test]
 fn east_asia_theme_slot_embeds_ea_face_for_cjk() {
-    // xml 3.2 ckpt 2: hint=eastAsia + eastAsiaTheme uses a:ea, not latin.
+    // xml 3.2 ckpt 2: hint=eastAsia + eastAsiaTheme uses a:ea, not latin,
+    // for the ambiguous characters the hint decides (quotes, ellipsis).
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
@@ -21510,7 +21536,7 @@ fn east_asia_theme_slot_embeds_ea_face_for_cjk() {
          </a:theme>";
     let body = "<w:p><w:r><w:rPr>\
          <w:rFonts w:ascii=\"Calibri\" w:eastAsiaTheme=\"minorEastAsia\" w:hint=\"eastAsia\"/>\
-         </w:rPr><w:t>HelloEA</w:t></w:r></w:p><w:sectPr/>";
+         </w:rPr><w:t>“…”</w:t></w:r></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&docx_with_styles_and_theme(body, styles, theme))
         .expect("convert eastAsia theme");
     let text = String::from_utf8_lossy(&pdf);
