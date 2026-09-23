@@ -8268,43 +8268,40 @@ fn collect_visible(dom: &Dom, node: NodeId, out: &mut String, in_del: bool) {
 
 fn collapse_ws(text: &str) -> String {
     // Squeeze XML pretty-print / ordinary runs. Keep hard `\n` from `w:br`.
+    // Only ASCII blanks squeeze: NBSP and the ideographic space are text.
+    let blank = |c: char| matches!(c, ' ' | '\r' | '\u{0B}' | '\u{0C}');
+    let chars: Vec<char> = text.chars().collect();
     let mut out = String::new();
-    let mut space = false;
-    // A tab is not a collapsible space: a `<w:tab/>` run stays "\t".
-    let leading = text
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_whitespace() && c != '\n' && c != '\t');
-    for ch in text.chars() {
-        if ch == '\n' {
-            if space && !out.is_empty() && !out.ends_with(' ') && !out.ends_with('\n') {
-                out.push(' ');
-            }
-            space = false;
-            out.push('\n');
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        if !blank(ch) {
+            out.push(ch);
+            i += 1;
             continue;
         }
-        if ch == '\t' {
-            space = false;
-            out.push('\t');
+        let start = i;
+        while i < chars.len() && blank(chars[i]) {
+            i += 1;
+        }
+        let run = &chars[start..i];
+        let before = start.checked_sub(1).map(|b| chars[b]);
+        let after = chars.get(i).copied();
+        // Interior spaces between text are Word's to keep (002b4f4d's
+        // "муниципальных  услуг" is a 7pt gap at TNR 14).
+        let interior = before.is_some_and(|c| c != '\n' && c != '\t')
+            && after.is_some_and(|c| c != '\n' && c != '\t');
+        if interior && run.iter().all(|c| *c == ' ') {
+            out.extend(run);
             continue;
         }
-        if ch.is_whitespace() {
-            space = true;
-            continue;
+        // A tab is not a collapsible space: a `<w:tab/>` run stays "\t".
+        match (before, after) {
+            (Some('\n'), _) => {}
+            (_, Some('\n')) if out.is_empty() || out.ends_with(' ') || out.ends_with('\n') => {}
+            (Some(_), Some('\t')) => {}
+            _ => out.push(' '),
         }
-        if space && !out.is_empty() && !out.ends_with('\n') {
-            out.push(' ');
-        }
-        space = false;
-        out.push(ch);
-    }
-    if leading && !out.is_empty() && !out.starts_with(' ') && !out.starts_with('\n') {
-        out.insert(0, ' ');
-    }
-    // A whitespace-only run squeezes to one space, not to nothing.
-    if space && !out.ends_with(' ') && !out.ends_with('\n') {
-        out.push(' ');
     }
     out
 }
@@ -27931,6 +27928,16 @@ mod comments_spacing_tests {
             return runs.first().map(|r| r.style.family.clone());
         }
         None
+    }
+
+    #[test]
+    fn collapse_ws_keeps_interior_spaces_and_hard_spaces() {
+        // fixtures_500 002b4f4d: Word keeps "муниципальных  услуг"'s two
+        // spaces (a 7pt gap at TNR 14); NBSP and U+3000 are characters.
+        assert_eq!(super::collapse_ws("a  b"), "a  b");
+        assert_eq!(super::collapse_ws("a\u{a0}\u{a0}b"), "a\u{a0}\u{a0}b");
+        assert_eq!(super::collapse_ws("\u{3000}\u{3000}x"), "\u{3000}\u{3000}x");
+        assert_eq!(super::collapse_ws("a \r\n  b"), "a \nb");
     }
 
     #[test]
