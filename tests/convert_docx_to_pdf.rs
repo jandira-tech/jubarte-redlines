@@ -17093,6 +17093,38 @@ fn do_not_expand_shift_return_skips_justify_on_soft_break() {
 }
 
 #[test]
+fn doc_grid_leaves_exact_and_unsnapped_lines_alone() {
+    // fixtures_500 0016d88a: under docGrid lines (linePitch 286) Word
+    // keeps an exact 10.6pt line at 10.6pt; we snapped it to 14.3. A
+    // paragraph with snapToGrid=0 keeps its natural line too.
+    let grid = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/><w:docGrid w:type="lines" w:linePitch="360"/></w:sectPr>"#;
+    let pitch = |ppr: &str| {
+        let para = format!(r#"<w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>Line</w:t></w:r></w:p>"#);
+        let body = format!("{para}{para}{para}{grid}");
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("grid");
+        let ys = text_baselines(&pdf);
+        ys[0] - ys[1]
+    };
+    let snapped = pitch(r#"<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#);
+    assert!(
+        (snapped - 18.0).abs() < 0.1,
+        "auto lines snap to 18pt; {snapped}"
+    );
+    let exact = pitch(r#"<w:spacing w:after="0" w:line="200" w:lineRule="exact"/>"#);
+    assert!(
+        (exact - 10.0).abs() < 0.1,
+        "an exact line keeps 10pt; {exact}"
+    );
+    let free = pitch(
+        r#"<w:snapToGrid w:val="0"/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#,
+    );
+    assert!(
+        (free - 13.43).abs() < 0.1,
+        "snapToGrid=0 keeps Calibri's 13.43; {free}"
+    );
+}
+
+#[test]
 fn sectpr_doc_grid_chars_adds_char_space() {
     // sectPr w:docGrid charSpace is in 4096ths of a point (ECMA-376
     // 17.6.5): fixtures_500 0016d88a's -4301 makes Word's 10.5pt CJK

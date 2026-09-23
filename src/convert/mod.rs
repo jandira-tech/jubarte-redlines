@@ -347,6 +347,8 @@ struct ParaStyle {
     /// `w:widowControl`: on unless a style or pPr turns it off (Word's
     /// default; 00182e72 moves a lone first line to the next page).
     widow_control: bool,
+    /// `w:snapToGrid`: off keeps the line off the docGrid linePitch.
+    snap_to_grid: bool,
     line_mult: f32,
     /// `w:spacing w:lineRule="exact"` in points. Word uses this as the
     /// line box (sd_2517 Ttulo1 line=400 → 20pt), not size×(line/11).
@@ -736,6 +738,7 @@ impl Defaults {
                 before_auto: false,
                 after_auto: false,
                 widow_control: true,
+                snap_to_grid: true,
                 line_mult: 276.0 / 240.0,
                 line_exact: None,
                 line_at_least: None,
@@ -2758,6 +2761,9 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
     if first_named(dom, ppr, "pageBreakBefore").is_some() {
         style.page_break_before = !val_is_false(dom, first_named(dom, ppr, "pageBreakBefore"));
     }
+    if first_named(dom, ppr, "snapToGrid").is_some() {
+        style.snap_to_grid = !val_is_false(dom, first_named(dom, ppr, "snapToGrid"));
+    }
     if first_named(dom, ppr, "keepNext").is_some() {
         style.keep_next = !val_is_false(dom, first_named(dom, ppr, "keepNext"));
     }
@@ -3063,6 +3069,17 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
 /// Single-byte-width characters: ASCII and the half-width forms block.
 fn is_half_width(c: char) -> bool {
     c.is_ascii() || ('\u{FF61}'..='\u{FFDC}').contains(&c)
+}
+
+/// The docGrid pitch a paragraph's lines snap to: none for an exact line
+/// (0016d88a's exact 10.6pt line stays 10.6 under a 14.3pt grid) or a
+/// paragraph with snapToGrid off.
+fn para_grid_pitch(style: &ParaStyle, pitch: f32) -> f32 {
+    if style.line_exact.is_some() || !style.snap_to_grid {
+        0.0
+    } else {
+        pitch
+    }
 }
 
 fn snap_doc_grid(h: f32, pitch: f32) -> f32 {
@@ -5542,7 +5559,10 @@ fn para_first_line_pt(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle, grid_p
     let face = runs.first().map_or(FaceId::CarlitoRegular.into(), |r| {
         fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
     });
-    snap_doc_grid(para_line_box(fonts.get(face), size, style), grid_pitch)
+    snap_doc_grid(
+        para_line_box(fonts.get(face), size, style),
+        para_grid_pitch(style, grid_pitch),
+    )
 }
 
 fn keep_lines_need_pt(
@@ -10665,6 +10685,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         before_auto: false,
         after_auto: false,
         widow_control: true,
+        snap_to_grid: true,
         line_mult: 1.0,
         line_exact: None,
         line_at_least: None,
@@ -11669,8 +11690,10 @@ impl<'a> Layout<'a> {
         let mut fit = 0usize;
         for (line_i, line) in lines.iter().enumerate() {
             let (natural, ascent) = self.line_face_metrics(line, marker.filter(|_| line_i == 0));
-            let line_box =
-                snap_doc_grid(line_box_from_natural(natural, style), self.page.grid_pitch);
+            let line_box = snap_doc_grid(
+                line_box_from_natural(natural, style),
+                para_grid_pitch(style, self.page.grid_pitch),
+            );
             if y - line_fit_need(natural, ascent, style, line_box) < self.body_floor {
                 break;
             }
@@ -12344,7 +12367,7 @@ impl<'a> Layout<'a> {
             if self.space_for_ul && line_has_underlined_cjk(line) {
                 line_box += space_for_ul_extra(size);
             }
-            line_box = snap_doc_grid(line_box, self.page.grid_pitch);
+            line_box = snap_doc_grid(line_box, para_grid_pitch(style, self.page.grid_pitch));
             let fn_h = self.added_footnote_h(line);
             if fn_h > 0.0 {
                 let new_floor = self.chrome_floor() + self.footnote_block_h() + fn_h;
@@ -12410,7 +12433,13 @@ impl<'a> Layout<'a> {
                 self.paint_line_with_tabs(line, x, baseline);
             }
             self.paint_line_number(baseline);
-            self.y -= (line_box - ascent).max(1.0);
+            // An exact line is exactly its pitch even under a taller face
+            // (0016d88a's exact 10.6pt lines of 10.5pt MS Mincho).
+            self.y -= if style.line_exact.is_some() {
+                line_box - ascent
+            } else {
+                (line_box - ascent).max(1.0)
+            };
         }
         // Do not skip empty/del-only pBdr (mini 217–220): no-redline
         // file_146 +0.026 but redline mean −0.020 (comments-lots family
