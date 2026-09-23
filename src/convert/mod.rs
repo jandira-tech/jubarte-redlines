@@ -12182,7 +12182,15 @@ impl<'a> Layout<'a> {
             }
             self.y -= ascent;
             let line_w = self.line_width_pt(line);
-            let leftover = (width - line_w).max(0.0);
+            let first_extra = if line_i == 0 && marker.is_none() {
+                style.indent_first
+            } else {
+                0.0
+            };
+            // The first line's measure starts at its own indent (00189e50's
+            // justified firstLine=720 line ran 36pt past the margin).
+            let measure = width - first_extra;
+            let leftover = (measure - line_w).max(0.0);
             let extra = match style.align {
                 Align::Left | Align::Justify => 0.0,
                 Align::Center => leftover / 2.0,
@@ -12191,16 +12199,11 @@ impl<'a> Layout<'a> {
             // Word leftover / inter-word gaps (TJ ≈ -55 at 11.04). Trailing
             // wrap space is not a gap and is not in the measured line.
             let trail = trailing_ws_pt(self.fonts, line);
-            let justify_left = (width - (line_w - trail).max(0.0)).max(0.0);
+            let justify_left = (measure - (line_w - trail).max(0.0)).max(0.0);
             let justify = matches!(style.align, Align::Justify)
                 && line_i + 1 < lines.len()
                 && justify_left > 0.5
                 && !(self.do_not_expand_shift_return && ends_br.get(line_i) == Some(&true));
-            let first_extra = if line_i == 0 && marker.is_none() {
-                style.indent_first
-            } else {
-                0.0
-            };
             let x = self.flow_left() + indent + extra + first_extra;
             let baseline = self.y;
             if line_i == 0

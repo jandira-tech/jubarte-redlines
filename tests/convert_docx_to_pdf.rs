@@ -7748,6 +7748,29 @@ fn widow_control_moves_a_lone_first_line_to_the_next_page() {
 }
 
 #[test]
+fn justified_first_line_stops_at_the_margin_despite_its_indent() {
+    // fixtures_500 00189e50: a justified paragraph with firstLine=720; its
+    // first line was stretched to the full measure and ran 36pt past the
+    // right margin.
+    let words = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud";
+    let body = format!(
+        r#"<w:p><w:pPr><w:ind w:firstLine="720"/><w:jc w:val="both"/></w:pPr><w:r><w:t>{words}</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("justified indent");
+    let hay = String::from_utf8_lossy(&pdf);
+    let rightmost = pdf_tf_xs(&pdf, "11.04 Tf")
+        .into_iter()
+        .fold(f32::MIN, f32::max);
+    // The stretched line ends on the margin; its trailing space may start
+    // there (Word hangs it).
+    assert!(
+        rightmost <= 540.01,
+        "no glyph starts past the 540pt margin; rightmost={rightmost} len={}",
+        hay.len()
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables
