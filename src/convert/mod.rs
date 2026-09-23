@@ -17884,7 +17884,10 @@ fn wrap_runs_segment(
                     );
                     let face = fonts.get(fid);
                     let size = run.style.layout_size();
+                    // w:spacing tracking widens every letter, as painted
+                    // (00080142's +0.35pt Arial packed too many words).
                     face.width_pt_kern(tok, size, run.style.kerns_at(size)) * run.style.hscale()
+                        + run.style.track * tok.chars().count() as f32
                 };
                 let is_space = tok.chars().all(char::is_whitespace);
                 let glue = open

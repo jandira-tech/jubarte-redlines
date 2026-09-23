@@ -899,6 +899,30 @@ fn a_tab_only_line_takes_the_size_next_to_its_mark() {
 }
 
 #[test]
+fn character_spacing_widens_the_wrap_measure() {
+    // fixtures_500 00080142: w:spacing val=7 (+0.35pt a letter) on Arial 10.
+    // The wrap measured the untracked text, packed too many words per line
+    // and the justified squeeze ate the spaces.
+    let lines = |track: &str| {
+        let body = format!(
+            r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr><w:r><w:rPr>{track}</w:rPr><w:t>{}</w:t></w:r></w:p><w:sectPr/>"#,
+            "word ".repeat(80)
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("tracking");
+        let mut ys = text_baselines(&pdf);
+        ys.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        ys.dedup_by(|a, b| (*a - *b).abs() < 0.1);
+        ys.len()
+    };
+    let plain = lines("");
+    let tracked = lines(r#"<w:spacing w:val="40"/>"#);
+    assert!(
+        tracked > plain,
+        "2pt tracking needs more lines; plain={plain} tracked={tracked}"
+    );
+}
+
+#[test]
 fn direct_ind_left_keeps_the_numbering_level_hanging() {
     // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
     // paragraph overrides only the left edge; Word keeps the level's
