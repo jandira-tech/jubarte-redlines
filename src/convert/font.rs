@@ -1441,6 +1441,10 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
 /// Candidates are files whose normalised name starts with the family's,
 /// confirmed against the font's own family name.
 pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>)> {
+    let stems = cjk_file_stems(family);
+    if !stems.is_empty() {
+        return cjk_family_faces(family, stems);
+    }
     const DIRS: &[&str] = &[
         "/System/Library/Fonts/Supplemental",
         "/Library/Fonts",
@@ -1494,6 +1498,234 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
     out
 }
 
+/// A family name folded for comparison: full-width Latin to ASCII (the
+/// Japanese "ＭＳ 明朝" is MS Mincho's own name), ASCII lowercase, and no
+/// spaces, underscores or hyphens.
+fn fold_family(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+            _ => c,
+        })
+        .filter(|c| !c.is_whitespace() && *c != '_' && *c != '-')
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// East Asian families Word ships in its DFonts, by every name documents
+/// use for them, and the file stems that hold them. Word draws these real
+/// faces (fixtures_500: MS Mincho in 21 documents, YaHei 16, JhengHei 12,
+/// Yu Gothic 11); we had no face for them and their text vanished.
+const CJK_FAMILIES: &[(&[&str], &[&str])] = &[
+    (
+        &["msmincho", "ms明朝", "mspmincho", "msp明朝"],
+        &["msmincho"],
+    ),
+    (
+        &[
+            "msgothic",
+            "msゴシック",
+            "mspgothic",
+            "mspゴシック",
+            "msuigothic",
+        ],
+        &["msgothic"],
+    ),
+    (
+        &[
+            "yugothic",
+            "游ゴシック",
+            "yugothicui",
+            "yugothicmedium",
+            "yugothiclight",
+            "游ゴシックmedium",
+            "游ゴシックlight",
+        ],
+        &["yugothr", "yugothm", "yugothb", "yugothl"],
+    ),
+    (
+        &[
+            "yumincho",
+            "游明朝",
+            "yuminchodemibold",
+            "yumincholight",
+            "游明朝demibold",
+            "游明朝light",
+        ],
+        &["yumin", "yumindb", "yuminl"],
+    ),
+    (&["meiryo", "メイリオ", "meiryoui"], &["meiryo", "meiryob"]),
+    (
+        &[
+            "microsoftyahei",
+            "微软雅黑",
+            "microsoftyaheiui",
+            "microsoftyaheilight",
+        ],
+        &["msyh", "msyhbd", "msyhl"],
+    ),
+    (
+        &["microsoftjhenghei", "微軟正黑體", "microsoftjhengheiui"],
+        &["msjh", "msjhbd"],
+    ),
+    (&["simsun", "宋体", "nsimsun", "新宋体"], &["simsun"]),
+    (&["simhei", "黑体"], &["simhei"]),
+    (
+        &["fangsong", "仿宋", "fangsonggb2312", "仿宋gb2312"],
+        &["fangsong"],
+    ),
+    (&["kaiti", "楷体", "kaitigb2312", "楷体gb2312"], &["kaiti"]),
+    (
+        &["mingliu", "細明體", "pmingliu", "新細明體", "mingliuhkscs"],
+        &["mingliu", "mingliub"],
+    ),
+    (
+        &["batang", "바탕", "batangche", "gungsuh", "궁서"],
+        &["batang"],
+    ),
+    (
+        &["gulim", "굴림", "gulimche", "dotum", "돋움", "dotumche"],
+        &["gulim"],
+    ),
+    (&["malgungothic", "맑은고딕"], &["malgun", "malgunbd"]),
+    (
+        &["dengxian", "等线", "dengxianlight"],
+        &["deng", "dengb", "dengl"],
+    ),
+];
+
+fn cjk_file_stems(family: &str) -> &'static [&'static str] {
+    let key = fold_family(family);
+    CJK_FAMILIES
+        .iter()
+        .find(|(names, _)| names.contains(&key.as_str()))
+        .map_or(&[], |(_, stems)| stems)
+}
+
+/// Family names (name IDs `id`) of one face, folded, in every language.
+fn face_family_names(face: &ttf_parser::Face<'_>, id: u16) -> Vec<String> {
+    face.names()
+        .into_iter()
+        .filter(|n| n.name_id == id)
+        .filter_map(|n| n.to_string())
+        .map(|n| fold_family(&n))
+        .collect()
+}
+
+/// The faces of an East Asian family from Word's DFonts. A collection
+/// (`.ttc`) holds several families (MS Mincho / MS PMincho); the face whose
+/// own family name is the requested one wins, name ID 1 before the
+/// typographic ID 16 (Yu Gothic Medium is ID 1 "Yu Gothic Medium"). A name
+/// no face carries (FangSong_GB2312) takes the group's first face.
+fn cjk_family_faces(family: &str, stems: &[&str]) -> Vec<((bool, bool), Vec<u8>)> {
+    const DIRS: &[&str] = &[
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
+        "/Library/Fonts/Microsoft",
+        "/Library/Fonts",
+    ];
+    let want = fold_family(family);
+    let mut files: Vec<(usize, PathBuf)> = Vec::new();
+    for dir in DIRS {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for path in entries.flatten().map(|e| e.path()) {
+            let ext_ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                ["ttf", "otf", "ttc"]
+                    .iter()
+                    .any(|x| e.eq_ignore_ascii_case(x))
+            });
+            let stem = path.file_stem().and_then(|s| s.to_str()).map(fold_family);
+            if let (true, Some(stem)) = (ext_ok, stem)
+                && let Some(rank) = stems.iter().position(|s| *s == stem)
+                && files.iter().all(|(_, p)| p.file_name() != path.file_name())
+            {
+                files.push((rank, path));
+            }
+        }
+    }
+    files.sort();
+    // (pass, style, bytes): pass 0 = ID 1 match, 1 = ID 16, 2 = fallback.
+    let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
+    for (rank, path) in &files {
+        let Ok(bytes) = fs::read(path) else {
+            continue;
+        };
+        let count = ttf_parser::fonts_in_collection(&bytes).unwrap_or(1);
+        for index in 0..count {
+            let Ok(face) = ttf_parser::Face::parse(&bytes, index) else {
+                continue;
+            };
+            let pass = if face_family_names(&face, ttf_parser::name_id::FAMILY).contains(&want) {
+                0
+            } else if face_family_names(&face, ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
+                .contains(&want)
+            {
+                1
+            } else if *rank == 0 && index == 0 {
+                2
+            } else {
+                continue;
+            };
+            let style = (face.is_bold(), face.is_italic());
+            let data = if count > 1 {
+                match ttc_face_bytes(&bytes, index) {
+                    Some(data) => data,
+                    None => continue,
+                }
+            } else {
+                bytes.clone()
+            };
+            found.push((pass, style, data));
+        }
+    }
+    let Some(best) = found.iter().map(|(pass, _, _)| *pass).min() else {
+        return Vec::new();
+    };
+    let mut out: Vec<((bool, bool), Vec<u8>)> = Vec::new();
+    for (pass, style, data) in found {
+        if pass == best && out.iter().all(|(s, _)| *s != style) {
+            out.push((style, data));
+        }
+    }
+    out
+}
+
+/// One face of a TrueType collection as a standalone sfnt: the face's
+/// table directory with its tables copied after it (PDF `FontFile2`
+/// cannot hold a collection).
+fn ttc_face_bytes(ttc: &[u8], index: u32) -> Option<Vec<u8>> {
+    let u32_at = |at: usize| -> Option<u32> {
+        ttc.get(at..at + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    if ttc.get(0..4)? != b"ttcf" {
+        return None;
+    }
+    let dir = usize::try_from(u32_at(12 + 4 * usize::try_from(index).ok()?)?).ok()?;
+    let num_tables = usize::from(u16::from_be_bytes([*ttc.get(dir + 4)?, *ttc.get(dir + 5)?]));
+    let header_len = 12 + 16 * num_tables;
+    let mut out = ttc.get(dir..dir + 12)?.to_vec();
+    let mut records = Vec::with_capacity(16 * num_tables);
+    let mut data: Vec<u8> = Vec::new();
+    for t in 0..num_tables {
+        let rec = dir + 12 + 16 * t;
+        let offset = usize::try_from(u32_at(rec + 8)?).ok()?;
+        let length = usize::try_from(u32_at(rec + 12)?).ok()?;
+        let new_offset = u32::try_from(header_len + data.len()).ok()?;
+        records.extend_from_slice(ttc.get(rec..rec + 8)?);
+        records.extend_from_slice(&new_offset.to_be_bytes());
+        records.extend_from_slice(ttc.get(rec + 12..rec + 16)?);
+        data.extend_from_slice(ttc.get(offset..offset + length)?);
+        while !data.len().is_multiple_of(4) {
+            data.push(0);
+        }
+    }
+    out.extend_from_slice(&records);
+    out.extend_from_slice(&data);
+    Some(out)
+}
+
 /// Adds the installed faces of every font-table family that the catalogue
 /// does not cover and the document does not embed.
 pub(crate) fn add_installed_faces(
@@ -1505,7 +1737,20 @@ pub(crate) fn add_installed_faces(
         if catalogue_paints_family(&entry.name) || embedded.keys().any(|(f, _, _)| *f == lower) {
             continue;
         }
-        for ((bold, italic), bytes) in installed_family_faces(&entry.name) {
+        let faces = installed_family_faces(&entry.name);
+        // Runs may name the family by its altName ("MS Mincho" for the
+        // table's "ＭＳ 明朝"); the same faces answer to both.
+        if let Some(alt) = entry.alt_name.as_deref()
+            && !cjk_file_stems(&entry.name).is_empty()
+        {
+            let alt = alt.to_ascii_lowercase();
+            if embedded.keys().all(|(f, _, _)| *f != alt) {
+                for ((bold, italic), bytes) in &faces {
+                    embedded.insert((alt.clone(), *bold, *italic), bytes.clone());
+                }
+            }
+        }
+        for ((bold, italic), bytes) in faces {
             embedded.insert((lower.clone(), bold, italic), bytes);
         }
     }
@@ -1526,7 +1771,10 @@ fn catalogue_paints_family(family: &str) -> bool {
         italic: false,
     };
     let face = catalogue().get(Fonts::id_from_key(&key));
-    norm(face.pdf_name()).starts_with(&norm(family))
+    // A name with no ASCII letters ("ＭＳ 明朝") folds to "", which every
+    // catalogue name starts with; no catalogue slot is that family.
+    let want = norm(family);
+    !want.is_empty() && norm(face.pdf_name()).starts_with(&want)
 }
 
 /// (bold, italic) when the font's own family name is `family`.
@@ -1857,6 +2105,43 @@ mod tests {
         assert_eq!(
             fonts.resolve_in("SomeFixed", false, false, &table),
             FaceId::MonoRegular
+        );
+    }
+
+    #[test]
+    fn fold_family_maps_full_width_names_to_their_ascii_key() {
+        assert_eq!(fold_family("ＭＳ 明朝"), "ms明朝");
+        assert_eq!(fold_family("MS Mincho"), "msmincho");
+        assert_eq!(fold_family("FangSong_GB2312"), "fangsonggb2312");
+        assert_eq!(cjk_file_stems("ＭＳ ゴシック"), &["msgothic"]);
+        assert!(cjk_file_stems("Calibri").is_empty());
+    }
+
+    #[test]
+    fn cjk_family_takes_its_own_face_out_of_word_s_collection() {
+        // fixtures_500 0016d88a: "ＭＳ 明朝" text vanished (no face held
+        // its glyphs). Word draws msmincho.ttc face 0, MS Mincho.
+        let ttc = "/Applications/Microsoft Word.app/Contents/Resources/DFonts/msmincho.ttc";
+        if !Path::new(ttc).is_file() {
+            return;
+        }
+        let faces = installed_family_faces("ＭＳ 明朝");
+        let (_, bytes) = faces
+            .iter()
+            .find(|(style, _)| *style == (false, false))
+            .expect("a regular MS Mincho face");
+        let face = ttf_parser::Face::parse(bytes, 0).expect("standalone sfnt");
+        assert!(
+            face_family_names(&face, ttf_parser::name_id::FAMILY).contains(&"msmincho".to_string())
+        );
+        assert!(face.glyph_index('明').is_some(), "CJK glyphs present");
+        let pfaces = installed_family_faces("MS PMincho");
+        let (_, pbytes) = pfaces.first().expect("MS PMincho face");
+        let pface = ttf_parser::Face::parse(pbytes, 0).expect("standalone sfnt");
+        assert!(
+            face_family_names(&pface, ttf_parser::name_id::FAMILY)
+                .contains(&"mspmincho".to_string()),
+            "the collection's second face, not the first"
         );
     }
 
