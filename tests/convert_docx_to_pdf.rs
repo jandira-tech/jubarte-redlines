@@ -7427,6 +7427,27 @@ fn inline_picture_follows_its_paragraph_alignment() {
 }
 
 #[test]
+fn inline_pictures_in_one_paragraph_sit_side_by_side() {
+    // fixtures_500 0034561f: three inline pictures in one centred
+    // paragraph share a line in Word; stacking them pushed the rest of the
+    // cover onto a second page.
+    let pic = r#"<w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    let body =
+        format!(r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr>{pic}{pic}{pic}</w:p><w:sectPr/>"#);
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("three inline pictures");
+    let mut boxes = pdf_image_boxes(&pdf);
+    boxes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    assert_eq!(boxes.len(), 3, "three pictures; boxes={boxes:?}");
+    let same_row = boxes.iter().all(|b| (b.1 - boxes[0].1).abs() < 0.05);
+    // 216pt of pictures centred in 72..540: 198, 270, 342.
+    let xs: Vec<f32> = boxes.iter().map(|b| b.0).collect();
+    assert!(
+        same_row && (xs[0] - 198.0).abs() < 0.1 && (xs[2] - 342.0).abs() < 0.1,
+        "the pictures share one centred line; boxes={boxes:?}"
+    );
+}
+
+#[test]
 fn paragraph_anchor_offsets_from_its_own_paragraph() {
     // fixtures_500 0004c94c: positionV relativeFrom="paragraph" -6.1pt on
     // the second paragraph; Word measures from that paragraph's top, not

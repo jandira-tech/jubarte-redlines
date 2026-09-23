@@ -13308,6 +13308,47 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// Lay a paragraph's inline pictures out in lines: left to right on a
+    /// shared baseline, aligned by the paragraph's jc, wrapping when the
+    /// next one would pass the measure.
+    fn emit_inline_pictures(&mut self, imgs: &[&LaidImage], style: &ParaStyle) {
+        if imgs.is_empty() {
+            return;
+        }
+        self.page_has_body = true;
+        let left = self.page.margin_l + style.indent_left;
+        let room = self.content_width() - style.indent_left - style.indent_right;
+        let mut row: Vec<(&LaidImage, f32, f32)> = Vec::new();
+        let flush = |lay: &mut Self, row: &mut Vec<(&LaidImage, f32, f32)>| {
+            if row.is_empty() {
+                return;
+            }
+            let w: f32 = row.iter().map(|r| r.1).sum();
+            let h = row.iter().map(|r| r.2).fold(0.0_f32, f32::max);
+            lay.ensure(h);
+            lay.y -= h;
+            let spare = (room - w).max(0.0);
+            let mut x = match style.align {
+                Align::Center => left + spare * 0.5,
+                Align::Right => left + spare,
+                Align::Left | Align::Justify => left,
+            };
+            for (img, dw, dh) in row.drain(..) {
+                lay.push_image(img, x, lay.y, dw, dh);
+                x += dw;
+            }
+        };
+        for img in imgs {
+            let (dw, dh) = self.image_wh(img);
+            let used: f32 = row.iter().map(|r| r.1).sum();
+            if !row.is_empty() && used + dw > room + 0.5 {
+                flush(self, &mut row);
+            }
+            row.push((img, dw, dh));
+        }
+        flush(self, &mut row);
+    }
+
     /// Paint `img` for a paragraph styled `style`: an inline picture sits
     /// at the paragraph's indent and follows its jc (0016811c's centred
     /// coat of arms).
@@ -16534,7 +16575,17 @@ fn layout(
                     lay.at_page_top = false;
                     lay.suppress_space_before = false;
                 }
-                for img in images {
+                // Inline pictures share lines like text (0034561f's three
+                // cover pictures sit side by side); floats place themselves.
+                let inline: Vec<&LaidImage> = images
+                    .iter()
+                    .filter(|img| matches!(img.slot, ImageSlot::Flow))
+                    .collect();
+                lay.emit_inline_pictures(&inline, &style);
+                for img in images
+                    .iter()
+                    .filter(|img| !matches!(img.slot, ImageSlot::Flow))
+                {
                     lay.emit_image_in(img, &style);
                 }
                 for box_ in boxes {
