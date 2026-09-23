@@ -5,6 +5,7 @@
 //! PDF 1.4 writer: embedded TTF (Identity-H), stroked rules, JPEG/RGB images.
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::io::Write;
 
 use flate2::Compression;
@@ -277,7 +278,12 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
             continue;
         }
         let file_id = objs.len() + 1;
-        objs.push(font_file_obj(face.bytes(), options.compress));
+        let used_gids = face_used_glyphs(face, *face_id, pages);
+        let program = subset_keep_gids(face.bytes(), &used_gids);
+        objs.push(font_file_obj(
+            program.as_deref().unwrap_or(face.bytes()),
+            options.compress,
+        ));
         let desc_id = objs.len() + 1;
         objs.push(font_descriptor_obj(face, file_id));
         if want_simple {
@@ -741,6 +747,181 @@ impl FaceObjIds {
     }
 }
 
+/// Glyph ids a face paints: the shaped ids (Identity-H) and, for the
+/// WinAnsi path, the ids the reader finds through the face's own cmap.
+fn face_used_glyphs(face: &super::font::Face, id: FaceRef, pages: &[Page]) -> BTreeSet<u16> {
+    let parsed = ttf_parser::Face::parse(face.bytes(), 0).ok();
+    let mut used = BTreeSet::from([0u16]);
+    for page in pages {
+        for op in &page.ops {
+            if let Op::Text {
+                face, glyphs, text, ..
+            }
+            | Op::Watermark {
+                face, glyphs, text, ..
+            } = op
+                && *face == id
+            {
+                used.extend(glyphs.iter().copied());
+                if let Some(parsed) = &parsed {
+                    used.extend(
+                        text.chars()
+                            .filter_map(|c| parsed.glyph_index(c))
+                            .map(|g| g.0),
+                    );
+                }
+            }
+        }
+    }
+    used
+}
+
+/// Tables a PDF reader needs from an embedded TrueType program.
+const SUBSET_TABLES: &[&[u8; 4]] = &[
+    b"OS/2", b"cmap", b"cvt ", b"fpgm", b"glyf", b"head", b"hhea", b"hmtx", b"loca", b"maxp",
+    b"name", b"post", b"prep",
+];
+
+/// A TrueType program that keeps every glyph id but only the outlines of
+/// `used` (plus their composite components): unused glyphs become empty.
+/// Ids never move, so `/W` and the Identity CIDToGIDMap stay valid, and
+/// bitmap/layout tables a reader ignores are dropped. Faces were embedded
+/// whole: a one-line document was 1.3 MB, a CJK one 10 MB. `None` (embed
+/// whole) for a face without `glyf` (CFF) or one that does not parse.
+fn subset_keep_gids(ttf: &[u8], used: &BTreeSet<u16>) -> Option<Vec<u8>> {
+    let u16_at = |b: &[u8], at: usize| -> Option<u16> {
+        b.get(at..at + 2).map(|x| u16::from_be_bytes([x[0], x[1]]))
+    };
+    let u32_at = |b: &[u8], at: usize| -> Option<u32> {
+        b.get(at..at + 4)
+            .map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]))
+    };
+    let num_tables = usize::from(u16_at(ttf, 4)?);
+    let mut tables: Vec<([u8; 4], &[u8])> = Vec::with_capacity(num_tables);
+    for t in 0..num_tables {
+        let rec = 12 + 16 * t;
+        let tag: [u8; 4] = ttf.get(rec..rec + 4)?.try_into().ok()?;
+        let offset = usize::try_from(u32_at(ttf, rec + 8)?).ok()?;
+        let length = usize::try_from(u32_at(ttf, rec + 12)?).ok()?;
+        tables.push((tag, ttf.get(offset..offset + length)?));
+    }
+    let table = |tag: &[u8; 4]| tables.iter().find(|(t, _)| t == tag).map(|(_, d)| *d);
+    let head = table(b"head")?;
+    let glyf = table(b"glyf")?;
+    let loca = table(b"loca")?;
+    let num_glyphs = usize::from(u16_at(table(b"maxp")?, 4)?);
+    let long = u16_at(head, 50)? != 0;
+    let offset_of = |g: usize| -> Option<usize> {
+        if long {
+            usize::try_from(u32_at(loca, 4 * g)?).ok()
+        } else {
+            Some(usize::from(u16_at(loca, 2 * g)?) * 2)
+        }
+    };
+    let glyph = |g: usize| -> Option<&[u8]> { glyf.get(offset_of(g)?..offset_of(g + 1)?) };
+    // Close over composite components.
+    let mut keep: BTreeSet<usize> = BTreeSet::new();
+    let mut stack: Vec<usize> = used.iter().map(|g| usize::from(*g)).collect();
+    while let Some(g) = stack.pop() {
+        if g >= num_glyphs || !keep.insert(g) {
+            continue;
+        }
+        let data = glyph(g)?;
+        if data.len() < 10 || i16::from_be_bytes([data[0], data[1]]) >= 0 {
+            continue;
+        }
+        let mut at = 10;
+        loop {
+            let flags = u16_at(data, at)?;
+            stack.push(usize::from(u16_at(data, at + 2)?));
+            at += 4 + if flags & 0x0001 != 0 { 4 } else { 2 };
+            at += if flags & 0x0008 != 0 {
+                2
+            } else if flags & 0x0040 != 0 {
+                4
+            } else if flags & 0x0080 != 0 {
+                8
+            } else {
+                0
+            };
+            if flags & 0x0020 == 0 {
+                break;
+            }
+        }
+    }
+    let mut new_glyf: Vec<u8> = Vec::new();
+    let mut new_loca: Vec<u8> = Vec::with_capacity(4 * (num_glyphs + 1));
+    for g in 0..num_glyphs {
+        new_loca.extend_from_slice(&u32::try_from(new_glyf.len()).ok()?.to_be_bytes());
+        if keep.contains(&g) {
+            new_glyf.extend_from_slice(glyph(g)?);
+            while !new_glyf.len().is_multiple_of(4) {
+                new_glyf.push(0);
+            }
+        }
+    }
+    new_loca.extend_from_slice(&u32::try_from(new_glyf.len()).ok()?.to_be_bytes());
+    let mut new_head = head.to_vec();
+    new_head.get_mut(8..12)?.copy_from_slice(&[0; 4]);
+    new_head
+        .get_mut(50..52)?
+        .copy_from_slice(&1u16.to_be_bytes());
+    let mut out_tables: Vec<([u8; 4], Cow<'_, [u8]>)> = Vec::new();
+    for (tag, data) in &tables {
+        if !SUBSET_TABLES.contains(&tag) {
+            continue;
+        }
+        let data: Cow<'_, [u8]> = match tag {
+            b"glyf" => Cow::Owned(std::mem::take(&mut new_glyf)),
+            b"loca" => Cow::Owned(std::mem::take(&mut new_loca)),
+            b"head" => Cow::Owned(std::mem::take(&mut new_head)),
+            _ => Cow::Borrowed(*data),
+        };
+        out_tables.push((*tag, data));
+    }
+    out_tables.sort_by_key(|a| a.0);
+    Some(write_sfnt(u32_at(ttf, 0)?, &out_tables))
+}
+
+/// An sfnt from `tables` (sorted by tag), with checksums and 4-byte padding.
+fn write_sfnt(version: u32, tables: &[([u8; 4], Cow<'_, [u8]>)]) -> Vec<u8> {
+    let checksum = |data: &[u8]| -> u32 {
+        data.chunks(4).fold(0u32, |sum, c| {
+            let mut w = [0u8; 4];
+            w[..c.len()].copy_from_slice(c);
+            sum.wrapping_add(u32::from_be_bytes(w))
+        })
+    };
+    let n = u16::try_from(tables.len()).unwrap_or(u16::MAX);
+    let mut pow = 1u16;
+    let mut log = 0u16;
+    while pow * 2 <= n {
+        pow *= 2;
+        log += 1;
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(&version.to_be_bytes());
+    out.extend_from_slice(&n.to_be_bytes());
+    out.extend_from_slice(&(pow * 16).to_be_bytes());
+    out.extend_from_slice(&log.to_be_bytes());
+    out.extend_from_slice(&(n * 16 - pow * 16).to_be_bytes());
+    let mut offset = 12 + 16 * tables.len();
+    let mut body: Vec<u8> = Vec::new();
+    for (tag, data) in tables {
+        out.extend_from_slice(tag);
+        out.extend_from_slice(&checksum(data).to_be_bytes());
+        out.extend_from_slice(&u32::try_from(offset).unwrap_or(0).to_be_bytes());
+        out.extend_from_slice(&u32::try_from(data.len()).unwrap_or(0).to_be_bytes());
+        body.extend_from_slice(data);
+        while !body.len().is_multiple_of(4) {
+            body.push(0);
+        }
+        offset = 12 + 16 * tables.len() + body.len();
+    }
+    out.extend_from_slice(&body);
+    out
+}
+
 fn font_file_obj(ttf: &[u8], compress: bool) -> Vec<u8> {
     // `/Length1` stays the *uncompressed* face length (PDF 32000-1 9.9), so a
     // reader knows how many bytes to expect after inflating.
@@ -1105,6 +1286,45 @@ fn finalize_pdf(objects: &[Vec<u8>]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::uniquify;
+
+    /// Faces were embedded whole (a one-line PDF was 1.3 MB). The subset
+    /// keeps every glyph id, the outlines of the used ones and the
+    /// components of a used composite, and empties the rest.
+    #[test]
+    fn subset_keeps_ids_and_used_outlines_only() {
+        let bytes = super::FaceId::CarlitoRegular.bytes();
+        let full = ttf_parser::Face::parse(bytes, 0).expect("Carlito");
+        let a = full.glyph_index('A').expect("A").0;
+        let b = full.glyph_index('B').expect("B").0;
+        // "É" is a composite of E and an accent in Carlito: E's outline
+        // must survive although E itself is unused.
+        let e_acute = full.glyph_index('É').expect("Eacute").0;
+        let e = full.glyph_index('E').expect("E").0;
+        let used = std::collections::BTreeSet::from([0u16, a, e_acute]);
+        let program = super::subset_keep_gids(bytes, &used).expect("glyf face subsets");
+        assert!(
+            program.len() < bytes.len() / 3,
+            "{} vs {}",
+            program.len(),
+            bytes.len()
+        );
+        let sub = ttf_parser::Face::parse(&program, 0).expect("subset parses");
+        assert_eq!(
+            sub.number_of_glyphs(),
+            full.number_of_glyphs(),
+            "ids never move"
+        );
+        assert_eq!(sub.glyph_index('A').map(|g| g.0), Some(a), "cmap kept");
+        let bbox = |f: &ttf_parser::Face<'_>, g: u16| f.glyph_bounding_box(ttf_parser::GlyphId(g));
+        assert_eq!(bbox(&sub, a), bbox(&full, a), "used outline kept");
+        assert!(bbox(&sub, b).is_none(), "unused outline emptied");
+        assert_eq!(bbox(&sub, e_acute), bbox(&full, e_acute));
+        assert_eq!(
+            bbox(&sub, e),
+            bbox(&full, e),
+            "a composite keeps its components"
+        );
+    }
 
     /// CodeRabbit PR#4: two override faces whose PostScript names differ only
     /// in punctuation both sanitize to `Foo-Bar`, so the page resource
