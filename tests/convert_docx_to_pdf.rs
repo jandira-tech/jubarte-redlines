@@ -3307,11 +3307,11 @@ fn numbering_suff_nothing_omits_gutter_space() {
 }
 
 #[test]
-fn en_dash_bullet_stays_concatenated_after_mini_endash() {
+fn en_dash_bullet_hangs_its_body_at_the_indent() {
     // file_146 ListBullet lvlText is U+2013 (–), hanging=320 / left=640.
-    // Word p5: dash at 88, body at 104. Hanging U+2013 (mini 205–208)
-    // lifted no-redline +0.044/+0.233 but dropped redline mean
-    // 54.5872→54.5825. Keep the concatenated body at ~96.
+    // Word p5: dash at 88, body at 104 — the dash hangs like any bullet
+    // (fixtures_500 019f3137 "●"). The concatenated ~96 was a score lock
+    // (mini endash).
     let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
           <w:abstractNum w:abstractNumId=\"0\">\
@@ -3335,8 +3335,8 @@ fn en_dash_bullet_stays_concatenated_after_mini_endash() {
         .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
         .unwrap();
     assert!(
-        (90.0..100.0).contains(&ex),
-        "mini endash hanging was redline ITT-neg; keep concatenated E at ~96; ex={ex} ey={ey} es={es:?}"
+        (ex - 104.0).abs() < 0.5,
+        "the body starts at the 32pt indent like Word; ex={ex} ey={ey} es={es:?}"
     );
 }
 
@@ -7567,6 +7567,52 @@ fn blank_continuous_section_break_paragraph_takes_no_line() {
     assert!(
         plain - with > 10.0,
         "the section-break paragraph adds no line; with={with} plain={plain}"
+    );
+}
+
+#[test]
+fn list_marker_takes_the_paragraph_mark_run_properties() {
+    // fixtures_500 019f3137: 10pt Verdana bullets whose mark rPr is sz=20
+    // under an 11pt document default. Word sizes the bullet from the mark
+    // (10pt), so list lines step like plain 10pt lines; an 11pt bullet
+    // made every item 2pt taller.
+    let numbering = r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
+    let para = |num: bool| {
+        let np = if num {
+            r#"<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>"#
+        } else {
+            ""
+        };
+        format!(
+            r#"<w:p><w:pPr>{np}<w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:rPr><w:sz w:val="20"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Verdana" w:hAnsi="Verdana"/><w:sz w:val="20"/></w:rPr><w:t>Item</w:t></w:r></w:p>"#
+        )
+    };
+    let pitch = |num: bool| {
+        let body = format!("{}{}<w:sectPr/>", para(num), para(num));
+        let ys =
+            text_baselines(&docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("list"));
+        ys[0] - ys[ys.len() - 1]
+    };
+    let (list, plain) = (pitch(true), pitch(false));
+    assert!(
+        (list - plain).abs() < 0.05,
+        "bulleted 10pt lines step like plain ones; list={list} plain={plain}"
+    );
+}
+
+#[test]
+fn black_circle_bullet_hangs_its_text_at_the_indent() {
+    // fixtures_500 019f3137: lvlText "●" with left=1004 hanging=360. Word
+    // puts the bullet at 104.2 and the text at the 122.2 indent; the text
+    // followed the bullet at 113.
+    let numbering = r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="●"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="1004" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
+    let body = r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Item</w:t></w:r></w:p><w:sectPr/>"#;
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("circle bullet");
+    let mut xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!(
+        xs.iter().any(|x| (x - 122.2).abs() < 0.1),
+        "the item text starts at the 50.2pt indent; xs={xs:?}"
     );
 }
 

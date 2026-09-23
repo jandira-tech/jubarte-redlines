@@ -5656,7 +5656,16 @@ fn paragraph_block(
         },
     );
     if !marker.is_empty() {
+        // Word styles the number from the paragraph mark's run (pPr/rPr),
+        // then the level's rPr (019f3137: sz=20 marks under an 11pt
+        // default keep 10pt bullets and 10pt lines).
         let mut marker_style = rstyle.clone();
+        if let Some(rpr) = dom
+            .element(para, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        {
+            apply_rpr(dom, rpr, &mut marker_style, &sheet.theme);
+        }
         if let Some(lvl) = numbering.level(&num_id, ilvl) {
             if !lvl.family.is_empty() {
                 marker_style.family = lvl.family.clone();
@@ -16001,11 +16010,12 @@ fn is_list_marker_text(text: &str) -> bool {
     if t.is_empty() || t.chars().count() > 8 {
         return false;
     }
-    if matches!(t, "•" | "·" | "-" | "o" | "\u{F0B7}") {
-        // file_146 ListBullet lvlText is U+2013 (–). Hanging it (mini
-        // 205–208) lifted no-redline +0.044/+0.233 but dropped redline
-        // mean 54.5872→54.5825. Do not add U+2013 / U+2014 / U+25CF /
-        // U+25CB; ASCII '-' already hangs.
+    // Any one-symbol bullet hangs like Word's: •, ●, ○, –, ■, ➢ …
+    // (019f3137's "●" text sat on the bullet instead of the indent).
+    let mut chars = t.chars();
+    if let (Some(c), None) = (chars.next(), chars.next())
+        && (c == 'o' || !c.is_alphanumeric())
+    {
         return true;
     }
     if t.chars().any(|c| (c as u32) >= 0xF000) {
