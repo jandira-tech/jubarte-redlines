@@ -5222,7 +5222,8 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
         .map(|r| fonts.resolve(&r.style.family, r.style.bold, r.style.italic))
         .unwrap_or_else(|| FaceId::CarlitoRegular.into());
     let line_box = para_line_box(fonts.get(face_id), size, &para.style);
-    let lines = wrap_runs(fonts, &para.runs, wrap_w, wrap_w, false);
+    let (first_w, rest_w) = cell_para_measure(&para.style, wrap_w);
+    let lines = wrap_runs(fonts, &para.runs, first_w, rest_w, false);
     let lines_h: f32 = lines
         .iter()
         .map(|line| line_box + ul_line_extra(line, size, space_for_ul))
@@ -6787,7 +6788,7 @@ fn table_block(
                 pad_r,
                 pad_t,
                 pad_b,
-                nowrap: cell_nowrap(dom, cell),
+                nowrap: cell_nowrap(dom, cell) && !fixed_width_cell(dom, table, cell),
                 borders,
             });
         }
@@ -7298,6 +7299,22 @@ fn cell_nowrap(dom: &Dom, cell: NodeId) -> bool {
     };
     // Direct child only — do not steal nested-table noWrap.
     direct_named(dom, pr, "noWrap").is_some_and(|n| !val_is_false(dom, Some(n)))
+}
+
+/// A cell whose width is fixed — a dxa `tcW` or a fixed-layout table —
+/// wraps inside it even under `w:noWrap` (00aaa7af: Word wraps every
+/// noWrap cell of its dxa-width table).
+fn fixed_width_cell(dom: &Dom, table: NodeId, cell: NodeId) -> bool {
+    table_layout_fixed(dom, table)
+        || matches!(cell_pref_width(dom, cell), PrefWidth::Dxa(w) if w > 0.0)
+}
+
+/// A cell paragraph's (first line, other lines) wrap widths inside the
+/// cell's text width: its w:ind left/right narrow or (negative, 00bbcc14)
+/// widen it; the signed first-line indent moves the first line only.
+fn cell_para_measure(style: &ParaStyle, wrap_w: f32) -> (f32, f32) {
+    let rest = (wrap_w - style.indent_left - style.indent_right).max(8.0);
+    ((rest - style.indent_first).max(8.0), rest)
 }
 
 fn cell_wrap_width(cell: &TableCell, avail: f32) -> f32 {
@@ -12906,6 +12923,8 @@ impl<'a> Layout<'a> {
                     let inset = if page_sized { 0.0 } else { self.page.margin_r };
                     self.page.width - inset - dw
                 }
+                // Centred even when wider than its frame: Word overhangs
+                // both sides (00aaa7af 801pt table in a 714pt measure).
                 Align::Center => {
                     let origin = if page_sized { 0.0 } else { self.page.margin_l };
                     let avail = if page_sized {
@@ -12913,7 +12932,7 @@ impl<'a> Layout<'a> {
                     } else {
                         self.content_width()
                     };
-                    origin + ((avail - dw) * 0.5).max(0.0)
+                    origin + (avail - dw) * 0.5
                 }
             },
         };
@@ -14688,8 +14707,15 @@ impl<'a> Layout<'a> {
             let saved_mr = self.page.margin_r;
             let saved_top = self.at_page_top;
             self.nested_depth = 1;
-            self.page.margin_l = fx;
-            self.page.margin_r = (self.page.width - fx - used).max(0.0);
+            // A centred/right float's border box sits at fx itself: undo
+            // the nested pass's mode<15 pull and tblInd (00aaa7af).
+            let edge_fix = if matches!(align, Align::Center | Align::Right) {
+                pull - ind
+            } else {
+                0.0
+            };
+            self.page.margin_l = fx + edge_fix;
+            self.page.margin_r = (self.page.width - fx - edge_fix - used).max(0.0);
             self.y = top;
             self.at_page_top = false;
             self.emit_table(cols, rows, style, borders, geom);
@@ -14794,7 +14820,8 @@ impl<'a> Layout<'a> {
                             })
                             .unwrap_or_else(|| FaceId::CarlitoRegular.into());
                         let line_box = para_line_box(self.fonts.get(face_id), size, &para.style);
-                        let lines = wrap_runs(self.fonts, &para.runs, wrap_w, wrap_w, false);
+                        let (first_w, rest_w) = cell_para_measure(&para.style, wrap_w);
+                        let lines = wrap_runs(self.fonts, &para.runs, first_w, rest_w, false);
                         nlines += lines.len().max(1);
                         para_lines.push((size, line_box, face_id, lines));
                     }
@@ -14872,11 +14899,19 @@ impl<'a> Layout<'a> {
                         } else {
                             lines
                         };
-                        for line in lines {
+                        for (li, line) in lines.into_iter().enumerate() {
                             let ty = y_line - ascent;
                             if ty < bottom {
                                 break;
                             }
+                            // The paragraph's own w:ind (signed firstLine /
+                            // hanging on its first line), as in the body.
+                            let ind_l = para.style.indent_left
+                                + if li == 0 {
+                                    para.style.indent_first
+                                } else {
+                                    0.0
+                                };
                             if let Some((color, width)) = line.iter().find_map(|r| r.rule) {
                                 let inner_w = (w - pad_l - pad_r).max(1.0);
                                 self.current().ops.push(Op::FillRect {
@@ -14933,15 +14968,17 @@ impl<'a> Layout<'a> {
                                     self.fonts.get(fid).width_pt(text, run.style.paint_size())
                                 })
                                 .sum();
-                            let inner = (w - pad_l - pad_r).max(0.0);
+                            let inner =
+                                (w - pad_l - pad_r - ind_l - para.style.indent_right).max(0.0);
                             // Each paragraph keeps its own jc (0005052e).
                             let extra = match para.style.align {
                                 Align::Center => ((inner - line_w) / 2.0).max(0.0),
                                 Align::Right => (inner - line_w).max(0.0),
                                 Align::Left | Align::Justify => 0.0,
                             };
-                            let mut tx = x + pad_l + extra;
-                            self.clip_right = Some(x + w);
+                            let mut tx = x + pad_l + ind_l + extra;
+                            // A negative right indent runs past the cell edge.
+                            self.clip_right = Some(x + w + (-para.style.indent_right).max(0.0));
                             for run in &line {
                                 if run.text.is_empty() {
                                     continue;

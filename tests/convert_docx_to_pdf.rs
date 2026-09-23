@@ -7422,6 +7422,81 @@ fn paragraph_anchor_offsets_from_its_own_paragraph() {
 }
 
 #[test]
+fn nowrap_cell_with_a_fixed_width_still_wraps() {
+    // fixtures_500 00aaa7af: every cell is noWrap with a dxa tcW; Word
+    // wraps "source author and year" inside the fixed width anyway.
+    let body = r#"<w:tbl><w:tblPr><w:tblW w:w="1200" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1200"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1200" w:type="dxa"/><w:noWrap/></w:tcPr><w:p><w:r><w:t>source author and year</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("nowrap fixed");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("year"),
+        "the 60pt cell wraps its text instead of clipping it; text={text:?}"
+    );
+}
+
+#[test]
+fn centred_float_table_wider_than_the_column_overhangs_both_sides() {
+    // fixtures_500 00aaa7af: tblpXSpec=center, 801pt table in a 714pt
+    // measure; Word centres it (left edge 13.3pt), it is not pinned to
+    // the margin. Letter 72..540 with a 550pt table: left edge 31.
+    let body = r#"<w:tbl><w:tblPr><w:tblpPr w:horzAnchor="margin" w:tblpXSpec="center" w:tblpY="1"/><w:tblW w:w="11000" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblBorders><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="11000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="11000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("centred float");
+    let rules = pdf_vertical_rule_xs(&pdf);
+    assert!(
+        rules.iter().any(|x| (x - 31.0).abs() < 0.5)
+            && rules.iter().any(|x| (x - 581.0).abs() < 0.5),
+        "the 550pt table spans 31..581; rules={rules:?}"
+    );
+}
+
+fn indent_cell_table(width: u32, ppr: &str, text: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="{width}" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="{width}"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/></w:tcPr><w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+    )
+}
+
+#[test]
+fn cell_paragraph_indent_shifts_its_text() {
+    // Word indents a cell paragraph by its own w:ind like any paragraph.
+    let first_x = |ppr: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(
+            &indent_cell_table(4000, ppr, "Indented"),
+            "",
+        ))
+        .expect("cell indent");
+        pdf_tf_xs(&pdf, "11.04 Tf")
+            .into_iter()
+            .fold(f32::INFINITY, f32::min)
+    };
+    let flush = first_x("");
+    let indented = first_x(r#"<w:ind w:left="720"/>"#);
+    assert!(
+        ((indented - flush) - 36.0).abs() < 0.05,
+        "ind left=720 moves the text 36pt; flush={flush} indented={indented}"
+    );
+}
+
+#[test]
+fn cell_negative_right_indent_widens_the_measure() {
+    // fixtures_500 00bbcc14: w:ind right=-424 lets "Lower bound" run past
+    // the cell's inner edge on one line instead of wrapping.
+    let lines = |ppr: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(
+            &indent_cell_table(1300, ppr, "Lower bound"),
+            "",
+        ))
+        .expect("cell negative indent");
+        text_baselines(&pdf).len()
+    };
+    assert!(lines("") >= 2, "without the indent the 54pt cell wraps");
+    assert_eq!(
+        lines(r#"<w:ind w:left="-360" w:right="-424" w:firstLine="360"/>"#),
+        1,
+        "the negative indents give the line room"
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables
