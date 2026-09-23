@@ -325,10 +325,10 @@ impl RunStyle {
         raised + self.offset
     }
 
-    /// Word kerns only at `size ≥ val/2`. Gate `val ≥ 28` so body
-    /// docDefaults/Normal `kern=2` stays hmtx (ungated GPOS ITT-neg).
+    /// Word kerns at `size ≥ val/2` (ECMA-376 17.3.2.19). Body
+    /// docDefaults `kern=2` kerns too: 00b540dd's "Tr" and " T" pairs.
     fn kerns_at(&self, size: f32) -> bool {
-        self.kern_half >= 28 && size * 2.0 + 0.01 >= f32::from(self.kern_half)
+        self.kern_half > 0 && size * 2.0 + 0.01 >= f32::from(self.kern_half)
     }
 }
 
@@ -2633,8 +2633,7 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
         && let Ok(half) = val.parse::<u16>()
     {
         // ECMA 17.3.2.19: smallest size (half-points) that gets
-        // automatic kerning. Title val=28 at 28pt; do not treat
-        // val=2 as always-on (ungated GPOS ITT-neg).
+        // automatic kerning (val=2 kerns everything from 1pt up).
         style.kern_half = half;
     }
     if style.highlight.is_none()
@@ -5748,18 +5747,20 @@ fn paragraph_block(
                 marker_style.italic = true;
             }
             // Numbering lvl pPr/ind overrides the paragraph style (ListParagraph
-            // start=720 vs Strict01 ilvl start=18pt/36pt). Direct pPr/ind wins.
+            // start=720 vs Strict01 ilvl start=18pt/36pt). Direct pPr/ind wins
+            // attribute by attribute: a direct `left` alone keeps the level's
+            // hanging (00194caa's "1." hangs from left=426).
             let direct_ind = dom
                 .element(para, &W::p_pr())
-                .and_then(|ppr| first_named(dom, ppr, "ind"))
-                .is_some();
-            if !direct_ind {
-                if lvl.left > 0.0 {
-                    pstyle.indent_left = lvl.left;
-                }
-                if lvl.hanging > 0.0 {
-                    pstyle.indent_first = -lvl.hanging;
-                }
+                .and_then(|ppr| first_named(dom, ppr, "ind"));
+            let direct_has = |names: &[&str]| {
+                direct_ind.is_some_and(|ind| names.iter().any(|n| attr_any(dom, ind, n).is_some()))
+            };
+            if lvl.left > 0.0 && !direct_has(&["left", "start"]) {
+                pstyle.indent_left = lvl.left;
+            }
+            if lvl.hanging > 0.0 && !direct_has(&["hanging", "firstLine"]) {
+                pstyle.indent_first = -lvl.hanging;
             }
             pstyle.list_jc_right = lvl.jc_right;
             merge_tab_stops(&mut pstyle.tab_stops, &lvl.tab_stops);
@@ -8212,10 +8213,11 @@ fn collapse_ws(text: &str) -> String {
     // Squeeze XML pretty-print / ordinary runs. Keep hard `\n` from `w:br`.
     let mut out = String::new();
     let mut space = false;
+    // A tab is not a collapsible space: a `<w:tab/>` run stays "\t".
     let leading = text
         .chars()
         .next()
-        .is_some_and(|c| c.is_whitespace() && c != '\n');
+        .is_some_and(|c| c.is_whitespace() && c != '\n' && c != '\t');
     for ch in text.chars() {
         if ch == '\n' {
             if space && !out.is_empty() && !out.ends_with(' ') && !out.ends_with('\n') {
@@ -12533,12 +12535,19 @@ impl<'a> Layout<'a> {
         &self,
         body: &[TextRun],
         style: &ParaStyle,
+        indent: f32,
         has_marker: bool,
         width: f32,
         list: bool,
     ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
+        let tabs = |first_start: f32| WrapTabs {
+            stops: &self.tab_stops,
+            default_tab: self.page.default_tab,
+            first_start,
+            start: indent,
+        };
         if has_marker {
-            return wrap_runs_marked(self.fonts, body, width, width, list);
+            return wrap_runs_tabbed(self.fonts, body, width, width, list, Some(&tabs(indent)));
         }
         let hanging = -style.indent_first;
         if hanging > 0.0
@@ -12549,7 +12558,8 @@ impl<'a> Layout<'a> {
                 .map(|r| self.run_width_pt(r, r.text.trim_end_matches('\t')))
                 .sum();
             if head_w < hanging {
-                let (mut lines, mut ends) = wrap_runs_marked(self.fonts, &desc, width, width, list);
+                let (mut lines, mut ends) =
+                    wrap_runs_tabbed(self.fonts, &desc, width, width, list, Some(&tabs(indent)));
                 if lines.is_empty() {
                     lines.push(Vec::new());
                     ends.push(false);
@@ -12561,7 +12571,8 @@ impl<'a> Layout<'a> {
             }
         }
         let first_w = (width - style.indent_first).max(40.0);
-        wrap_runs_marked(self.fonts, body, first_w, width, list)
+        let first_tabs = tabs(indent + style.indent_first);
+        wrap_runs_tabbed(self.fonts, body, first_w, width, list, Some(&first_tabs))
     }
 
     fn wrap_para_runs(
@@ -12581,7 +12592,7 @@ impl<'a> Layout<'a> {
             .rev()
             .find(|t| t.align == TabAlign::Right);
         let Some(stop) = right else {
-            return self.wrap_hanging_or_first(body, style, has_marker, width, list);
+            return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
         };
         let Some((prefix, suffix)) = peel_trailing_tab(body) else {
             return wrap_runs_marked(self.fonts, body, width, width, list);
@@ -12644,7 +12655,7 @@ impl<'a> Layout<'a> {
             // at x=367–522). rest_w also subtracts w:right=720 so 9.02
             // wrapped an extra line and dropped 11.01 off p3.
             let remain = (stop.pos - indent - last_w).max(8.0);
-            let extra = wrap_runs_segment(self.fonts, &suffix, remain, rest_w, false);
+            let extra = wrap_runs_segment(self.fonts, &suffix, remain, rest_w, false, None);
             if let Some(last) = lines.last_mut()
                 && let Some(first) = extra.first()
             {
@@ -16440,6 +16451,26 @@ fn wrap_runs_marked(
     width: f32,
     list: bool,
 ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
+    wrap_runs_tabbed(fonts, runs, first_width, width, list, None)
+}
+
+/// Where a paragraph's lines start relative to the tab origin (the flow
+/// left edge), so a tab can take its real jump while wrapping.
+struct WrapTabs<'a> {
+    stops: &'a [TabStop],
+    default_tab: f32,
+    first_start: f32,
+    start: f32,
+}
+
+fn wrap_runs_tabbed(
+    fonts: &Fonts,
+    runs: &[TextRun],
+    first_width: f32,
+    width: f32,
+    list: bool,
+    tabs: Option<&WrapTabs<'_>>,
+) -> (Vec<Vec<TextRun>>, Vec<bool>) {
     let mut segments: Vec<Vec<TextRun>> = vec![Vec::new()];
     for run in runs {
         let mut parts = run.text.split('\n');
@@ -16469,7 +16500,13 @@ fn wrap_runs_marked(
     let mut ends_br = Vec::new();
     for (i, seg) in segments.iter().enumerate() {
         let fw = if i == 0 { first_width } else { width };
-        let wrapped = wrap_runs_segment(fonts, seg, fw, width, list && i == 0);
+        let seg_tabs = tabs.map(|t| WrapTabs {
+            stops: t.stops,
+            default_tab: t.default_tab,
+            first_start: if i == 0 { t.first_start } else { t.start },
+            start: t.start,
+        });
+        let wrapped = wrap_runs_segment(fonts, seg, fw, width, list && i == 0, seg_tabs.as_ref());
         let more = i + 1 < segments.len();
         let n = wrapped.len();
         for (j, line) in wrapped.into_iter().enumerate() {
@@ -16490,6 +16527,7 @@ fn wrap_runs_segment(
     first_width: f32,
     width: f32,
     list: bool,
+    tabs: Option<&WrapTabs<'_>>,
 ) -> Vec<Vec<TextRun>> {
     let mut lines: Vec<Vec<TextRun>> = vec![Vec::new()];
     let mut x = 0.0;
@@ -16549,7 +16587,30 @@ fn wrap_runs_segment(
         }
     }
     for (unit, is_space) in units {
-        let w: f32 = unit.iter().map(|(_, _, w)| w).sum();
+        let mut w: f32 = unit.iter().map(|(_, _, w)| w).sum();
+        // A tab jumps to the next stop from where it stands (00996ee5's
+        // leading tab took 35pt of the first line in Word).
+        if let Some(t) = tabs
+            && is_space
+            && unit.iter().any(|(_, tok, _)| tok.contains('\t'))
+        {
+            let start = if line_i == 0 { t.first_start } else { t.start };
+            let mut pos = start + x;
+            for (run, tok, _) in &unit {
+                for ch in tok.chars() {
+                    if ch == '\t' {
+                        pos = next_tab_x(pos, 0.0, t.stops, t.default_tab);
+                    } else {
+                        let fid =
+                            fonts.resolve(&run.style.family, run.style.bold, run.style.italic);
+                        let size = run.style.layout_size();
+                        pos += fonts.get(fid).width_pt(ch.encode_utf8(&mut [0; 4]), size)
+                            * run.style.hscale();
+                    }
+                }
+            }
+            w = pos - start - x;
+        }
         let limit = if line_i == 0 { first_width } else { width };
         // Unbreakable tokens wider than the cell overflow (Test 7).
         // Character-break was ITT-wrong: file_196 13→15pp and
@@ -27772,6 +27833,15 @@ mod comments_spacing_tests {
             return runs.first().map(|r| r.style.family.clone());
         }
         None
+    }
+
+    #[test]
+    fn collapse_ws_keeps_a_tab_run_free_of_a_phantom_space() {
+        // fixtures_500 00b540dd: each `<w:tab/>` run became " \t"; the
+        // extra space pushed the tab past a stop, a whole 36pt further.
+        assert_eq!(super::collapse_ws("\t"), "\t");
+        assert_eq!(super::collapse_ws("\tWord"), "\tWord");
+        assert_eq!(super::collapse_ws(" Word"), " Word");
     }
 
     #[test]

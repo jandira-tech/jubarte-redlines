@@ -585,6 +585,37 @@ fn numbered_list_revision_keeps_single_counter_after_mini_310() {
 }
 
 #[test]
+fn direct_ind_left_keeps_the_numbering_level_hanging() {
+    // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
+    // paragraph overrides only the left edge; Word keeps the level's
+    // hanging, so "1." hangs and the text starts at the indent. We dropped
+    // the whole level indent and the tab threw the text 35pt right.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+           <w:ind w:left=\"1440\"/></w:pPr><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("ind merge");
+    // 72pt margin + 1440tw left = 144pt; the marker hangs 18pt left of it.
+    let xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    let marker_x = xs.iter().copied().fold(f32::MAX, f32::min);
+    assert!(
+        (marker_x - 126.0).abs() < 1.0,
+        "the marker hangs at the level's 360tw; xs={xs:?}"
+    );
+    assert!(
+        xs.iter().any(|x| (x - 144.0).abs() < 1.0),
+        "the text starts at the direct left indent; xs={xs:?}"
+    );
+}
+
+#[test]
 fn numbering_start_override_restarts_the_second_instance() {
     // xml_parts_plan numbering leftovers: w:lvlOverride/w:startOverride
     // on a second w:num sharing the abstract. Without it, CharlieOV
@@ -7770,6 +7801,49 @@ fn one_and_a_half_line_keeps_its_text_on_the_page_when_only_leading_overflows() 
         pdf_page_count(&pdf),
         1,
         "the 1.5-spaced tail line's text fits above the floor"
+    );
+}
+
+#[test]
+fn leading_tab_takes_its_width_from_the_line_measure() {
+    // fixtures_500 00996ee5: a paragraph opening with <w:tab/> wrapped as if
+    // the tab were zero wide, so its first line ran 26pt past the right
+    // margin and the paragraph lost a line against Word.
+    let words = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et";
+    let lines = |lead: &str| {
+        let body = format!(
+            r#"<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>{lead}<w:t>{words}</w:t></w:r></w:p><w:sectPr/>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("tab lead");
+        text_baselines(&pdf).len()
+    };
+    assert_eq!(lines(""), 1, "the words alone fit one 468pt line (451pt)");
+    assert_eq!(
+        lines("<w:tab/>"),
+        2,
+        "a 36pt leading tab pushes the last word onto a second line"
+    );
+}
+
+#[test]
+fn kern_two_kerns_body_text_like_word() {
+    // fixtures_500 00b540dd: docDefaults `w:kern w:val="2"` (kern at 1pt
+    // and up). Word kerns "Tr"/" T" there; unkerned "Airport" ended at
+    // 216.3pt, past the 216pt tab stop Word's 215.0 still reached.
+    let z_x = |kern: &str| {
+        let body = format!(
+            r#"<w:p><w:r><w:rPr>{kern}</w:rPr><w:t>AVAVAVAVAVAVAVAV</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>Z</w:t></w:r></w:p><w:sectPr/>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("kern");
+        pdf_tf_xs(&pdf, "11.04 Tf")
+            .into_iter()
+            .fold(f32::MIN, f32::max)
+    };
+    let plain = z_x("");
+    let kerned = z_x(r#"<w:kern w:val="2"/>"#);
+    assert!(
+        kerned < plain - 2.0,
+        "kern=2 tightens AV pairs at 11pt; plain={plain} kerned={kerned}"
     );
 }
 
