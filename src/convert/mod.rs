@@ -465,7 +465,8 @@ struct PageSetup {
     ln_restart: u8,
     /// `w:docGrid/@w:linePitch` (pt) when type is lines/linesAndChars. 0 = off.
     grid_pitch: f32,
-    /// `w:docGrid/@w:charSpace` (pt) when type is snapToChars/linesAndChars.
+    /// `w:docGrid/@w:charSpace` in points (the attribute is 4096ths of a
+    /// point) when type is snapToChars/linesAndChars.
     grid_char: f32,
 }
 
@@ -3049,12 +3050,19 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
                 .unwrap_or(0.0);
         }
         if matches!(ty, "snapToChars" | "linesAndChars") {
+            // 4096ths of a point (ECMA-376 17.6.5), not twips: 0016d88a's
+            // -4301 is Word's 10.5 → 9.45pt CJK pitch, not -215pt a glyph.
             page.grid_char = attr_any(dom, grid, "charSpace")
-                .and_then(parse_len)
-                .unwrap_or(0.0);
+                .and_then(|v| v.parse::<f32>().ok())
+                .map_or(0.0, |v| v / 4096.0);
         }
     }
     page
+}
+
+/// Single-byte-width characters: ASCII and the half-width forms block.
+fn is_half_width(c: char) -> bool {
+    c.is_ascii() || ('\u{FF61}'..='\u{FFDC}').contains(&c)
 }
 
 fn snap_doc_grid(h: f32, pitch: f32) -> f32 {
@@ -12809,7 +12817,10 @@ impl<'a> Layout<'a> {
                 } else {
                     1.0
                 };
-                let mut a = *adv * sp + self.page.grid_char;
+                // A half-width character takes half the grid adjustment
+                // (0016d88a's spaces are 4.72pt beside 9.45pt CJK glyphs).
+                let half = paired && is_half_width(chars[i]);
+                let mut a = *adv * sp + self.page.grid_char * if half { 0.5 } else { 1.0 };
                 if self.balance_sbcs_dbcs
                     && paired
                     && chars[i].is_ascii()

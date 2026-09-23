@@ -17094,9 +17094,11 @@ fn do_not_expand_shift_return_skips_justify_on_soft_break() {
 
 #[test]
 fn sectpr_doc_grid_chars_adds_char_space() {
-    // xml leftover: sectPr w:docGrid type=snapToChars charSpace (ECMA-376 17.6.5).
-    // charSpace 200 twips = 10pt extra per glyph. A then B must sit
-    // farther apart than the natural ~7pt advance.
+    // sectPr w:docGrid charSpace is in 4096ths of a point (ECMA-376
+    // 17.6.5): fixtures_500 0016d88a's -4301 makes Word's 10.5pt CJK
+    // glyphs 9.45pt apart and half-width spaces 4.72. We read it as twips
+    // (-215pt a glyph) and the whole body vanished off the page.
+    // 40960 = +10pt a full-width glyph, +5pt for the half-width "A".
     let body = "<w:p>\
            <w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr>\
            <w:r><w:t>AB</w:t></w:r>\
@@ -17104,7 +17106,7 @@ fn sectpr_doc_grid_chars_adds_char_space() {
          <w:sectPr>\
            <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
-           <w:docGrid w:type=\"snapToChars\" w:charSpace=\"200\"/>\
+           <w:docGrid w:type=\"snapToChars\" w:charSpace=\"40960\"/>\
          </w:sectPr>";
     let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("convert docGrid chars");
     let hay = String::from_utf8_lossy(&pdf);
@@ -17117,8 +17119,8 @@ fn sectpr_doc_grid_chars_adds_char_space() {
         .map(|(x, _)| *x)
         .expect("marker B");
     assert!(
-        bx - ax > 14.0,
-        "snapToChars charSpace=200 must add ~10pt per glyph; A={ax} B={bx} dx={}",
+        (10.5..12.5).contains(&(bx - ax)),
+        "charSpace=40960 adds 5pt to the half-width A (~6.4pt); A={ax} B={bx} dx={}",
         bx - ax
     );
 }
