@@ -23,7 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::namespaces::{A, M, MC, R, W, W14, WNE, WP};
 use crate::opc::PartFs;
-use crate::xmllinq::{Dom, NodeId, XName};
+use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use font::{Face, FaceId, FaceRef, Fonts};
 
@@ -905,9 +905,9 @@ struct TableGeom {
     mar_l: f32,
     /// First-row `tcW` preferred widths (spans shared by the grid).
     pref: Vec<PrefWidth>,
-    /// Painted table-level horizontal rule widths `[top, insideH]`; Word
-    /// stacks a row's rule on top of its height.
-    rules: [f32; 2],
+    /// Painted table-level horizontal rule widths `[top, insideH,
+    /// bottom]`; Word stacks each into the row it bounds.
+    rules: [f32; 3],
     /// `w:tblLayout w:type=fixed`.
     fixed: bool,
     /// `w:tblpPr` floating table (xml 3.3 ckpt 5).
@@ -2208,6 +2208,24 @@ fn parse_tbl_borders(dom: &Dom, parent: NodeId) -> Option<TblBorders> {
     // Present `w:tblBorders` is a real override, including all-none
     // (file_22 / sd_2517). Returning None here used to inherit TableGrid.
     Some(out)
+}
+
+/// Cell edges from a row's `tblPrEx/tblBorders`: outer edges on the
+/// table's rim, insideH/insideV between cells.
+fn row_exception_cell_borders(
+    b: TblBorders,
+    first_row: bool,
+    last_row: bool,
+    first_col: bool,
+    last_col: bool,
+) -> CellBorders {
+    let edge = |on: bool| on.then_some((b.color, b.width));
+    CellBorders {
+        top: edge(if first_row { b.top } else { b.inside_h }),
+        bottom: edge(if last_row { b.bottom } else { b.inside_h }),
+        left: edge(if first_col { b.left } else { b.inside_v }),
+        right: edge(if last_col { b.right } else { b.inside_v }),
+    }
 }
 
 fn parse_tc_borders(dom: &Dom, cell: NodeId) -> Option<CellBorders> {
@@ -5373,17 +5391,34 @@ fn table_row_height_pt(
         .iter()
         .map(|cell| cell_content_height(fonts, cell, col_w, space_for_ul))
         .fold(0.0_f32, f32::max);
-    // The rule above the row: a cell restating its borders owns its top
-    // edge; otherwise the table's top (first row) or insideH applies.
+    content.max(spec) + row_top_rule(row, geom, ri) + row_bottom_rule(row, geom, ri)
+}
+
+/// The table's bottom rule, which Word keeps inside the last row
+/// (0005052e header rule 90.5-91.0 with the next line below it).
+fn row_bottom_rule(row: &[TableCell], geom: &TableGeom, ri: usize) -> f32 {
+    if ri + 1 < geom.row_min.len() {
+        return 0.0;
+    }
+    row.iter()
+        .map(|cell| {
+            cell.borders
+                .map_or(geom.rules[2], |cb| cb.bottom.map_or(0.0, |(_, w)| w))
+        })
+        .fold(0.0_f32, f32::max)
+}
+
+/// The rule above a row, which Word stacks into its pitch: a cell
+/// restating its borders owns its top edge; otherwise the table's top
+/// (first row) or insideH applies.
+fn row_top_rule(row: &[TableCell], geom: &TableGeom, ri: usize) -> f32 {
     let table_rule = geom.rules[usize::from(ri > 0)];
-    let rule = row
-        .iter()
+    row.iter()
         .map(|cell| {
             cell.borders
                 .map_or(table_rule, |cb| cb.top.map_or(0.0, |(_, w)| w))
         })
-        .fold(0.0_f32, f32::max);
-    content.max(spec) + rule
+        .fold(0.0_f32, f32::max)
 }
 
 /// One line box of a paragraph as `emit_runs` lays it out: `para_line_box`
@@ -6606,7 +6641,16 @@ fn table_block(
     // Direct `w:tr` only — descendants() would flatten nested tables into this one.
     // Repeating-section w:sdt rows (Strict01 100/200/300) are Word-faithful
     // but mini 454 ITT-neg: file_100/115/185/196 13→14pp (−23 ITT).
-    for row in dom.elements(table, Some(&W::tr())) {
+    let all_rows = dom.elements(table, Some(&W::tr()));
+    let row_count = all_rows.len();
+    for (ri, row) in all_rows.into_iter().enumerate() {
+        let [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b] =
+            row_cell_mar(dom, row, [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b]);
+        // A row's tblPrEx/tblBorders replaces the table borders for its
+        // cells (0005052e header row 2: sz=4 over the table's sz=18/12).
+        let row_borders =
+            direct_named(dom, row, "tblPrEx").and_then(|ex| parse_tbl_borders(dom, ex));
+        let mut grid_at = 0usize;
         let mut cells = Vec::new();
         let mut row_has_cell_del = false;
         for cell in dom.elements(row, Some(&W::tc())) {
@@ -6714,6 +6758,19 @@ fn table_block(
                 last.blank_bookmarks.append(&mut blank_bookmarks);
             }
             let (colspan, vmerge) = cell_span(dom, cell);
+            let borders = parse_tc_borders(dom, cell).or_else(|| {
+                row_borders.map(|b| {
+                    let last_col = grid_at + colspan.max(1) >= cols.len();
+                    row_exception_cell_borders(
+                        b,
+                        ri == 0,
+                        ri + 1 == row_count,
+                        grid_at == 0,
+                        last_col,
+                    )
+                })
+            });
+            grid_at += colspan.max(1);
             let (pad_l, pad_r) = cell_pad_h(dom, cell, tbl_pad_l, tbl_pad_r);
             let (pad_t, pad_b) = cell_pad_tb(dom, cell, tbl_pad_t, tbl_pad_b);
             cells.push(RawCell {
@@ -6731,7 +6788,7 @@ fn table_block(
                 pad_t,
                 pad_b,
                 nowrap: cell_nowrap(dom, cell),
-                borders: parse_tc_borders(dom, cell),
+                borders,
             });
         }
         // Word All Markup appends a “Deleted Cells” column when the
@@ -6806,9 +6863,9 @@ fn table_block(
     let unstyled = tdef.is_none();
     let rules = direct_borders
         .or_else(|| tdef.as_ref().and_then(|t| t.borders))
-        .map_or([0.0; 2], |b| {
+        .map_or([0.0; 3], |b| {
             let on = |edge: bool| if edge { b.width } else { 0.0 };
-            [on(b.top), on(b.inside_h)]
+            [on(b.top), on(b.inside_h), on(b.bottom)]
         });
     Block::Table {
         cols,
@@ -6998,6 +7055,29 @@ fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
         edge("left").unwrap_or(default),
         edge("right").unwrap_or(default),
     )
+}
+
+/// A row's `w:tblPrEx/w:tblCellMar` replaces the table margins it lists
+/// for that row's cells (0005052e header row 2: 70 twips over a 0 table).
+fn row_cell_mar(dom: &Dom, row: NodeId, table: [f32; 4]) -> [f32; 4] {
+    let Some(mar) =
+        direct_named(dom, row, "tblPrEx").and_then(|ex| direct_named(dom, ex, "tblCellMar"))
+    else {
+        return table;
+    };
+    let edge = |name: &str, fallback: f32| {
+        direct_named(dom, mar, name)
+            .and_then(|n| attr_any(dom, n, "w"))
+            .and_then(parse_len)
+            .unwrap_or(fallback)
+    };
+    let [l, r, t, b] = table;
+    [
+        edge("left", l),
+        edge("right", r),
+        edge("top", t),
+        edge("bottom", b),
+    ]
 }
 
 fn cell_pad_h(dom: &Dom, cell: NodeId, table_l: f32, table_r: f32) -> (f32, f32) {
@@ -7926,6 +8006,13 @@ fn para_keeps_xml_space(dom: &Dom, para: NodeId) -> bool {
 /// "birds. We" in Word (fixtures_500 014babb2 painted "birds.We").
 fn is_run_text(dom: &Dom, node: NodeId, text: &str) -> bool {
     !text.trim().is_empty() || dom.parent(node).is_some_and(|p| dom.name_is(p, &W::t()))
+}
+
+/// A run whose `w:t` carries `xml:space="preserve"`.
+fn run_preserves_space(dom: &Dom, run: NodeId) -> bool {
+    dom.descendants(run, Some(&W::t()))
+        .into_iter()
+        .any(|t| dom.attribute(t, &XNamespace::xml().name("space")) == Some("preserve"))
 }
 
 fn visible_text(dom: &Dom, node: NodeId, mark: RevMark, preserve_ws: bool) -> String {
@@ -10636,7 +10723,9 @@ fn collect_hf_rec(
             }
             return;
         }
-        let text = visible_text(dom, node, RevMark::None, false);
+        // Word paints every space of an xml:space="preserve" run (0005052e
+        // footer indents "BGYS.F-06" with six); plain runs still squeeze.
+        let text = visible_text(dom, node, RevMark::None, run_preserves_space(dom, node));
         if !text.is_empty() {
             runs.push(TextRun::new(text, style));
             if scan.result {
@@ -12983,9 +13072,9 @@ impl<'a> Layout<'a> {
         let (dw, dh) = self.image_wh(img);
         let x = self.page.margin_l + dx;
         let y = if in_header {
-            self.page.height - self.page.header.max(10.0) - dh
+            self.page.height - self.page.header.max(0.0) - dh
         } else {
-            self.page.footer.max(10.0)
+            self.page.footer.max(0.0)
         };
         match &img.kind {
             ImageKind::Jpeg {
@@ -13038,9 +13127,9 @@ impl<'a> Layout<'a> {
     fn emit_chrome_table(&mut self, table: &ChromeTable, in_header: bool) {
         let x = self.page.margin_l;
         let y = if in_header {
-            self.page.height - self.page.header.max(10.0) - table.h
+            self.page.height - self.page.header.max(0.0) - table.h
         } else {
-            self.page.footer.max(10.0)
+            self.page.footer.max(0.0)
         };
         let x2 = x + table.w;
         let y2 = y + table.h;
@@ -14626,6 +14715,7 @@ impl<'a> Layout<'a> {
             for ri in paint {
                 let row = work[ri].0.cells();
                 let rh = work[ri].1;
+                let rule = row_top_rule(row, geom, ri);
                 self.at_page_top = false;
                 self.y -= rh;
                 let y_top = self.y + rh;
@@ -14687,7 +14777,8 @@ impl<'a> Layout<'a> {
                         cell.borders,
                         [ri == 0, last_row, cell.col == 0, last_col],
                     );
-                    let mut y_line = y_top - inset;
+                    // Content starts below the row's top rule.
+                    let mut y_line = y_top - rule - inset;
                     if cell.valign_center {
                         let content =
                             cell_content_height(self.fonts, cell, &col_w, self.space_for_ul)
@@ -14775,10 +14866,22 @@ impl<'a> Layout<'a> {
                                     color: fill,
                                 });
                             }
+                            // Aligned on its ink: the space a wrapped line
+                            // broke after does not count (0005052e "Sıra ").
+                            let ink_end = line
+                                .iter()
+                                .rposition(|run| !run.text.trim_end().is_empty())
+                                .unwrap_or(0);
                             let line_w: f32 = line
                                 .iter()
-                                .map(|run| {
-                                    if run.text.is_empty() {
+                                .enumerate()
+                                .map(|(ri, run)| {
+                                    let text = match ri.cmp(&ink_end) {
+                                        std::cmp::Ordering::Less => run.text.as_str(),
+                                        std::cmp::Ordering::Equal => run.text.trim_end(),
+                                        std::cmp::Ordering::Greater => "",
+                                    };
+                                    if text.is_empty() {
                                         return 0.0;
                                     }
                                     let fid = self.fonts.resolve(
@@ -14786,13 +14889,12 @@ impl<'a> Layout<'a> {
                                         run.style.bold,
                                         run.style.italic,
                                     );
-                                    self.fonts
-                                        .get(fid)
-                                        .width_pt(&run.text, run.style.paint_size())
+                                    self.fonts.get(fid).width_pt(text, run.style.paint_size())
                                 })
                                 .sum();
                             let inner = (w - pad_l - pad_r).max(0.0);
-                            let extra = match cell.align {
+                            // Each paragraph keeps its own jc (0005052e).
+                            let extra = match para.style.align {
                                 Align::Center => ((inner - line_w) / 2.0).max(0.0),
                                 Align::Right => (inner - line_w).max(0.0),
                                 Align::Left | Align::Justify => 0.0,
@@ -14930,19 +15032,23 @@ impl<'a> Layout<'a> {
             // Falling through when every edge is sz=0 (file_34 Feature
             // tblBorders sz=4 auto) was Word-shaped (0.2pt lattice) but
             // mini 536 ITT-neg: file_34 −0.82 / uipriority −1.05, 0 gains.
+            // Horizontal rules hang below their edge, except the last
+            // row's bottom rule, which its box already holds.
             let segs = [
-                (cb.top, true, x, y2, x2 - x, 0.0),
-                (cb.bottom, true, x, y, x2 - x, 0.0),
-                (cb.left, false, x, y, 0.0, y2 - y),
-                (cb.right, false, x2, y, 0.0, y2 - y),
+                (cb.top, true, true, x, y2, x2 - x, 0.0),
+                (cb.bottom, true, !last_row, x, y, x2 - x, 0.0),
+                (cb.left, false, false, x, y, 0.0, y2 - y),
+                (cb.right, false, false, x2, y, 0.0, y2 - y),
             ];
-            for (edge, horiz, mut fx, mut fy, mut fw, mut fh) in segs {
+            for (edge, horiz, hang, mut fx, mut fy, mut fw, mut fh) in segs {
                 let Some((color, thick)) = edge else {
                     continue;
                 };
                 let half = thick * 0.5;
                 if horiz {
-                    fy -= half;
+                    if hang {
+                        fy -= thick;
+                    }
                     fh = thick;
                 } else {
                     fx -= half;
@@ -14981,9 +15087,18 @@ impl<'a> Layout<'a> {
             None => 0.5,
         };
         let half = thick * 0.5;
+        // A horizontal rule hangs below its edge, inside the row whose
+        // pitch it adds to (0005052e 288dpi scan).
         let segs = [
-            (top, x, y2 - half, x2 - x, thick),
-            (bottom, x, y - half, x2 - x, thick),
+            (top, x, y2 - thick, x2 - x, thick),
+            // The last row holds the table's bottom rule inside its box.
+            (
+                bottom,
+                x,
+                if last_row { y } else { y - thick },
+                x2 - x,
+                thick,
+            ),
             (left, x - half, y, thick, y2 - y),
             (right, x2 - half, y, thick, y2 - y),
         ];
@@ -15100,7 +15215,7 @@ impl<'a> Layout<'a> {
         let had_body = self.page_has_body;
         if !self.header_tables.is_empty() {
             let tables = self.header_tables.clone();
-            let mut top = self.page.height - self.page.header.max(10.0);
+            let mut top = self.page.height - self.page.header.max(0.0);
             for table in &tables {
                 match table.block.as_deref() {
                     Some(block) if table.before_text => {
@@ -15115,7 +15230,7 @@ impl<'a> Layout<'a> {
             } else {
                 chrome_line_pt(self.fonts, &self.header)
             };
-            let mut top = self.page.height - self.page.header.max(10.0) - head_before - text_h;
+            let mut top = self.page.height - self.page.header.max(0.0) - head_before - text_h;
             for table in tables.iter().filter(|t| !t.before_text) {
                 if let Some(block) = table.block.as_deref() {
                     top -= self.emit_nested_table(block, self.page.margin_l, top, avail);
@@ -15139,7 +15254,7 @@ impl<'a> Layout<'a> {
             );
             let ascent = self.fonts.get(fid).ascent_pt(size);
             let (lead, _) = chrome_empty_pads(self.fonts, &header);
-            let mut y = self.page.height - self.page.header.max(10.0) - ascent - lead - head_before;
+            let mut y = self.page.height - self.page.header.max(0.0) - ascent - lead - head_before;
             let header_lines = hf_styled_lines(&header);
             for (i, (line, _)) in header_lines.iter().enumerate() {
                 if i > 0 {
@@ -15174,7 +15289,7 @@ impl<'a> Layout<'a> {
         );
         if !self.footer_tables.is_empty() {
             let tables = self.footer_tables.clone();
-            let mut top = self.page.footer.max(10.0) + foot_after;
+            let mut top = self.page.footer.max(0.0) + foot_after;
             for table in &tables {
                 match table.block.as_deref() {
                     Some(block) if !table.before_text => {
@@ -15190,7 +15305,7 @@ impl<'a> Layout<'a> {
                 chrome_line_pt(self.fonts, &self.footer)
             };
             let before = chrome_tables_h(self.fonts, &tables, avail, self.space_for_ul, Some(true));
-            let mut top = self.page.footer.max(10.0) + foot_after + text_h + before;
+            let mut top = self.page.footer.max(0.0) + foot_after + text_h + before;
             for table in tables.iter().filter(|t| t.before_text) {
                 if let Some(block) = table.block.as_deref() {
                     top -= self.emit_nested_table(block, self.page.margin_l, top, avail);

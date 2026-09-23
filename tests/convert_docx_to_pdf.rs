@@ -7193,6 +7193,150 @@ fn bordered_row_pitch_adds_the_horizontal_rule() {
 }
 
 #[test]
+fn cell_paragraphs_keep_their_own_alignment() {
+    // Word aligns each cell paragraph by its own jc; the first paragraph's
+    // jc is not the cell's (fixtures_500 0005052e header: an empty left
+    // paragraph above a centred title left the title flush left).
+    let body = r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Lefty</w:t></w:r></w:p><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Middy</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("convert per-para jc");
+    let mut xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!(xs.len() >= 2, "both paragraphs paint; xs={xs:?}");
+    assert!(
+        xs[xs.len() - 1] - xs[0] > 60.0,
+        "the centred paragraph sits mid-cell; xs={xs:?}"
+    );
+}
+
+#[test]
+fn row_tblprex_cell_margins_replace_the_table_margins() {
+    // fixtures_500 0005052e header: the table has 0 L/R cell margins and
+    // row 2's tblPrEx sets 70 twips; Word insets that row's text by 3.5pt.
+    let row = |ex: &str, t: &str| {
+        format!(
+            r#"<w:tr>{ex}<w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc></w:tr>"#
+        )
+    };
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/><w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>{}{}</w:tbl><w:p/>"#,
+        row("", "Flush"),
+        row(
+            r#"<w:tblPrEx><w:tblCellMar><w:left w:w="70" w:type="dxa"/><w:right w:w="70" w:type="dxa"/></w:tblCellMar></w:tblPrEx>"#,
+            "Inset"
+        )
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("convert tblPrEx");
+    let mut xs = pdf_tf_xs(&pdf, "11.04 Tf");
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    xs.dedup_by(|a, b| (*a - *b).abs() < 0.05);
+    assert!(
+        xs.len() >= 2 && ((xs[1] - xs[0]) - 3.5).abs() < 0.1,
+        "the tblPrEx row starts 3.5pt right of the flush row; xs={xs:?}"
+    );
+}
+
+#[test]
+fn row_tblprex_borders_replace_the_table_borders() {
+    // fixtures_500 0005052e header row 2: tblPrEx restates sz=4 borders
+    // over the table's sz=18/12; Word paints that row with 0.5pt rules.
+    let edges = |sz: u32| {
+        ["top", "left", "bottom", "right", "insideH", "insideV"]
+            .iter()
+            .map(|e| format!(r#"<w:{e} w:val="single" w:sz="{sz}" w:space="0" w:color="000000"/>"#))
+            .collect::<String>()
+    };
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/><w:tblBorders>{}</w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tblPrEx><w:tblBorders>{}</w:tblBorders></w:tblPrEx><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+        edges(18),
+        edges(4)
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("convert tblPrEx borders");
+    let rects = pdf_fill_rects(&pdf, 0.0, 0.0, 0.0);
+    let thick = rects
+        .iter()
+        .filter(|(w, h)| (w.min(*h) - 2.25).abs() < 0.1)
+        .count();
+    let thin = rects
+        .iter()
+        .filter(|(w, h)| (w.min(*h) - 0.5).abs() < 0.05)
+        .count();
+    assert!(
+        thick == 0 && thin >= 4,
+        "the row's 0.5pt borders replace the table's 2.25pt; rects={rects:?}"
+    );
+}
+
+#[test]
+fn row_top_rule_sits_inside_the_row_above_its_text() {
+    // fixtures_500 0005052e (288dpi scan): Word's 0.5pt row rules cover
+    // [edge-0.5, edge] and the cell text starts below them.
+    let table = |bdr: &str| {
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="3000" w:type="dxa"/>{bdr}</w:tblPr><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>one</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+        )
+    };
+    let ruled = r#"<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders>"#;
+    let with = docx_to_pdf(&minimal_docx_with_settings(&table(ruled), "")).expect("ruled");
+    let without = docx_to_pdf(&minimal_docx_with_settings(&table(""), "")).expect("bare");
+    let first = |pdf: &[u8]| text_baselines(pdf).first().copied().unwrap_or(0.0);
+    assert!(
+        ((first(&without) - first(&with)) - 0.5).abs() < 0.05,
+        "the text starts below the 0.5pt top rule; with={} without={}",
+        first(&with),
+        first(&without)
+    );
+    let pages = pdf_content_streams(&with);
+    let rule = pdf_fill_boxes_in(&pages[0], 0.0, 0.0, 0.0)
+        .into_iter()
+        .find(|(_, _, w, h)| *w > 100.0 && (*h - 0.5).abs() < 0.05);
+    assert!(
+        rule.is_some_and(|(_, y, _, h)| ((y + h) - 720.0).abs() < 0.05),
+        "the top rule hangs from the table top at 720; rule={rule:?}"
+    );
+}
+
+#[test]
+fn table_bottom_rule_adds_to_the_table_height() {
+    // fixtures_500 0005052e header: the last row's 0.5pt bottom rule sits
+    // inside the table (90.5-91.0) and what follows starts below it.
+    let doc = |bdr: &str| {
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="3000" w:type="dxa"/>{bdr}</w:tblPr><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>after</w:t></w:r></w:p>"#
+        )
+    };
+    let ruled = r#"<w:tblBorders><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders>"#;
+    let last = |pdf: &[u8]| text_baselines(pdf).last().copied().unwrap_or(0.0);
+    let with = last(&docx_to_pdf(&minimal_docx_with_settings(&doc(ruled), "")).expect("ruled"));
+    let without = last(&docx_to_pdf(&minimal_docx_with_settings(&doc(""), "")).expect("bare"));
+    assert!(
+        ((without - with) - 0.5).abs() < 0.05,
+        "the bottom rule pushes the next paragraph 0.5pt down; with={with} without={without}"
+    );
+}
+
+#[test]
+fn centred_cell_line_ignores_its_trailing_space() {
+    // Word centres a wrapped cell line on its ink, not on the space it
+    // broke after (fixtures_500 0005052e "Sıra " / "Doküman " sat 1.4pt
+    // left of Word). "Wordy Wordy" wraps into two identical lines.
+    let body = r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Wordy Wordy</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("centred wrap");
+    let pages = pdf_content_streams(&pdf);
+    let mut starts: Vec<(f32, f32)> = Vec::new();
+    for (x, y) in pdf_device_xy(&pages[0], "46 Tf") {
+        match starts.iter_mut().find(|(_, ly)| (*ly - y).abs() < 0.5) {
+            Some(s) => s.0 = s.0.min(x),
+            None => starts.push((x, y)),
+        }
+    }
+    assert!(starts.len() >= 2, "two lines paint; starts={starts:?}");
+    assert!(
+        (starts[0].0 - starts[1].0).abs() < 0.05,
+        "both centred lines start at the same x; starts={starts:?}"
+    );
+}
+
+#[test]
 fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
     // Word centres the whole table in the measure; the mode < 15 pull by
     // the left cell margin only applies to left-aligned tables
@@ -7630,9 +7774,10 @@ fn table_cell_keeps_xml_space_padding() {
 }
 
 #[test]
-fn footer_xml_space_padding_stays_collapsed_after_mini_88() {
-    // Word file_146 footer is `Page       1of       7`. Keeping that
-    // padding (mini 88) dropped every sample/file_146 stem ~0.10 ITT.
+fn footer_xml_space_padding_is_painted_like_word() {
+    // Word file_146 footer is `Page       1of       7`: an xml:space
+    // "preserve" run paints every space (fixtures_500 0005052e footer
+    // "      BGYS.F-06"). Collapsing it was a score lock (mini 88).
     let footer = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
            <w:p><w:r><w:t xml:space=\"preserve\">Page       </w:t></w:r>\
@@ -7653,8 +7798,8 @@ fn footer_xml_space_padding_stays_collapsed_after_mini_88() {
     .expect("convert padded footer");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        !text.contains("Page       "),
-        "HF xml:space padding is ITT-wrong on sample/file_146; tail {}",
+        text.contains("Page       "),
+        "HF xml:space padding paints as Word does; tail {}",
         &text[text.len().saturating_sub(200)..]
     );
 }
@@ -7856,6 +8001,28 @@ fn pdf_cm_tj_xy(hay: &str, lit: &str) -> Vec<(f32, f32)> {
     out
 }
 
+/// `pdf_tj_xy` for every `(…) Tj` literal that starts with `prefix`.
+fn pdf_tj_prefix_xy(hay: &str, prefix: &str) -> Vec<(f32, f32)> {
+    let needle = format!("({prefix}");
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = hay[from..].find(&needle) {
+        let i = from + rel;
+        from = i + needle.len();
+        let Some(close) = hay[i..].find(") Tj") else {
+            break;
+        };
+        if hay[i..i + close].contains('\n') {
+            continue;
+        }
+        let lit = &hay[i + 1..i + close];
+        if let Some(xy) = pdf_tj_xy(&hay[i.saturating_sub(160)..], lit).first() {
+            out.push(*xy);
+        }
+    }
+    out
+}
+
 fn pdf_tj_xy(hay: &str, lit: &str) -> Vec<(f32, f32)> {
     let needle = format!("({lit}) Tj");
     let mut out = Vec::new();
@@ -7898,10 +8065,8 @@ fn official_file_146_footer_numpages_does_not_open_a_hole() {
         .map(|(x, _)| x)
         .max_by(|a, b| a.partial_cmp(b).unwrap())
         .expect("footer NUMPAGES 7");
-    let mut dots = pdf_tj_xy(&hay, "\\267 ");
-    if dots.is_empty() {
-        dots = pdf_tj_xy(&hay, "\\267");
-    }
+    // The middot run keeps its xml:space padding ("·       eigenpal.com").
+    let dots = pdf_tj_prefix_xy(&hay, "\\267");
     let footer_dot = dots
         .into_iter()
         .filter(|(_, y)| *y < 80.0)
@@ -14780,9 +14945,15 @@ fn header_image_docx() -> Vec<u8> {
 /// A one-paragraph body whose default header holds `inner` (header1.xml
 /// with an `rIdImg` 1×1 PNG relationship).
 fn header_part_docx(inner: &str) -> Vec<u8> {
+    header_part_docx_at(inner, 720)
+}
+
+/// `header_part_docx` with the header `header` twips from the page top.
+fn header_part_docx_at(inner: &str, header: u32) -> Vec<u8> {
     // xml leftover: images in headers. The blip lives on header1.xml.rels,
     // not document.xml.rels; collect_hf_runs currently skips w:drawing.
-    let document = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
            xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
          <w:body><w:p><w:r><w:t>HdrImgBodyX</w:t></w:r></w:p>\
@@ -14790,8 +14961,9 @@ fn header_part_docx(inner: &str) -> Vec<u8> {
              <w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
              <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
              <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
-               w:header=\"720\" w:footer=\"720\"/></w:sectPr>\
-         </w:body></w:document>";
+               w:header=\"{header}\" w:footer=\"720\"/></w:sectPr>\
+         </w:body></w:document>"
+    );
     let header = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
@@ -14861,6 +15033,33 @@ fn header_inline_image_paints_in_the_header_band() {
         hay.contains("/Subtype /Image") && hay.contains("/Width 1"),
         "header blip must embed as a 1×1 image XObject; tail {}",
         &hay[hay.len().saturating_sub(320)..]
+    );
+}
+
+#[test]
+fn header_distance_below_ten_points_is_honoured() {
+    // fixtures_500 0005052e: w:header=132 (6.6pt). Word puts the header
+    // there; clamping to 10pt dropped the whole header table 3.4pt.
+    let top = |pdf: &[u8]| text_baselines(pdf).first().copied().unwrap_or(0.0);
+    let inner = "<w:p><w:r><w:t>HdrTop</w:t></w:r></w:p>";
+    let near = top(&docx_to_pdf(&header_part_docx_at(inner, 132)).expect("header 132"));
+    let far = top(&docx_to_pdf(&header_part_docx_at(inner, 720)).expect("header 720"));
+    assert!(
+        ((near - far) - 29.4).abs() < 0.05,
+        "132 vs 720 twips is 29.4pt apart; near={near} far={far}"
+    );
+}
+
+#[test]
+fn header_leading_preserved_spaces_indent_the_text() {
+    // fixtures_500 0005052e footer "      BGYS.F-06 Rev.0": Word paints all
+    // six xml:space="preserve" spaces, so the text starts ~13pt in.
+    let inner = r#"<w:p><w:r><w:t xml:space="preserve">      Hdr</w:t></w:r></w:p>"#;
+    let pdf = docx_to_pdf(&header_part_docx_at(inner, 720)).expect("header spaces");
+    let hay = pdf_content_streams(&pdf).join("\n");
+    assert!(
+        hay.contains("(      Hdr) Tj"),
+        "the six preserved spaces paint; streams lack them"
     );
 }
 
