@@ -5116,8 +5116,13 @@ fn walk_container(
             // when it is the last child of an SDT (`has_later_content` on
             // that container is false while the body continues).
             let sect_here = para_sect_pr(dom, child);
-            let sect_br = sect_here
-                .is_some_and(|s| !is_final_sect(ctx.sects, s) && sect_starts_new_page(dom, s));
+            // The break before a section has *that* section's type
+            // (ECMA-376 17.6.22): 00ac06fe's continuous section 2 follows
+            // an untyped section 1 on the same page.
+            let sect_br = sect_here.is_some_and(|s| {
+                !is_final_sect(ctx.sects, s)
+                    && next_sect_pr(ctx.sects, s).is_none_or(|n| sect_starts_new_page(dom, n))
+            });
             endnotes.observe_para(dom, child);
             let block = paragraph_block(ctx, dom, child, false, numbering);
             let blank = block_is_blank(&block);
@@ -5179,7 +5184,7 @@ fn walk_container(
             walk_container(ctx, dom, content, numbering, blocks, endnotes);
         } else if dom.name_is(child, &W::sect_pr()) && !is_final_sect(ctx.sects, child) {
             endnotes.flush_if_sect_end(ctx, dom, child, numbering, blocks);
-            if sect_starts_new_page(dom, child) {
+            if next_sect_pr(ctx.sects, child).is_none_or(|n| sect_starts_new_page(dom, n)) {
                 let next = next_sect_pr(ctx.sects, child)
                     .map(|s| Box::new(section_chrome(ctx.pkg, ctx.main, dom, s, ctx.sheet)));
                 blocks.push(Block::PageBreak {

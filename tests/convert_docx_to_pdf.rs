@@ -477,11 +477,12 @@ fn adjacent_page_and_section_breaks_coalesce() {
 
 #[test]
 fn continuous_section_does_not_add_a_page() {
+    // The break takes the type of the section it starts (ECMA-376 17.6.22).
     let docx = minimal_docx_body(
         "<w:p><w:r><w:t>Still one page</w:t></w:r></w:p>\
-         <w:p><w:pPr><w:sectPr><w:type w:val=\"continuous\"/></w:sectPr></w:pPr>\
+         <w:p><w:pPr><w:sectPr/></w:pPr>\
          <w:r><w:t>Also first page</w:t></w:r></w:p>\
-         <w:sectPr/>",
+         <w:sectPr><w:type w:val=\"continuous\"/></w:sectPr>",
     );
     let pdf = docx_to_pdf(&docx).expect("convert continuous");
     assert_eq!(
@@ -17170,6 +17171,30 @@ fn doc_grid_centres_the_line_in_its_snapped_box() {
 }
 
 #[test]
+fn a_section_break_takes_the_type_of_the_section_it_starts() {
+    // ECMA-376 17.6.22: w:type describes how *its* section starts, so the
+    // break before a section is the next sectPr's type. fixtures_500
+    // 00ac06fe: section 1 (no type) then a continuous section 2 stays on
+    // page one in Word; we broke the page on section 1's default nextPage.
+    let pages = |first: &str, second: &str| {
+        let body = format!(
+            "<w:p><w:pPr><w:sectPr>{first}<w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr></w:pPr>\
+               <w:r><w:t>One</w:t></w:r></w:p>\
+             <w:p><w:r><w:t>Two</w:t></w:r></w:p>\
+             <w:sectPr>{second}<w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>"
+        );
+        pdf_page_count(&docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("sections"))
+    };
+    let continuous = r#"<w:type w:val="continuous"/>"#;
+    assert_eq!(
+        pages("", continuous),
+        1,
+        "a continuous section 2 does not break"
+    );
+    assert_eq!(pages(continuous, ""), 2, "a nextPage section 2 breaks");
+}
+
+#[test]
 fn sectpr_doc_grid_chars_adds_char_space() {
     // sectPr w:docGrid charSpace is in 4096ths of a point (ECMA-376
     // 17.6.5): fixtures_500 0016d88a's -4301 makes Word's 10.5pt CJK
@@ -18445,11 +18470,11 @@ fn endnote_referenced_from_a_table_cell_is_painted() {
         "docEnd: the cell's endnote paints"
     );
     let sect_end = format!(
-        "{table}<w:p><w:pPr><w:sectPr><w:type w:val=\"continuous\"/>\
+        "{table}<w:p><w:pPr><w:sectPr>\
            <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:endnotePr><w:pos w:val=\"sectEnd\"/></w:endnotePr></w:sectPr></w:pPr></w:p>\
          <w:p><w:r><w:t>Zafter</w:t></w:r></w:p>\
-         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>"
+         <w:sectPr><w:type w:val=\"continuous\"/><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>"
     );
     let pdf = docx_to_pdf(&endnotes_docx(&sect_end, notes)).expect("convert cell endnote sectEnd");
     let (q, z) = (glyph_xy(&pdf, "Q").1, glyph_xy(&pdf, "Z").1);
