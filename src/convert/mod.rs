@@ -15660,7 +15660,64 @@ impl<'a> Layout<'a> {
         }
     }
 
-    fn emit_chrome_image(&mut self, img: &LaidImage, in_header: bool, dx: f32, lift: f32) -> f32 {
+    /// The header's or footer's pictures that are (`behind`) or are not
+    /// behind the text, in order; each still advances the inline run.
+    fn emit_chrome_images(&mut self, in_header: bool, behind: bool) {
+        let held = if in_header {
+            &self.header_images
+        } else {
+            &self.footer_images
+        };
+        if !held.iter().any(|img| img.behind == behind) {
+            return;
+        }
+        let band = if in_header {
+            0.0
+        } else {
+            chrome_band(
+                self.fonts,
+                &self.footer,
+                &self.footer_tables,
+                self.content_width(),
+                self.space_for_ul,
+            ) + chrome_images_h(self.fonts, &self.footer_images)
+        };
+        // Moved out and back (not cloned): the vector owns image bytes and
+        // chrome() runs on every page.
+        let images = std::mem::take(if in_header {
+            &mut self.header_images
+        } else {
+            &mut self.footer_images
+        });
+        let mut dx = self.chrome_images_dx(&images);
+        // A footer picture that opens the part sits above its text.
+        let text_h = if in_header || self.footer.is_empty() {
+            0.0
+        } else {
+            chrome_line_pt(self.fonts, &self.footer, self.content_width())
+        };
+        for img in &images {
+            let lift = if img.chrome_lead { text_h } else { 0.0 };
+            if img.behind == behind {
+                self.emit_chrome_image(img, in_header, dx, lift, band);
+            }
+            dx += self.image_wh(img).0;
+        }
+        if in_header {
+            self.header_images = images;
+        } else {
+            self.footer_images = images;
+        }
+    }
+
+    fn emit_chrome_image(
+        &mut self,
+        img: &LaidImage,
+        in_header: bool,
+        dx: f32,
+        lift: f32,
+        foot_band: f32,
+    ) {
         let (dw, dh) = self.image_wh(img);
         let mut x = self.page.margin_l + dx;
         let mut y = if in_header {
@@ -15683,14 +15740,7 @@ impl<'a> Layout<'a> {
                 // its own, like the footer's text boxes (01838a08's banner:
                 // 23.9pt above it, not on the footer distance). Below text
                 // paragraphs its paragraph's top is not known here.
-                let band = chrome_band(
-                    self.fonts,
-                    &self.footer,
-                    &self.footer_tables,
-                    self.content_width(),
-                    self.space_for_ul,
-                ) + chrome_images_h(self.fonts, &self.footer_images);
-                y = self.page.footer.max(0.0) + band - off - dh;
+                y = self.page.footer.max(0.0) + foot_band - off - dh;
             }
         }
         match &img.kind {
@@ -15738,7 +15788,6 @@ impl<'a> Layout<'a> {
                 color: [0.6, 0.6, 0.6],
             }),
         }
-        dw
     }
 
     fn emit_chrome_table(&mut self, table: &ChromeTable, in_header: bool) {
@@ -18161,6 +18210,10 @@ impl<'a> Layout<'a> {
                 rotate_deg: mark.rotate_deg,
             });
         }
+        // Pictures behind the text go under the parts' text boxes (01838a08's
+        // blue footer banner under its white text box).
+        self.emit_chrome_images(true, true);
+        self.emit_chrome_images(false, true);
         let header_boxes = self.header_boxes.clone();
         let footer_boxes = self.footer_boxes.clone();
         if !header_boxes.is_empty() {
@@ -18178,16 +18231,7 @@ impl<'a> Layout<'a> {
             let top = self.page.footer.max(0.0) + band;
             self.emit_chrome_boxes(&footer_boxes, top);
         }
-        if !self.header_images.is_empty() {
-            // Moved out and back (not cloned): the vector owns image bytes
-            // and chrome() runs on every page.
-            let images = std::mem::take(&mut self.header_images);
-            let mut dx = self.chrome_images_dx(&images);
-            for img in &images {
-                dx += self.emit_chrome_image(img, true, dx, 0.0);
-            }
-            self.header_images = images;
-        }
+        self.emit_chrome_images(true, false);
         let avail = self.content_width();
         let head_before = chrome_tables_h(
             self.fonts,
@@ -18289,21 +18333,7 @@ impl<'a> Layout<'a> {
                 self.hairline_h(x1, y - 3.0, x2, width, color);
             }
         }
-        if !self.footer_images.is_empty() {
-            let images = std::mem::take(&mut self.footer_images);
-            let mut dx = self.chrome_images_dx(&images);
-            // A footer picture that opens the part sits above its text.
-            let text_h = if self.footer.is_empty() {
-                0.0
-            } else {
-                chrome_line_pt(self.fonts, &self.footer, self.content_width())
-            };
-            for img in &images {
-                let lift = if img.chrome_lead { text_h } else { 0.0 };
-                dx += self.emit_chrome_image(img, false, dx, lift);
-            }
-            self.footer_images = images;
-        }
+        self.emit_chrome_images(false, false);
         let foot_after = chrome_tables_h(
             self.fonts,
             &self.footer_tables,

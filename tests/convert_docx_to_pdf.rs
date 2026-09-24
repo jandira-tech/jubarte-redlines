@@ -18979,6 +18979,54 @@ fn a_floating_footer_picture_hangs_from_its_paragraph() {
 }
 
 #[test]
+fn a_behind_text_footer_picture_paints_under_the_footer_text_box() {
+    // fixtures_500 01838a08: the footer's white text box sits on a blue
+    // behindDoc banner. We painted chrome text boxes first and pictures
+    // after, so the banner covered the text on every page.
+    let body = format!(
+        "<w:p><w:r><w:t>body</w:t></w:r></w:p>\
+         <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>{CHROME_SECT}</w:sectPr>"
+    );
+    let anchor = |behind: u8, inner: &str| {
+        format!(
+            "<w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" \
+               simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"{behind}\" locked=\"0\" \
+               layoutInCell=\"1\" allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/>\
+             <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+             <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+             <wp:extent cx=\"1828800\" cy=\"457200\"/><wp:wrapNone/>\
+             <wp:docPr id=\"{behind}\" name=\"Shape {behind}\"/>\
+             <a:graphic>{inner}</a:graphic></wp:anchor></w:drawing></w:r>"
+        )
+    };
+    let pic = "<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+        <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic></a:graphicData>";
+    let text_box = "<a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+        <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+        <wps:cNvSpPr txBox=\"1\"/><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/>\
+        <a:ext cx=\"1828800\" cy=\"457200\"/></a:xfrm><a:prstGeom prst=\"rect\"/></wps:spPr>\
+        <wps:txbx><w:txbxContent><w:p><w:r><w:t>Zq</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+        <wps:bodyPr/></wps:wsp></a:graphicData>";
+    let ftr = format!(
+        "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>{}{}</w:p>",
+        anchor(0, text_box),
+        anchor(1, pic)
+    );
+    let pdf = docx_to_pdf(&chrome_image_docx(
+        &body,
+        &[("rIdF1", "footer", "footer1.xml", ftr)],
+    ))
+    .expect("convert footer banner under a text box");
+    let hay = String::from_utf8_lossy(&pdf);
+    let image = hay.find(" Do").expect("the banner is painted");
+    let text = hay.find("(Z) Tj").expect("the text box's text is painted");
+    assert!(
+        image < text,
+        "the behindDoc banner paints before the text box's text; Do at {image}, text at {text}"
+    );
+}
+
+#[test]
 fn two_header_images_in_one_paragraph_sit_side_by_side() {
     // #127: inline images advance along the line; they must not stack on
     // one origin.
