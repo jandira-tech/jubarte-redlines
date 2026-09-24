@@ -18943,6 +18943,42 @@ fn header_image_paints_inside_the_header_band() {
 }
 
 #[test]
+fn a_floating_footer_picture_hangs_from_its_paragraph() {
+    // fixtures_500 01838a08: a footer banner anchored 23.9pt above its
+    // paragraph (relativeFrom="paragraph") sat on the footer distance
+    // instead, 67pt too high. Word measures the offset from the footer
+    // paragraph's top, as it does for the footer's text boxes. Here the
+    // paragraph top is ~50pt above the page bottom (36pt distance + one
+    // single line), so the 36pt picture 12pt above it ends ~26pt up.
+    let body = format!(
+        "<w:p><w:r><w:t>FtrFloatBody</w:t></w:r></w:p>\
+         <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>{CHROME_SECT}</w:sectPr>"
+    );
+    let ftr = "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:r><w:drawing>\
+        <wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+          relativeHeight=\"1\" behindDoc=\"1\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+        <wp:simplePos x=\"0\" y=\"0\"/>\
+        <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+        <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>-152400</wp:posOffset></wp:positionV>\
+        <wp:extent cx=\"457200\" cy=\"457200\"/><wp:wrapNone/>\
+        <wp:docPr id=\"1\" name=\"Picture 1\"/>\
+        <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+          <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+        </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"
+        .to_string();
+    let pdf = docx_to_pdf(&chrome_image_docx(
+        &body,
+        &[("rIdF1", "footer", "footer1.xml", ftr)],
+    ))
+    .expect("convert floating footer picture");
+    let (_, y) = image_cm_xy(&pdf, "36.00", "36.00");
+    assert!(
+        (20.0..32.0).contains(&y),
+        "the picture's bottom sits ~26pt up, not on the 36pt footer distance; y={y}"
+    );
+}
+
+#[test]
 fn two_header_images_in_one_paragraph_sit_side_by_side() {
     // #127: inline images advance along the line; they must not stack on
     // one origin.

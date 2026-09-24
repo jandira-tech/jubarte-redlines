@@ -15676,6 +15676,21 @@ impl<'a> Layout<'a> {
                 y = self.page.height - top - dh;
             } else if in_header {
                 y = self.page.height - self.page.header.max(0.0) - para_y.unwrap_or(0.0) - dh;
+            } else if let Some(off) = para_y
+                && img.chrome_lead
+            {
+                // From the footer's top when no text paragraph precedes
+                // its own, like the footer's text boxes (01838a08's banner:
+                // 23.9pt above it, not on the footer distance). Below text
+                // paragraphs its paragraph's top is not known here.
+                let band = chrome_band(
+                    self.fonts,
+                    &self.footer,
+                    &self.footer_tables,
+                    self.content_width(),
+                    self.space_for_ul,
+                ) + chrome_images_h(self.fonts, &self.footer_images);
+                y = self.page.footer.max(0.0) + band - off - dh;
             }
         }
         match &img.kind {
