@@ -2847,8 +2847,10 @@ fn multiline_footer_after_spacing_raises_the_block() {
         ya > yb && yb > yc,
         "footer story flows down toward the page edge; ya={ya} yb={yb} yc={yc}"
     );
+    // 36 (w:footer) + descent + the 1.15 line's extra hung under the text
+    // (0033735c) + Normal's closing after: ~50.8, not 19pt higher.
     assert!(
-        yc < 50.0,
+        yc < 52.0,
         "last line stays at w:footer from the page bottom; yc={yc}"
     );
     assert!(
@@ -5442,9 +5444,11 @@ fn unstyled_tblcellmar_80_stays_replaced_after_mini_92() {
     ys.dedup_by(|a, b| (*a - *b).abs() < 0.5);
     assert!(ys.len() >= 2, "need North and South baselines; ys={ys:?}");
     let gap = ys[0] - ys[1];
+    // + docDefaults' 6pt after, which Word keeps in an unstyled table's
+    // cells (fixtures_500 001d945a / 00026ef6).
     assert!(
-        (19.0..24.0).contains(&gap),
-        "80+80 + para_line_box (atLeast-240), not 11+8 chrome; gap={gap} ys={ys:?}"
+        (26.5..29.0).contains(&gap),
+        "80+80 + para_line_box (atLeast-240) + 6 after, not 11+8 chrome; gap={gap} ys={ys:?}"
     );
 }
 
@@ -20941,11 +20945,11 @@ fn table_tr_height_exact_does_not_add_cell_pad() {
 
 #[test]
 fn table_tr_height_at_least_single_line_matches_soffice_row() {
-    // Median lock: meeting_agenda / q1_sales / employee_directory / …
-    // tblW=9360, 3×gridCol=3120, trHeight atLeast 360, empty Normal,
-    // docDefaults after=200 line=276. Soffice row rules are 25.2–26.1pt;
-    // we emit 11*1.15+8=20.65. Raising every single-line pad would spill
-    // sample_document (no trHeight) and comments (44 rows, no trHeight).
+    // meeting_agenda / q1_sales / employee_directory / …: tblW=9360,
+    // 3×gridCol=3120, trHeight atLeast 360, empty Normal, docDefaults
+    // after=200 line=276. Word keeps docDefaults' after in an unstyled
+    // table's cells (fixtures_500 001d945a sits 30pt off without it), so
+    // the content (one 1.15 line + 10) outgrows the 18pt minimum.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
            <w:docDefaults><w:pPrDefault><w:pPr>\
@@ -20992,8 +20996,8 @@ fn table_tr_height_at_least_single_line_matches_soffice_row() {
     let gaps: Vec<f32> = ys.windows(2).map(|w| w[0] - w[1]).collect();
     for gap in &gaps {
         assert!(
-            (17.5..=19.0).contains(gap),
-            "atLeast-360 is 18pt when content (one line box, TableNormal after=0) is shorter; gaps={gaps:?}"
+            (24.0..=25.0).contains(gap),
+            "one 1.15 line + docDefaults' 10pt after outgrows atLeast-360; gaps={gaps:?}"
         );
     }
 }
@@ -21888,9 +21892,12 @@ fn table_cell_wrap_uses_painted_face_not_carlito_count() {
         "cell must stroke top and bottom rules, ys={ys:?}"
     );
     let gap = ys[0] - ys[1];
+    // Word keeps docDefaults' 10pt after in an unstyled table's cells
+    // (fixtures_500 001d945a / 00026ef6): 2 × 14.33 + 10. One Carlito line
+    // would be ~24.8.
     assert!(
-        (27.5..=29.5).contains(&gap),
-        "Courier 30×i must wrap to 2 painted hhea lines (2 × 14.33), not a Carlito 1-line row; gap={gap} ys={ys:?}"
+        (38.0..=40.0).contains(&gap),
+        "Courier 30×i must wrap to 2 painted hhea lines (2 × 14.33) + 10 after, not a Carlito 1-line row; gap={gap} ys={ys:?}"
     );
 }
 

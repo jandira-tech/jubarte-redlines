@@ -7095,9 +7095,15 @@ fn table_block(
     }
     let (tbl_pad_l, tbl_pad_r) = table_pad_h(dom, table);
     let (tbl_pad_t, tbl_pad_b) = table_pad_tb(dom, table);
-    // No tblStyle is TableNormal, which sets no pPr: Normal's spacing
-    // stands (0073da0a's TOC rows 22.8pt apart, 0000c5b9).
-    let latent_table_para = sheet.defaults.para.clone();
+    // No tblStyle is TableNormal, which sets no pPr: Normal's and
+    // docDefaults' spacing stand (0073da0a's TOC rows 22.8pt apart,
+    // 001d945a's docDefaults after=200). With no styles part at all the
+    // synthetic Word-2007 after stays out of cells.
+    let mut latent_table_para = sheet.defaults.para.clone();
+    if sheet.by_id.is_empty() {
+        latent_table_para.after = 0.0;
+        latent_table_para.before = 0.0;
+    }
     let table_para = tdef.as_ref().map(|t| &t.para).unwrap_or(&latent_table_para);
     let mut raw_rows: Vec<Vec<RawCell>> = Vec::new();
     let mut row_min = Vec::new();
