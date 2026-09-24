@@ -1048,6 +1048,52 @@ fn line_height_is_the_tallest_face_including_the_marker() {
 }
 
 #[test]
+fn a_numbered_cell_paragraph_hangs_its_marker_like_the_body() {
+    // fixtures_500 00297360: "1." (lvl sz=20) hangs at left=363/360 in a
+    // cell; the body and its wrapped lines start 18.15pt in. The cell
+    // path glued a 12pt "1. " to the text and wrapped from the cell edge.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:tabs><w:tab w:val=\"num\" w:pos=\"363\"/></w:tabs>\
+                <w:ind w:left=\"363\" w:hanging=\"360\"/></w:pPr>\
+              <w:rPr><w:sz w:val=\"20\"/></w:rPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let words: Vec<String> = (0..60).map(|i| format!("pal{i:02}")).collect();
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid><w:tr><w:tc>\
+           <w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+             <w:r><w:t>Primera {}</w:t></w:r></w:p>\
+         </w:tc></w:tr></w:tbl><w:sectPr/>",
+        words.join(" ")
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("cell list");
+    let (mark_x, _) = pdf_glyph_text_xy(&pdf, "1.").expect("marker paints");
+    let (first_x, _) = pdf_glyph_text_xy(&pdf, "Primera").expect("first line");
+    let wrapped_x = words
+        .iter()
+        .filter_map(|w| pdf_glyph_text_xy(&pdf, w))
+        .map(|(x, _)| x)
+        .fold(f32::MAX, f32::min);
+    assert!(
+        (first_x - mark_x - 18.0).abs() < 0.5,
+        "the body starts at the hanging indent; mark={mark_x} first={first_x}"
+    );
+    assert!(
+        (wrapped_x - first_x).abs() < 0.5,
+        "wrapped lines align with the body; first={first_x} wrapped={wrapped_x}"
+    );
+    assert!(
+        !pdf_tf_xs(&pdf, "10.00 Tf").is_empty() || !pdf_tf_xs(&pdf, "10.08 Tf").is_empty(),
+        "the marker takes the level's 10pt"
+    );
+}
+
+#[test]
 fn auto_spacing_drops_between_items_of_one_list() {
     // fixtures_500 00df97e7: HTML-style bullets (before/afterAutospacing)
     // step one 16.5pt line apart in Word; the 14pt auto space only opens

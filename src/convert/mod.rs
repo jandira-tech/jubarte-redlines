@@ -5531,7 +5531,7 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
         .map(|r| fonts.resolve(&r.style.family, r.style.bold, r.style.italic))
         .unwrap_or_else(|| FaceId::CarlitoRegular.into());
     let line_box = para_line_box(fonts.get(face_id), size, &para.style);
-    let (first_w, rest_w) = cell_para_measure(&para.style, wrap_w);
+    let (first_w, rest_w) = cell_para_widths(fonts, para, wrap_w);
     let lines = wrap_runs(fonts, &para.runs, first_w, rest_w, false);
     let lines_h: f32 = lines
         .iter()
@@ -6011,51 +6011,8 @@ fn paragraph_block(
         },
     );
     if !marker.is_empty() {
-        // Word styles the number from the paragraph mark's run (pPr/rPr),
-        // then the level's rPr (019f3137: sz=20 marks under an 11pt
-        // default keep 10pt bullets and 10pt lines).
-        let mut marker_style = rstyle.clone();
-        if let Some(rpr) = dom
-            .element(para, &W::p_pr())
-            .and_then(|ppr| dom.element(ppr, &W::r_pr()))
-        {
-            apply_rpr(dom, rpr, &mut marker_style, &sheet.theme);
-        }
-        if let Some(lvl) = numbering.level(&num_id, ilvl) {
-            if !lvl.family.is_empty() {
-                marker_style.family = lvl.family.clone();
-            }
-            if let Some(sz) = lvl.size {
-                marker_style.size = sz;
-            }
-            if lvl.underline {
-                marker_style.underline = true;
-            }
-            if lvl.bold {
-                marker_style.bold = true;
-            }
-            if lvl.italic {
-                marker_style.italic = true;
-            }
-            // Numbering lvl pPr/ind overrides the paragraph style (ListParagraph
-            // start=720 vs Strict01 ilvl start=18pt/36pt). Direct pPr/ind wins
-            // attribute by attribute: a direct `left` alone keeps the level's
-            // hanging (00194caa's "1." hangs from left=426).
-            let direct_ind = dom
-                .element(para, &W::p_pr())
-                .and_then(|ppr| first_named(dom, ppr, "ind"));
-            let direct_has = |names: &[&str]| {
-                direct_ind.is_some_and(|ind| names.iter().any(|n| attr_any(dom, ind, n).is_some()))
-            };
-            if lvl.left > 0.0 && !direct_has(&["left", "start"]) {
-                pstyle.indent_left = lvl.left;
-            }
-            if lvl.hanging > 0.0 && !direct_has(&["hanging", "firstLine"]) {
-                pstyle.indent_first = -lvl.hanging;
-            }
-            pstyle.list_jc_right = lvl.jc_right;
-            merge_tab_stops(&mut pstyle.tab_stops, &lvl.tab_stops);
-        }
+        let lvl = numbering.level(&num_id, ilvl);
+        let marker_style = apply_list_level(dom, para, sheet, lvl, &rstyle, &mut pstyle);
         if pic.is_none() {
             let mut mark = TextRun::new(marker, marker_style);
             mark.list_marker = true;
@@ -6877,6 +6834,66 @@ fn num_pr(dom: &Dom, ppr: NodeId) -> (Option<String>, u32) {
     (num_id, ilvl)
 }
 
+/// A numbered paragraph's marker style — its mark's pPr/rPr, then the
+/// level's rPr — with the level's indent and tabs applied to `pstyle`.
+/// Body and cell paragraphs share it (00297360's cell "1." is 10pt and
+/// hangs at the level's 18.15pt like a body item).
+fn apply_list_level(
+    dom: &Dom,
+    para: NodeId,
+    sheet: &StyleSheet,
+    lvl: Option<&NumLevel>,
+    rstyle: &RunStyle,
+    pstyle: &mut ParaStyle,
+) -> RunStyle {
+    // Word styles the number from the paragraph mark's run (pPr/rPr),
+    // then the level's rPr (019f3137: sz=20 marks under an 11pt
+    // default keep 10pt bullets and 10pt lines).
+    let mut marker_style = rstyle.clone();
+    if let Some(rpr) = dom
+        .element(para, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+    {
+        apply_rpr(dom, rpr, &mut marker_style, &sheet.theme);
+    }
+    if let Some(lvl) = lvl {
+        if !lvl.family.is_empty() {
+            marker_style.family = lvl.family.clone();
+        }
+        if let Some(sz) = lvl.size {
+            marker_style.size = sz;
+        }
+        if lvl.underline {
+            marker_style.underline = true;
+        }
+        if lvl.bold {
+            marker_style.bold = true;
+        }
+        if lvl.italic {
+            marker_style.italic = true;
+        }
+        // Numbering lvl pPr/ind overrides the paragraph style (ListParagraph
+        // start=720 vs Strict01 ilvl start=18pt/36pt). Direct pPr/ind wins
+        // attribute by attribute: a direct `left` alone keeps the level's
+        // hanging (00194caa's "1." hangs from left=426).
+        let direct_ind = dom
+            .element(para, &W::p_pr())
+            .and_then(|ppr| first_named(dom, ppr, "ind"));
+        let direct_has = |names: &[&str]| {
+            direct_ind.is_some_and(|ind| names.iter().any(|n| attr_any(dom, ind, n).is_some()))
+        };
+        if lvl.left > 0.0 && !direct_has(&["left", "start"]) {
+            pstyle.indent_left = lvl.left;
+        }
+        if lvl.hanging > 0.0 && !direct_has(&["hanging", "firstLine"]) {
+            pstyle.indent_first = -lvl.hanging;
+        }
+        pstyle.list_jc_right = lvl.jc_right;
+        merge_tab_stops(&mut pstyle.tab_stops, &lvl.tab_stops);
+    }
+    marker_style
+}
+
 fn list_marker(
     dom: &Dom,
     para: NodeId,
@@ -7093,8 +7110,12 @@ fn table_block(
                 if !dom.name_is(child, &W::p()) {
                     continue;
                 }
-                let (pstyle, r) = para_base(dom, child, sheet, Some(table_para));
-                let (mark, _, _) = list_marker(dom, child, sheet, numbering);
+                let (mut pstyle, r) = para_base(dom, child, sheet, Some(table_para));
+                let (mark, num_id, ilvl) = list_marker(dom, child, sheet, numbering);
+                let mark_style = (!mark.is_empty()).then(|| {
+                    let lvl = numbering.level(&num_id, ilvl);
+                    apply_list_level(dom, child, sheet, lvl, &r, &mut pstyle)
+                });
                 let bookmarks = para_bookmark_names(dom, child);
                 let mut runs = collect_runs_in(
                     dom,
@@ -7134,8 +7155,10 @@ fn table_block(
                 if cell_paras.is_empty() {
                     cell_align = pstyle.align;
                 }
-                if !mark.is_empty() {
-                    runs.insert(0, TextRun::new(mark, r.clone()));
+                if let Some(style) = mark_style {
+                    let mut run = TextRun::new(mark, style);
+                    run.list_marker = true;
+                    runs.insert(0, run);
                 }
                 if empty_ink && let Some((color, width)) = cell_rule {
                     let mut rule = TextRun::new(" ", r.clone());
@@ -7756,6 +7779,23 @@ fn fixed_width_cell(dom: &Dom, table: NodeId, cell: NodeId) -> bool {
 fn cell_para_measure(style: &ParaStyle, wrap_w: f32) -> (f32, f32) {
     let rest = (wrap_w - style.indent_left - style.indent_right).max(8.0);
     ((rest - style.indent_first).max(8.0), rest)
+}
+
+/// A cell paragraph's (first, rest) wrap widths. A hanging list marker
+/// tabs to the indent, so the first line's body keeps the full measure
+/// (00297360's "1." in an 18.15pt hang).
+fn cell_para_widths(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> (f32, f32) {
+    let (first, rest) = cell_para_measure(&para.style, wrap_w);
+    match para.runs.first() {
+        Some(mark) if mark.list_marker && para.style.indent_first < 0.0 => {
+            let hang = -para.style.indent_first;
+            let fid = fonts.resolve(&mark.style.family, mark.style.bold, mark.style.italic);
+            let text = mark.text.trim_end();
+            let mark_w = fonts.get(fid).width_pt(text, mark.style.layout_size());
+            ((first - mark_w.max(hang) + mark_w).max(8.0), rest)
+        }
+        _ => (first, rest),
+    }
 }
 
 fn cell_wrap_width(cell: &TableCell, avail: f32) -> f32 {
@@ -16584,7 +16624,7 @@ impl<'a> Layout<'a> {
                             })
                             .unwrap_or_else(|| FaceId::CarlitoRegular.into());
                         let line_box = para_line_box(self.fonts.get(face_id), size, &para.style);
-                        let (first_w, rest_w) = cell_para_measure(&para.style, wrap_w);
+                        let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
                         let lines = wrap_runs(self.fonts, &para.runs, first_w, rest_w, false);
                         nlines += lines.len().max(1);
                         para_lines.push((size, line_box, face_id, lines));
@@ -16750,6 +16790,15 @@ impl<'a> Layout<'a> {
                             self.clip_right = Some(x + w + (-para.style.indent_right).max(0.0));
                             for run in &line {
                                 if run.text.is_empty() {
+                                    continue;
+                                }
+                                // A hanging marker tabs to the indent, not
+                                // to the next default stop.
+                                if run.list_marker && para.style.indent_first < 0.0 {
+                                    let mut mark = run.clone();
+                                    mark.text = run.text.trim_end().to_string();
+                                    tx = self.paint_run(&mark, tx, ty);
+                                    tx = tx.max(x + pad_l + para.style.indent_left + extra);
                                     continue;
                                 }
                                 tx = self.paint_run(run, tx, ty);
