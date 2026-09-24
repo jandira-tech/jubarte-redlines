@@ -2184,6 +2184,50 @@ fn a_centred_text_frame_floats_on_the_next_empty_line() {
 }
 
 #[test]
+fn page_break_before_after_an_overflowing_empty_paragraph_skips_no_page() {
+    // fixtures_500 00a46f85: an empty Calibri 12 paragraph (after 6pt)
+    // whose line fits at the page foot but whose after runs 5pt past it,
+    // then a pageBreakBefore heading. Word keeps the empty line on page one
+    // and opens the heading on page two; the explicit-break "skipped page"
+    // rule left a blank page between them. Top margins sweep the window
+    // where the line fits and its after overflows by more than 5pt.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:pPr><w:spacing w:after=\"120\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+            <w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"24\"/></w:rPr></w:style>\
+        </w:styles>";
+    let fill: String = (0..30)
+        .map(|i| format!("<w:p><w:r><w:t>Fill{i:02}</w:t></w:r></w:p>"))
+        .collect();
+    // At 1718 the empty line itself no longer fits: live Word opens page two
+    // with it and the heading on page three (checked 2026-09-25), so the
+    // sweep stops short of that.
+    for top in (1690..1715).step_by(4) {
+        let body = format!(
+            "{fill}<w:p/><w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>Head</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"{top}\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let pdf =
+            docx_to_pdf(&numbering_docx_with_styles(&body, None, Some(styles))).expect("fill");
+        let pages = pdf_content_streams(&pdf);
+        let head = pages
+            .iter()
+            .position(|p| stream_glyph_text(p).contains("Head"))
+            .expect("Head paints");
+        let blank = pages[..head].iter().any(|p| {
+            !stream_glyph_text(p).contains("Fill") && stream_glyph_text(p).trim().is_empty()
+        });
+        assert!(
+            !blank,
+            "top={top}: no blank page before the heading ({} pages)",
+            pages.len()
+        );
+    }
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

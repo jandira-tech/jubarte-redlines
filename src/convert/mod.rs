@@ -14670,7 +14670,10 @@ impl<'a> Layout<'a> {
         // TextHeading skips the three near-overflows (109). Only
         // rem=-4.29 is the Word 1-4 site in our layout (+1 → 107).
         let leftover_heading = leftover_break_heading(&self.last_style_id) && remaining < -4.0;
-        let skip_blank = next.is_none()
+        // pageBreakBefore (manual=false) never skips: 00a46f85's heading
+        // after an empty paragraph 5pt past the foot opens the next page.
+        let skip_blank = manual
+            && next.is_none()
             && self.page_has_body
             && !self.at_page_top
             && (remaining < -5.0 || leftover_heading);
