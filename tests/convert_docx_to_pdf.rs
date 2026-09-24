@@ -16119,6 +16119,48 @@ fn strike_is_filled_hairline_like_word_quartz() {
 }
 
 #[test]
+fn a_footer_line_stands_on_its_distance_and_its_line_spacing() {
+    // fixtures_500 0033735c: w:footer=170 (8.5pt) and a 1.5-spaced footer
+    // line. Word's baseline is 8.5 + descent + half a line above the page
+    // bottom; we floored the distance at 12pt and hung no extra below.
+    let baseline = |dist: u32, line: u32| {
+        let footer = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+               <w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"{line}\" \
+                 w:lineRule=\"auto\"/></w:pPr><w:r><w:t>FootMark</w:t></w:r></w:p></w:ftr>"
+        );
+        let body = format!(
+            "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+             <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+               <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:footer=\"{dist}\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&hf_docx(
+            &body,
+            &[("rIdF1", "footer", "footer1.xml")],
+            &[("word/footer1.xml", footer)],
+        ))
+        .expect("convert footer");
+        pdf_glyph_text_xy(&pdf, "FootMark")
+            .expect("footer paints")
+            .1
+    };
+    let near = baseline(170, 240);
+    let far = baseline(340, 240);
+    assert!(
+        (far - near - 8.5).abs() < 0.1,
+        "the footer distance moves the line 1:1; near={near} far={far}"
+    );
+    let spaced = baseline(170, 360);
+    assert!(
+        spaced - near > 5.0,
+        "a 1.5 line hangs its extra below the text; near={near} spaced={spaced}"
+    );
+}
+
+#[test]
 fn numpages_glued_to_its_neighbours_still_gets_the_count() {
     // fixtures_500 00309780: a tabbed header "<tab>1 (NUMPAGES)" paints
     // through the tab path glyph by glyph; the patch matched only an op

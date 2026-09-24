@@ -17458,18 +17458,29 @@ impl<'a> Layout<'a> {
                 .filter(|img| !img.chrome_lead && img.chrome_flow)
                 .map(|img| chrome_pic_line(self.fonts, img))
                 .fold(0.0_f32, f32::max);
-            let base = self.page.footer.max(12.0)
-                + self.fonts.get(fid).descent_pt(size)
-                + trail
-                + hf_closing_after(&footer)
-                + foot_after
-                + pics_below;
             // Baselines upward: line i sits above line i+1 by i+1's ascent,
             // i's own box and the gap between them, less i's ascent.
             let metrics: Vec<(f32, f32)> = lines
                 .iter()
                 .map(|(line, _)| chrome_line_metrics(self.fonts, line))
                 .collect();
+            // A multiple-spaced last line hangs its extra under the text
+            // (0033735c's 1.5 footer: 14.95pt below "ndis.gov.au").
+            let hang = lines
+                .last()
+                .and_then(|(line, _)| line.iter().find_map(|r| r.hf_para.as_deref()))
+                .filter(|p| p.line_exact.is_none() && p.line_at_least.is_none())
+                .filter(|p| p.line_mult > 1.0)
+                .zip(metrics.last())
+                .map_or(0.0, |(p, m)| m.1 - m.1 / p.line_mult);
+            // w:footer is honoured as written (0033735c's 170 = 8.5pt).
+            let base = self.page.footer.max(0.0)
+                + self.fonts.get(fid).descent_pt(size)
+                + hang
+                + trail
+                + hf_closing_after(&footer)
+                + foot_after
+                + pics_below;
             let mut baselines = vec![0.0_f32; n];
             for i in (0..n.saturating_sub(1)).rev() {
                 baselines[i] =
