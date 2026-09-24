@@ -613,6 +613,28 @@ fn numid_zero_over_a_numbered_style_drops_its_list_indent() {
 }
 
 #[test]
+fn table_cell_spacing_opens_each_row_by_twice_the_spacing() {
+    // fixtures_500 00046848: tblCellSpacing w=50 (2.5pt). Word's rows stand
+    // 5.1pt further apart than their content and margins; we ignored it.
+    let pitch = |spacing: &str| {
+        let body = format!(
+            "<w:tbl><w:tblPr>{spacing}</w:tblPr><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:p><w:r><w:t>RowOne</w:t></w:r></w:p></w:tc></w:tr>\
+               <w:tr><w:tc><w:p><w:r><w:t>RowTwo</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("cell spacing");
+        pdf_literal_td_y(&pdf, "RowOne").expect("RowOne")
+            - pdf_literal_td_y(&pdf, "RowTwo").expect("RowTwo")
+    };
+    let plain = pitch("");
+    let spaced = pitch("<w:tblCellSpacing w:w=\"50\" w:type=\"dxa\"/>");
+    assert!(
+        (spaced - plain - 5.0).abs() < 0.1,
+        "2 × 2.5pt between rows; plain={plain} spaced={spaced}"
+    );
+}
+
+#[test]
 fn a_newline_inside_w_t_is_a_space_not_a_break() {
     // fixtures_500 000312ea (PHPWord): the Heading1 text carries literal
     // newlines ("jeudi 27 avril 2017\nJeudi, 2ème …"). Word draws them as

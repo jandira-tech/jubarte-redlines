@@ -7101,6 +7101,11 @@ fn table_block(
     }
     let (tbl_pad_l, tbl_pad_r) = table_pad_h(dom, table);
     let (tbl_pad_t, tbl_pad_b) = table_pad_tb(dom, table);
+    let tbl_spacing = table_pr(dom, table)
+        .and_then(|pr| first_named(dom, pr, "tblCellSpacing"))
+        .and_then(|n| attr_any(dom, n, "w"))
+        .and_then(parse_len)
+        .unwrap_or(0.0);
     // No tblStyle is TableNormal, which sets no pPr: Normal's and
     // docDefaults' spacing stand (0073da0a's TOC rows 22.8pt apart,
     // 001d945a's docDefaults after=200). With no styles part at all the
@@ -7272,6 +7277,9 @@ fn table_block(
             grid_at += colspan.max(1);
             let (pad_l, pad_r) = cell_pad_h(dom, cell, tbl_pad_l, tbl_pad_r);
             let (pad_t, pad_b) = cell_pad_tb(dom, cell, tbl_pad_t, tbl_pad_b);
+            // tblCellSpacing opens a gap above and below every cell
+            // (00046848's 2.5pt rows stand 5pt further apart in Word).
+            let (pad_t, pad_b) = (pad_t + tbl_spacing, pad_b + tbl_spacing);
             cells.push(RawCell {
                 paras: cell_paras,
                 nested,
