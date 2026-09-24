@@ -2162,6 +2162,28 @@ fn a_float_anchored_after_a_page_spanning_paragraph_lands_on_its_last_page() {
 }
 
 #[test]
+fn a_centred_text_frame_floats_on_the_next_empty_line() {
+    // Redlines vs 002aa60c: the footer's PAGE sits in a text-anchored frame
+    // (xAlign="center") above an empty paragraph. Word centres it on that
+    // paragraph's line; we stacked it as a left-aligned line of its own,
+    // grew the band and pushed every page's last entry over.
+    let frame = r#"<w:p><w:pPr><w:framePr w:wrap="around" w:vAnchor="text" w:hAnchor="margin" w:xAlign="center" w:y="1"/></w:pPr><w:r><w:t>PgNum</w:t></w:r></w:p>"#;
+    let body_y = |hdr: &str| {
+        let pdf = docx_to_pdf(&header_part_docx_at(hdr, 1100)).expect("framed header");
+        let (_, y) = pdf_glyph_text_xy(&pdf, "HdrImgBodyX").expect("body paints");
+        (pdf, y)
+    };
+    let (pdf, framed) = body_y(&format!("{frame}<w:p/>"));
+    let (_, plain) = body_y("<w:p/>");
+    assert!(
+        (framed - plain).abs() < 0.2,
+        "the frame adds no line; {framed} vs {plain}"
+    );
+    let (x, _) = pdf_glyph_text_xy(&pdf, "PgNum").expect("frame paints");
+    assert!(x > 280.0 && x < 306.0, "centred on the text area; x={x}");
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

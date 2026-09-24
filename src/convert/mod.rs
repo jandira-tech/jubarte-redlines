@@ -1109,6 +1109,10 @@ struct TextRun {
     /// Header/footer run of a right-aligned `w:framePr` paragraph: it
     /// floats to the right margin on the next line (0014add1's PAGE).
     frame_right: bool,
+    /// Header/footer run of a centred (`xAlign="center"`) text-anchored
+    /// frame: centred on the line it floats on (redlines vs 002aa60c's
+    /// deleted PAGE over the footer's empty paragraph).
+    frame_center: bool,
     /// First run of a header/footer paragraph's wrapped continuation line:
     /// the paragraph's first-line indent does not apply to it.
     hf_cont: bool,
@@ -1137,6 +1141,7 @@ impl TextRun {
             hf_pic_h: 0.0,
             list_marker: false,
             frame_right: false,
+            frame_center: false,
             hf_cont: false,
             checkbox: None,
         }
@@ -13497,16 +13502,25 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
         let mut scan = FieldScan::default();
         let mut line = Vec::new();
         collect_hf_rec(dom, para, &prun, sheet, &mut scan, &mut line);
-        let right_frame = dom
+        let frame_align = dom
             .element(para, &W::p_pr())
             .and_then(|ppr| first_named(dom, ppr, "framePr"))
-            .is_some_and(|fp| attr_any(dom, fp, "xAlign") == Some("right"));
-        if right_frame && !line.is_empty() {
+            .and_then(|fp| attr_any(dom, fp, "xAlign"));
+        if matches!(frame_align, Some("right" | "center")) && !line.is_empty() {
             for mut run in line {
-                run.frame_right = true;
+                run.frame_right = frame_align == Some("right");
+                run.frame_center = frame_align == Some("center");
                 framed.push(run);
             }
             continue;
+        }
+        // Framed runs waiting for a line float on an empty paragraph's too.
+        if !framed.is_empty()
+            && line
+                .iter()
+                .all(|r| r.text.trim().is_empty() && matches!(r.field, FieldKind::None))
+        {
+            line = std::mem::take(&mut framed);
         }
         let border = hf_border_pad(last.as_deref(), &pstyle)
             + last
@@ -19644,9 +19658,10 @@ impl<'a> Layout<'a> {
     fn draw_line_of_runs(&mut self, runs: &[TextRun], y: f32, align: Align) {
         // A right-framed run (PAGE in a framePr) ends at the right margin
         // on this line; the rest lays out as if it were not there.
-        if runs.iter().any(|r| r.frame_right) && runs.iter().any(|r| !r.frame_right) {
+        let framed = |r: &TextRun| r.frame_right || r.frame_center;
+        if runs.iter().any(framed) {
             let (frame, rest): (Vec<TextRun>, Vec<TextRun>) =
-                runs.iter().cloned().partition(|r| r.frame_right);
+                runs.iter().cloned().partition(|r| framed(r));
             let w: f32 = frame
                 .iter()
                 .map(|r| {
@@ -19657,11 +19672,17 @@ impl<'a> Layout<'a> {
                     self.fonts.get(f).width_pt(measure, r.style.layout_size())
                 })
                 .sum();
-            let mut x = self.page.width - self.page.margin_r - w;
+            let mut x = if frame.iter().any(|r| r.frame_center) {
+                self.page.margin_l + (self.content_width() - w) / 2.0
+            } else {
+                self.page.width - self.page.margin_r - w
+            };
             for run in &frame {
                 x = self.paint_run(run, x, y);
             }
-            self.draw_line_of_runs(&rest, y, align);
+            if !rest.is_empty() {
+                self.draw_line_of_runs(&rest, y, align);
+            }
             return;
         }
         // A tab moves to its paragraph's stops; it paints no glyph
