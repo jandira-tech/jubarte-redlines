@@ -1890,6 +1890,31 @@ fn a_keep_next_row_stays_with_the_next_row() {
 }
 
 #[test]
+fn a_floating_table_taller_than_its_page_breaks_across_pages() {
+    // fixtures_500 0011e415: a page-anchored floating table (tblpY 131pt)
+    // runs past the page foot. Word breaks it onto page 2; we painted it
+    // whole, off the bottom of page 1.
+    let mut rows = String::new();
+    for i in 0..60 {
+        rows.push_str(&format!(
+            "<w:tr><w:tc><w:p><w:r><w:t>Floaty{i:02}</w:t></w:r></w:p></w:tc></w:tr>"
+        ));
+    }
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" \
+           w:vertAnchor=\"page\" w:horzAnchor=\"margin\" w:tblpY=\"2621\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl><w:p/><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("tall float");
+    assert!(pdf_page_count(&pdf) >= 2, "the table continues on page 2");
+    let pages = pdf_content_streams(&pdf);
+    assert!(
+        stream_glyph_text(&pages[1]).contains("Floaty59"),
+        "its last row lands on page 2"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves

@@ -16786,8 +16786,23 @@ impl<'a> Layout<'a> {
             self.flow_left()
         };
         let table_left = origin + shift + ind - pull;
+        // A floating table that would run past its page's foot is laid out
+        // in the flow and breaks across pages (0011e415's page-anchored
+        // table continues on page 2).
+        let overflows = geom.float.is_some_and(|slot| {
+            let th: f32 = row_h.iter().sum();
+            self.float_table_top(slot) - th < self.body_floor
+        });
+        if overflows
+            && self.nested_depth == 0
+            && let Some(slot) = geom.float
+        {
+            // It starts where it floats (0011e415's first row at 219pt).
+            self.y = self.float_table_top(slot);
+        }
         if let Some(slot) = geom.float
             && self.nested_depth == 0
+            && !overflows
         {
             let used: f32 = col_w.iter().sum();
             let th: f32 = row_h.iter().sum();
