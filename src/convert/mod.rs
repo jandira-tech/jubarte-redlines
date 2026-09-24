@@ -5428,6 +5428,24 @@ fn para_line_box(metrics: &Face, size: f32, style: &ParaStyle) -> f32 {
     line_box_from_natural(metrics.single_line_pt(size), style)
 }
 
+/// A line's box on the docGrid `grid` (0 = none). A line whose face fits
+/// one grid line takes the multiple of the grid line itself: 00b37b14's
+/// TNR 12 at 1.5 on a 15.6pt grid steps 23.4, not 31.2. A taller face
+/// (its 14pt title) still snaps its multiplied height (31.2).
+fn grid_line_box(natural: f32, style: &ParaStyle, grid: f32) -> f32 {
+    let multiple = style.line_exact.is_none() && style.line_at_least.is_none();
+    if grid > 0.5 && multiple && natural <= grid + 0.01 {
+        let m = if style.line_mult > 0.0 {
+            style.line_mult
+        } else {
+            1.0
+        };
+        grid * m
+    } else {
+        snap_doc_grid(line_box_from_natural(natural, style), grid)
+    }
+}
+
 fn line_box_from_natural(natural: f32, style: &ParaStyle) -> f32 {
     if let Some(exact) = style.line_exact {
         exact
@@ -5791,8 +5809,9 @@ fn para_first_line_pt(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle, grid_p
     let face = runs.first().map_or(FaceId::CarlitoRegular.into(), |r| {
         fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
     });
-    snap_doc_grid(
-        para_line_box(fonts.get(face), size, style),
+    grid_line_box(
+        fonts.get(face).single_line_pt(size),
+        style,
         para_grid_pitch(style, grid_pitch),
     )
 }
@@ -12745,10 +12764,8 @@ impl<'a> Layout<'a> {
         let mut fit = 0usize;
         for (line_i, line) in lines.iter().enumerate() {
             let (natural, ascent) = self.line_face_metrics(line, marker.filter(|_| line_i == 0));
-            let line_box = snap_doc_grid(
-                line_box_from_natural(natural, style),
-                para_grid_pitch(style, self.page.grid_pitch),
-            );
+            let line_box =
+                grid_line_box(natural, style, para_grid_pitch(style, self.page.grid_pitch));
             if y - line_fit_need(natural, ascent, style, line_box) < self.body_floor {
                 break;
             }
@@ -13574,12 +13591,17 @@ impl<'a> Layout<'a> {
                 self.y -= box_h;
                 continue;
             }
-            let mut line_box = line_box_from_natural(natural, style);
-            if self.space_for_ul && line_has_underlined_cjk(line) {
-                line_box += space_for_ul_extra(size);
-            }
             let grid = para_grid_pitch(style, self.page.grid_pitch);
-            line_box = snap_doc_grid(line_box, grid);
+            let ul_extra = if self.space_for_ul && line_has_underlined_cjk(line) {
+                space_for_ul_extra(size)
+            } else {
+                0.0
+            };
+            let line_box = if grid > 0.5 {
+                grid_line_box(natural + ul_extra, style, grid)
+            } else {
+                line_box_from_natural(natural, style) + ul_extra
+            };
             // On a docGrid the text sits centred in its snapped box: 00d2ca27's
             // TNR 12 double lines on a 15.6pt grid start 8.7pt down.
             let grid_pad = if grid > 0.5 {

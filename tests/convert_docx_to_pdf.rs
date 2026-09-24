@@ -736,6 +736,26 @@ fn a_square_float_narrows_the_paragraphs_after_its_anchor() {
 }
 
 #[test]
+fn a_multiple_on_a_line_grid_multiplies_the_grid_line() {
+    // fixtures_500 00b37b14: docGrid lines 312 (15.6pt), line=360 auto.
+    // Word steps 1.5 × 15.6 = 23.4pt: the multiple applies to the grid
+    // lines one line needs. We multiplied the face (20.7) and snapped it
+    // up to two grid lines (31.2).
+    let body = "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"360\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:t>GridA</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"360\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:t>GridB</w:t></w:r></w:p>\
+         <w:sectPr><w:docGrid w:type=\"lines\" w:linePitch=\"312\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("grid multiple");
+    let step = pdf_glyph_text_xy(&pdf, "GridA").expect("a").1
+        - pdf_glyph_text_xy(&pdf, "GridB").expect("b").1;
+    assert!(
+        (step - 23.4).abs() < 0.2,
+        "1.5 × the 15.6pt grid line; step={step}"
+    );
+}
+
+#[test]
 fn a_square_float_with_no_side_room_pushes_text_below_it() {
     // fixtures_500 0007c30e: a 660pt x 135.7pt letterhead picture anchored
     // at the page top, wrapSquare. Nothing fits beside it, so Word starts
