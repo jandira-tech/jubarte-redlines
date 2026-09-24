@@ -2124,6 +2124,44 @@ fn a_framed_header_picture_sits_at_its_frame_out_of_the_band() {
 }
 
 #[test]
+fn a_float_anchored_after_a_page_spanning_paragraph_lands_on_its_last_page() {
+    // Redlines vs 017447de: B's deleted pictures are anchored after all of
+    // a four-page paragraph, positioned from the paragraph with tight wrap.
+    // Word places them on the paragraph's last page (from the top of its
+    // part there) and never narrows page one; we placed and wrapped them on
+    // page one.
+    let img = blip(
+        "1270000",
+        "1270000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let words: String = (0..900).map(|i| format!("word{i:03} ")).collect();
+    let pdf = docx_to_pdf(&drawing_docx(&format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">{words}</w:t></w:r><w:r>{img}</w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    )))
+    .expect("tail float");
+    let pages = pdf_content_streams(&pdf);
+    assert!(pages.len() >= 2, "the paragraph spans pages");
+    assert!(!pages[0].contains(" cm /Im"), "page one holds no picture");
+    assert!(
+        pages.last().is_some_and(|p| p.contains(" cm /Im")),
+        "the picture sits on the paragraph's last page"
+    );
+    let (x, _) = pdf_glyph_text_xy(&pdf, "word000").expect("first word");
+    assert!(
+        (x - 72.0).abs() < 0.5,
+        "page one's lines start at the margin; x={x}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

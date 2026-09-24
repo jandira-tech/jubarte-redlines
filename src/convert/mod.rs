@@ -1519,6 +1519,10 @@ struct LaidImage {
     /// The part's last paragraph is this picture's: its space after closes
     /// the band (redlines vs 001cc92b: the header's lone VML banner + 8pt).
     chrome_after: f32,
+    /// Anchored after all of its paragraph's text: Word places it on the
+    /// page that anchor falls on (redlines vs 017447de: B's two deleted
+    /// pictures close a four-page paragraph and sit on its last page).
+    tail_anchor: bool,
     /// `pic:spPr/a:ln`: Word strokes the picture's own outline (000f5278's
     /// QR code has a black frame).
     outline: Option<([f32; 3], f32)>,
@@ -6994,6 +6998,7 @@ fn paragraph_block(
                 chrome_drop_tab: None,
                 chrome_para: 0,
                 chrome_after: 0.0,
+                tail_anchor: false,
                 outline: None,
                 gap_before: 0.0,
             },
@@ -11305,6 +11310,19 @@ fn inline_effect_pt(dom: &Dom, drawing: NodeId) -> [f32; 4] {
 
 fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<LaidImage> {
     let mut out = Vec::new();
+    // Text nodes in document order: a drawing with none after it is a tail
+    // anchor (`LaidImage::tail_anchor`).
+    let last_text = dom
+        .descendants(para, None)
+        .into_iter()
+        .filter(|n| {
+            (dom.name_is(*n, &W::t()) || dom.name_is(*n, &W::name("delText")))
+                && !element_text(dom, *n).trim().is_empty()
+                && !inside_text_box(dom, *n, para)
+        })
+        .map(|n| n.0)
+        .max();
+    let mut marks: Vec<(usize, bool)> = Vec::new();
     // 019d92d9's text box holds an inline flag; laying it out in the host
     // paragraph pushed the list 18.6pt down.
     for drawing in dom
@@ -11312,6 +11330,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
         .into_iter()
         .filter(|d| !inside_text_box(dom, *d, para))
     {
+        marks.push((out.len(), last_text.is_some_and(|t| t < drawing.0)));
         let (w, h) = drawing_extent_pt(dom, drawing);
         let slot = drawing_slot(dom, drawing);
         let (behind, z) = drawing_z(dom, drawing);
@@ -11347,6 +11366,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_drop_tab: None,
                     chrome_para: 0,
                     chrome_after: 0.0,
+                    tail_anchor: false,
                     outline: None,
                     gap_before: 0.0,
                 });
@@ -11382,6 +11402,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_drop_tab: None,
                         chrome_para: 0,
                         chrome_after: 0.0,
+                        tail_anchor: false,
                         outline: picture_outline(dom, drawing),
                         gap_before: space_before_drawing(dom, drawing),
                     });
@@ -11406,11 +11427,19 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_drop_tab: None,
                         chrome_para: 0,
                         chrome_after: 0.0,
+                        tail_anchor: false,
                         outline: None,
                         gap_before: 0.0,
                     });
                 }
             }
+        }
+    }
+    let drawn = out.len();
+    for (k, &(start, tail)) in marks.iter().enumerate() {
+        let end = marks.get(k + 1).map_or(drawn, |m| m.0);
+        for img in &mut out[start..end] {
+            img.tail_anchor = tail;
         }
     }
     // Choice Requires=v OLE / clipart: v:imagedata, not a:blip. Skip when
@@ -11460,6 +11489,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_drop_tab: None,
                         chrome_para: 0,
                         chrome_after: 0.0,
+                        tail_anchor: false,
                         outline: None,
                         gap_before: 0.0,
                     });
@@ -11490,6 +11520,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_drop_tab: None,
                     chrome_para: 0,
                     chrome_after: 0.0,
+                    tail_anchor: false,
                     outline: None,
                     gap_before: 0.0,
                 });
@@ -21041,6 +21072,28 @@ fn layout(
                     }
                 }
                 let has_ink = runs.iter().any(|r| !r.text.trim().is_empty());
+                // Floats anchored after all of a paragraph that runs past this
+                // page belong to its last page: Word places them there, from
+                // the top of the paragraph's part on that page, and page one
+                // never wraps around them (redlines vs 017447de).
+                let tail_float =
+                    |img: &LaidImage| img.tail_anchor && !matches!(img.slot, ImageSlot::Flow);
+                // Only when its first line fits here: one that cannot moves the
+                // whole paragraph, floats included, to the next page
+                // (00c975b8).
+                let defer_tail = has_ink && images.iter().any(tail_float) && {
+                    let lines = lay.para_line_count(runs, &style, *list) as f32;
+                    let line = para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
+                    let room = lay.y - style.before - lay.body_floor;
+                    line <= room && lines * line > room
+                };
+                let (tail_images, images): (Vec<LaidImage>, Vec<LaidImage>) = if defer_tail {
+                    images.iter().cloned().partition(|img| tail_float(img))
+                } else {
+                    (Vec::new(), images.clone())
+                };
+                let images = &images;
+                let pages_before = lay.pages.len();
                 // Word: a drawing-only paragraph does not also consume a
                 // Normal line box. Rectangle 3 reserve_only (167pt hole)
                 // and Chart 1 (Strict01 p1) are that pattern. Cover/gallery
@@ -21153,6 +21206,16 @@ fn layout(
                     .filter(|img| !matches!(img.slot, ImageSlot::Flow))
                 {
                     lay.emit_image_in(img, &style);
+                }
+                if !tail_images.is_empty() {
+                    let saved = lay.para_top;
+                    if lay.pages.len() > pages_before {
+                        lay.para_top = lay.page.height - lay.body_top;
+                    }
+                    for img in &tail_images {
+                        lay.emit_image_in(img, &style);
+                    }
+                    lay.para_top = saved;
                 }
                 for box_ in boxes {
                     lay.emit_textbox(box_);
