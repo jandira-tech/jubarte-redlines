@@ -19422,6 +19422,49 @@ fn a_header_picture_below_a_header_table_paints_under_it() {
 }
 
 #[test]
+fn a_footer_lines_hanging_indent_starts_it_at_the_margin() {
+    // fixtures_500 00ad6ec7: footer paragraphs with ind left=900
+    // hanging=900 start their first line at the margin in Word ("Issued:"
+    // at x=72) and centre it over the full width. We started every
+    // footer line at the left indent, 45pt in (22.5pt for the centred one).
+    let body = format!(
+        "<w:p><w:r><w:t>body</w:t></w:r></w:p>\
+         <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>{CHROME_SECT}</w:sectPr>"
+    );
+    let ind = "<w:ind w:left=\"900\" w:hanging=\"900\"/>";
+    let ftr = format!(
+        "<w:p><w:pPr>{ind}</w:pPr><w:r><w:t>Qissued</w:t></w:r></w:p>\
+         <w:p><w:pPr>{ind}<w:jc w:val=\"center\"/></w:pPr><w:r><w:t>Zcentred</w:t></w:r></w:p>"
+    );
+    let pdf = docx_to_pdf(&chrome_image_docx(
+        &body,
+        &[("rIdF1", "footer", "footer1.xml", ftr)],
+    ))
+    .expect("convert hanging footer");
+    let (qx, _) = pdf_glyph_text_xy(&pdf, "Qissued").expect("Qissued paints");
+    assert!(
+        (qx - 72.0).abs() < 0.5,
+        "the first line starts at the margin; x={qx}"
+    );
+    let (zx, _) = pdf_glyph_text_xy(&pdf, "Zcentred").expect("Zcentred paints");
+    let (zx_body, _) = {
+        let plain =
+            "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:t>Zcentred</w:t></w:r></w:p>"
+                .to_string();
+        let pdf = docx_to_pdf(&chrome_image_docx(
+            &body,
+            &[("rIdF1", "footer", "footer1.xml", plain)],
+        ))
+        .expect("convert plain centred footer");
+        pdf_glyph_text_xy(&pdf, "Zcentred").expect("plain Zcentred paints")
+    };
+    assert!(
+        (zx - zx_body).abs() < 0.5,
+        "the centred first line centres over the full width: {zx} vs {zx_body}"
+    );
+}
+
+#[test]
 fn two_header_images_in_one_paragraph_sit_side_by_side() {
     // #127: inline images advance along the line; they must not stack on
     // one origin.

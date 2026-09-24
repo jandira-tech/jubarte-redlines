@@ -909,6 +909,9 @@ struct TextRun {
     /// Header/footer run of a right-aligned `w:framePr` paragraph: it
     /// floats to the right margin on the next line (0014add1's PAGE).
     frame_right: bool,
+    /// First run of a header/footer paragraph's wrapped continuation line:
+    /// the paragraph's first-line indent does not apply to it.
+    hf_cont: bool,
 }
 
 impl TextRun {
@@ -931,6 +934,7 @@ impl TextRun {
             hf_pic_h: 0.0,
             list_marker: false,
             frame_right: false,
+            hf_cont: false,
         }
     }
 
@@ -12720,28 +12724,41 @@ fn hf_para_is_bare_line(dom: &Dom, root: NodeId, para: NodeId) -> bool {
 fn hf_styled_lines(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<(Vec<TextRun>, f32)> {
     let mut out = Vec::new();
     for (line, gap) in hf_paragraph_lines(runs) {
-        let room = line
-            .iter()
-            .find_map(|r| r.hf_para.as_deref())
-            .map_or(width, |p| width - p.indent_left - p.indent_right);
+        let (first, room) =
+            line.iter()
+                .find_map(|r| r.hf_para.as_deref())
+                .map_or((width, width), |p| {
+                    let rest = width - p.indent_left - p.indent_right;
+                    (rest - p.indent_first, rest)
+                });
         let pieces = if line.iter().any(|r| r.text.contains('\t')) {
             Vec::new()
         } else {
-            wrap_runs(fonts, &line, room, room, false)
+            wrap_runs(fonts, &line, first, room, false)
         };
         if pieces.len() < 2 {
             out.push((line, gap));
             continue;
         }
         let last = pieces.len() - 1;
-        out.extend(
-            pieces
-                .into_iter()
-                .enumerate()
-                .map(|(i, piece)| (piece, if i == last { gap } else { 0.0 })),
-        );
+        out.extend(pieces.into_iter().enumerate().map(|(i, mut piece)| {
+            if i > 0
+                && let Some(head) = piece.first_mut()
+            {
+                head.hf_cont = true;
+            }
+            (piece, if i == last { gap } else { 0.0 })
+        }));
     }
     out
+}
+
+/// A header/footer line's left indent: its paragraph's, plus the first-line
+/// indent on the paragraph's first line (00ad6ec7's footer: ind left=900
+/// hanging=900 starts "Issued:" at the margin in Word).
+fn hf_line_indent(para: &ParaStyle, line: &[TextRun]) -> f32 {
+    let first = !line.first().is_some_and(|r| r.hf_cont);
+    para.indent_left + if first { para.indent_first } else { 0.0 }
 }
 
 fn hf_paragraph_lines(runs: &[TextRun]) -> Vec<(Vec<TextRun>, f32)> {
@@ -18464,7 +18481,7 @@ impl<'a> Layout<'a> {
                 .as_ref()
                 .map(|p| p.tab_stops.clone())
                 .unwrap_or_default();
-            let indent = para.as_ref().map_or(0.0, |p| p.indent_left);
+            let indent = para.as_ref().map_or(0.0, |p| hf_line_indent(p, runs));
             let saved = std::mem::replace(&mut self.tab_stops, stops);
             self.paint_line_with_tabs(runs, self.page.margin_l + indent, y);
             self.tab_stops = saved;
@@ -18475,7 +18492,7 @@ impl<'a> Layout<'a> {
         let (ind_l, ind_r) = runs
             .iter()
             .find_map(|r| r.hf_para.as_deref())
-            .map_or((0.0, 0.0), |p| (p.indent_left, p.indent_right));
+            .map_or((0.0, 0.0), |p| (hf_line_indent(p, runs), p.indent_right));
         let width = self.content_width() - ind_l - ind_r;
         let line_w: f32 = runs
             .iter()
