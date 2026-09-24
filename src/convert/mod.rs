@@ -5629,7 +5629,9 @@ fn walk_container(
                 let moved = cols(&was) != cols(&page)
                     || (page.col_count > 1 && (was.col_space - page.col_space).abs() > 0.01)
                     || (was.margin_l - page.margin_l).abs() > 0.01
-                    || (was.margin_r - page.margin_r).abs() > 0.01;
+                    || (was.margin_r - page.margin_r).abs() > 0.01
+                    || (was.margin_t - page.margin_t).abs() > 0.01
+                    || (was.margin_b - page.margin_b).abs() > 0.01;
                 if moved {
                     blocks.push(Block::SectionCols {
                         page: Box::new(page),
@@ -13380,6 +13382,9 @@ struct Layout<'a> {
     /// previous paragraph's space after: only the space before in excess
     /// of it shows (Word: before 24 after 10 -> 14pt).
     top_credit: f32,
+    /// A continuous section changed the top margin mid-page: the next page
+    /// starts its body from the new margin.
+    top_pending: bool,
     /// The last paragraph's space after, for `top_credit`.
     last_after: f32,
     /// Word `compatibilityMode` (absent → 12). Mode < 15 pulls the table
@@ -13729,6 +13734,7 @@ impl<'a> Layout<'a> {
             at_page_top: true,
             suppress_space_before: false,
             top_credit: 0.0,
+            top_pending: false,
             last_after: 0.0,
             compat_mode,
             last_break_was_section: false,
@@ -13991,6 +13997,11 @@ impl<'a> Layout<'a> {
         self.select_parity_chrome();
         // Body top after the parity header is in place (even/odd headers
         // may differ in height).
+        if std::mem::take(&mut self.top_pending) {
+            // Live Word: pages after a continuous section open at its top
+            // margin (1440 under an earlier 720 starts the body at 83.3).
+            self.refresh_body_top();
+        }
         self.y = self.page.height - self.body_top;
         self.apply_mirror_margins();
         self.refresh_body_floor();
@@ -14292,6 +14303,7 @@ impl<'a> Layout<'a> {
         self.page.col_gap = next.col_gap;
         self.page.margin_l = next.margin_l;
         self.page.margin_r = next.margin_r;
+        self.top_pending |= (self.page.margin_t - next.margin_t).abs() > 0.01;
         self.page.margin_t = next.margin_t;
         self.page.margin_b = next.margin_b;
         self.margin_l0 = next.margin_l;

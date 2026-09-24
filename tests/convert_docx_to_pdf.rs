@@ -1668,6 +1668,35 @@ fn a_continuous_section_keeps_its_custom_column_gaps() {
 }
 
 #[test]
+fn pages_after_a_continuous_section_use_its_top_margin() {
+    // fixtures_500 019d92d9: a continuous section with top=1440 follows a
+    // top=720 one. Live Word opens every later page at the new 72pt top;
+    // we kept 36pt, so page two ran 36pt high.
+    let fill: String = (0..70)
+        .map(|i| format!("<w:p><w:r><w:t>More{i:02}</w:t></w:r></w:p>"))
+        .collect();
+    let body = format!(
+        "<w:p><w:r><w:t>Intro</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"720\" w:right=\"720\" w:bottom=\"720\" w:left=\"1080\"/></w:sectPr></w:pPr></w:p>\
+         {fill}<w:sectPr><w:type w:val=\"continuous\"/><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"720\" w:bottom=\"720\" w:left=\"1080\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("continuous top margin");
+    let pages = pdf_content_streams(&pdf);
+    let second = pages.get(1).expect("the section runs onto page two");
+    let top = [pdf_cm_tj_xy(second, "M"), pdf_tj_xy(second, "M")]
+        .concat()
+        .iter()
+        .map(|p| 792.0 - p.1)
+        .fold(f32::MAX, f32::min);
+    assert!(
+        top > 72.0 && top < 90.0,
+        "page two's first baseline sits under the 72pt top; {top} from the top"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path
