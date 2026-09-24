@@ -8008,20 +8008,30 @@ fn official_verdana_demo_embeds_verdana_not_arial() {
 }
 
 #[test]
-fn open_sans_maps_to_arial_metric_not_calibri() {
-    // open_sans_font_demo has no system Open Sans. It is Arial-metric, not
-    // Calibri; unknown → Carlito left the cluster at ~65.
+fn open_sans_is_drawn_when_installed_else_arial_metric() {
+    // open_sans_font_demo: without Open Sans the stand-in is Arial-metric,
+    // not Calibri (unknown → Carlito left the cluster at ~65). Word draws
+    // its cloud-cache Open Sans when present (fixtures_500 0003dc87).
+    let installed = std::env::var_os("HOME").is_some_and(|home| {
+        std::path::Path::new(&home)
+            .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/Open Sans")
+            .is_dir()
+    });
     let body = "<w:p><w:r>\
            <w:rPr><w:rFonts w:ascii=\"Open Sans\" w:hAnsi=\"Open Sans\"/>\
              <w:sz w:val=\"22\"/></w:rPr>\
            <w:t>OpenSansBody</w:t></w:r></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Open Sans");
     let text = String::from_utf8_lossy(&pdf);
-    assert!(
-        text.contains("/LiberationSans") || text.contains("/Arial"),
-        "Open Sans must embed Arial-metric Sans; tail {}",
-        &text[text.len().saturating_sub(280)..]
-    );
+    if installed {
+        assert!(text.contains("/OpenSans"), "Word's Open Sans face");
+    } else {
+        assert!(
+            text.contains("/LiberationSans") || text.contains("/Arial"),
+            "Open Sans must embed Arial-metric Sans; tail {}",
+            &text[text.len().saturating_sub(280)..]
+        );
+    }
 }
 
 fn docx_with_styles_and_theme(body: &str, styles: &str, theme: &str) -> Vec<u8> {
@@ -28507,26 +28517,25 @@ fn omml_cambria_math_stays_calibri_after_mini_360() {
 }
 
 #[test]
-fn helvetica_neue_stays_arial_after_mini_431() {
-    // image_out / file_48: Word Quartz embeds HelveticaNeue, but overlaying
-    // system HelveticaNeue.ttc (mini 431) dropped those stems −8.88 /
-    // NR mean 59.451→59.155. Quartz ITT prefers Arial substitute.
+fn helvetica_neue_is_drawn_when_installed_like_word() {
+    // Word embeds HelveticaNeue (image_out / file_48; fixtures_500 0017a25e,
+    // 002af604). The old mini 431 lock kept Arial on a score dip; it only
+    // held for a document without a font table, which never loaded faces.
+    let installed = std::path::Path::new("/System/Library/Fonts/HelveticaNeue.ttc").is_file();
     let body = "<w:p><w:r>\
            <w:rPr><w:rFonts w:ascii=\"Helvetica Neue\" w:hAnsi=\"Helvetica Neue\"/>\
              <w:sz w:val=\"38\"/></w:rPr>\
            <w:t>Quantum</w:t></w:r></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Helvetica Neue");
     let text = String::from_utf8_lossy(&pdf);
-    assert!(
-        text.contains("/ArialMT") || text.contains("/LiberationSans"),
-        "mini 431 ITT-neg HelveticaNeue; keep Arial; tail {}",
-        &text[text.len().saturating_sub(320)..]
-    );
-    assert!(
-        !text.contains("/HelveticaNeue"),
-        "must not overlay HelveticaNeue after mini 431; tail {}",
-        &text[text.len().saturating_sub(280)..]
-    );
+    if installed {
+        assert!(text.contains("/HelveticaNeue"), "Word's HelveticaNeue face");
+    } else {
+        assert!(
+            text.contains("/ArialMT") || text.contains("/LiberationSans"),
+            "Arial stands in without HelveticaNeue"
+        );
+    }
 }
 
 #[test]
@@ -28553,28 +28562,31 @@ fn book_antiqua_run_embeds_book_antiqua_not_carlito() {
 }
 
 #[test]
-fn wide_latin_stays_calibri_after_mini_505() {
-    // Strict01 live `w:ascii="Wide Latin"` on "Video provides…". Overlaying
-    // DFonts WideLatin.ttf (Word embeds LatinWide) was Word-shaped but
-    // mini 505 ITT-neg: NR 59.4662→59.4342, 8 Strict01-family drops 0
-    // gains (Strict01 −0.17 / file_100 clones −0.31). Quartz ITT prefers
-    // the Calibri fallback. Do not retry.
+fn wide_latin_is_drawn_when_installed_like_word() {
+    // Strict01 live `w:ascii="Wide Latin"` on "Video provides…": Word embeds
+    // LatinWide from DFonts WideLatin.ttf. The old mini 505 lock kept the
+    // Calibri fallback on a score dip, only for a table-less document.
+    let installed = std::path::Path::new(
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts/WideLatin.ttf",
+    )
+    .is_file();
     let body = "<w:p><w:r>\
            <w:rPr><w:rFonts w:ascii=\"Wide Latin\" w:hAnsi=\"Wide Latin\"/>\
              <w:sz w:val=\"24\"/></w:rPr>\
            <w:t>Video</w:t></w:r></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Wide Latin lock");
     let text = String::from_utf8_lossy(&pdf);
-    assert!(
-        text.contains("/Calibri") || text.contains("/Carlito"),
-        "mini 505 ITT-neg WideLatin; keep Calibri; tail {}",
-        &text[text.len().saturating_sub(320)..]
-    );
-    assert!(
-        !text.contains("/LatinWide") && !text.contains("/WideLatin"),
-        "must not overlay WideLatin after mini 505; tail {}",
-        &text[text.len().saturating_sub(280)..]
-    );
+    if installed {
+        assert!(
+            text.contains("/LatinWide") || text.contains("/WideLatin"),
+            "Word's Wide Latin face"
+        );
+    } else {
+        assert!(
+            text.contains("/Calibri") || text.contains("/Carlito"),
+            "Calibri stands in without Wide Latin"
+        );
+    }
 }
 
 #[test]

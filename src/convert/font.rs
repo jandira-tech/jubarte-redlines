@@ -1644,8 +1644,34 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
             found.push((pass, style, bytes));
         }
     }
+    if found.is_empty() {
+        found.extend(
+            BUNDLED_FACES
+                .iter()
+                .filter(|(name, ..)| norm(name) == key)
+                .map(|&(_, bold, italic, bytes)| (0, (bold, italic), bytes.to_vec())),
+        );
+    }
     pick_ranked_faces(found)
 }
+
+/// Freely licensed faces Word draws from its cloud-font cache, shipped
+/// byte-identical to Word's copy so a machine without that cache still
+/// paints them (fixtures_500 01838a08: RobotoCondensed-Regular/-Bold).
+const BUNDLED_FACES: &[(&str, bool, bool, &[u8])] = &[
+    (
+        "Roboto Condensed",
+        false,
+        false,
+        include_bytes!("../../assets/fonts/RobotoCondensed-Regular.ttf"),
+    ),
+    (
+        "Roboto Condensed",
+        true,
+        false,
+        include_bytes!("../../assets/fonts/RobotoCondensed-Bold.ttf"),
+    ),
+];
 
 /// A family name folded for comparison: full-width Latin to ASCII (the
 /// Japanese "ＭＳ 明朝" is MS Mincho's own name), ASCII lowercase, and no
@@ -1959,12 +1985,14 @@ pub(crate) fn add_installed_faces(
     for name in extra {
         let lower = name.to_ascii_lowercase();
         if table.get(name).is_some()
-            || cjk_file_stems(name).is_empty()
             || embedded.keys().any(|(f, _, _)| *f == lower)
+            || (cjk_file_stems(name).is_empty() && catalogue_paints_family(name))
         {
             continue;
         }
-        let faces = cached_faces(name, || cjk_family_faces(name, cjk_file_stems(name)));
+        // A family runs name but the table omits (015beda9 has no table
+        // part; Word still draws its Segoe UI) loads like a table family.
+        let faces = cached_faces(name, || installed_family_faces(name));
         for ((bold, italic), bytes) in faces {
             embedded.insert((lower.clone(), bold, italic), bytes);
         }
@@ -2382,6 +2410,30 @@ mod tests {
             Arc::ptr_eq(&first[0].1, &second[0].1),
             "one shared allocation"
         );
+    }
+
+    #[test]
+    fn roboto_condensed_is_bundled_like_words_cloud_copy() {
+        // fixtures_500 01838a08: Word's PDF embeds RobotoCondensed-Regular
+        // and -Bold from its cloud cache (filed under the Roboto folder);
+        // we had no face and drew Arial. The Apache-2.0 files ship with us.
+        let faces = installed_family_faces("Roboto Condensed");
+        for style in [(false, false), (true, false)] {
+            assert!(
+                faces.iter().any(|(s, _)| *s == style),
+                "Roboto Condensed {style:?} face"
+            );
+        }
+    }
+
+    #[test]
+    fn a_run_family_missing_from_the_font_table_still_loads_its_faces() {
+        // fixtures_500 015beda9 has no fontTable part; its runs name
+        // Segoe UI, which Word draws, and only table families were loaded.
+        let mut embedded = EmbeddedFonts::new();
+        let table = super::super::font_table::FontTable::default();
+        add_installed_faces(&mut embedded, &table, &["Roboto Condensed".to_string()]);
+        assert!(embedded.contains_key(&("roboto condensed".to_string(), false, false)));
     }
 
     #[test]
