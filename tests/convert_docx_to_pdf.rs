@@ -2339,6 +2339,30 @@ fn an_underline_without_a_val_draws_nothing() {
 }
 
 #[test]
+fn a_run_color_auto_overrides_the_styles_color() {
+    // fixtures_500 004b3b3d: the paragraph style is red, the runs say
+    // <w:color w:val="auto"/>. Word paints them in automatic black; we
+    // skipped "auto" and kept the style's red.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Red\"><w:name w:val=\"red\"/><w:basedOn w:val=\"Normal\"/>\
+            <w:rPr><w:color w:val=\"FF0000\"/></w:rPr></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"Red\"/></w:pPr>\
+           <w:r><w:rPr><w:color w:val=\"auto\"/></w:rPr><w:t>Automatic</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("color auto");
+    let hay = pdf_content_streams(&pdf).join("\n");
+    assert!(
+        !hay.contains("1.000 0.000 0.000 rg"),
+        "no red text; stream {}",
+        &hay[..hay.len().min(300)]
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves
@@ -2547,10 +2571,11 @@ fn file_34_char_styles_xml() -> &'static str {
 }
 
 #[test]
-fn char_style_explicit_sz_stays_para_size_after_mini_336() {
-    // Word applies character-style w:sz (RedBoldCharacter 12pt on an
-    // 11pt para). Overlaying it (mini 334–337) was NR 0-delta but
-    // redline file_34_file_35 −0.49 / mean −0.008. Keep paragraph size.
+fn char_style_explicit_sz_applies_like_word() {
+    // Word applies character-style w:sz (RedBoldCharacter 12pt on an 11pt
+    // paragraph). The old mini 334-337 lock kept the paragraph size for an
+    // old-corpus redline metric; fixtures_500 004b3b3d's PageNumber (8pt)
+    // shows Word's rule.
     let body = "<w:p>\
          <w:r><w:t>plain</w:t></w:r>\
          <w:r><w:rPr><w:rStyle w:val=\"RedBoldCharacter\"/></w:rPr>\
@@ -2561,16 +2586,16 @@ fn char_style_explicit_sz_stays_para_size_after_mini_336() {
         None,
         Some(file_34_char_styles_xml()),
     ))
-    .expect("convert char style sz lock");
+    .expect("convert char style sz");
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
         pdf_has_factory_calibri_11(&hay),
-        "char-style sz overlay ITT-neg; stay 11pt; tail {}",
+        "the plain run stays 11pt; tail {}",
         &hay[hay.len().saturating_sub(320)..]
     );
     assert!(
-        !hay.contains("12 Tf") && !hay.contains("12.00 Tf"),
-        "must not overlay RedBoldCharacter 12pt; tail {}",
+        hay.contains("12 Tf") || hay.contains("12.00 Tf") || hay.contains(" 50 Tf"),
+        "RedBoldCharacter paints at 12pt; tail {}",
         &hay[hay.len().saturating_sub(320)..]
     );
 }
@@ -10713,6 +10738,46 @@ fn a_footer_text_box_paints_its_text() {
     .expect("footer text box");
     let (_, y) = pdf_glyph_text_xy(&pdf, "BoxedContact").expect("the footer text box paints");
     assert!(y < 72.0, "in the footer band; y={y}");
+}
+
+#[test]
+fn header_runs_take_their_character_style() {
+    // fixtures_500 004b3b3d: the header's "1/1" runs carry rStyle
+    // PageNumber (8pt) and no size of their own. Word's header line is 8pt;
+    // we ignored rStyle in headers, drew 11pt and pushed the body 3.4pt down.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"PageNumber\"><w:name w:val=\"page number\"/>\
+            <w:rPr><w:sz w:val=\"16\"/></w:rPr></w:style></w:styles>";
+    let body_top = |rstyle: &str| {
+        let header = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+               <w:p><w:r><w:rPr>{rstyle}</w:rPr><w:t>Qhead</w:t></w:r></w:p></w:hdr>"
+        );
+        let body = "<w:p><w:r><w:t>Zbody</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+               <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"709\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"709\" w:footer=\"720\"/></w:sectPr>";
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[("rIdH1", "header", "header1.xml")],
+            &[
+                ("word/header1.xml", header),
+                ("word/styles.xml", styles.to_string()),
+            ],
+        ))
+        .expect("header char style");
+        pdf_glyph_text_xy(&pdf, "Zbody").expect("body").1
+    };
+    let styled = body_top("<w:rStyle w:val=\"PageNumber\"/>");
+    let direct = body_top("<w:sz w:val=\"16\"/>");
+    assert!(
+        (styled - direct).abs() < 0.05,
+        "an rStyle 8pt header line is an 8pt line; body at {styled} vs {direct}"
+    );
 }
 
 #[test]

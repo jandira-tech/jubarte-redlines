@@ -585,6 +585,10 @@ struct NamedStyle {
     run: RunStyle,
     num_id: Option<String>,
     ilvl: u32,
+    /// The style chain itself sets `w:sz` / `w:rFonts` (not inherited
+    /// document defaults): a character style overlays them on its runs.
+    sets_size: bool,
+    sets_family: bool,
 }
 
 #[derive(Clone, Default)]
@@ -2264,6 +2268,22 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             para.style_name = nm.clone();
         }
         let (num_id, ilvl) = resolve_num_pr(&dom, &raw, &id, 0);
+        let chain_sets = |name: &str| {
+            let mut cur = Some(id.as_str());
+            for _ in 0..12 {
+                let Some(r) = cur.and_then(|c| raw.get(c)) else {
+                    break;
+                };
+                if r.rpr
+                    .is_some_and(|rpr| first_named(&dom, rpr, name).is_some())
+                {
+                    return true;
+                }
+                cur = r.based.as_deref();
+            }
+            false
+        };
+        let (sets_size, sets_family) = (chain_sets("sz"), chain_sets("rFonts"));
         by_id.insert(
             id,
             NamedStyle {
@@ -2271,6 +2291,8 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
                 run,
                 num_id,
                 ilvl,
+                sets_size,
+                sets_family,
             },
         );
     }
@@ -2847,6 +2869,10 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
                 ];
             }
             style.color = rgb;
+        } else if dom.attribute(color, &W::val()) == Some("auto") {
+            // "auto" is Word's automatic colour: it overrides an inherited
+            // one (004b3b3d's runs under a red paragraph style are black).
+            style.color = [0.0, 0.0, 0.0];
         }
     } else {
         // Strict01 Online Video: w14:textFill accent5, no w:color.
@@ -8278,6 +8304,15 @@ fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
     if run.color != [0.0, 0.0, 0.0] {
         style.color = run.color;
     }
+    // A size or face the character style itself sets does apply
+    // (004b3b3d's PageNumber is 8pt Arial; the old mini 336 lock
+    // predates fixtures_500).
+    if named.sets_size {
+        style.size = run.size;
+    }
+    if named.sets_family {
+        style.family.clone_from(&run.family);
+    }
 }
 
 #[derive(Default)]
@@ -11999,7 +12034,7 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
         let pstyle = std::rc::Rc::new(pstyle);
         let mut scan = FieldScan::default();
         let mut line = Vec::new();
-        collect_hf_rec(dom, para, &prun, theme, &mut scan, &mut line);
+        collect_hf_rec(dom, para, &prun, sheet, &mut scan, &mut line);
         let right_frame = dom
             .element(para, &W::p_pr())
             .and_then(|ppr| first_named(dom, ppr, "framePr"))
@@ -12226,10 +12261,11 @@ fn collect_hf_rec(
     dom: &Dom,
     node: NodeId,
     base: &RunStyle,
-    theme: &ThemeFonts,
+    sheet: &StyleSheet,
     scan: &mut FieldScan,
     runs: &mut Vec<TextRun>,
 ) {
+    let theme = &sheet.theme;
     if dom.name_is(node, &W::instr_text()) {
         let raw = element_text(dom, node);
         scan.instr.push_str(&raw);
@@ -12277,15 +12313,24 @@ fn collect_hf_rec(
                 break;
             }
         }
-        if fieldish {
-            for i in 0..dom.child_count(node) {
-                collect_hf_rec(dom, dom.child_at(node, i), base, theme, scan, runs);
-            }
-            return;
-        }
+        // The run's character style, then its direct rPr (004b3b3d's
+        // PageNumber runs are 8pt only through rStyle).
         let mut style = base.clone();
         if let Some(rpr) = dom.element(node, &W::r_pr()) {
+            if let Some(named) = first_named(dom, rpr, "rStyle")
+                .and_then(|n| dom.attribute(n, &W::val()))
+                .and_then(|sid| sheet.by_id.get(sid))
+            {
+                apply_named_char_style(&mut style, named);
+            }
             apply_rpr(dom, rpr, &mut style, theme);
+        }
+        if fieldish {
+            // An uncached field's run takes the style of the run holding it.
+            for i in 0..dom.child_count(node) {
+                collect_hf_rec(dom, dom.child_at(node, i), &style, sheet, scan, runs);
+            }
+            return;
         }
         if scan.result
             && let Some(kind) = scan.kind
@@ -12311,7 +12356,7 @@ fn collect_hf_rec(
         return;
     }
     for idx in 0..dom.child_count(node) {
-        collect_hf_rec(dom, dom.child_at(node, idx), base, theme, scan, runs);
+        collect_hf_rec(dom, dom.child_at(node, idx), base, sheet, scan, runs);
     }
 }
 
