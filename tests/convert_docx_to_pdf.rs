@@ -31176,6 +31176,44 @@ fn a_right_to_left_paragraph_mirrors_its_alignment_and_indents() {
 }
 
 #[test]
+fn a_spaces_only_paragraph_is_sized_by_its_mark() {
+    // fixtures_500 00195f87: a paragraph of 12pt spaces under a 14pt mark
+    // stood 2.1pt short. Checked in Word: a spaces-only paragraph's line
+    // is its mark's (28pt spaces + 12pt mark: a 12pt line; 12pt spaces +
+    // 28pt mark: a 28pt line), exactly like an empty paragraph with that
+    // mark. A line with ink keeps its runs' height.
+    let tnr = |half: u32| {
+        format!(
+            "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+             <w:sz w:val=\"{half}\"/></w:rPr>"
+        )
+    };
+    let flat = "<w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>";
+    let next_y = |middle: &str| {
+        let body = format!(
+            "<w:p><w:pPr>{flat}</w:pPr><w:r>{}<w:t>Top</w:t></w:r></w:p>{middle}\
+             <w:p><w:pPr>{flat}</w:pPr><w:r>{}<w:t>Next</w:t></w:r></w:p><w:sectPr/>",
+            tnr(24),
+            tnr(24)
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert spaces paragraph");
+        pdf_glyph_text_xy(&pdf, "Next").expect("Next paints").1
+    };
+    for (spaces, mark) in [(56, 24), (24, 56)] {
+        let spaced = next_y(&format!(
+            "<w:p><w:pPr>{flat}{}</w:pPr><w:r>{}<w:t xml:space=\"preserve\">     </w:t></w:r></w:p>",
+            tnr(mark),
+            tnr(spaces)
+        ));
+        let empty = next_y(&format!("<w:p><w:pPr>{flat}{}</w:pPr></w:p>", tnr(mark)));
+        assert!(
+            (spaced - empty).abs() < 0.3,
+            "spaces {spaces} under mark {mark} sit like an empty mark-{mark} paragraph: {spaced} vs {empty}"
+        );
+    }
+}
+
+#[test]
 fn a_justified_underline_runs_through_the_stretched_spaces() {
     // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
     // underlined word by word; the justify pad after each space was bare.

@@ -6552,6 +6552,29 @@ fn paragraph_block(
         apply_rpr(dom, rpr, &mut mark, &sheet.theme);
         pstyle.mark_run = Some(std::rc::Rc::new(mark));
     }
+    // A paragraph of plain spaces is a line of its mark, like an empty one
+    // (checked in Word: 28pt spaces under a 12pt mark make a 12pt line,
+    // 12pt spaces under a 28pt mark a 28pt one; 00195f87's 12pt spaces
+    // under a 14pt mark stood 2.1pt short).
+    let spaces_only = !runs.is_empty()
+        && runs.iter().all(|r| {
+            !r.list_marker && matches!(r.field, FieldKind::None) && r.text.chars().all(|c| c == ' ')
+        });
+    if spaces_only && floats_only && boxes_float {
+        let mut mark = rstyle.clone();
+        if let Some(rpr) = dom
+            .element(para, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        {
+            apply_rpr(dom, rpr, &mut mark, &sheet.theme);
+        }
+        for run in &mut runs {
+            run.style.family.clone_from(&mark.family);
+            run.style.bold = mark.bold;
+            run.style.italic = mark.italic;
+            run.style.size = mark.size;
+        }
+    }
     if runs.is_empty() && floats_only && boxes_float {
         if let Some(rpr) = mark_rpr {
             let mut mark = rstyle.clone();
