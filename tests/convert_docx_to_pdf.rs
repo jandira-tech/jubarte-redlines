@@ -2064,6 +2064,46 @@ fn a_cell_bottom_border_sits_in_the_next_rows_pitch() {
 }
 
 #[test]
+fn a_cell_naming_only_its_diagonals_keeps_the_table_rules() {
+    // fixtures_500 004599833e (WPS): every cell's tcBorders names only
+    // tl2br / tr2bl = nil. Word overrides only the edges a cell names;
+    // the others stay the table's rules. Treating any tcBorders as a full
+    // restatement erased every grid line.
+    let cell = |t: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/>\
+             <w:tcBorders><w:tl2br w:val=\"nil\"/><w:tr2bl w:val=\"nil\"/></w:tcBorders></w:tcPr>\
+             <w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/><w:tblBorders>\
+           <w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+           <w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+           <w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+           <w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+           <w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+           <w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+         </w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid>\
+         <w:tr><w:trPr><w:trHeight w:val=\"400\"/></w:trPr>{}{}</w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        cell("Left"),
+        cell("Right")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("diagonal-only tcBorders");
+    let mut xs = pdf_vertical_rule_xs(&pdf);
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    xs.dedup_by(|a, b| (*a - *b).abs() < 1.0);
+    assert_eq!(
+        xs.len(),
+        3,
+        "left, insideV and right rules still paint; xs={xs:?}"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves

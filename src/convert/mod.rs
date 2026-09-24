@@ -2446,9 +2446,16 @@ fn row_exception_cell_borders(
     }
 }
 
-fn parse_tc_borders(dom: &Dom, cell: NodeId) -> Option<CellBorders> {
+/// A cell's `w:tcBorders` edge by edge (top, bottom, left, right): the
+/// outer `None` is an edge the cell does not name, `Some(None)` one it
+/// names as none.
+type TcEdge = Option<Option<([f32; 3], f32)>>;
+
+fn parse_tc_border_spec(dom: &Dom, cell: NodeId) -> Option<[TcEdge; 4]> {
     let pr = first_named(dom, cell, "tcPr")?;
-    parse_tc_borders_el(dom, pr)
+    let borders = direct_named(dom, pr, "tcBorders")?;
+    let edge = |name: &str| border_el(dom, borders, name).map(|el| parse_border_edge(dom, el));
+    Some([edge("top"), edge("bottom"), edge("left"), edge("right")])
 }
 
 fn parse_style_pr_tc_borders(dom: &Dom, pr: NodeId) -> Option<CellBorders> {
@@ -7215,6 +7222,10 @@ fn table_block(
     // but mini 454 ITT-neg: file_100/115/185/196 13→14pp (−23 ITT).
     let all_rows = dom.elements(table, Some(&W::tr()));
     let row_count = all_rows.len();
+    // The rules an edge a cell's tcBorders leaves unnamed falls back to.
+    let table_borders = table_pr(dom, table)
+        .and_then(|pr| parse_tbl_borders(dom, pr))
+        .or_else(|| tdef.as_ref().and_then(|t| t.borders));
     for (ri, row) in all_rows.into_iter().enumerate() {
         let [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b] =
             row_cell_mar(dom, row, [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b]);
@@ -7350,18 +7361,25 @@ fn table_block(
                 last.style.after = 0.0;
             }
             let (colspan, vmerge) = cell_span(dom, cell);
-            let borders = parse_tc_borders(dom, cell).or_else(|| {
-                row_borders.map(|b| {
-                    let last_col = grid_at + colspan.max(1) >= cols.len();
-                    row_exception_cell_borders(
-                        b,
-                        ri == 0,
-                        ri + 1 == row_count,
-                        grid_at == 0,
-                        last_col,
-                    )
-                })
-            });
+            let last_col = grid_at + colspan.max(1) >= cols.len();
+            let at = |b: TblBorders| {
+                row_exception_cell_borders(b, ri == 0, ri + 1 == row_count, grid_at == 0, last_col)
+            };
+            // tcBorders overrides only the edges it names (004599833e's
+            // cells name just tl2br / tr2bl): the rest keep the row's
+            // tblPrEx rules, else the table's.
+            let borders = match parse_tc_border_spec(dom, cell) {
+                Some([top, bottom, left, right]) => {
+                    let inherit = row_borders.or(table_borders).map(at).unwrap_or_default();
+                    Some(CellBorders {
+                        top: top.unwrap_or(inherit.top),
+                        bottom: bottom.unwrap_or(inherit.bottom),
+                        left: left.unwrap_or(inherit.left),
+                        right: right.unwrap_or(inherit.right),
+                    })
+                }
+                None => row_borders.map(at),
+            };
             grid_at += colspan.max(1);
             let (pad_l, pad_r) = cell_pad_h(dom, cell, tbl_pad_l, tbl_pad_r);
             let (pad_t, pad_b) = cell_pad_tb(dom, cell, tbl_pad_t, tbl_pad_b);
