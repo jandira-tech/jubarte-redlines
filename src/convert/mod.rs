@@ -1275,6 +1275,9 @@ struct LaidImage {
     /// A header/footer picture whose paragraph follows one of the part's
     /// top-level tables: it paints under them (00319da4's logo).
     chrome_under_table: bool,
+    /// An inline picture's `wp:effectExtent` (left, top, right, bottom) in
+    /// points: `w`/`h` include it, the picture paints inside it.
+    inset: [f32; 4],
     /// A chrome picture paragraph's auto multiple above single: the extra
     /// `(mult - 1)` lines of its mark's face go under the picture
     /// (00e901c5's 48.2pt logo at 1.3 lines stands 52.6pt).
@@ -6387,6 +6390,7 @@ fn paragraph_block(
                 chrome_lead: false,
                 chrome_flow: false,
                 chrome_under_table: false,
+                inset: [0.0; 4],
                 chrome_leading: None,
                 outline: None,
                 gap_before: 0.0,
@@ -10452,6 +10456,21 @@ fn space_before_drawing(dom: &Dom, drawing: NodeId) -> f32 {
     0.0
 }
 
+/// An inline drawing's `wp:effectExtent` (l, t, r, b) in points. Word lays
+/// the picture out at its extent plus these (00319da4's logo: b=0.75pt;
+/// in Word b=10pt moves the text below 10pt down, t=10pt the picture).
+fn inline_effect_pt(dom: &Dom, drawing: NodeId) -> [f32; 4] {
+    let Some(effect) = first_named_any(dom, drawing, "effectExtent") else {
+        return [0.0; 4];
+    };
+    let side = |name: &str| {
+        attr_any(dom, effect, name)
+            .and_then(|v| v.parse::<f32>().ok())
+            .map_or(0.0, |emu| (emu / 12700.0).max(0.0))
+    };
+    [side("l"), side("t"), side("r"), side("b")]
+}
+
 fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<LaidImage> {
     let mut out = Vec::new();
     // 019d92d9's text box holds an inline flag; laying it out in the host
@@ -10489,6 +10508,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_lead: false,
                     chrome_flow: false,
                     chrome_under_table: false,
+                    inset: [0.0; 4],
                     chrome_leading: None,
                     outline: None,
                     gap_before: 0.0,
@@ -10500,9 +10520,14 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
             if let Some(rid) = attr_any(dom, blip, "embed") {
                 if let Some(bytes) = resolve_media(pkg, main, rid) {
                     let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);
+                    let inset = if matches!(slot, ImageSlot::Flow) {
+                        inline_effect_pt(dom, drawing)
+                    } else {
+                        [0.0; 4]
+                    };
                     out.push(LaidImage {
-                        w,
-                        h,
+                        w: w + inset[0] + inset[2],
+                        h: h + inset[1] + inset[3],
                         kind,
                         slot,
                         behind,
@@ -10513,6 +10538,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_lead: false,
                         chrome_flow: false,
                         chrome_under_table: false,
+                        inset,
                         chrome_leading: None,
                         outline: picture_outline(dom, drawing),
                         gap_before: space_before_drawing(dom, drawing),
@@ -10531,6 +10557,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_lead: false,
                         chrome_flow: false,
                         chrome_under_table: false,
+                        inset: [0.0; 4],
                         chrome_leading: None,
                         outline: None,
                         gap_before: 0.0,
@@ -10568,6 +10595,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_lead: false,
                         chrome_flow: false,
                         chrome_under_table: false,
+                        inset: [0.0; 4],
                         chrome_leading: None,
                         outline: None,
                         gap_before: 0.0,
@@ -10592,6 +10620,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_lead: false,
                     chrome_flow: false,
                     chrome_under_table: false,
+                    inset: [0.0; 4],
                     chrome_leading: None,
                     outline: None,
                     gap_before: 0.0,
@@ -11498,6 +11527,13 @@ fn attr_any<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
 fn resolve_media(pkg: &PartFs, source_part: &str, rel_id: &str) -> Option<Vec<u8>> {
     let path = rel_target_path(pkg, source_part, rel_id)?;
     pkg.part_bytes(&path).map(<[u8]>::to_vec)
+}
+
+/// The picture's own box inside its laid-out box (x, y bottom-left): the
+/// `wp:effectExtent` margins stay empty.
+fn inset_box(img: &LaidImage, x: f32, y: f32, dw: f32, dh: f32) -> (f32, f32, f32, f32) {
+    let [l, t, r, b] = img.inset;
+    (x + l, y + b, (dw - l - r).max(1.0), (dh - t - b).max(1.0))
 }
 
 /// A VML fixed-point fraction (`19661f` = 19661/65536) or plain number.
@@ -15607,6 +15643,7 @@ impl<'a> Layout<'a> {
 
     /// One picture's paint op at (x, y) bottom-left, dw × dh.
     fn push_image(&mut self, img: &LaidImage, x: f32, y: f32, dw: f32, dh: f32) {
+        let (x, y, dw, dh) = inset_box(img, x, y, dw, dh);
         match &img.kind {
             ImageKind::Jpeg {
                 width,
@@ -15941,6 +15978,7 @@ impl<'a> Layout<'a> {
                 y = self.page.footer.max(0.0) + foot_band - off - dh;
             }
         }
+        let (x, y, dw, dh) = inset_box(img, x, y, dw, dh);
         match &img.kind {
             ImageKind::Jpeg {
                 width,

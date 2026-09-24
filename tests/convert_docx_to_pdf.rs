@@ -2973,6 +2973,54 @@ fn blip(cx: &str, cy: &str, inner_open: &str, inner_close: &str) -> String {
 }
 
 #[test]
+fn an_inline_pictures_effect_extent_takes_room_in_its_line() {
+    // fixtures_500 00319da4 (118 files carry one): Word lays an inline
+    // picture out at its extent plus wp:effectExtent. Checked in Word: the
+    // logo's b grown from 0.75pt to 10pt moves the text below 9.36pt down,
+    // t=10pt moves the picture itself 10pt down. We ignored the extents.
+    let pdf_with = |effect: &str| {
+        let pic = format!(
+            "<w:drawing><wp:inline><wp:extent cx=\"457200\" cy=\"457200\"/>{effect}\
+               <wp:docPr id=\"1\" name=\"Picture 0\" descr=\"dot.png\"/>\
+               <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+                 <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+               </a:graphicData></a:graphic></wp:inline></w:drawing>"
+        );
+        let docx = drawing_docx(&format!(
+            "<w:p><w:r>{pic}</w:r></w:p><w:p><w:r><w:t>NextLine</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        ));
+        docx_to_pdf(&docx).expect("convert inline picture")
+    };
+    let plain = pdf_with("");
+    let below = pdf_with("<wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"127000\"/>");
+    let above = pdf_with("<wp:effectExtent l=\"0\" t=\"127000\" r=\"0\" b=\"0\"/>");
+    let next = |pdf: &[u8]| {
+        pdf_glyph_text_xy(pdf, "NextLine")
+            .expect("next line paints")
+            .1
+    };
+    let pic_y = |pdf: &[u8]| image_cm_xy(pdf, "36.00", "36.00").1;
+    assert!(
+        (next(&plain) - next(&below) - 10.0).abs() < 0.6,
+        "b=10pt pushes the next line 10pt down: {} -> {}",
+        next(&plain),
+        next(&below)
+    );
+    assert!(
+        (pic_y(&plain) - pic_y(&above) - 10.0).abs() < 0.6,
+        "t=10pt paints the picture 10pt lower: {} -> {}",
+        pic_y(&plain),
+        pic_y(&above)
+    );
+    assert!(
+        (pic_y(&plain) - pic_y(&below)).abs() < 0.6,
+        "b=10pt leaves the picture where it was"
+    );
+}
+
+#[test]
 fn a_space_between_inline_pictures_keeps_them_apart() {
     // fixtures_500 0034561f: two photos separated by a 16pt space run.
     // Word leaves the space's 4pt between them; we set them edge to edge.
