@@ -1840,6 +1840,66 @@ fn an_autofit_pct_table_keeps_the_grid_its_width_matches() {
 }
 
 #[test]
+fn a_headers_tracked_deletion_paints_struck_through() {
+    // Redlines vs 000e3e7b: the compared footer holds B's line only as
+    // w:del/w:delText (PAGE/NUMPAGES as delInstrText). Word's markup view
+    // paints it struck through; we dropped it.
+    let hdr = r#"<w:p><w:del w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>GoneText</w:delText></w:r></w:del></w:p>"#;
+    let pdf = docx_to_pdf(&header_part_docx(hdr)).expect("header deletion");
+    let (_, y) = pdf_glyph_text_xy(&pdf, "GoneText").expect("the deleted text paints");
+    assert!(y > 700.0, "it paints in the header; y={y}");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("0.820 0.204 0.220 rg"),
+        "the deletion paints in the revision ink"
+    );
+}
+
+#[test]
+fn header_ptabs_align_to_the_margins() {
+    // Redlines vs 000e3e7b: "FORM<ptab center>" and "<ptab right>PAGE 1 OF 2"
+    // sit centred on the text area and flush with the right margin,
+    // whatever the paragraph's own stops (right at 8080 twips here).
+    let hdr = r#"<w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="8080"/></w:tabs></w:pPr><w:r><w:t>Lft</w:t></w:r><w:r><w:ptab w:relativeTo="margin" w:alignment="center" w:leader="none"/><w:t>Mid</w:t></w:r><w:r><w:ptab w:relativeTo="margin" w:alignment="right" w:leader="none"/><w:t>Rgt</w:t></w:r></w:p>"#;
+    let pdf = docx_to_pdf(&header_part_docx(hdr)).expect("ptab header");
+    let (xm, _) = pdf_glyph_text_xy(&pdf, "Mid").expect("Mid paints");
+    let (xr, _) = pdf_glyph_text_xy(&pdf, "Rgt").expect("Rgt paints");
+    assert!(xm > 280.0 && xm < 306.0, "Mid centres on 306; x={xm}");
+    assert!(
+        xr > 500.0 && xr < 540.0,
+        "Rgt ends at the 540pt margin; x={xr}"
+    );
+}
+
+#[test]
+fn a_tab_after_a_full_width_header_picture_wraps_to_its_own_line() {
+    // Redlines vs 000e3e7b: a 441.75pt banner fills the header measure and
+    // a tab follows it; Word wraps the tab to a second line (descent + one
+    // line, 16.2pt at Calibri 11) and starts the body that much lower.
+    let pic = |tab: &str| {
+        format!(
+            "<w:p><w:r><w:drawing><wp:inline><wp:extent cx=\"5943600\" cy=\"1270000\"/>\
+             <wp:docPr id=\"1\" name=\"Picture 1\"/><a:graphic><a:graphicData \
+             uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic><pic:blipFill>\
+             <a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>\
+             </wp:inline></w:drawing></w:r>{tab}</w:p>"
+        )
+    };
+    let body_y = |tab: &str| {
+        let pdf = docx_to_pdf(&header_part_docx_at(&pic(tab), 0)).expect("banner header");
+        pdf_glyph_text_xy(&pdf, "HdrImgBodyX")
+            .expect("body paints")
+            .1
+    };
+    let plain = body_y("");
+    let tabbed = body_y("<w:r><w:tab/></w:r>");
+    assert!(
+        plain - tabbed > 10.0,
+        "the wrapped tab line pushes the body down; plain {plain} tabbed {tabbed}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

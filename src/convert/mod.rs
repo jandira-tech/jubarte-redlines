@@ -421,6 +421,12 @@ struct TabStop {
     leader: TabLeader,
 }
 
+/// A header/footer `w:ptab alignment="center"` stop: the middle of the text
+/// area, resolved when the line paints (`draw_line_of_runs`).
+const PTAB_CENTER: f32 = -1.0;
+/// A header/footer `w:ptab alignment="right"` stop: the right margin.
+const PTAB_RIGHT: f32 = -2.0;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TabAlign {
     Left,
@@ -1307,6 +1313,10 @@ struct LaidImage {
     /// `(mult - 1)` lines of its mark's face go under the picture
     /// (00e901c5's 48.2pt logo at 1.3 lines stands 52.6pt).
     chrome_leading: Option<(f32, RunStyle)>,
+    /// A chrome picture that fills the measure with a tab after it: Word
+    /// wraps the tab to a line of its own in this mark's face (redlines vs
+    /// 000e3e7b: a 441.75pt banner + tab stands 16.2pt taller).
+    chrome_tab_line: Option<RunStyle>,
     /// `pic:spPr/a:ln`: Word strokes the picture's own outline (000f5278's
     /// QR code has a black frame).
     outline: Option<([f32; 3], f32)>,
@@ -6746,6 +6756,7 @@ fn paragraph_block(
                 chrome_under_table: false,
                 inset: [0.0; 4],
                 chrome_leading: None,
+                chrome_tab_line: None,
                 outline: None,
                 gap_before: 0.0,
             },
@@ -8992,6 +9003,9 @@ enum RevMark {
     Del,
 }
 
+/// Header/footer revisions take the first author's ink (`AuthorColors`).
+const HF_REV_COLOR: [f32; 3] = [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0];
+
 fn apply_rev(style: &mut RunStyle, mark: RevMark, color: [f32; 3]) {
     match mark {
         RevMark::None => {}
@@ -9566,6 +9580,12 @@ fn collect_visible_marked(dom: &Dom, node: NodeId, out: &mut String, in_del: boo
     // 00abf747's footer ends in one, a line Word keeps).
     if !in_del && dom.name_is(node, &W::name("cr")) {
         out.push('\n');
+        return;
+    }
+    // An absolute-position tab moves like a tab; chrome paragraphs resolve
+    // its stop against the margins (`PTAB_CENTER` / `PTAB_RIGHT`).
+    if !in_del && dom.name_is(node, &W::name("ptab")) {
+        out.push('\t');
         return;
     }
     if !in_del && (dom.name_is(node, &W::name("tab")) || dom.name_is(node, &W::name("br"))) {
@@ -11040,6 +11060,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_under_table: false,
                     inset: [0.0; 4],
                     chrome_leading: None,
+                    chrome_tab_line: None,
                     outline: None,
                     gap_before: 0.0,
                 });
@@ -11070,6 +11091,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_under_table: false,
                         inset,
                         chrome_leading: None,
+                        chrome_tab_line: None,
                         outline: picture_outline(dom, drawing),
                         gap_before: space_before_drawing(dom, drawing),
                     });
@@ -11089,6 +11111,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_under_table: false,
                         inset: [0.0; 4],
                         chrome_leading: None,
+                        chrome_tab_line: None,
                         outline: None,
                         gap_before: 0.0,
                     });
@@ -11127,6 +11150,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_under_table: false,
                         inset: [0.0; 4],
                         chrome_leading: None,
+                        chrome_tab_line: None,
                         outline: None,
                         gap_before: 0.0,
                     });
@@ -11152,6 +11176,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_under_table: false,
                     inset: [0.0; 4],
                     chrome_leading: None,
+                    chrome_tab_line: None,
                     outline: None,
                     gap_before: 0.0,
                 });
@@ -12576,7 +12601,9 @@ fn sect_ref_chrome_of(
     let Some(rid) = rid else {
         return empty_chrome();
     };
-    load_chrome_part(pkg, main, &rid, local, sheet)
+    let page = apply_sect_pr(dom, sect, &sheet.defaults.page);
+    let text_w = page.width - page.margin_l - page.margin_r;
+    load_chrome_part(pkg, main, &rid, local, sheet, text_w)
 }
 
 fn load_chrome_part(
@@ -12585,6 +12612,7 @@ fn load_chrome_part(
     rid: &str,
     local: &str,
     sheet: &StyleSheet,
+    text_w: f32,
 ) -> ChromePart {
     let Some(path) = rel_target_path(pkg, main, rid) else {
         return empty_chrome();
@@ -12639,6 +12667,22 @@ fn load_chrome_part(
                 (pstyle.line_mult - 1.0, mark)
             });
         let lead = !seen_text;
+        let tab_after = !part_dom
+            .descendants(para, Some(&W::name("tab")))
+            .into_iter()
+            .filter(|t| part_dom.ancestors(*t, Some(&W::name("tabs"))).is_empty())
+            .collect::<Vec<_>>()
+            .is_empty();
+        let mark_style = || {
+            let mut mark = prun.clone();
+            if let Some(rpr) = part_dom
+                .element(para, &W::p_pr())
+                .and_then(|ppr| part_dom.element(ppr, &W::r_pr()))
+            {
+                apply_rpr(&part_dom, rpr, &mut mark, &sheet.theme);
+            }
+            mark
+        };
         // Only a picture-only paragraph stands as its own line; a picture
         // sharing a line with text (000e002d's logo + tabbed title) stays
         // with the text.
@@ -12680,6 +12724,9 @@ fn load_chrome_part(
                     img.chrome_flow = flow && matches!(img.slot, ImageSlot::Flow);
                     if img.chrome_flow {
                         img.chrome_leading.clone_from(&leading);
+                        if tab_after && img.w >= text_w - 0.5 {
+                            img.chrome_tab_line = Some(mark_style());
+                        }
                     }
                     img
                 }),
@@ -12973,7 +13020,29 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
         if hf_para_is_shape_text(dom, para) || hf_para_in_table(dom, node, para) {
             continue;
         }
-        let (pstyle, prun) = para_base(dom, para, sheet, None);
+        let (mut pstyle, prun) = para_base(dom, para, sheet, None);
+        // Absolute-position tabs replace the paragraph's stops: Word aligns
+        // them to the margins whatever w:tabs say (redlines vs 000e3e7b:
+        // "FORM - ..." centred on the page, "PAGE 1 OF 2" at the margin).
+        let ptabs: Vec<TabStop> = dom
+            .descendants(para, Some(&W::name("ptab")))
+            .into_iter()
+            .filter_map(|n| {
+                let (pos, align) = match attr_any(dom, n, "alignment") {
+                    Some("center") => (PTAB_CENTER, TabAlign::Center),
+                    Some("right") => (PTAB_RIGHT, TabAlign::Right),
+                    _ => return None,
+                };
+                Some(TabStop {
+                    pos,
+                    align,
+                    leader: TabLeader::None,
+                })
+            })
+            .collect();
+        if !ptabs.is_empty() {
+            pstyle.tab_stops = ptabs;
+        }
         let pstyle = std::rc::Rc::new(pstyle);
         let mut scan = FieldScan::default();
         let mut line = Vec::new();
@@ -13256,8 +13325,24 @@ fn collect_hf_rec(
     scan: &mut FieldScan,
     runs: &mut Vec<TextRun>,
 ) {
+    collect_hf_rev(dom, node, base, sheet, scan, runs, RevMark::None);
+}
+
+/// `collect_hf_rec` under a tracked change: Word's markup view paints a
+/// header/footer's deletions struck through and its insertions underlined,
+/// both in the first author's red (redlines vs 000e3e7b: the deleted
+/// "FRESHCARE AWISSP ... PAGE 1 OF 2" footer line).
+fn collect_hf_rev(
+    dom: &Dom,
+    node: NodeId,
+    base: &RunStyle,
+    sheet: &StyleSheet,
+    scan: &mut FieldScan,
+    runs: &mut Vec<TextRun>,
+    mark: RevMark,
+) {
     let theme = &sheet.theme;
-    if dom.name_is(node, &W::instr_text()) {
+    if dom.name_is(node, &W::instr_text()) || dom.name_is(node, &W::del_instr_text()) {
         let raw = element_text(dom, node);
         scan.instr.push_str(&raw);
         let up = scan.instr.to_ascii_uppercase();
@@ -13299,7 +13384,10 @@ fn collect_hf_rec(
         let mut fieldish = false;
         for i in 0..dom.child_count(node) {
             let c = dom.child_at(node, i);
-            if dom.name_is(c, &W::fld_char()) || dom.name_is(c, &W::instr_text()) {
+            if dom.name_is(c, &W::fld_char())
+                || dom.name_is(c, &W::instr_text())
+                || dom.name_is(c, &W::del_instr_text())
+            {
                 fieldish = true;
                 break;
             }
@@ -13316,17 +13404,18 @@ fn collect_hf_rec(
             }
             apply_rpr(dom, rpr, &mut style, theme);
         }
+        apply_rev(&mut style, mark, HF_REV_COLOR);
         if fieldish {
             // An uncached field's run takes the style of the run holding it.
             for i in 0..dom.child_count(node) {
-                collect_hf_rec(dom, dom.child_at(node, i), &style, sheet, scan, runs);
+                collect_hf_rev(dom, dom.child_at(node, i), &style, sheet, scan, runs, mark);
             }
             return;
         }
         if scan.result
             && let Some(kind) = scan.kind
         {
-            let text = visible_text(dom, node, RevMark::None, false);
+            let text = visible_text(dom, node, mark, false);
             if !text.is_empty() {
                 let mut run = field_run(text, &style);
                 run.field = kind;
@@ -13337,7 +13426,7 @@ fn collect_hf_rec(
         }
         // Word paints every space of an xml:space="preserve" run (0005052e
         // footer indents "BGYS.F-06" with six); plain runs still squeeze.
-        let text = visible_text(dom, node, RevMark::None, run_preserves_space(dom, node));
+        let text = visible_text(dom, node, mark, run_preserves_space(dom, node));
         if !text.is_empty() {
             runs.push(TextRun::new(text, style));
             if scan.result {
@@ -13346,8 +13435,15 @@ fn collect_hf_rec(
         }
         return;
     }
+    let mark = if dom.name_is(node, &W::del()) || dom.name_is(node, &W::move_from()) {
+        RevMark::Del
+    } else if dom.name_is(node, &W::ins()) || dom.name_is(node, &W::move_to()) {
+        RevMark::Ins
+    } else {
+        mark
+    };
     for idx in 0..dom.child_count(node) {
-        collect_hf_rec(dom, dom.child_at(node, idx), base, sheet, scan, runs);
+        collect_hf_rev(dom, dom.child_at(node, idx), base, sheet, scan, runs, mark);
     }
 }
 
@@ -13550,10 +13646,16 @@ fn chrome_images_h(fonts: &Fonts, images: &[LaidImage]) -> f32 {
 /// A chrome picture paragraph's line: the picture plus its multiple's
 /// extra leading.
 fn chrome_pic_line(fonts: &Fonts, img: &LaidImage) -> f32 {
+    let mult = 1.0 + img.chrome_leading.as_ref().map_or(0.0, |(extra, _)| *extra);
     img.h
         + img.chrome_leading.as_ref().map_or(0.0, |(extra, mark)| {
             let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
             extra * face.single_line_pt(mark.size)
+        })
+        + img.chrome_tab_line.as_ref().map_or(0.0, |mark| {
+            // The picture line's descent, then the tab's own line.
+            let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
+            face.line_descent_pt(mark.size) + mult * face.single_line_pt(mark.size)
         })
 }
 
@@ -19072,9 +19174,24 @@ impl<'a> Layout<'a> {
         let tabbed = runs.iter().any(|r| r.text.contains('\t'));
         if tabbed && matches!(align, Align::Left | Align::Justify) {
             let para = runs.iter().find_map(|r| r.hf_para.clone());
+            let width = self.content_width();
             let stops = para
                 .as_ref()
-                .map(|p| p.tab_stops.clone())
+                .map(|p| {
+                    p.tab_stops
+                        .iter()
+                        .map(|t| TabStop {
+                            pos: if t.pos == PTAB_CENTER {
+                                width / 2.0
+                            } else if t.pos == PTAB_RIGHT {
+                                width
+                            } else {
+                                t.pos
+                            },
+                            ..*t
+                        })
+                        .collect()
+                })
                 .unwrap_or_default();
             let indent = para.as_ref().map_or(0.0, |p| hf_line_indent(p, runs));
             let saved = std::mem::replace(&mut self.tab_stops, stops);
