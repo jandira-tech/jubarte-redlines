@@ -635,6 +635,36 @@ fn table_cell_spacing_opens_each_row_by_twice_the_spacing() {
 }
 
 #[test]
+fn a_square_float_narrows_the_paragraphs_after_its_anchor() {
+    // fixtures_500 00df9dc4: a 249pt x 331pt picture at the left margin,
+    // anchored in the first paragraph. Word wraps every following paragraph
+    // beside it (x=323); we wrapped only the anchoring paragraph and ran
+    // the rest across the picture.
+    let img = blip(
+        "3159125",
+        "4207510",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"margin\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"margin\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r>{img}</w:r><w:r><w:t>AnchorPara</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>SecondPara</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>ThirdPara</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("side float");
+    for t in ["AnchorPara", "SecondPara", "ThirdPara"] {
+        let (x, _) = pdf_glyph_text_xy(&pdf, t).expect("paints");
+        assert!(x > 72.0 + 248.0, "{t} sits right of the picture; x={x}");
+    }
+}
+
+#[test]
 fn a_square_float_with_no_side_room_pushes_text_below_it() {
     // fixtures_500 0007c30e: a 660pt x 135.7pt letterhead picture anchored
     // at the page top, wrapSquare. Nothing fits beside it, so Word starts

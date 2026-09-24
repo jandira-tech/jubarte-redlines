@@ -14895,6 +14895,46 @@ impl<'a> Layout<'a> {
             slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
         };
         self.push_image(img, x, y, dw, dh);
+        self.hold_square_float(img.slot, x, y, dw, dh);
+    }
+
+    /// A square-wrapped picture keeps narrowing the paragraphs after its
+    /// anchor while its band lasts (00df9dc4's left pictures: every
+    /// paragraph beside them starts at x=323), like a floating table.
+    fn hold_square_float(&mut self, slot: ImageSlot, x: f32, y: f32, dw: f32, dh: f32) {
+        let ImageSlot::Float {
+            wrap_square: true,
+            dist_l,
+            dist_r,
+            dist_t,
+            dist_b,
+            ..
+        } = slot
+        else {
+            return;
+        };
+        let left_edge = self.flow_left();
+        let right_edge = left_edge + self.content_width();
+        let left_room = x - dist_l - left_edge;
+        let right_room = right_edge - (x + dw + dist_r);
+        let bottom = y - dist_b;
+        if left_room.max(right_room) < MIN_SIDE_FLOAT_ROOM_PT || bottom >= self.y {
+            return;
+        }
+        let (align, inset) = if right_room >= left_room {
+            (Align::Left, x + dw + dist_r - left_edge)
+        } else {
+            (Align::Right, right_edge - (x - dist_l))
+        };
+        if self.side_float.is_some_and(|sf| sf.bottom <= bottom) {
+            return;
+        }
+        self.side_float = Some(SideFloat {
+            align,
+            inset,
+            top: y + dh + dist_t,
+            bottom,
+        });
     }
 
     /// Paint one header/footer inline image `dx` after the previous ones
