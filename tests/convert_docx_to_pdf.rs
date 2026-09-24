@@ -3021,6 +3021,32 @@ fn an_inline_pictures_effect_extent_takes_room_in_its_line() {
 }
 
 #[test]
+fn an_inline_cell_picture_keeps_its_extent_past_the_cell_text_width() {
+    // fixtures_500 000bf661: a 99.75pt picture in a 108pt fixed cell whose
+    // text is 97.2pt wide. Word paints it at 99.75 x 78.75 into the cell
+    // padding (checked: at 104pt and 120pt too; an autofit table widens the
+    // column instead). We shrank it to the text width, 2.5pt shorter, and
+    // the header row came out 5.4pt short.
+    let pic = "<w:drawing><wp:inline><wp:extent cx=\"1266825\" cy=\"1000125\"/>\
+        <wp:docPr id=\"1\" name=\"Picture 0\" descr=\"dot.png\"/>\
+        <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+          <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+        </a:graphicData></a:graphic></wp:inline></w:drawing>";
+    let docx = drawing_docx(&format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"2160\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2160\"/></w:tblGrid><w:tr><w:tc>\
+         <w:tcPr><w:tcW w:w=\"2160\" w:type=\"dxa\"/></w:tcPr><w:p><w:r>{pic}</w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p/><w:sectPr/>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("convert cell picture");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("99.75 0 0 78.75 "),
+        "the picture keeps its 99.75 x 78.75 extent"
+    );
+}
+
+#[test]
 fn a_space_between_inline_pictures_keeps_them_apart() {
     // fixtures_500 0034561f: two photos separated by a 16pt space run.
     // Word leaves the space's 4pt between them; we set them edge to edge.

@@ -5872,7 +5872,7 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
         .map(|img| {
             let (_, _, drop, room) = cell_image_place(img, para.style.align);
             if room {
-                cell_image_wh(img, wrap_w).1 + drop
+                cell_image_wh(img).1 + drop
             } else {
                 0.0
             }
@@ -5934,14 +5934,12 @@ fn cell_para_is_image_only(para: &CellPara) -> bool {
         && para.runs.iter().all(|r| r.text.trim().is_empty())
 }
 
-/// An inline cell picture shrunk to the cell's text width.
-fn cell_image_wh(img: &LaidImage, wrap_w: f32) -> (f32, f32) {
-    let (w, h) = (img.w.max(1.0), img.h.max(1.0));
-    if w > wrap_w && wrap_w > 1.0 {
-        (wrap_w, h * wrap_w / w)
-    } else {
-        (w, h)
-    }
+/// An inline cell picture at its own extent: Word never shrinks it to the
+/// cell (000bf661's 99.75pt logo in a 97.2pt text width runs into the
+/// padding; checked at 104pt and 120pt, and an autofit table widens the
+/// column instead).
+fn cell_image_wh(img: &LaidImage) -> (f32, f32) {
+    (img.w.max(1.0), img.h.max(1.0))
 }
 
 /// `w:spaceForUL` descent under an underlined East Asian line (cells and
@@ -17940,7 +17938,7 @@ impl<'a> Layout<'a> {
                         }
                         y_line -= para.style.before;
                         for img in &para.images {
-                            let (dw, dh) = cell_image_wh(img, wrap_w);
+                            let (dw, dh) = cell_image_wh(img);
                             let (align, col_x, drop, room) =
                                 cell_image_place(img, para.style.align);
                             let inner = (w - pad_l - pad_r).max(0.0);
