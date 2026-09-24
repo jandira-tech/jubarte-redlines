@@ -635,6 +635,35 @@ fn table_cell_spacing_opens_each_row_by_twice_the_spacing() {
 }
 
 #[test]
+fn a_square_float_with_no_side_room_pushes_text_below_it() {
+    // fixtures_500 0007c30e: a 660pt x 135.7pt letterhead picture anchored
+    // at the page top, wrapSquare. Nothing fits beside it, so Word starts
+    // the body under it; we ran the text over the picture.
+    let img = blip(
+        "8382000",
+        "1270000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"page\"><wp:posOffset>-304800</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"page\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r>{img}</w:r><w:r><w:t>UnderBanner</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"720\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("banner");
+    let (_, y) = pdf_glyph_text_xy(&pdf, "UnderBanner").expect("text paints");
+    assert!(
+        792.0 - y > 100.0,
+        "the line starts under the 100pt banner; baseline {} below the top",
+        792.0 - y
+    );
+}
+
+#[test]
 fn a_br_outside_a_run_still_breaks_the_line() {
     // fixtures_500 0065a5f9 (PHPWord): <w:br/> sits directly in the w:p
     // between the title run and the URL hyperlink. Word breaks the line

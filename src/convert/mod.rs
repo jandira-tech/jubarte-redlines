@@ -13272,16 +13272,32 @@ impl<'a> Layout<'a> {
     fn apply_top_bottom_wrap(&mut self, images: &[LaidImage], boxes: &[LaidTextBox]) {
         let mut jump = self.y;
         let mut hit = false;
+        let left_edge = self.flow_left();
+        let right_edge = left_edge + self.content_width();
         let mut consider = |slot: ImageSlot, w: f32, h: f32| {
             let ImageSlot::Float {
                 wrap_top_bottom,
+                wrap_square,
+                dist_l,
+                dist_r,
                 dist_b,
                 ..
             } = slot
             else {
                 return;
             };
-            if !wrap_top_bottom {
+            // A square wrap with no room on either side (0007c30e's 660pt
+            // letterhead) sends the text under it, as top-and-bottom does,
+            // when the page has room under it (00003fff's full-page cover
+            // picture keeps its paragraph on the page).
+            let no_side_room = wrap_square && {
+                let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
+                let (fx, fy) = self.float_xy(dw, dh.max(1.0), slot);
+                fx - dist_l - left_edge < MIN_SIDE_FLOAT_ROOM_PT
+                    && right_edge - (fx + dw + dist_r) < MIN_SIDE_FLOAT_ROOM_PT
+                    && fy - dist_b > self.body_floor
+            };
+            if !wrap_top_bottom && !no_side_room {
                 return;
             }
             if !self.wrap_band_hits_line(slot, w, h) {
