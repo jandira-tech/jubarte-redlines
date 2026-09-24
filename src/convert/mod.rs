@@ -9904,9 +9904,31 @@ fn alternate_choice(dom: &Dom, node: NodeId) -> Option<NodeId> {
     fb
 }
 
+/// `node` sits inside a text box's content below `top`: the text box lays
+/// those pictures out itself.
+fn inside_text_box(dom: &Dom, node: NodeId, top: NodeId) -> bool {
+    let mut cur = dom.parent(node);
+    while let Some(n) = cur {
+        if n == top {
+            return false;
+        }
+        if local_name_is(dom, n, "txbxContent") {
+            return true;
+        }
+        cur = dom.parent(n);
+    }
+    false
+}
+
 fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<LaidImage> {
     let mut out = Vec::new();
-    for drawing in dom.descendants(para, Some(&W::drawing())) {
+    // 019d92d9's text box holds an inline flag; laying it out in the host
+    // paragraph pushed the list 18.6pt down.
+    for drawing in dom
+        .descendants(para, Some(&W::drawing()))
+        .into_iter()
+        .filter(|d| !inside_text_box(dom, *d, para))
+    {
         let (w, h) = drawing_extent_pt(dom, drawing);
         let slot = drawing_slot(dom, drawing);
         let (behind, z) = drawing_z(dom, drawing);

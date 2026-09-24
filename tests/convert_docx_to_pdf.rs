@@ -635,6 +635,47 @@ fn table_cell_spacing_opens_each_row_by_twice_the_spacing() {
 }
 
 #[test]
+fn a_picture_inside_a_text_box_is_not_the_paragraphs_own() {
+    // fixtures_500 019d92d9: "Patented Burner…" anchors a wrapNone text box
+    // whose content holds an 18.5pt inline flag. Word's paragraph stays one
+    // text line; we laid the flag out in the host paragraph and pushed the
+    // list 18.6pt down.
+    let flag = blip(
+        "368300",
+        "234950",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let tbox = format!(
+        "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>3000000</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"2286000\" cy=\"326390\"/><wp:wrapNone/><wp:docPr id=\"9\" name=\"Box\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:p><w:r>{flag}</w:r></w:p></w:txbxContent></wps:txbx>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>"
+    );
+    let step = |host: &str| {
+        let docx = drawing_docx(&format!(
+            "<w:p><w:r><w:t>HostLine</w:t></w:r>{host}</w:p>\
+             <w:p><w:r><w:t>NextLine</w:t></w:r></w:p><w:sectPr/>"
+        ));
+        let pdf = docx_to_pdf(&docx).expect("box flag");
+        pdf_glyph_text_xy(&pdf, "HostLine").expect("host").1
+            - pdf_glyph_text_xy(&pdf, "NextLine").expect("next").1
+    };
+    let plain = step("");
+    let boxed = step(&format!("<w:r>{tbox}</w:r>"));
+    assert!(
+        (boxed - plain).abs() < 0.5,
+        "the text box's flag adds no height to its host line; plain={plain} boxed={boxed}"
+    );
+}
+
+#[test]
 fn a_float_in_the_margin_does_not_indent_the_text() {
     // fixtures_500 00af3bb0: a 30pt QR code at column offset -42.7pt
     // (wrapTight) sits wholly in the left margin. Word starts the title at
