@@ -2978,7 +2978,11 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     // extra vs Word slabs.
     let has_reflection = !descendants_local(dom, rpr, "reflection").is_empty();
     let has_shadow = !descendants_local(dom, rpr, "shadow").is_empty();
-    let has_outline = !descendants_local(dom, rpr, "textOutline").is_empty();
+    // An outline with w14:noFill draws nothing (Pages-made "Cuerpo"
+    // styles in 107 redlines): it is no outline.
+    let has_outline = descendants_local(dom, rpr, "textOutline")
+        .into_iter()
+        .any(|o| descendants_local(dom, o, "noFill").is_empty());
     let has_sz = first_named(dom, rpr, "sz").is_some();
     let has_color_el = first_named(dom, rpr, "color").is_some();
     if has_reflection || (has_shadow && has_outline) || (has_outline && has_color_el && !has_sz) {

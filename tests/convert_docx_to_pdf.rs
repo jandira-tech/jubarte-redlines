@@ -31495,6 +31495,24 @@ fn space_before_at_a_broken_page_top_keeps_only_what_the_break_leaves() {
 }
 
 #[test]
+fn a_text_outline_with_no_fill_still_paints_the_text() {
+    // 107 redlines and 8 fixtures_500 files (Pages-made styles like
+    // "Cuerpo") carry w14:textOutline with w14:noFill: no outline at all.
+    // The outline + colour + no size rule for Word's flattened effects
+    // skipped those runs, so whole bodies painted nothing.
+    let body = "<w:p><w:r><w:rPr><w:color w:val=\"000000\"/>\
+        <w14:textOutline xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\" \
+          w14:w=\"0\" w14:cap=\"flat\" w14:cmpd=\"sng\" w14:algn=\"ctr\"><w14:noFill/>\
+          <w14:prstDash w14:val=\"solid\"/><w14:bevel/></w14:textOutline></w:rPr>\
+        <w:t>Qvisible</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert no-fill outline");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "Qvisible").is_some(),
+        "the run paints its text"
+    );
+}
+
+#[test]
 fn a_justified_underline_runs_through_the_stretched_spaces() {
     // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
     // underlined word by word; the justify pad after each space was bare.
