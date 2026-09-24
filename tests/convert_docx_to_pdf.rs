@@ -17314,9 +17314,10 @@ fn empty_para_after_table_before_heading1_keeps_linebox() {
 
 #[test]
 fn hf_pbdr_stays_content_box_after_mini_hfoutset() {
-    // Word file_146 header E2E8F0 is 70.56–541.44, but chrome Quartz
-    // 1.44pt outset (mini 244) dropped no-redline mean −0.0001 /
-    // median −0.0002. Keep the content box like body pBdr.
+    // Word file_146 header E2E8F0 is 70.56–541.44: the paragraph's bottom
+    // rule stands 1.44pt outside the text on each side, as fixtures_500
+    // 00ad6ec7's does (70.56–541.44 in Word). The old-corpus lock kept the
+    // 72–540 content box for a −0.0001 mean; Word is the truth.
     let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
            <w:p><w:pPr><w:pBdr>\
@@ -17343,13 +17344,14 @@ fn hf_pbdr_stays_content_box_after_mini_hfoutset() {
         .collect();
     assert!(!hair.is_empty(), "header pBdr must fill; boxes={boxes:?}");
     let (x, _, w, _) = hair[0];
+    assert_eq!(hair.len(), 1, "one rule, not two; hair={hair:?}");
     assert!(
-        (71.5..72.5).contains(&x),
-        "mini hfoutset was ITT-neg; keep header pBdr at margin 72; x={x} hair={hair:?}"
+        (70.3..70.8).contains(&x),
+        "Word's header pBdr starts 1.44pt outside the margin; x={x} hair={hair:?}"
     );
     assert!(
-        (466.0..469.0).contains(&w),
-        "mini hfoutset was ITT-neg; keep header pBdr w=468; w={w} hair={hair:?}"
+        (470.6..471.2).contains(&w),
+        "Word's header pBdr is 470.88 wide; w={w} hair={hair:?}"
     );
 }
 
@@ -19461,6 +19463,45 @@ fn a_footer_lines_hanging_indent_starts_it_at_the_margin() {
     assert!(
         (zx - zx_body).abs() < 0.5,
         "the centred first line centres over the full width: {zx} vs {zx_body}"
+    );
+}
+
+#[test]
+fn a_header_paragraphs_bottom_border_is_painted_and_takes_room() {
+    // fixtures_500 00ad6ec7: the header's last text line has a 1.5pt
+    // bottom border 1pt below it. Word paints the rule and the body starts
+    // 2.5pt lower; we painted nothing and started the body 2.45pt high.
+    let body = format!(
+        "<w:p><w:r><w:t>Zbody</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>{CHROME_SECT}</w:sectPr>"
+    );
+    let hdr = |bdr: &str| {
+        format!(
+            "<w:p><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p>\
+             <w:p><w:pPr>{bdr}</w:pPr><w:r><w:t>Three</w:t></w:r></w:p>"
+        )
+    };
+    let rule =
+        "<w:pBdr><w:bottom w:val=\"single\" w:sz=\"12\" w:space=\"1\" w:color=\"auto\"/></w:pBdr>";
+    let pdf = |bdr: &str| {
+        docx_to_pdf(&chrome_image_docx(
+            &body,
+            &[("rIdH1", "header", "header1.xml", hdr(bdr))],
+        ))
+        .expect("convert bordered header")
+    };
+    let (plain, ruled) = (pdf(""), pdf(rule));
+    let y = |pdf: &[u8]| pdf_glyph_text_xy(pdf, "Zbody").expect("body paints").1;
+    assert!(
+        ((y(&plain) - y(&ruled)) - 2.5).abs() < 0.3,
+        "the border's space and width push the body down 2.5pt: {} -> {}",
+        y(&plain),
+        y(&ruled)
+    );
+    let hay = String::from_utf8_lossy(&ruled);
+    assert!(
+        hay.contains(" 1.50 re f"),
+        "the 1.5pt rule is painted under the header's last line"
     );
 }
 

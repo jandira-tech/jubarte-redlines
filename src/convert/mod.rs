@@ -12561,7 +12561,10 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
             }
             continue;
         }
-        let border = hf_border_pad(last.as_deref(), &pstyle);
+        let border = hf_border_pad(last.as_deref(), &pstyle)
+            + last
+                .as_deref()
+                .map_or(0.0, |l| hf_bottom_pad(l, Some(&pstyle)));
         if line
             .iter()
             .all(|r| r.text.trim().is_empty() && matches!(r.field, FieldKind::None))
@@ -12646,6 +12649,16 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
 
 /// Width + space of a header/footer paragraph's top border, unless the
 /// paragraph above carries the same one (one box, one rule).
+/// Bottom border space + width of a chrome paragraph that closes its
+/// border group (`next` does not share the edge): the rule stands between
+/// it and what follows (00ad6ec7's header rule 1pt under its last line).
+fn hf_bottom_pad(para: &ParaStyle, next: Option<&ParaStyle>) -> f32 {
+    match para.border_bottom {
+        Some(edge) if next.is_none_or(|n| n.border_bottom != Some(edge)) => edge.1 + edge.2,
+        _ => 0.0,
+    }
+}
+
 fn hf_border_pad(above: Option<&ParaStyle>, para: &ParaStyle) -> f32 {
     match para.border_top {
         Some(edge) if above.is_none_or(|a| a.border_top != Some(edge)) => edge.1 + edge.2,
@@ -13202,7 +13215,7 @@ fn chrome_line_pt(fonts: &Fonts, runs: &[TextRun], width: f32) -> f32 {
 fn hf_closing_after(runs: &[TextRun]) -> f32 {
     runs.last()
         .and_then(|r| r.hf_para.as_deref())
-        .map_or(0.0, |p| p.after)
+        .map_or(0.0, |p| p.after + hf_bottom_pad(p, None))
 }
 
 /// Top border width + space of a part whose first paragraph paints text
@@ -14715,6 +14728,20 @@ impl<'a> Layout<'a> {
         let x1 = self.page.margin_l + para.indent_left - 1.44;
         let x2 = self.page.width - self.page.margin_r - para.indent_right + 1.44;
         self.hairline_h(x1, text_top + space + width * 0.5, x2, width, color);
+    }
+
+    /// A chrome paragraph's bottom rule, its space under the line box
+    /// bottom, when the paragraph closes its border group.
+    fn hf_bottom_rule(&mut self, para: &ParaStyle, next: Option<&ParaStyle>, line_bottom: f32) {
+        if hf_bottom_pad(para, next) <= 0.0 {
+            return;
+        }
+        let Some((color, width, space)) = para.border_bottom else {
+            return;
+        };
+        let x1 = self.page.margin_l + para.indent_left - 1.44;
+        let x2 = self.page.width - self.page.margin_r - para.indent_right + 1.44;
+        self.hairline_h(x1, line_bottom - space - width * 0.5, x2, width, color);
     }
 
     fn hairline_v(&mut self, x: f32, y1: f32, y2: f32, width: f32, color: [f32; 3]) {
@@ -18670,15 +18697,37 @@ impl<'a> Layout<'a> {
                 - hf_opening_pad(&header);
             let mut y = top;
             let mut above: Option<std::rc::Rc<ParaStyle>> = None;
-            for (line, gap) in hf_styled_lines(self.fonts, &header, self.content_width()) {
-                let (ascent, line_h) = chrome_line_metrics(self.fonts, &line);
+            let lines = hf_styled_lines(self.fonts, &header, self.content_width());
+            // A text line's paragraph paints its own bottom rule below.
+            let line_rules = lines.iter().any(|(l, _)| {
+                l.iter().any(|r| {
+                    r.hf_para
+                        .as_ref()
+                        .is_some_and(|p| p.border_bottom.is_some())
+                })
+            });
+            let trail_para = header
+                .iter()
+                .rposition(|r| r.text != HF_LINE_BREAK)
+                .and_then(|i| header[i + 1..].iter().find_map(|r| r.hf_para.clone()));
+            for (i, (line, gap)) in lines.iter().enumerate() {
+                let (ascent, line_h) = chrome_line_metrics(self.fonts, line);
                 y = top - ascent;
                 let para = line.iter().find_map(|r| r.hf_para.clone());
                 if let Some(p) = para.as_ref() {
                     self.hf_top_rule(above.as_deref(), p, top);
                 }
                 let align = para.as_ref().map_or(self.header_align, |p| p.align);
-                self.draw_line_of_runs(&line, y, align);
+                self.draw_line_of_runs(line, y, align);
+                let next = lines
+                    .get(i + 1)
+                    .and_then(|(l, _)| l.iter().find_map(|r| r.hf_para.clone()))
+                    .or_else(|| trail_para.clone());
+                if let Some(p) = para.as_ref()
+                    && next.as_ref().is_none_or(|n| !std::rc::Rc::ptr_eq(n, p))
+                {
+                    self.hf_bottom_rule(p, next.as_deref(), top - line_h);
+                }
                 top -= line_h + gap;
                 if para.is_some() {
                     above = para;
@@ -18703,11 +18752,8 @@ impl<'a> Layout<'a> {
                 }
                 top -= hf_break_box(self.fonts, r);
             }
-            if let Some((color, width)) = self.header_bottom {
-                // Word file_146 header E2E8F0 is 70.56–541.44, but chrome
-                // Quartz 1.44pt outset (mini 244) was no-redline mean
-                // 59.1612→59.1611 / median 53.4615→53.4613. Keep the
-                // content box like body pBdr (mini 225–228).
+            if let Some((color, width)) = self.header_bottom.filter(|_| !line_rules) {
+                // Only a border no text line painted (an empty paragraph's).
                 let x1 = self.page.margin_l;
                 let x2 = self.page.width - self.page.margin_r;
                 self.hairline_h(x1, y - 3.0, x2, width, color);
@@ -18824,6 +18870,16 @@ impl<'a> Layout<'a> {
                     .and_then(|r| r.hf_para.as_ref())
                     .map_or(self.footer_align, |p| p.align);
                 self.draw_line_of_runs(line, y + baselines[i], align);
+                let para = line.iter().find_map(|r| r.hf_para.clone());
+                let next = lines
+                    .get(i + 1)
+                    .and_then(|(l, _)| l.iter().find_map(|r| r.hf_para.clone()));
+                if let Some(p) = para.as_ref()
+                    && next.as_ref().is_none_or(|n| !std::rc::Rc::ptr_eq(n, p))
+                {
+                    let below = metrics[i].1 - metrics[i].0;
+                    self.hf_bottom_rule(p, next.as_deref(), y + baselines[i] - below);
+                }
             }
         }
         self.paint_pg_borders();
