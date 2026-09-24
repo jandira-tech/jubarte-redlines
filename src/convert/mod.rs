@@ -1896,6 +1896,29 @@ fn tab_dest(
     }
 }
 
+/// A pPr's `w:tabs` on top of the inherited stops: a stop replaces the
+/// one at its position and `val=clear` removes it, the rest stay
+/// (ECMA-376 17.3.1.38; 010684299d's footer keeps its style's center and
+/// right stops under the paragraph's own right stop).
+fn apply_tab_stops(stops: &mut Vec<TabStop>, dom: &Dom, ppr: NodeId) {
+    let Some(tabs) = first_named(dom, ppr, "tabs") else {
+        return;
+    };
+    let same = |a: f32, b: f32| (a - b).abs() < 0.05;
+    for tab in dom.elements(tabs, Some(&W::name("tab"))) {
+        if attr_any(dom, tab, "val") == Some("clear")
+            && let Some(pos) = attr_any(dom, tab, "pos").and_then(|s| s.parse::<f32>().ok())
+        {
+            stops.retain(|s| !same(s.pos, twip(pos)));
+        }
+    }
+    for stop in parse_tab_stops(dom, ppr) {
+        stops.retain(|s| !same(s.pos, stop.pos));
+        stops.push(stop);
+    }
+    stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
+}
+
 /// `w:tabs/w:tab`. `val=num` is a numbering left stop (ECMA-376 17.3.1.38).
 fn parse_tab_stops(dom: &Dom, ppr: NodeId) -> Vec<TabStop> {
     let Some(tabs) = first_named(dom, ppr, "tabs") else {
@@ -2985,7 +3008,7 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
         style.contextual = !val_is_false(dom, first_named(dom, ppr, "contextualSpacing"));
     }
     if first_named(dom, ppr, "tabs").is_some() {
-        style.tab_stops = parse_tab_stops(dom, ppr);
+        apply_tab_stops(&mut style.tab_stops, dom, ppr);
     }
     if first_named(dom, ppr, "pageBreakBefore").is_some() {
         style.page_break_before = !val_is_false(dom, first_named(dom, ppr, "pageBreakBefore"));

@@ -2104,6 +2104,39 @@ fn a_cell_naming_only_its_diagonals_keeps_the_table_rules() {
 }
 
 #[test]
+fn paragraph_tabs_merge_with_the_styles_tabs() {
+    // fixtures_500 010684299d: the Footer style sets center 4513 and right
+    // 9026; the paragraph adds right 10490. Word keeps all three, so
+    // "Fund<tab><tab>Page 1 of 5" ends at the 9026 stop (523.3pt).
+    // Replacing the style's stops sent both tabs past the margin.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Tabbed\"><w:name w:val=\"tabbed\"/><w:basedOn w:val=\"Normal\"/>\
+            <w:pPr><w:tabs><w:tab w:val=\"center\" w:pos=\"4513\"/><w:tab w:val=\"right\" w:pos=\"9026\"/></w:tabs></w:pPr>\
+          </w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Cleared\"><w:name w:val=\"cleared\"/><w:basedOn w:val=\"Tabbed\"/>\
+            <w:pPr><w:tabs><w:tab w:val=\"clear\" w:pos=\"4513\"/></w:tabs></w:pPr>\
+          </w:style>\
+        </w:styles>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"Tabbed\"/><w:tabs><w:tab w:val=\"right\" w:pos=\"10490\"/></w:tabs></w:pPr>\
+           <w:r><w:t>Fund</w:t></w:r><w:r><w:tab/></w:r><w:r><w:tab/></w:r><w:r><w:t>Zend</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pStyle w:val=\"Cleared\"/></w:pPr>\
+           <w:r><w:t>Gone</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>Zend</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("merged tabs");
+    // Both "Zend"s right-align on the style's 9026 stop, inside the 540pt
+    // margin: "clear" drops only the centre stop.
+    let hay = pdf_content_streams(&pdf).join("\n");
+    let zs: Vec<f32> = pdf_tj_xy(&hay, "Z").into_iter().map(|(x, _)| x).collect();
+    assert!(
+        zs.len() == 2 && zs.iter().all(|&x| x < 540.0) && (zs[0] - zs[1]).abs() < 0.5,
+        "style right stop kept under a paragraph tab and after a clear; zs={zs:?}"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves
