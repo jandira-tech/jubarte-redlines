@@ -749,6 +749,9 @@ struct Defaults {
     run: RunStyle,
     para: ParaStyle,
     page: PageSetup,
+    /// compatibilityMode below 15: a pct table width is measured on the
+    /// text width plus the table's left and right cell margins.
+    legacy_tables: bool,
 }
 
 impl Defaults {
@@ -848,6 +851,7 @@ impl Defaults {
                 grid_pitch: 0.0,
                 grid_char: 0.0,
             },
+            legacy_tables: false,
         }
     }
 }
@@ -1044,6 +1048,9 @@ struct TableGeom {
     /// `w:bidiVisual`: the grid is stored mirrored; `tblInd` and the
     /// cell-margin pull measure from the right margin.
     rtl: bool,
+    /// A legacy document's pct table width spans the text plus these
+    /// (the table's left + right cell margins); 0 in compatibilityMode 15.
+    pct_margins: f32,
 }
 
 /// Preferred table width from `tblW`. Word `pct` is 50ths of a percent
@@ -2197,6 +2204,7 @@ fn collect_script_fonts(
 fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     let theme = load_theme(pkg);
     let mut defaults = Defaults::word();
+    defaults.legacy_tables = settings_compat_mode(pkg) < 15;
     let mut raw: std::collections::HashMap<String, RawStyle> = std::collections::HashMap::new();
     let Some(xml) = pkg.part_string(&main_rel_part(pkg, "styles", "word/styles.xml")) else {
         return StyleSheet {
@@ -5802,7 +5810,10 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     let target = match geom.width {
         TblWidth::Grid => grid_total,
         TblWidth::Dxa(w) => w,
-        TblWidth::Pct(p) => avail * p,
+        // Checked in Word on 00587c73: a legacy 100% table is the text
+        // width plus its cell margins (452.9pt on 441.9pt); mode 15 is the
+        // text width.
+        TblWidth::Pct(p) => (avail + geom.pct_margins) * p,
     }
     .max(0.0);
     let base: Vec<f32> = (0..n)
@@ -5821,6 +5832,23 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     // grid 2000/3000 is that scaled result; raw tcW 2880/2160 is not.
     if geom.fixed && matches!(geom.width, TblWidth::Grid) {
         return base;
+    }
+    // pct cells that overrun the table keep their shares; the last
+    // columns give up the excess (00587c73's 101.4%: Word's last column
+    // is what is left, the first three are pct x the table).
+    let all_pct = (0..n).all(|i| matches!(geom.pref.get(i), Some(PrefWidth::Pct(p)) if *p > 0.0));
+    if all_pct && total > target {
+        let mut out = base;
+        let mut excess = total - target;
+        for w in out.iter_mut().rev() {
+            let cut = excess.min(*w - 1.0).max(0.0);
+            *w -= cut;
+            excess -= cut;
+            if excess <= 0.0 {
+                break;
+            }
+        }
+        return out;
     }
     let scale = if total > 0.0 { target / total } else { 1.0 };
     base.iter().map(|c| c * scale).collect()
@@ -7930,6 +7958,18 @@ fn table_block(
                 rules,
                 grid_padded: grid_len > 0 && grid_len < occupancy,
                 rtl,
+                // Only margins something defines: with no table style and
+                // no tblCellMar Word's are 0 (00f0e7f3's bare styles part;
+                // Word's 60% table with no styles part is 60% of the text).
+                pct_margins: if sheet.defaults.legacy_tables
+                    && (!sheet.tables.is_empty()
+                        || table_pr(dom, table)
+                            .is_some_and(|pr| first_named(dom, pr, "tblCellMar").is_some()))
+                {
+                    tbl_pad_l + tbl_pad_r
+                } else {
+                    0.0
+                },
             })
         },
     }

@@ -9684,6 +9684,46 @@ fn an_empty_cell_end_after_a_nested_table_takes_no_room() {
 }
 
 #[test]
+fn a_legacy_pct_table_spans_the_text_and_its_cell_margins() {
+    // fixtures_500 00587c73: a fixed 100% table with pct cells (40.86% +
+    // 22.88% + 22.8% + 14.88% = 101.4%) in a legacy (pre-2013) document.
+    // Checked in Word: the table is the text width plus its left and right
+    // cell margins (452.9pt on 441.9pt), each column pct x that, the last
+    // column only what is left; in compatibilityMode 15 the same table is
+    // the text width. We scaled every column into the text width.
+    let bdr = "<w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/>\
+        <w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/>\
+        <w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders>";
+    let cell = |pct: u32, t: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{pct}\" w:type=\"pct\"/></w:tcPr><w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/>{bdr}<w:tblLayout w:type=\"fixed\"/>\
+         <w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"5000\"/><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+         <w:tr>{}{}</w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        cell(3000, "Q"),
+        cell(2500, "Z")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert legacy pct table");
+    let hay = String::from_utf8_lossy(&pdf);
+    // Text 468pt + 2 x 5.4pt = 478.8pt from 66.6: col one 60% = 287.28.
+    let z = [pdf_cm_tj_xy(&hay, "Z"), pdf_tj_xy(&hay, "Z")]
+        .concat()
+        .first()
+        .map(|p| p.0)
+        .expect("Z paints");
+    assert!(
+        (z - (66.6 + 287.28 + 5.4)).abs() < 0.8,
+        "the second column starts 60% of (text + margins) in; Z at {z}"
+    );
+}
+
+#[test]
 fn bordered_row_pitch_adds_the_horizontal_rule() {
     // Word stacks each row's horizontal rule on top of its height: 0.5pt
     // rules make the pitch trHeight/content + 0.5 (fixtures_500 0005052e
@@ -24651,6 +24691,9 @@ fn tblw_pct_sixty_stretches_narrow_grid() {
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert pct table");
     let xs = pdf_vertical_rule_xs(&pdf);
     // 60% of 468 is 280.8; mode<15 right edge is 72 − 5.4 + 280.8 = 347.4.
+    // Known gap: Word itself runs this exact body (no styles part) 72.0-
+    // 353.76, because with nothing defining cell margins its are 0 (no
+    // pull); table_pad_h still defaults to 108 twips.
     assert!(
         xs.iter().any(|x| (346.0..=349.0).contains(x)),
         "60% table right edge is 347.4 after Word cell-mar pull, not 352.8; xs={xs:?}"
