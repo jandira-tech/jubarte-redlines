@@ -164,16 +164,18 @@ impl Canvas {
                 let (x0, y0) = pts[i];
                 let (x1, y1) = pts[(i + 1) % pts.len()];
                 if (y0 <= y && y1 > y) || (y1 <= y && y0 > y) {
-                    let dy = i64::from(y1) - i64::from(y0);
+                    let dy = i128::from(y1) - i128::from(y0);
                     if dy != 0 {
                         // Full-range i32 coords overflow the i32 product — and
                         // the i32 *subtraction* too: mapped points saturate to
                         // i32::MIN/MAX (`px.round() as i32`), so `y - y0` with
                         // `y0 == i32::MIN` panics in debug and wraps to a wrong
-                        // intersection in release. Widen before subtracting.
-                        let x = i64::from(x0)
-                            + (i64::from(y) - i64::from(y0)) * (i64::from(x1) - i64::from(x0)) / dy;
-                        xs.push(x.clamp(-1, self.w as i64) as i32);
+                        // intersection in release. Widen before subtracting;
+                        // the product of two ~2^32 spans needs i128.
+                        let x = i128::from(x0)
+                            + (i128::from(y) - i128::from(y0)) * (i128::from(x1) - i128::from(x0))
+                                / dy;
+                        xs.push(x.clamp(-1, self.w as i128) as i32);
                     }
                 }
             }
@@ -188,6 +190,68 @@ impl Canvas {
                 let b = pair[0].max(pair[1]).min(self.w as i32 - 1);
                 for x in a..=b {
                     self.put(x, y, color);
+                }
+            }
+        }
+    }
+
+    /// Fill every subpath of a path as one shape: even-odd (ALTERNATE)
+    /// keeps letter counters open; `winding` is the nonzero rule.
+    fn fill_path(&mut self, subpaths: &[Vec<(i32, i32)>], color: [u8; 3], winding: bool) {
+        let edges: Vec<((i32, i32), (i32, i32))> = subpaths
+            .iter()
+            .filter(|sp| sp.len() >= 2)
+            .flat_map(|sp| (0..sp.len()).map(move |i| (sp[i], sp[(i + 1) % sp.len()])))
+            .collect();
+        if edges.is_empty() {
+            return;
+        }
+        let min_y = edges
+            .iter()
+            .map(|(a, b)| a.1.min(b.1))
+            .min()
+            .unwrap_or(0)
+            .max(0);
+        let max_y = edges
+            .iter()
+            .map(|(a, b)| a.1.max(b.1))
+            .max()
+            .unwrap_or(0)
+            .min(self.h as i32 - 1);
+        for y in min_y..=max_y {
+            // (x, direction) crossings at the pixel row's centre line.
+            let mut xs: Vec<(i64, i32)> = Vec::new();
+            for &((x0, y0), (x1, y1)) in &edges {
+                if (y0 <= y && y1 > y) || (y1 <= y && y0 > y) {
+                    // i128: saturated points put the product past i64::MAX.
+                    let dy = i128::from(y1) - i128::from(y0);
+                    let x = i128::from(x0)
+                        + (i128::from(y) - i128::from(y0)) * (i128::from(x1) - i128::from(x0)) / dy;
+                    let x = x.clamp(-1, self.w as i128) as i64;
+                    xs.push((x, if y1 > y0 { 1 } else { -1 }));
+                }
+            }
+            xs.sort_unstable();
+            let mut inside = 0_i32;
+            let mut start: Option<i64> = None;
+            for (x, dir) in xs {
+                inside += if winding { dir } else { 1 };
+                let on = if winding {
+                    inside != 0
+                } else {
+                    inside % 2 != 0
+                };
+                match (start, on) {
+                    (None, true) => start = Some(x),
+                    (Some(a), false) => {
+                        let a = (a as i32).max(0);
+                        let b = (x as i32).min(self.w as i32 - 1);
+                        for px in a..=b {
+                            self.put(px, y, color);
+                        }
+                        start = None;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -412,6 +476,60 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     Some(canvas.finish())
 }
 
+/// EMF logical → device coordinates (SETMAPMODE / window / viewport).
+/// MM_TEXT and the fixed metric modes translate only; MM_ISOTROPIC (7) and
+/// MM_ANISOTROPIC (8) also scale window extents onto viewport extents.
+struct Xform {
+    mode: u32,
+    win_org: (f32, f32),
+    win_ext: (f32, f32),
+    vp_org: (f32, f32),
+    vp_ext: (f32, f32),
+}
+
+impl Xform {
+    fn dev(&self, x: i32, y: i32) -> (i32, i32) {
+        let (mut dx, mut dy) = (x as f32 - self.win_org.0, y as f32 - self.win_org.1);
+        if matches!(self.mode, 7 | 8)
+            && self.win_ext.0.abs() > f32::EPSILON
+            && self.win_ext.1.abs() > f32::EPSILON
+        {
+            dx *= self.vp_ext.0 / self.win_ext.0;
+            dy *= self.vp_ext.1 / self.win_ext.1;
+        }
+        (
+            (dx + self.vp_org.0).round() as i32,
+            (dy + self.vp_org.1).round() as i32,
+        )
+    }
+}
+
+/// A cubic Bézier from `p0` flattened to line points (excluding `p0`).
+fn flatten_bezier(
+    p0: (i32, i32),
+    c1: (i32, i32),
+    c2: (i32, i32),
+    p3: (i32, i32),
+) -> Vec<(i32, i32)> {
+    const STEPS: i32 = 12;
+    (1..=STEPS)
+        .map(|k| {
+            let t = k as f32 / STEPS as f32;
+            let u = 1.0 - t;
+            let f = |a: i32, b: i32, c: i32, d: i32| {
+                u * u * u * a as f32
+                    + 3.0 * u * u * t * b as f32
+                    + 3.0 * u * t * t * c as f32
+                    + t * t * t * d as f32
+            };
+            (
+                f(p0.0, c1.0, c2.0, p3.0).round() as i32,
+                f(p0.1, c1.1, c2.1, p3.1).round() as i32,
+            )
+        })
+        .collect()
+}
+
 fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     if data.len() < 108 {
         return None;
@@ -430,12 +548,41 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
         w: cw as f32,
         h: ch as f32,
     };
+    let mut xf = Xform {
+        mode: 1,
+        win_org: (0.0, 0.0),
+        win_ext: (1.0, 1.0),
+        vp_org: (0.0, 0.0),
+        vp_ext: (1.0, 1.0),
+    };
+    // Logical point → canvas pixel.
+    let px = |xf: &Xform, x: i32, y: i32| {
+        let (dx, dy) = xf.dev(x, y);
+        map.map(dx, dy)
+    };
     let mut objects: HashMap<u32, GdiObj> = HashMap::new();
     let mut brush = [0_u8, 0, 0];
     let mut pen = [0_u8, 0, 0];
     let mut pen_w = 1_i32;
     let mut cx = 0_i32;
     let mut cy = 0_i32;
+    let mut winding = false;
+    let mut in_path = false;
+    // Paths and polylines in logical coordinates.
+    let mut subpaths: Vec<Vec<(i32, i32)>> = Vec::new();
+    // EMR_CLOSEFIGURE ended the last figure: the next line starts another.
+    let mut figure_closed = false;
+    let stroke_poly =
+        |canvas: &mut Canvas, xf: &Xform, pts: &[(i32, i32)], pen: [u8; 3], w: i32| {
+            if w <= 0 {
+                return;
+            }
+            for pair in pts.windows(2) {
+                let a = px(xf, pair[0].0, pair[0].1);
+                let b = px(xf, pair[1].0, pair[1].1);
+                canvas.stroke_line(a.0, a.1, b.0, b.1, pen, w);
+            }
+        };
     let mut off = read_u32(data, 4)? as usize;
     while off + 8 <= data.len() {
         let typ = read_u32(data, off)?;
@@ -445,18 +592,127 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
         }
         match typ {
             14 => break,
+            9..=12 if size >= 16 => {
+                let v = (
+                    read_i32(data, off + 8)? as f32,
+                    read_i32(data, off + 12)? as f32,
+                );
+                match typ {
+                    9 => xf.win_ext = v,
+                    10 => xf.win_org = v,
+                    11 => xf.vp_ext = v,
+                    _ => xf.vp_org = v,
+                }
+            }
+            17 if size >= 12 => xf.mode = read_u32(data, off + 8)?,
+            19 if size >= 12 => winding = read_u32(data, off + 8)? == 2,
+            59 => {
+                in_path = true;
+                subpaths.clear();
+                figure_closed = false;
+            }
+            // EMR_CLOSEFIGURE: a line back to the figure's start, which
+            // becomes the current position.
+            61 if in_path => {
+                if let Some(sp) = subpaths.last_mut()
+                    && sp.len() > 1
+                    && let Some(&first) = sp.first()
+                {
+                    sp.push(first);
+                    (cx, cy) = first;
+                    figure_closed = true;
+                }
+            }
+            60 => in_path = false,
             27 if size >= 16 => {
                 cx = read_i32(data, off + 8)?;
                 cy = read_i32(data, off + 12)?;
+                if in_path {
+                    subpaths.push(vec![(cx, cy)]);
+                    figure_closed = false;
+                }
             }
             54 if size >= 16 => {
                 let x = read_i32(data, off + 8)?;
                 let y = read_i32(data, off + 12)?;
-                let a = map.map(cx, cy);
-                let b = map.map(x, y);
-                canvas.stroke_line(a.0, a.1, b.0, b.1, pen, pen_w);
+                if in_path {
+                    if subpaths.is_empty() || figure_closed {
+                        subpaths.push(vec![(cx, cy)]);
+                        figure_closed = false;
+                    }
+                    if let Some(sp) = subpaths.last_mut() {
+                        sp.push((x, y));
+                    }
+                } else {
+                    stroke_poly(&mut canvas, &xf, &[(cx, cy), (x, y)], pen, pen_w);
+                }
                 cx = x;
                 cy = y;
+            }
+            // EMR_POLYBEZIERTO(16) / EMR_POLYLINETO(16): continue from the
+            // current point; EMR_POLYBEZIER(16) / EMR_POLYLINE(16) start at
+            // their first point.
+            2 | 4 | 5 | 6 | 85 | 87 | 88 | 89 if size >= 28 => {
+                let pts16 = matches!(typ, 85 | 87 | 88 | 89);
+                let Some(pts) = read_emf_points(data, off, size, pts16) else {
+                    off += size;
+                    continue;
+                };
+                let bezier = matches!(typ, 2 | 5 | 85 | 88);
+                let to = matches!(typ, 5 | 6 | 88 | 89);
+                let (start, rest) = if to {
+                    ((cx, cy), &pts[..])
+                } else if let Some((first, rest)) = pts.split_first() {
+                    (*first, rest)
+                } else {
+                    off += size;
+                    continue;
+                };
+                let mut line = vec![start];
+                if bezier {
+                    let mut p0 = start;
+                    for trio in rest.chunks_exact(3) {
+                        line.extend(flatten_bezier(p0, trio[0], trio[1], trio[2]));
+                        p0 = trio[2];
+                    }
+                } else {
+                    line.extend_from_slice(rest);
+                }
+                if to && let Some(&(x, y)) = line.last() {
+                    cx = x;
+                    cy = y;
+                }
+                if in_path {
+                    if to
+                        && !figure_closed
+                        && let Some(sp) = subpaths.last_mut()
+                    {
+                        sp.extend_from_slice(&line[1..]);
+                    } else {
+                        subpaths.push(line);
+                    }
+                    figure_closed = false;
+                } else {
+                    stroke_poly(&mut canvas, &xf, &line, pen, pen_w);
+                }
+            }
+            // EMR_FILLPATH / EMR_STROKEANDFILLPATH / EMR_STROKEPATH
+            62..=64 => {
+                if typ != 64 {
+                    let dev: Vec<Vec<(i32, i32)>> = subpaths
+                        .iter()
+                        .map(|sp| sp.iter().map(|&(x, y)| px(&xf, x, y)).collect())
+                        .collect();
+                    canvas.fill_path(&dev, brush, winding);
+                }
+                // GDI strokes each figure as built: only EMR_CLOSEFIGURE
+                // closes one.
+                if typ != 62 {
+                    for sp in &subpaths {
+                        stroke_poly(&mut canvas, &xf, sp, pen, pen_w);
+                    }
+                }
+                subpaths.clear();
             }
             37 if size >= 12 => {
                 let id = read_u32(data, off + 8)?;
@@ -485,6 +741,15 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                     },
                 );
             }
+            // EMR_EXTCREATEPEN: LOGPEN_EX after the four bitmap fields.
+            95 if size >= 44 => {
+                let id = read_u32(data, off + 8)?;
+                let style = read_u32(data, off + 28).unwrap_or(0);
+                let color = colorref(read_u32(data, off + 40).unwrap_or(0));
+                // PS_NULL draws nothing.
+                let width = if style & 0xF == 5 { 0 } else { 1 };
+                objects.insert(id, GdiObj::Pen { color, width });
+            }
             39 if size >= 24 => {
                 let id = read_u32(data, off + 8)?;
                 let style = read_u32(data, off + 12).unwrap_or(0);
@@ -507,8 +772,8 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                 let y = read_i32(data, off + 28)?;
                 let w = read_i32(data, off + 32)?;
                 let h = read_i32(data, off + 36)?;
-                let a = map.map(x, y);
-                let b = map.map(x.saturating_add(w.max(1)), y.saturating_add(h.max(1)));
+                let a = px(&xf, x, y);
+                let b = px(&xf, x.saturating_add(w.max(1)), y.saturating_add(h.max(1)));
                 canvas.fill_rect(
                     a.0.min(b.0),
                     a.1.min(b.1),
@@ -519,9 +784,20 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
             }
             3 | 86 if size >= 28 => {
                 // EMR_POLYGON / EMR_POLYGON16
-                if let Some(pts) = read_emf_points(data, off, size, typ == 86) {
-                    let mapped: Vec<(i32, i32)> = pts.iter().map(|&(x, y)| map.map(x, y)).collect();
-                    canvas.fill_polygon(&mapped, brush);
+                // Inside a path bracket it is a closed figure of the path and
+                // paints nothing until FILLPATH / STROKEPATH.
+                if let Some(mut pts) = read_emf_points(data, off, size, typ == 86) {
+                    if in_path {
+                        if let Some(&first) = pts.first() {
+                            pts.push(first);
+                        }
+                        subpaths.push(pts);
+                        figure_closed = true;
+                    } else {
+                        let mapped: Vec<(i32, i32)> =
+                            pts.iter().map(|&(x, y)| px(&xf, x, y)).collect();
+                        canvas.fill_polygon(&mapped, brush);
+                    }
                 }
             }
             _ => {}
@@ -727,5 +1003,189 @@ mod emf_text_tests {
             "mini 365 EXTTEXTOUTW bitmap ITT-neg; dark={}",
             dark_samples(&rgb)
         );
+    }
+}
+
+#[cfg(test)]
+mod emf_path_tests {
+    //! fixtures_500 000ebd12: the Riksdag header logo is an EMF of filled
+    //! Bézier paths (BEGINPATH … POLYBEZIERTO16 … FILLPATH) under a
+    //! window/viewport mapping. We rasterized none of it.
+    use super::*;
+
+    #[test]
+    fn saturated_edges_cross_where_the_line_does() {
+        // PR #167 review: mapped points saturate to i32::MIN/MAX, and the
+        // crossing product (y - y0) * (x1 - x0) then passes i64::MAX. The
+        // diagonal from (MIN, MIN) to (MAX, MAX) crosses row y at x = y.
+        let tri = [
+            (i32::MIN, i32::MIN),
+            (i32::MAX, i32::MAX),
+            (i32::MIN, i32::MAX),
+        ];
+        let ink = |c: &Canvas, x: usize, y: usize| c.px[(y * c.w + x) * 3] == 0;
+        let mut poly = Canvas::new(64, 64);
+        poly.fill_polygon(&tri, [0, 0, 0]);
+        let mut path = Canvas::new(64, 64);
+        path.fill_path(&[tri.to_vec()], [0, 0, 0], false);
+        for c in [&poly, &path] {
+            assert!(ink(c, 5, 40), "left of the diagonal is inside");
+            assert!(!ink(c, 60, 20), "right of the diagonal is outside");
+        }
+    }
+
+    fn header(left: i32, top: i32, right: i32, bottom: i32) -> Vec<u8> {
+        let mut d = vec![0u8; 108];
+        d[0..4].copy_from_slice(&1u32.to_le_bytes());
+        d[4..8].copy_from_slice(&108u32.to_le_bytes());
+        d[8..12].copy_from_slice(&left.to_le_bytes());
+        d[12..16].copy_from_slice(&top.to_le_bytes());
+        d[16..20].copy_from_slice(&right.to_le_bytes());
+        d[20..24].copy_from_slice(&bottom.to_le_bytes());
+        d[40..44].copy_from_slice(b" EMF");
+        d
+    }
+
+    fn rec(d: &mut Vec<u8>, typ: u32, body: &[u8]) {
+        d.extend_from_slice(&typ.to_le_bytes());
+        d.extend_from_slice(&((8 + body.len()) as u32).to_le_bytes());
+        d.extend_from_slice(body);
+    }
+
+    fn ints(v: &[i32]) -> Vec<u8> {
+        v.iter().flat_map(|x| x.to_le_bytes()).collect()
+    }
+
+    /// EMR_POLYBEZIERTO16 / EMR_POLYLINETO16: bounds, count, 16-bit points.
+    fn pts16(pts: &[(i16, i16)]) -> Vec<u8> {
+        let mut b = ints(&[0, 0, 0, 0, pts.len() as i32]);
+        for (x, y) in pts {
+            b.extend_from_slice(&x.to_le_bytes());
+            b.extend_from_slice(&y.to_le_bytes());
+        }
+        b
+    }
+
+    fn square(d: &mut Vec<u8>, x0: i16, y0: i16, x1: i16, y1: i16) {
+        rec(d, 27, &ints(&[i32::from(x0), i32::from(y0)]));
+        rec(d, 89, &pts16(&[(x1, y0), (x1, y1), (x0, y1)]));
+        rec(d, 61, &[]);
+    }
+
+    fn dark(rgb: &[u8], w: u32, x: u32, y: u32) -> bool {
+        let i = ((y * w + x) * 3) as usize;
+        rgb[i] < 128
+    }
+
+    #[test]
+    fn a_stroked_path_closes_only_the_figures_closefigure_closes() {
+        // PR #167 review: EMR_STROKEPATH closed every subpath, so an open
+        // polyline gained a chord back to its start. GDI closes a figure
+        // only on EMR_CLOSEFIGURE, which also moves the pen to the
+        // figure's start for the next LINETO.
+        let stroked = |close: bool| {
+            let mut d = header(0, 0, 100, 100);
+            rec(&mut d, 59, &[]);
+            rec(&mut d, 27, &ints(&[10, 10]));
+            rec(&mut d, 54, &ints(&[90, 10]));
+            if close {
+                rec(&mut d, 61, &[]);
+                rec(&mut d, 54, &ints(&[10, 90]));
+            } else {
+                rec(&mut d, 54, &ints(&[90, 90]));
+            }
+            rec(&mut d, 60, &[]);
+            rec(&mut d, 64, &ints(&[0, 0, 0, 0]));
+            rec(&mut d, 14, &ints(&[0, 0, 0]));
+            rasterize(&d).expect("raster")
+        };
+        let (w, _, open) = stroked(false);
+        assert!(dark(&open, w, 50, 10), "the open figure's first edge inks");
+        assert!(!dark(&open, w, 50, 50), "no chord back to the start");
+        let (w, _, closed) = stroked(true);
+        assert!(
+            dark(&closed, w, 10, 50),
+            "after the close, LINETO starts at the figure start"
+        );
+        assert!(
+            !dark(&closed, w, 50, 50),
+            "not from the last point (90, 10)"
+        );
+    }
+
+    #[test]
+    fn a_polygon_inside_a_path_bracket_joins_the_path() {
+        // PR #167 review: EMR_POLYGON between BEGINPATH and ENDPATH is a
+        // closed figure of the path and paints nothing itself; only the
+        // path's FILLPATH inks it (a clip-only path never does).
+        let polygon_path = |fill: bool| {
+            let mut d = header(0, 0, 100, 100);
+            rec(&mut d, 39, &ints(&[1, 0, 0, 0]));
+            rec(&mut d, 37, &ints(&[1]));
+            rec(&mut d, 59, &[]);
+            rec(
+                &mut d,
+                86,
+                &pts16(&[(10, 10), (90, 10), (90, 90), (10, 90)]),
+            );
+            rec(&mut d, 60, &[]);
+            if fill {
+                rec(&mut d, 62, &ints(&[0, 0, 0, 0]));
+            }
+            rec(&mut d, 14, &ints(&[0, 0, 0]));
+            rasterize(&d).expect("raster")
+        };
+        let (w, _, unfilled) = polygon_path(false);
+        assert!(
+            !dark(&unfilled, w, 50, 50),
+            "a path polygon paints nothing on its own"
+        );
+        let (w, _, filled) = polygon_path(true);
+        assert!(
+            dark(&filled, w, 50, 50),
+            "FILLPATH fills the polygon figure"
+        );
+    }
+
+    #[test]
+    fn a_mapped_bezier_path_fills() {
+        // Device bounds 0..100; logical window 0..1000 mapped onto it.
+        let mut d = header(0, 0, 100, 100);
+        rec(&mut d, 17, &ints(&[8])); // MM_ANISOTROPIC
+        rec(&mut d, 9, &ints(&[1000, 1000])); // window ext
+        rec(&mut d, 11, &ints(&[100, 100])); // viewport ext
+        rec(&mut d, 39, &ints(&[1, 0, 0, 0])); // black solid brush #1
+        rec(&mut d, 37, &ints(&[1]));
+        rec(&mut d, 59, &[]);
+        rec(&mut d, 27, &ints(&[100, 500]));
+        rec(&mut d, 88, &pts16(&[(100, 100), (900, 100), (900, 500)]));
+        rec(&mut d, 88, &pts16(&[(900, 900), (100, 900), (100, 500)]));
+        rec(&mut d, 61, &[]);
+        rec(&mut d, 60, &[]);
+        rec(&mut d, 62, &ints(&[0, 0, 0, 0]));
+        rec(&mut d, 14, &ints(&[0, 0, 0]));
+        let (w, h, rgb) = rasterize(&d).expect("raster");
+        assert!(
+            dark(&rgb, w, w / 2, h / 2),
+            "the filled path inks its centre"
+        );
+        assert!(!dark(&rgb, w, 2, 2), "outside the path stays white");
+    }
+
+    #[test]
+    fn an_even_odd_path_keeps_its_hole() {
+        let mut d = header(0, 0, 100, 100);
+        rec(&mut d, 19, &ints(&[1])); // ALTERNATE
+        rec(&mut d, 39, &ints(&[1, 0, 0, 0]));
+        rec(&mut d, 37, &ints(&[1]));
+        rec(&mut d, 59, &[]);
+        square(&mut d, 10, 10, 90, 90);
+        square(&mut d, 40, 40, 60, 60);
+        rec(&mut d, 60, &[]);
+        rec(&mut d, 62, &ints(&[0, 0, 0, 0]));
+        rec(&mut d, 14, &ints(&[0, 0, 0]));
+        let (w, h, rgb) = rasterize(&d).expect("raster");
+        assert!(dark(&rgb, w, w / 5, h / 2), "the ring inks");
+        assert!(!dark(&rgb, w, w / 2, h / 2), "the counter stays open");
     }
 }

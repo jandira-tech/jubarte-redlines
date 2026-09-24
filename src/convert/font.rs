@@ -641,12 +641,32 @@ pub(crate) struct Face<'a> {
     /// lineGap (typo when USE_TYPO_METRICS is set). GDI reaches the same
     /// total as win height + external leading.
     line_height: f32,
+    /// hhea descender (typo with USE_TYPO_METRICS): `line_height`'s part
+    /// below the baseline.
+    line_descent: f32,
     /// Win ascent when USE_TYPO_METRICS is unset (Liberation ↔ Arial).
     paint_ascent: f32,
     pub bbox: [i16; 4],
     pub widths: Vec<u16>,
     cmap: HashMap<u32, u16>,
+    /// Shape plans by segment (direction, script, language) and kerning:
+    /// building one was a fifth of a conversion when every run built its
+    /// own (redline 0006f790: 21% of samples in `ShapePlan::new`).
+    plans: Mutex<HashMap<PlanKey, Arc<rustybuzz::ShapePlan>>>,
+    /// Shaped text in font units by (text, kern); see `shaped_units`.
+    shaped: Mutex<HashMap<(String, bool), ShapedUnits>>,
 }
+
+/// Glyph ids and x advances in font units.
+/// (glyph id, x advance in font units, cluster = byte offset of its text).
+type ShapedUnits = Arc<[(u16, i32, u32)]>;
+
+type PlanKey = (
+    rustybuzz::Direction,
+    rustybuzz::Script,
+    Option<rustybuzz::Language>,
+    bool,
+);
 
 impl<'a> Face<'a> {
     pub(crate) fn bytes(&self) -> &[u8] {
@@ -689,6 +709,9 @@ impl<'a> Face<'a> {
         // vs 1.13) and Arial (1.09 vs 1.15) against Word's line.
         let line_height =
             f32::from(face.ascender()) - f32::from(face.descender()) + f32::from(face.line_gap());
+        // The line's part below the baseline, from the same table as its
+        // height (Courier's typo descender under-sizes it).
+        let line_descent = f32::from(face.descender()).abs();
         // GDI puts the external leading (hhea total − win total) above the
         // text: Word's first TNR 12 baseline is winAscent + 0.51pt down.
         let paint_ascent = face
@@ -726,10 +749,13 @@ impl<'a> Face<'a> {
         Some(Self {
             bytes,
             buzz,
+            plans: Mutex::new(HashMap::new()),
+            shaped: Mutex::new(HashMap::new()),
             pdf_name,
             upem,
             descent,
             line_height,
+            line_descent,
             paint_ascent,
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
@@ -776,6 +802,12 @@ impl<'a> Face<'a> {
         self.line_height * size / self.upem
     }
 
+    /// The single line's part below the baseline (hhea descender, the same
+    /// table as `single_line_pt`).
+    pub(crate) fn line_descent_pt(&self, size: f32) -> f32 {
+        self.line_descent * size / self.upem
+    }
+
     pub(crate) fn glyphs(&self, text: &str) -> Vec<u16> {
         // Only the glyph ids are kept; ids are size-independent, so the
         // shaping size passed here is arbitrary.
@@ -794,6 +826,54 @@ impl<'a> Face<'a> {
                 .map(|ch| (self.glyph(ch), self.advance_pt(ch, size)))
                 .collect();
         };
+        let units = self.shaped_units(face, text, kern);
+        units
+            .iter()
+            .map(|&(gid, x_advance, _)| {
+                let adv = x_advance as f32 / self.upem * size + word_device_track(size);
+                (gid, adv)
+            })
+            .collect()
+    }
+
+    /// The text behind each glyph `shape_kern(text, _, kern)` returns: its
+    /// cluster's characters on the cluster's first glyph, empty on the
+    /// rest. A glyph shaped from several characters (`e` + U+0301 composed
+    /// to `é`, a lam-alef) carries all of them, for `/ToUnicode`.
+    pub(crate) fn glyph_texts(&self, text: &str, kern: bool) -> Vec<String> {
+        let Some(face) = self.buzz.as_ref() else {
+            return text.chars().map(String::from).collect();
+        };
+        let units = self.shaped_units(face, text, kern);
+        let mut starts: Vec<usize> = units.iter().map(|u| u.2 as usize).collect();
+        starts.sort_unstable();
+        starts.dedup();
+        let mut seen = std::collections::HashSet::new();
+        units
+            .iter()
+            .map(|u| {
+                let at = u.2 as usize;
+                if !seen.insert(at) {
+                    return String::new();
+                }
+                let end = starts
+                    .iter()
+                    .find(|&&s| s > at)
+                    .copied()
+                    .unwrap_or(text.len());
+                text.get(at..end).unwrap_or_default().to_string()
+            })
+            .collect()
+    }
+
+    /// `text` shaped in font units (glyph id, x advance), remembered per
+    /// face: documents repeat their words, and shaping each again was a
+    /// fifth of a conversion.
+    fn shaped_units(&self, face: &rustybuzz::Face, text: &str, kern: bool) -> ShapedUnits {
+        let memo = (text.to_string(), kern);
+        if let Some(hit) = self.shaped.lock().ok().and_then(|c| c.get(&memo).cloned()) {
+            return hit;
+        }
         let mut buf = rustybuzz::UnicodeBuffer::new();
         buf.push_str(text);
         // Word Quartz WinAnsi PDFs do not ligate Calibri and place glyphs
@@ -812,17 +892,38 @@ impl<'a> Face<'a> {
                 ..,
             ),
         ];
-        let out = rustybuzz::shape(face, &word_pdf, buf);
-        let infos = out.glyph_infos();
-        let pos = out.glyph_positions();
-        infos
+        buf.guess_segment_properties();
+        let key = (buf.direction(), buf.script(), buf.language(), kern);
+        let cached = self.plans.lock().ok().and_then(|p| p.get(&key).cloned());
+        let plan = cached.unwrap_or_else(|| {
+            let plan = Arc::new(rustybuzz::ShapePlan::new(
+                face,
+                key.0,
+                Some(key.1),
+                key.2.as_ref(),
+                &word_pdf,
+            ));
+            if let Ok(mut plans) = self.plans.lock() {
+                plans.insert(key.clone(), Arc::clone(&plan));
+            }
+            plan
+        });
+        let out = rustybuzz::shape_with_plan(face, &plan, buf);
+        let units: ShapedUnits = out
+            .glyph_infos()
             .iter()
-            .zip(pos.iter())
-            .map(|(info, p)| {
-                let adv = p.x_advance as f32 / self.upem * size + word_device_track(size);
-                (info.glyph_id as u16, adv)
-            })
-            .collect()
+            .zip(out.glyph_positions())
+            .map(|(info, p)| (info.glyph_id as u16, p.x_advance, info.cluster))
+            .collect();
+        if let Ok(mut cache) = self.shaped.lock() {
+            // A long-lived caller (Python / WASM) converts many documents
+            // through one face; keep the memory bounded.
+            if cache.len() > 50_000 {
+                cache.clear();
+            }
+            cache.insert(memo, Arc::clone(&units));
+        }
+        units
     }
 
     pub(crate) fn pdf_widths_1000(&self) -> Vec<i32> {
@@ -1091,7 +1192,31 @@ impl<'a> Fonts<'a> {
                 },
             );
         }
-        let (id, step) = self.resolve_in_step(family, bold, italic, table);
+        let mut visited = HashSet::new();
+        let (id, step, via_default) = self.resolve_walk(family, bold, italic, table, &mut visited);
+        // An unknown family="auto" face paints in the document default,
+        // which may itself be an embedded-only face (PR #167 review).
+        if let Some(default) = via_default
+            && let Some(idx) = self.embedded_index(family_token(default), bold, italic)
+        {
+            let face = FaceRef::Embedded(idx);
+            let exact = self.extra_index.contains_key(&FaceKey {
+                family: family_token(default).to_ascii_lowercase(),
+                bold,
+                italic,
+            });
+            return (
+                face,
+                FontReportEntry {
+                    requested: family.to_string(),
+                    step: FontStep::Embedded,
+                    physical: self.get(face).pdf_name().to_string(),
+                    bold,
+                    italic,
+                    synthetic: (bold || italic) && !exact,
+                },
+            );
+        }
         let face = FaceRef::Catalogue(id);
         (
             face,
@@ -1121,6 +1246,7 @@ impl<'a> Fonts<'a> {
         self.resolve_in_step(family, bold, italic, table).0
     }
 
+    #[cfg(test)]
     fn resolve_in_step(
         &self,
         family: &str,
@@ -1129,21 +1255,25 @@ impl<'a> Fonts<'a> {
         table: &super::font_table::FontTable,
     ) -> (FaceId, FontStep) {
         let mut visited = HashSet::new();
-        self.resolve_walk(family, bold, italic, table, &mut visited)
+        let (id, step, _) = self.resolve_walk(family, bold, italic, table, &mut visited);
+        (id, step)
     }
 
     /// Follow `family` through the font table. Iterative: an altName chain
-    /// is bounded by the table's size, never by the call stack.
-    fn resolve_walk(
+    /// is bounded by the table's size, never by the call stack. The third
+    /// value is the document default an unknown family="auto" face fell
+    /// back to, if the walk took that hop.
+    fn resolve_walk<'t>(
         &self,
-        family: &str,
+        family: &'t str,
         bold: bool,
         italic: bool,
-        table: &super::font_table::FontTable,
+        table: &'t super::font_table::FontTable,
         visited: &mut HashSet<String>,
-    ) -> (FaceId, FontStep) {
+    ) -> (FaceId, FontStep, Option<&'t str>) {
         let mut current = family;
         let mut via_alt = false;
+        let mut via_default = None;
         // The generic of a name the altName chain passed through: a chain
         // that dead-ends (Myriad Pro → absent Segoe UI) keeps it.
         let mut chain_generic = "";
@@ -1199,12 +1329,29 @@ impl<'a> Fonts<'a> {
                     FontStep::Generic,
                 );
             }
+            // An unknown face Word knows nothing about (family="auto", no
+            // panose) paints in the document's default font: 010300e3's
+            // Serenity and 00b5aa69's Shivaji01 are Calibri there.
+            if let Some(entry) = table.get(primary)
+                && matches!(entry.family, super::font_table::FontFamilyClass::Auto)
+                && entry.panose.is_none_or(|p| p.iter().all(|b| *b == 0))
+                && let Some(default) = table.default_family()
+                && !default.eq_ignore_ascii_case(primary)
+            {
+                current = default;
+                via_default = Some(default);
+                continue;
+            }
             break (
                 Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
                 FontStep::Unknown,
             );
         };
-        (id, if via_alt { FontStep::AltName } else { step })
+        (
+            id,
+            if via_alt { FontStep::AltName } else { step },
+            via_default,
+        )
     }
 
     /// `family` names an installed catalogue face directly (the report's
@@ -1396,7 +1543,23 @@ impl Fonts<'_> {
     }
 }
 
+/// `system_override_uncached`, remembered for the process: font
+/// resolution asks for every run, and each ask was up to eight `stat`s
+/// (a fifth of a conversion's samples).
 fn system_override(id: FaceId) -> Option<PathBuf> {
+    static CACHE: LazyLock<Mutex<HashMap<FaceId, Option<PathBuf>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = CACHE.lock().ok().and_then(|c| c.get(&id).cloned()) {
+        return hit;
+    }
+    let found = system_override_uncached(id);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(id, found.clone());
+    }
+    found
+}
+
+fn system_override_uncached(id: FaceId) -> Option<PathBuf> {
     let names: &[&str] = match id {
         FaceId::CarlitoRegular => &["Calibri.ttf", "calibri.ttf"],
         FaceId::CarlitoBold => &["Calibrib.ttf", "Calibri Bold.ttf", "calibrib.ttf"],
@@ -1497,6 +1660,39 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
 /// Century Gothic in DFonts); we painted them as Arial or Calibri.
 /// Candidates are files whose normalised name starts with the family's,
 /// confirmed against the font's own family name.
+/// Word's cloud-font folder for `family`, when the name is one plain path
+/// component: `w:name` is document data, and "../.." or an absolute name
+/// would read fonts from anywhere (PR #167 review).
+fn cloud_font_dir(home: &Path, family: &str) -> Option<PathBuf> {
+    let mut parts = Path::new(family).components();
+    match (parts.next(), parts.next()) {
+        (Some(std::path::Component::Normal(_)), None) => Some(
+            home.join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts")
+                .join(family),
+        ),
+        _ => None,
+    }
+}
+
+/// A font folder's entries, sorted, listed once per process: every
+/// family lookup walks the same system folders (hundreds of entries).
+fn sorted_dir_listing(dir: &Path) -> Arc<Vec<PathBuf>> {
+    static CACHE: LazyLock<Mutex<HashMap<PathBuf, Arc<Vec<PathBuf>>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = CACHE.lock().ok().and_then(|c| c.get(dir).cloned()) {
+        return hit;
+    }
+    let mut paths: Vec<PathBuf> = fs::read_dir(dir)
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    paths.sort();
+    let paths = Arc::new(paths);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(dir.to_path_buf(), Arc::clone(&paths));
+    }
+    paths
+}
+
 pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>)> {
     let stems = cjk_file_stems(family);
     if !stems.is_empty() {
@@ -1507,6 +1703,7 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
         "/Library/Fonts",
         "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
         "/Library/Fonts/Microsoft",
+        "/System/Library/Fonts",
     ];
     let norm = |s: &str| -> String {
         s.chars()
@@ -1518,27 +1715,120 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
     if key.len() < 3 {
         return Vec::new();
     }
-    let mut dirs: Vec<PathBuf> = DIRS.iter().map(PathBuf::from).collect();
-    if let Some(home) = std::env::var_os("HOME") {
-        let cloud = PathBuf::from(home)
-            .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts")
-            .join(family);
-        dirs.push(cloud);
+    // (dir, whole folder is the family): Word's cloud-font cache keeps each
+    // family in its own folder under numeric file names (Poppins/2397….ttf).
+    let mut dirs: Vec<(PathBuf, bool)> = DIRS.iter().map(|d| (PathBuf::from(d), false)).collect();
+    dirs.extend(cloud_font_dirs(family));
+    faces_with_user_fonts(family, &dirs, user_font_dir().as_deref())
+}
+
+/// Word's cloud-font folders that may hold `family`, each a whole-family
+/// folder: its own or, when it has none, any whose name starts it. Word files a style
+/// family under its parent (fixtures_500 001d945a: "Script MT Bold" in
+/// "Script MT/", 01838a08: "Roboto Condensed" in "Roboto/"); the faces
+/// still answer only to their own family name. Parent names come from the
+/// cache's own listing, never from the document.
+fn cloud_font_dirs(family: &str) -> Vec<(PathBuf, bool)> {
+    let Some(home) = std::env::var_os("HOME") else {
+        return Vec::new();
+    };
+    let home = Path::new(&home);
+    let own = cloud_font_dir(home, family);
+    if let Some(dir) = own.as_ref().filter(|d| d.is_dir()) {
+        return vec![(dir.clone(), true)];
     }
-    let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
-    for dir in dirs {
-        let Ok(entries) = fs::read_dir(&dir) else {
+    let mut out: Vec<(PathBuf, bool)> = own.map(|dir| (dir, true)).into_iter().collect();
+    let Some(root) = cloud_font_dir(home, "x").and_then(|d| d.parent().map(Path::to_path_buf))
+    else {
+        return out;
+    };
+    let want = fold_family(family);
+    for dir in sorted_dir_listing(&root).iter() {
+        let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-        paths.sort();
-        for path in paths {
-            let is_font = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("ttf") || e.eq_ignore_ascii_case("otf"));
+        let parent = fold_family(name);
+        if parent.len() >= 3 && parent.len() < want.len() && want.starts_with(&parent) {
+            out.push((dir.clone(), true));
+        }
+    }
+    out
+}
+
+/// `family`'s faces from `dirs`, then from jubarte's own font folder
+/// (`scripts/install.sh` fills it), then an open stand-in from that folder
+/// when the real face is nowhere (Selawik for Segoe UI).
+fn faces_with_user_fonts(
+    family: &str,
+    dirs: &[(PathBuf, bool)],
+    user: Option<&Path>,
+) -> Vec<((bool, bool), Vec<u8>)> {
+    let mut all = dirs.to_vec();
+    if let Some(user) = user {
+        all.push((user.to_path_buf(), false));
+    }
+    let found = family_faces_in(family, &all);
+    if !found.is_empty() {
+        return found;
+    }
+    match (open_stand_in(family), user) {
+        (Some(stand_in), Some(user)) => family_faces_in(stand_in, &[(user.to_path_buf(), false)]),
+        _ => Vec::new(),
+    }
+}
+
+/// The open family that stands in for a Microsoft one jubarte cannot ship:
+/// Selawik is Microsoft's own metric-compatible Segoe UI substitute (with
+/// Word's cloud cache hidden, 010ec7df 0.442 -> 0.447 and 015beda9 gets
+/// Word's 4 pages). EB Garamond for Garamond was tried and dropped: its
+/// metrics are further from Monotype's than the Times fallback (00dd36c7
+/// 0.181 -> 0.079). Cooper Black and Script MT have no open equivalent.
+fn open_stand_in(family: &str) -> Option<&'static str> {
+    (fold_family(family) == "segoeui").then_some("Selawik")
+}
+
+/// `family`'s faces in `dirs` ((folder, whole folder is the family)).
+fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool), Vec<u8>)> {
+    let norm = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    let key = norm(family);
+    if key.len() < 3 {
+        return Vec::new();
+    }
+    let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
+    for (dir, family_folder) in dirs {
+        let family_folder = *family_folder;
+        for path in sorted_dir_listing(dir).iter() {
+            let path = path.clone();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let is_font = ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf");
             let stem = path.file_stem().and_then(|s| s.to_str()).map(norm);
-            if !is_font || !stem.is_some_and(|s| s.starts_with(&key)) {
+            // A collection is named for its whole family (Avenir.ttc holds
+            // "Avenir Book"); its faces answer to their own names.
+            if ext.eq_ignore_ascii_case("ttc")
+                && stem
+                    .as_deref()
+                    .is_some_and(|s| s.len() >= 3 && key.starts_with(s))
+            {
+                let Ok(bytes) = fs::read(&path) else {
+                    continue;
+                };
+                let count = ttf_parser::fonts_in_collection(&bytes).unwrap_or(0);
+                for index in 0..count {
+                    let Some(data) = ttc_face_bytes(&bytes, index) else {
+                        continue;
+                    };
+                    if let Some((pass, style)) = face_family_style(&data, family) {
+                        found.push((pass, style, data));
+                    }
+                }
+                continue;
+            }
+            if !is_font || !(family_folder || stem.is_some_and(|s| s.starts_with(&key))) {
                 continue;
             }
             let Ok(bytes) = fs::read(&path) else {
@@ -1551,6 +1841,28 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
         }
     }
     pick_ranked_faces(found)
+}
+
+/// jubarte's own font folder: `$JUBARTE_FONT_DIR`, else the platform's
+/// per-user data folder (`~/Library/Application Support/jubarte/fonts`,
+/// `$XDG_DATA_HOME/jubarte/fonts` or `~/.local/share/jubarte/fonts`,
+/// `%APPDATA%\jubarte\fonts`). Fonts live there, not in the binary.
+pub(crate) fn user_font_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("JUBARTE_FONT_DIR").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    if cfg!(target_os = "windows") {
+        return std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("jubarte").join("fonts"));
+    }
+    let home = PathBuf::from(std::env::var_os("HOME")?);
+    let data = if cfg!(target_os = "macos") {
+        home.join("Library/Application Support")
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .filter(|d| !d.is_empty())
+            .map_or_else(|| home.join(".local/share"), PathBuf::from)
+    };
+    Some(data.join("jubarte").join("fonts"))
 }
 
 /// A family name folded for comparison: full-width Latin to ASCII (the
@@ -1855,22 +2167,36 @@ pub(crate) fn add_cjk_fallbacks(embedded: &mut EmbeddedFonts) {
 
 /// Adds the installed faces of every font-table family that the catalogue
 /// does not cover and the document does not embed.
+///
+/// `extra` are the families styles and the theme name; `run_faces` those
+/// runs paint non-East-Asian text in (ascii / hAnsi / cs, theme latin).
+/// A theme lists ~45 script fonts (Mangal, Sylfaen, 游明朝…): loading each
+/// from disk was a third of every conversion, so an East Asian family
+/// loads only for East Asian text or a run that paints in it, and any
+/// other family only when a run paints in it.
 pub(crate) fn add_installed_faces(
     embedded: &mut EmbeddedFonts,
     table: &super::font_table::FontTable,
     extra: &[String],
+    run_faces: &[String],
+    has_cjk: bool,
 ) {
     // East Asian families named only in styles or the theme ("宋体" as the
     // theme's Hans font) are not in the font table but Word draws them.
     for name in extra {
         let lower = name.to_ascii_lowercase();
-        if table.get(name).is_some()
-            || cjk_file_stems(name).is_empty()
-            || embedded.keys().any(|(f, _, _)| *f == lower)
-        {
+        let painted = run_faces.iter().any(|n| n == name);
+        let wanted = if cjk_file_stems(name).is_empty() {
+            painted && !catalogue_paints_family(name)
+        } else {
+            has_cjk || painted
+        };
+        if !wanted || table.get(name).is_some() || embedded.keys().any(|(f, _, _)| *f == lower) {
             continue;
         }
-        let faces = cached_faces(name, || cjk_family_faces(name, cjk_file_stems(name)));
+        // A family runs name but the table omits (015beda9 has no table
+        // part; Word still draws its Segoe UI) loads like a table family.
+        let faces = cached_faces(name, || installed_family_faces(name));
         for ((bold, italic), bytes) in faces {
             embedded.insert((lower.clone(), bold, italic), bytes);
         }
@@ -2290,6 +2616,116 @@ mod tests {
         );
     }
 
+    fn repo_font_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/extra")
+    }
+
+    #[test]
+    fn jubartes_own_font_folder_is_searched() {
+        // fixtures_500 01838a08: Word embeds RobotoCondensed-Regular/-Bold
+        // from its cloud cache; install.sh puts the same Apache-2.0 files in
+        // jubarte's font folder instead of growing the binary.
+        let faces = faces_with_user_fonts("Roboto Condensed", &[], Some(&repo_font_dir()));
+        for style in [(false, false), (true, false)] {
+            assert!(
+                faces.iter().any(|(s, _)| *s == style),
+                "Roboto Condensed {style:?} face"
+            );
+        }
+    }
+
+    #[test]
+    fn an_open_stand_in_answers_for_an_absent_microsoft_face() {
+        // Segoe UI (015beda9) is Microsoft's; without it we fell to
+        // Cambria. Selawik is Microsoft's open Segoe UI stand-in.
+        let faces = faces_with_user_fonts("Segoe UI", &[], Some(&repo_font_dir()));
+        assert!(
+            faces.iter().any(|(s, _)| *s == (false, false)),
+            "a regular Selawik for Segoe UI"
+        );
+    }
+
+    #[test]
+    fn a_theme_script_font_no_run_paints_is_not_loaded() {
+        // A theme lists ~45 per-script faces; reading each from disk was a
+        // third of every conversion though no run paints in them.
+        let mut embedded = EmbeddedFonts::new();
+        let table = super::super::font_table::FontTable::default();
+        let names = ["Roboto Condensed".to_string()];
+        add_installed_faces(&mut embedded, &table, &names, &[], false);
+        assert!(embedded.is_empty(), "nothing painted, nothing loaded");
+    }
+
+    #[test]
+    fn a_run_family_missing_from_the_font_table_still_loads_its_faces() {
+        // fixtures_500 015beda9 has no fontTable part; its runs name
+        // Segoe UI, which Word draws, and only table families were loaded.
+        if !Path::new("/System/Library/Fonts/HelveticaNeue.ttc").is_file() {
+            return;
+        }
+        let mut embedded = EmbeddedFonts::new();
+        let table = super::super::font_table::FontTable::default();
+        let names = ["Helvetica Neue".to_string()];
+        add_installed_faces(&mut embedded, &table, &names, &names, false);
+        assert!(embedded.contains_key(&("helvetica neue".to_string(), false, false)));
+    }
+
+    #[test]
+    fn a_cloud_face_filed_under_its_parent_family_is_found() {
+        // fixtures_500 001d945a: Word embeds ScriptMTBold, which its cloud
+        // cache files under "Script MT/"; we looked only in
+        // "Script MT Bold/" and drew Cambria.
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let dir = PathBuf::from(home)
+            .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/Script MT");
+        if !dir.is_dir() {
+            return;
+        }
+        let faces =
+            faces_with_user_fonts("Script MT Bold", &cloud_font_dirs("Script MT Bold"), None);
+        assert!(
+            !faces.is_empty(),
+            "Script MT Bold from the Script MT folder"
+        );
+    }
+
+    #[test]
+    fn word_cloud_fonts_are_found_despite_numeric_file_names() {
+        // fixtures_500 014b42f2 / 01635d97: Poppins and Lato live in Word's
+        // cloud-font cache as <family>/<number>.ttf; the file-stem prefix
+        // filter rejected them and the text fell to Cambria.
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let dir = PathBuf::from(home)
+            .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/Poppins");
+        if !dir.is_dir() {
+            return;
+        }
+        let faces = installed_family_faces("Poppins");
+        assert!(
+            faces.iter().any(|(style, _)| *style == (false, false)),
+            "a regular Poppins face from the cloud cache"
+        );
+    }
+
+    #[test]
+    fn a_system_collection_face_is_found_by_its_family() {
+        // fixtures_500 00d0925f: Word draws "Avenir Book" from macOS's
+        // /System/Library/Fonts/Avenir.ttc (hhea 1.366em: 15.1pt lines at
+        // 11pt). Only loose .ttf/.otf were searched; the text fell to Arial.
+        if !Path::new("/System/Library/Fonts/Avenir.ttc").is_file() {
+            return;
+        }
+        let faces = installed_family_faces("Avenir Book");
+        assert!(
+            faces.iter().any(|(style, _)| *style == (false, false)),
+            "a regular Avenir Book face from the system collection"
+        );
+    }
+
     #[test]
     fn a_cff_face_is_not_embedded() {
         // CodeRabbit #166: the PDF writer emits FontFile2 (TrueType); a CFF
@@ -2671,6 +3107,38 @@ mod tests {
         let (_, bold) = fonts.classify_in("Press Start 2P", true, false, &table);
         assert_eq!(bold.step, FontStep::Embedded);
         assert!(bold.synthetic, "missing bold embed is synthetic");
+    }
+
+    #[test]
+    fn an_unknown_auto_family_takes_the_embedded_default_face() {
+        // PR #167 review: the family="auto" fallback resolved the document
+        // default through the catalogue only, so an embedded default face
+        // lost to Cambria.
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("Press Start 2P", false, false, FaceId::MonoRegular.bytes());
+        let mut table = super::super::font_table::parse_font_table_xml(
+            "<w:fonts xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:font w:name=\"Serenity\"><w:family w:val=\"auto\"/></w:font></w:fonts>",
+        );
+        table.set_default_family("Press Start 2P");
+        let (_, entry) = fonts.classify_in("Serenity", false, false, &table);
+        assert_eq!(entry.step, FontStep::Embedded);
+        assert_eq!(entry.physical, "LiberationMono");
+    }
+
+    #[test]
+    fn a_family_name_cannot_leave_the_cloud_font_cache() {
+        // PR #167 review: w:name is document data; joining "../.." or an
+        // absolute name onto the cache path read fonts from anywhere.
+        let home = std::path::Path::new("/Users/someone");
+        assert!(cloud_font_dir(home, "Poppins").is_some());
+        assert!(cloud_font_dir(home, "Roboto Condensed").is_some());
+        for bad in ["../../../../etc", "/Library/Fonts", "a/b", "..", ".", ""] {
+            assert!(
+                cloud_font_dir(home, bad).is_none(),
+                "{bad:?} must not map to a folder"
+            );
+        }
     }
 
     #[test]
