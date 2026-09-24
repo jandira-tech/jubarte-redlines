@@ -1764,6 +1764,32 @@ fn a_line_break_survives_a_trailing_right_tab() {
 }
 
 #[test]
+fn text_after_a_centred_floating_table_does_not_paint_over_it() {
+    // fixtures_500 019d92d9: a centred tblpPr table (469pt of a 540pt
+    // measure). Live Word flows a word or two down each narrow side and
+    // the rest under the last row; we ignored a centred float and painted
+    // the next paragraphs across the table. They now start under it.
+    let cells: String = (0..4)
+        .map(|r| {
+            let tcs: String = (0..5)
+                .map(|c| format!(r#"<w:tc><w:tcPr><w:tcW w:w="1875" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>R{r}C{c}</w:t></w:r></w:p></w:tc>"#))
+                .collect();
+            format!("<w:tr>{tcs}</w:tr>")
+        })
+        .collect();
+    let body = format!(
+        r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblpPr w:leftFromText="180" w:rightFromText="180" w:vertAnchor="text" w:horzAnchor="margin" w:tblpXSpec="center" w:tblpY="161"/><w:tblW w:w="9379" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1875"/><w:gridCol w:w="1875"/><w:gridCol w:w="1875"/><w:gridCol w:w="1875"/><w:gridCol w:w="1875"/></w:tblGrid>{cells}</w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p><w:p><w:r><w:t>Tail</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr>"#
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("centred float");
+    let (_, last_row) = pdf_glyph_text_xy(&pdf, "R3C0").expect("last row paints");
+    let (_, tail) = pdf_glyph_text_xy(&pdf, "Tail").expect("tail paints");
+    assert!(
+        tail < last_row - 5.0,
+        "Tail sits under the table; row {last_row} tail {tail}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

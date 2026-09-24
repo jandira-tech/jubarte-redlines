@@ -14700,7 +14700,11 @@ impl<'a> Layout<'a> {
         let Some(sf) = self.side_float_holds_line() else {
             return;
         };
-        if self.content_width() - sf.inset >= MIN_SIDE_FLOAT_ROOM_PT {
+        // A centred table never narrows the line (no side is chosen); text
+        // painted across it was worse than Word's both-sides flow and than
+        // starting under it, which this approximates.
+        let centred = matches!(sf.align, Align::Center);
+        if !centred && self.content_width() - sf.inset >= MIN_SIDE_FLOAT_ROOM_PT {
             return;
         }
         self.y = self.y.min(sf.bottom);
