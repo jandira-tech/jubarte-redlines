@@ -12212,10 +12212,16 @@ fn hf_para_is_bare_line(dom: &Dom, root: NodeId, para: NodeId) -> bool {
             // A paragraph holding only anchored drawings is still a line
             // (000ebd12's first-page logo paragraph); inline pictures are
             // sized as chrome images.
+            // mc:Fallback only mirrors the Choice Word renders (000f3a4e's
+            // anchored text box carries a w:pict fallback).
             return !dom.descendants(para, None).into_iter().any(|d| {
-                dom.name_is(d, &W::pict())
+                (dom.name_is(d, &W::pict())
                     || (dom.name_is(d, &W::drawing())
-                        && !dom.descendants(d, Some(&WP::name("inline"))).is_empty())
+                        && !dom.descendants(d, Some(&WP::name("inline"))).is_empty()))
+                    && !dom
+                        .ancestors(d, None)
+                        .iter()
+                        .any(|a| local_name_is(dom, *a, "Fallback"))
             });
         }
         if !(dom.name_is(id, &W::sdt()) || dom.name_is(id, &W::sdt_content())) {

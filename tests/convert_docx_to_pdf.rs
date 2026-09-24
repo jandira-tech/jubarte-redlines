@@ -10817,6 +10817,67 @@ fn header_runs_take_their_character_style() {
 }
 
 #[test]
+fn a_header_line_holding_only_an_anchored_shape_with_a_vml_fallback_is_a_line() {
+    // fixtures_500 000f3a4e (LibreOffice): the header opens with a
+    // paragraph whose only content is mc:AlternateContent - an anchored
+    // wps text box, with a w:pict in mc:Fallback. Word renders the Choice
+    // and the paragraph stays an empty line above "2"; the Fallback's
+    // w:pict made us drop it.
+    let header = |fallback: bool| {
+        let alt = if fallback {
+            "<mc:AlternateContent><mc:Choice Requires=\"wps\"><w:drawing><wp:anchor distT=\"0\" distB=\"0\" \
+               distL=\"0\" distR=\"0\" simplePos=\"0\" relativeHeight=\"2\" behindDoc=\"1\" locked=\"0\" \
+               layoutInCell=\"1\" allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/>\
+               <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+               <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+               <wp:extent cx=\"100000\" cy=\"100000\"/><wp:wrapNone/><wp:docPr id=\"1\" name=\"s\"/>\
+               <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:wsp><wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></wps:spPr>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice>\
+               <mc:Fallback><w:pict><v:rect style=\"position:absolute;width:8pt;height:8pt\"/></w:pict></mc:Fallback>\
+             </mc:AlternateContent>"
+        } else {
+            ""
+        };
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+               xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+               xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+               xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\" \
+               xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" \
+               xmlns:v=\"urn:schemas-microsoft-com:vml\">\
+               <w:p><w:r>{alt}</w:r></w:p><w:p><w:r><w:t>Qnum</w:t></w:r></w:p></w:hdr>"
+        )
+    };
+    let y = |fallback: bool| {
+        let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+               <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[("rIdH1", "header", "header1.xml")],
+            &[("word/header1.xml", header(fallback))],
+        ))
+        .expect("header shape line");
+        pdf_glyph_text_xy(&pdf, "Qnum").expect("Qnum").1
+    };
+    // The shape paragraph is a line in both: "Qnum" sits one line down
+    // whether or not the VML fallback is present.
+    let with_fallback = y(true);
+    let plain_empty = {
+        // The same header with an empty first paragraph.
+        y(false)
+    };
+    assert!(
+        (with_fallback - plain_empty).abs() < 0.05,
+        "the shape paragraph is an empty line; {with_fallback} vs {plain_empty}"
+    );
+}
+
+#[test]
 fn official_sample_npm_package_sits_after_label() {
     // Word p1 npm badge: npm at ~80, @eigenpal at ~133. Collapsed
     // padding parked the package at npm+2.
