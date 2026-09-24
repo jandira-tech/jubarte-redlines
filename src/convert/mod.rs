@@ -5291,7 +5291,9 @@ fn push_endnote_blocks(
     for i in 0..ndom.child_count(note) {
         let child = ndom.child_at(note, i);
         if ndom.name_is(child, &W::p()) {
-            blocks.push(paragraph_block(ctx, ndom, child, false, numbering));
+            blocks.push(without_page_marks(paragraph_block(
+                ctx, ndom, child, false, numbering,
+            )));
         } else if ndom.name_is(child, &W::tbl()) {
             let block = table_block(
                 ndom,
@@ -5346,7 +5348,8 @@ fn load_footnotes(
         for i in 0..ndom.child_count(note) {
             let child = ndom.child_at(note, i);
             if ndom.name_is(child, &W::p()) {
-                let block = paragraph_block(&ctx, &ndom, child, false, &mut numbering);
+                let block =
+                    without_page_marks(paragraph_block(&ctx, &ndom, child, false, &mut numbering));
                 if let Block::Paragraph { runs, style, .. } = block {
                     paras.push(FootnotePara { runs, style });
                 }
@@ -5530,6 +5533,18 @@ fn walk_container(
             });
             endnotes.observe_para(dom, child);
             let block = paragraph_block(ctx, dom, child, false, numbering);
+            // Text after a page break inside the paragraph continues it on
+            // the next page (checked in Word: "Aa<br page/>Cc" opens page
+            // two with Cc); a break with nothing after it breaks as before.
+            let (mut parts, page_br) = split_page_breaks(block, page_br);
+            let block = parts.pop().expect("split keeps the paragraph");
+            for part in parts {
+                blocks.push(part);
+                blocks.push(Block::PageBreak {
+                    next: None,
+                    manual: true,
+                });
+            }
             let blank = block_is_blank(&block);
             // A blank paragraph that only carries a section break is no
             // line, continuous breaks included (0016811c: Word's gap has
@@ -5621,6 +5636,100 @@ fn walk_container(
             }
         }
     }
+}
+
+/// A paragraph cut at its page breaks: every part but the last ends a
+/// page. The first part keeps the space before, the list marker, the
+/// pictures and the bookmarks; the last keeps the space after. Returns the
+/// parts and whether a break still follows the last one (a break with no
+/// ink after it, or `page_br` for a paragraph without a marked break).
+fn split_page_breaks(block: Block, page_br: bool) -> (Vec<Block>, bool) {
+    let Block::Paragraph {
+        runs,
+        style,
+        list,
+        images,
+        boxes,
+        bookmarks,
+    } = block
+    else {
+        return (vec![block], page_br);
+    };
+    if !runs.iter().any(|r| r.text.contains(PAGE_BREAK_MARK)) {
+        return (
+            vec![Block::Paragraph {
+                runs,
+                style,
+                list,
+                images,
+                boxes,
+                bookmarks,
+            }],
+            page_br,
+        );
+    }
+    // Cut the runs at every mark.
+    let mut pieces: Vec<Vec<TextRun>> = vec![Vec::new()];
+    for run in runs {
+        let mut texts = run.text.split(PAGE_BREAK_MARK).peekable();
+        while let Some(text) = texts.next() {
+            if !text.is_empty() {
+                pieces
+                    .last_mut()
+                    .expect("a piece")
+                    .push(run.with_text(text));
+            }
+            if texts.peek().is_some() {
+                pieces.push(Vec::new());
+            }
+        }
+    }
+    let ink = |p: &[TextRun]| p.iter().any(|r| !r.text.trim().is_empty() || r.list_marker);
+    // Pieces with no ink after the last inked one fold back: their breaks
+    // are the trailing break.
+    let last_ink = pieces.iter().rposition(|p| ink(p)).unwrap_or(0);
+    let trailing = last_ink + 1 < pieces.len();
+    pieces.truncate(last_ink + 1);
+    let n = pieces.len();
+    let mut images = Some(images);
+    let mut boxes = Some(boxes);
+    let mut bookmarks = Some(bookmarks);
+    let parts = pieces
+        .into_iter()
+        .enumerate()
+        .map(|(i, runs)| {
+            let mut style = style.clone();
+            if i > 0 {
+                style.before = 0.0;
+                style.before_auto = false;
+            }
+            if i + 1 < n {
+                style.after = 0.0;
+                style.after_auto = false;
+            }
+            Block::Paragraph {
+                runs,
+                style,
+                list: list && i == 0,
+                images: if i == 0 {
+                    images.take().unwrap_or_default()
+                } else {
+                    Vec::new()
+                },
+                boxes: if i == 0 {
+                    boxes.take().unwrap_or_default()
+                } else {
+                    Vec::new()
+                },
+                bookmarks: if i == 0 {
+                    bookmarks.take().unwrap_or_default()
+                } else {
+                    Vec::new()
+                },
+            }
+        })
+        .collect();
+    (parts, trailing)
 }
 
 fn para_sect_pr(dom: &Dom, para: NodeId) -> Option<NodeId> {
@@ -8527,7 +8636,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
 
 fn collect_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts) -> Vec<TextRun> {
     let mut authors = AuthorColors::default();
-    collect_runs_in(
+    let runs = collect_runs_in(
         dom,
         node,
         base,
@@ -8539,7 +8648,44 @@ fn collect_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts) ->
             in_table: false,
             toc: false,
         },
-    )
+    );
+    strip_page_marks(runs)
+}
+
+/// Runs with their page-break marks removed (text boxes, notes: no page
+/// to break).
+fn strip_page_marks(runs: Vec<TextRun>) -> Vec<TextRun> {
+    runs.into_iter()
+        .filter_map(|r| {
+            if !r.text.contains(PAGE_BREAK_MARK) {
+                return Some(r);
+            }
+            let text: String = r.text.chars().filter(|c| *c != PAGE_BREAK_MARK).collect();
+            (!text.is_empty()).then(|| r.with_text(text))
+        })
+        .collect()
+}
+
+/// A paragraph block whose runs keep no page-break marks.
+fn without_page_marks(block: Block) -> Block {
+    match block {
+        Block::Paragraph {
+            runs,
+            style,
+            list,
+            images,
+            boxes,
+            bookmarks,
+        } => Block::Paragraph {
+            runs: strip_page_marks(runs),
+            style,
+            list,
+            images,
+            boxes,
+            bookmarks,
+        },
+        other => other,
+    }
 }
 
 struct RunCollect<'a> {
@@ -8985,7 +9131,7 @@ fn collect_runs_rec(
         }
         let raw = {
             let mut out = String::new();
-            collect_visible(ctx.dom, node, &mut out, false);
+            collect_visible_marked(ctx.dom, node, &mut out, false, !ctx.in_table);
             out
         };
         let mut text = rev_text(
@@ -9221,12 +9367,22 @@ fn rev_text(text: &str, mark: RevMark, preserve_ws: bool) -> String {
 }
 
 fn collect_visible(dom: &Dom, node: NodeId, out: &mut String, in_del: bool) {
+    collect_visible_marked(dom, node, out, in_del, false);
+}
+
+/// A body run's text keeps its page breaks as `PAGE_BREAK_MARK`, so its
+/// paragraph can split there (`split_page_breaks`, which removes every
+/// mark). A noncharacter: no whitespace pass squeezes it and no document
+/// carries it.
+const PAGE_BREAK_MARK: char = '\u{FDD0}';
+
+fn collect_visible_marked(dom: &Dom, node: NodeId, out: &mut String, in_del: bool, pages: bool) {
     if skip_non_text(dom, node) {
         return;
     }
     if dom.name_is(node, &W::del()) || dom.name_is(node, &W::move_from()) {
         for idx in 0..dom.child_count(node) {
-            collect_visible(dom, dom.child_at(node, idx), out, true);
+            collect_visible_marked(dom, dom.child_at(node, idx), out, true, pages);
         }
         return;
     }
@@ -9244,10 +9400,11 @@ fn collect_visible(dom: &Dom, node: NodeId, out: &mut String, in_del: bool) {
     }
     if !in_del && (dom.name_is(node, &W::name("tab")) || dom.name_is(node, &W::name("br"))) {
         if dom.name_is(node, &W::name("br")) {
-            let skip = dom
-                .attribute(node, &W::name("type"))
-                .is_some_and(|k| k == "page" || k == "oddPage" || k == "evenPage" || k == "column");
-            if !skip {
+            let kind = dom.attribute(node, &W::name("type"));
+            let page = kind.is_some_and(|k| k == "page" || k == "oddPage" || k == "evenPage");
+            if page && pages {
+                out.push(PAGE_BREAK_MARK);
+            } else if !page && kind != Some("column") {
                 out.push('\n');
             }
         } else {
@@ -9256,7 +9413,7 @@ fn collect_visible(dom: &Dom, node: NodeId, out: &mut String, in_del: bool) {
         return;
     }
     for idx in 0..dom.child_count(node) {
-        collect_visible(dom, dom.child_at(node, idx), out, in_del);
+        collect_visible_marked(dom, dom.child_at(node, idx), out, in_del, pages);
     }
 }
 

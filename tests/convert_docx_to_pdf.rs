@@ -31402,6 +31402,39 @@ fn a_spaces_only_paragraph_is_sized_by_its_mark() {
 }
 
 #[test]
+fn a_page_break_inside_a_paragraph_moves_the_rest_of_it_to_the_next_page() {
+    // Eight fixtures_500 files carry text after a w:br type="page" in the
+    // same paragraph. Checked in Word: "Aa<br page/>Cc" paints Aa on page
+    // one and Cc at the top of page two (82.32), the next paragraph under
+    // it. We ignored the break mid-paragraph ("AaCc" on page one) and
+    // broke the page after the whole paragraph.
+    let body = "<w:p><w:r><w:t>Aa</w:t></w:r><w:r><w:br w:type=\"page\"/></w:r><w:r><w:t>Cc</w:t></w:r></w:p>\
+        <w:p><w:r><w:t>Bb</w:t></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+        <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert mid-paragraph page break");
+    assert_eq!(pdf_page_count(&pdf), 2, "two pages");
+    let streams = pdf_content_streams(&pdf);
+    assert_eq!(streams.len(), 2, "one content stream per page");
+    let a1 = pdf_cm_tj_xy(&streams[0], "A");
+    let c2 = pdf_cm_tj_xy(&streams[1], "C");
+    let b2 = pdf_cm_tj_xy(&streams[1], "B");
+    assert!(
+        pdf_cm_tj_xy(&streams[0], "C").is_empty(),
+        "Cc is not on page one"
+    );
+    assert!(
+        c2.first()
+            .is_some_and(|c| a1.first().is_some_and(|a| (c.1 - a.1).abs() < 0.5)),
+        "Cc opens page two at the height Aa opens page one: A {a1:?} C {c2:?}"
+    );
+    assert!(
+        b2.first()
+            .is_some_and(|b| c2.first().is_some_and(|c| b.1 < c.1 - 5.0)),
+        "Bb follows Cc on page two: C {c2:?} B {b2:?}"
+    );
+}
+
+#[test]
 fn a_justified_underline_runs_through_the_stretched_spaces() {
     // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
     // underlined word by word; the justify pad after each space was bare.
