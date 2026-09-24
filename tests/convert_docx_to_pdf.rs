@@ -1747,6 +1747,23 @@ fn a_hanging_head_that_tabs_short_of_the_indent_keeps_the_full_first_line() {
 }
 
 #[test]
+fn a_line_break_survives_a_trailing_right_tab() {
+    // fixtures_500 019d92d9: a title paragraph with a right stop runs
+    // "Hi Delta<br/>Models<tab>Model <tab>". The trailing tab sent it down
+    // the TOC path, which glued the head into line one and dropped the
+    // break; live Word paints "Models" on line two.
+    let body = r#"<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="8280"/><w:tab w:val="right" w:pos="10440"/></w:tabs></w:pPr><w:r><w:t>Hi Delta</w:t></w:r><w:r><w:br/></w:r><w:r><w:t>Models</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t xml:space="preserve">Model </w:t></w:r><w:r><w:tab/></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="720" w:bottom="1440" w:left="720"/></w:sectPr>"#;
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("title break");
+    let (_, y1) = pdf_glyph_text_xy(&pdf, "Hi").expect("line one");
+    let (x2, y2) = pdf_glyph_text_xy(&pdf, "Models").expect("line two");
+    assert!(y1 - y2 > 5.0, "Models drops to line two; {y1} vs {y2}");
+    assert!(
+        (x2 - 36.0).abs() < 0.5,
+        "line two starts at the margin; x={x2}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

@@ -15446,7 +15446,12 @@ impl<'a> Layout<'a> {
         // A right stop the paragraph never tabs to is just a stop: the
         // first line still loses its firstLine indent (000ebd12 Normal
         // right tab at 9072tw ran "önska i" 13pt into the margin).
-        let Some((prefix, suffix)) = peel_trailing_tab(body) else {
+        // A hard line break makes no single TOC line: the TOC path glued
+        // 019d92d9's "Hi Delta…<br/>Models…<tab>Model<tab>" head into line
+        // one and lost the break Word keeps.
+        let Some((prefix, suffix)) =
+            peel_trailing_tab(body).filter(|_| !body.iter().any(|r| r.text.contains('\n')))
+        else {
             return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
         };
         // A tab that only separates the list label ("1.") from its text is
