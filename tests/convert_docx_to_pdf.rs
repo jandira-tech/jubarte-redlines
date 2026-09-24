@@ -30794,6 +30794,52 @@ fn a_cells_plain_after_does_not_cancel_its_table_styles_auto_spacing() {
 }
 
 #[test]
+fn a_right_to_left_paragraph_mirrors_its_alignment_and_indents() {
+    // fixtures_500 00205272 (and three more Persian files): a w:bidi
+    // paragraph starts at the right margin. Checked in Word: no jc and
+    // jc="left" end at the right margin, jc="right" starts at the left
+    // one, and w:ind left=1440 indents from the right. We laid all of them
+    // out left to right.
+    let para = |ppr: &str, t: &str| {
+        format!(
+            "<w:p><w:pPr><w:bidi/>{ppr}<w:spacing w:after=\"0\"/></w:pPr>\
+             <w:r><w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "{}{}{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        para("", "Q"),
+        para("<w:jc w:val=\"right\"/>", "Z"),
+        para("<w:ind w:left=\"1440\"/>", "X")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert RTL paragraphs");
+    let hay = String::from_utf8_lossy(&pdf);
+    let x = |g: &str| {
+        [pdf_cm_tj_xy(&hay, g), pdf_tj_xy(&hay, g)]
+            .concat()
+            .first()
+            .map(|p| p.0)
+            .unwrap_or_else(|| panic!("{g} paints"))
+    };
+    assert!(
+        x("Q") > 525.0,
+        "no jc ends at the right margin; Q at {}",
+        x("Q")
+    );
+    assert!(
+        (x("Z") - 72.0).abs() < 0.5,
+        "jc=right starts at the left margin; Z at {}",
+        x("Z")
+    );
+    assert!(
+        (450.0..468.0).contains(&x("X")),
+        "ind left=1440 indents from the right (ends at 468); X at {}",
+        x("X")
+    );
+}
+
+#[test]
 fn a_justified_underline_runs_through_the_stretched_spaces() {
     // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
     // underlined word by word; the justify pad after each space was bare.

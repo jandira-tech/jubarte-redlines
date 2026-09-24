@@ -367,6 +367,9 @@ struct ParaStyle {
     /// (a cell's outer auto space is dropped, 0129b302).
     before_auto: bool,
     after_auto: bool,
+    /// `w:bidi`: a right-to-left paragraph. `para_base` mirrors its
+    /// alignment and indents once every layer is applied.
+    bidi: bool,
     /// `w:widowControl`: on unless a style or pPr turns it off (Word's
     /// default; 00182e72 moves a lone first line to the next page).
     widow_control: bool,
@@ -782,6 +785,7 @@ impl Defaults {
                 before: 0.0,
                 before_auto: false,
                 after_auto: false,
+                bidi: false,
                 widow_control: true,
                 snap_to_grid: true,
                 line_mult: 276.0 / 240.0,
@@ -3001,6 +3005,9 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
             "both" | "distribute" => Align::Justify,
             _ => Align::Left,
         };
+    }
+    if let Some(b) = direct_named(dom, ppr, "bidi") {
+        style.bidi = !val_is_false(dom, Some(b));
     }
     if let Some(wc) = direct_named(dom, ppr, "widowControl") {
         style.widow_control = !val_is_false(dom, Some(wc));
@@ -6222,7 +6229,23 @@ fn para_base(
             pstyle.before_auto = true;
         }
     }
+    if pstyle.bidi {
+        mirror_bidi(&mut pstyle);
+    }
     (pstyle, rstyle)
+}
+
+/// A right-to-left paragraph as the left-to-right one it paints like: its
+/// start is the right margin, so jc left/right and ind left/right swap
+/// (checked in Word: no jc and jc="left" end at the right margin,
+/// jc="right" starts at the left one, ind left indents from the right).
+fn mirror_bidi(style: &mut ParaStyle) {
+    style.align = match style.align {
+        Align::Left => Align::Right,
+        Align::Right => Align::Left,
+        other => other,
+    };
+    std::mem::swap(&mut style.indent_left, &mut style.indent_right);
 }
 
 /// Word 2007/365 latent built-ins when `styles.xml` has no definition.
@@ -12275,6 +12298,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         before: 0.0,
         before_auto: false,
         after_auto: false,
+        bidi: false,
         widow_control: true,
         snap_to_grid: true,
         line_mult: 1.0,
