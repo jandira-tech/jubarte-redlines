@@ -613,6 +613,39 @@ fn numid_zero_over_a_numbered_style_drops_its_list_indent() {
 }
 
 #[test]
+fn a_docdefaults_without_ppr_default_keeps_words_paragraph_defaults() {
+    // fixtures_500 00046848 / 000312ea (PHPWord): docDefaults carries only
+    // rPrDefault. Word lays it out at 1.15 lines and 8pt after (13.3pt
+    // lines, 21.3pt paragraph steps). An empty <w:pPrDefault/> (003599e1,
+    // 003c9ddd) is what means single spacing and no after.
+    let step = |ppr_default: &str| {
+        let styles = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+            <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+              <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+                <w:sz w:val=\"20\"/></w:rPr></w:rPrDefault>{ppr_default}</w:docDefaults>\
+              <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+            </w:styles>"
+        );
+        let body = "<w:p><w:r><w:t>StepOne</w:t></w:r></w:p>\
+                    <w:p><w:r><w:t>StepTwo</w:t></w:r></w:p><w:sectPr/>";
+        let pdf = docx_to_pdf(&docx_with_styles(body, &styles)).expect("pPrDefault");
+        pdf_literal_td_y(&pdf, "StepOne").expect("StepOne")
+            - pdf_literal_td_y(&pdf, "StepTwo").expect("StepTwo")
+    };
+    let absent = step("");
+    let empty = step("<w:pPrDefault/>");
+    assert!(
+        (empty - 11.5).abs() < 0.3,
+        "an empty pPrDefault is single spaced, no after; empty={empty}"
+    );
+    assert!(
+        (absent - (11.5 * 1.15 + 8.0)).abs() < 0.5,
+        "no pPrDefault takes a 1.15 line and 8pt after; absent={absent}"
+    );
+}
+
+#[test]
 fn an_unstyled_table_keeps_the_normal_paragraph_spacing() {
     // fixtures_500 0073da0a / 0000c5b9: a w:tbl with no tblStyle takes
     // TableNormal, which sets no pPr — Normal's after=160 still spaces
@@ -28331,12 +28364,14 @@ fn a_space_only_run_keeps_its_space() {
 fn an_empty_times_paragraph_keeps_the_times_line() {
     // fixtures_500 014babb2: Normal = Times New Roman 12, double. Word's
     // empty paragraph between two text paragraphs is 27.6pt tall; the
-    // factory Calibri 11 mark made it 26.85.
+    // factory Calibri 11 mark made it 26.85. Its docDefaults carries an
+    // empty pPrDefault (no after), as here.
     if !std::path::Path::new("/System/Library/Fonts/Supplemental/Times New Roman.ttf").is_file() {
         return;
     }
     let styles = "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-        <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"24\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+        <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"24\"/></w:rPr></w:rPrDefault>\
+          <w:pPrDefault/></w:docDefaults>\
         <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
         <w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/></w:rPr></w:style>\
         </w:styles>";

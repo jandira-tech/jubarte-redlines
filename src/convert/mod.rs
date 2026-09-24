@@ -2117,14 +2117,20 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             latent: true,
         };
     };
-    // styles.xml is present. Do not keep the synthetic Word-2007 after=200
-    // twips from `Defaults::word()` — empty pPrDefault + empty Normal (the
-    // sample_document / eigenpal family) means after=0. docDefaults below
-    // can still set after when the file actually specifies it.
-    defaults.para.after = 0.0;
-    // Same for the Word-2013 276/240 line: with no `w:line` anywhere Word
-    // is single-spaced (fixtures_500 003599e1 TNR 13 lines 14.88pt apart).
-    defaults.para.line_mult = 1.0;
+    // styles.xml is present. An empty pPrDefault + empty Normal (the
+    // sample_document / eigenpal family) means after=0, and with no `w:line`
+    // anywhere Word is single-spaced (fixtures_500 003599e1 TNR 13 lines
+    // 14.88pt apart). A docDefaults with no pPrDefault at all lays out at
+    // 1.15 lines and 8pt after (PHPWord's 00046848 / 000312ea: 13.3pt
+    // lines, 21.3pt paragraph steps, 34.3pt table rows).
+    // docDefaults below can still set them when the file specifies them.
+    let has = |name: &str| !dom.descendants(root, Some(&W::name(name))).is_empty();
+    if has("docDefaults") && !has("pPrDefault") {
+        defaults.para.after = 8.0;
+    } else {
+        defaults.para.after = 0.0;
+        defaults.para.line_mult = 1.0;
+    }
     // And the size: with no `w:sz` anywhere Word runs at the OOXML
     // default 10pt, not the new-document 11 (fixtures_500 003c9ddd).
     defaults.run.size = 10.0;
