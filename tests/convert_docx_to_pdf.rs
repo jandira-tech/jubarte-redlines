@@ -2137,6 +2137,93 @@ fn paragraph_tabs_merge_with_the_styles_tabs() {
 }
 
 #[test]
+fn auto_spaced_cell_paragraphs_share_the_larger_gap() {
+    // fixtures_500 0129b302: a cell of three HTML auto-spaced paragraphs
+    // (nbsp, "1.300.000", nbsp). Word keeps max(after, next before) between
+    // them, 14pt, as in the body; adding both made the row 28pt taller.
+    let auto = "<w:pPr><w:spacing w:before=\"100\" w:beforeAutospacing=\"1\" w:after=\"100\" \
+                w:afterAutospacing=\"1\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>";
+    let p = |t: &str| format!("<w:p>{auto}<w:r><w:t>{t}</w:t></w:r></w:p>");
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+         <w:tr><w:tc>{}{}{}</w:tc></w:tr>\
+         <w:tr><w:tc><w:p><w:r><w:t>Below</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        p("Alpha"),
+        p("Beta"),
+        p("Gamma")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("auto-spaced cell");
+    let y = |t: &str| pdf_glyph_text_xy(&pdf, t).expect(t).1;
+    let step = y("Alpha") - y("Beta");
+    let step2 = y("Beta") - y("Gamma");
+    let line = y("Gamma") - y("Below");
+    assert!(
+        (step - (line + 14.0)).abs() < 0.3 && (step2 - step).abs() < 0.05,
+        "one 14pt gap between auto-spaced cell paragraphs; steps {step} {step2}, line {line}"
+    );
+}
+
+#[test]
+fn an_autofit_table_whose_grid_matches_its_width_keeps_the_grid() {
+    // fixtures_500 0129b302: tblW 9360 dxa, autofit, grid 2000/4000/3360
+    // (also 9360) under first-row tcW 2100/3900/3360, each within 10% of its
+    // column. Word lays the saved grid out; scaling the tcW preferences
+    // moved the inner rules.
+    let cell = |w: u32, t: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/><w:tcBorders>\
+             <w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>\
+             <w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/></w:tcBorders></w:tcPr>\
+             <w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"9360\" w:type=\"dxa\"/>\
+         <w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"4000\"/><w:gridCol w:w=\"3360\"/></w:tblGrid>\
+         <w:tr>{}{}{}</w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        cell(2100, "A"),
+        cell(3900, "B"),
+        cell(3360, "C")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("grid table");
+    let mut xs = pdf_vertical_rule_xs(&pdf);
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    xs.dedup_by(|a, b| (*a - *b).abs() < 1.0);
+    assert!(
+        xs.iter().any(|&x| (x - 172.0).abs() < 0.6) && xs.iter().any(|&x| (x - 372.0).abs() < 0.6),
+        "inner rules on the grid at 172 and 372; xs={xs:?}"
+    );
+}
+
+#[test]
+fn the_compat_pull_is_the_first_cells_own_left_margin() {
+    // fixtures_500 0129b302 (compat 12): tblCellMar left 0 but every cell
+    // has tcMar left 30. Word pulls the border 1.5pt into the margin (from
+    // 72 - 7.5 tblInd to 63.0), by the cell's own margin.
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/><w:tblInd w:w=\"-150\" w:type=\"dxa\"/>\
+         <w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/><w:tcBorders>\
+           <w:left w:val=\"single\" w:sz=\"8\" w:space=\"0\" w:color=\"auto\"/></w:tcBorders>\
+           <w:tcMar><w:left w:w=\"30\" w:type=\"dxa\"/><w:right w:w=\"30\" w:type=\"dxa\"/></w:tcMar></w:tcPr>\
+           <w:p><w:r><w:t>Pulled</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("tcMar pull");
+    let xs = pdf_vertical_rule_xs(&pdf);
+    assert!(
+        xs.iter().any(|&x| (x - 63.0).abs() < 0.3),
+        "left border pulled by the cell's 1.5pt margin to 63.0; xs={xs:?}"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves
@@ -22203,7 +22290,8 @@ fn official_file_146_second_signoff_table_is_on_page_seven() {
 fn cell_tcmar_left_overrides_tblcellmar() {
     // file_146 / 175 / 176 / sample code listing: tblCellMar left=10 twips
     // but the cell has tcMar left=200 (10pt). Word paints Courier at
-    // 72+10=82; we used the table 10-twip pad (x≈72.5).
+    // 72+10=82; we used the table 10-twip pad (x≈72.5). file_146 is
+    // compatibilityMode 15, so the table is not pulled into the margin.
     let body = "<w:tbl><w:tblPr>\
            <w:tblW w:w=\"9360\" w:type=\"dxa\"/>\
            <w:tblCellMar>\
@@ -22221,7 +22309,12 @@ fn cell_tcmar_left_overrides_tblcellmar() {
                <w:t>ImportLine</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
-    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert tcMar cell");
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(
+        body,
+        "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+           w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>",
+    ))
+    .expect("convert tcMar cell");
     let xs = pdf_tf_xs(&pdf, "9.50 Tf");
     assert!(!xs.is_empty(), "Courier 9.5 must paint; xs={xs:?}");
     let x = xs.iter().copied().fold(f32::INFINITY, f32::min);

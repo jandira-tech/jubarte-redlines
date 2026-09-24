@@ -5636,6 +5636,20 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
         };
         return cols.iter().map(|c| c * scale).collect();
     }
+    // An autofit table whose saved grid fills its tblW and sits within 10%
+    // of each dxa tcW is Word's own resolved layout (0129b302: grid 1320 /
+    // tcW 1260). A far-off grid is stale and the tcW still lead.
+    let near_grid = cols.iter().enumerate().all(
+        |(i, &g)| matches!(geom.pref.get(i), Some(PrefWidth::Dxa(w)) if (w - g).abs() <= 0.1 * g),
+    );
+    if !geom.fixed
+        && let TblWidth::Dxa(w) = geom.width
+        && !geom.grid_padded
+        && (grid_total - w).abs() < 1.0
+        && near_grid
+    {
+        return cols.to_vec();
+    }
     let target = match geom.width {
         TblWidth::Grid => grid_total,
         TblWidth::Dxa(w) => w,
@@ -7383,6 +7397,14 @@ fn table_block(
             {
                 last.style.after = 0.0;
             }
+            // Between two paragraphs Word keeps max(after, next before),
+            // as in the body (0129b302's auto-spaced "1.300.000" cell is
+            // 14pt apart, not 28): the next before keeps only its excess.
+            for i in 1..cell_paras.len() {
+                let after = cell_paras[i - 1].style.after;
+                let next = &mut cell_paras[i].style;
+                next.before = (next.before - after).max(0.0);
+            }
             let (colspan, vmerge) = cell_span(dom, cell);
             let last_col = grid_at + colspan.max(1) >= cols.len();
             let at = |b: TblBorders| {
@@ -7503,6 +7525,12 @@ fn table_block(
             _ => Align::Left,
         };
     }
+    // The pull is the first cell's own left margin: 0129b302's tcMar 30
+    // under tblCellMar 0 sits 1.5pt further left.
+    let first_pad_l = rows
+        .first()
+        .and_then(|row| row.first())
+        .map_or(tbl_pad_l, |cell| cell.pad_l);
     let bottom_above: Vec<f32> = std::iter::once(0.0)
         .chain(rows.iter().map(|row| {
             row.iter()
@@ -7536,7 +7564,7 @@ fn table_block(
                 header_rows,
                 table_grid: table_style_id(dom, table) == Some("TableGrid"),
                 tbl_ind: table_ind(dom, table),
-                mar_l: tbl_pad_l,
+                mar_l: first_pad_l,
                 pref,
                 fixed,
                 float: table_float(dom, table),
