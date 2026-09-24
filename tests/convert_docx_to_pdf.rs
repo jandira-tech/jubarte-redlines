@@ -1596,6 +1596,39 @@ fn a_style_numpr_keeps_the_style_indent_over_the_level() {
 }
 
 #[test]
+fn a_form_checkbox_paints_a_box_and_takes_its_advance() {
+    // fixtures_500 019d92d9: FORMCHECKBOX option lists. Live Word draws a
+    // 0.72pt box (side 1.15s - 2.16, 0.96pt in) and advances 1.15s, s the
+    // run size (7.5pt: text at +8.62) or w:size; checked adds diagonals.
+    // We painted nothing and advanced nothing.
+    let cb = |checked: u8| {
+        let r = r#"<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="15"/></w:rPr>"#;
+        format!(
+            r#"<w:p><w:r>{r}<w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="C"/><w:enabled/><w:checkBox><w:sizeAuto/><w:default w:val="{checked}"/></w:checkBox></w:ffData></w:fldChar></w:r><w:r>{r}<w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r>{r}<w:fldChar w:fldCharType="separate"/></w:r><w:r>{r}<w:fldChar w:fldCharType="end"/></w:r><w:r>{r}<w:t>Opt{checked}</w:t></w:r></w:p>"#
+        )
+    };
+    let body = format!(
+        "{}{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        cb(0),
+        cb(1)
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("checkbox");
+    let (x, _) = pdf_glyph_text_xy(&pdf, "Opt0").expect("text after the box");
+    assert!(
+        (x - 80.62).abs() < 0.2,
+        "the box advances 1.15 x 7.5pt; x={x}"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    assert_eq!(hay.matches("6.47 6.47 re S").count(), 2, "two 6.47pt boxes");
+    assert_eq!(
+        hay.matches("0.48 w").count(),
+        2,
+        "one checked box, two diagonals"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

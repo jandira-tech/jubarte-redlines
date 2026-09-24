@@ -917,6 +917,9 @@ struct TextRun {
     /// First run of a header/footer paragraph's wrapped continuation line:
     /// the paragraph's first-line indent does not apply to it.
     hf_cont: bool,
+    /// A FORMCHECKBOX legacy form field: an em space advanced like Word's
+    /// box (1.15 x the box size) that paints the box, crossed when checked.
+    checkbox: Option<bool>,
 }
 
 impl TextRun {
@@ -940,6 +943,7 @@ impl TextRun {
             list_marker: false,
             frame_right: false,
             hf_cont: false,
+            checkbox: None,
         }
     }
 
@@ -9180,6 +9184,19 @@ fn collect_runs_rec(
         if mark != RevMark::None {
             apply_rev(&mut style, mark, ctx.authors.color(author));
         }
+        if let Some((size, checked)) = form_checkbox(ctx.dom, node) {
+            // Word paints the legacy checkbox at its begin fldChar; the
+            // field has no result text (019d92d9's option lists).
+            let mut boxed = style.clone();
+            let box_pt = size.unwrap_or_else(|| boxed.layout_size());
+            let layout = boxed.layout_size();
+            if layout > 0.0 {
+                boxed.scale = 1.15 * box_pt / layout;
+            }
+            let mut run = TextRun::new(CHECKBOX_SPACE, boxed);
+            run.checkbox = Some(checked);
+            runs.push(run);
+        }
         let mut footnote_id = None;
         let mut note_ref = false;
         for idx in 0..ctx.dom.child_count(node) {
@@ -9453,6 +9470,32 @@ fn collect_visible(dom: &Dom, node: NodeId, out: &mut String, in_del: bool) {
 /// mark). A noncharacter: no whitespace pass squeezes it and no document
 /// carries it.
 const PAGE_BREAK_MARK: char = '\u{FDD0}';
+
+/// An em space: a FORMCHECKBOX's advance at 115% scaling (see `TextRun::checkbox`).
+const CHECKBOX_SPACE: &str = "\u{2003}";
+
+/// A run's `fldChar begin` carrying `w:ffData/w:checkBox`: the box size in
+/// points (`w:size`, else the run's font size) and whether it is checked
+/// (`w:checked`, else `w:default`).
+fn form_checkbox(dom: &Dom, run: NodeId) -> Option<(Option<f32>, bool)> {
+    let fld = first_named(dom, run, "fldChar")?;
+    if attr_any(dom, fld, "fldCharType") != Some("begin") {
+        return None;
+    }
+    let cb = first_named(dom, fld, "ffData").and_then(|ff| first_named(dom, ff, "checkBox"))?;
+    let size = first_named(dom, cb, "size")
+        .and_then(|n| attr_any(dom, n, "val"))
+        .and_then(|v| v.parse::<f32>().ok())
+        .map(|half| half / 2.0);
+    let on = |name: &str| {
+        first_named(dom, cb, name)
+            .map(|n| attr_any(dom, n, "val").is_none_or(|v| matches!(v, "1" | "true" | "on")))
+    };
+    Some((
+        size,
+        on("checked").or_else(|| on("default")).unwrap_or(false),
+    ))
+}
 
 fn collect_visible_marked(dom: &Dom, node: NodeId, out: &mut String, in_del: bool, pages: bool) {
     if skip_non_text(dom, node) {
@@ -15726,6 +15769,39 @@ impl<'a> Layout<'a> {
             // body glyphs (Strict01 p11 18/20pt Video). Keep the line
             // box so 13pp packing holds; do not extra-skip short redlines.
             return x + self.run_width_pt(run, &run.text);
+        }
+        if let Some(checked) = run.checkbox {
+            // Live Word: box side 1.15s - 2.16 from 0.96pt in, top 0.96s -
+            // 1.2 above the baseline, 0.72pt stroke; checked adds both
+            // diagonals at 0.48pt (s = box size, advance 1.15s).
+            let w = self.run_width_pt(run, &run.text);
+            let s = w / 1.15;
+            let side = (1.15 * s - 2.16).max(1.0);
+            let y = run.style.paint_y(y);
+            let top = y + 0.96 * s - 1.2;
+            let (bx, by) = (x + 0.96, top - side);
+            let color = run.style.color;
+            self.current().ops.push(Op::StrokeRect {
+                x: bx,
+                y: by,
+                w: side,
+                h: side,
+                width: 0.72,
+                color,
+            });
+            if checked {
+                for (y1, y2) in [(top, by), (by, top)] {
+                    self.current().ops.push(Op::Line {
+                        x1: bx,
+                        y1,
+                        x2: bx + side,
+                        y2,
+                        width: 0.48,
+                        color,
+                    });
+                }
+            }
+            return x + w;
         }
         if chrome_measure_text(&run.text) != run.text {
             // A page-count mark is patched after layout: one op carrying
