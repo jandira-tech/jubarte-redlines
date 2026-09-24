@@ -15047,6 +15047,9 @@ impl<'a> Layout<'a> {
                     }
                     x = self.paint_run(&TextRun::new(" ", run.style.clone()), x, y);
                     if last_ink.is_some_and(|end| idx < end) && last_tab.is_none_or(|t| idx > t) {
+                        // Word's underline and strike run through the
+                        // stretched space, not only its natural width.
+                        self.decorate_run(x, y, pad, &run.style);
                         x += pad;
                     }
                 } else {

@@ -30428,3 +30428,49 @@ fn identity_h_text_carries_a_to_unicode_map() {
         assert!(text.contains(code), "the map names U+{code}");
     }
 }
+
+#[test]
+fn a_justified_underline_runs_through_the_stretched_spaces() {
+    // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
+    // underlined word by word; the justify pad after each space was bare.
+    // Word draws one continuous underline across the line.
+    let words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi \
+                 omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta";
+    let body = format!(
+        "<w:p><w:pPr><w:jc w:val=\"both\"/></w:pPr><w:r><w:rPr><w:color w:val=\"FF0000\"/>\
+         <w:u w:val=\"single\"/></w:rPr><w:t xml:space=\"preserve\">{words}</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert justified underline");
+    let hay = String::from_utf8_lossy(&pdf);
+    let mut first_line: Vec<(f32, f32)> = Vec::new();
+    let mut top_y = f32::MIN;
+    for chunk in hay.split("1.000 0.000 0.000 rg ").skip(1) {
+        let Some(end) = chunk.find(" re f") else {
+            continue;
+        };
+        let n: Vec<f32> = chunk[..end]
+            .split_whitespace()
+            .filter_map(|t| t.parse().ok())
+            .collect();
+        if n.len() != 4 || n[3] > 1.0 {
+            continue;
+        }
+        if n[1] > top_y + 0.5 {
+            top_y = n[1];
+            first_line.clear();
+        }
+        if (n[1] - top_y).abs() < 0.5 {
+            first_line.push((n[0], n[0] + n[2]));
+        }
+    }
+    assert!(first_line.len() > 3, "underline pieces on the first line");
+    first_line.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for pair in first_line.windows(2) {
+        assert!(
+            pair[1].0 - pair[0].1 < 0.05,
+            "gap {:?} -> {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+}
