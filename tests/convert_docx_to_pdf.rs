@@ -1727,6 +1727,26 @@ fn a_mid_page_column_top_keeps_the_space_before() {
 }
 
 #[test]
+fn a_hanging_head_that_tabs_short_of_the_indent_keeps_the_full_first_line() {
+    // fixtures_500 019d92d9: ind left=810 hanging=810 with a left stop at
+    // 274 in a 180pt column: "X<tab>F-10<tab>Low Water Cut-Off, Remote
+    // Probe". The head's tab stops at 13.7pt, not the 40.5pt indent, yet
+    // we wrapped the rest as if it started there with the rest-line
+    // budget and broke "Probe" off; live Word keeps one line to 551pt.
+    let a = r#"<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="15"/></w:rPr>"#;
+    let body = format!(
+        r#"<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="274"/></w:tabs><w:ind w:left="810" w:hanging="810"/></w:pPr><w:r>{a}<w:t>X</w:t></w:r><w:r>{a}<w:tab/><w:t>F-10</w:t></w:r><w:r>{a}<w:tab/><w:t>Low Water Cut-Off, Remote Probe</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="7560" w:bottom="1440" w:left="1080"/></w:sectPr>"#
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("hanging head");
+    let (_, y_low) = pdf_glyph_text_xy(&pdf, "Low").expect("Low paints");
+    let (_, y_probe) = pdf_glyph_text_xy(&pdf, "Probe").expect("Probe paints");
+    assert!(
+        (y_low - y_probe).abs() < 0.5,
+        "Probe stays on the first line; {y_low} vs {y_probe}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

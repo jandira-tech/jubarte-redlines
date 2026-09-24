@@ -15377,7 +15377,14 @@ impl<'a> Layout<'a> {
                 .iter()
                 .map(|r| self.run_width_pt(r, r.text.trim_end_matches('\t')))
                 .sum();
-            if head_w < hanging {
+            // Only when that tab reaches the hanging indent: an earlier
+            // explicit stop (019d92d9's checkbox, tab to 13.7pt "F-10",
+            // tab to 40.5pt) leaves more of the line to the first tab
+            // group, which the plain wrap below measures.
+            let start = indent + style.indent_first;
+            let lands =
+                next_tab_x(start + head_w, 0.0, &self.tab_stops, self.page.default_tab).min(indent);
+            if head_w < hanging && lands >= indent - 0.01 {
                 let (mut lines, mut ends) =
                     wrap_runs_tabbed(self.fonts, &desc, width, width, list, Some(&tabs(indent)));
                 if lines.is_empty() {
