@@ -770,6 +770,9 @@ struct NamedStyle {
     /// (019d92d9 Bulleted 270/270 over 360/360; 0005cabe Lista1 left=426
     /// alone keeps the level's hanging 360).
     sets_ind: (bool, bool),
+    /// `w:type="character"` (or numbering): named by a paragraph's pStyle,
+    /// Word ignores it and keeps the default paragraph style.
+    not_para: bool,
 }
 
 #[derive(Clone, Default)]
@@ -2460,6 +2463,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     let mut tables = HashMap::new();
     let mut implicit_para: Option<String> = None;
     let mut style_names: HashMap<String, String> = HashMap::new();
+    let mut not_para: std::collections::HashSet<String> = std::collections::HashSet::new();
     for style in dom.descendants(root, Some(&W::name("style"))) {
         let Some(sid) = dom.attribute(style, &W::name("styleId")) else {
             continue;
@@ -2471,6 +2475,12 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         if attr_any(&dom, style, "type") == Some("table") {
             tables.insert(sid.to_string(), parse_tbl_style(&dom, style, &defaults));
             continue;
+        }
+        if matches!(
+            attr_any(&dom, style, "type"),
+            Some("character" | "numbering")
+        ) {
+            not_para.insert(sid.to_string());
         }
         // Only the default *paragraph* style becomes doc defaults.
         // TableNormal / NoList also carry w:default="1" and would
@@ -2529,6 +2539,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             }
             false
         };
+        let style_not_para = not_para.contains(&id);
         let sets_ind = (
             chain_ind(&["left", "start"]),
             chain_ind(&["hanging", "firstLine"]),
@@ -2543,6 +2554,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
                 sets_size,
                 sets_family,
                 sets_ind,
+                not_para: style_not_para,
             },
         );
     }
@@ -6690,7 +6702,11 @@ fn para_base(
         && let Some(ps) = first_named(dom, ppr, "pStyle")
         && let Some(sid) = dom.attribute(ps, &W::val())
     {
-        if let Some(named) = sheet.by_id.get(sid) {
+        if sheet.by_id.get(sid).is_some_and(|named| named.not_para) {
+            // A character style as pStyle (redlines vs 0004c94c's
+            // "Hyperlink" header paragraph): Word keeps Normal, not the
+            // document defaults under the character style.
+        } else if let Some(named) = sheet.by_id.get(sid) {
             pstyle = named.para.clone();
             rstyle = named.run.clone();
             if let Some(t) = table_para {

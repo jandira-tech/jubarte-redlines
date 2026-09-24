@@ -1974,6 +1974,40 @@ fn conventional_revisions_are_red_blue_and_green() {
 }
 
 #[test]
+fn a_character_style_as_pstyle_keeps_normal() {
+    // Redlines vs 0004c94c: the compared header paragraph names the
+    // character style "Hyperlink" as its pStyle. Word ignores it and keeps
+    // Normal (Arial 9, no after); we laid it on the document defaults
+    // (after 10, 1.15 lines) and pushed every page's body 6-17pt down.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault>\
+          <w:pPrDefault><w:pPr><w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/></w:pPr></w:pPrDefault></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+            <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"18\"/></w:rPr></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"Hyperlink\"><w:name w:val=\"Hyperlink\"/>\
+            <w:rPr><w:color w:val=\"0000FF\"/><w:u w:val=\"single\"/></w:rPr></w:style>\
+        </w:styles>";
+    let gap = |pstyle: &str| {
+        let body = format!(
+            r#"<w:p><w:pPr>{pstyle}</w:pPr><w:r><w:t>First</w:t></w:r></w:p><w:p><w:r><w:t>Second</w:t></w:r></w:p><w:sectPr/>"#
+        );
+        let pdf =
+            docx_to_pdf(&numbering_docx_with_styles(&body, None, Some(styles))).expect("styles");
+        let (_, a) = pdf_glyph_text_xy(&pdf, "First").expect("first");
+        let (_, b) = pdf_glyph_text_xy(&pdf, "Second").expect("second");
+        a - b
+    };
+    let plain = gap("");
+    let charstyle = gap(r#"<w:pStyle w:val="Hyperlink"/>"#);
+    assert!(
+        (plain - charstyle).abs() < 0.2,
+        "a character pStyle spaces like Normal; plain {plain} charstyle {charstyle}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path
