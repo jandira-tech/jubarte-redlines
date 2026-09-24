@@ -1915,6 +1915,49 @@ fn a_floating_table_taller_than_its_page_breaks_across_pages() {
 }
 
 #[test]
+fn a_phpword_table_without_table_styles_is_not_pulled_into_the_margin() {
+    // fixtures_500 00f0e7f3 / 00046848 (PHPWord, compatibilityMode 12):
+    // docDefaults without pPrDefault and no table style: Word keeps the
+    // table border at the margin (cell text 5.4pt in). 00587c73, whose
+    // styles define TableNormal, is pulled left by its cell margin as
+    // usual, and so is a styles part that carries a pPrDefault.
+    let styles = |defaults: &str, table_style: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+            <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+              <w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault>{defaults}</w:docDefaults>\
+              <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+              {table_style}</w:styles>"
+        )
+    };
+    let normal_table = "<w:style w:type=\"table\" w:default=\"1\" w:styleId=\"TableNormal\">\
+        <w:name w:val=\"Normal Table\"/><w:tblPr><w:tblInd w:w=\"0\" w:type=\"dxa\"/>\
+        <w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar>\
+        </w:tblPr></w:style>";
+    let x = |styles_xml: &str| {
+        let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>\
+               <w:tr><w:tc><w:p><w:r><w:t>NoPull</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/>";
+        let pdf = docx_to_pdf(&docx_with_styles(body, styles_xml)).expect("pull");
+        pdf_glyph_text_xy(&pdf, "NoPull").expect("cell text").0
+    };
+    let plain = x(&styles("", ""));
+    let styled = x(&styles("", normal_table));
+    let with_ppr_default = x(&styles("<w:pPrDefault><w:pPr/></w:pPrDefault>", ""));
+    assert!(
+        (plain - 77.4).abs() < 0.3,
+        "no table styles: not pulled; x={plain}"
+    );
+    assert!(
+        (with_ppr_default - 72.0).abs() < 0.3,
+        "pPrDefault present: pulled; x={with_ppr_default}"
+    );
+    assert!(
+        (styled - 72.0).abs() < 0.3,
+        "TableNormal: pulled; x={styled}"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves

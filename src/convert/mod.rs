@@ -656,6 +656,9 @@ struct StyleSheet {
     /// no styles part, or one that declares w:latentStyles. A styles part
     /// without them leaves an undefined heading as Normal (000312ea).
     latent: bool,
+    /// A docDefaults without pPrDefault (PHPWord's signature): Word keeps
+    /// an unindented, unstyled table's border at the margin (00f0e7f3).
+    bare_defaults: bool,
 }
 
 #[derive(Clone)]
@@ -1002,6 +1005,11 @@ struct TableGeom {
     fixed: bool,
     /// `w:tblpPr` floating table (xml 3.3 ckpt 5).
     float: Option<ImageSlot>,
+    /// A PHPWord-shaped file (docDefaults without pPrDefault, no table
+    /// style) whose table carries no `w:tblInd`: Word keeps the border at
+    /// the margin in every compatibility mode (00f0e7f3, 00046848), while
+    /// 017abe40's explicit tblInd 0 and 00587c73's TableNormal are pulled.
+    keep_at_margin: bool,
 }
 
 /// Preferred table width from `tblW`. Word `pct` is 50ths of a percent
@@ -2112,6 +2120,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             tables: HashMap::new(),
             theme,
             latent: true,
+            bare_defaults: false,
         };
     };
     let mut dom = Dom::new();
@@ -2123,6 +2132,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             tables: HashMap::new(),
             theme,
             latent: true,
+            bare_defaults: false,
         };
     };
     // styles.xml is present. An empty pPrDefault + empty Normal (the
@@ -2133,7 +2143,8 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     // lines, 21.3pt paragraph steps, 34.3pt table rows).
     // docDefaults below can still set them when the file specifies them.
     let has = |name: &str| !dom.descendants(root, Some(&W::name(name))).is_empty();
-    if has("docDefaults") && !has("pPrDefault") {
+    let bare_defaults = has("docDefaults") && !has("pPrDefault");
+    if bare_defaults {
         defaults.para.after = 8.0;
     } else {
         defaults.para.after = 0.0;
@@ -2228,6 +2239,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         tables,
         theme,
         latent: xml.contains("latentStyles"),
+        bare_defaults,
     }
 }
 
@@ -7457,6 +7469,10 @@ fn table_block(
                 pref,
                 fixed,
                 float: table_float(dom, table),
+                keep_at_margin: sheet.bare_defaults
+                    && sheet.tables.is_empty()
+                    && table_pr(dom, table)
+                        .is_none_or(|pr| first_named(dom, pr, "tblInd").is_none()),
                 rules,
                 grid_padded: grid_len > 0 && grid_len < occupancy,
             })
@@ -16772,7 +16788,7 @@ impl<'a> Layout<'a> {
         // cell text lines up with body. Mode 15: margin + tblInd. A
         // centred table is centred whole: no pull, no tblInd (0005052e).
         let centred = matches!(style.align, Align::Center);
-        let pull = if self.compat_mode < 15 && !centred {
+        let pull = if self.compat_mode < 15 && !centred && !geom.keep_at_margin {
             geom.mar_l
         } else {
             0.0
@@ -28953,6 +28969,7 @@ mod table_tests {
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
             latent: true,
+            bare_defaults: false,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -29011,6 +29028,7 @@ mod table_tests {
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
             latent: true,
+            bare_defaults: false,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -29056,6 +29074,7 @@ mod table_tests {
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
             latent: true,
+            bare_defaults: false,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -29125,6 +29144,7 @@ mod table_tests {
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
             latent: true,
+            bare_defaults: false,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -29179,6 +29199,7 @@ mod table_tests {
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
             latent: true,
+            bare_defaults: false,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -29249,6 +29270,7 @@ mod table_tests {
             tables,
             theme: ThemeFonts::default(),
             latent: true,
+            bare_defaults: false,
         }
     }
 
