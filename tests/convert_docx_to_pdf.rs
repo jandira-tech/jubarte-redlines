@@ -9564,6 +9564,56 @@ fn a_ten_point_table_style_leaves_normals_size_in_its_cells() {
 }
 
 #[test]
+fn a_merged_cell_taller_than_its_rows_keeps_the_rules_it_spans() {
+    // fixtures_500 000bf661: a logo merged over two short header rows. The
+    // rows' heights include their 0.5pt rules, the merged content did not,
+    // so the span came out a rule short (Word: content + the table's top
+    // rule). Two short rows under a merged 5-line cell end where one row
+    // holding the same cell ends.
+    let tall = "<w:p><w:r><w:t>one</w:t><w:br/><w:t>two</w:t><w:br/><w:t>three</w:t>\
+        <w:br/><w:t>four</w:t><w:br/><w:t>five</w:t></w:r></w:p>";
+    let bdr = "<w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/>\
+        <w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/>\
+        <w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders>";
+    let tc = |merge: &str, body: &str| {
+        format!("<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/>{merge}</w:tcPr>{body}</w:tc>")
+    };
+    let table = |rows: &str| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/>{bdr}</w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid>{rows}</w:tbl>\
+             <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>"
+        )
+    };
+    let one = table(&format!(
+        "<w:tr>{}{}</w:tr>",
+        tc("", tall),
+        tc("", "<w:p/>")
+    ));
+    let two = table(&format!(
+        "<w:tr>{}{}</w:tr><w:tr>{}{}</w:tr>",
+        tc("<w:vMerge w:val=\"restart\"/>", tall),
+        tc("", "<w:p/>"),
+        tc("<w:vMerge/>", "<w:p/>"),
+        tc("", "<w:p/>")
+    ));
+    let after = |body: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert merged table");
+        let hay = String::from_utf8_lossy(&pdf).into_owned();
+        [pdf_cm_tj_xy(&hay, "A"), pdf_tj_xy(&hay, "A")]
+            .concat()
+            .first()
+            .map(|p| p.1)
+            .expect("After paints")
+    };
+    let (y1, y2) = (after(&one), after(&two));
+    assert!(
+        (y1 - y2).abs() < 0.2,
+        "the merged span ends where the single row does: {y1} vs {y2}"
+    );
+}
+
+#[test]
 fn bordered_row_pitch_adds_the_horizontal_rule() {
     // Word stacks each row's horizontal rule on top of its height: 0.5pt
     // rules make the pitch trHeight/content + 0.5 (fixtures_500 0005052e

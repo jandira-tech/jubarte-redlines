@@ -6053,7 +6053,12 @@ fn table_row_heights(
     for (ri, row) in rows.iter().enumerate() {
         for cell in row.iter().filter(|c| c.rowspan > 1) {
             let last = (ri + cell.rowspan).min(rows.len()) - 1;
-            let need = cell_content_height(fonts, cell, col_w, space_for_ul);
+            // The span's rows carry their rules; the merged content needs
+            // them too (000bf661's merged logo row is Word's 81.6pt, the
+            // content 80.8 plus the table's top rule).
+            let need = cell_content_height(fonts, cell, col_w, space_for_ul)
+                + row_top_rule(row, geom, ri)
+                + row_bottom_rule(&rows[last], geom, last);
             let have: f32 = h[ri..=last].iter().sum();
             if need > have {
                 h[last] += need - have;
