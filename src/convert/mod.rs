@@ -375,6 +375,9 @@ struct ParaStyle {
     indent_right: f32,
     indent_first: f32,
     contextual: bool,
+    /// The paragraph's numbering instance (`w:numId`), empty when unlisted:
+    /// auto spacing drops between items of one list (00df97e7).
+    list_num: String,
     style_id: String,
     /// `w:style/w:name` (uipriority uses styleId="2" name="heading 1").
     style_name: String,
@@ -769,6 +772,7 @@ impl Defaults {
                 indent_right: 0.0,
                 indent_first: 0.0,
                 contextual: false,
+                list_num: String::new(),
                 style_id: String::new(),
                 style_name: String::new(),
                 border_top: None,
@@ -5959,6 +5963,9 @@ fn paragraph_block(
             pstyle.indent_left = 0.0;
             pstyle.indent_first = 0.0;
         }
+    }
+    if !marker.is_empty() {
+        pstyle.list_num.clone_from(&num_id);
     }
     let pic = numbering.pic_image(&num_id, ilvl);
     let pic_extent = numbering.pic_extent(&num_id, ilvl);
@@ -11390,6 +11397,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         indent_right: 0.0,
         indent_first: 0.0,
         contextual: false,
+        list_num: String::new(),
         style_id: String::new(),
         style_name: String::new(),
         border_top: None,
@@ -13415,10 +13423,17 @@ impl<'a> Layout<'a> {
             // An exact line's baseline is 4/5 down its box whatever the
             // face (00080142 Arial exact 12: 9.53; 000e618d Tahoma exact
             // 14: 11.23; 0015b689 SimHei exact 25: 19.92).
+            // An atLeast box stacks its extra height above the text
+            // (00df97e7's Arial 8 under 16.5pt sits 7.3pt down).
+            let rise = if style.line_at_least.is_some() && grid_pad == 0.0 {
+                (line_box - natural).max(0.0)
+            } else {
+                0.0
+            };
             let drop = if style.line_exact.is_some() {
                 exact_baseline(line_box)
             } else {
-                ascent
+                ascent + rise
             };
             self.y -= grid_pad + drop;
             let line_w = self.line_width_pt(line);
@@ -13483,7 +13498,7 @@ impl<'a> Layout<'a> {
             self.y -= if style.line_exact.is_some() {
                 line_box - drop
             } else {
-                (line_box - grid_pad - ascent).max(1.0)
+                (line_box - grid_pad - drop).max(1.0)
             };
         }
         // Do not skip empty/del-only pBdr (mini 217–220): no-redline
@@ -18160,7 +18175,21 @@ fn layout(
                     } else {
                         // Word inter-para space is max(after, next.before).
                         // Heading2 after=10 + before=18 was 28pt vs Word 18.
-                        style.after = style.after.max(next.before);
+                        // Auto spacing drops between items of one list
+                        // (00df97e7's HTML bullets step one line apart).
+                        let one_list =
+                            !style.list_num.is_empty() && style.list_num == next.list_num;
+                        let after = if one_list && style.after_auto {
+                            0.0
+                        } else {
+                            style.after
+                        };
+                        let before = if one_list && next.before_auto {
+                            0.0
+                        } else {
+                            next.before
+                        };
+                        style.after = after.max(before);
                     }
                     // Do not max body→Heading1 (potpourri before=18): mini
                     // 209–212 dropped no-redline mean −0.057 (potpourri

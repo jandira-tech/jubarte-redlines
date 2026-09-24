@@ -1532,6 +1532,7 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
         "/Library/Fonts",
         "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
         "/Library/Fonts/Microsoft",
+        "/System/Library/Fonts",
     ];
     let norm = |s: &str| -> String {
         s.chars()
@@ -1560,11 +1561,30 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
         let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
         paths.sort();
         for path in paths {
-            let is_font = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("ttf") || e.eq_ignore_ascii_case("otf"));
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let is_font = ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf");
             let stem = path.file_stem().and_then(|s| s.to_str()).map(norm);
+            // A collection is named for its whole family (Avenir.ttc holds
+            // "Avenir Book"); its faces answer to their own names.
+            if ext.eq_ignore_ascii_case("ttc")
+                && stem
+                    .as_deref()
+                    .is_some_and(|s| s.len() >= 3 && key.starts_with(s))
+            {
+                let Ok(bytes) = fs::read(&path) else {
+                    continue;
+                };
+                let count = ttf_parser::fonts_in_collection(&bytes).unwrap_or(0);
+                for index in 0..count {
+                    let Some(data) = ttc_face_bytes(&bytes, index) else {
+                        continue;
+                    };
+                    if let Some((pass, style)) = face_family_style(&data, family) {
+                        found.push((pass, style, data));
+                    }
+                }
+                continue;
+            }
             if !is_font || !(family_folder || stem.is_some_and(|s| s.starts_with(&key))) {
                 continue;
             }
@@ -2334,6 +2354,21 @@ mod tests {
         assert!(
             faces.iter().any(|(style, _)| *style == (false, false)),
             "a regular Poppins face from the cloud cache"
+        );
+    }
+
+    #[test]
+    fn a_system_collection_face_is_found_by_its_family() {
+        // fixtures_500 00d0925f: Word draws "Avenir Book" from macOS's
+        // /System/Library/Fonts/Avenir.ttc (hhea 1.366em: 15.1pt lines at
+        // 11pt). Only loose .ttf/.otf were searched; the text fell to Arial.
+        if !Path::new("/System/Library/Fonts/Avenir.ttc").is_file() {
+            return;
+        }
+        let faces = installed_family_faces("Avenir Book");
+        assert!(
+            faces.iter().any(|(style, _)| *style == (false, false)),
+            "a regular Avenir Book face from the system collection"
         );
     }
 

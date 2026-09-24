@@ -662,6 +662,27 @@ fn an_exact_line_puts_its_baseline_four_fifths_down() {
 }
 
 #[test]
+fn an_at_least_line_puts_its_extra_space_above_the_text() {
+    // fixtures_500 00df97e7: Arial 8 under atLeast 330 (16.5pt) sits
+    // 7.4pt lower in Word than its ascent from the line top — the 7.3pt
+    // the box adds over the 9.2pt face. A bullet's taller Symbol mark
+    // then leaves the line pitch at 16.5 too.
+    let first_baseline = |twips: u32| {
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"{twips}\" w:lineRule=\"atLeast\"/></w:pPr><w:r><w:t>AtLeast</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("atLeast");
+        text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max)
+    };
+    let short = first_baseline(400);
+    let tall = first_baseline(700);
+    assert!(
+        (short - tall - 15.0).abs() < 0.05,
+        "15pt more atLeast height is 15pt lower baseline; short={short} tall={tall}"
+    );
+}
+
+#[test]
 fn a_short_exact_line_fits_on_its_box_not_its_ascent() {
     // fixtures_500 001a915a: an exact 4pt closing paragraph with 7pt
     // left on page 1. Word keeps it there (the line is 4pt; the glyph
@@ -1023,6 +1044,49 @@ fn line_height_is_the_tallest_face_including_the_marker() {
     assert!(
         (plain_pitch - 11.5).abs() < 0.1,
         "a trailing Calibri space leaves the Arial line at 11.5pt; pitch={plain_pitch}"
+    );
+}
+
+#[test]
+fn auto_spacing_drops_between_items_of_one_list() {
+    // fixtures_500 00df97e7: HTML-style bullets (before/afterAutospacing)
+    // step one 16.5pt line apart in Word; the 14pt auto space only opens
+    // where the list meets other paragraphs.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let auto = "<w:spacing w:before=\"100\" w:beforeAutospacing=\"1\" w:after=\"100\" \
+                w:afterAutospacing=\"1\" w:line=\"330\" w:lineRule=\"atLeast\"/>";
+    let item = |t: &str| {
+        format!(
+            "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>{auto}</w:pPr>\
+               <w:r><w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "<w:p><w:pPr>{auto}</w:pPr><w:r><w:t>Lead</w:t></w:r></w:p>{}{}{}\
+         <w:p><w:pPr>{auto}</w:pPr><w:r><w:t>Tail</w:t></w:r></w:p><w:sectPr/>",
+        item("ItemOne"),
+        item("ItemTwo"),
+        item("ItemThree")
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("auto list");
+    let y = |t: &str| pdf_literal_td_y(&pdf, t).unwrap_or_else(|| panic!("{t} paints"));
+    let step = y("ItemOne") - y("ItemTwo");
+    assert!(
+        (step - 16.5).abs() < 0.3,
+        "items step one line; step={step}"
+    );
+    let open = y("Lead") - y("ItemOne");
+    assert!(
+        (open - 30.5).abs() < 0.3,
+        "the list opens with 14pt; open={open}"
     );
 }
 
