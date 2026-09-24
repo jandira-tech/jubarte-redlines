@@ -13220,9 +13220,16 @@ impl<'a> Layout<'a> {
             if !hits && text_left.is_none() {
                 return;
             }
+            // A float placed by offset narrows only by what it overlaps of
+            // the column (00af3bb0's QR code sits in the left margin).
+            let left_inset = if placed {
+                (fx + dw + dist_r - self.page.margin_l).max(0.0)
+            } else {
+                dw + dist_r
+            };
             match text_left {
                 Some(inset) => right = right.max(inset),
-                None => left = left.max(dw + dist_r),
+                None => left = left.max(left_inset),
             }
             if hits {
                 first_hit = true;
@@ -14926,7 +14933,8 @@ impl<'a> Layout<'a> {
         } else {
             (Align::Right, right_edge - (x - dist_l))
         };
-        if self.side_float.is_some_and(|sf| sf.bottom <= bottom) {
+        // Wholly in the margin: nothing to wrap around.
+        if inset <= 0.0 || self.side_float.is_some_and(|sf| sf.bottom <= bottom) {
             return;
         }
         self.side_float = Some(SideFloat {

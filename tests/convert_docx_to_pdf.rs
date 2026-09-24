@@ -635,6 +635,36 @@ fn table_cell_spacing_opens_each_row_by_twice_the_spacing() {
 }
 
 #[test]
+fn a_float_in_the_margin_does_not_indent_the_text() {
+    // fixtures_500 00af3bb0: a 30pt QR code at column offset -42.7pt
+    // (wrapTight) sits wholly in the left margin. Word starts the title at
+    // the margin; we indented it by the picture's width plus distR.
+    let img = blip(
+        "381000",
+        "381000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"1\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>-542607</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:wrapTight wrapText=\"bothSides\"><wp:wrapPolygon edited=\"0\"><wp:start x=\"0\" y=\"0\"/>\
+             <wp:lineTo x=\"0\" y=\"21600\"/><wp:lineTo x=\"21600\" y=\"21600\"/><wp:lineTo x=\"21600\" y=\"0\"/>\
+             <wp:lineTo x=\"0\" y=\"0\"/></wp:wrapPolygon></wp:wrapTight>",
+        "</wp:anchor>",
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r>{img}</w:r><w:r><w:t>MarginTitle</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("margin float");
+    let (x, _) = pdf_glyph_text_xy(&pdf, "MarginTitle").expect("paints");
+    assert!(
+        (x - 72.0).abs() < 0.5,
+        "the title starts at the margin; x={x}"
+    );
+}
+
+#[test]
 fn a_square_float_narrows_the_paragraphs_after_its_anchor() {
     // fixtures_500 00df9dc4: a 249pt x 331pt picture at the left margin,
     // anchored in the first paragraph. Word wraps every following paragraph
