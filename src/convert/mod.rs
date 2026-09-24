@@ -2865,10 +2865,7 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
             } else {
                 bare.map(twip)
             };
-            // An atLeast of 0 sets no minimum: the inherited rule stands
-            // (0085209e's style exact 15.45pt lines under "atLeast 0").
-            let empty_at_least = rule == "atLeast" && spec.is_some_and(|pt| pt <= 0.0);
-            if let Some(pt) = spec.filter(|_| !empty_at_least) {
+            if let Some(pt) = spec {
                 style.line_exact = None;
                 style.line_at_least = None;
                 match rule {

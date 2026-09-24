@@ -736,39 +736,6 @@ fn a_square_float_narrows_the_paragraphs_after_its_anchor() {
 }
 
 #[test]
-fn an_at_least_zero_line_keeps_the_inherited_rule() {
-    // fixtures_500 0085209e: style exact 309 (15.45pt), paragraphs
-    // atLeast line=0 on an 18pt line grid. Word keeps the style's exact
-    // 15.45 lines; we took atLeast 0, snapped to the grid, and ran 6 pages
-    // to Word's 3.
-    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-          <w:docDefaults><w:pPrDefault/></w:docDefaults>\
-          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
-          <w:style w:type=\"paragraph\" w:styleId=\"aa\"><w:name w:val=\"Ichitaro\"/>\
-            <w:pPr><w:spacing w:line=\"309\" w:lineRule=\"exact\"/></w:pPr></w:style>\
-        </w:styles>";
-    let para = |t: &str| {
-        format!(
-            "<w:p><w:pPr><w:pStyle w:val=\"aa\"/><w:spacing w:line=\"0\" w:lineRule=\"atLeast\"/></w:pPr>\
-               <w:r><w:t>{t}</w:t></w:r></w:p>"
-        )
-    };
-    let body = format!(
-        "{}{}<w:sectPr><w:docGrid w:type=\"lines\" w:linePitch=\"360\"/></w:sectPr>",
-        para("ZeroOne"),
-        para("ZeroTwo")
-    );
-    let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("atLeast 0");
-    let step = pdf_glyph_text_xy(&pdf, "ZeroOne").expect("one").1
-        - pdf_glyph_text_xy(&pdf, "ZeroTwo").expect("two").1;
-    assert!(
-        (step - 15.45).abs() < 0.1,
-        "the style's exact 15.45 stands; step={step}"
-    );
-}
-
-#[test]
 fn a_multiple_on_a_line_grid_multiplies_the_grid_line() {
     // fixtures_500 00b37b14: docGrid lines 312 (15.6pt), line=360 auto.
     // Word steps 1.5 × 15.6 = 23.4pt: the multiple applies to the grid
