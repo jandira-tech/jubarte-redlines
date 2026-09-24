@@ -10478,7 +10478,10 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     continue;
                 };
                 let (w, h) = vml_owner_extent_pt(dom, im, root);
-                let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);
+                let mut kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);
+                if vml_washout(dom, im) {
+                    kind = washed_out(kind);
+                }
                 out.push(LaidImage {
                     w,
                     h,
@@ -11397,6 +11400,64 @@ fn attr_any<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
 fn resolve_media(pkg: &PartFs, source_part: &str, rel_id: &str) -> Option<Vec<u8>> {
     let path = rel_target_path(pkg, source_part, rel_id)?;
     pkg.part_bytes(&path).map(<[u8]>::to_vec)
+}
+
+/// A VML fixed-point fraction (`19661f` = 19661/65536) or plain number.
+fn vml_fraction(value: &str) -> Option<f32> {
+    match value.strip_suffix('f') {
+        Some(fixed) => fixed.trim().parse::<f32>().ok().map(|v| v / 65536.0),
+        None => value.trim().parse().ok(),
+    }
+}
+
+/// Word's "Washout" picture setting: `v:imagedata` gain 0.3 with
+/// blacklevel 0.35, the only pair its watermark dialog writes
+/// (LibreOffice maps the same pair to its watermark mode).
+fn vml_washout(dom: &Dom, im: NodeId) -> bool {
+    let near = |name: &str, want: f32| {
+        attr_any(dom, im, name)
+            .and_then(vml_fraction)
+            .is_some_and(|v| (v - want).abs() < 0.01)
+    };
+    near("gain", 0.3) && near("blacklevel", 0.35)
+}
+
+/// The samples Word paints for a washed-out picture: 0041dade's Word PDF
+/// maps each 8-bit sample to 0.29 * v + 206.7, clipped to white.
+fn washed_out(kind: ImageKind) -> ImageKind {
+    let pale = |v: &mut u8| *v = (f32::from(*v) * 0.29 + 206.7).round().min(255.0) as u8;
+    match kind {
+        ImageKind::Jpeg { bytes, .. } => {
+            let Ok(img) = image::load_from_memory(&bytes) else {
+                return ImageKind::Reserve;
+            };
+            let rgb = img.to_rgb8();
+            let (width, height) = (rgb.width(), rgb.height());
+            let mut bytes = rgb.into_raw();
+            bytes.iter_mut().for_each(pale);
+            ImageKind::Rgb {
+                width,
+                height,
+                bytes,
+                alpha: None,
+            }
+        }
+        ImageKind::Rgb {
+            width,
+            height,
+            mut bytes,
+            alpha,
+        } => {
+            bytes.iter_mut().for_each(pale);
+            ImageKind::Rgb {
+                width,
+                height,
+                bytes,
+                alpha,
+            }
+        }
+        other => other,
+    }
 }
 
 fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {
