@@ -865,6 +865,15 @@ struct TblStyle {
     /// takes: the table style's own `w:sz`, else docDefaults', never
     /// Normal's (00004116). `None` in mode 15, where Normal's wins.
     run_size: Option<f32>,
+    /// The table style's own `w:sz` (pt): an unstyled cell takes it in
+    /// mode 15 when Normal sets no size of its own (live Word: Normal
+    /// silent, table style 11pt -> 11pt cells in modes 12 and 15).
+    own_size: Option<f32>,
+    /// The table style's own `w:rFonts`, resolved: an unstyled cell takes it
+    /// when Normal sets no font of its own (live Word, modes 12 and 15;
+    /// redlines vs 00134233: Table Grid's minor-theme Calibri over the
+    /// document's Arial).
+    run_family: Option<String>,
     first_row_fill: Option<[f32; 3]>,
     band1_fill: Option<[f32; 3]>,
     band2_fill: Option<[f32; 3]>,
@@ -933,6 +942,9 @@ struct Defaults {
     /// The default paragraph style's own w:spacing sets [after, before,
     /// line]: a table style's pPr does not override those in its cells.
     normal_spacing: [bool; 3],
+    /// The default paragraph style's own chain sets (size, font): a table
+    /// style's run size / font then yields to it in unstyled cells.
+    normal_run: (bool, bool),
 }
 
 impl Defaults {
@@ -1035,6 +1047,7 @@ impl Defaults {
             },
             legacy_tables: false,
             normal_spacing: [false; 3],
+            normal_run: (false, false),
         }
     }
 }
@@ -2486,7 +2499,10 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             style_names.insert(sid.to_string(), nm.to_string());
         }
         if attr_any(&dom, style, "type") == Some("table") {
-            tables.insert(sid.to_string(), parse_tbl_style(&dom, style, &defaults));
+            tables.insert(
+                sid.to_string(),
+                parse_tbl_style(&dom, style, &defaults, &theme),
+            );
             continue;
         }
         if matches!(
@@ -2592,6 +2608,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         // paras with no pStyle. sd_2517 Normal is after=0; docDefaults is 200.
         defaults.para = named.para.clone();
         defaults.run = named.run.clone();
+        defaults.normal_run = (named.sets_size, named.sets_family);
     }
     // Below compatibilityMode 15 an unstyled cell takes the table style's
     // size (its own w:sz, else docDefaults', else the OOXML 10pt) unless
@@ -2633,7 +2650,7 @@ fn is_auto_spacing(dom: &Dom, spacing: NodeId, name: &str) -> bool {
     attr_any(dom, spacing, name).is_some_and(|v| matches!(v, "1" | "true" | "on"))
 }
 
-fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
+fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeFonts) -> TblStyle {
     let mut para = defaults.para.clone();
     para.after = 0.0;
     para.before = 0.0;
@@ -2666,11 +2683,23 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
         .and_then(|sz| attr_any(dom, sz, "val"))
         .and_then(|v| v.parse::<f32>().ok())
         .map(|half| half / 2.0);
+    let run_family = dom
+        .element(style, &W::r_pr())
+        .filter(|rpr| first_named(dom, *rpr, "rFonts").is_some())
+        .map(|rpr| {
+            let mut run = defaults.run.clone();
+            run.family.clear();
+            apply_rpr(dom, rpr, &mut run, theme);
+            run.family
+        })
+        .filter(|f| !f.is_empty());
     let mut out = TblStyle {
         para,
         sets_line,
         sets_space,
         run_size,
+        own_size: run_size,
+        run_family,
         first_row_fill: None,
         band1_fill: None,
         band2_fill: None,
@@ -8084,6 +8113,17 @@ fn table_block(
                     .is_none();
                 if unstyled_para && let Some(size) = tdef.as_ref().and_then(|t| t.run_size) {
                     r.size = size;
+                } else if unstyled_para
+                    && !sheet.defaults.normal_run.0
+                    && let Some(size) = tdef.as_ref().and_then(|t| t.own_size)
+                {
+                    r.size = size;
+                }
+                if unstyled_para
+                    && !sheet.defaults.normal_run.1
+                    && let Some(family) = tdef.as_ref().and_then(|t| t.run_family.clone())
+                {
+                    r.family = family;
                 }
                 // The paragraph mark's run: a picture-only cell line takes
                 // its auto multiple's extra leading from it.
@@ -31379,6 +31419,8 @@ mod table_tests {
                 sets_line: true,
                 sets_space: true,
                 run_size: None,
+                own_size: None,
+                run_family: None,
                 first_row_fill: None,
                 band1_fill: parse_hex_color("D3DFEE"),
                 band2_fill: None,
@@ -31511,7 +31553,7 @@ mod table_tests {
             .into_iter()
             .next()
             .expect("style");
-        let parsed = parse_tbl_style(&dom, style, &Defaults::word());
+        let parsed = parse_tbl_style(&dom, style, &Defaults::word(), &ThemeFonts::default());
         let fill = parsed.band1_fill.expect("band1");
         assert!((fill[0] - 0xD3 as f32 / 255.0).abs() < 0.01);
         assert!(parsed.first_row_fill.is_none());
@@ -31541,7 +31583,7 @@ mod table_tests {
             .into_iter()
             .next()
             .expect("style");
-        let parsed = parse_tbl_style(&dom, style, &Defaults::word());
+        let parsed = parse_tbl_style(&dom, style, &Defaults::word(), &ThemeFonts::default());
         let fill = parsed.first_row_fill.expect("firstRow fill");
         assert!((fill[0] - 0x15 as f32 / 255.0).abs() < 0.01);
         let color = parsed.first_row_color.expect("firstRow color");

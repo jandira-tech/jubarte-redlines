@@ -2058,6 +2058,46 @@ fn an_inline_vml_header_picture_takes_its_line_and_after() {
 }
 
 #[test]
+fn a_table_styles_font_beats_the_document_defaults_in_cells() {
+    // Redlines vs 00134233: Table Grid sets the minor-theme font and Normal
+    // sets none, so the cells paint in the table style's font over the
+    // document's Arial default (live Word, compat modes 12 and 15). A font
+    // Normal sets itself still wins.
+    let styles = |normal_rpr: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+            <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+              <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+              <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>{normal_rpr}</w:style>\
+              <w:style w:type=\"table\" w:styleId=\"TG\"><w:name w:val=\"TG\"/>\
+                <w:rPr><w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\"/></w:rPr></w:style>\
+            </w:styles>"
+        )
+    };
+    let body = r#"<w:tbl><w:tblPr><w:tblStyle w:val="TG"/><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cellx</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr/>"#;
+    let render = |normal_rpr: &str| {
+        let pdf = docx_to_pdf(&numbering_docx_with_styles(
+            body,
+            None,
+            Some(&styles(normal_rpr)),
+        ))
+        .expect("table font");
+        String::from_utf8_lossy(&pdf).into_owned()
+    };
+    assert!(
+        render("").contains("Courier"),
+        "the cell takes the table style's font"
+    );
+    assert!(
+        !render(
+            r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/></w:rPr>"#
+        )
+        .contains("Courier"),
+        "Normal's own font beats the table style's"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path
