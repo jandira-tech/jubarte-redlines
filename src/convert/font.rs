@@ -653,7 +653,12 @@ pub(crate) struct Face<'a> {
     /// building one was a fifth of a conversion when every run built its
     /// own (redline 0006f790: 21% of samples in `ShapePlan::new`).
     plans: Mutex<HashMap<PlanKey, Arc<rustybuzz::ShapePlan>>>,
+    /// Shaped text in font units by (text, kern); see `shaped_units`.
+    shaped: Mutex<HashMap<(String, bool), ShapedUnits>>,
 }
+
+/// Glyph ids and x advances in font units.
+type ShapedUnits = Arc<[(u16, i32)]>;
 
 type PlanKey = (
     rustybuzz::Direction,
@@ -744,6 +749,7 @@ impl<'a> Face<'a> {
             bytes,
             buzz,
             plans: Mutex::new(HashMap::new()),
+            shaped: Mutex::new(HashMap::new()),
             pdf_name,
             upem,
             descent,
@@ -819,6 +825,24 @@ impl<'a> Face<'a> {
                 .map(|ch| (self.glyph(ch), self.advance_pt(ch, size)))
                 .collect();
         };
+        let units = self.shaped_units(face, text, kern);
+        units
+            .iter()
+            .map(|&(gid, x_advance)| {
+                let adv = x_advance as f32 / self.upem * size + word_device_track(size);
+                (gid, adv)
+            })
+            .collect()
+    }
+
+    /// `text` shaped in font units (glyph id, x advance), remembered per
+    /// face: documents repeat their words, and shaping each again was a
+    /// fifth of a conversion.
+    fn shaped_units(&self, face: &rustybuzz::Face, text: &str, kern: bool) -> ShapedUnits {
+        let memo = (text.to_string(), kern);
+        if let Some(hit) = self.shaped.lock().ok().and_then(|c| c.get(&memo).cloned()) {
+            return hit;
+        }
         let mut buf = rustybuzz::UnicodeBuffer::new();
         buf.push_str(text);
         // Word Quartz WinAnsi PDFs do not ligate Calibri and place glyphs
@@ -854,16 +878,21 @@ impl<'a> Face<'a> {
             plan
         });
         let out = rustybuzz::shape_with_plan(face, &plan, buf);
-        let infos = out.glyph_infos();
-        let pos = out.glyph_positions();
-        infos
+        let units: ShapedUnits = out
+            .glyph_infos()
             .iter()
-            .zip(pos.iter())
-            .map(|(info, p)| {
-                let adv = p.x_advance as f32 / self.upem * size + word_device_track(size);
-                (info.glyph_id as u16, adv)
-            })
-            .collect()
+            .zip(out.glyph_positions())
+            .map(|(info, p)| (info.glyph_id as u16, p.x_advance))
+            .collect();
+        if let Ok(mut cache) = self.shaped.lock() {
+            // A long-lived caller (Python / WASM) converts many documents
+            // through one face; keep the memory bounded.
+            if cache.len() > 50_000 {
+                cache.clear();
+            }
+            cache.insert(memo, Arc::clone(&units));
+        }
+        units
     }
 
     pub(crate) fn pdf_widths_1000(&self) -> Vec<i32> {
@@ -1483,7 +1512,23 @@ impl Fonts<'_> {
     }
 }
 
+/// `system_override_uncached`, remembered for the process: font
+/// resolution asks for every run, and each ask was up to eight `stat`s
+/// (a fifth of a conversion's samples).
 fn system_override(id: FaceId) -> Option<PathBuf> {
+    static CACHE: LazyLock<Mutex<HashMap<FaceId, Option<PathBuf>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = CACHE.lock().ok().and_then(|c| c.get(&id).cloned()) {
+        return hit;
+    }
+    let found = system_override_uncached(id);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(id, found.clone());
+    }
+    found
+}
+
+fn system_override_uncached(id: FaceId) -> Option<PathBuf> {
     let names: &[&str] = match id {
         FaceId::CarlitoRegular => &["Calibri.ttf", "calibri.ttf"],
         FaceId::CarlitoBold => &["Calibrib.ttf", "Calibri Bold.ttf", "calibrib.ttf"],
@@ -1598,6 +1643,25 @@ fn cloud_font_dir(home: &Path, family: &str) -> Option<PathBuf> {
     }
 }
 
+/// A font folder's entries, sorted, listed once per process: every
+/// family lookup walks the same system folders (hundreds of entries).
+fn sorted_dir_listing(dir: &Path) -> Arc<Vec<PathBuf>> {
+    static CACHE: LazyLock<Mutex<HashMap<PathBuf, Arc<Vec<PathBuf>>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = CACHE.lock().ok().and_then(|c| c.get(dir).cloned()) {
+        return hit;
+    }
+    let mut paths: Vec<PathBuf> = fs::read_dir(dir)
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    paths.sort();
+    let paths = Arc::new(paths);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(dir.to_path_buf(), Arc::clone(&paths));
+    }
+    paths
+}
+
 pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>)> {
     let stems = cjk_file_stems(family);
     if !stems.is_empty() {
@@ -1630,12 +1694,8 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
     }
     let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
     for (dir, family_folder) in dirs {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-        paths.sort();
-        for path in paths {
+        for path in sorted_dir_listing(&dir).iter() {
+            let path = path.clone();
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let is_font = ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf");
             let stem = path.file_stem().and_then(|s| s.to_str()).map(norm);

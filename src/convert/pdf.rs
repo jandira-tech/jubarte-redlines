@@ -6,6 +6,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::io::Write;
 
 use flate2::Compression;
@@ -368,7 +369,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     img_n += 1;
                     let id = objs.len() + 1;
                     objs.push(jpeg_xobject(*width, *height, bytes, *components));
-                    xobjects.push_str(&format!("/Im{img_n} {id} 0 R "));
+                    let _ = write!(xobjects, "/Im{img_n} {id} 0 R ");
                 }
                 Op::Rgb {
                     width,
@@ -385,7 +386,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     });
                     let id = objs.len() + 1;
                     objs.push(rgb_xobject(*width, *height, bytes, true, smask));
-                    xobjects.push_str(&format!("/Im{img_n} {id} 0 R "));
+                    let _ = write!(xobjects, "/Im{img_n} {id} 0 R ");
                 }
                 Op::Watermark { .. } => has_watermark = true,
                 _ => {}
@@ -397,9 +398,10 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
             .then(|| markup_chrome(page.width, page.height))
             .flatten();
         if let Some(m) = markup {
-            stream.push_str(&format!(
+            let _ = writeln!(
+                stream,
                 "0.949 0.949 0.949 rg {x:.2} {y:.2} {w:.2} {h:.2} re f\n\
-                 q {k:.4} 0 0 {k:.4} {tx:.2} {ty:.2} cm\n",
+                 q {k:.4} 0 0 {k:.4} {tx:.2} {ty:.2} cm",
                 x = m.gx,
                 y = m.gy,
                 w = m.gw,
@@ -407,7 +409,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                 k = m.k,
                 tx = m.tx,
                 ty = m.ty,
-            ));
+            );
         }
         // Only the faces this page actually paints, not every face in the
         // document.
@@ -434,7 +436,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         }
         let mut font_res = String::new();
         for (obj_id, name) in &page_faces {
-            font_res.push_str(&format!("/{name} {obj_id} 0 R "));
+            let _ = write!(font_res, "/{name} {obj_id} 0 R ");
         }
         let mut img_counter = 0usize;
         for (op_idx, op) in page.ops.iter().enumerate() {
@@ -463,9 +465,10 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     };
                     let (r, g, b) = (color[0], color[1], color[2]);
                     if let Some((ppem, tc)) = word_device_paint(*size) {
-                        stream.push_str(&format!(
-                            "q 0.24 0 0 0.24 {x:.2} {y:.2} cm BT /{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg {tc:.4} Tc 0 0 Td {lit} Tj ET Q\n",
-                        ));
+                        let _ = writeln!(
+                            stream,
+                            "q 0.24 0 0 0.24 {x:.2} {y:.2} cm BT /{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg {tc:.4} Tc 0 0 Td {lit} Tj ET Q",
+                        );
                     } else {
                         let tc = word_device_track(*size);
                         let tc_op = if tc.abs() > 0.00005 {
@@ -473,9 +476,10 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         } else {
                             String::new()
                         };
-                        stream.push_str(&format!(
-                            "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {tc_op}{x:.2} {y:.2} Td {lit} Tj ET\n",
-                        ));
+                        let _ = writeln!(
+                            stream,
+                            "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {tc_op}{x:.2} {y:.2} Td {lit} Tj ET",
+                        );
                     }
                 }
                 Op::Watermark {
@@ -506,14 +510,15 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let Some((_, name)) = res_for(*face, encoded.is_some()) else {
                         continue;
                     };
-                    stream.push_str(&format!(
+                    let _ = writeln!(
+                        stream,
                         "q /WmGs gs 1 0 0 1 {x:.2} {y:.2} cm {cos:.4} {sin:.4} {nsin:.4} {cos:.4} 0 0 cm \
-                         BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {dx:.2} {dy:.2} Td {lit} Tj ET Q\n",
+                         BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {dx:.2} {dy:.2} Td {lit} Tj ET Q",
                         nsin = -sin,
                         r = color[0],
                         g = color[1],
                         b = color[2],
-                    ));
+                    );
                 }
                 Op::Line {
                     x1,
@@ -523,21 +528,23 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     width,
                     color,
                 } => {
-                    stream.push_str(&format!(
-                        "{w:.2} w {r:.3} {g:.3} {b:.3} RG {x1:.2} {y1:.2} m {x2:.2} {y2:.2} l S\n",
+                    let _ = writeln!(
+                        stream,
+                        "{w:.2} w {r:.3} {g:.3} {b:.3} RG {x1:.2} {y1:.2} m {x2:.2} {y2:.2} l S",
                         w = width,
                         r = color[0],
                         g = color[1],
                         b = color[2],
-                    ));
+                    );
                 }
                 Op::FillRect { x, y, w, h, color } => {
-                    stream.push_str(&format!(
-                        "{r:.3} {g:.3} {b:.3} rg {x:.2} {y:.2} {w:.2} {h:.2} re f\n",
+                    let _ = writeln!(
+                        stream,
+                        "{r:.3} {g:.3} {b:.3} rg {x:.2} {y:.2} {w:.2} {h:.2} re f",
                         r = color[0],
                         g = color[1],
                         b = color[2],
-                    ));
+                    );
                 }
                 Op::StrokeRect {
                     x,
@@ -547,24 +554,26 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     width,
                     color,
                 } => {
-                    stream.push_str(&format!(
-                        "{lw:.2} w {r:.3} {g:.3} {b:.3} RG {x:.2} {y:.2} {w:.2} {h:.2} re S\n",
+                    let _ = writeln!(
+                        stream,
+                        "{lw:.2} w {r:.3} {g:.3} {b:.3} RG {x:.2} {y:.2} {w:.2} {h:.2} re S",
                         lw = width,
                         r = color[0],
                         g = color[1],
                         b = color[2],
-                    ));
+                    );
                 }
                 Op::FillPoly { points, color } => {
                     if let Some((x0, y0)) = points.first() {
-                        stream.push_str(&format!(
+                        let _ = write!(
+                            stream,
                             "{r:.3} {g:.3} {b:.3} rg {x0:.2} {y0:.2} m",
                             r = color[0],
                             g = color[1],
                             b = color[2],
-                        ));
+                        );
                         for (x, y) in points.iter().skip(1) {
-                            stream.push_str(&format!(" {x:.2} {y:.2} l"));
+                            let _ = write!(stream, " {x:.2} {y:.2} l");
                         }
                         stream.push_str(" h f\n");
                     }
@@ -577,21 +586,20 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let mut body = String::new();
                     for c in contours.iter().filter(|c| c.len() >= 2) {
                         for (i, (x, y)) in c.iter().enumerate() {
-                            body.push_str(&format!(
-                                " {x:.2} {y:.2} {}",
-                                if i == 0 { 'm' } else { 'l' }
-                            ));
+                            let _ =
+                                write!(body, " {x:.2} {y:.2} {}", if i == 0 { 'm' } else { 'l' });
                         }
                         body.push_str(" h");
                     }
                     if !body.is_empty() {
-                        stream.push_str(&format!(
-                            "{r:.3} {g:.3} {b:.3} rg{body} {op}\n",
+                        let _ = writeln!(
+                            stream,
+                            "{r:.3} {g:.3} {b:.3} rg{body} {op}",
                             r = color[0],
                             g = color[1],
                             b = color[2],
                             op = if *even_odd { "f*" } else { "f" },
-                        ));
+                        );
                     }
                 }
                 Op::StrokePath {
@@ -602,23 +610,22 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let mut body = String::new();
                     for (pts, closed) in subpaths.iter().filter(|(p, _)| p.len() >= 2) {
                         for (i, (x, y)) in pts.iter().enumerate() {
-                            body.push_str(&format!(
-                                " {x:.2} {y:.2} {}",
-                                if i == 0 { 'm' } else { 'l' }
-                            ));
+                            let _ =
+                                write!(body, " {x:.2} {y:.2} {}", if i == 0 { 'm' } else { 'l' });
                         }
                         if *closed {
                             body.push_str(" h");
                         }
                     }
                     if !body.is_empty() {
-                        stream.push_str(&format!(
-                            "{w:.2} w {r:.3} {g:.3} {b:.3} RG{body} S\n",
+                        let _ = writeln!(
+                            stream,
+                            "{w:.2} w {r:.3} {g:.3} {b:.3} RG{body} S",
                             w = width,
                             r = color[0],
                             g = color[1],
                             b = color[2],
-                        ));
+                        );
                     }
                 }
                 Op::StrokePoly {
@@ -627,15 +634,16 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     color,
                 } => {
                     if let Some((x0, y0)) = points.first() {
-                        stream.push_str(&format!(
+                        let _ = write!(
+                            stream,
                             "{w:.2} w {r:.3} {g:.3} {b:.3} RG {x0:.2} {y0:.2} m",
                             w = width,
                             r = color[0],
                             g = color[1],
                             b = color[2],
-                        ));
+                        );
                         for (x, y) in points.iter().skip(1) {
-                            stream.push_str(&format!(" {x:.2} {y:.2} l"));
+                            let _ = write!(stream, " {x:.2} {y:.2} l");
                         }
                         stream.push_str(" h S\n");
                     }
@@ -646,7 +654,8 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     width,
                     color,
                 } => {
-                    stream.push_str(&format!(
+                    let _ = write!(
+                        stream,
                         "{w:.2} w {r:.3} {g:.3} {b:.3} RG {x:.2} {y:.2} m",
                         w = width,
                         r = color[0],
@@ -654,11 +663,12 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         b = color[2],
                         x = start.0,
                         y = start.1,
-                    ));
+                    );
                     for [(c1x, c1y), (c2x, c2y), (ex, ey)] in segments {
-                        stream.push_str(&format!(
+                        let _ = write!(
+                            stream,
                             " {c1x:.2} {c1y:.2} {c2x:.2} {c2y:.2} {ex:.2} {ey:.2} c"
-                        ));
+                        );
                     }
                     stream.push_str(" S\n");
                 }
@@ -710,7 +720,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                 author: note.author.clone(),
             });
             objs.push(text_annot_obj(scaled.as_ref().unwrap_or(note)));
-            annot_refs.push_str(&format!("{id} 0 R "));
+            let _ = write!(annot_refs, "{id} 0 R ");
         }
         let annots = if annot_refs.is_empty() {
             String::new()
@@ -1095,7 +1105,7 @@ fn to_unicode_obj(map: &BTreeMap<u16, char>, compress: bool) -> Vec<u8> {
     );
     let entries: Vec<(&u16, &char)> = map.iter().collect();
     for chunk in entries.chunks(100) {
-        cmap.push_str(&format!("{} beginbfchar\n", chunk.len()));
+        let _ = writeln!(cmap, "{} beginbfchar", chunk.len());
         for (g, c) in chunk {
             let mut units = [0u16; 2];
             let hex: String = c
@@ -1103,7 +1113,7 @@ fn to_unicode_obj(map: &BTreeMap<u16, char>, compress: bool) -> Vec<u8> {
                 .iter()
                 .map(|u| format!("{u:04X}"))
                 .collect();
-            cmap.push_str(&format!("<{g:04X}> <{hex}>\n"));
+            let _ = writeln!(cmap, "<{g:04X}> <{hex}>");
         }
         cmap.push_str("endbfchar\n");
     }
@@ -1348,7 +1358,7 @@ fn pdf_text_string(text: &str) -> String {
     }
     let mut out = String::from("<FEFF");
     for unit in text.encode_utf16() {
-        out.push_str(&format!("{unit:04X}"));
+        let _ = write!(out, "{unit:04X}");
     }
     out.push('>');
     out
@@ -1363,7 +1373,9 @@ fn pdf_literal(bytes: &[u8]) -> String {
                 out.push(char::from(b));
             }
             32..=126 => out.push(char::from(b)),
-            _ => out.push_str(&format!("\\{b:03o}")),
+            _ => {
+                let _ = write!(out, "\\{b:03o}");
+            }
         }
     }
     out.push(')');
