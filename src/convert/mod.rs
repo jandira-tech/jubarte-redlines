@@ -1851,7 +1851,7 @@ fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop], default_tab: f32) -> Ta
             continue;
         }
         let abs = origin + stop.pos;
-        if abs > x + 0.5 {
+        if abs > x + 0.01 {
             return TabStop {
                 pos: abs,
                 align: stop.align,
@@ -1870,6 +1870,26 @@ fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop], default_tab: f32) -> Ta
 
 fn next_tab_x(x: f32, origin: f32, stops: &[TabStop], default_tab: f32) -> f32 {
     next_tab_stop(x, origin, stops, default_tab).pos
+}
+
+/// Where a tab at `x` sends the text after it: the next stop, less the
+/// following text's width (right), half of it (center) or its integer part
+/// (decimal).
+fn tab_dest(
+    x: f32,
+    origin: f32,
+    stops: &[TabStop],
+    default_tab: f32,
+    after_w: f32,
+    decimal_w: f32,
+) -> f32 {
+    let stop = next_tab_stop(x, origin, stops, default_tab);
+    match stop.align {
+        TabAlign::Left | TabAlign::Bar => stop.pos,
+        TabAlign::Right => (stop.pos - after_w).max(x),
+        TabAlign::Center => (stop.pos - after_w * 0.5).max(x),
+        TabAlign::Decimal => (stop.pos - decimal_w).max(x),
+    }
 }
 
 /// `w:tabs/w:tab`. `val=num` is a numbering left stop (ECMA-376 17.3.1.38).
@@ -3677,14 +3697,11 @@ impl Numbering {
             out = out.replace(&token, &format_num(fmt, val));
         }
         if !lvl.suff_nothing && !out.ends_with(' ') && !out.ends_with('\t') {
-            // Default `w:suff` is tab. Only emit `\t` when the level
-            // carries an explicit numbering tab; synthesizing a stop at
-            // hanging packed sd_2517 107→106 (mini sechang).
-            if lvl.tab_stops.is_empty() {
-                out.push(' ');
-            } else {
-                out.push('\t');
-            }
+            // Default `w:suff` is tab, with or without a numbering stop:
+            // 0020e409's "1." goes to the paragraph's 851-twip stop, and a
+            // space there broke 000eb113 / 0004c94c's lines early (fixtures_500
+            // 22 up, 0 down; the old sd_2517 space rule predates them).
+            out.push('\t');
         }
         out
     }
@@ -12176,6 +12193,10 @@ struct Layout<'a> {
     compat_mode: u8,
     last_break_was_section: bool,
     tab_stops: Vec<TabStop>,
+    /// How far the line being painted sits right of its left-aligned
+    /// place (centring / right alignment): Word resolves tab stops before
+    /// it moves the line (0020e409's centred "I<tab> SKYRIUS").
+    tab_shift: f32,
     section_page: u32,
     chapter: String,
     header_rest: Option<ChromePart>,
@@ -12522,6 +12543,7 @@ impl<'a> Layout<'a> {
             compat_mode,
             last_break_was_section: false,
             tab_stops: Vec::new(),
+            tab_shift: 0.0,
             section_page: page.page_num_start.unwrap_or(1),
             chapter: String::new(),
             header_rest: hf.header_rest,
@@ -13769,11 +13791,19 @@ impl<'a> Layout<'a> {
                 ascent + rise
             };
             self.y -= grid_pad + drop;
-            let line_w = self.line_width_pt(line);
             let first_extra = if line_i == 0 && marker.is_none() {
                 style.indent_first
             } else {
                 0.0
+            };
+            // A tab's width is its resolved stop, not a glyph: centring,
+            // right alignment and justification all start from it.
+            let has_tab = line.iter().any(|r| r.text.contains('\t'));
+            let shifted = has_tab && matches!(style.align, Align::Center | Align::Right);
+            let line_w = if has_tab {
+                self.tab_line_width(line, self.flow_left() + indent + first_extra)
+            } else {
+                self.line_width_pt(line)
             };
             // The first line's measure starts at its own indent (00189e50's
             // justified firstLine=720 line ran 36pt past the margin).
@@ -13811,7 +13841,12 @@ impl<'a> Layout<'a> {
                 && let Some(mark) = marker
             {
                 let mx = if style.list_jc_right {
-                    let mw = self.run_width_pt(mark, &mark.text);
+                    // The suffix tab has no ink: it spans the gutter like
+                    // the space the tuck was measured with (mini 705).
+                    let mw = match mark.text.strip_suffix('\t') {
+                        Some(num) => self.run_width_pt(mark, &format!("{num} ")),
+                        None => self.run_width_pt(mark, &mark.text),
+                    };
                     let body_x = self.flow_left() + indent + extra;
                     (body_x - mw).max(self.flow_left() + extra)
                 } else {
@@ -13822,7 +13857,9 @@ impl<'a> Layout<'a> {
             if justify {
                 self.paint_justified_line(line, x, baseline, justify_left);
             } else {
+                self.tab_shift = if shifted { extra } else { 0.0 };
                 self.paint_line_with_tabs(line, x, baseline);
+                self.tab_shift = 0.0;
             }
             self.paint_line_number(baseline);
             self.last_line_end = Some((x + line_w, baseline));
@@ -14262,6 +14299,31 @@ impl<'a> Layout<'a> {
         Some((den_end, nw.max(dw)))
     }
 
+    /// The line's width with its tabs resolved from `x0`, its left-aligned
+    /// start: what Word centres or right-aligns.
+    fn tab_line_width(&self, line: &[TextRun], x0: f32) -> f32 {
+        let mut x = x0;
+        for (i, run) in line.iter().enumerate() {
+            for (pi, part) in run.text.split('\t').enumerate() {
+                if pi > 0 {
+                    let after_w = self.tab_suffix_width(part, run, &line[i + 1..]);
+                    let decimal_w = self.decimal_prefix_width(part, run, &line[i + 1..]);
+                    x = tab_dest(
+                        x,
+                        self.flow_left(),
+                        &self.tab_stops,
+                        self.page.default_tab,
+                        after_w,
+                        decimal_w,
+                    )
+                    .max(x);
+                }
+                x += self.run_width_pt(run, part);
+            }
+        }
+        x - x0
+    }
+
     fn line_width_pt(&self, line: &[TextRun]) -> f32 {
         let mut i = 0;
         let mut w = 0.0;
@@ -14406,13 +14468,21 @@ impl<'a> Layout<'a> {
         decimal_w: f32,
         style: &RunStyle,
     ) -> f32 {
-        let stop = next_tab_stop(x, self.flow_left(), &self.tab_stops, self.page.default_tab);
-        let dest = match stop.align {
-            TabAlign::Left | TabAlign::Bar => stop.pos,
-            TabAlign::Right => (stop.pos - after_w).max(x),
-            TabAlign::Center => (stop.pos - after_w * 0.5).max(x),
-            TabAlign::Decimal => (stop.pos - decimal_w).max(x),
-        };
+        let dest = self.tab_shift
+            + tab_dest(
+                x - self.tab_shift,
+                self.flow_left(),
+                &self.tab_stops,
+                self.page.default_tab,
+                after_w,
+                decimal_w,
+            );
+        let stop = next_tab_stop(
+            x - self.tab_shift,
+            self.flow_left(),
+            &self.tab_stops,
+            self.page.default_tab,
+        );
         if dest > x + 1.0 {
             match stop.leader {
                 TabLeader::None => {}
@@ -14522,12 +14592,13 @@ impl<'a> Layout<'a> {
             let mut first = true;
             for part in run.text.split('\t') {
                 if !first {
-                    xcur = next_tab_x(
-                        xcur,
-                        self.flow_left(),
-                        &self.tab_stops,
-                        self.page.default_tab,
-                    );
+                    xcur = self.tab_shift
+                        + next_tab_x(
+                            xcur - self.tab_shift,
+                            self.flow_left(),
+                            &self.tab_stops,
+                            self.page.default_tab,
+                        );
                 }
                 first = false;
                 if part.is_empty() {
@@ -14688,6 +14759,7 @@ impl<'a> Layout<'a> {
         };
         let joined: String = line.iter().map(|r| r.text.as_str()).collect();
         let last_ink = joined.rfind(|c: char| !c.is_whitespace());
+        let last_tab = joined.rfind('\t');
         let mut idx = 0usize;
         for run in line {
             let mut word = String::new();
@@ -14701,7 +14773,7 @@ impl<'a> Layout<'a> {
                         );
                     }
                     x = self.paint_run(&TextRun::new(" ", run.style.clone()), x, y);
-                    if last_ink.is_some_and(|end| idx < end) {
+                    if last_ink.is_some_and(|end| idx < end) && last_tab.is_none_or(|t| idx > t) {
                         x += pad;
                     }
                 } else {
@@ -18340,9 +18412,13 @@ fn is_list_marker_text(text: &str) -> bool {
     matches!(t.chars().last(), Some('.' | ')'))
 }
 
+/// The spaces justification stretches: Word leaves those before the
+/// line's last tab alone (000eb113's "3.1.<tab>Настоящий …").
 fn inter_word_gaps(line: &[TextRun]) -> usize {
     let joined: String = line.iter().map(|r| r.text.as_str()).collect();
-    joined.trim_end().chars().filter(|&c| c == ' ').count()
+    let body = joined.trim_end();
+    let after_tab = body.rfind('\t').map_or(body, |at| &body[at..]);
+    after_tab.chars().filter(|&c| c == ' ').count()
 }
 
 fn trailing_ws_pt(fonts: &Fonts, line: &[TextRun]) -> f32 {
@@ -28726,9 +28802,9 @@ mod numbering_tests {
     #[test]
     fn decimal_markers_increment() {
         let mut n = decimal_numbering();
-        assert_eq!(n.next_marker("1", 0), "1. ");
-        assert_eq!(n.next_marker("1", 0), "2. ");
-        assert_eq!(n.next_marker("1", 0), "3. ");
+        assert_eq!(n.next_marker("1", 0), "1.\t");
+        assert_eq!(n.next_marker("1", 0), "2.\t");
+        assert_eq!(n.next_marker("1", 0), "3.\t");
     }
 
     #[test]
@@ -28773,11 +28849,11 @@ mod numbering_tests {
             },
         );
         n.levels.insert("3".into(), lvls);
-        assert_eq!(n.next_marker("1", 0), "1) ");
-        assert_eq!(n.next_marker("1", 1), "a) ");
-        assert_eq!(n.next_marker("1", 1), "b) ");
-        assert_eq!(n.next_marker("1", 0), "2) ");
-        assert_eq!(n.next_marker("1", 1), "a) ");
+        assert_eq!(n.next_marker("1", 0), "1)\t");
+        assert_eq!(n.next_marker("1", 1), "a)\t");
+        assert_eq!(n.next_marker("1", 1), "b)\t");
+        assert_eq!(n.next_marker("1", 0), "2)\t");
+        assert_eq!(n.next_marker("1", 1), "a)\t");
     }
 
     #[test]
@@ -28849,11 +28925,11 @@ mod numbering_tests {
         );
         n.levels.insert("2".into(), lvls);
         n.next_marker("2", 0);
-        assert_eq!(n.next_marker("2", 1), "Article One ");
-        assert_eq!(n.next_marker("2", 2), "Section 1.01 ");
-        assert_eq!(n.next_marker("2", 2), "Section 1.02 ");
-        assert_eq!(n.next_marker("2", 1), "Article Two ");
-        assert_eq!(n.next_marker("2", 2), "Section 2.01 ");
+        assert_eq!(n.next_marker("2", 1), "Article One\t");
+        assert_eq!(n.next_marker("2", 2), "Section 1.01\t");
+        assert_eq!(n.next_marker("2", 2), "Section 1.02\t");
+        assert_eq!(n.next_marker("2", 1), "Article Two\t");
+        assert_eq!(n.next_marker("2", 2), "Section 2.01\t");
     }
 
     #[test]

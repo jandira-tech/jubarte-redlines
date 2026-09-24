@@ -1958,6 +1958,74 @@ fn a_phpword_table_without_table_styles_is_not_pulled_into_the_margin() {
 }
 
 #[test]
+fn a_centred_line_resolves_its_tabs_before_centring() {
+    // fixtures_500 0020e409: a centred "I<tab> SKYRIUS" heading with
+    // firstLine 567 and a left stop at 709. Word resolves the tab as if the
+    // line were left-aligned at its indent (the "I" ends at 105pt, the stop
+    // is at 107.45pt: a 2.4pt tab), then centres the whole line. Resolving
+    // the tab after centring sent " SKYRIUS" to a stop 35pt away.
+    let body = "<w:p><w:pPr><w:tabs><w:tab w:val=\"left\" w:pos=\"0\"/>\
+           <w:tab w:val=\"left\" w:pos=\"709\"/><w:tab w:val=\"left\" w:pos=\"1134\"/></w:tabs>\
+           <w:ind w:firstLine=\"567\"/><w:jc w:val=\"center\"/></w:pPr>\
+           <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:b/><w:sz w:val=\"24\"/></w:rPr><w:t>I</w:t></w:r>\
+           <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:b/><w:sz w:val=\"24\"/></w:rPr><w:tab/><w:t xml:space=\"preserve\"> SKYRIUS</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("centred tab");
+    let (ix, _) = pdf_glyph_text_xy(&pdf, "I").expect("I");
+    let (sx, _) = pdf_glyph_text_xy(&pdf, "SKYRIUS").expect("SKYRIUS");
+    let gap = sx - ix;
+    // "I" 4.67 + tab 2.43 + the leading space 3.0.
+    assert!(
+        (9.5..10.7).contains(&gap),
+        "\"I\" + a 2.4pt tab + a space before \"SKYRIUS\"; gap={gap} (I at {ix}, SKYRIUS at {sx})"
+    );
+}
+
+#[test]
+fn a_justified_line_with_a_tab_ends_at_the_margin() {
+    // fixtures_500 000eb113: "3.1.<tab>Настоящий договор …" justified.
+    // The line's natural width holds the tab resolved to its stop, and
+    // Word stretches only the spaces after it; measuring the tab as a
+    // glyph over-stretched the words past the right margin.
+    let words = vec!["lorem"; 40].join(" ");
+    let para = |lead: &str| {
+        format!(
+            "<w:p><w:pPr><w:tabs><w:tab w:val=\"left\" w:pos=\"1440\"/></w:tabs>\
+             <w:jc w:val=\"both\"/></w:pPr><w:r>{lead}<w:t>{words}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "{}{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        para(""),
+        para("<w:t>1.</w:t><w:tab/>")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("justified tab");
+    let hay = pdf_content_streams(&pdf).join("\n");
+    // Calibri 11 paints glyph by glyph: each "l" starts a "lorem".
+    let xy = pdf_cm_tj_xy(&hay, "l");
+    let first_line_last_x = |y0: f32| {
+        xy.iter()
+            .filter(|(_, y)| (y - y0).abs() < 0.01)
+            .map(|(x, _)| *x)
+            .fold(f32::MIN, f32::max)
+    };
+    let top = xy.iter().map(|(_, y)| *y).fold(f32::MIN, f32::max);
+    let word_w = 540.0 - first_line_last_x(top);
+    let tab_line_y = xy
+        .iter()
+        .filter(|(x, _)| (*x - 144.0).abs() < 0.05)
+        .map(|(_, y)| *y)
+        .fold(f32::MIN, f32::max);
+    let edge = first_line_last_x(tab_line_y) + word_w;
+    assert!(
+        (edge - 540.0).abs() < 0.3,
+        "the tabbed justified line ends at the margin; edge={edge} (word {word_w})"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves
@@ -6452,10 +6520,12 @@ fn numbering_xml_decimal_list_converts() {
 }
 
 #[test]
-fn section_lvltext_does_not_hang_after_mini_sechang() {
-    // Word Título2 hangs `Section 1.01` (lvlText longer than 8 chars) at
-    // 90pt with body at 180. Hanging it (mini sechang) packed sd_2517 /
-    // file_22 107→106pp and dropped ITT −0.10 each. Keep the 8-char cap.
+fn section_lvltext_marker_tabs_to_the_hanging_indent() {
+    // Word hangs `Section 01` at 90pt: the default w:suff is a tab, and it
+    // runs to the hanging indent (72 + 90). The old space suffix kept the
+    // body beside the marker for sd_2517's page count (mini sechang);
+    // fixtures_500 rendered the tab 22 files up, 0 down (0020e409,
+    // 000eb113, 0004c94c).
     let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
           <w:abstractNum w:abstractNumId=\"0\">\
@@ -6474,10 +6544,9 @@ fn section_lvltext_does_not_hang_after_mini_sechang() {
     let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("convert Section marker");
     let mut xs = pdf_tf_xs(&pdf, "11.04 Tf");
     xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let max_gap = xs.windows(2).map(|w| w[1] - w[0]).fold(0.0_f32, f32::max);
     assert!(
-        max_gap < 20.0,
-        "mini sechang 90pt gutter packed 107→106; max_gap={max_gap} xs={xs:?}"
+        (xs[0] - 72.0).abs() < 0.3 && xs.iter().any(|&x| (x - 162.0).abs() < 0.3),
+        "marker at the margin, body at the 162pt hanging indent; xs={xs:?}"
     );
 }
 
