@@ -2363,6 +2363,42 @@ fn a_run_color_auto_overrides_the_styles_color() {
 }
 
 #[test]
+fn a_merged_cells_content_grows_the_last_row_it_spans() {
+    // fixtures_500 000bf661: a header table whose first row (trHeight 703)
+    // starts vertical merges holding four text lines; the second row
+    // continues them. Word keeps row one at its trHeight and grows the
+    // last row; we pushed all the merged text into row one.
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders>\
+           <w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+           <w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+           <w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+           <w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+           <w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+           <w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+         </w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+         <w:tr><w:trPr><w:trHeight w:val=\"400\"/></w:trPr>\
+           <w:tc><w:tcPr><w:vMerge w:val=\"restart\"/></w:tcPr>\
+             <w:p><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p>\
+             <w:p><w:r><w:t>Three</w:t></w:r></w:p><w:p><w:r><w:t>Four</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:t>Side</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:trPr><w:trHeight w:val=\"200\"/></w:trPr>\
+           <w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc>\
+           <w:tc><w:p/></w:tc></w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("vMerge rows");
+    let mut ys = pdf_horiz_rule_ys(&pdf);
+    ys.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    // top, the row one / row two boundary, bottom: row one keeps its 20pt.
+    assert!(
+        ys.len() == 3 && (ys[0] - ys[1] - 20.0).abs() < 1.5,
+        "rules {ys:?}"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves

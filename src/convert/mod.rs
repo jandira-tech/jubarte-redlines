@@ -5887,12 +5887,38 @@ fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: b
         return 0.0;
     };
     let col_w = table_col_widths(cols, geom, avail);
-    let rows_h: f32 = rows
+    let rows_h: f32 = table_row_heights(fonts, rows, &col_w, geom, space_for_ul)
         .iter()
-        .enumerate()
-        .map(|(ri, row)| table_row_height_pt(fonts, row, &col_w, geom, ri, space_for_ul))
         .sum();
     rows_h + style.after.max(4.0)
+}
+
+/// Every row's height: each row on its own cells, then a vertically
+/// merged cell whose content outgrows its rows lengthens the last one
+/// (000bf661's header keeps row one at its trHeight).
+fn table_row_heights(
+    fonts: &Fonts,
+    rows: &[Vec<TableCell>],
+    col_w: &[f32],
+    geom: &TableGeom,
+    space_for_ul: bool,
+) -> Vec<f32> {
+    let mut h: Vec<f32> = rows
+        .iter()
+        .enumerate()
+        .map(|(ri, row)| table_row_height_pt(fonts, row, col_w, geom, ri, space_for_ul))
+        .collect();
+    for (ri, row) in rows.iter().enumerate() {
+        for cell in row.iter().filter(|c| c.rowspan > 1) {
+            let last = (ri + cell.rowspan).min(rows.len()) - 1;
+            let need = cell_content_height(fonts, cell, col_w, space_for_ul);
+            let have: f32 = h[ri..=last].iter().sum();
+            if need > have {
+                h[last] += need - have;
+            }
+        }
+    }
+    h
 }
 
 /// Word row height: max cell content (pad_t + sum of paragraph line
@@ -5912,8 +5938,11 @@ fn table_row_height_pt(
     if exact && spec > 0.0 {
         return spec;
     }
+    // A cell merged down over later rows sizes the last of them
+    // (table_row_heights), not this one.
     let content = row
         .iter()
+        .filter(|cell| cell.rowspan <= 1)
         .map(|cell| cell_content_height(fonts, cell, col_w, space_for_ul))
         .fold(0.0_f32, f32::max);
     // An atLeast minimum is the text area: the cells' top and bottom
@@ -12596,9 +12625,8 @@ fn table_rows_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: boo
         return 0.0;
     };
     let col_w = table_col_widths(cols, geom, avail);
-    rows.iter()
-        .enumerate()
-        .map(|(ri, row)| table_row_height_pt(fonts, row, &col_w, geom, ri, space_for_ul))
+    table_row_heights(fonts, rows, &col_w, geom, space_for_ul)
+        .iter()
         .sum()
 }
 
@@ -17103,13 +17131,7 @@ impl<'a> Layout<'a> {
         // tblW dxa/pct is the preferred width (table_bookmark_end Tests 3–5
         // use pct 50ths). Grid-only tables still never stretch.
         let col_w = table_col_widths(cols, geom, avail);
-        let row_h: Vec<f32> = rows
-            .iter()
-            .enumerate()
-            .map(|(ri, row)| {
-                table_row_height_pt(self.fonts, row, &col_w, geom, ri, self.space_for_ul)
-            })
-            .collect();
+        let row_h = table_row_heights(self.fonts, rows, &col_w, geom, self.space_for_ul);
         let used: f32 = col_w.iter().sum();
         // A centred table wider than the measure overhangs both sides
         // (00afb3e6's 534.75pt table starts at 38.6 in a 72..540 measure).
