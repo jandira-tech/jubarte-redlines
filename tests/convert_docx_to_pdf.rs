@@ -2321,6 +2321,24 @@ fn cells_inside_content_controls_are_laid_out() {
 }
 
 #[test]
+fn an_underline_without_a_val_draws_nothing() {
+    // fixtures_500 0023298b: every run of the "Nota" paragraph carries
+    // <w:u w:color="000000"/> with no w:val. Word draws no underline;
+    // we underlined the whole paragraph and its empty neighbours.
+    let body = "<w:p><w:r><w:rPr><w:u w:color=\"000000\"/></w:rPr><w:t>Plain</w:t></w:r></w:p>\
+         <w:p><w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>Lined</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("u without val");
+    let hay = String::from_utf8_lossy(&pdf);
+    let rules = hay.matches(" re f").count();
+    assert_eq!(
+        rules, 1,
+        "only the val=single run is underlined; {rules} rules"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves
@@ -3123,6 +3141,42 @@ fn a_picture_paragraph_at_a_multiple_adds_the_marks_extra_leading() {
     assert!(
         (drop - 6.9).abs() < 0.2,
         "half an Arial 12 line more at 1.5; drop={drop}"
+    );
+}
+
+#[test]
+fn a_picture_paragraphs_mark_rpr_sets_its_extra_leading() {
+    // fixtures_500 0023298b: the logo paragraph holds only the drawing;
+    // its Arial 12 lives in pPr/rPr, and Normal is line 276. Word adds
+    // 0.15 x 13.8 = 2.07pt under the picture; with no text run we added
+    // none and every line after sat 2.1pt high.
+    let after_y = |line: u32| {
+        let drawing = blip(
+            "914400",
+            "914400",
+            "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+            "</wp:inline>",
+        );
+        let docx = drawing_docx(&format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"{line}\" w:lineRule=\"auto\"/>\
+               <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"24\"/></w:rPr></w:pPr>\
+               <w:r>{drawing}</w:r></w:p>\
+             <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        ));
+        let pdf = docx_to_pdf(&docx).expect("picture paragraph");
+        let hay = String::from_utf8_lossy(&pdf);
+        pdf_device_xy(hay.as_ref(), "46 Tf")
+            .into_iter()
+            .next()
+            .expect("After")
+            .1
+    };
+    let drop = after_y(240) - after_y(360);
+    assert!(
+        (drop - 6.9).abs() < 0.2,
+        "the mark's half line at 1.5; drop={drop}"
     );
 }
 

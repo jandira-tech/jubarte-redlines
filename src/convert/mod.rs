@@ -354,6 +354,9 @@ impl RunStyle {
 
 #[derive(Clone)]
 struct ParaStyle {
+    /// The paragraph mark's own run style (pPr/rPr with a size or face):
+    /// a picture-only line takes its multiple's leading from it (0023298b).
+    mark_run: Option<std::rc::Rc<RunStyle>>,
     align: Align,
     after: f32,
     before: f32,
@@ -766,6 +769,7 @@ impl Defaults {
                 effect_skip: false,
             },
             para: ParaStyle {
+                mark_run: None,
                 align: Align::Left,
                 after: 10.0,
                 before: 0.0,
@@ -2802,7 +2806,8 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     }
     if first_named(dom, rpr, "u").is_some() {
         let val = first_named(dom, rpr, "u").and_then(|n| dom.attribute(n, &W::val()));
-        let off = val.is_some_and(|v| v == "none");
+        // A w:u with no w:val (0023298b's color-only <w:u/>) draws nothing.
+        let off = val.is_none_or(|v| v == "none");
         style.underline = !off;
         style.underline_double = val.is_some_and(|v| v == "double" || v == "thick");
         style.underline_wave = val.is_some_and(|v| v == "wave" || v == "wavy");
@@ -6285,6 +6290,11 @@ fn paragraph_block(
     // Floating text boxes take no line space either (00bf6b4c's org chart
     // hangs its boxes off empty 20pt paragraphs).
     let boxes_float = boxes.iter().all(|b| !matches!(b.slot, ImageSlot::Flow));
+    if let Some(rpr) = mark_rpr {
+        let mut mark = rstyle.clone();
+        apply_rpr(dom, rpr, &mut mark, &sheet.theme);
+        pstyle.mark_run = Some(std::rc::Rc::new(mark));
+    }
     if runs.is_empty() && floats_only && boxes_float {
         if let Some(rpr) = mark_rpr {
             let mut mark = rstyle.clone();
@@ -11848,6 +11858,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         return Align::Left;
     };
     let mut style = ParaStyle {
+        mark_run: None,
         align: Align::Left,
         after: 0.0,
         before: 0.0,
@@ -19270,7 +19281,9 @@ fn layout(
                         false
                     });
                 }
-                let mark = (!has_ink).then(|| runs.first().map(|r| &r.style)).flatten();
+                let mark = (!has_ink)
+                    .then(|| runs.first().map(|r| &r.style).or(style.mark_run.as_deref()))
+                    .flatten();
                 lay.emit_inline_pictures(&inline, &style, mark);
                 for img in images
                     .iter()
