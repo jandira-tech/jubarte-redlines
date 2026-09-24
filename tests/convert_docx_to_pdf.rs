@@ -1485,6 +1485,43 @@ fn a_list_marker_only_grows_the_line_above_the_baseline() {
 }
 
 #[test]
+fn an_inline_list_marker_still_lifts_its_line() {
+    // fixtures_500 0014add1: ind left=-142 firstLine=1353 puts a 12pt
+    // Symbol bullet inside the first line over Times 12. Word lifts that
+    // line to 14.66pt (Symbol's 12.06 above the baseline + Times' 2.6
+    // below) and keeps line two at Times' 13.8pt; the one-family shortcut
+    // squeezed line two to 12.94pt.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
+              <w:lvlText w:val=\"\u{f0b7}\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\
+              <w:rPr><w:rFonts w:ascii=\"Symbol\" w:hAnsi=\"Symbol\"/><w:sz w:val=\"24\"/></w:rPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let tnr = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let spacing = r#"<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#;
+    let body = format!(
+        r#"<w:p><w:pPr>{spacing}</w:pPr><w:r>{tnr}<w:t>Plain</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>{spacing}<w:ind w:left="-142" w:firstLine="1353"/></w:pPr><w:r>{tnr}<w:t>seul l’avis du maire de la commune de Tours et celui du président de la métropole ont été sollicités alors que la loi impose</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("inline bullet");
+    let ys = text_baselines(&pdf);
+    assert!(ys.len() >= 3, "a wrapped item; ys={ys:?}");
+    let lift = ys[0] - ys[1];
+    let next = ys[1] - ys[2];
+    assert!(
+        (lift - 14.66).abs() < 0.15,
+        "the in-line bullet lifts the item line; pitch={lift} ys={ys:?}"
+    );
+    assert!(
+        (next - 13.8).abs() < 0.15,
+        "line two keeps the Times line; pitch={next} ys={ys:?}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

@@ -14092,14 +14092,15 @@ impl<'a> Layout<'a> {
         // Weights and styles of one family keep their taller single line
         // (00053b6b's Comic Sans MS regular + bold); the split only applies
         // across different families.
+        let is_marker = |r: &TextRun| r.list_marker || marker.is_some_and(|m| std::ptr::eq(m, r));
         let one_family = runs
             .iter()
-            .filter(|r| !(r.list_marker || marker.is_some_and(|m| std::ptr::eq(m, **r))))
+            .filter(|r| !is_marker(r))
             .map(|r| paint_family(&r.style, &r.text).to_ascii_lowercase())
             .collect::<std::collections::HashSet<_>>()
             .len()
             <= 1;
-        let mut natural = if one_family && marker.is_none() {
+        let mut natural = if one_family && !runs.iter().any(|r| is_marker(r)) {
             single
         } else {
             single.max(up + down)
