@@ -169,15 +169,7 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
                 notes: load_footnotes(&pkg, &main, &sheet),
                 display,
             };
-            let pages = layout(
-                &fonts,
-                &page,
-                &hf,
-                &blocks,
-                settings_suppress_sp_bf_after_pg_brk(&pkg),
-                compat_mode,
-                footnotes,
-            );
+            let pages = layout(&fonts, &page, &hf, &blocks, compat_mode, footnotes);
             Ok(pdf::emit(&fonts, &pages, options))
         })
     })
@@ -969,9 +961,10 @@ enum Block {
     /// Hard page / next-page section break (`w:br type=page` or non-continuous `sectPr`).
     /// `next` is the following section's geometry + chrome (sd_2517 later
     /// sections are 1800-twip with their own footer; first is 2160/vAlign).
-    /// `manual` marks a run-level `w:br type=page`: the only break
-    /// `suppressSpBfAfterPgBrk` applies to (not `pageBreakBefore`, not the
-    /// break inserted before a Cover Pages SDT).
+    /// `manual` marks a run-level `w:br type=page`: the next paragraph's
+    /// space before is dropped after it (not after `pageBreakBefore` or the
+    /// break inserted before a Cover Pages SDT, which keep its excess over
+    /// the previous paragraph's space after).
     PageBreak {
         next: Option<Box<SectionChrome>>,
         manual: bool,
@@ -4745,12 +4738,6 @@ fn settings_flag(pkg: &PartFs, local: &str) -> bool {
 
 fn settings_track_revisions(pkg: &PartFs) -> bool {
     settings_flag(pkg, "trackRevisions")
-}
-
-/// Word `w:compat/w:suppressSpBfAfterPgBrk`: drop space-before after a
-/// hard `w:br type=page`. Absent (the default) keeps the before.
-fn settings_suppress_sp_bf_after_pg_brk(pkg: &PartFs) -> bool {
-    settings_flag(pkg, "suppressSpBfAfterPgBrk")
 }
 
 /// `w:compatSetting name="compatibilityMode"`. Absent → 12 (Word 2007),
@@ -13209,11 +13196,16 @@ struct Layout<'a> {
     page_has_body: bool,
     chrome_end: usize,
     at_page_top: bool,
-    /// True only when this page top was reached by overflow (or a hard
-    /// page break under `suppressSpBfAfterPgBrk`). Document start, sectPr,
-    /// and a plain `w:br type=page` keep space-before (plan Step 3).
+    /// True when this page top was reached by overflow or a manual
+    /// `w:br type=page`: the space before is dropped. Document start keeps
+    /// it; pageBreakBefore and section breaks keep its excess (`top_credit`).
     suppress_space_before: bool,
-    suppress_sp_bf_after_pg_brk: bool,
+    /// At a page top reached by `pageBreakBefore` or a section break, the
+    /// previous paragraph's space after: only the space before in excess
+    /// of it shows (Word: before 24 after 10 -> 14pt).
+    top_credit: f32,
+    /// The last paragraph's space after, for `top_credit`.
+    last_after: f32,
     /// Word `compatibilityMode` (absent → 12). Mode < 15 pulls the table
     /// left edge by the left cell margin (plan xml 3.3).
     compat_mode: u8,
@@ -13514,13 +13506,7 @@ fn chrome_empty_pads(fonts: &Fonts, runs: &[TextRun]) -> (f32, f32) {
 }
 
 impl<'a> Layout<'a> {
-    fn new(
-        fonts: &'a Fonts<'a>,
-        page: PageSetup,
-        hf: HfChrome,
-        suppress_sp_bf_after_pg_brk: bool,
-        compat_mode: u8,
-    ) -> Self {
+    fn new(fonts: &'a Fonts<'a>, page: PageSetup, hf: HfChrome, compat_mode: u8) -> Self {
         let header = hf.header;
         let footer = hf.footer;
         let avail = page.width - page.margin_l - page.margin_r;
@@ -13566,7 +13552,8 @@ impl<'a> Layout<'a> {
             chrome_end: 0,
             at_page_top: true,
             suppress_space_before: false,
-            suppress_sp_bf_after_pg_brk,
+            top_credit: 0.0,
+            last_after: 0.0,
             compat_mode,
             last_break_was_section: false,
             tab_stops: Vec::new(),
@@ -13859,6 +13846,20 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// The space before a paragraph starting here: whole mid-page, none
+    /// at a page top reached by overflow or a manual break, and only its
+    /// excess over `top_credit` at one reached by pageBreakBefore or a
+    /// section break.
+    fn page_top_before(&self, before: f32) -> f32 {
+        if !self.at_page_top {
+            before
+        } else if self.suppress_space_before {
+            0.0
+        } else {
+            (before - self.top_credit).max(0.0)
+        }
+    }
+
     fn hard_page_break(&mut self, next: Option<&SectionChrome>, manual: bool) {
         // Word: an empty `w:br type=page` that does not fit on a full page
         // starts on the next page and still breaks — one skipped page
@@ -13915,8 +13916,12 @@ impl<'a> Layout<'a> {
             self.y = self.page.height - self.body_top;
             self.page_has_body = false;
             self.at_page_top = true;
-            self.suppress_space_before =
-                next.is_none() && manual && self.suppress_sp_bf_after_pg_brk;
+            // Checked in Word (compatibilityMode 12 and 15, no
+            // suppressSpBfAfterPgBrk): a manual page break drops the next
+            // paragraph's space before; pageBreakBefore keeps its excess
+            // over the previous paragraph's space after.
+            self.suppress_space_before = next.is_none() && manual;
+            self.top_credit = self.last_after;
             self.refresh_body_floor();
             self.chrome();
             self.chrome_end = self.current().ops.len();
@@ -13925,6 +13930,7 @@ impl<'a> Layout<'a> {
             self.y = self.page.height - self.body_top;
             self.at_page_top = true;
             self.suppress_space_before = false;
+            self.top_credit = self.last_after;
         }
         self.last_break_was_section = next.is_some();
     }
@@ -14370,11 +14376,7 @@ impl<'a> Layout<'a> {
     }
 
     fn set_line_probe(&mut self, runs: &[TextRun], style: &ParaStyle) {
-        let before = if !self.at_page_top || !self.suppress_space_before {
-            style.before
-        } else {
-            0.0
-        };
+        let before = self.page_top_before(style.before);
         self.line_probe = LineProbe {
             top: self.y - before,
             h: para_first_line_pt(self.fonts, runs, style, self.page.grid_pitch),
@@ -14670,15 +14672,15 @@ impl<'a> Layout<'a> {
                 },
             );
         }
-        // Word suppresses Spacing Before only when the paragraph arrived
-        // at the page top by overflow (plan Step 3 / Finding C). Document
-        // start, nextPage sectPr, and a hard page break still apply it
-        // unless `suppressSpBfAfterPgBrk` is set.
+        // Word drops Spacing Before at a page top reached by overflow or
+        // a manual page break, keeps its excess over the previous
+        // paragraph's after at one reached by pageBreakBefore or a section
+        // break, and keeps it whole at the document start.
         // HTML auto spacing never opens a page (00accd5b's first title
         // sits 14pt higher in Word).
         let auto_at_top = self.at_page_top && style.before_auto;
-        if (!self.at_page_top || !self.suppress_space_before) && !auto_at_top {
-            self.y -= style.before;
+        if !auto_at_top {
+            self.y -= self.page_top_before(style.before);
         }
         self.at_page_top = false;
         self.suppress_space_before = false;
@@ -20041,17 +20043,10 @@ fn layout(
     page: &PageSetup,
     hf: &HfChrome,
     blocks: &[Block],
-    suppress_sp_bf_after_pg_brk: bool,
     compat_mode: u8,
     footnotes: FootnoteCatalog,
 ) -> Vec<Page> {
-    let mut lay = Layout::new(
-        fonts,
-        *page,
-        hf.clone(),
-        suppress_sp_bf_after_pg_brk,
-        compat_mode,
-    );
+    let mut lay = Layout::new(fonts, *page, hf.clone(), compat_mode);
     lay.footnotes = footnotes;
     lay.known_bookmarks = document_bookmark_names(blocks);
     lay.bookmark_texts = document_bookmark_texts(blocks);
@@ -20246,7 +20241,7 @@ fn layout(
                         lay.para_top = anchor_top;
                     }
                 } else if !lay.at_page_top || !lay.suppress_space_before {
-                    lay.y -= style.before;
+                    lay.y -= lay.page_top_before(style.before);
                     lay.at_page_top = false;
                     lay.suppress_space_before = false;
                 }
@@ -20310,7 +20305,13 @@ fn layout(
                 borders,
                 geom,
             } => lay.emit_table(cols, rows, style, *borders, geom),
-            Block::PageBreak { next, manual } => lay.hard_page_break(next.as_deref(), *manual),
+            Block::PageBreak { next, manual } => {
+                lay.last_after = i
+                    .checked_sub(1)
+                    .and_then(|j| block_para_style(&blocks[j]))
+                    .map_or(0.0, |p| p.after);
+                lay.hard_page_break(next.as_deref(), *manual);
+            }
             Block::ColumnBreak => lay.column_break(),
             Block::SectionCols { page } => lay.start_continuous_section(page),
         }
@@ -31090,7 +31091,6 @@ mod comments_spacing_tests {
                 boxes: Vec::new(),
                 bookmarks: Vec::new(),
             }],
-            false,
             12,
             FootnoteCatalog::default(),
         );
@@ -31147,7 +31147,6 @@ mod comments_spacing_tests {
                 boxes: Vec::new(),
                 bookmarks: Vec::new(),
             }],
-            false,
             12,
             FootnoteCatalog::default(),
         );

@@ -12882,27 +12882,25 @@ fn heading_before_applies_after_section_break() {
     let page_y = pdf_tf_ys(&page_pdf, "14.00 Tf")
         .into_iter()
         .fold(f32::NEG_INFINITY, f32::max);
+    // Checked in Word: a section break keeps the before's excess over the
+    // previous paragraph's after; a hard page break drops it.
     assert!(
-        section_y < 690.0,
-        "Heading1 before=24pt must apply after nextPage sectPr; section_y={section_y}"
+        section_y < page_y - 5.0,
+        "the section break keeps part of Heading1's 24pt before; section_y={section_y} page_y={page_y}"
     );
     assert!(
-        page_y < 690.0,
-        "Heading1 before=24pt must apply after a hard page break; page_y={page_y}"
-    );
-    assert!(
-        (section_y - page_y).abs() < 2.0,
-        "sectPr and w:br page must apply the same before; section_y={section_y} page_y={page_y}"
+        page_y > 700.0,
+        "the hard page break drops Heading1's before; page_y={page_y}"
     );
 }
 
 #[test]
 fn official_comments_lots_section_heading_keeps_full_before_after_mini_418() {
     // Landscape p6 Heading1 follows nextPage sectPr. Word glyph top is
-    // 62.83 (size×1.15, PDF y≈538). Full before=480 parks at 70.80
-    // (PDF y≈528). Capping to size×1.15 (mini 418) was Word-faithful
-    // but ITT-neg: comments-lots −1.87 / I_am_sharing −1.47 / NR mean
-    // 59.425→59.351. Skipping entirely packed p7–p8. Keep full 24pt.
+    // 62.83 (PDF y≈536); full before=480 parked it at 70.80 (y≈528), a
+    // value kept for an old-corpus score. Word keeps only the before's
+    // excess over the previous paragraph's after at a section break
+    // (checked on reduced copies), which lands on Word's y.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official comments-lots");
     assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
@@ -12919,8 +12917,8 @@ fn official_comments_lots_section_heading_keeps_full_before_after_mini_418() {
     let ys = page_tf_ys(&pages[land], "14.00 Tf");
     let top = ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     assert!(
-        top > 520.0 && top < 533.0,
-        "mini 418 ITT-neg size×1.15 cap (y≈536); keep full before=480 y≈528; top={top}"
+        top > 534.0 && top < 538.0,
+        "Word's section heading sits at y≈536; top={top}"
     );
 }
 
@@ -22739,8 +22737,11 @@ fn space_before_suppressed_on_overflow_page() {
 }
 
 #[test]
-fn space_before_applies_after_hard_page_break() {
-    // Word applies before after w:br type=page unless suppressSpBfAfterPgBrk.
+fn space_before_is_dropped_after_a_hard_page_break() {
+    // Checked in Word (compatibilityMode 12 and 15, no compat flag): the
+    // paragraph after a w:br type=page opens the page with no space
+    // before, whether the break ends the previous paragraph or stands in
+    // its own.
     let body = format!(
         "<w:p><w:r><w:t>FirstPage</w:t></w:r></w:p>\
          <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
@@ -22751,8 +22752,8 @@ fn space_before_applies_after_hard_page_break() {
     let y = heading16_y(&minimal_docx_body(&body));
     let top = page_top_16pt_y();
     assert!(
-        top - y >= 20.0,
-        "hard page break must keep space-before=24pt; top={top} y={y}"
+        (y - top).abs() < 2.0,
+        "a hard page break drops the space before; top={top} y={y}"
     );
 }
 
@@ -22962,8 +22963,9 @@ fn keep_lines_reserves_grid_snapped_line_boxes() {
 }
 
 #[test]
-fn space_before_kept_after_hard_break_when_compat_is_off() {
-    // ST_OnOff: w:val="off" is false; the setting must not read as present.
+fn space_before_is_dropped_after_a_hard_break_whatever_the_compat_flag() {
+    // Word drops it without suppressSpBfAfterPgBrk too (checked in modes 12
+    // and 15), so a val="off" flag changes nothing.
     let body = format!(
         "<w:p><w:r><w:t>FirstPage</w:t></w:r></w:p>\
          <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
@@ -22977,17 +22979,18 @@ fn space_before_kept_after_hard_break_when_compat_is_off() {
     ));
     let top = page_top_16pt_y();
     assert!(
-        top - y >= 20.0,
-        "suppressSpBfAfterPgBrk val=off keeps space-before=24pt; top={top} y={y}"
+        (y - top).abs() < 2.0,
+        "the hard break drops the space before; top={top} y={y}"
     );
 }
 
 #[test]
-fn space_before_kept_after_page_break_before_when_compat_set() {
-    // The compat option names a manual page break (w:br type=page). A
-    // paragraph's own pageBreakBefore is not one and keeps its before.
+fn page_break_before_keeps_only_the_before_past_the_previous_after() {
+    // Checked in Word: after pageBreakBefore a before=24pt under a
+    // paragraph with after=10pt opens the page 14pt down (96.24 vs 82.32);
+    // Word carries max(after, before) across the break.
     let body = format!(
-        "<w:p><w:r><w:t>FirstPage</w:t></w:r></w:p>\
+        "<w:p><w:pPr><w:spacing w:after=\"200\"/></w:pPr><w:r><w:t>FirstPage</w:t></w:r></w:p>\
          <w:p><w:pPr><w:pageBreakBefore/><w:spacing w:before=\"480\"/></w:pPr>\
            <w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>TopHead</w:t></w:r></w:p>{}",
         letter_body_sect()
@@ -22998,8 +23001,8 @@ fn space_before_kept_after_page_break_before_when_compat_set() {
     ));
     let top = page_top_16pt_y();
     assert!(
-        top - y >= 20.0,
-        "pageBreakBefore keeps space-before=24pt under the compat option; top={top} y={y}"
+        ((top - y) - 14.0).abs() < 1.0,
+        "pageBreakBefore keeps 24 - 10 = 14pt of the space before; top={top} y={y}"
     );
 }
 
@@ -31431,6 +31434,63 @@ fn a_page_break_inside_a_paragraph_moves_the_rest_of_it_to_the_next_page() {
         b2.first()
             .is_some_and(|b| c2.first().is_some_and(|c| b.1 < c.1 - 5.0)),
         "Bb follows Cc on page two: C {c2:?} B {b2:?}"
+    );
+}
+
+#[test]
+fn space_before_at_a_broken_page_top_keeps_only_what_the_break_leaves() {
+    // fixtures_500 00749d7a: page two's first paragraph (before=6pt, after a
+    // w:br type="page") sat 6pt low. Checked in Word, the previous
+    // paragraph with after=10pt and the next with before=24pt:
+    // - after a manual page break the before is dropped (82.32, as with
+    //   before=0), whether the break ends the previous paragraph or stands
+    //   in its own, in compatibilityMode 12 and 15;
+    // - after pageBreakBefore or a section break only its excess over the
+    //   previous paragraph's after shows (96.24 = 82.32 + 24 - 10).
+    let flat = |before: u32| {
+        format!(
+            "<w:spacing w:before=\"{before}\" w:after=\"200\" w:line=\"240\" w:lineRule=\"auto\"/>"
+        )
+    };
+    let page_two_y = |body: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_body(&format!(
+            "{body}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        )))
+        .expect("convert page top");
+        let streams = pdf_content_streams(&pdf);
+        pdf_cm_tj_xy(&streams[1], "B")
+            .first()
+            .map(|p| p.1)
+            .expect("Bb paints on page two")
+    };
+    let manual = |before: u32| {
+        page_two_y(&format!(
+            "<w:p><w:pPr>{}</w:pPr><w:r><w:t>Aa</w:t></w:r><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+             <w:p><w:pPr>{}</w:pPr><w:r><w:t>Bb</w:t></w:r></w:p>",
+            flat(0),
+            flat(before)
+        ))
+    };
+    let before_break = |before: u32| {
+        page_two_y(&format!(
+            "<w:p><w:pPr>{}</w:pPr><w:r><w:t>Aa</w:t></w:r></w:p>\
+             <w:p><w:pPr><w:pageBreakBefore/>{}</w:pPr><w:r><w:t>Bb</w:t></w:r></w:p>",
+            flat(0),
+            flat(before)
+        ))
+    };
+    assert!(
+        (manual(0) - manual(480)).abs() < 0.3,
+        "a manual break drops the before: {} vs {}",
+        manual(0),
+        manual(480)
+    );
+    assert!(
+        ((before_break(0) - before_break(480)) - 14.0).abs() < 0.5,
+        "pageBreakBefore keeps 24 - 10 = 14pt: {} vs {}",
+        before_break(0),
+        before_break(480)
     );
 }
 
