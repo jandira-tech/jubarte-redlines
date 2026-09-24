@@ -15191,11 +15191,33 @@ impl<'a> Layout<'a> {
     /// Lay a paragraph's inline pictures out in lines: left to right on a
     /// shared baseline, aligned by the paragraph's jc, wrapping when the
     /// next one would pass the measure.
-    fn emit_inline_pictures(&mut self, imgs: &[&LaidImage], style: &ParaStyle) {
+    /// `mark`: the run style of a picture-only paragraph's mark, whose
+    /// auto multiple adds its extra leading under each picture row.
+    fn emit_inline_pictures(
+        &mut self,
+        imgs: &[&LaidImage],
+        style: &ParaStyle,
+        mark: Option<&RunStyle>,
+    ) {
         if imgs.is_empty() {
             return;
         }
         self.page_has_body = true;
+        // 00762acc's logo at line 360: Word adds (1.5 - 1) x the mark's
+        // single line under the picture, as in chrome picture paragraphs.
+        let extra = match mark {
+            Some(run)
+                if style.line_exact.is_none()
+                    && style.line_at_least.is_none()
+                    && style.line_mult > 1.0 =>
+            {
+                let face = self
+                    .fonts
+                    .get(self.fonts.resolve(&run.family, run.bold, run.italic));
+                (style.line_mult - 1.0) * face.single_line_pt(run.layout_size())
+            }
+            _ => 0.0,
+        };
         let left = self.page.margin_l + style.indent_left;
         let room = self.content_width() - style.indent_left - style.indent_right;
         let mut row: Vec<(&LaidImage, f32, f32)> = Vec::new();
@@ -15206,7 +15228,7 @@ impl<'a> Layout<'a> {
             let gaps: f32 = row.iter().skip(1).map(|r| r.0.gap_before).sum();
             let w: f32 = row.iter().map(|r| r.1).sum::<f32>() + gaps;
             let h = row.iter().map(|r| r.2).fold(0.0_f32, f32::max);
-            lay.ensure(h);
+            lay.ensure(h + extra);
             lay.y -= h;
             let spare = (room - w).max(0.0);
             let mut x = match style.align {
@@ -15221,6 +15243,7 @@ impl<'a> Layout<'a> {
                 lay.push_image(img, x, lay.y, dw, dh);
                 x += dw;
             }
+            lay.y -= extra;
         };
         for img in imgs {
             let (dw, dh) = self.image_wh(img);
@@ -19151,7 +19174,8 @@ fn layout(
                         false
                     });
                 }
-                lay.emit_inline_pictures(&inline, &style);
+                let mark = (!has_ink).then(|| runs.first().map(|r| &r.style)).flatten();
+                lay.emit_inline_pictures(&inline, &style, mark);
                 for img in images
                     .iter()
                     .filter(|img| !matches!(img.slot, ImageSlot::Flow))

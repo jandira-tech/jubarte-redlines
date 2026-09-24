@@ -3029,6 +3029,42 @@ fn inline_extent_is_written_to_pdf_cm() {
 }
 
 #[test]
+fn a_picture_paragraph_at_a_multiple_adds_the_marks_extra_leading() {
+    // fixtures_500 00762acc: a logo paragraph (inline picture + an Arial 12
+    // space) at line 360 auto. Word adds (1.5 - 1) x Arial 12's single line
+    // under the picture, as in header picture paragraphs: the text below
+    // starts 6.9pt lower than at single spacing.
+    let after_y = |line: u32| {
+        let drawing = blip(
+            "914400",
+            "914400",
+            "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+            "</wp:inline>",
+        );
+        let docx = drawing_docx(&format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"{line}\" w:lineRule=\"auto\"/></w:pPr>\
+               <w:r>{drawing}</w:r><w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+               <w:sz w:val=\"24\"/></w:rPr><w:t xml:space=\"preserve\"> </w:t></w:r></w:p>\
+             <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        ));
+        let pdf = docx_to_pdf(&docx).expect("picture paragraph");
+        let hay = String::from_utf8_lossy(&pdf);
+        pdf_device_xy(hay.as_ref(), "46 Tf")
+            .into_iter()
+            .next()
+            .expect("After")
+            .1
+    };
+    let drop = after_y(240) - after_y(360);
+    assert!(
+        (drop - 6.9).abs() < 0.2,
+        "half an Arial 12 line more at 1.5; drop={drop}"
+    );
+}
+
+#[test]
 fn inline_picture_para_does_not_add_a_text_line_box() {
     // xml 3.4 ckpt 3 / case12: a drawing-only inline picture is the
     // paragraph's line box (cy), not a Normal text line plus the picture
