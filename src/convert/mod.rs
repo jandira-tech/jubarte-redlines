@@ -11503,6 +11503,15 @@ fn shape_has_no_fill(dom: &Dom, shape: NodeId) -> bool {
     })
 }
 
+/// `spPr/a:blipFill`: the shape's fill is its picture, which paints as an
+/// image; the style's fillRef colour never goes over it (00feb732's
+/// photo rectangle, accent1 fillRef).
+fn shape_has_picture_fill(dom: &Dom, shape: NodeId) -> bool {
+    descendants_local(dom, shape, "spPr").into_iter().any(|sp| {
+        (0..dom.child_count(sp)).any(|i| local_name_is(dom, dom.child_at(sp, i), "blipFill"))
+    })
+}
+
 fn shape_ln_is_nofill(dom: &Dom, shape: NodeId) -> bool {
     // Explicit `a:ln/a:noFill` (Strict01 Text Box 465 Author). Distinct
     // from no `a:ln` at all (unfilled txbx still hairline: mcdoc).
@@ -11633,7 +11642,7 @@ fn under_line_props(dom: &Dom, shape: NodeId, node: NodeId) -> bool {
 }
 
 fn shape_fill_color(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> Option<[f32; 3]> {
-    if shape_has_no_fill(dom, shape) {
+    if shape_has_no_fill(dom, shape) || shape_has_picture_fill(dom, shape) {
         return None;
     }
     if let Some(fill) = descendants_local(dom, shape, "solidFill")
@@ -11821,6 +11830,20 @@ fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {
         && bytes[1] == 0xD8
         && let Some((width, height, components)) = jpeg_info(&bytes)
     {
+        // Word converts a CMYK photo to RGB for its PDF; embedded as
+        // DeviceCMYK it renders far darker (fixtures_500 00feb732: 99% of
+        // the photo under the ink threshold against Word's 64%).
+        if components == 4
+            && let Ok(img) = image::load_from_memory(&bytes)
+        {
+            let rgb = img.to_rgb8();
+            return Some(ImageKind::Rgb {
+                width: rgb.width(),
+                height: rgb.height(),
+                bytes: rgb.into_raw(),
+                alpha: None,
+            });
+        }
         return Some(ImageKind::Jpeg {
             width,
             height,
