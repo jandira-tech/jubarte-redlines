@@ -613,6 +613,29 @@ fn numid_zero_over_a_numbered_style_drops_its_list_indent() {
 }
 
 #[test]
+fn a_newline_inside_w_t_is_a_space_not_a_break() {
+    // fixtures_500 000312ea (PHPWord): the Heading1 text carries literal
+    // newlines ("jeudi 27 avril 2017\nJeudi, 2ème …"). Word draws them as
+    // spaces on one line; we broke the heading into three lines.
+    let body = "<w:p><w:r><w:t xml:space=\"preserve\">NlAlpha\nNlBravo</w:t></w:r></w:p>\
+                <w:p><w:r><w:t>NlGamma\nNlDelta</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("newline text");
+    let y = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .1
+    };
+    assert!(
+        (y("NlAlpha") - y("NlBravo")).abs() < 0.1,
+        "preserved text keeps one line"
+    );
+    assert!(
+        (y("NlGamma") - y("NlDelta")).abs() < 0.1,
+        "plain text keeps one line"
+    );
+}
+
+#[test]
 fn a_docdefaults_without_ppr_default_keeps_words_paragraph_defaults() {
     // fixtures_500 00046848 / 000312ea (PHPWord): docDefaults carries only
     // rPrDefault. Word lays it out at 1.15 lines and 8pt after (13.3pt

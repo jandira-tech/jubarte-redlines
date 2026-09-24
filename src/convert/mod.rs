@@ -8604,7 +8604,13 @@ fn collect_visible(dom: &Dom, node: NodeId, out: &mut String, in_del: bool) {
     }
     if let Some(text) = dom.text_value(node) {
         if !in_del && is_run_text(dom, node, text) {
-            out.push_str(text);
+            // A literal line feed inside w:t is a space to Word, not a
+            // break (000312ea's PHPWord heading stays on one line); only
+            // w:br breaks.
+            out.extend(
+                text.chars()
+                    .map(|c| if matches!(c, '\n' | '\r') { ' ' } else { c }),
+            );
         }
         return;
     }
