@@ -5574,13 +5574,18 @@ fn walk_container(
             // Text after a page break inside the paragraph continues it on
             // the next page (checked in Word: "Aa<br page/>Cc" opens page
             // two with Cc); a break with nothing after it breaks as before.
-            let (mut parts, page_br) = split_page_breaks(block, page_br);
+            let (mut parts, seps, trailing) = split_page_breaks(block, page_br, column_br);
+            let (page_br, column_br) = (trailing == Some(false), trailing == Some(true));
             let block = parts.pop().expect("split keeps the paragraph");
-            for part in parts {
+            for (part, column) in parts.into_iter().zip(seps) {
                 blocks.push(part);
-                blocks.push(Block::PageBreak {
-                    next: None,
-                    manual: true,
+                blocks.push(if column {
+                    Block::ColumnBreak
+                } else {
+                    Block::PageBreak {
+                        next: None,
+                        manual: true,
+                    }
                 });
             }
             let blank = block_is_blank(&block);
@@ -5620,7 +5625,7 @@ fn walk_container(
                     apply_sect_pr(dom, here, base),
                     apply_sect_pr(dom, next, base),
                 );
-                let cols = |p: &PageSetup| (p.col_count.max(1), p.col_custom, p.col_w);
+                let cols = |p: &PageSetup| (p.col_count.max(1), p.col_custom, p.col_w, p.col_gap);
                 let moved = cols(&was) != cols(&page)
                     || (page.col_count > 1 && (was.col_space - page.col_space).abs() > 0.01)
                     || (was.margin_l - page.margin_l).abs() > 0.01
@@ -5681,7 +5686,19 @@ fn walk_container(
 /// pictures and the bookmarks; the last keeps the space after. Returns the
 /// parts and whether a break still follows the last one (a break with no
 /// ink after it, or `page_br` for a paragraph without a marked break).
-fn split_page_breaks(block: Block, page_br: bool) -> (Vec<Block>, bool) {
+/// Cut a paragraph at its in-text page and column breaks: the pieces, the
+/// break after each piece but the last (`true` = column), and the break the
+/// paragraph ends on (`Some(true)` = column), if any.
+fn split_page_breaks(
+    block: Block,
+    page_br: bool,
+    column_br: bool,
+) -> (Vec<Block>, Vec<bool>, Option<bool>) {
+    let fallback = if page_br {
+        Some(false)
+    } else {
+        column_br.then_some(true)
+    };
     let Block::Paragraph {
         runs,
         style,
@@ -5691,9 +5708,9 @@ fn split_page_breaks(block: Block, page_br: bool) -> (Vec<Block>, bool) {
         bookmarks,
     } = block
     else {
-        return (vec![block], page_br);
+        return (vec![block], Vec::new(), fallback);
     };
-    if !runs.iter().any(|r| r.text.contains(PAGE_BREAK_MARK)) {
+    if !runs.iter().any(|r| r.text.contains(is_break_mark)) {
         return (
             vec![Block::Paragraph {
                 runs,
@@ -5703,31 +5720,40 @@ fn split_page_breaks(block: Block, page_br: bool) -> (Vec<Block>, bool) {
                 boxes,
                 bookmarks,
             }],
-            page_br,
+            Vec::new(),
+            fallback,
         );
     }
-    // Cut the runs at every mark.
+    // Cut the runs at every mark; `seps[i]` is the break after piece i.
     let mut pieces: Vec<Vec<TextRun>> = vec![Vec::new()];
+    let mut seps: Vec<bool> = Vec::new();
     for run in runs {
-        let mut texts = run.text.split(PAGE_BREAK_MARK).peekable();
-        while let Some(text) = texts.next() {
-            if !text.is_empty() {
+        let mut start = 0;
+        for (at, c) in run.text.char_indices().filter(|(_, c)| is_break_mark(*c)) {
+            if at > start {
                 pieces
                     .last_mut()
                     .expect("a piece")
-                    .push(run.with_text(text));
+                    .push(run.with_text(&run.text[start..at]));
             }
-            if texts.peek().is_some() {
-                pieces.push(Vec::new());
-            }
+            seps.push(c == COLUMN_BREAK_MARK);
+            pieces.push(Vec::new());
+            start = at + c.len_utf8();
+        }
+        if start < run.text.len() {
+            pieces
+                .last_mut()
+                .expect("a piece")
+                .push(run.with_text(&run.text[start..]));
         }
     }
     let ink = |p: &[TextRun]| p.iter().any(|r| !r.text.trim().is_empty() || r.list_marker);
     // Pieces with no ink after the last inked one fold back: their breaks
     // are the trailing break.
     let last_ink = pieces.iter().rposition(|p| ink(p)).unwrap_or(0);
-    let trailing = last_ink + 1 < pieces.len();
+    let trailing = (last_ink + 1 < pieces.len()).then(|| seps[last_ink]);
     pieces.truncate(last_ink + 1);
+    seps.truncate(last_ink);
     let n = pieces.len();
     let mut images = Some(images);
     let mut boxes = Some(boxes);
@@ -5767,7 +5793,7 @@ fn split_page_breaks(block: Block, page_br: bool) -> (Vec<Block>, bool) {
             }
         })
         .collect();
-    (parts, trailing)
+    (parts, seps, trailing)
 }
 
 fn para_sect_pr(dom: &Dom, para: NodeId) -> Option<NodeId> {
@@ -8739,10 +8765,10 @@ fn collect_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts) ->
 fn strip_page_marks(runs: Vec<TextRun>) -> Vec<TextRun> {
     runs.into_iter()
         .filter_map(|r| {
-            if !r.text.contains(PAGE_BREAK_MARK) {
+            if !r.text.contains(is_break_mark) {
                 return Some(r);
             }
-            let text: String = r.text.chars().filter(|c| *c != PAGE_BREAK_MARK).collect();
+            let text: String = r.text.chars().filter(|c| !is_break_mark(*c)).collect();
             (!text.is_empty()).then(|| r.with_text(text))
         })
         .collect()
@@ -9471,6 +9497,14 @@ fn collect_visible(dom: &Dom, node: NodeId, out: &mut String, in_del: bool) {
 /// carries it.
 const PAGE_BREAK_MARK: char = '\u{FDD0}';
 
+/// A body run's column break, split like `PAGE_BREAK_MARK`: the text after
+/// it opens the next column (live Word, 019d92d9's continuous columns).
+const COLUMN_BREAK_MARK: char = '\u{FDD1}';
+
+fn is_break_mark(c: char) -> bool {
+    c == PAGE_BREAK_MARK || c == COLUMN_BREAK_MARK
+}
+
 /// An em space: a FORMCHECKBOX's advance at 115% scaling (see `TextRun::checkbox`).
 const CHECKBOX_SPACE: &str = "\u{2003}";
 
@@ -9531,6 +9565,8 @@ fn collect_visible_marked(dom: &Dom, node: NodeId, out: &mut String, in_del: boo
             let page = kind.is_some_and(|k| k == "page" || k == "oddPage" || k == "evenPage");
             if page && pages {
                 out.push(PAGE_BREAK_MARK);
+            } else if kind == Some("column") && pages {
+                out.push(COLUMN_BREAK_MARK);
             } else if !page && kind != Some("column") {
                 out.push('\n');
             }
@@ -14253,6 +14289,7 @@ impl<'a> Layout<'a> {
         self.page.col_space = next.col_space;
         self.page.col_custom = next.col_custom;
         self.page.col_w = next.col_w;
+        self.page.col_gap = next.col_gap;
         self.page.margin_l = next.margin_l;
         self.page.margin_r = next.margin_r;
         self.page.margin_t = next.margin_t;

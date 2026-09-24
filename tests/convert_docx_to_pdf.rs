@@ -1629,6 +1629,45 @@ fn a_form_checkbox_paints_a_box_and_takes_its_advance() {
 }
 
 #[test]
+fn a_continuous_section_keeps_its_custom_column_gaps() {
+    // fixtures_500 019d92d9: a continuous section with columns 3240/180,
+    // 3240/180, 3600. Word starts column two at 54 + 162 + 9 = 225; the
+    // continuous switch copied the widths but not the gaps (216).
+    let body = "<w:p><w:r><w:t>Intro</w:t></w:r></w:p>\
+        <w:p><w:pPr><w:sectPr><w:type w:val=\"continuous\"/><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+        <w:pgMar w:top=\"720\" w:right=\"720\" w:bottom=\"576\" w:left=\"1080\"/></w:sectPr></w:pPr></w:p>\
+        <w:p><w:r><w:t>First</w:t></w:r></w:p><w:p><w:r><w:br w:type=\"column\"/></w:r><w:r><w:t>Second</w:t></w:r></w:p>\
+        <w:sectPr><w:type w:val=\"continuous\"/><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+        <w:pgMar w:top=\"720\" w:right=\"720\" w:bottom=\"576\" w:left=\"1080\"/>\
+        <w:cols w:num=\"3\" w:space=\"360\" w:equalWidth=\"0\"><w:col w:w=\"3240\" w:space=\"180\"/>\
+        <w:col w:w=\"3240\" w:space=\"180\"/><w:col w:w=\"3600\"/></w:cols></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("continuous columns");
+    let (x, _) = pdf_glyph_text_xy(&pdf, "Second").expect("column two paints");
+    assert!(
+        (x - 225.0).abs() < 0.2,
+        "column two starts after its 9pt gap; x={x}"
+    );
+    // Text after a column break inside a paragraph opens the next column
+    // (live Word: "First<br column/>Second" puts Second at 225, top).
+    let inline = body.replace(
+        "<w:p><w:r><w:t>First</w:t></w:r></w:p><w:p><w:r>",
+        "<w:p><w:r><w:t>First</w:t></w:r><w:r>",
+    );
+    assert_ne!(inline, body, "the mid-paragraph variant differs");
+    let pdf = docx_to_pdf(&minimal_docx_body(&inline)).expect("inline column break");
+    let (x2, y2) = pdf_glyph_text_xy(&pdf, "Second").expect("column two paints");
+    let (_, y1) = pdf_glyph_text_xy(&pdf, "First").expect("column one paints");
+    assert!(
+        (x2 - 225.0).abs() < 0.2,
+        "the break moves Second to column two; x={x2}"
+    );
+    assert!(
+        (y2 - y1).abs() < 0.2,
+        "Second opens column two at its top; {y1} vs {y2}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path
