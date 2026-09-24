@@ -1272,6 +1272,9 @@ struct LaidImage {
     /// An inline picture directly in a header/footer paragraph, so in the
     /// part's line flow (003982453's text-box picture is not).
     chrome_flow: bool,
+    /// A header/footer picture whose paragraph follows one of the part's
+    /// top-level tables: it paints under them (00319da4's logo).
+    chrome_under_table: bool,
     /// A chrome picture paragraph's auto multiple above single: the extra
     /// `(mult - 1)` lines of its mark's face go under the picture
     /// (00e901c5's 48.2pt logo at 1.3 lines stands 52.6pt).
@@ -6383,6 +6386,7 @@ fn paragraph_block(
                 chrome_align: Align::Left,
                 chrome_lead: false,
                 chrome_flow: false,
+                chrome_under_table: false,
                 chrome_leading: None,
                 outline: None,
                 gap_before: 0.0,
@@ -10484,6 +10488,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_align: Align::Left,
                     chrome_lead: false,
                     chrome_flow: false,
+                    chrome_under_table: false,
                     chrome_leading: None,
                     outline: None,
                     gap_before: 0.0,
@@ -10507,6 +10512,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
+                        chrome_under_table: false,
                         chrome_leading: None,
                         outline: picture_outline(dom, drawing),
                         gap_before: space_before_drawing(dom, drawing),
@@ -10524,6 +10530,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
+                        chrome_under_table: false,
                         chrome_leading: None,
                         outline: None,
                         gap_before: 0.0,
@@ -10560,6 +10567,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
+                        chrome_under_table: false,
                         chrome_leading: None,
                         outline: None,
                         gap_before: 0.0,
@@ -10583,6 +10591,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_align: Align::Left,
                     chrome_lead: false,
                     chrome_flow: false,
+                    chrome_under_table: false,
                     chrome_leading: None,
                     outline: None,
                     gap_before: 0.0,
@@ -12049,6 +12058,11 @@ fn load_chrome_part(
         // A top-level chrome table lays out the pictures its cells hold,
         // nested tables' included (0005052e / 0107980d painted the logo
         // twice); page-anchored ones stay here.
+        let under_table = !hf_para_in_table(&part_dom, root, para)
+            && part_dom
+                .descendants(root, Some(&W::tbl()))
+                .iter()
+                .any(|t| t.0 < para.0 && hf_node_is_top_level(&part_dom, root, *t));
         let table_owned = hf_para_in_table(&part_dom, root, para)
             && part_dom
                 .ancestors(para, Some(&W::tbl()))
@@ -12061,6 +12075,7 @@ fn load_chrome_part(
                 .map(|mut img| {
                     img.chrome_align = jc;
                     img.chrome_lead = lead;
+                    img.chrome_under_table = under_table;
                     img.chrome_flow = flow && matches!(img.slot, ImageSlot::Flow);
                     if img.chrome_flow {
                         img.chrome_leading.clone_from(&leading);
@@ -15840,14 +15855,36 @@ impl<'a> Layout<'a> {
             &mut self.footer_images
         });
         let mut dx = self.chrome_images_dx(&images);
-        // A footer picture that opens the part sits above its text.
+        // A footer picture that opens the part sits above its text; a
+        // header picture under the part's leading tables hangs below them.
         let text_h = if in_header || self.footer.is_empty() {
             0.0
         } else {
             chrome_line_pt(self.fonts, &self.footer, self.content_width())
         };
+        let tables_h = if in_header {
+            chrome_tables_h(
+                self.fonts,
+                &self.header_tables,
+                self.content_width(),
+                self.space_for_ul,
+                Some(true),
+            )
+        } else {
+            0.0
+        };
         for img in &images {
-            let lift = if img.chrome_lead { text_h } else { 0.0 };
+            let lift = if in_header {
+                if img.chrome_under_table && matches!(img.slot, ImageSlot::Flow) {
+                    tables_h
+                } else {
+                    0.0
+                }
+            } else if img.chrome_lead {
+                text_h
+            } else {
+                0.0
+            };
             if img.behind == behind {
                 self.emit_chrome_image(img, in_header, dx, lift, band);
             }
@@ -15871,7 +15908,7 @@ impl<'a> Layout<'a> {
         let (dw, dh) = self.image_wh(img);
         let mut x = self.page.margin_l + dx;
         let mut y = if in_header {
-            self.page.height - self.page.header.max(0.0) - dh
+            self.page.height - self.page.header.max(0.0) - lift - dh
         } else {
             self.page.footer.max(0.0) + lift
         };

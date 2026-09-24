@@ -19089,6 +19089,39 @@ fn a_washed_out_picture_watermark_is_painted_washed_out() {
 }
 
 #[test]
+fn a_header_picture_below_a_header_table_paints_under_it() {
+    // fixtures_500 00319da4: the first-page header is a one-row table and
+    // then the logo's paragraph. Word paints the logo under the table
+    // (checked: 12.65pt lower); we painted it at the header distance, over
+    // the table, though the body already started below both.
+    let body = format!(
+        "<w:p><w:r><w:t>body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>{CHROME_SECT}</w:sectPr>"
+    );
+    let flat = "<w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>";
+    let hdr = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>\
+         <w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+         <w:p>{flat}<w:r><w:t>HdrCell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p>{flat}{}</w:p>",
+        chrome_drawing(457_200)
+    );
+    let pdf = docx_to_pdf(&chrome_image_docx(
+        &body,
+        &[("rIdH1", "header", "header1.xml", hdr)],
+    ))
+    .expect("convert header table then picture");
+    let (_, y) = image_cm_xy(&pdf, "36.00", "36.00");
+    // Header top 756pt; one 11pt row is ~13.4pt, so the 36pt picture's
+    // top sits at or below ~742.6 and its bottom at or below ~706.6.
+    assert!(
+        y <= 707.5,
+        "the picture hangs below the header table, not over it; y={y}"
+    );
+}
+
+#[test]
 fn two_header_images_in_one_paragraph_sit_side_by_side() {
     // #127: inline images advance along the line; they must not stack on
     // one origin.
