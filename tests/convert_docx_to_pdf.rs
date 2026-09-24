@@ -1458,6 +1458,34 @@ fn a_row_holding_a_nested_table_still_splits_at_the_page_end() {
 }
 
 #[test]
+fn a_split_row_breaks_its_paragraph_between_lines() {
+    // fixtures_500 00297360: Word ends the letter row's page-1 part with
+    // the first line of item 6 and carries its other lines over; we moved
+    // the whole paragraph to page 2 and left the page short.
+    let mut paras = String::new();
+    for i in 0..20 {
+        paras.push_str(&format!("<w:p><w:r><w:t>Short{i:02}</w:t></w:r></w:p>"));
+    }
+    let long = "palabra ".repeat(400);
+    paras.push_str(&format!(
+        "<w:p><w:r><w:t>LongStart {long}LongEnd</w:t></w:r></w:p>"
+    ));
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>\
+           <w:tr><w:tc>{paras}</w:tc></w:tr></w:tbl><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert line split");
+    let pages = pdf_content_streams(&pdf);
+    let first = stream_glyph_text(&pages[0]);
+    let rest: String = pages[1..].iter().map(|p| stream_glyph_text(p)).collect();
+    assert!(
+        first.contains("Short19") && first.contains("LongStart"),
+        "the long paragraph starts on page 1; page1={first:?}"
+    );
+    assert!(rest.contains("LongEnd"), "and ends on a later page");
+}
+
+#[test]
 fn trailing_body_sectpr_does_not_add_a_page() {
     let docx = minimal_docx_body("<w:p><w:r><w:t>Only page</w:t></w:r></w:p><w:sectPr/>");
     let pdf = docx_to_pdf(&docx).expect("convert trailing sectPr");

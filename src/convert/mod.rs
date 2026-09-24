@@ -1082,6 +1082,9 @@ struct CellPara {
     /// Bookmarks on empty cell paragraphs dropped before this one: they
     /// exist and land on this page, but carry no REF text.
     blank_bookmarks: Vec<String>,
+    /// The page-end part of a paragraph a split row carries on: its last
+    /// line is not the paragraph's last and still justifies.
+    continued: bool,
 }
 
 #[derive(Clone)]
@@ -5517,7 +5520,9 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     base.iter().map(|c| c * scale).collect()
 }
 
-fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: bool) -> f32 {
+/// A cell paragraph's (size, line box): its largest run over the first
+/// inked run's face.
+fn cell_para_line_box(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
     let size = para
         .runs
         .iter()
@@ -5530,7 +5535,11 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
         .find(|r| !r.text.is_empty())
         .map(|r| fonts.resolve(&r.style.family, r.style.bold, r.style.italic))
         .unwrap_or_else(|| FaceId::CarlitoRegular.into());
-    let line_box = para_line_box(fonts.get(face_id), size, &para.style);
+    (size, para_line_box(fonts.get(face_id), size, &para.style))
+}
+
+fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: bool) -> f32 {
+    let (size, line_box) = cell_para_line_box(fonts, para);
     let (first_w, rest_w) = cell_para_widths(fonts, para, wrap_w);
     let lines = wrap_runs(fonts, &para.runs, first_w, rest_w, false);
     let lines_h: f32 = lines
@@ -5651,6 +5660,7 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
                 style,
                 bookmarks: Vec::new(),
                 blank_bookmarks: Vec::new(),
+                continued: false,
             },
             wrap_w,
             space_for_ul,
@@ -7171,6 +7181,7 @@ fn table_block(
                     style: pstyle,
                     bookmarks,
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
+                    continued: false,
                 });
             }
             if cell_paras.is_empty() && nested.is_empty() {
@@ -7193,6 +7204,7 @@ fn table_block(
                     style: table_para.clone(),
                     bookmarks: Vec::new(),
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
+                    continued: false,
                 });
             } else if let Some(last) = cell_paras.last_mut() {
                 // Trailing empty paragraphs: their bookmarks still exist.
@@ -7730,6 +7742,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
             },
             bookmarks: Vec::new(),
             blank_bookmarks: Vec::new(),
+            continued: false,
         }],
         colspan: 1,
         vmerge: VMerge::None,
@@ -16812,7 +16825,7 @@ impl<'a> Layout<'a> {
                             });
                             let leftover = inner - line_w - mark_gap;
                             if matches!(para.style.align, Align::Justify)
-                                && li + 1 < line_count
+                                && (li + 1 < line_count || para.continued)
                                 && !(self.do_not_expand_shift_return
                                     && breaks.get(li).copied().unwrap_or(false))
                                 && leftover > 0.5
@@ -16912,9 +16925,26 @@ impl<'a> Layout<'a> {
             while k < cell.paras.len() && height(&cell.split_at(k + 1).0) <= room {
                 k += 1;
             }
-            any_head |= k > 0;
+            let (mut h, mut t) = cell.split_at(k);
+            let mut broke = false;
+            // Word breaks the next paragraph between its lines, with no
+            // widow control across the row split (00297360's item 6 leaves
+            // one line on page 1).
+            if k < cell.paras.len() && t.nested_at.iter().all(|&at| at > 0) {
+                let cw: f32 = (0..cell.colspan)
+                    .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
+                    .sum();
+                let left = room - height(&h);
+                if let Some((hp, tp)) =
+                    self.split_cell_para(&cell.paras[k], left, cell_wrap_width(cell, cw))
+                {
+                    h.paras.push(hp);
+                    t.paras[0] = tp;
+                    broke = true;
+                }
+            }
+            any_head |= k > 0 || broke;
             any_tail |= k < cell.paras.len();
-            let (h, t) = cell.split_at(k);
             head.push(h);
             tail.push(t);
         }
@@ -16925,6 +16955,45 @@ impl<'a> Layout<'a> {
         // The head fills the page: its borders run to the bottom margin.
         work[ri] = (RowSrc::Owned(head), room - 0.01, false, 0.0);
         work.insert(ri + 1, (RowSrc::Owned(tail), tail_h, false, 0.0));
+    }
+
+    /// A cell paragraph cut after the lines that fit in `left` points:
+    /// the head keeps them (no space after, still justifying), the tail
+    /// carries on at the indent with no space before.
+    fn split_cell_para(
+        &self,
+        para: &CellPara,
+        left: f32,
+        wrap_w: f32,
+    ) -> Option<(CellPara, CellPara)> {
+        let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
+        let lines = wrap_runs(self.fonts, &para.runs, first_w, rest_w, false);
+        let (size, line_box) = cell_para_line_box(self.fonts, para);
+        let mut used = para.style.before;
+        let mut n = 0;
+        while n < lines.len() {
+            let h = line_box + ul_line_extra(&lines[n], size, self.space_for_ul);
+            if used + h > left {
+                break;
+            }
+            used += h;
+            n += 1;
+        }
+        if n == 0 || n >= lines.len() {
+            return None;
+        }
+        let mut head = para.clone();
+        head.runs = lines[..n].concat();
+        head.style.after = 0.0;
+        head.continued = true;
+        let mut tail = para.clone();
+        tail.runs = lines[n..].concat();
+        tail.images = Vec::new();
+        tail.bookmarks = Vec::new();
+        tail.blank_bookmarks = Vec::new();
+        tail.style.before = 0.0;
+        tail.style.indent_first = 0.0;
+        Some((head, tail))
     }
 
     fn emit_nested_table(&mut self, block: &Block, left: f32, top: f32, avail: f32) -> f32 {
