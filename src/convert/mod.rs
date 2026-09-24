@@ -18830,9 +18830,25 @@ fn layout(
                     if lay.side_float.is_some_and(|sf| lay.y <= sf.bottom + 0.5) {
                         lay.side_float = None;
                     }
+                    // A float-carrying paragraph whose first line cannot fit
+                    // starts on the next page before its floats are placed
+                    // (00c975b8's picture paragraph wraps on page 2).
+                    if (!images.is_empty() || !boxes.is_empty()) && !lay.at_page_top {
+                        let first =
+                            para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
+                        if lay.y - style.before - first < lay.body_floor {
+                            lay.ensure(style.before + first);
+                            lay.para_top = lay.y;
+                        }
+                    }
                     lay.set_line_probe(runs, &style);
                     lay.clear_full_width_side_float(runs, &style);
+                    // Floats keep the paragraph's own top even when their
+                    // wrap pushes its text below them (00c975b8's picture
+                    // stays at 89pt while its text starts at 266).
+                    let anchor_top = lay.line_probe.top;
                     lay.apply_top_bottom_wrap(images, boxes);
+                    let pushed = (lay.line_probe.top - anchor_top).abs() > 0.01;
                     let (left, right, from) = lay.wrap_square_inset(images, boxes);
                     let until = lay.wrap_band_remaining(images, boxes);
                     let joins = |other: Option<&Block>| matches!(other, Some(Block::Paragraph { style: o, .. }) if same_pbdr(o, &style));
@@ -18845,6 +18861,9 @@ fn layout(
                     };
                     lay.emit_runs(runs, &style, *list, wrap);
                     lay.pbdr_joins = (false, false);
+                    if pushed {
+                        lay.para_top = anchor_top;
+                    }
                 } else if !lay.at_page_top || !lay.suppress_space_before {
                     lay.y -= style.before;
                     lay.at_page_top = false;

@@ -785,6 +785,67 @@ fn a_multiple_on_a_line_grid_multiplies_the_grid_line() {
 }
 
 #[test]
+fn a_float_paragraph_moved_to_the_next_page_wraps_there() {
+    // fixtures_500 00c975b8: a paragraph anchoring a 158pt top-and-bottom
+    // picture does not fit at the foot of page 1. Word starts it on page 2
+    // and runs its text under the picture there; we computed the wrap on
+    // page 1, moved the text to page 2's top and drew the picture later.
+    let img = blip(
+        "2005013",
+        "2005013",
+        "<wp:anchor distT=\"114300\" distB=\"114300\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>1685925</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>219075</wp:posOffset></wp:positionV>\
+           <wp:wrapTopAndBottom distT=\"114300\" distB=\"114300\"/>",
+        "</wp:anchor>",
+    );
+    let doc = |n: usize, pic: &str| {
+        let fill: String = (0..n)
+            .map(|i| format!("<w:p><w:r><w:t>Fill{i:02}</w:t></w:r></w:p>"))
+            .collect();
+        docx_to_pdf(&drawing_docx(&format!(
+            "{fill}<w:p><w:r><w:t>Anchored</w:t></w:r>{pic}<w:r><w:t> tail</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        )))
+        .expect("float paragraph")
+    };
+    // The fewest filler lines that push the plain paragraph to page 2.
+    let n = (20..80)
+        .find(|n| pdf_page_count(&doc(*n, "")) == 2)
+        .expect("a filler count that fills page 1");
+    let pdf = doc(n, &format!("<w:r>{img}</w:r>"));
+    let pages = pdf_content_streams(&pdf);
+    let second = pages.get(1).expect("a second page");
+    assert!(
+        stream_glyph_text(second).contains("Anchored"),
+        "the paragraph is on page 2"
+    );
+    let (_, y) = pdf_glyph_text_xy(&pdf, "Anchored").expect("text");
+    assert!(
+        792.0 - y > 72.0 + 17.25 + 158.0,
+        "its text runs under the picture on page 2; baseline {} from the top",
+        792.0 - y
+    );
+    // The picture keeps the paragraph's own top: 17.25pt under the margin.
+    let draw = second.find(" cm /Im").expect("the picture draws on page 2");
+    let nums: Vec<f32> = second[..draw]
+        .rsplit("q ")
+        .next()
+        .unwrap_or("")
+        .split_whitespace()
+        .filter_map(|v| v.parse().ok())
+        .collect();
+    let (dh, bottom) = (nums[3], nums[5]);
+    let top = 792.0 - (bottom + dh);
+    assert!(
+        (top - (72.0 + 17.25)).abs() < 1.0,
+        "picture top {top} from the page top"
+    );
+}
+
+#[test]
 fn a_square_float_with_no_side_room_pushes_text_below_it() {
     // fixtures_500 0007c30e: a 660pt x 135.7pt letterhead picture anchored
     // at the page top, wrapSquare. Nothing fits beside it, so Word starts
