@@ -11860,7 +11860,10 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
         let mut line = Vec::new();
         collect_hf_rec(dom, para, &prun, theme, &mut scan, &mut line);
         let border = hf_border_pad(last.as_deref(), &pstyle);
-        if line.iter().all(|r| r.text.trim().is_empty()) {
+        if line
+            .iter()
+            .all(|r| r.text.trim().is_empty() && matches!(r.field, FieldKind::None))
+        {
             if hf_para_is_bare_line(dom, node, para) {
                 let mut first = empty_break(para, &pstyle, &prun);
                 if !runs.is_empty()
@@ -12041,9 +12044,12 @@ fn hf_paragraph_lines(runs: &[TextRun]) -> Vec<(Vec<TextRun>, f32)> {
             line.0.push(run.clone());
         }
     }
+    // A PAGE / NUMPAGES run is empty until the page patch fills it
+    // (00c975b8's uncached PAGE is the footer's only content).
     lines.retain(|(line, _)| {
-        line.iter()
-            .any(|r| !r.text.trim().is_empty() || r.ends_line)
+        line.iter().any(|r| {
+            !r.text.trim().is_empty() || r.ends_line || !matches!(r.field, FieldKind::None)
+        })
     });
     lines
 }

@@ -10217,6 +10217,35 @@ fn footer_xml_space_padding_is_painted_like_word() {
 }
 
 #[test]
+fn a_footer_holding_only_an_uncached_page_field_paints_the_number() {
+    // fixtures_500 00c975b8: the footer's one run carries begin, PAGE,
+    // separate and end with no cached result. The field run is empty
+    // until the page patch, and the blank-line filter dropped its line:
+    // Word paints "1", "2" there.
+    let footer = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:pPr><w:jc w:val=\"right\"/></w:pPr><w:r>\
+             <w:fldChar w:fldCharType=\"begin\"/><w:instrText xml:space=\"preserve\">PAGE</w:instrText>\
+             <w:fldChar w:fldCharType=\"separate\"/><w:fldChar w:fldCharType=\"end\"/></w:r></w:p></w:ftr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer.to_string())],
+    ))
+    .expect("convert page-field footer");
+    let (x, y) = pdf_glyph_text_xy(&pdf, "1").expect("the footer paints its page number");
+    assert!(
+        y < 72.0 && x > 500.0,
+        "right-aligned in the footer; at ({x}, {y})"
+    );
+}
+
+#[test]
 fn official_sample_npm_package_sits_after_label() {
     // Word p1 npm badge: npm at ~80, @eigenpal at ~133. Collapsed
     // padding parked the package at npm+2.
