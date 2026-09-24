@@ -9613,6 +9613,76 @@ fn a_merged_cell_taller_than_its_rows_keeps_the_rules_it_spans() {
     );
 }
 
+/// A one-cell table whose cell holds `inner`, then an "After" paragraph;
+/// returns the PDF.
+fn outer_cell_pdf(inner: &str) -> Vec<u8> {
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid><w:tr><w:tc>\
+         <w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>{inner}</w:tc></w:tr></w:tbl>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>"
+    );
+    docx_to_pdf(&minimal_docx_body(&body)).expect("convert outer cell")
+}
+
+fn nested_table(text: &str) -> String {
+    format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>\
+         <w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+         <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+    )
+}
+
+fn glyph_y(pdf: &[u8], g: &str) -> f32 {
+    let hay = String::from_utf8_lossy(pdf).into_owned();
+    [pdf_cm_tj_xy(&hay, g), pdf_tj_xy(&hay, g)]
+        .concat()
+        .first()
+        .map(|p| p.1)
+        .unwrap_or_else(|| panic!("{g} paints"))
+}
+
+#[test]
+fn a_nested_table_adds_no_tail_to_its_cell() {
+    // fixtures_500 0107980d: Word lays a cell's paragraph after a nested
+    // table right under it (checked: "Zz" after the nested table sits
+    // where Word puts it) and the row ends one line later. We added a
+    // flat 4pt under every nested table when sizing the row (the body
+    // tail was already dropped in 1e9dea9).
+    let plain =
+        outer_cell_pdf("<w:p><w:r><w:t>Q</w:t></w:r></w:p><w:p><w:r><w:t>Z</w:t></w:r></w:p>");
+    let nested = outer_cell_pdf(&format!(
+        "{}<w:p><w:r><w:t>Z</w:t></w:r></w:p>",
+        nested_table("Q")
+    ));
+    let gap = |pdf: &[u8]| glyph_y(pdf, "Z") - glyph_y(pdf, "A");
+    assert!(
+        (gap(&plain) - gap(&nested)).abs() < 0.2,
+        "the cell's last line to the next paragraph is the same after a nested table: {} vs {}",
+        gap(&plain),
+        gap(&nested)
+    );
+}
+
+#[test]
+fn an_empty_cell_end_after_a_nested_table_takes_no_room() {
+    // fixtures_500 0107980d: a cell ends with a nested table and the empty
+    // paragraph Word requires after it. Checked in Word: shrinking that
+    // paragraph to 1pt moves nothing (with text it is a line); we sized
+    // the row with it as a full line.
+    let full = outer_cell_pdf(&format!("{}<w:p/>", nested_table("Q")));
+    let tiny = outer_cell_pdf(&format!(
+        "{}<w:p><w:pPr><w:rPr><w:sz w:val=\"2\"/></w:rPr></w:pPr></w:p>",
+        nested_table("Q")
+    ));
+    let (a, b) = (glyph_y(&full, "A"), glyph_y(&tiny, "A"));
+    assert!(
+        (a - b).abs() < 0.2,
+        "the empty cell end takes no room whatever its size: {a} vs {b}"
+    );
+}
+
 #[test]
 fn bordered_row_pitch_adds_the_horizontal_rule() {
     // Word stacks each row's horizontal rule on top of its height: 0.5pt

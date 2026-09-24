@@ -6004,7 +6004,18 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
             space_for_ul,
         )
     } else {
-        cell.paras
+        // The empty paragraph that closes a cell right after a nested
+        // table takes no room (checked in Word on 0107980d's header: at
+        // 1pt or 12pt it moves nothing; with text it is a line).
+        let closing = cell
+            .nested_at
+            .last()
+            .is_some_and(|&at| at + 1 == cell.paras.len())
+            && cell.paras.last().is_some_and(|p| {
+                p.images.is_empty() && p.runs.iter().all(|r| r.text.trim().is_empty())
+            });
+        let counted = cell.paras.len() - usize::from(closing);
+        cell.paras[..counted]
             .iter()
             .map(|p| cell_para_height(fonts, p, wrap_w, space_for_ul))
             .sum()
@@ -6032,7 +6043,9 @@ fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: b
     let rows_h: f32 = table_row_heights(fonts, rows, &col_w, geom, space_for_ul)
         .iter()
         .sum();
-    rows_h + style.after.max(4.0)
+    // No tail under it: the cell's next paragraph starts at its bottom
+    // edge, as after a body table (1e9dea9; 0107980d's header in Word).
+    rows_h + style.after
 }
 
 /// Every row's height: each row on its own cells, then a vertically
