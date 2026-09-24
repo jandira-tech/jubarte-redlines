@@ -1812,6 +1812,34 @@ fn a_headers_leading_auto_space_before_collapses() {
 }
 
 #[test]
+fn an_autofit_pct_table_keeps_the_grid_its_width_matches() {
+    // fixtures_500 005e8d94: tblW 4949 pct (505pt of 510.2), grid
+    // 1546/1263/1341/1958/1991/1991 twips summing to 504.5pt, tcW shares
+    // 814/612/650/949/1008/966 within 7% of it. Live Word draws the grid;
+    // we laid the shares out (column two 4.9pt right).
+    let grid = [1546, 1263, 1341, 1958, 1991, 1991];
+    let pct = [814, 612, 650, 949, 1008, 966];
+    let cols: String = grid
+        .iter()
+        .map(|g| format!(r#"<w:gridCol w:w="{g}"/>"#))
+        .collect();
+    let cells: String = pct
+        .iter()
+        .enumerate()
+        .map(|(i, p)| format!(r#"<w:tc><w:tcPr><w:tcW w:w="{p}" w:type="pct"/></w:tcPr><w:p><w:r><w:t>Cell{i}</w:t></w:r></w:p></w:tc>"#))
+        .collect();
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4949" w:type="pct"/><w:jc w:val="center"/></w:tblPr><w:tblGrid>{cols}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="851" w:bottom="1134" w:left="851"/></w:sectPr>"#
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("pct grid table");
+    let (x, _) = pdf_glyph_text_xy(&pdf, "Cell1").expect("cell two paints");
+    assert!(
+        (x - 128.1).abs() < 0.4,
+        "column two starts at the grid's 77.3pt; x={x}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

@@ -5971,17 +5971,6 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     // An autofit table whose saved grid fills its tblW and sits within 10%
     // of each dxa tcW is Word's own resolved layout (0129b302: grid 1320 /
     // tcW 1260). A far-off grid is stale and the tcW still lead.
-    let near_grid = cols.iter().enumerate().all(
-        |(i, &g)| matches!(geom.pref.get(i), Some(PrefWidth::Dxa(w)) if (w - g).abs() <= 0.1 * g),
-    );
-    if !geom.fixed
-        && let TblWidth::Dxa(w) = geom.width
-        && !geom.grid_padded
-        && (grid_total - w).abs() < 1.0
-        && near_grid
-    {
-        return cols.to_vec();
-    }
     let target = match geom.width {
         TblWidth::Grid => grid_total,
         TblWidth::Dxa(w) => w,
@@ -5991,6 +5980,24 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
         TblWidth::Pct(p) => (avail + geom.pct_margins) * p,
     }
     .max(0.0);
+    // The same holds for pct: 005e8d94's 98.98% table keeps its grid
+    // (1546/1263/... twips, live Word) over tcW shares within 7% of it.
+    let near_grid = cols.iter().enumerate().all(|(i, &g)| {
+        let pref = match geom.pref.get(i) {
+            Some(PrefWidth::Dxa(w)) => *w,
+            Some(PrefWidth::Pct(p)) if matches!(geom.width, TblWidth::Pct(_)) => target * p,
+            _ => return false,
+        };
+        (pref - g).abs() <= 0.1 * g
+    });
+    if !geom.fixed
+        && matches!(geom.width, TblWidth::Dxa(_) | TblWidth::Pct(_))
+        && !geom.grid_padded
+        && (grid_total - target).abs() < 1.0
+        && near_grid
+    {
+        return cols.to_vec();
+    }
     let base: Vec<f32> = (0..n)
         .map(|i| {
             let grid = cols.get(i).copied().unwrap_or(80.0);
