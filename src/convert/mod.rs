@@ -11201,6 +11201,9 @@ struct ChromeTable {
     block: Option<std::rc::Rc<Block>>,
     /// No text paragraph precedes it in the part.
     before_text: bool,
+    /// The empty paragraphs above it: each a line of its mark (0107980d's
+    /// header opens with one before its logo table).
+    lead: Vec<TextRun>,
     w: f32,
     h: f32,
     color: [f32; 3],
@@ -11247,6 +11250,7 @@ fn collect_hf_tables(
         .find(|p| !element_text(dom, *p).trim().is_empty())
         .map(|p| p.0);
     let mut out = Vec::new();
+    let mut prev = 0;
     for tbl in dom.descendants(root, Some(&W::tbl())) {
         if !hf_node_is_top_level(dom, root, tbl) {
             continue;
@@ -11261,8 +11265,27 @@ fn collect_hf_tables(
             &HashMap::new(),
             Some((pkg, path)),
         );
+        let lead = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .filter(|p| p.0 > prev && p.0 < tbl.0 && hf_node_is_top_level(dom, root, *p))
+            .map(|p| {
+                let (pstyle, mut mark) = para_base(dom, p, sheet, None);
+                if let Some(rpr) = dom
+                    .element(p, &W::p_pr())
+                    .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+                {
+                    apply_rpr(dom, rpr, &mut mark, &sheet.theme);
+                }
+                let mut run = TextRun::new(HF_LINE_BREAK, mark);
+                run.hf_para = Some(std::rc::Rc::new(pstyle));
+                run
+            })
+            .collect();
+        prev = tbl.0;
         out.push(ChromeTable {
             block: Some(std::rc::Rc::new(block)),
+            lead,
             before_text: first_text.is_none_or(|t| tbl.0 < t),
             w: hf_table_width_pt(dom, tbl),
             h: 0.0,
@@ -11429,13 +11452,14 @@ fn load_chrome_part(
         {
             seen_text = true;
         }
-        // A top-level chrome table lays out the pictures its cells hold
-        // (0005052e painted the logo twice); page-anchored ones stay here.
+        // A top-level chrome table lays out the pictures its cells hold,
+        // nested tables' included (0005052e / 0107980d painted the logo
+        // twice); page-anchored ones stay here.
         let table_owned = hf_para_in_table(&part_dom, root, para)
             && part_dom
                 .ancestors(para, Some(&W::tbl()))
-                .first()
-                .is_some_and(|t| hf_node_is_top_level(&part_dom, root, *t));
+                .iter()
+                .any(|t| hf_node_is_top_level(&part_dom, root, *t));
         images.extend(
             collect_images(pkg, &path, &part_dom, para)
                 .into_iter()
@@ -17504,6 +17528,11 @@ impl<'a> Layout<'a> {
             for table in &tables {
                 match table.block.as_deref() {
                     Some(block) if table.before_text => {
+                        top -= table
+                            .lead
+                            .iter()
+                            .map(|r| hf_break_box(self.fonts, r))
+                            .sum::<f32>();
                         top -= self.emit_nested_table(block, self.page.margin_l, top, avail);
                     }
                     Some(_) => {}

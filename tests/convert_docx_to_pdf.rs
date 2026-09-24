@@ -17350,6 +17350,50 @@ fn header_inline_image_paints_in_the_header_band() {
 }
 
 #[test]
+fn an_empty_paragraph_above_a_header_table_is_a_line() {
+    // fixtures_500 0107980d: the header opens with an empty "Encabezado"
+    // paragraph, then its logo table. Word starts the table one line down
+    // (logo top at 10pt); we started it at the header distance.
+    let table = "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid><w:tr><w:tc>\
+           <w:p><w:r><w:t>TblHdr</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+    let y = |inner: &str| {
+        let pdf = docx_to_pdf(&header_part_docx_at(inner, 0)).expect("header table");
+        pdf_glyph_text_xy(&pdf, "TblHdr").expect("header text").1
+    };
+    let bare = y(table);
+    let led = y(&format!("<w:p/>{table}"));
+    assert!(
+        bare - led > 10.0,
+        "the empty paragraph pushes the table a line down; bare={bare} led={led}"
+    );
+}
+
+#[test]
+fn a_header_logo_in_a_nested_table_paints_once() {
+    // fixtures_500 0107980d: the header's layout table nests a table whose
+    // cell holds the 150pt logo. The nested table paints it; we painted it
+    // again as a header picture and stacked its height into the band, so
+    // the body started at 357pt instead of Word's 188.
+    let logo = "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+          <wp:extent cx=\"1029335\" cy=\"1901274\"/><wp:docPr id=\"1\" name=\"Logo\"/>\
+          <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+            <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+          </a:graphicData></a:graphic></wp:inline></w:drawing></w:r>";
+    let inner = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid><w:tr><w:tc>\
+           <w:tbl><w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc>\
+             <w:p>{logo}</w:p></w:tc></w:tr></w:tbl><w:p/>\
+         </w:tc></w:tr></w:tbl><w:p/>"
+    );
+    let pdf = docx_to_pdf(&header_part_docx_at(&inner, 0)).expect("nested logo");
+    let draws: usize = pdf_content_streams(&pdf)
+        .iter()
+        .map(|p| p.matches(" Do Q").count())
+        .sum();
+    assert_eq!(draws, 1, "the logo paints once");
+}
+
+#[test]
 fn header_distance_below_ten_points_is_honoured() {
     // fixtures_500 0005052e: w:header=132 (6.6pt). Word puts the header
     // there; clamping to 10pt dropped the whole header table 3.4pt.
