@@ -30539,3 +30539,27 @@ fn a_grouped_picture_fills_only_its_own_part_of_the_group() {
         "100pt square, got {boxes:?}"
     );
 }
+
+#[test]
+fn a_tracked_section_change_is_not_a_section_break() {
+    // Redline set: 730 of 965 Word comparisons came out one page long.
+    // The final sectPr's sectPrChange holds the old sectPr; counting it as
+    // the last section made the real final sectPr a break and opened a
+    // blank page.
+    let body = "<w:p><w:r><w:t>Only page</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+          <w:pgMar w:top=\"1417\" w:right=\"1417\" w:bottom=\"1134\" w:left=\"1417\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>\
+          <w:sectPrChange w:id=\"1\" w:author=\"A\" w:date=\"2026-09-22T12:20:00Z\"><w:sectPr>\
+            <w:pgMar w:top=\"993\" w:right=\"991\" w:bottom=\"993\" w:left=\"993\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>\
+          </w:sectPr></w:sectPrChange></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert sectPrChange");
+    let text = String::from_utf8_lossy(&pdf);
+    let pages = text.matches("/Type /Page ").count()
+        + text.matches("/Type /Page/").count()
+        + text.matches("/Type /Page>").count();
+    assert_eq!(pages, 1, "one page");
+    assert!(
+        text.contains("/MediaBox [0 0 595.20 841.92]"),
+        "the live A4 size"
+    );
+}

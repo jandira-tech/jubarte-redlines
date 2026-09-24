@@ -2565,6 +2565,17 @@ fn first_named(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {
         .find(|&cand| !under_prior_change(dom, node, cand))
 }
 
+/// The body's section properties in document order, without the old
+/// copies a tracked change keeps (`w:sectPrChange`, `w:pPrChange`): a
+/// redline's final sectPr holding its previous self is one section, not
+/// two (730 of 965 Word comparisons gained a blank last page).
+fn live_sect_prs(dom: &Dom, body: NodeId) -> Vec<NodeId> {
+    dom.descendants(body, Some(&W::sect_pr()))
+        .into_iter()
+        .filter(|&s| !under_prior_change(dom, body, s))
+        .collect()
+}
+
 fn under_prior_change(dom: &Dom, root: NodeId, mut n: NodeId) -> bool {
     while n != root {
         let Some(parent) = dom.parent(n) else {
@@ -3166,11 +3177,7 @@ fn parse_hex_color(val: &str) -> Option<[f32; 3]> {
 }
 
 fn load_page_setup(dom: &Dom, body: NodeId, fallback: &PageSetup) -> PageSetup {
-    let Some(sect) = dom
-        .descendants(body, Some(&W::sect_pr()))
-        .into_iter()
-        .next()
-    else {
+    let Some(sect) = live_sect_prs(dom, body).into_iter().next() else {
         return *fallback;
     };
     apply_sect_pr(dom, sect, fallback)
@@ -4956,7 +4963,7 @@ fn collect_blocks(
     let _ = fonts;
     let mut blocks = Vec::new();
     let mut numbering = load_numbering(pkg);
-    let sects = dom.descendants(body, Some(&W::sect_pr()));
+    let sects = live_sect_prs(dom, body);
     let comments = load_comments(pkg, main);
     let ctx = WalkCtx {
         pkg,
@@ -11487,11 +11494,7 @@ fn first_section_hf(
     sheet: &StyleSheet,
 ) -> HfChrome {
     let page_background = page_background_fill(pkg, dom, body);
-    let Some(sect) = dom
-        .descendants(body, Some(&W::sect_pr()))
-        .into_iter()
-        .next()
-    else {
+    let Some(sect) = live_sect_prs(dom, body).into_iter().next() else {
         return HfChrome {
             page_background,
             ul_trail_space: settings_ul_trail_space(pkg),
