@@ -1029,6 +1029,9 @@ struct TableGeom {
     /// the margin in every compatibility mode (00f0e7f3, 00046848), while
     /// 017abe40's explicit tblInd 0 and 00587c73's TableNormal are pulled.
     keep_at_margin: bool,
+    /// `w:bidiVisual`: the grid is stored mirrored; `tblInd` and the
+    /// cell-margin pull measure from the right margin.
+    rtl: bool,
 }
 
 /// Preferred table width from `tblW`. Word `pct` is 50ths of a percent
@@ -7655,7 +7658,36 @@ fn table_block(
         }))
         .take(rows.len())
         .collect();
-    let direct_borders = table_pr(dom, table).and_then(|pr| parse_tbl_borders(dom, pr));
+    // `w:bidiVisual`: columns run right to left and the table hangs from
+    // the right margin (0041dade's Persian tables). Mirrored here, once,
+    // so sizing and painting read one left-to-right grid.
+    let rtl = table_pr(dom, table)
+        .and_then(|pr| first_named(dom, pr, "bidiVisual"))
+        .is_some_and(|b| !matches!(attr_any(dom, b, "val"), Some("0" | "false" | "off")));
+    let mut pref = pref;
+    if rtl {
+        mirror_table(&mut cols, &mut rows);
+        pref.reverse();
+        tstyle.align = match tstyle.align {
+            Align::Left | Align::Justify => Align::Right,
+            Align::Right => Align::Left,
+            Align::Center => Align::Center,
+        };
+    }
+    let mirror = |b: TblBorders| {
+        if rtl {
+            TblBorders {
+                left: b.right,
+                right: b.left,
+                ..b
+            }
+        } else {
+            b
+        }
+    };
+    let direct_borders = table_pr(dom, table)
+        .and_then(|pr| parse_tbl_borders(dom, pr))
+        .map(mirror);
     let unstyled = tdef.is_none();
     let rules = direct_borders
         .or_else(|| tdef.as_ref().and_then(|t| t.borders))
@@ -7667,7 +7699,7 @@ fn table_block(
         cols,
         rows,
         style: tstyle,
-        borders: direct_borders.or_else(|| tdef.and_then(|t| t.borders)),
+        borders: direct_borders.or_else(|| tdef.and_then(|t| t.borders).map(mirror)),
         geom: {
             Box::new(TableGeom {
                 row_min,
@@ -7690,8 +7722,27 @@ fn table_block(
                         .is_none_or(|pr| first_named(dom, pr, "tblInd").is_none()),
                 rules,
                 grid_padded: grid_len > 0 && grid_len < occupancy,
+                rtl,
             })
         },
+    }
+}
+
+/// A right-to-left table as the left-to-right grid it paints: columns
+/// reversed, each cell at its mirrored column with its left and right
+/// margins and borders swapped.
+fn mirror_table(cols: &mut [f32], rows: &mut [Vec<TableCell>]) {
+    let n = cols.len();
+    cols.reverse();
+    for row in rows.iter_mut() {
+        for cell in row.iter_mut() {
+            cell.col = n.saturating_sub(cell.col + cell.colspan);
+            std::mem::swap(&mut cell.pad_l, &mut cell.pad_r);
+            if let Some(b) = cell.borders.as_mut() {
+                std::mem::swap(&mut b.left, &mut b.right);
+            }
+        }
+        row.sort_by_key(|cell| cell.col);
     }
 }
 
@@ -17454,6 +17505,12 @@ impl<'a> Layout<'a> {
             0.0
         };
         let ind = if centred { 0.0 } else { geom.tbl_ind };
+        // A right-to-left table measures both from the right margin.
+        let (ind, pull) = if geom.rtl && matches!(style.align, Align::Right) {
+            (-ind, -pull)
+        } else {
+            (ind, pull)
+        };
         // A table in flow starts at its column (000876cd's column-two
         // table); the floating pass below sets margin_l to the float box.
         let origin = if self.nested_depth > 0 {

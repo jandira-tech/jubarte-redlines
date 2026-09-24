@@ -30591,6 +30591,42 @@ fn a_glyph_shaped_from_several_characters_maps_back_to_all_of_them() {
 }
 
 #[test]
+fn a_right_to_left_table_starts_at_the_right_margin() {
+    // fixtures_500 0041dade (and six more): `w:bidiVisual` lays a table's
+    // columns out right to left and hangs it from the right margin. We
+    // drew it left to right from the left margin. The 100pt first column
+    // holds "Q", the 200pt second holds "Z"; in the 72..540 measure the
+    // table runs 240..540, so "Q" sits in 440..540 and "Z" in 240..440.
+    let cell = |w: u32, t: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+         <w:tr>{}{}</w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        cell(2000, "Q"),
+        cell(4000, "Z")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert RTL table");
+    let hay = String::from_utf8_lossy(&pdf);
+    let q = pdf_cm_tj_xy(&hay, "Q");
+    let z = pdf_cm_tj_xy(&hay, "Z");
+    assert!(
+        q.first().is_some_and(|p| (435.0..455.0).contains(&p.0)),
+        "the first column is the rightmost: Q at {q:?}"
+    );
+    assert!(
+        z.first().is_some_and(|p| (235.0..255.0).contains(&p.0)),
+        "the second column sits left of it: Z at {z:?}"
+    );
+}
+
+#[test]
 fn a_justified_underline_runs_through_the_stretched_spaces() {
     // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
     // underlined word by word; the justify pad after each space was bare.
