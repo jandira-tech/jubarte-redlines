@@ -15727,10 +15727,21 @@ impl<'a> Layout<'a> {
         };
         // A floating header/footer picture sits at its anchor, not on the
         // part's line (000ebd12's logo: leftMargin 447.95pt, topMargin 34pt).
-        if let ImageSlot::Float { page_y, para_y, .. } = img.slot {
-            x = self.float_xy(dw, dh, img.slot).0;
+        if let ImageSlot::Float {
+            page_y,
+            para_y,
+            v_rel,
+            ..
+        } = img.slot
+        {
+            let (fx, fy) = self.float_xy(dw, dh, img.slot);
+            x = fx;
             if let Some(top) = page_y {
                 y = self.page.height - top - dh;
+            } else if para_y.is_none() && !matches!(v_rel, RelFrame::Paragraph | RelFrame::Line) {
+                // Placed in its page or margin frame (0041dade's picture
+                // watermark centres on the margin box).
+                y = fy;
             } else if in_header {
                 y = self.page.height - self.page.header.max(0.0) - para_y.unwrap_or(0.0) - dh;
             } else if let Some(off) = para_y

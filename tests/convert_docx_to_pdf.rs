@@ -19027,6 +19027,37 @@ fn a_behind_text_footer_picture_paints_under_the_footer_text_box() {
 }
 
 #[test]
+fn a_header_picture_watermark_centres_on_the_margin_box() {
+    // fixtures_500 0041dade: Word's picture watermark (a header v:shape,
+    // mso-position-vertical:center relative to the margin) sat at the
+    // header distance, 67.5pt above Word's. The margin box here runs
+    // 72..720pt, so a 100pt picture centres at 346..446pt.
+    let body = format!(
+        "<w:p><w:r><w:t>body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>{CHROME_SECT}</w:sectPr>"
+    );
+    let hdr = "<w:p><w:r><w:pict xmlns:v=\"urn:schemas-microsoft-com:vml\">\
+        <v:shape id=\"WordPictureWatermark1\" type=\"#_x0000_t75\" \
+          style=\"position:absolute;margin-left:0;margin-top:0;width:100pt;height:100pt;\
+          z-index:-251657216;mso-position-horizontal:center;\
+          mso-position-horizontal-relative:margin;mso-position-vertical:center;\
+          mso-position-vertical-relative:margin\">\
+        <v:imagedata r:id=\"rIdImg\"/></v:shape></w:pict></w:r></w:p>"
+        .to_string();
+    let pdf = docx_to_pdf(&chrome_image_docx(
+        &body,
+        &[("rIdH1", "header", "header1.xml", hdr)],
+    ))
+    .expect("convert centred picture watermark");
+    let (x, y) = image_cm_xy(&pdf, "100.00", "100.00");
+    assert!((x - 256.0).abs() < 0.5, "centred across the margins; x={x}");
+    assert!(
+        (y - 346.0).abs() < 0.5,
+        "centred down the margin box; y={y}"
+    );
+}
+
+#[test]
 fn two_header_images_in_one_paragraph_sit_side_by_side() {
     // #127: inline images advance along the line; they must not stack on
     // one origin.
