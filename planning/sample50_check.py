@@ -50,7 +50,7 @@ def convert_and_score(rows, jubarte, scorer, workers):
         jobs, failed = [], []
         for r in rows:
             out = os.path.join(work, r["id"] + ".pdf")
-            p = subprocess.run([jubarte, "convert", r["docx"], "-o", out, "--force"], capture_output=True, text=True)
+            p = subprocess.run([jubarte, "convert", r["docx"], "-o", out, "--force", "--revisions", "word"], capture_output=True, text=True)
             if p.returncode != 0 or not os.path.exists(out):
                 failed.append(r["id"])
                 continue

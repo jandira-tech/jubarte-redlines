@@ -60,6 +60,166 @@ impl fmt::Display for ConvertError {
 
 impl std::error::Error for ConvertError {}
 
+/// How many lines a revision mark draws (strike through or under the text).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MarkLines {
+    /// No line.
+    #[default]
+    None,
+    /// One line.
+    Single,
+    /// Two lines.
+    Double,
+}
+
+/// How one kind of tracked change is painted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RevisionMark {
+    /// Ink of the changed text and its lines (RGB).
+    pub color: [u8; 3],
+    /// Lines struck through the text.
+    pub strike: MarkLines,
+    /// Lines under the text.
+    pub underline: MarkLines,
+}
+
+/// The marks for each kind of tracked change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RevisionPalette {
+    /// `w:del`.
+    pub deleted: RevisionMark,
+    /// `w:ins`.
+    pub inserted: RevisionMark,
+    /// `w:moveFrom`.
+    pub moved_from: RevisionMark,
+    /// `w:moveTo`.
+    pub moved_to: RevisionMark,
+}
+
+impl RevisionPalette {
+    /// The legal-redline convention: deletions red and struck through,
+    /// insertions blue with a double underline, moved text green (struck
+    /// through where it left, double-underlined where it landed).
+    pub const CONVENTIONAL: Self = Self {
+        deleted: RevisionMark {
+            color: [0xFF, 0x00, 0x00],
+            strike: MarkLines::Single,
+            underline: MarkLines::None,
+        },
+        inserted: RevisionMark {
+            color: [0x00, 0x00, 0xFF],
+            strike: MarkLines::None,
+            underline: MarkLines::Double,
+        },
+        moved_from: RevisionMark {
+            color: [0x00, 0x80, 0x00],
+            strike: MarkLines::Single,
+            underline: MarkLines::None,
+        },
+        moved_to: RevisionMark {
+            color: [0x00, 0x80, 0x00],
+            strike: MarkLines::None,
+            underline: MarkLines::Double,
+        },
+    };
+}
+
+impl RevisionPalette {
+    /// Parse `kind=#RRGGBB[:line...],...` over the conventional palette.
+    /// Kinds: `deleted`, `inserted`, `moved-from`, `moved-to`. Lines:
+    /// `strike`, `double-strike`, `underline`, `double-underline`, `plain`
+    /// (none). A kind's colour alone keeps its conventional lines.
+    ///
+    /// ```
+    /// use jubarte::convert::{MarkLines, RevisionPalette};
+    /// let p = RevisionPalette::parse("inserted=#00AA00:underline").unwrap();
+    /// assert_eq!(p.inserted.color, [0x00, 0xAA, 0x00]);
+    /// assert_eq!(p.inserted.underline, MarkLines::Single);
+    /// assert_eq!(p.deleted, RevisionPalette::CONVENTIONAL.deleted);
+    /// ```
+    pub fn parse(spec: &str) -> Result<Self, String> {
+        let mut palette = Self::CONVENTIONAL;
+        for entry in spec.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+            let (kind, value) = entry
+                .split_once('=')
+                .ok_or_else(|| format!("'{entry}': expected kind=#RRGGBB[:lines]"))?;
+            let mark = match kind.trim() {
+                "deleted" | "del" => &mut palette.deleted,
+                "inserted" | "ins" => &mut palette.inserted,
+                "moved-from" | "move-from" => &mut palette.moved_from,
+                "moved-to" | "move-to" => &mut palette.moved_to,
+                other => return Err(format!("unknown revision kind '{other}'")),
+            };
+            let mut parts = value.split(':').map(str::trim);
+            let hex = parts.next().unwrap_or("").trim_start_matches('#');
+            if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(format!("'{value}': colour must be #RRGGBB"));
+            }
+            let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0);
+            mark.color = [byte(0), byte(2), byte(4)];
+            let lines: Vec<&str> = parts.collect();
+            if !lines.is_empty() {
+                mark.strike = MarkLines::None;
+                mark.underline = MarkLines::None;
+            }
+            for line in lines {
+                match line {
+                    "strike" => mark.strike = MarkLines::Single,
+                    "double-strike" => mark.strike = MarkLines::Double,
+                    "underline" => mark.underline = MarkLines::Single,
+                    "double-underline" => mark.underline = MarkLines::Double,
+                    "plain" => {}
+                    other => return Err(format!("unknown line style '{other}'")),
+                }
+            }
+        }
+        Ok(palette)
+    }
+}
+
+/// How tracked changes (`w:ins`, `w:del`, `w:moveFrom`, `w:moveTo`) are
+/// painted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RevisionStyle {
+    /// `RevisionPalette::CONVENTIONAL`.
+    #[default]
+    Conventional,
+    /// What Microsoft Word's Save as PDF paints (per-author ink, single
+    /// strike and underline); the fidelity benchmarks measure this one.
+    Word,
+    /// The caller's own marks.
+    Custom(RevisionPalette),
+}
+
+impl RevisionStyle {
+    /// `"conventional"`, `"word"` or `"custom"` (which needs a
+    /// `RevisionPalette::parse` spec), as the CLI and bindings name them.
+    ///
+    /// ```
+    /// use jubarte::convert::RevisionStyle;
+    /// assert_eq!(RevisionStyle::from_choice("word", None), Ok(RevisionStyle::Word));
+    /// assert!(RevisionStyle::from_choice("custom", None).is_err());
+    /// ```
+    pub fn from_choice(name: &str, palette: Option<&str>) -> Result<Self, String> {
+        match (name, palette) {
+            ("custom", Some(spec)) => RevisionPalette::parse(spec).map(Self::Custom),
+            ("custom", None) => Err("revisions \"custom\" needs a revision palette".into()),
+            (_, Some(_)) => Err("a revision palette needs revisions \"custom\"".into()),
+            ("conventional", None) => Ok(Self::Conventional),
+            ("word", None) => Ok(Self::Word),
+            (other, None) => Err(format!(
+                "unknown revisions \"{other}\" (conventional, word, custom)"
+            )),
+        }
+    }
+}
+
+thread_local! {
+    /// The conversion in progress's `PdfOptions::revisions`.
+    static REVISIONS: std::cell::Cell<RevisionStyle> =
+        const { std::cell::Cell::new(RevisionStyle::Conventional) };
+}
+
 /// Convert a `.docx` package into a PDF (`%PDF` header, one or more pages).
 /// How `docx_to_pdf` writes the PDF's stream objects.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -73,6 +233,9 @@ pub struct PdfOptions {
     /// a second and takes a text-heavy document to roughly a seventh of its
     /// size (a 217-page redline: 48.8 MB → 6.7 MB).
     pub compress: bool,
+    /// How tracked changes are painted (default: the conventional
+    /// red/blue/green redline marks).
+    pub revisions: RevisionStyle,
 }
 
 /// Rendered PDF plus the distinct font resolutions for this document.
@@ -105,6 +268,13 @@ pub fn docx_to_pdf_report(docx: &[u8], options: PdfOptions) -> Result<ConvertedP
 }
 
 fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, ConvertError> {
+    let previous = REVISIONS.with(|r| r.replace(options.revisions));
+    let result = docx_to_pdf_body(docx, options);
+    REVISIONS.with(|r| r.set(previous));
+    result
+}
+
+fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, ConvertError> {
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
     let pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;
@@ -237,6 +407,8 @@ struct RunStyle {
     underline_double: bool,
     underline_wave: bool,
     strike: bool,
+    /// `w:dstrike` (and double-struck revision marks): two lines.
+    strike_double: bool,
     color: [f32; 3],
     highlight: Option<[f32; 3]>,
     /// Extra points after each glyph (`w:spacing` on `w:rPr`, twips).
@@ -775,6 +947,7 @@ impl Defaults {
                 italic: false,
                 underline: false,
                 underline_double: false,
+                strike_double: false,
                 underline_wave: false,
                 strike: false,
                 color: [0.0, 0.0, 0.0],
@@ -2983,8 +3156,10 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
         style.underline_double = val.is_some_and(|v| v == "double" || v == "thick");
         style.underline_wave = val.is_some_and(|v| v == "wave" || v == "wavy");
     }
-    style.strike = first_named(dom, rpr, "strike").is_some_and(|n| !val_is_false(dom, Some(n)))
-        || first_named(dom, rpr, "dstrike").is_some_and(|n| !val_is_false(dom, Some(n)));
+    let dstrike = first_named(dom, rpr, "dstrike").is_some_and(|n| !val_is_false(dom, Some(n)));
+    style.strike =
+        first_named(dom, rpr, "strike").is_some_and(|n| !val_is_false(dom, Some(n))) || dstrike;
+    style.strike_double = dstrike;
     if let Some(val) = first_named(dom, rpr, "vertAlign").and_then(|n| attr_any(dom, n, "val")) {
         style.vert = match val {
             "superscript" => VertAlign::Super,
@@ -9001,14 +9176,58 @@ enum RevMark {
     None,
     Ins,
     Del,
+    MoveTo,
+    MoveFrom,
 }
 
 /// Header/footer revisions take the first author's ink (`AuthorColors`).
 const HF_REV_COLOR: [f32; 3] = [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0];
 
+/// The revision a `w:del` / `w:ins` / `w:moveFrom` / `w:moveTo` wrapper opens.
+fn rev_mark_of(dom: &Dom, node: NodeId) -> Option<RevMark> {
+    if dom.name_is(node, &W::del()) {
+        Some(RevMark::Del)
+    } else if dom.name_is(node, &W::move_from()) {
+        Some(RevMark::MoveFrom)
+    } else if dom.name_is(node, &W::ins()) {
+        Some(RevMark::Ins)
+    } else if dom.name_is(node, &W::move_to()) {
+        Some(RevMark::MoveTo)
+    } else {
+        None
+    }
+}
+
 fn apply_rev(style: &mut RunStyle, mark: RevMark, color: [f32; 3]) {
+    let palette = match REVISIONS.with(std::cell::Cell::get) {
+        RevisionStyle::Word => None,
+        RevisionStyle::Conventional => Some(RevisionPalette::CONVENTIONAL),
+        RevisionStyle::Custom(palette) => Some(palette),
+    };
+    if let Some(palette) = palette {
+        let chosen = match mark {
+            RevMark::None => return,
+            RevMark::Del => palette.deleted,
+            RevMark::Ins => palette.inserted,
+            RevMark::MoveFrom => palette.moved_from,
+            RevMark::MoveTo => palette.moved_to,
+        };
+        style.color = chosen.color.map(|c| f32::from(c) / 255.0);
+        style.strike = chosen.strike != MarkLines::None;
+        style.strike_double = chosen.strike == MarkLines::Double;
+        style.underline = chosen.underline != MarkLines::None;
+        style.underline_double = chosen.underline == MarkLines::Double;
+        style.underline_wave = false;
+        return;
+    }
+    // Word paints a move like a deletion / insertion.
+    let mark = match mark {
+        RevMark::MoveFrom => RevMark::Del,
+        RevMark::MoveTo => RevMark::Ins,
+        other => other,
+    };
     match mark {
-        RevMark::None => {}
+        RevMark::None | RevMark::MoveFrom | RevMark::MoveTo => {}
         RevMark::Del => {
             style.strike = true;
             // Word Quartz deletion ink is #D13438 (addition_removal p3
@@ -9165,23 +9384,13 @@ fn collect_runs_rec(
     if skip_non_text(ctx.dom, node) {
         return;
     }
-    if ctx.dom.name_is(node, &W::del()) || ctx.dom.name_is(node, &W::move_from()) {
+    if let Some(kind) = rev_mark_of(ctx.dom, node) {
         let who = attr_any(ctx.dom, node, "author")
             .unwrap_or(author)
             .to_string();
         for idx in 0..ctx.dom.child_count(node) {
             let child = ctx.dom.child_at(node, idx);
-            collect_runs_rec(ctx, child, RevMark::Del, &who, runs);
-        }
-        return;
-    }
-    if ctx.dom.name_is(node, &W::ins()) || ctx.dom.name_is(node, &W::move_to()) {
-        let who = attr_any(ctx.dom, node, "author")
-            .unwrap_or(author)
-            .to_string();
-        for idx in 0..ctx.dom.child_count(node) {
-            let child = ctx.dom.child_at(node, idx);
-            collect_runs_rec(ctx, child, RevMark::Ins, &who, runs);
+            collect_runs_rec(ctx, child, kind, &who, runs);
         }
         return;
     }
@@ -9506,7 +9715,7 @@ fn rev_text(text: &str, mark: RevMark, preserve_ws: bool) -> String {
         // NR mean −0.341 / median −1.53; sample/eigenpal clones −6.8.
         RevMark::None if preserve_ws => text.to_string(),
         RevMark::None => collapse_ws(text),
-        RevMark::Ins | RevMark::Del => text.to_string(),
+        RevMark::Ins | RevMark::Del | RevMark::MoveTo | RevMark::MoveFrom => text.to_string(),
     }
 }
 
@@ -13435,13 +13644,7 @@ fn collect_hf_rev(
         }
         return;
     }
-    let mark = if dom.name_is(node, &W::del()) || dom.name_is(node, &W::move_from()) {
-        RevMark::Del
-    } else if dom.name_is(node, &W::ins()) || dom.name_is(node, &W::move_to()) {
-        RevMark::Ins
-    } else {
-        mark
-    };
+    let mark = rev_mark_of(dom, node).unwrap_or(mark);
     for idx in 0..dom.child_count(node) {
         collect_hf_rev(dom, dom.child_at(node, idx), base, sheet, scan, runs, mark);
     }
@@ -16274,7 +16477,12 @@ impl<'a> Layout<'a> {
             }
         }
         if style.strike {
-            self.hairline_h(x, y + style.size * 0.28, x + w, 0.6, style.color);
+            if style.strike_double {
+                self.hairline_h(x, y + style.size * 0.22, x + w, 0.6, style.color);
+                self.hairline_h(x, y + style.size * 0.34, x + w, 0.6, style.color);
+            } else {
+                self.hairline_h(x, y + style.size * 0.28, x + w, 0.6, style.color);
+            }
         }
     }
 
@@ -19903,6 +20111,7 @@ fn default_run_style() -> RunStyle {
         italic: false,
         underline: false,
         underline_double: false,
+        strike_double: false,
         underline_wave: false,
         strike: false,
         color: [0.0, 0.0, 0.0],
@@ -24198,6 +24407,8 @@ mod field_tests {
 
     #[test]
     fn del_run_is_red_strikethrough() {
+        // A Word lock: Word's own revision ink.
+        REVISIONS.with(|r| r.set(RevisionStyle::Word));
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body><w:p>
@@ -24225,6 +24436,8 @@ mod field_tests {
 
     #[test]
     fn ins_run_is_green_underline() {
+        // A Word lock: Word's own revision ink.
+        REVISIONS.with(|r| r.set(RevisionStyle::Word));
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body><w:p>

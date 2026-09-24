@@ -87,11 +87,25 @@ fn get_revisions_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
 /// Render a DOCX package (bytes) → PDF bytes (Word-style layout).
 ///
 /// `compress=True` deflates the PDF's streams (`/FlateDecode`), which is much
-/// smaller but no longer plain text.
+/// smaller but no longer plain text. `revisions` paints tracked changes:
+/// `"conventional"` (red struck deletions, blue double-underlined insertions,
+/// green moves), `"word"` (Microsoft Word's markup) or `"custom"` with
+/// `revision_palette="deleted=#AA0000:strike,..."`.
 #[pyfunction]
-#[pyo3(signature = (docx, compress = false))]
-fn docx_to_pdf(py: Python<'_>, docx: &[u8], compress: bool) -> PyResult<Py<PyBytes>> {
-    let options = jubarte::convert::PdfOptions { compress };
+#[pyo3(signature = (docx, compress = false, revisions = "conventional", revision_palette = None))]
+fn docx_to_pdf(
+    py: Python<'_>,
+    docx: &[u8],
+    compress: bool,
+    revisions: &str,
+    revision_palette: Option<&str>,
+) -> PyResult<Py<PyBytes>> {
+    let revisions = jubarte::convert::RevisionStyle::from_choice(revisions, revision_palette)
+        .map_err(JubarteError::new_err)?;
+    let options = jubarte::convert::PdfOptions {
+        compress,
+        revisions,
+    };
     let out = py
         .detach(|| jubarte::convert::docx_to_pdf_with(docx, options))
         .map_err(err)?;

@@ -138,7 +138,17 @@ jubarte revisions redline.docx --json     # list tracked revisions
 jubarte accept redline.docx -o final.docx # accept every revision
 jubarte reject redline.docx -o clean.docx # reject every revision
 jubarte convert contract.docx             # independent DOCX → PDF
+jubarte convert redline.docx --revisions word   # tracked changes as Word paints them
 ```
+
+`jubarte convert` paints tracked changes in the conventional redline marks by
+default: deletions red and struck through, insertions blue with a double
+underline, moved text green (struck through where it left, double-underlined
+where it landed). `--revisions word` reproduces Microsoft Word's own markup
+(what the fidelity gates below measure), and `--revisions custom
+--revision-palette "deleted=#AA0000:strike,inserted=#0055FF:double-underline"`
+sets your own (kinds: deleted, inserted, moved-from, moved-to; lines: strike,
+double-strike, underline, double-underline, plain).
 
 Run `jubarte --help` for author/date stamping, `--detail-threshold`, and
 `--powertools-faithful` (classic PowerTools-compatible mode).

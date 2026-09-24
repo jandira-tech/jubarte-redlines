@@ -7,7 +7,18 @@
 use std::io::{Cursor, Read, Write};
 use std::process::Command;
 
-use jubarte::convert::{PdfOptions, docx_to_pdf, docx_to_pdf_with, pdf_page_count};
+use jubarte::convert::{PdfOptions, RevisionStyle, docx_to_pdf_with, pdf_page_count};
+
+/// These tests lock Word's own output, tracked-change marks included.
+fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, jubarte::convert::ConvertError> {
+    docx_to_pdf_with(
+        docx,
+        PdfOptions {
+            revisions: RevisionStyle::Word,
+            ..PdfOptions::default()
+        },
+    )
+}
 use zip::ZipArchive;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
@@ -1930,6 +1941,35 @@ fn a_paragraph_float_near_the_page_foot_runs_off_the_page() {
     assert!(
         (top - (anchor_y + 15.0)).abs() < 12.0,
         "the picture hangs from its paragraph; top {top}, anchor baseline {anchor_y}"
+    );
+}
+
+#[test]
+fn conventional_revisions_are_red_blue_and_green() {
+    // Arthur's convention (the default): deletions red struck through,
+    // insertions blue double-underlined, moved text green (struck where it
+    // left, double-underlined where it landed). Word mode keeps Word's ink.
+    let body = r#"<w:p><w:del w:id="1" w:author="A"><w:r><w:delText>Gone</w:delText></w:r></w:del><w:ins w:id="2" w:author="A"><w:r><w:t>Added</w:t></w:r></w:ins><w:moveFrom w:id="3" w:author="A"><w:r><w:t>Left</w:t></w:r></w:moveFrom><w:moveTo w:id="4" w:author="A"><w:r><w:t>Landed</w:t></w:r></w:moveTo></w:p><w:sectPr/>"#;
+    let docx = minimal_docx_body(body);
+    let conventional = jubarte::convert::docx_to_pdf(&docx).expect("conventional");
+    let hay = String::from_utf8_lossy(&conventional);
+    for (ink, what) in [
+        ("1.000 0.000 0.000 rg", "red deletion"),
+        ("0.000 0.000 1.000 rg", "blue insertion"),
+        ("0.000 0.502 0.000 rg", "green move"),
+    ] {
+        assert!(hay.contains(ink), "{what} ink ({ink})");
+    }
+    let word = String::from_utf8_lossy(&docx_to_pdf(&docx).expect("word")).into_owned();
+    assert!(
+        !word.contains("0.000 0.000 1.000 rg"),
+        "Word mode keeps Word's ink"
+    );
+    let conv_lines = hay.matches(" re f").count();
+    let word_lines = word.matches(" re f").count();
+    assert!(
+        conv_lines > word_lines,
+        "double underlines add hairlines; conventional {conv_lines} word {word_lines}"
     );
 }
 
@@ -30832,7 +30872,14 @@ fn compress_option_deflates_streams_and_default_leaves_them_plain() {
         "the default content stream must stay readable"
     );
 
-    let packed = docx_to_pdf_with(&docx, PdfOptions { compress: true }).expect("convert");
+    let packed = docx_to_pdf_with(
+        &docx,
+        PdfOptions {
+            compress: true,
+            revisions: RevisionStyle::Word,
+        },
+    )
+    .expect("convert");
     let packed_text = String::from_utf8_lossy(&packed);
     assert!(
         packed_text.contains("/Filter /FlateDecode"),
@@ -30862,7 +30909,14 @@ fn compress_option_deflates_streams_and_default_leaves_them_plain() {
 #[test]
 fn deflated_streams_inflate_back_to_the_plain_bytes() {
     let docx = minimal_docx(&["Alpha beta gamma"], None);
-    let packed = docx_to_pdf_with(&docx, PdfOptions { compress: true }).expect("convert");
+    let packed = docx_to_pdf_with(
+        &docx,
+        PdfOptions {
+            compress: true,
+            revisions: RevisionStyle::Word,
+        },
+    )
+    .expect("convert");
 
     const OPEN: &[u8] = b"stream\n";
     const CLOSE: &[u8] = b"endstream";
