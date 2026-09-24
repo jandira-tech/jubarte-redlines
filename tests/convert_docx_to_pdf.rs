@@ -1715,6 +1715,69 @@ fn a_row_holding_a_nested_table_still_splits_at_the_page_end() {
 }
 
 #[test]
+fn a_keep_next_row_stays_with_the_next_row() {
+    // fixtures_500 000aba38: Heading 2 (keepNext) label rows. The first
+    // fits under page 1's rows by itself, but not with the row after it;
+    // Word moves it to page 2 with that row.
+    let mut rows = String::new();
+    for i in 0..34 {
+        rows.push_str(&format!(
+            "<w:tr><w:tc><w:p><w:r><w:t>Filler{i:02}</w:t></w:r></w:p></w:tc></w:tr>"
+        ));
+    }
+    let tall = |tag: &str| {
+        let mut cell =
+            format!("<w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:t>{tag}</w:t></w:r></w:p>");
+        for i in 0..8 {
+            cell.push_str(&format!("<w:p><w:r><w:t>{tag}Line{i}</w:t></w:r></w:p>"));
+        }
+        format!("<w:tr><w:tc>{cell}</w:tc></w:tr>")
+    };
+    rows.push_str(&tall("KeptOne"));
+    rows.push_str(&tall("KeptTwo"));
+    let body =
+        format!("<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl><w:sectPr/>");
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("keep next row");
+    let pages = pdf_content_streams(&pdf);
+    let first = stream_glyph_text(&pages[0]);
+    let second = stream_glyph_text(&pages[1]);
+    assert!(
+        !first.contains("KeptOne") && second.contains("KeptOne") && second.contains("KeptTwo"),
+        "the keepNext row moves to page 2 with its next row"
+    );
+}
+
+#[test]
+fn a_row_with_a_keep_lines_paragraph_moves_whole() {
+    // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
+    // (keepNext + keepLines) does not fit under page 1's rows. Word moves
+    // the whole row to page 2 (page 1 ends at 489pt); we split it.
+    let mut rows = String::new();
+    for i in 0..30 {
+        rows.push_str(&format!(
+            "<w:tr><w:tc><w:p><w:r><w:t>Filler{i:02}</w:t></w:r></w:p></w:tc></w:tr>"
+        ));
+    }
+    let mut cell = String::from(
+        "<w:p><w:pPr><w:keepNext/><w:keepLines/></w:pPr><w:r><w:t>KeepHead</w:t></w:r></w:p>",
+    );
+    for i in 0..30 {
+        cell.push_str(&format!("<w:p><w:r><w:t>Body{i:02}</w:t></w:r></w:p>"));
+    }
+    rows.push_str(&format!("<w:tr><w:tc>{cell}</w:tc></w:tr>"));
+    let body =
+        format!("<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl><w:sectPr/>");
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("keep lines row");
+    let pages = pdf_content_streams(&pdf);
+    let first = stream_glyph_text(&pages[0]);
+    assert!(
+        first.contains("Filler29") && !first.contains("KeepHead"),
+        "the keep-lines row starts page 2 whole; page1 ends {:?}",
+        &first[first.len().saturating_sub(40)..]
+    );
+}
+
+#[test]
 fn a_split_row_breaks_its_paragraph_between_lines() {
     // fixtures_500 00297360: Word ends the letter row's page-1 part with
     // the first line of item 6 and carries its other lines over; we moved

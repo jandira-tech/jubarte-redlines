@@ -16740,6 +16740,22 @@ impl<'a> Layout<'a> {
             .collect();
         let mut ri = 0;
         while ri < work.len() {
+            // A keepNext row stays with the row after it when the two fit on
+            // a page (000aba38's Heading 2 label rows start page 2 together).
+            let keeps_next = self.nested_depth == 0
+                && ri + 1 < work.len()
+                && work[ri]
+                    .0
+                    .cells()
+                    .iter()
+                    .any(|c| c.paras.iter().any(|p| p.style.keep_next));
+            if keeps_next && !self.at_page_top {
+                let pair = work[ri].1 + work[ri + 1].1;
+                let page_room = self.page.height - self.body_top - self.body_floor;
+                if pair <= page_room && self.y - pair < self.body_floor {
+                    self.ensure(pair);
+                }
+            }
             let splittable = self.nested_depth == 0 && ri >= header_n && !work[ri].2;
             if splittable {
                 self.split_work_row(&mut work, ri, &col_w);
@@ -17078,6 +17094,14 @@ impl<'a> Layout<'a> {
         // (00297360's three-page letter row).
         let page_room = self.page.height - self.body_top - self.body_floor;
         if row.iter().any(|c| !c.nested.is_empty()) && rh <= page_room * 1.05 {
+            return;
+        }
+        // A keepLines paragraph keeps its row whole when a page can hold
+        // it (000aba38's Heading 2 label row moves to page 2).
+        let keeps = row
+            .iter()
+            .any(|c| c.paras.iter().any(|p| p.style.keep_lines));
+        if keeps && rh <= page_room {
             return;
         }
         let height =
