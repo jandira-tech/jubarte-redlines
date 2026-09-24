@@ -5,7 +5,7 @@
 //! PDF 1.4 writer: embedded TTF (Identity-H), stroked rules, JPEG/RGB images.
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
 use flate2::Compression;
@@ -331,8 +331,13 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         if want_cid {
             let cid_id = objs.len() + 1;
             objs.push(cid_font_obj(face, desc_id));
+            let cmap_id = objs.len() + 1;
+            objs.push(to_unicode_obj(
+                &face_unicode_map(face, *face_id, pages),
+                options.compress,
+            ));
             let type0_id = objs.len() + 1;
-            objs.push(type0_font_obj(face, cid_id));
+            objs.push(type0_font_obj(face, cid_id, cmap_id));
             // `…CID` keeps the Type0 entry distinct from this face's simple
             // entry, exactly as before.
             let base = if want_simple {
@@ -1032,13 +1037,82 @@ fn cid_font_obj(face: &super::font::Face, desc_id: usize) -> Vec<u8> {
     .into_bytes()
 }
 
-fn type0_font_obj(face: &super::font::Face, cid_id: usize) -> Vec<u8> {
+fn type0_font_obj(face: &super::font::Face, cid_id: usize, cmap_id: usize) -> Vec<u8> {
     let name = face.pdf_name();
     format!(
         "<< /Type /Font /Subtype /Type0 /BaseFont /{name} /Encoding /Identity-H \
-           /DescendantFonts [{cid_id} 0 R] >>"
+           /DescendantFonts [{cid_id} 0 R] /ToUnicode {cmap_id} 0 R >>"
     )
     .into_bytes()
+}
+
+/// The characters behind each glyph id a face paints, for `/ToUnicode`.
+/// The face's own cmap answers first (exact, order-free); a glyph it cannot
+/// reach (a shaped form) takes the character at its index when the run has
+/// one glyph per character.
+fn face_unicode_map(face: &super::font::Face, id: FaceRef, pages: &[Page]) -> BTreeMap<u16, char> {
+    let parsed = ttf_parser::Face::parse(face.bytes(), 0).ok();
+    let mut map = BTreeMap::new();
+    let mut zipped = BTreeMap::new();
+    for page in pages {
+        for op in &page.ops {
+            if let Op::Text {
+                face, glyphs, text, ..
+            }
+            | Op::Watermark {
+                face, glyphs, text, ..
+            } = op
+                && *face == id
+            {
+                for c in text.chars() {
+                    if let Some(g) = parsed.as_ref().and_then(|p| p.glyph_index(c)) {
+                        map.entry(g.0).or_insert(c);
+                    }
+                }
+                if glyphs.len() == text.chars().count() {
+                    for (&g, c) in glyphs.iter().zip(text.chars()) {
+                        zipped.entry(g).or_insert(c);
+                    }
+                }
+            }
+        }
+    }
+    for (g, c) in zipped {
+        map.entry(g).or_insert(c);
+    }
+    map.remove(&0);
+    map
+}
+
+/// A `/ToUnicode` CMap stream (PDF 32000-1 9.10.3) mapping 2-byte CIDs
+/// (= glyph ids under Identity-H) to UTF-16BE.
+fn to_unicode_obj(map: &BTreeMap<u16, char>, compress: bool) -> Vec<u8> {
+    let mut cmap = String::from(
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n\
+         /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n\
+         /CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n\
+         1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n",
+    );
+    let entries: Vec<(&u16, &char)> = map.iter().collect();
+    for chunk in entries.chunks(100) {
+        cmap.push_str(&format!("{} beginbfchar\n", chunk.len()));
+        for (g, c) in chunk {
+            let mut units = [0u16; 2];
+            let hex: String = c
+                .encode_utf16(&mut units)
+                .iter()
+                .map(|u| format!("{u:04X}"))
+                .collect();
+            cmap.push_str(&format!("<{g:04X}> <{hex}>\n"));
+        }
+        cmap.push_str("endbfchar\n");
+    }
+    cmap.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend");
+    let (bytes, filter) = deflate(cmap.as_bytes(), compress);
+    let mut out = format!("<< /Length {}{filter} >>\nstream\n", bytes.len()).into_bytes();
+    out.extend_from_slice(&bytes);
+    out.extend_from_slice(b"\nendstream");
+    out
 }
 
 fn jpeg_xobject(width: u32, height: u32, bytes: &[u8], components: u8) -> Vec<u8> {

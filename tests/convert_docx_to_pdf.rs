@@ -30411,3 +30411,20 @@ fn an_inline_picture_wider_than_the_column_keeps_its_size() {
         "full-size picture at the margin; x={x}"
     );
 }
+
+#[test]
+fn identity_h_text_carries_a_to_unicode_map() {
+    // Copying Cyrillic out of our PDFs gave garbage (fixtures_500 0019592c):
+    // Identity-H fonts had no /ToUnicode, so readers could not map glyph
+    // ids back to characters. Word's PDFs carry one per font.
+    let body = "<w:p><w:r><w:t>Почта</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Cyrillic");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/ToUnicode"),
+        "a /ToUnicode on the Type0 font"
+    );
+    for code in ["<041F>", "<043E>", "<0447>", "<0442>", "<0430>"] {
+        assert!(text.contains(code), "the map names U+{code}");
+    }
+}
