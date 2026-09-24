@@ -8008,20 +8008,30 @@ fn official_verdana_demo_embeds_verdana_not_arial() {
 }
 
 #[test]
-fn open_sans_maps_to_arial_metric_not_calibri() {
-    // open_sans_font_demo has no system Open Sans. It is Arial-metric, not
-    // Calibri; unknown → Carlito left the cluster at ~65.
+fn open_sans_is_drawn_when_installed_else_arial_metric() {
+    // open_sans_font_demo: without Open Sans the stand-in is Arial-metric,
+    // not Calibri (unknown → Carlito left the cluster at ~65). Word draws
+    // its cloud-cache Open Sans when present (fixtures_500 0003dc87).
+    let installed = std::env::var_os("HOME").is_some_and(|home| {
+        std::path::Path::new(&home)
+            .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/Open Sans")
+            .is_dir()
+    });
     let body = "<w:p><w:r>\
            <w:rPr><w:rFonts w:ascii=\"Open Sans\" w:hAnsi=\"Open Sans\"/>\
              <w:sz w:val=\"22\"/></w:rPr>\
            <w:t>OpenSansBody</w:t></w:r></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Open Sans");
     let text = String::from_utf8_lossy(&pdf);
-    assert!(
-        text.contains("/LiberationSans") || text.contains("/Arial"),
-        "Open Sans must embed Arial-metric Sans; tail {}",
-        &text[text.len().saturating_sub(280)..]
-    );
+    if installed {
+        assert!(text.contains("/OpenSans"), "Word's Open Sans face");
+    } else {
+        assert!(
+            text.contains("/LiberationSans") || text.contains("/Arial"),
+            "Open Sans must embed Arial-metric Sans; tail {}",
+            &text[text.len().saturating_sub(280)..]
+        );
+    }
 }
 
 fn docx_with_styles_and_theme(body: &str, styles: &str, theme: &str) -> Vec<u8> {
@@ -28507,26 +28517,25 @@ fn omml_cambria_math_stays_calibri_after_mini_360() {
 }
 
 #[test]
-fn helvetica_neue_stays_arial_after_mini_431() {
-    // image_out / file_48: Word Quartz embeds HelveticaNeue, but overlaying
-    // system HelveticaNeue.ttc (mini 431) dropped those stems −8.88 /
-    // NR mean 59.451→59.155. Quartz ITT prefers Arial substitute.
+fn helvetica_neue_is_drawn_when_installed_like_word() {
+    // Word embeds HelveticaNeue (image_out / file_48; fixtures_500 0017a25e,
+    // 002af604). The old mini 431 lock kept Arial on a score dip; it only
+    // held for a document without a font table, which never loaded faces.
+    let installed = std::path::Path::new("/System/Library/Fonts/HelveticaNeue.ttc").is_file();
     let body = "<w:p><w:r>\
            <w:rPr><w:rFonts w:ascii=\"Helvetica Neue\" w:hAnsi=\"Helvetica Neue\"/>\
              <w:sz w:val=\"38\"/></w:rPr>\
            <w:t>Quantum</w:t></w:r></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Helvetica Neue");
     let text = String::from_utf8_lossy(&pdf);
-    assert!(
-        text.contains("/ArialMT") || text.contains("/LiberationSans"),
-        "mini 431 ITT-neg HelveticaNeue; keep Arial; tail {}",
-        &text[text.len().saturating_sub(320)..]
-    );
-    assert!(
-        !text.contains("/HelveticaNeue"),
-        "must not overlay HelveticaNeue after mini 431; tail {}",
-        &text[text.len().saturating_sub(280)..]
-    );
+    if installed {
+        assert!(text.contains("/HelveticaNeue"), "Word's HelveticaNeue face");
+    } else {
+        assert!(
+            text.contains("/ArialMT") || text.contains("/LiberationSans"),
+            "Arial stands in without HelveticaNeue"
+        );
+    }
 }
 
 #[test]
@@ -28553,28 +28562,31 @@ fn book_antiqua_run_embeds_book_antiqua_not_carlito() {
 }
 
 #[test]
-fn wide_latin_stays_calibri_after_mini_505() {
-    // Strict01 live `w:ascii="Wide Latin"` on "Video provides…". Overlaying
-    // DFonts WideLatin.ttf (Word embeds LatinWide) was Word-shaped but
-    // mini 505 ITT-neg: NR 59.4662→59.4342, 8 Strict01-family drops 0
-    // gains (Strict01 −0.17 / file_100 clones −0.31). Quartz ITT prefers
-    // the Calibri fallback. Do not retry.
+fn wide_latin_is_drawn_when_installed_like_word() {
+    // Strict01 live `w:ascii="Wide Latin"` on "Video provides…": Word embeds
+    // LatinWide from DFonts WideLatin.ttf. The old mini 505 lock kept the
+    // Calibri fallback on a score dip, only for a table-less document.
+    let installed = std::path::Path::new(
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts/WideLatin.ttf",
+    )
+    .is_file();
     let body = "<w:p><w:r>\
            <w:rPr><w:rFonts w:ascii=\"Wide Latin\" w:hAnsi=\"Wide Latin\"/>\
              <w:sz w:val=\"24\"/></w:rPr>\
            <w:t>Video</w:t></w:r></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Wide Latin lock");
     let text = String::from_utf8_lossy(&pdf);
-    assert!(
-        text.contains("/Calibri") || text.contains("/Carlito"),
-        "mini 505 ITT-neg WideLatin; keep Calibri; tail {}",
-        &text[text.len().saturating_sub(320)..]
-    );
-    assert!(
-        !text.contains("/LatinWide") && !text.contains("/WideLatin"),
-        "must not overlay WideLatin after mini 505; tail {}",
-        &text[text.len().saturating_sub(280)..]
-    );
+    if installed {
+        assert!(
+            text.contains("/LatinWide") || text.contains("/WideLatin"),
+            "Word's Wide Latin face"
+        );
+    } else {
+        assert!(
+            text.contains("/Calibri") || text.contains("/Carlito"),
+            "Calibri stands in without Wide Latin"
+        );
+    }
 }
 
 #[test]
@@ -30397,5 +30409,157 @@ fn an_inline_picture_wider_than_the_column_keeps_its_size() {
     assert!(
         (x - 72.0).abs() < 0.5,
         "full-size picture at the margin; x={x}"
+    );
+}
+
+#[test]
+fn identity_h_text_carries_a_to_unicode_map() {
+    // Copying Cyrillic out of our PDFs gave garbage (fixtures_500 0019592c):
+    // Identity-H fonts had no /ToUnicode, so readers could not map glyph
+    // ids back to characters. Word's PDFs carry one per font.
+    let body = "<w:p><w:r><w:t>Почта</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Cyrillic");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/ToUnicode"),
+        "a /ToUnicode on the Type0 font"
+    );
+    for code in ["<041F>", "<043E>", "<0447>", "<0442>", "<0430>"] {
+        assert!(text.contains(code), "the map names U+{code}");
+    }
+}
+
+#[test]
+fn a_justified_underline_runs_through_the_stretched_spaces() {
+    // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
+    // underlined word by word; the justify pad after each space was bare.
+    // Word draws one continuous underline across the line.
+    let words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi \
+                 omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta";
+    let body = format!(
+        "<w:p><w:pPr><w:jc w:val=\"both\"/></w:pPr><w:r><w:rPr><w:color w:val=\"FF0000\"/>\
+         <w:u w:val=\"single\"/></w:rPr><w:t xml:space=\"preserve\">{words}</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert justified underline");
+    let hay = String::from_utf8_lossy(&pdf);
+    let mut first_line: Vec<(f32, f32)> = Vec::new();
+    let mut top_y = f32::MIN;
+    for chunk in hay.split("1.000 0.000 0.000 rg ").skip(1) {
+        let Some(end) = chunk.find(" re f") else {
+            continue;
+        };
+        let n: Vec<f32> = chunk[..end]
+            .split_whitespace()
+            .filter_map(|t| t.parse().ok())
+            .collect();
+        if n.len() != 4 || n[3] > 1.0 {
+            continue;
+        }
+        if n[1] > top_y + 0.5 {
+            top_y = n[1];
+            first_line.clear();
+        }
+        if (n[1] - top_y).abs() < 0.5 {
+            first_line.push((n[0], n[0] + n[2]));
+        }
+    }
+    assert!(first_line.len() > 3, "underline pieces on the first line");
+    first_line.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for pair in first_line.windows(2) {
+        assert!(
+            pair[1].0 - pair[0].1 < 0.05,
+            "gap {:?} -> {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+}
+
+/// A page-anchored 200×100pt group at (100, 100) from the page's top-left
+/// whose right half is `right` (a `wps:wsp` or `pic:pic`) and left half an
+/// empty rectangle.
+fn half_group_docx(right: &str) -> Vec<u8> {
+    let body = format!(
+        "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"2540000\" cy=\"1270000\"/><wp:wrapNone/><wp:docPr id=\"1\" name=\"Group\"/>\
+          <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">\
+            <wpg:wgp xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\" \
+              xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+              <wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"2540000\" cy=\"1270000\"/>\
+                <a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"200\" cy=\"100\"/></a:xfrm></wpg:grpSpPr>\
+              <wps:wsp><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"100\" cy=\"100\"/></a:xfrm>\
+                <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp>\
+              {right}\
+            </wpg:wgp></a:graphicData></a:graphic>\
+        </wp:anchor></w:drawing></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>"
+    );
+    drawing_docx(&body)
+}
+
+#[test]
+fn a_grouped_text_box_paints_its_text_in_its_own_place() {
+    // Redline header 00a4b0b9 (fixtures_500 0.62 -> 0.86): the banner text
+    // sits in a text box inside a wpg:wgp. We painted the group's first
+    // text box as one box over the whole group, from the group's left.
+    let right = "<wps:wsp><wps:spPr><a:xfrm><a:off x=\"100\" y=\"0\"/><a:ext cx=\"100\" cy=\"100\"/></a:xfrm>\
+          <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr>\
+          <wps:txbx><w:txbxContent><w:p><w:r><w:t>Grouped</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+          <wps:bodyPr/></wps:wsp>";
+    let pdf = docx_to_pdf(&half_group_docx(right)).expect("grouped text box");
+    let hay = String::from_utf8_lossy(&pdf);
+    let at = pdf_cm_tj_xy(&hay, "G");
+    assert_eq!(at.len(), 1, "the grouped text is painted once");
+    assert!(
+        at[0].0 >= 200.0 && at[0].0 < 215.0,
+        "inside the right half, got {at:?}"
+    );
+}
+
+#[test]
+fn a_grouped_picture_fills_only_its_own_part_of_the_group() {
+    // Redline header 00a4b0b9: the Achensee logo is a pic:pic in the right
+    // part of a wpg:wgp; we stretched it over the whole group.
+    let right = "<pic:pic><pic:nvPicPr><pic:cNvPr id=\"2\" name=\"Logo\"/><pic:cNvPicPr/></pic:nvPicPr>\
+          <pic:blipFill><a:blip r:embed=\"rIdImg\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+          <pic:spPr><a:xfrm><a:off x=\"100\" y=\"0\"/><a:ext cx=\"100\" cy=\"100\"/></a:xfrm>\
+          <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>";
+    let pdf = docx_to_pdf(&half_group_docx(right)).expect("grouped picture");
+    let boxes = pdf_image_boxes(&pdf);
+    assert_eq!(boxes.len(), 1, "one picture, got {boxes:?}");
+    let (x, y, w, h) = boxes[0];
+    assert!(
+        (x - 200.0).abs() < 0.5 && (y - 592.0).abs() < 0.5,
+        "at the right half, got {boxes:?}"
+    );
+    assert!(
+        (w - 100.0).abs() < 0.5 && (h - 100.0).abs() < 0.5,
+        "100pt square, got {boxes:?}"
+    );
+}
+
+#[test]
+fn a_tracked_section_change_is_not_a_section_break() {
+    // Redline set: 730 of 965 Word comparisons came out one page long.
+    // The final sectPr's sectPrChange holds the old sectPr; counting it as
+    // the last section made the real final sectPr a break and opened a
+    // blank page.
+    let body = "<w:p><w:r><w:t>Only page</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+          <w:pgMar w:top=\"1417\" w:right=\"1417\" w:bottom=\"1134\" w:left=\"1417\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>\
+          <w:sectPrChange w:id=\"1\" w:author=\"A\" w:date=\"2026-09-22T12:20:00Z\"><w:sectPr>\
+            <w:pgMar w:top=\"993\" w:right=\"991\" w:bottom=\"993\" w:left=\"993\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>\
+          </w:sectPr></w:sectPrChange></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert sectPrChange");
+    let text = String::from_utf8_lossy(&pdf);
+    let pages = text.matches("/Type /Page ").count()
+        + text.matches("/Type /Page/").count()
+        + text.matches("/Type /Page>").count();
+    assert_eq!(pages, 1, "one page");
+    assert!(
+        text.contains("/MediaBox [0 0 595.20 841.92]"),
+        "the live A4 size"
     );
 }

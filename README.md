@@ -61,6 +61,19 @@ cargo install jubarte-redlines
 jubarte --version
 ```
 
+**Fonts for `jubarte convert`** — open fonts Word draws that macOS/Linux
+lack (Roboto Condensed; Selawik standing in for Segoe UI) are installed
+beside the binary instead of inside it:
+
+```sh
+scripts/install.sh               # cargo install + fonts
+scripts/install.sh --fonts-only  # fonts only (Windows: scripts\install.ps1)
+```
+
+They go to `$JUBARTE_FONT_DIR`, else `~/Library/Application Support/jubarte/fonts`
+(macOS), `$XDG_DATA_HOME/jubarte/fonts` or `~/.local/share/jubarte/fonts` (Linux),
+`%APPDATA%\jubarte\fonts` (Windows).
+
 **Library** (skip clap if you only need the API)
 
 ```sh
