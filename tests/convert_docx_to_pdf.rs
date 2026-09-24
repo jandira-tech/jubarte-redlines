@@ -736,6 +736,35 @@ fn a_square_float_narrows_the_paragraphs_after_its_anchor() {
 }
 
 #[test]
+fn at_least_lines_leave_the_grid_from_compat_15() {
+    // fixtures_500 0085209e / 0062780d (compatibilityMode 15): atLeast
+    // lines on an 18pt line grid step at their own height in Word (15.5,
+    // 20.7), not grid multiples. 002c5410 (mode 14) snaps them.
+    let step = |mode: u32| {
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let body = "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"0\" w:lineRule=\"atLeast\"/></w:pPr>\
+               <w:r><w:t>LeastOne</w:t></w:r></w:p>\
+             <w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"0\" w:lineRule=\"atLeast\"/></w:pPr>\
+               <w:r><w:t>LeastTwo</w:t></w:r></w:p>\
+             <w:sectPr><w:docGrid w:type=\"lines\" w:linePitch=\"480\"/></w:sectPr>";
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(body, &settings)).expect("compat grid");
+        pdf_glyph_text_xy(&pdf, "LeastOne").expect("one").1
+            - pdf_glyph_text_xy(&pdf, "LeastTwo").expect("two").1
+    };
+    assert!(
+        (step(14) - 24.0).abs() < 0.2,
+        "mode 14 snaps to the 24pt grid"
+    );
+    assert!(
+        step(15) < 20.0,
+        "mode 15 keeps the natural line; {}",
+        step(15)
+    );
+}
+
+#[test]
 fn a_multiple_on_a_line_grid_multiplies_the_grid_line() {
     // fixtures_500 00b37b14: docGrid lines 312 (15.6pt), line=360 auto.
     // Word steps 1.5 × 15.6 = 23.4pt: the multiple applies to the grid

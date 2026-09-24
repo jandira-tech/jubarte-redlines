@@ -158,6 +158,8 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
             let page = load_page_setup(&dom, body, &sheet.defaults.page);
             let hf = first_section_hf(&pkg, &main, &dom, body, &sheet);
             let mut blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, &fonts);
+            let compat_mode = settings_compat_mode(&pkg);
+            at_least_off_grid(&mut blocks, compat_mode);
             let display = number_footnote_refs(&mut blocks);
             resolve_cell_fields(&mut blocks);
             let footnotes = FootnoteCatalog {
@@ -170,7 +172,7 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
                 &hf,
                 &blocks,
                 settings_suppress_sp_bf_after_pg_brk(&pkg),
-                settings_compat_mode(&pkg),
+                compat_mode,
                 footnotes,
             );
             Ok(pdf::emit(&fonts, &pages, options))
@@ -4538,6 +4540,22 @@ fn settings_suppress_sp_bf_after_pg_brk(pkg: &PartFs) -> bool {
 
 /// `w:compatSetting name="compatibilityMode"`. Absent → 12 (Word 2007),
 /// which uses the pre-2013 table-edge rule (plan xml 3.3).
+/// From compatibility mode 15 an atLeast line keeps its own height on a
+/// line grid: 0085209e / 0062780d's lines step 15.5 / 20.7pt on an 18pt
+/// grid, while 002c5410 (mode 14) snaps them.
+fn at_least_off_grid(blocks: &mut [Block], compat_mode: u8) {
+    if compat_mode < 15 {
+        return;
+    }
+    for block in blocks {
+        if let Block::Paragraph { style, .. } = block
+            && style.line_at_least.is_some()
+        {
+            style.snap_to_grid = false;
+        }
+    }
+}
+
 fn settings_compat_mode(pkg: &PartFs) -> u8 {
     pkg.part_string(&settings_part(pkg))
         .map_or(12, |xml| settings_compat_mode_xml(&xml))
