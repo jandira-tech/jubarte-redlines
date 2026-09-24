@@ -31582,6 +31582,38 @@ fn a_carriage_return_ends_the_line() {
 }
 
 #[test]
+fn a_tab_that_stops_at_the_hanging_indent_is_no_toc_leader() {
+    // fixtures_500 008033c9: "1.<tab>long text" under ind left=284
+    // hanging=284 with a right tab stop at 4179. The tab lands on the
+    // hanging indent, so Word wraps the text like any paragraph (line two
+    // at the indent). We took it for a TOC entry: the text after the last
+    // tab rode the right stop unwrapped and ran 60pt past the page.
+    let body = "<w:p><w:pPr><w:tabs><w:tab w:val=\"right\" w:pos=\"4179\"/></w:tabs>\
+        <w:spacing w:line=\"240\" w:lineRule=\"exact\"/><w:ind w:left=\"284\" w:hanging=\"284\"/></w:pPr>\
+        <w:r><w:rPr><w:sz w:val=\"18\"/></w:rPr><w:t>1.</w:t></w:r><w:r><w:rPr><w:sz w:val=\"18\"/></w:rPr><w:tab/></w:r>\
+        <w:r><w:rPr><w:sz w:val=\"18\"/></w:rPr><w:t>Crisiskaart, zodat bij crisis de wensen van personen duidelijk \
+        zijn (bouwsteen 1. inbreng van personen met verward gedrag en omgeving Qend</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+        <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert hanging tab item");
+    let (x, _) = pdf_glyph_text_xy(&pdf, "Qend").expect("the item's last word paints");
+    assert!(
+        (x - 86.2).abs() < 1.0 || x < 530.0,
+        "the item wraps inside the margins; Qend at x={x}"
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    let xs: Vec<f32> = [pdf_cm_tj_xy(&hay, "Q"), pdf_tj_xy(&hay, "Q")]
+        .concat()
+        .iter()
+        .map(|p| p.0)
+        .collect();
+    assert!(
+        xs.iter().all(|x| *x < 540.0),
+        "nothing paints past the right margin; Q at {xs:?}"
+    );
+}
+
+#[test]
 fn a_justified_underline_runs_through_the_stretched_spaces() {
     // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
     // underlined word by word; the justify pad after each space was bare.

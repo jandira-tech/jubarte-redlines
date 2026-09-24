@@ -15274,6 +15274,13 @@ impl<'a> Layout<'a> {
         let Some((prefix, suffix)) = peel_trailing_tab(body) else {
             return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
         };
+        // A tab that only separates the list label ("1.") from its text is
+        // no TOC leader: Word tabs to the hanging indent and wraps the text
+        // like any paragraph. Riding the right stop ran 008033c9 item "1."
+        // 45pt past the right margin on one line.
+        if has_marker && prefix.iter().all(|r| r.text.trim().is_empty()) {
+            return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
+        }
         // Missing PAGEREF is Word's long Error! string, not a 9-1 page
         // number. Subtracting its width from the TOC column packed the
         // description into 40pt slices. Fold it into the wrap so
