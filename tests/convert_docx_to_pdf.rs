@@ -1048,6 +1048,41 @@ fn line_height_is_the_tallest_face_including_the_marker() {
 }
 
 #[test]
+fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
+    // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
+    // every line but the last to the cell's right edge; the cell path
+    // painted them ragged, at the natural word pitch.
+    let words: Vec<String> = (0..65).map(|i| format!("w{i:02}")).collect();
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid><w:tr><w:tc>\
+           <w:p><w:pPr><w:jc w:val=\"both\"/></w:pPr><w:r><w:t>{}</w:t></w:r></w:p>\
+         </w:tc></w:tr></w:tbl><w:sectPr/>",
+        words.join(" ")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("justified cell");
+    // Word starts per baseline, top line first.
+    let mut rows: Vec<(f32, Vec<f32>)> = Vec::new();
+    for w in &words {
+        let Some((x, y)) = pdf_glyph_text_xy(&pdf, w) else {
+            continue;
+        };
+        match rows.iter_mut().find(|(ry, _)| (ry - y).abs() < 1.0) {
+            Some(row) => row.1.push(x),
+            None => rows.push((y, vec![x])),
+        }
+    }
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let pitch = |xs: &[f32]| (xs[xs.len() - 1] - xs[0]) / (xs.len() - 1) as f32;
+    let first = pitch(&rows[0].1);
+    let last = pitch(&rows[rows.len() - 1].1);
+    assert!(
+        first > last + 0.3,
+        "a justified line's words spread wider than the ragged last line's; \
+         first={first} last={last} rows={rows:?}"
+    );
+}
+
+#[test]
 fn a_numbered_cell_paragraph_hangs_its_marker_like_the_body() {
     // fixtures_500 00297360: "1." (lvl sz=20) hangs at left=363/360 in a
     // cell; the body and its wrapped lines start 18.15pt in. The cell

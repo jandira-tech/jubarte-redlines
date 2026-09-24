@@ -16605,7 +16605,7 @@ impl<'a> Layout<'a> {
                     let pad_l = cell.pad_l;
                     let pad_r = cell.pad_r;
                     let wrap_w = cell_wrap_width(cell, w);
-                    let mut para_lines: Vec<(f32, f32, FaceRef, Vec<Vec<TextRun>>)> = Vec::new();
+                    let mut para_lines: Vec<LaidCellPara> = Vec::new();
                     let mut nlines = 0usize;
                     for para in &cell.paras {
                         let size = para
@@ -16625,9 +16625,10 @@ impl<'a> Layout<'a> {
                             .unwrap_or_else(|| FaceId::CarlitoRegular.into());
                         let line_box = para_line_box(self.fonts.get(face_id), size, &para.style);
                         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
-                        let lines = wrap_runs(self.fonts, &para.runs, first_w, rest_w, false);
+                        let (lines, breaks) =
+                            wrap_runs_marked(self.fonts, &para.runs, first_w, rest_w, false);
                         nlines += lines.len().max(1);
-                        para_lines.push((size, line_box, face_id, lines));
+                        para_lines.push((size, line_box, face_id, lines, breaks));
                     }
                     let one_line = nlines == 1;
                     let inset = cell.pad_t;
@@ -16663,7 +16664,7 @@ impl<'a> Layout<'a> {
                             slack / 2.0
                         };
                     }
-                    for (pi, (para, (size, line_box, face_id, lines))) in
+                    for (pi, (para, (size, line_box, face_id, lines, breaks))) in
                         cell.paras.iter().zip(para_lines).enumerate()
                     {
                         for (nested, _) in cell
@@ -16708,6 +16709,7 @@ impl<'a> Layout<'a> {
                         } else {
                             lines
                         };
+                        let line_count = lines.len();
                         for (li, line) in lines.into_iter().enumerate() {
                             let ty = y_line - ascent;
                             if ty < bottom {
@@ -16788,6 +16790,46 @@ impl<'a> Layout<'a> {
                             let mut tx = x + pad_l + ind_l + extra;
                             // A negative right indent runs past the cell edge.
                             self.clip_right = Some(x + w + (-para.style.indent_right).max(0.0));
+                            // Justified lines spread to the cell's measure like
+                            // the body's (00297360's jc=both letter); the last
+                            // line stays ragged, a soft-break line only under
+                            // doNotExpandShiftReturn.
+                            let hang = (-para.style.indent_first).max(0.0);
+                            let mark = line
+                                .first()
+                                .filter(|r| li == 0 && r.list_marker && hang > 0.0);
+                            let mark_gap = mark.map_or(0.0, |m| {
+                                let fid = self.fonts.resolve(
+                                    &m.style.family,
+                                    m.style.bold,
+                                    m.style.italic,
+                                );
+                                let mw = self
+                                    .fonts
+                                    .get(fid)
+                                    .width_pt(m.text.trim_end(), m.style.layout_size());
+                                (hang - mw).max(0.0)
+                            });
+                            let leftover = inner - line_w - mark_gap;
+                            if matches!(para.style.align, Align::Justify)
+                                && li + 1 < line_count
+                                && !(self.do_not_expand_shift_return
+                                    && breaks.get(li).copied().unwrap_or(false))
+                                && leftover > 0.5
+                            {
+                                let mut body = line.as_slice();
+                                if let Some(m) = mark {
+                                    let mut run = m.clone();
+                                    run.text = m.text.trim_end().to_string();
+                                    tx = self.paint_run(&run, tx, ty);
+                                    tx = tx.max(x + pad_l + para.style.indent_left);
+                                    body = &line[1..];
+                                }
+                                self.paint_justified_line(body, tx, ty, leftover);
+                                self.clip_right = None;
+                                y_line -= line_box;
+                                continue;
+                            }
                             for run in &line {
                                 if run.text.is_empty() {
                                     continue;
@@ -17775,6 +17817,10 @@ fn url_wrap_pieces(tok: &str) -> Vec<&str> {
     }
     if out.is_empty() { vec![tok] } else { out }
 }
+
+/// A cell paragraph ready to paint: size, line box, face, wrapped lines and
+/// which of them end in a `w:br`.
+type LaidCellPara = (f32, f32, FaceRef, Vec<Vec<TextRun>>, Vec<bool>);
 
 /// One measured piece of a run inside a wrap unit: source run, text, width.
 type WrapPiece<'r> = (&'r TextRun, &'r str, f32);
