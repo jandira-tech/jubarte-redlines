@@ -1692,9 +1692,57 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
     {
         dirs.push((cloud, true));
     }
+    faces_with_user_fonts(family, &dirs, user_font_dir().as_deref())
+}
+
+/// `family`'s faces from `dirs`, then from jubarte's own font folder
+/// (`scripts/install.sh` fills it), then an open stand-in from that folder
+/// when the real face is nowhere (Selawik for Segoe UI).
+fn faces_with_user_fonts(
+    family: &str,
+    dirs: &[(PathBuf, bool)],
+    user: Option<&Path>,
+) -> Vec<((bool, bool), Vec<u8>)> {
+    let mut all = dirs.to_vec();
+    if let Some(user) = user {
+        all.push((user.to_path_buf(), false));
+    }
+    let found = family_faces_in(family, &all);
+    if !found.is_empty() {
+        return found;
+    }
+    match (open_stand_in(family), user) {
+        (Some(stand_in), Some(user)) => family_faces_in(stand_in, &[(user.to_path_buf(), false)]),
+        _ => Vec::new(),
+    }
+}
+
+/// The open family that stands in for a Microsoft one jubarte cannot ship:
+/// Selawik is Microsoft's own metric-compatible Segoe UI substitute (with
+/// Word's cloud cache hidden, 010ec7df 0.442 -> 0.447 and 015beda9 gets
+/// Word's 4 pages). EB Garamond for Garamond was tried and dropped: its
+/// metrics are further from Monotype's than the Times fallback (00dd36c7
+/// 0.181 -> 0.079). Cooper Black and Script MT have no open equivalent.
+fn open_stand_in(family: &str) -> Option<&'static str> {
+    (fold_family(family) == "segoeui").then_some("Selawik")
+}
+
+/// `family`'s faces in `dirs` ((folder, whole folder is the family)).
+fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool), Vec<u8>)> {
+    let norm = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    let key = norm(family);
+    if key.len() < 3 {
+        return Vec::new();
+    }
     let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
     for (dir, family_folder) in dirs {
-        for path in sorted_dir_listing(&dir).iter() {
+        let family_folder = *family_folder;
+        for path in sorted_dir_listing(dir).iter() {
             let path = path.clone();
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let is_font = ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf");
@@ -1732,34 +1780,30 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
             found.push((pass, style, bytes));
         }
     }
-    if found.is_empty() {
-        found.extend(
-            BUNDLED_FACES
-                .iter()
-                .filter(|(name, ..)| norm(name) == key)
-                .map(|&(_, bold, italic, bytes)| (0, (bold, italic), bytes.to_vec())),
-        );
-    }
     pick_ranked_faces(found)
 }
 
-/// Freely licensed faces Word draws from its cloud-font cache, shipped
-/// byte-identical to Word's copy so a machine without that cache still
-/// paints them (fixtures_500 01838a08: RobotoCondensed-Regular/-Bold).
-const BUNDLED_FACES: &[(&str, bool, bool, &[u8])] = &[
-    (
-        "Roboto Condensed",
-        false,
-        false,
-        include_bytes!("../../assets/fonts/RobotoCondensed-Regular.ttf"),
-    ),
-    (
-        "Roboto Condensed",
-        true,
-        false,
-        include_bytes!("../../assets/fonts/RobotoCondensed-Bold.ttf"),
-    ),
-];
+/// jubarte's own font folder: `$JUBARTE_FONT_DIR`, else the platform's
+/// per-user data folder (`~/Library/Application Support/jubarte/fonts`,
+/// `$XDG_DATA_HOME/jubarte/fonts` or `~/.local/share/jubarte/fonts`,
+/// `%APPDATA%\jubarte\fonts`). Fonts live there, not in the binary.
+pub(crate) fn user_font_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("JUBARTE_FONT_DIR").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    if cfg!(target_os = "windows") {
+        return std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("jubarte").join("fonts"));
+    }
+    let home = PathBuf::from(std::env::var_os("HOME")?);
+    let data = if cfg!(target_os = "macos") {
+        home.join("Library/Application Support")
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .filter(|d| !d.is_empty())
+            .map_or_else(|| home.join(".local/share"), PathBuf::from)
+    };
+    Some(data.join("jubarte").join("fonts"))
+}
 
 /// A family name folded for comparison: full-width Latin to ASCII (the
 /// Japanese "ＭＳ 明朝" is MS Mincho's own name), ASCII lowercase, and no
@@ -2512,18 +2556,33 @@ mod tests {
         );
     }
 
+    fn repo_font_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/extra")
+    }
+
     #[test]
-    fn roboto_condensed_is_bundled_like_words_cloud_copy() {
-        // fixtures_500 01838a08: Word's PDF embeds RobotoCondensed-Regular
-        // and -Bold from its cloud cache (filed under the Roboto folder);
-        // we had no face and drew Arial. The Apache-2.0 files ship with us.
-        let faces = installed_family_faces("Roboto Condensed");
+    fn jubartes_own_font_folder_is_searched() {
+        // fixtures_500 01838a08: Word embeds RobotoCondensed-Regular/-Bold
+        // from its cloud cache; install.sh puts the same Apache-2.0 files in
+        // jubarte's font folder instead of growing the binary.
+        let faces = faces_with_user_fonts("Roboto Condensed", &[], Some(&repo_font_dir()));
         for style in [(false, false), (true, false)] {
             assert!(
                 faces.iter().any(|(s, _)| *s == style),
                 "Roboto Condensed {style:?} face"
             );
         }
+    }
+
+    #[test]
+    fn an_open_stand_in_answers_for_an_absent_microsoft_face() {
+        // Segoe UI (015beda9) is Microsoft's; without it we fell to
+        // Cambria. Selawik is Microsoft's open Segoe UI stand-in.
+        let faces = faces_with_user_fonts("Segoe UI", &[], Some(&repo_font_dir()));
+        assert!(
+            faces.iter().any(|(s, _)| *s == (false, false)),
+            "a regular Selawik for Segoe UI"
+        );
     }
 
     #[test]
@@ -2541,11 +2600,14 @@ mod tests {
     fn a_run_family_missing_from_the_font_table_still_loads_its_faces() {
         // fixtures_500 015beda9 has no fontTable part; its runs name
         // Segoe UI, which Word draws, and only table families were loaded.
+        if !Path::new("/System/Library/Fonts/HelveticaNeue.ttc").is_file() {
+            return;
+        }
         let mut embedded = EmbeddedFonts::new();
         let table = super::super::font_table::FontTable::default();
-        let names = ["Roboto Condensed".to_string()];
+        let names = ["Helvetica Neue".to_string()];
         add_installed_faces(&mut embedded, &table, &names, &names, false);
-        assert!(embedded.contains_key(&("roboto condensed".to_string(), false, false)));
+        assert!(embedded.contains_key(&("helvetica neue".to_string(), false, false)));
     }
 
     #[test]
