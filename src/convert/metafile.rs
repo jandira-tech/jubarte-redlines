@@ -164,16 +164,18 @@ impl Canvas {
                 let (x0, y0) = pts[i];
                 let (x1, y1) = pts[(i + 1) % pts.len()];
                 if (y0 <= y && y1 > y) || (y1 <= y && y0 > y) {
-                    let dy = i64::from(y1) - i64::from(y0);
+                    let dy = i128::from(y1) - i128::from(y0);
                     if dy != 0 {
                         // Full-range i32 coords overflow the i32 product — and
                         // the i32 *subtraction* too: mapped points saturate to
                         // i32::MIN/MAX (`px.round() as i32`), so `y - y0` with
                         // `y0 == i32::MIN` panics in debug and wraps to a wrong
-                        // intersection in release. Widen before subtracting.
-                        let x = i64::from(x0)
-                            + (i64::from(y) - i64::from(y0)) * (i64::from(x1) - i64::from(x0)) / dy;
-                        xs.push(x.clamp(-1, self.w as i64) as i32);
+                        // intersection in release. Widen before subtracting;
+                        // the product of two ~2^32 spans needs i128.
+                        let x = i128::from(x0)
+                            + (i128::from(y) - i128::from(y0)) * (i128::from(x1) - i128::from(x0))
+                                / dy;
+                        xs.push(x.clamp(-1, self.w as i128) as i32);
                     }
                 }
             }
@@ -221,10 +223,12 @@ impl Canvas {
             let mut xs: Vec<(i64, i32)> = Vec::new();
             for &((x0, y0), (x1, y1)) in &edges {
                 if (y0 <= y && y1 > y) || (y1 <= y && y0 > y) {
-                    let dy = i64::from(y1) - i64::from(y0);
-                    let x = i64::from(x0)
-                        + (i64::from(y) - i64::from(y0)) * (i64::from(x1) - i64::from(x0)) / dy;
-                    xs.push((x.clamp(-1, self.w as i64), if y1 > y0 { 1 } else { -1 }));
+                    // i128: saturated points put the product past i64::MAX.
+                    let dy = i128::from(y1) - i128::from(y0);
+                    let x = i128::from(x0)
+                        + (i128::from(y) - i128::from(y0)) * (i128::from(x1) - i128::from(x0)) / dy;
+                    let x = x.clamp(-1, self.w as i128) as i64;
+                    xs.push((x, if y1 > y0 { 1 } else { -1 }));
                 }
             }
             xs.sort_unstable();
@@ -566,6 +570,8 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let mut in_path = false;
     // Paths and polylines in logical coordinates.
     let mut subpaths: Vec<Vec<(i32, i32)>> = Vec::new();
+    // EMR_CLOSEFIGURE ended the last figure: the next line starts another.
+    let mut figure_closed = false;
     let stroke_poly =
         |canvas: &mut Canvas, xf: &Xform, pts: &[(i32, i32)], pen: [u8; 3], w: i32| {
             if w <= 0 {
@@ -603,6 +609,19 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
             59 => {
                 in_path = true;
                 subpaths.clear();
+                figure_closed = false;
+            }
+            // EMR_CLOSEFIGURE: a line back to the figure's start, which
+            // becomes the current position.
+            61 if in_path => {
+                if let Some(sp) = subpaths.last_mut()
+                    && sp.len() > 1
+                    && let Some(&first) = sp.first()
+                {
+                    sp.push(first);
+                    (cx, cy) = first;
+                    figure_closed = true;
+                }
             }
             60 => in_path = false,
             27 if size >= 16 => {
@@ -610,14 +629,16 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                 cy = read_i32(data, off + 12)?;
                 if in_path {
                     subpaths.push(vec![(cx, cy)]);
+                    figure_closed = false;
                 }
             }
             54 if size >= 16 => {
                 let x = read_i32(data, off + 8)?;
                 let y = read_i32(data, off + 12)?;
                 if in_path {
-                    if subpaths.is_empty() {
+                    if subpaths.is_empty() || figure_closed {
                         subpaths.push(vec![(cx, cy)]);
+                        figure_closed = false;
                     }
                     if let Some(sp) = subpaths.last_mut() {
                         sp.push((x, y));
@@ -662,11 +683,15 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                     cy = y;
                 }
                 if in_path {
-                    if to && let Some(sp) = subpaths.last_mut() {
+                    if to
+                        && !figure_closed
+                        && let Some(sp) = subpaths.last_mut()
+                    {
                         sp.extend_from_slice(&line[1..]);
                     } else {
                         subpaths.push(line);
                     }
+                    figure_closed = false;
                 } else {
                     stroke_poly(&mut canvas, &xf, &line, pen, pen_w);
                 }
@@ -680,13 +705,11 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                         .collect();
                     canvas.fill_path(&dev, brush, winding);
                 }
+                // GDI strokes each figure as built: only EMR_CLOSEFIGURE
+                // closes one.
                 if typ != 62 {
                     for sp in &subpaths {
-                        let mut closed = sp.clone();
-                        if let Some(&first) = sp.first() {
-                            closed.push(first);
-                        }
-                        stroke_poly(&mut canvas, &xf, &closed, pen, pen_w);
+                        stroke_poly(&mut canvas, &xf, sp, pen, pen_w);
                     }
                 }
                 subpaths.clear();
@@ -761,9 +784,20 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
             }
             3 | 86 if size >= 28 => {
                 // EMR_POLYGON / EMR_POLYGON16
-                if let Some(pts) = read_emf_points(data, off, size, typ == 86) {
-                    let mapped: Vec<(i32, i32)> = pts.iter().map(|&(x, y)| px(&xf, x, y)).collect();
-                    canvas.fill_polygon(&mapped, brush);
+                // Inside a path bracket it is a closed figure of the path and
+                // paints nothing until FILLPATH / STROKEPATH.
+                if let Some(mut pts) = read_emf_points(data, off, size, typ == 86) {
+                    if in_path {
+                        if let Some(&first) = pts.first() {
+                            pts.push(first);
+                        }
+                        subpaths.push(pts);
+                        figure_closed = true;
+                    } else {
+                        let mapped: Vec<(i32, i32)> =
+                            pts.iter().map(|&(x, y)| px(&xf, x, y)).collect();
+                        canvas.fill_polygon(&mapped, brush);
+                    }
                 }
             }
             _ => {}
@@ -979,6 +1013,27 @@ mod emf_path_tests {
     //! window/viewport mapping. We rasterized none of it.
     use super::*;
 
+    #[test]
+    fn saturated_edges_cross_where_the_line_does() {
+        // PR #167 review: mapped points saturate to i32::MIN/MAX, and the
+        // crossing product (y - y0) * (x1 - x0) then passes i64::MAX. The
+        // diagonal from (MIN, MIN) to (MAX, MAX) crosses row y at x = y.
+        let tri = [
+            (i32::MIN, i32::MIN),
+            (i32::MAX, i32::MAX),
+            (i32::MIN, i32::MAX),
+        ];
+        let ink = |c: &Canvas, x: usize, y: usize| c.px[(y * c.w + x) * 3] == 0;
+        let mut poly = Canvas::new(64, 64);
+        poly.fill_polygon(&tri, [0, 0, 0]);
+        let mut path = Canvas::new(64, 64);
+        path.fill_path(&[tri.to_vec()], [0, 0, 0], false);
+        for c in [&poly, &path] {
+            assert!(ink(c, 5, 40), "left of the diagonal is inside");
+            assert!(!ink(c, 60, 20), "right of the diagonal is outside");
+        }
+    }
+
     fn header(left: i32, top: i32, right: i32, bottom: i32) -> Vec<u8> {
         let mut d = vec![0u8; 108];
         d[0..4].copy_from_slice(&1u32.to_le_bytes());
@@ -1020,6 +1075,76 @@ mod emf_path_tests {
     fn dark(rgb: &[u8], w: u32, x: u32, y: u32) -> bool {
         let i = ((y * w + x) * 3) as usize;
         rgb[i] < 128
+    }
+
+    #[test]
+    fn a_stroked_path_closes_only_the_figures_closefigure_closes() {
+        // PR #167 review: EMR_STROKEPATH closed every subpath, so an open
+        // polyline gained a chord back to its start. GDI closes a figure
+        // only on EMR_CLOSEFIGURE, which also moves the pen to the
+        // figure's start for the next LINETO.
+        let stroked = |close: bool| {
+            let mut d = header(0, 0, 100, 100);
+            rec(&mut d, 59, &[]);
+            rec(&mut d, 27, &ints(&[10, 10]));
+            rec(&mut d, 54, &ints(&[90, 10]));
+            if close {
+                rec(&mut d, 61, &[]);
+                rec(&mut d, 54, &ints(&[10, 90]));
+            } else {
+                rec(&mut d, 54, &ints(&[90, 90]));
+            }
+            rec(&mut d, 60, &[]);
+            rec(&mut d, 64, &ints(&[0, 0, 0, 0]));
+            rec(&mut d, 14, &ints(&[0, 0, 0]));
+            rasterize(&d).expect("raster")
+        };
+        let (w, _, open) = stroked(false);
+        assert!(dark(&open, w, 50, 10), "the open figure's first edge inks");
+        assert!(!dark(&open, w, 50, 50), "no chord back to the start");
+        let (w, _, closed) = stroked(true);
+        assert!(
+            dark(&closed, w, 10, 50),
+            "after the close, LINETO starts at the figure start"
+        );
+        assert!(
+            !dark(&closed, w, 50, 50),
+            "not from the last point (90, 10)"
+        );
+    }
+
+    #[test]
+    fn a_polygon_inside_a_path_bracket_joins_the_path() {
+        // PR #167 review: EMR_POLYGON between BEGINPATH and ENDPATH is a
+        // closed figure of the path and paints nothing itself; only the
+        // path's FILLPATH inks it (a clip-only path never does).
+        let polygon_path = |fill: bool| {
+            let mut d = header(0, 0, 100, 100);
+            rec(&mut d, 39, &ints(&[1, 0, 0, 0]));
+            rec(&mut d, 37, &ints(&[1]));
+            rec(&mut d, 59, &[]);
+            rec(
+                &mut d,
+                86,
+                &pts16(&[(10, 10), (90, 10), (90, 90), (10, 90)]),
+            );
+            rec(&mut d, 60, &[]);
+            if fill {
+                rec(&mut d, 62, &ints(&[0, 0, 0, 0]));
+            }
+            rec(&mut d, 14, &ints(&[0, 0, 0]));
+            rasterize(&d).expect("raster")
+        };
+        let (w, _, unfilled) = polygon_path(false);
+        assert!(
+            !dark(&unfilled, w, 50, 50),
+            "a path polygon paints nothing on its own"
+        );
+        let (w, _, filled) = polygon_path(true);
+        assert!(
+            dark(&filled, w, 50, 50),
+            "FILLPATH fills the polygon figure"
+        );
     }
 
     #[test]
