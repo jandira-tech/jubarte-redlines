@@ -744,6 +744,9 @@ struct Defaults {
     /// compatibilityMode below 15: a pct table width is measured on the
     /// text width plus the table's left and right cell margins.
     legacy_tables: bool,
+    /// The default paragraph style's own w:spacing sets [after, before,
+    /// line]: a table style's pPr does not override those in its cells.
+    normal_spacing: [bool; 3],
 }
 
 impl Defaults {
@@ -844,6 +847,7 @@ impl Defaults {
                 grid_char: 0.0,
             },
             legacy_tables: false,
+            normal_spacing: [false; 3],
         }
     }
 }
@@ -2332,6 +2336,21 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         );
     }
     let implicit_id = implicit_para.as_deref().unwrap_or("Normal");
+    // What the default paragraph style's own spacing sets (not inherited).
+    if let Some(sp) = dom
+        .descendants(root, Some(&W::name("style")))
+        .into_iter()
+        .find(|st| dom.attribute(*st, &W::name("styleId")) == Some(implicit_id))
+        .and_then(|st| dom.element(st, &W::p_pr()))
+        .and_then(|ppr| first_named(&dom, ppr, "spacing"))
+    {
+        let sets = |names: &[&str]| names.iter().any(|n| attr_any(&dom, sp, n).is_some());
+        defaults.normal_spacing = [
+            sets(&["after", "afterAutospacing"]),
+            sets(&["before", "beforeAutospacing"]),
+            sets(&["line"]),
+        ];
+    }
     if let Some(named) = by_id.get(implicit_id) {
         // Word applies the default paragraph style (usually Normal) to
         // paras with no pStyle. sd_2517 Normal is after=0; docDefaults is 200.
@@ -6402,11 +6421,22 @@ fn para_base(
         // pStyle/pPr; an unstyled table (TableNormal, no pPr) keeps
         // Normal's spacing (0073da0a). Direct cell spacing still wins via
         // apply_ppr below (xml 3.3 ckpt 2).
-        pstyle.after = t.after;
-        pstyle.before = t.before;
-        pstyle.line_mult = t.line_mult;
-        pstyle.line_exact = t.line_exact;
-        pstyle.line_at_least = t.line_at_least;
+        // Except what the default paragraph style sets itself (checked in
+        // Word: Normal's own after=200 line=276 keep 24.96pt rows under
+        // Table Grid's after=0 line=240; inherited from docDefaults, the
+        // table style's 13.2pt win).
+        let [own_after, own_before, own_line] = sheet.defaults.normal_spacing;
+        if !own_after {
+            pstyle.after = t.after;
+        }
+        if !own_before {
+            pstyle.before = t.before;
+        }
+        if !own_line {
+            pstyle.line_mult = t.line_mult;
+            pstyle.line_exact = t.line_exact;
+            pstyle.line_at_least = t.line_at_least;
+        }
     }
     if let Some(ppr) = dom.element(para, &W::p_pr())
         && let Some(ps) = first_named(dom, ppr, "pStyle")

@@ -9869,6 +9869,62 @@ fn a_cells_vertical_rules_and_text_sit_where_words_compat_mode_puts_them() {
 }
 
 #[test]
+fn normals_own_spacing_beats_the_table_styles_in_a_cell() {
+    // 48 redlines against fixtures_500 00134233: Normal sets after=200
+    // line=276 itself and Table Grid says after=0 line=240. Checked in
+    // Word: the cells keep Normal's spacing (rows 24.96pt apart); only
+    // when Normal inherits its spacing from docDefaults does the table
+    // style's win (13.2pt). We always let the table style win.
+    let styles = |dd: &str, normal: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+             <w:sz w:val=\"22\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>{dd}</w:pPr></w:pPrDefault></w:docDefaults>\
+             <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+             <w:pPr>{normal}</w:pPr></w:style>\
+             <w:style w:type=\"table\" w:styleId=\"TableGrid\"><w:name w:val=\"Table Grid\"/>\
+             <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr></w:style></w:styles>"
+        )
+    };
+    let spacing = "<w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>";
+    let row = |t: &str| {
+        format!(
+            "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc></w:tr>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>{}{}</w:tbl><w:p/><w:sectPr/>",
+        row("Qone"),
+        row("Ztwo")
+    );
+    let pitch = |st: &str| {
+        let pdf = docx_to_pdf(&docx_with_styles(&body, st)).expect("convert cell spacing");
+        let hay = String::from_utf8_lossy(&pdf).into_owned();
+        let y = |g: &str| {
+            [pdf_cm_tj_xy(&hay, g), pdf_tj_xy(&hay, g)]
+                .concat()
+                .first()
+                .map(|p| p.1)
+                .unwrap_or_else(|| panic!("{g} paints"))
+        };
+        y("Q") - y("Z")
+    };
+    let own = pitch(&styles("", spacing));
+    let inherited = pitch(&styles(spacing, ""));
+    assert!(
+        (own - 24.96).abs() < 1.0,
+        "Normal's own after/line win in the cell; pitch={own}"
+    );
+    assert!(
+        (inherited - 13.2).abs() < 1.0,
+        "the table style wins over docDefaults' spacing; pitch={inherited}"
+    );
+}
+
+#[test]
 fn bordered_row_pitch_adds_the_horizontal_rule() {
     // Word stacks each row's horizontal rule on top of its height: 0.5pt
     // rules make the pitch trHeight/content + 0.5 (fixtures_500 0005052e
