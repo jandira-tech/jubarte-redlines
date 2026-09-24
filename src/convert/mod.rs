@@ -5873,9 +5873,10 @@ fn para_base(
     let mut pstyle = sheet.defaults.para.clone();
     let mut rstyle = sheet.defaults.run.clone();
     if let Some(t) = table_para {
-        // Table style pPr (or latent TableNormal after=0) sits between
-        // docDefaults and the cell's pStyle/pPr. Direct cell spacing still
-        // wins via apply_ppr below (xml 3.3 ckpt 2).
+        // Table style pPr sits between docDefaults and the cell's
+        // pStyle/pPr; an unstyled table (TableNormal, no pPr) keeps
+        // Normal's spacing (0073da0a). Direct cell spacing still wins via
+        // apply_ppr below (xml 3.3 ckpt 2).
         pstyle.after = t.after;
         pstyle.before = t.before;
         pstyle.line_mult = t.line_mult;
@@ -7073,9 +7074,9 @@ fn table_block(
     }
     let (tbl_pad_l, tbl_pad_r) = table_pad_h(dom, table);
     let (tbl_pad_t, tbl_pad_b) = table_pad_tb(dom, table);
-    let mut latent_table_para = sheet.defaults.para.clone();
-    latent_table_para.after = 0.0;
-    latent_table_para.before = 0.0;
+    // No tblStyle is TableNormal, which sets no pPr: Normal's spacing
+    // stands (0073da0a's TOC rows 22.8pt apart, 0000c5b9).
+    let latent_table_para = sheet.defaults.para.clone();
     let table_para = tdef.as_ref().map(|t| &t.para).unwrap_or(&latent_table_para);
     let mut raw_rows: Vec<Vec<RawCell>> = Vec::new();
     let mut row_min = Vec::new();

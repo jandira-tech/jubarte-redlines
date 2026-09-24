@@ -613,6 +613,36 @@ fn numid_zero_over_a_numbered_style_drops_its_list_indent() {
 }
 
 #[test]
+fn an_unstyled_table_keeps_the_normal_paragraph_spacing() {
+    // fixtures_500 0073da0a / 0000c5b9: a w:tbl with no tblStyle takes
+    // TableNormal, which sets no pPr — Normal's after=160 still spaces
+    // the cell paragraphs (TOC rows 22.8pt apart, 12pt + 8pt). We zeroed
+    // it and packed them one line apart.
+    let step = |after: u32| {
+        let styles = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+            <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+              <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+                <w:pPr><w:spacing w:after=\"{after}\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr></w:style>\
+            </w:styles>"
+        );
+        let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid><w:tr><w:tc>\
+               <w:p><w:r><w:t>CellOne</w:t></w:r></w:p>\
+               <w:p><w:r><w:t>CellTwo</w:t></w:r></w:p>\
+             </w:tc></w:tr></w:tbl><w:sectPr/>";
+        let pdf = docx_to_pdf(&docx_with_styles(body, &styles)).expect("unstyled table");
+        pdf_literal_td_y(&pdf, "CellOne").expect("CellOne")
+            - pdf_literal_td_y(&pdf, "CellTwo").expect("CellTwo")
+    };
+    let spaced = step(160);
+    let tight = step(0);
+    assert!(
+        (spaced - tight - 8.0).abs() < 0.1,
+        "Normal's 8pt after spaces the cell lines; spaced={spaced} tight={tight}"
+    );
+}
+
+#[test]
 fn a_style_right_tab_keeps_the_first_line_indent_in_the_wrap() {
     // fixtures_500 000ebd12: Normal carries a right tab at 9072tw and
     // firstLine=284. A paragraph with no tab took the right-tab wrap path,
