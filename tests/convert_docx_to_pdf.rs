@@ -30627,6 +30627,52 @@ fn a_right_to_left_table_starts_at_the_right_margin() {
 }
 
 #[test]
+fn a_cell_line_is_sized_by_its_inked_run_not_its_leading_spaces() {
+    // fixtures_500 003dd497: a cell title opens with plain spaces (docDefaults
+    // Calibri 11) before its Arial 25pt text. The cell line took the
+    // largest size in the first non-empty run's face, Calibri at 25pt,
+    // 1.8pt taller than Word's Arial line; every row below sat low.
+    // Word (measured with and without the spaces): the next row's TNR 10
+    // baseline sits 16.1-16.3pt under the title's.
+    let para = |runs: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>{runs}</w:p>"
+        )
+    };
+    let title = para(
+        "<w:r><w:t xml:space=\"preserve\">   </w:t></w:r>\
+         <w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:b/><w:i/><w:sz w:val=\"50\"/></w:rPr>\
+         <w:t>G</w:t></w:r>",
+    );
+    let next = para(
+        "<w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+         <w:sz w:val=\"20\"/></w:rPr><w:t>M</w:t></w:r>",
+    );
+    let mar = "<w:tblCellMar><w:top w:w=\"15\" w:type=\"dxa\"/><w:bottom w:w=\"15\" w:type=\"dxa\"/></w:tblCellMar>";
+    let cell =
+        |p: &str| format!("<w:tc><w:tcPr><w:tcW w:w=\"7230\" w:type=\"dxa\"/></w:tcPr>{p}</w:tc>");
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"7230\" w:type=\"dxa\"/>{mar}</w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"7230\"/></w:tblGrid>\
+         <w:tr>{}</w:tr><w:tr>{}</w:tr></w:tbl><w:p/><w:sectPr/>",
+        cell(&title),
+        cell(&next)
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert spaced cell title");
+    let hay = String::from_utf8_lossy(&pdf);
+    let g = [pdf_cm_tj_xy(&hay, "G"), pdf_tj_xy(&hay, "G")].concat();
+    let m = [pdf_cm_tj_xy(&hay, "M"), pdf_tj_xy(&hay, "M")].concat();
+    let (Some(g), Some(m)) = (g.first(), m.first()) else {
+        panic!("both glyphs are painted: G {g:?}, M {m:?}");
+    };
+    let gap = g.1 - m.1;
+    assert!(
+        (15.8..16.6).contains(&gap),
+        "the next row's baseline sits Word's 16.1-16.3pt below the title's; gap={gap}"
+    );
+}
+
+#[test]
 fn a_justified_underline_runs_through_the_stretched_spaces() {
     // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
     // underlined word by word; the justify pad after each space was bare.

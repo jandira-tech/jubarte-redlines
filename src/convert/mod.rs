@@ -5755,21 +5755,39 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     base.iter().map(|c| c * scale).collect()
 }
 
-/// A cell paragraph's (size, line box): its largest run over the first
-/// inked run's face.
-fn cell_para_line_box(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
+/// A cell paragraph's (size, face): its largest run, in the face of its
+/// largest inked run. Leading spaces in another face do not set the line
+/// (003dd497's Calibri spaces before an Arial 25pt title made a Calibri
+/// 25pt line, 1.8pt taller than Word's).
+fn cell_para_face(fonts: &Fonts, para: &CellPara) -> (f32, FaceRef) {
     let size = para
         .runs
         .iter()
         .map(|r| r.style.size)
         .fold(0.0_f32, f32::max);
     let size = if size > 0.0 { size } else { 11.0 };
-    let face_id = para
-        .runs
-        .iter()
-        .find(|r| !r.text.is_empty())
+    let largest = |inked: bool| {
+        para.runs
+            .iter()
+            .filter(|r| {
+                if inked {
+                    !r.text.trim().is_empty()
+                } else {
+                    !r.text.is_empty()
+                }
+            })
+            .reduce(|a, b| if b.style.size > a.style.size { b } else { a })
+    };
+    let face_id = largest(true)
+        .or_else(|| largest(false))
         .map(|r| fonts.resolve(&r.style.family, r.style.bold, r.style.italic))
         .unwrap_or_else(|| FaceId::CarlitoRegular.into());
+    (size, face_id)
+}
+
+/// A cell paragraph's (size, line box) in `cell_para_face`.
+fn cell_para_line_box(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
+    let (size, face_id) = cell_para_face(fonts, para);
     (size, para_line_box(fonts.get(face_id), size, &para.style))
 }
 
@@ -17682,21 +17700,7 @@ impl<'a> Layout<'a> {
                     let mut para_lines: Vec<LaidCellPara> = Vec::new();
                     let mut nlines = 0usize;
                     for para in &cell.paras {
-                        let size = para
-                            .runs
-                            .iter()
-                            .map(|r| r.style.size)
-                            .fold(0.0_f32, f32::max);
-                        let size = if size > 0.0 { size } else { 11.0 };
-                        let face_id = para
-                            .runs
-                            .iter()
-                            .find(|r| !r.text.is_empty())
-                            .map(|r| {
-                                self.fonts
-                                    .resolve(&r.style.family, r.style.bold, r.style.italic)
-                            })
-                            .unwrap_or_else(|| FaceId::CarlitoRegular.into());
+                        let (size, face_id) = cell_para_face(self.fonts, para);
                         let line_box = para_line_box(self.fonts.get(face_id), size, &para.style);
                         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
                         let (lines, breaks) =
