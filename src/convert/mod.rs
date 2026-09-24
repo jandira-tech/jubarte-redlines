@@ -9008,6 +9008,7 @@ fn collect_textboxes_styled(
         // second, empty stroked box (000f5278's QR code ran 188pt long).
         if dom.name_is(shape, &W::drawing())
             && graphic_data_uri_contains(dom, shape, "drawingml/2006/picture")
+            && descendants_local(dom, shape, "wgp").is_empty()
         {
             continue;
         }
@@ -9079,7 +9080,7 @@ fn collect_textboxes_styled(
         let (flip_h, flip_v) = shape_flip(dom, shape);
         let tail_end = shape_has_tail_end(dom, shape);
         let text_anchor = shape_text_anchor(dom, shape);
-        let group = group_children(dom, shape, theme);
+        let group = group_children(dom, shape, &GroupText { theme, base, sheet });
         // A group paints its shapes, not one box from its first child.
         let custom = if group.is_empty() {
             cust_geom(dom, shape).map(std::rc::Rc::new)
@@ -9090,7 +9091,7 @@ fn collect_textboxes_styled(
             fill = None;
         }
         let line = if group.is_empty() { line } else { None };
-        if empty && chart.is_none() && !group.is_empty() {
+        if chart.is_none() && !group.is_empty() {
             out.push(group_box(w, h, slot, geom, behind, z, group));
             continue;
         }
@@ -9285,12 +9286,69 @@ fn group_box(
 
 /// The shapes of the drawing's `wpg:wgp` group (nested groups flattened),
 /// each placed through the group's `chOff`/`chExt` child space.
-fn group_children(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> Vec<GroupChild> {
+fn group_children(dom: &Dom, shape: NodeId, text: &GroupText) -> Vec<GroupChild> {
     let mut out = Vec::new();
     if let Some(wgp) = descendants_local(dom, shape, "wgp").into_iter().next() {
-        collect_group(dom, wgp, [0.0, 0.0, 1.0, 1.0], theme, &mut out);
+        collect_group(
+            dom,
+            wgp,
+            [0.0, 0.0, 1.0, 1.0],
+            text.theme,
+            Some(text),
+            &mut out,
+            &mut Vec::new(),
+        );
     }
     out
+}
+
+/// The pictures of the drawing's `wpg:wgp` group: each `pic:pic` with its
+/// box as fractions of the group's box (x, y from the top-left, w, h).
+fn group_pictures(dom: &Dom, drawing: NodeId) -> Vec<([f32; 4], NodeId)> {
+    let mut pics = Vec::new();
+    if let Some(wgp) = descendants_local(dom, drawing, "wgp").into_iter().next() {
+        let theme = ThemeFonts::default();
+        collect_group(
+            dom,
+            wgp,
+            [0.0, 0.0, 1.0, 1.0],
+            &theme,
+            None,
+            &mut Vec::new(),
+            &mut pics,
+        );
+    }
+    pics
+}
+
+/// `slot` moved `dx` right and `dy` down, for a group's picture placed
+/// inside the group's box. Offsets that are fractions of the page or
+/// alignments cannot move and stay.
+fn shift_slot(mut slot: ImageSlot, dx: f32, dy: f32) -> ImageSlot {
+    if let ImageSlot::Float {
+        page_x,
+        col_x,
+        page_y,
+        para_y,
+        v_off,
+        ..
+    } = &mut slot
+    {
+        if let Some(x) = page_x.as_mut().or(col_x.as_mut()) {
+            *x += dx;
+        }
+        if let Some(y) = page_y.as_mut().or(para_y.as_mut()).or(v_off.as_mut()) {
+            *y += dy;
+        }
+    }
+    slot
+}
+
+/// What a group's text boxes need to lay their text out.
+struct GroupText<'a> {
+    theme: &'a ThemeFonts,
+    base: &'a RunStyle,
+    sheet: Option<&'a StyleSheet>,
 }
 
 /// `(off x, off y, ext cx, ext cy)` of an `a:xfrm`, EMU.
@@ -9314,7 +9372,9 @@ fn collect_group(
     grp: NodeId,
     frac: [f32; 4],
     theme: &ThemeFonts,
+    text: Option<&GroupText>,
     out: &mut Vec<GroupChild>,
+    pics: &mut Vec<([f32; 4], NodeId)>,
 ) {
     let children: Vec<NodeId> = (0..dom.child_count(grp))
         .map(|i| dom.child_at(grp, i))
@@ -9365,7 +9425,7 @@ fn collect_group(
                 .and_then(|pr| descendants_local(dom, pr, "xfrm").into_iter().next())
                 .and_then(|x| xfrm_box(dom, x));
             if let Some(b) = sub {
-                collect_group(dom, child, place(b), theme, out);
+                collect_group(dom, child, place(b), theme, text, out, pics);
             }
         } else if local_name_is(dom, child, "wsp") {
             let Some(b) = descendants_local(dom, child, "xfrm")
@@ -9398,10 +9458,33 @@ fn collect_group(
             shape.adj = preset_adjustments(dom, child);
             shape.flip_h = flip_h;
             shape.flip_v = flip_v;
+            // A grouped text box carries its own text (the Achensee
+            // redline header's banner lines).
+            if let Some(text) = text
+                && let Some(txbx) = first_named_any(dom, child, "txbxContent")
+            {
+                shape.runs = collect_runs(dom, txbx, text.base, theme);
+                shape.text_dx = first_para_content_dx(dom, txbx);
+                shape.text_dy = first_para_spacing_before(dom, txbx);
+                if let Some(sheet) = text.sheet
+                    && txbx_lays_out_paragraphs(dom, child, txbx)
+                {
+                    shape.paras = txbx_paragraphs(dom, txbx, sheet, theme);
+                }
+                shape.insets = textbox_insets(dom, child);
+                shape.text_anchor = shape_text_anchor(dom, child);
+            }
             out.push(GroupChild {
                 frac: place(b),
                 shape,
             });
+        } else if local_name_is(dom, child, "pic")
+            && let Some(b) = descendants_local(dom, child, "xfrm")
+                .into_iter()
+                .next()
+                .and_then(|x| xfrm_box(dom, x))
+        {
+            pics.push((place(b), child));
         }
     }
 }
@@ -10252,6 +10335,37 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
         let (w, h) = drawing_extent_pt(dom, drawing);
         let slot = drawing_slot(dom, drawing);
         let (behind, z) = drawing_z(dom, drawing);
+        // A group's pictures sit in their own part of the group's box,
+        // not stretched over all of it (the Achensee redline header logo).
+        let group_pics = group_pictures(dom, drawing);
+        if !group_pics.is_empty() {
+            for (frac, pic) in group_pics {
+                let Some(bytes) = descendants_local(dom, pic, "blip")
+                    .into_iter()
+                    .find_map(|b| attr_any(dom, b, "embed"))
+                    .and_then(|rid| resolve_media(pkg, main, rid))
+                else {
+                    continue;
+                };
+                out.push(LaidImage {
+                    w: w * frac[2],
+                    h: h * frac[3],
+                    kind: decode_image(bytes).unwrap_or(ImageKind::Reserve),
+                    slot: shift_slot(slot, w * frac[0], h * frac[1]),
+                    behind,
+                    z,
+                    crop: src_rect_frac(dom, pic),
+                    rotate_deg: 0.0,
+                    chrome_align: Align::Left,
+                    chrome_lead: false,
+                    chrome_flow: false,
+                    chrome_leading: None,
+                    outline: None,
+                    gap_before: 0.0,
+                });
+            }
+            continue;
+        }
         for blip in dom.descendants(drawing, Some(&A::name("blip"))) {
             if let Some(rid) = attr_any(dom, blip, "embed") {
                 if let Some(bytes) = resolve_media(pkg, main, rid) {
@@ -16418,11 +16532,17 @@ impl<'a> Layout<'a> {
         if box_.reserve_only {
             return;
         }
+        self.paint_box_at(box_, x, y, dw, dh);
+    }
+
+    /// Paints a placed box: its geometry, its group's shapes (each with
+    /// its own text), then its chart, diagram, paragraphs or runs.
+    fn paint_box_at(&mut self, box_: &LaidTextBox, x: f32, y: f32, dw: f32, dh: f32) {
         self.paint_box_geom(box_, x, y, dw, dh);
         for child in &box_.group {
             let [fx, fy, fw, fh] = child.frac;
             let (cw, ch) = (dw * fw, dh * fh);
-            self.paint_box_geom(&child.shape, x + dw * fx, y + dh - dh * fy - ch, cw, ch);
+            self.paint_box_at(&child.shape, x + dw * fx, y + dh - dh * fy - ch, cw, ch);
         }
         if let Some(chart) = &box_.chart {
             match chart.kind {
@@ -16499,6 +16619,8 @@ impl<'a> Layout<'a> {
                     run.style.color,
                     run.text.clone(),
                 ));
+                // Revision underline / strike, as on body lines.
+                self.decorate_run(tx, run.style.paint_y(ty), w, &run.style);
                 tx += w;
             }
             ty -= 2.0;

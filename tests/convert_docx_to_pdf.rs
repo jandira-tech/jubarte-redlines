@@ -30474,3 +30474,68 @@ fn a_justified_underline_runs_through_the_stretched_spaces() {
         );
     }
 }
+
+/// A page-anchored 200×100pt group at (100, 100) from the page's top-left
+/// whose right half is `right` (a `wps:wsp` or `pic:pic`) and left half an
+/// empty rectangle.
+fn half_group_docx(right: &str) -> Vec<u8> {
+    let body = format!(
+        "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"2540000\" cy=\"1270000\"/><wp:wrapNone/><wp:docPr id=\"1\" name=\"Group\"/>\
+          <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">\
+            <wpg:wgp xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\" \
+              xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+              <wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"2540000\" cy=\"1270000\"/>\
+                <a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"200\" cy=\"100\"/></a:xfrm></wpg:grpSpPr>\
+              <wps:wsp><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"100\" cy=\"100\"/></a:xfrm>\
+                <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp>\
+              {right}\
+            </wpg:wgp></a:graphicData></a:graphic>\
+        </wp:anchor></w:drawing></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>"
+    );
+    drawing_docx(&body)
+}
+
+#[test]
+fn a_grouped_text_box_paints_its_text_in_its_own_place() {
+    // Redline header 00a4b0b9 (fixtures_500 0.62 -> 0.86): the banner text
+    // sits in a text box inside a wpg:wgp. We painted the group's first
+    // text box as one box over the whole group, from the group's left.
+    let right = "<wps:wsp><wps:spPr><a:xfrm><a:off x=\"100\" y=\"0\"/><a:ext cx=\"100\" cy=\"100\"/></a:xfrm>\
+          <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr>\
+          <wps:txbx><w:txbxContent><w:p><w:r><w:t>Grouped</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+          <wps:bodyPr/></wps:wsp>";
+    let pdf = docx_to_pdf(&half_group_docx(right)).expect("grouped text box");
+    let hay = String::from_utf8_lossy(&pdf);
+    let at = pdf_cm_tj_xy(&hay, "G");
+    assert_eq!(at.len(), 1, "the grouped text is painted once");
+    assert!(
+        at[0].0 >= 200.0 && at[0].0 < 215.0,
+        "inside the right half, got {at:?}"
+    );
+}
+
+#[test]
+fn a_grouped_picture_fills_only_its_own_part_of_the_group() {
+    // Redline header 00a4b0b9: the Achensee logo is a pic:pic in the right
+    // part of a wpg:wgp; we stretched it over the whole group.
+    let right = "<pic:pic><pic:nvPicPr><pic:cNvPr id=\"2\" name=\"Logo\"/><pic:cNvPicPr/></pic:nvPicPr>\
+          <pic:blipFill><a:blip r:embed=\"rIdImg\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+          <pic:spPr><a:xfrm><a:off x=\"100\" y=\"0\"/><a:ext cx=\"100\" cy=\"100\"/></a:xfrm>\
+          <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>";
+    let pdf = docx_to_pdf(&half_group_docx(right)).expect("grouped picture");
+    let boxes = pdf_image_boxes(&pdf);
+    assert_eq!(boxes.len(), 1, "one picture, got {boxes:?}");
+    let (x, y, w, h) = boxes[0];
+    assert!(
+        (x - 200.0).abs() < 0.5 && (y - 592.0).abs() < 0.5,
+        "at the right half, got {boxes:?}"
+    );
+    assert!(
+        (w - 100.0).abs() < 0.5 && (h - 100.0).abs() < 0.5,
+        "100pt square, got {boxes:?}"
+    );
+}
