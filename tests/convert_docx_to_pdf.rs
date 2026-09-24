@@ -2299,6 +2299,28 @@ fn an_at_least_row_height_leaves_out_the_cell_margins() {
 }
 
 #[test]
+fn cells_inside_content_controls_are_laid_out() {
+    // fixtures_500 003c9ddd: cells wrapped in a cell-level w:sdt
+    // (tr > sdt > sdtContent > tc). Taking only direct w:tc children
+    // dropped their text. Row-level sdt rows stay out (see the mini 454
+    // and file_196 locks).
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:p><w:r><w:t>PlainCell</w:t></w:r></w:p></w:tc>\
+           <w:sdt><w:sdtPr/><w:sdtContent><w:tc><w:p><w:r><w:t>WrappedCell</w:t></w:r></w:p></w:tc></w:sdtContent></w:sdt></w:tr>\
+         </w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("sdt cells");
+    let (wx, wy) = pdf_glyph_text_xy(&pdf, "WrappedCell").expect("sdt-wrapped cell paints");
+    let (px, py) = pdf_glyph_text_xy(&pdf, "PlainCell").expect("plain cell");
+    assert!(
+        (wy - py).abs() < 0.5 && wx > px + 100.0,
+        "same row, second column"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves

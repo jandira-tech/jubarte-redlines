@@ -7270,8 +7270,8 @@ fn table_block(
     let mut header_rows = 0usize;
     let mut still_header = true;
     // Direct `w:tr` only — descendants() would flatten nested tables into this one.
-    // Repeating-section w:sdt rows (Strict01 100/200/300) are Word-faithful
-    // but mini 454 ITT-neg: file_100/115/185/196 13→14pp (−23 ITT).
+    // Repeating-section w:sdt rows (Strict01 100/200/300) are Word-faithful,
+    // but painting them sends file_196 past Word's 13pp on our looser packing.
     let all_rows = dom.elements(table, Some(&W::tr()));
     let row_count = all_rows.len();
     // The rules an edge a cell's tcBorders leaves unnamed falls back to.
@@ -7288,7 +7288,7 @@ fn table_block(
         let mut grid_at = 0usize;
         let mut cells = Vec::new();
         let mut row_has_cell_del = false;
-        for cell in dom.elements(row, Some(&W::tc())) {
+        for cell in wrapped_children(dom, row, "tc") {
             row_has_cell_del |= cell_is_deleted(dom, cell);
             let mut cell_paras = Vec::new();
             let mut nested = Vec::new();
@@ -8054,6 +8054,24 @@ fn cell_fill(dom: &Dom, cell: NodeId) -> Option<[f32; 3]> {
         return None;
     }
     parse_hex_color(fill)
+}
+
+/// `parent`'s `w:<local>` children, also those a content control or a
+/// custom-XML wrapper holds (003c9ddd's tr > sdt > sdtContent > tc).
+fn wrapped_children(dom: &Dom, parent: NodeId, local: &str) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for i in 0..dom.child_count(parent) {
+        let child = dom.child_at(parent, i);
+        if local_name_is(dom, child, local) {
+            out.push(child);
+        } else if local_name_is(dom, child, "sdt")
+            || local_name_is(dom, child, "sdtContent")
+            || local_name_is(dom, child, "customXml")
+        {
+            out.extend(wrapped_children(dom, child, local));
+        }
+    }
+    out
 }
 
 fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
