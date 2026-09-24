@@ -16348,8 +16348,11 @@ impl<'a> Layout<'a> {
             (Some(pct), _, _) => ((1.0 - pct) * self.page.height - dh).max(0.0),
             (_, Some(py), _) => (self.page.height - py - dh).max(0.0),
             // positionV relativeFrom="paragraph": from the anchoring
-            // paragraph's top (0004c94c logo sat 10.5pt high off body top).
-            (_, _, Some(py)) => (self.para_top - py - dh).max(self.page.margin_b),
+            // paragraph's top (0004c94c logo sat 10.5pt high off body top),
+            // unclamped: Word runs a tall float off the page foot rather
+            // than lifting it (redlines vs 0004c94c: the 295pt photo under
+            // A's last paragraph starts at 748pt and leaves the page).
+            (_, _, Some(py)) => self.para_top - py - dh,
             // Margin-frame offset (tblpY with vertAnchor="margin",
             // positionV relativeFrom="margin"/topMargin/...): from the
             // frame's top, unclamped.

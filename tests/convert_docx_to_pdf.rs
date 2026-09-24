@@ -1900,6 +1900,40 @@ fn a_tab_after_a_full_width_header_picture_wraps_to_its_own_line() {
 }
 
 #[test]
+fn a_paragraph_float_near_the_page_foot_runs_off_the_page() {
+    // Redlines vs 0004c94c: a 295pt picture anchored 8pt above the last
+    // paragraph (at ~756pt) starts at 748pt in Word and leaves the page.
+    // We clamped its bottom to the bottom margin and lifted it 258pt over
+    // the text.
+    let img = blip(
+        "3810000",
+        "3810000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:wrapNone/>",
+        "</wp:anchor>",
+    );
+    let fill: String = (0..40)
+        .map(|i| format!("<w:p><w:r><w:t>Fill{i:02}</w:t></w:r></w:p>"))
+        .collect();
+    let pdf = docx_to_pdf(&drawing_docx(&format!(
+        "{fill}<w:p><w:r><w:t>Anchor</w:t></w:r><w:r>{img}</w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    )))
+    .expect("float at the foot");
+    let (_, anchor_y) = pdf_glyph_text_xy(&pdf, "Anchor").expect("anchor paints");
+    let (_, y, _, h) = *pdf_image_boxes(&pdf).first().expect("the picture paints");
+    let top = y + h;
+    assert!(
+        (top - (anchor_y + 15.0)).abs() < 12.0,
+        "the picture hangs from its paragraph; top {top}, anchor baseline {anchor_y}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path
