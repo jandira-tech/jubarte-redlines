@@ -2026,6 +2026,44 @@ fn a_justified_line_with_a_tab_ends_at_the_margin() {
 }
 
 #[test]
+fn a_cell_bottom_border_sits_in_the_next_rows_pitch() {
+    // fixtures_500 0090ba78 (and its 0.94 siblings): every cell restates
+    // top=nil, bottom=single. Word still draws the row above's bottom rule
+    // on the shared edge and stacks its width into the pitch: 315-twip
+    // rows step 16.32pt, not 15.75.
+    let cell = |t: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/><w:tcBorders>\
+             <w:top w:val=\"nil\"/><w:bottom w:val=\"single\" w:sz=\"8\" w:space=\"0\" w:color=\"auto\"/>\
+             </w:tcBorders></w:tcPr><w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"20\"/></w:rPr><w:t>{t}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let row = |t: &str| {
+        format!(
+            "<w:tr><w:trPr><w:trHeight w:val=\"300\"/></w:trPr>{}</w:tr>",
+            cell(t)
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"2000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid>{}{}</w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        row("RowOne"),
+        row("RowTwo")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("bordered rows");
+    let (_, y1) = pdf_glyph_text_xy(&pdf, "RowOne").expect("row one");
+    let (_, y2) = pdf_glyph_text_xy(&pdf, "RowTwo").expect("row two");
+    let pitch = y1 - y2;
+    assert!(
+        (pitch - 16.0).abs() < 0.05,
+        "15pt row + the 1pt rule above row two; pitch={pitch}"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves
