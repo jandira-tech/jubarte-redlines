@@ -9724,6 +9724,64 @@ fn a_legacy_pct_table_spans_the_text_and_its_cell_margins() {
 }
 
 #[test]
+fn a_cells_vertical_rules_and_text_sit_where_words_compat_mode_puts_them() {
+    // fixtures_500 0019592c: every table rule stood 0.25pt left of Word's
+    // and the cell text 0.5pt. Checked in Word with a 3pt left border and
+    // zero cell margins: compatibilityMode 15 draws the rule from the
+    // table edge inward (72-74.88) and starts the text past it (75.12);
+    // mode 12 draws it outside the edge (69.12-72) and keeps the text at
+    // 72. We centred the rule on the edge in both and kept the text at 72.
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/>\
+        <w:tblBorders><w:left w:val=\"single\" w:sz=\"24\"/></w:tblBorders>\
+        <w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+        <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+        <w:p><w:r><w:t>Qx</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+        <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let settings = |mode: u32| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+             w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"{mode}\"/></w:compat></w:settings>"
+        )
+    };
+    let probe = |mode: u32| {
+        let pdf = docx_to_pdf(&docx_with_settings(body, &settings(mode))).expect("convert rule");
+        let hay = String::from_utf8_lossy(&pdf).into_owned();
+        let x = [pdf_cm_tj_xy(&hay, "Q"), pdf_tj_xy(&hay, "Q")]
+            .concat()
+            .first()
+            .map(|p| p.0)
+            .expect("Q paints");
+        let rule = pdf_fill_boxes_in(&hay, 0.0, 0.0, 0.0)
+            .into_iter()
+            .find(|(_, _, w, h)| (*w - 3.0).abs() < 0.1 && *h > 5.0)
+            .map(|(x, _, _, _)| x)
+            .expect("the 3pt rule paints");
+        (x, rule)
+    };
+    let (x15, rule15) = probe(15);
+    assert!(
+        (rule15 - 72.0).abs() < 0.2,
+        "mode 15 rule starts at the edge; x={rule15}"
+    );
+    assert!(
+        (x15 - 75.0).abs() < 0.3,
+        "mode 15 text starts past the rule; x={x15}"
+    );
+    let (x12, rule12) = probe(12);
+    assert!(
+        (rule12 - 69.0).abs() < 0.2,
+        "mode 12 rule ends at the edge; x={rule12}"
+    );
+    assert!(
+        (x12 - 72.0).abs() < 0.3,
+        "mode 12 text stays at the margin; x={x12}"
+    );
+}
+
+#[test]
 fn bordered_row_pitch_adds_the_horizontal_rule() {
     // Word stacks each row's horizontal rule on top of its height: 0.5pt
     // rules make the pitch trHeight/content + 0.5 (fixtures_500 0005052e

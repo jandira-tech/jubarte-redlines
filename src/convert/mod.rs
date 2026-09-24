@@ -11737,6 +11737,18 @@ fn inset_box(img: &LaidImage, x: f32, y: f32, dw: f32, dh: f32) -> (f32, f32, f3
     (x + l, y + b, (dw - l - r).max(1.0), (dh - t - b).max(1.0))
 }
 
+/// The width of the rule on a cell's left edge: its own left border, else
+/// the table's left (first column) or insideV rule; 0 when none paints.
+fn cell_left_rule(cell: &TableCell, borders: Option<TblBorders>) -> f32 {
+    if let Some(cb) = cell.borders {
+        return cb.left.map_or(0.0, |(_, w)| w);
+    }
+    match borders {
+        Some(b) if (cell.col == 0 && b.left) || (cell.col > 0 && b.inside_v) => b.width.max(0.24),
+        _ => 0.0,
+    }
+}
+
 /// A VML fixed-point fraction (`19661f` = 19661/65536) or plain number.
 fn vml_fraction(value: &str) -> Option<f32> {
     match value.strip_suffix('f') {
@@ -18031,7 +18043,16 @@ impl<'a> Layout<'a> {
                         .map(|w| w.1)
                         .sum();
                     let bottom = y_top - h;
-                    let pad_l = cell.pad_l;
+                    // In compatibilityMode 15 the text starts past the
+                    // cell's left rule: max(margin + half the rule, the
+                    // rule) from the grid line (Word: 0.5pt rule, 0 margin
+                    // -> 0.48; 3pt -> 3.12; 3pt + 5pt margin -> 6.48).
+                    let left_rule = cell_left_rule(cell, borders);
+                    let pad_l = if self.compat_mode >= 15 && left_rule > 0.0 {
+                        (cell.pad_l + left_rule * 0.5).max(left_rule)
+                    } else {
+                        cell.pad_l
+                    };
                     let pad_r = cell.pad_r;
                     let wrap_w = cell_wrap_width(cell, w);
                     let mut para_lines: Vec<LaidCellPara> = Vec::new();
@@ -18064,6 +18085,7 @@ impl<'a> Layout<'a> {
                         borders,
                         cell.borders,
                         [ri == 0, last_row, cell.col == 0, last_col],
+                        cell.pad_l,
                     );
                     // Content starts below the row's top rule.
                     let mut y_line = y_top - rule - inset;
@@ -18443,7 +18465,22 @@ impl<'a> Layout<'a> {
         borders: Option<TblBorders>,
         cell_borders: Option<CellBorders>,
         edges: [bool; 4],
+        pad_l: f32,
     ) {
+        // Where a vertical rule stands against its grid line (checked in
+        // Word with 0.5pt and 3pt borders, 0 and 5pt cell margins):
+        // compatibilityMode 15 draws it from the line to the right; below
+        // 15 it is centred, pushed left while half of it would overrun the
+        // cell margin (zero margins: wholly left of the line).
+        let mode15 = self.compat_mode >= 15;
+        let v_start = |x: f32, thick: f32| {
+            let half = thick * 0.5;
+            if mode15 {
+                x
+            } else {
+                x - half - (half - pad_l).max(0.0)
+            }
+        };
         let [x, y, w, h] = rect;
         let [first_row, last_row, first_col, last_col] = edges;
         let x2 = x + w;
@@ -18467,14 +18504,13 @@ impl<'a> Layout<'a> {
                 let Some((color, thick)) = edge else {
                     continue;
                 };
-                let half = thick * 0.5;
                 if horiz {
                     if hang {
                         fy -= thick;
                     }
                     fh = thick;
                 } else {
-                    fx -= half;
+                    fx = v_start(fx, thick);
                     fw = thick;
                 }
                 self.current().ops.push(Op::FillRect {
@@ -18509,7 +18545,6 @@ impl<'a> Layout<'a> {
             Some(b) => b.width.max(0.24),
             None => 0.5,
         };
-        let half = thick * 0.5;
         // A horizontal rule hangs below its edge, inside the row whose
         // pitch it adds to (0005052e 288dpi scan).
         let segs = [
@@ -18522,8 +18557,8 @@ impl<'a> Layout<'a> {
                 x2 - x,
                 thick,
             ),
-            (left, x - half, y, thick, y2 - y),
-            (right, x2 - half, y, thick, y2 - y),
+            (left, v_start(x, thick), y, thick, y2 - y),
+            (right, v_start(x2, thick), y, thick, y2 - y),
         ];
         for (on, fx, fy, fw, fh) in segs {
             if !on {
