@@ -856,6 +856,38 @@ fn a_newline_inside_w_t_is_a_space_not_a_break() {
 }
 
 #[test]
+fn a_table_style_without_spacing_keeps_the_normal_spacing() {
+    // fixtures_500 010902b5: ListTable3-Accent3 sets borders only; Normal
+    // has before/after 120 (6pt). Word spaces each cell paragraph by them
+    // (37pt two-line rows); we zeroed a styled table's spacing.
+    let step = |space: u32| {
+        let styles = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+            <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+              <w:docDefaults><w:pPrDefault/></w:docDefaults>\
+              <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+                <w:pPr><w:spacing w:before=\"{space}\" w:after=\"{space}\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr></w:style>\
+              <w:style w:type=\"table\" w:styleId=\"Plain\"><w:name w:val=\"Plain\"/>\
+                <w:tblPr><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:color=\"A5A5A5\"/></w:tblBorders></w:tblPr></w:style>\
+            </w:styles>"
+        );
+        let body = "<w:tbl><w:tblPr><w:tblStyle w:val=\"Plain\"/></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:p><w:r><w:t>StyledOne</w:t></w:r></w:p></w:tc></w:tr>\
+               <w:tr><w:tc><w:p><w:r><w:t>StyledTwo</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/>";
+        let pdf = docx_to_pdf(&docx_with_styles(body, &styles)).expect("styled table");
+        pdf_literal_td_y(&pdf, "StyledOne").expect("one")
+            - pdf_literal_td_y(&pdf, "StyledTwo").expect("two")
+    };
+    let spaced = step(120);
+    let tight = step(0);
+    assert!(
+        (spaced - tight - 12.0).abs() < 0.2,
+        "6pt after + 6pt before between the rows; spaced={spaced} tight={tight}"
+    );
+}
+
+#[test]
 fn a_docdefaults_without_ppr_default_keeps_words_paragraph_defaults() {
     // fixtures_500 00046848 / 000312ea (PHPWord): docDefaults carries only
     // rPrDefault. Word lays it out at 1.15 lines and 8pt after (13.3pt

@@ -664,6 +664,9 @@ struct TblStyle {
     /// The table style's own pPr sets `w:line`; otherwise cells keep the
     /// default paragraph style's line (00319da4 Normal 276).
     sets_line: bool,
+    /// The table style's own pPr sets before/after; otherwise cells keep
+    /// the default paragraph style's (010902b5's ListTable3: 6pt each).
+    sets_space: bool,
     first_row_fill: Option<[f32; 3]>,
     band1_fill: Option<[f32; 3]>,
     band2_fill: Option<[f32; 3]>,
@@ -2212,6 +2215,10 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         table.para.line_exact = defaults.para.line_exact;
         table.para.line_at_least = defaults.para.line_at_least;
     }
+    for table in tables.values_mut().filter(|t| !t.sets_space) {
+        table.para.before = defaults.para.before;
+        table.para.after = defaults.para.after;
+    }
     StyleSheet {
         defaults,
         by_id,
@@ -2234,10 +2241,16 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
     para.after = 0.0;
     para.before = 0.0;
     let mut sets_line = false;
+    let mut sets_space = false;
     if let Some(ppr) = dom.element(style, &W::p_pr()) {
         apply_ppr(dom, ppr, &mut para);
         sets_line =
             first_named(dom, ppr, "spacing").is_some_and(|sp| attr_any(dom, sp, "line").is_some());
+        sets_space = first_named(dom, ppr, "spacing").is_some_and(|sp| {
+            ["before", "after", "beforeAutospacing", "afterAutospacing"]
+                .iter()
+                .any(|a| attr_any(dom, sp, a).is_some())
+        });
         // HTML auto spacing resolves to 0 inside a cell (fixtures_500
         // 00319da4 Table Grid after=100 afterAutospacing=1: Word's cell
         // lines are one line apart), and table-style pPr only reaches cells.
@@ -2253,6 +2266,7 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
     let mut out = TblStyle {
         para,
         sets_line,
+        sets_space,
         first_row_fill: None,
         band1_fill: None,
         band2_fill: None,
@@ -29085,6 +29099,7 @@ mod table_tests {
             TblStyle {
                 para,
                 sets_line: true,
+                sets_space: true,
                 first_row_fill: None,
                 band1_fill: parse_hex_color("D3DFEE"),
                 band2_fill: None,
