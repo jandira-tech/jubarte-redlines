@@ -1342,6 +1342,41 @@ fn tbl_header_repeats_on_overflow_page() {
 }
 
 #[test]
+fn a_row_holding_a_nested_table_still_splits_at_the_page_end() {
+    // fixtures_500 00297360: a one-cell table holds a whole letter plus a
+    // small nested table. Word breaks the row at the page end; we moved it
+    // whole to page 2 and left page 1 with only its title.
+    let mut paras = String::new();
+    for i in 0..30 {
+        paras.push_str(&format!("<w:p><w:r><w:t>Row{i:02}</w:t></w:r></w:p>"));
+    }
+    paras.push_str(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+    );
+    for i in 30..90 {
+        paras.push_str(&format!("<w:p><w:r><w:t>Row{i:02}</w:t></w:r></w:p>"));
+    }
+    let body = format!(
+        "<w:p><w:r><w:t>Title</w:t></w:r></w:p>\
+         <w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>\
+           <w:tr><w:tc>{paras}</w:tc></w:tr></w:tbl><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert nested split");
+    let pages = pdf_content_streams(&pdf);
+    let first = stream_glyph_text(&pages[0]);
+    assert!(
+        first.contains("Row00") && first.contains("Row20"),
+        "the row starts under the title on page 1; page1={first:?}"
+    );
+    let all: String = pages.iter().map(|p| stream_glyph_text(p)).collect();
+    assert!(
+        all.contains("Inner") && all.contains("Row89"),
+        "nothing is lost across the split"
+    );
+}
+
+#[test]
 fn trailing_body_sectpr_does_not_add_a_page() {
     let docx = minimal_docx_body("<w:p><w:r><w:t>Only page</w:t></w:r></w:p><w:sectPr/>");
     let pdf = docx_to_pdf(&docx).expect("convert trailing sectPr");

@@ -1084,10 +1084,11 @@ struct CellPara {
     blank_bookmarks: Vec<String>,
 }
 
+#[derive(Clone)]
 struct TableCell {
     paras: Vec<CellPara>,
     /// Nested `w:tbl` blocks in document order.
-    nested: Vec<Block>,
+    nested: Vec<std::rc::Rc<Block>>,
     /// For each nested table, how many of `paras` precede it: a cell
     /// `p, tbl, p` paints the table between its two paragraphs.
     nested_at: Vec<usize>,
@@ -1123,6 +1124,24 @@ struct TableCell {
 impl TableCell {
     fn runs(&self) -> impl Iterator<Item = &TextRun> {
         self.paras.iter().flat_map(|p| p.runs.iter())
+    }
+
+    /// The cell's first `k` paragraphs and the rest, each keeping the
+    /// nested tables anchored among them (00297360's letter row splits
+    /// around its small nested table).
+    fn split_at(&self, k: usize) -> (TableCell, TableCell) {
+        let mut head = self.with_paras(self.paras[..k].to_vec());
+        let mut tail = self.with_paras(self.paras[k..].to_vec());
+        for (table, &at) in self.nested.iter().zip(&self.nested_at) {
+            if at < k {
+                head.nested.push(std::rc::Rc::clone(table));
+                head.nested_at.push(at);
+            } else {
+                tail.nested.push(std::rc::Rc::clone(table));
+                tail.nested_at.push(at - k);
+            }
+        }
+        (head, tail)
     }
 
     /// This cell's geometry with other paragraphs (one part of a split row).
@@ -1175,7 +1194,7 @@ enum VMerge {
 
 struct RawCell {
     paras: Vec<CellPara>,
-    nested: Vec<Block>,
+    nested: Vec<std::rc::Rc<Block>>,
     nested_at: Vec<usize>,
     pref: PrefWidth,
     colspan: usize,
@@ -5095,7 +5114,13 @@ fn visit_runs_mut_inner(blocks: &mut [Block], f: &mut impl FnMut(&mut TextRun)) 
                                 f(run);
                             }
                         }
-                        visit_runs_mut_inner(&mut cell.nested, f);
+                        // Nested tables are shared only by a split row
+                        // during layout; before it each one is unique.
+                        for nested in &mut cell.nested {
+                            if let Some(block) = std::rc::Rc::get_mut(nested) {
+                                visit_runs_mut_inner(std::slice::from_mut(block), f);
+                            }
+                        }
                     }
                 }
             }
@@ -6254,7 +6279,11 @@ fn resolve_cell_fields(blocks: &mut [Block]) {
                         para.runs = apply_field_results(&para.runs, known, texts, words);
                     }
                 }
-                walk(&mut cell.nested, known, texts, words);
+                for nested in &mut cell.nested {
+                    if let Some(block) = std::rc::Rc::get_mut(nested) {
+                        walk(std::slice::from_mut(block), known, texts, words);
+                    }
+                }
             }
         }
     }
@@ -6279,7 +6308,11 @@ fn document_word_count(blocks: &[Block]) -> u32 {
                         for para in &cell.paras {
                             n += run_word_count(&para.runs);
                         }
-                        n += document_word_count(&cell.nested);
+                        n += cell
+                            .nested
+                            .iter()
+                            .map(|b| document_word_count(std::slice::from_ref(&**b)))
+                            .sum::<u32>();
                     }
                 }
             }
@@ -7052,7 +7085,7 @@ fn table_block(
                 if dom.name_is(child, &W::tbl()) {
                     let block = table_block(dom, child, sheet, numbering, authors, comments, media);
                     if !block_is_blank(&block) {
-                        nested.push(block);
+                        nested.push(std::rc::Rc::new(block));
                         nested_at.push(cell_paras.len());
                     }
                     continue;
@@ -16765,10 +16798,18 @@ impl<'a> Layout<'a> {
         if rh <= room + 0.5
             || room < 1.0
             || room < min
-            || row.iter().any(|c| {
-                c.rowspan > 1 || !c.nested.is_empty() || c.valign_center || c.valign_bottom
-            })
+            || row
+                .iter()
+                .any(|c| c.rowspan > 1 || c.valign_center || c.valign_bottom)
         {
+            return;
+        }
+        // Our estimate of a row holding nested tables runs long (00f45b1b's
+        // brochure row: 568.7pt against the 554.4pt page Word fits it on),
+        // so such a row splits only when it plainly outgrows a whole page
+        // (00297360's three-page letter row).
+        let page_room = self.page.height - self.body_top - self.body_floor;
+        if row.iter().any(|c| !c.nested.is_empty()) && rh <= page_room * 1.05 {
             return;
         }
         let height =
@@ -16777,15 +16818,14 @@ impl<'a> Layout<'a> {
         let (mut any_head, mut any_tail) = (false, false);
         for cell in row {
             let mut k = 0;
-            while k < cell.paras.len()
-                && height(&cell.with_paras(cell.paras[..=k].to_vec())) <= room
-            {
+            while k < cell.paras.len() && height(&cell.split_at(k + 1).0) <= room {
                 k += 1;
             }
             any_head |= k > 0;
             any_tail |= k < cell.paras.len();
-            head.push(cell.with_paras(cell.paras[..k].to_vec()));
-            tail.push(cell.with_paras(cell.paras[k..].to_vec()));
+            let (h, t) = cell.split_at(k);
+            head.push(h);
+            tail.push(t);
         }
         if !any_head || !any_tail {
             return;
