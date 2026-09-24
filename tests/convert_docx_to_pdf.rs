@@ -1522,6 +1522,80 @@ fn an_inline_list_marker_still_lifts_its_line() {
 }
 
 #[test]
+fn a_style_numpr_keeps_the_style_indent_over_the_level() {
+    // fixtures_500 019d92d9: the Bulleted style carries numPr and its own
+    // ind 270/270; the level says 360/360. Live Word (2026-09-25) starts
+    // the text at the style's 270 when the numPr is only inherited, at the
+    // level's 360 under a direct numPr, and at a direct left=270 flush
+    // (no hanging) when numId=0 removes the list. A style setting only
+    // left (0005cabe Lista1) keeps the level's hanging.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
+              <w:pStyle w:val=\"Bulleted\"/><w:lvlText w:val=\"-\"/>\
+              <w:pPr><w:tabs><w:tab w:val=\"num\" w:pos=\"360\"/></w:tabs><w:ind w:left=\"360\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:abstractNum w:abstractNumId=\"1\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/><w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+          <w:num w:numId=\"2\"><w:abstractNumId w:val=\"1\"/></w:num>\
+        </w:numbering>";
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Bulleted\"><w:name w:val=\"Bulleted\"/><w:basedOn w:val=\"Normal\"/>\
+            <w:pPr><w:numPr><w:numId w:val=\"1\"/></w:numPr><w:tabs><w:tab w:val=\"clear\" w:pos=\"360\"/>\
+            <w:tab w:val=\"num\" w:pos=\"270\"/></w:tabs><w:ind w:left=\"270\" w:right=\"-240\" w:hanging=\"270\"/></w:pPr></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"ListLeft\"><w:name w:val=\"ListLeft\"/><w:basedOn w:val=\"Normal\"/>\
+            <w:pPr><w:numPr><w:numId w:val=\"2\"/></w:numPr><w:ind w:left=\"426\"/></w:pPr></w:style>\
+        </w:styles>";
+    let p = |ppr: &str, text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Bulleted"/>{ppr}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let body = [
+        p("", "Inherited"),
+        p(r#"<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>"#, "Direct"),
+        p(r#"<w:numPr><w:ilvl w:val="0"/><w:numId w:val="0"/></w:numPr><w:ind w:left="270" w:right="0"/>"#, "Removed"),
+        r#"<w:p><w:pPr><w:pStyle w:val="ListLeft"/></w:pPr><w:r><w:t>LeftOnly</w:t></w:r></w:p>"#
+            .to_string(),
+        "<w:sectPr/>".to_string(),
+    ]
+    .concat();
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(
+        &body,
+        Some(numbering),
+        Some(styles),
+    ))
+    .expect("style numPr");
+    let x = |w: &str| pdf_glyph_text_xy(&pdf, w).map(|p| p.0).unwrap_or(-1.0);
+    assert!(
+        (x("Inherited") - 85.5).abs() < 0.3,
+        "style indent 270: {}",
+        x("Inherited")
+    );
+    assert!(
+        (x("Direct") - 90.0).abs() < 0.3,
+        "level indent 360: {}",
+        x("Direct")
+    );
+    assert!(
+        (x("Removed") - 85.5).abs() < 0.3,
+        "flush at 270: {}",
+        x("Removed")
+    );
+    assert!(
+        (x("LeftOnly") - 93.3).abs() < 0.3,
+        "style left 426 under the level's hanging: {}",
+        x("LeftOnly")
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

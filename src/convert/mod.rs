@@ -587,6 +587,11 @@ struct NamedStyle {
     /// document defaults): a character style overlays them on its runs.
     sets_size: bool,
     sets_family: bool,
+    /// The style chain itself sets `w:ind` left / hanging-or-firstLine:
+    /// over a numPr it carries, those attributes beat the level's
+    /// (019d92d9 Bulleted 270/270 over 360/360; 0005cabe Lista1 left=426
+    /// alone keeps the level's hanging 360).
+    sets_ind: (bool, bool),
 }
 
 #[derive(Clone, Default)]
@@ -2307,14 +2312,29 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             para.style_name = nm.clone();
         }
         let (num_id, ilvl) = resolve_num_pr(&dom, &raw, &id, 0);
-        let chain_sets = |name: &str| {
+        let chain_sets = |name: &str, para_side: bool| {
             let mut cur = Some(id.as_str());
             for _ in 0..12 {
                 let Some(r) = cur.and_then(|c| raw.get(c)) else {
                     break;
                 };
-                if r.rpr
-                    .is_some_and(|rpr| first_named(&dom, rpr, name).is_some())
+                let pr = if para_side { r.ppr } else { r.rpr };
+                if pr.is_some_and(|pr| first_named(&dom, pr, name).is_some()) {
+                    return true;
+                }
+                cur = r.based.as_deref();
+            }
+            false
+        };
+        let (sets_size, sets_family) = (chain_sets("sz", false), chain_sets("rFonts", false));
+        let chain_ind = |names: &[&str]| {
+            let mut cur = Some(id.as_str());
+            for _ in 0..12 {
+                let Some(r) = cur.and_then(|c| raw.get(c)) else {
+                    break;
+                };
+                if let Some(ind) = r.ppr.and_then(|pr| first_named(&dom, pr, "ind"))
+                    && names.iter().any(|n| attr_any(&dom, ind, n).is_some())
                 {
                     return true;
                 }
@@ -2322,7 +2342,10 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             }
             false
         };
-        let (sets_size, sets_family) = (chain_sets("sz"), chain_sets("rFonts"));
+        let sets_ind = (
+            chain_ind(&["left", "start"]),
+            chain_ind(&["hanging", "firstLine"]),
+        );
         by_id.insert(
             id,
             NamedStyle {
@@ -2332,6 +2355,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
                 ilvl,
                 sets_size,
                 sets_family,
+                sets_ind,
             },
         );
     }
@@ -6585,10 +6609,26 @@ fn paragraph_block(
             .and_then(|ps| dom.attribute(ps, &W::val()))
             .and_then(|sid| sheet.by_id.get(sid))
             .is_some_and(|named| named.num_id.as_deref().is_some_and(|id| id != "0"));
-        let direct_ind = ppr.and_then(|ppr| first_named(dom, ppr, "ind")).is_some();
-        if style_numbered && !direct_ind {
-            pstyle.indent_left = 0.0;
-            pstyle.indent_first = 0.0;
+        // A direct w:ind lands on the cleared indent attribute by
+        // attribute: 019d92d9's `left=270` alone starts flush at 270, the
+        // style's hanging gone (live Word).
+        if style_numbered {
+            let direct_ind = ppr.and_then(|ppr| first_named(dom, ppr, "ind"));
+            let twips = |names: &[&str]| {
+                direct_ind.and_then(|ind| {
+                    names
+                        .iter()
+                        .find_map(|n| attr_any(dom, ind, n))
+                        .and_then(|v| v.parse::<f32>().ok())
+                        .map(|v| v / 20.0)
+                })
+            };
+            pstyle.indent_left = twips(&["left", "start"]).unwrap_or(0.0);
+            pstyle.indent_first = match (twips(&["hanging"]), twips(&["firstLine"])) {
+                (Some(h), _) => -h,
+                (None, Some(f)) => f,
+                (None, None) => 0.0,
+            };
         }
     }
     if !marker.is_empty() {
@@ -7515,10 +7555,27 @@ fn apply_list_level(
         let direct_has = |names: &[&str]| {
             direct_ind.is_some_and(|ind| names.iter().any(|n| attr_any(dom, ind, n).is_some()))
         };
-        if lvl.left > 0.0 && !direct_has(&["left", "start"]) {
+        // A numPr the paragraph only inherits from its style yields to that
+        // style's own w:ind (live Word: Bulleted 270/270 over a 360/360
+        // level puts text at 270; a direct numPr takes the level's 360).
+        let direct_num = dom
+            .element(para, &W::p_pr())
+            .and_then(|ppr| first_named(dom, ppr, "numPr"))
+            .and_then(|np| first_named(dom, np, "numId"))
+            .is_some();
+        let (style_left, style_first) = if direct_num {
+            (false, false)
+        } else {
+            dom.element(para, &W::p_pr())
+                .and_then(|ppr| first_named(dom, ppr, "pStyle"))
+                .and_then(|ps| dom.attribute(ps, &W::val()))
+                .and_then(|sid| sheet.by_id.get(sid))
+                .map_or((false, false), |named| named.sets_ind)
+        };
+        if lvl.left > 0.0 && !style_left && !direct_has(&["left", "start"]) {
             pstyle.indent_left = lvl.left;
         }
-        if lvl.hanging > 0.0 && !direct_has(&["hanging", "firstLine"]) {
+        if lvl.hanging > 0.0 && !style_first && !direct_has(&["hanging", "firstLine"]) {
             pstyle.indent_first = -lvl.hanging;
         }
         pstyle.list_jc_right = lvl.jc_right;
