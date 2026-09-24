@@ -1493,6 +1493,16 @@ struct LaidImage {
     /// wraps the tab to a line of its own in this mark's face (redlines vs
     /// 000e3e7b: a 441.75pt banner + tab stands 16.2pt taller).
     chrome_tab_line: Option<RunStyle>,
+    /// A chrome flow picture that wrapped below earlier pictures of its
+    /// paragraph: the picture rows above it (pt) and the wrapped tab line
+    /// between them, if any (redlines vs 000e3e7b: A's deleted 455pt VML
+    /// banner sits under B's 441.75pt banner and its tab line).
+    chrome_drop: f32,
+    /// The paragraph mark's face for the rows' line descents, and whether
+    /// a wrapped tab line sits between the first row and this one.
+    chrome_drop_tab: Option<(RunStyle, bool)>,
+    /// Index of the chrome paragraph holding the picture.
+    chrome_para: u32,
     /// `pic:spPr/a:ln`: Word strokes the picture's own outline (000f5278's
     /// QR code has a black frame).
     outline: Option<([f32; 3], f32)>,
@@ -6948,6 +6958,9 @@ fn paragraph_block(
                 inset: [0.0; 4],
                 chrome_leading: None,
                 chrome_tab_line: None,
+                chrome_drop: 0.0,
+                chrome_drop_tab: None,
+                chrome_para: 0,
                 outline: None,
                 gap_before: 0.0,
             },
@@ -11286,6 +11299,9 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     inset: [0.0; 4],
                     chrome_leading: None,
                     chrome_tab_line: None,
+                    chrome_drop: 0.0,
+                    chrome_drop_tab: None,
+                    chrome_para: 0,
                     outline: None,
                     gap_before: 0.0,
                 });
@@ -11317,6 +11333,9 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         inset,
                         chrome_leading: None,
                         chrome_tab_line: None,
+                        chrome_drop: 0.0,
+                        chrome_drop_tab: None,
+                        chrome_para: 0,
                         outline: picture_outline(dom, drawing),
                         gap_before: space_before_drawing(dom, drawing),
                     });
@@ -11337,6 +11356,9 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         inset: [0.0; 4],
                         chrome_leading: None,
                         chrome_tab_line: None,
+                        chrome_drop: 0.0,
+                        chrome_drop_tab: None,
+                        chrome_para: 0,
                         outline: None,
                         gap_before: 0.0,
                     });
@@ -11346,10 +11368,21 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
     }
     // Choice Requires=v OLE / clipart: v:imagedata, not a:blip. Skip when
     // the Fallback already contributed a DrawingML picture (Strict01 Excel
-    // object) — a second Flow reserve blows the 13-page pairing.
-    if out.is_empty() {
+    // object) — a second Flow reserve blows the 13-page pairing. A lone
+    // w:pict outside any mc:AlternateContent is its own picture even beside
+    // a drawing (redlines vs 000e3e7b: A's deleted VML banner after B's
+    // inserted DrawingML one).
+    let had_drawing = !out.is_empty();
+    {
         for root in shape_roots(dom, para) {
             if dom.name_is(root, &W::drawing()) {
+                continue;
+            }
+            if had_drawing
+                && !dom
+                    .ancestors(root, Some(&MC::name("AlternateContent")))
+                    .is_empty()
+            {
                 continue;
             }
             for im in descendants_local(dom, root, "imagedata") {
@@ -11376,6 +11409,9 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         inset: [0.0; 4],
                         chrome_leading: None,
                         chrome_tab_line: None,
+                        chrome_drop: 0.0,
+                        chrome_drop_tab: None,
+                        chrome_para: 0,
                         outline: None,
                         gap_before: 0.0,
                     });
@@ -11402,6 +11438,9 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     inset: [0.0; 4],
                     chrome_leading: None,
                     chrome_tab_line: None,
+                    chrome_drop: 0.0,
+                    chrome_drop_tab: None,
+                    chrome_para: 0,
                     outline: None,
                     gap_before: 0.0,
                 });
@@ -12856,6 +12895,7 @@ fn load_chrome_part(
     let mut boxes = Vec::new();
     let watermark = parse_header_watermark(&part_dom, root);
     let mut seen_text = false;
+    let mut para_no = 0_u32;
     for para in part_dom.descendants(root, Some(&W::p())) {
         if hf_para_is_shape_text(&part_dom, para) {
             continue;
@@ -12938,6 +12978,11 @@ fn load_chrome_part(
                 .ancestors(para, Some(&W::tbl()))
                 .iter()
                 .any(|t| hf_node_is_top_level(&part_dom, root, *t));
+        para_no += 1;
+        // Flow pictures fill rows; one past the measure opens the next row,
+        // under the wrapped tab line when the first row's tab wrapped.
+        let (mut cursor, mut row_h, mut drop) = (0.0_f32, 0.0_f32, 0.0_f32);
+        let mut tab_wrapped = false;
         images.extend(
             collect_images(pkg, &path, &part_dom, para)
                 .into_iter()
@@ -12946,12 +12991,26 @@ fn load_chrome_part(
                     img.chrome_align = jc;
                     img.chrome_lead = lead;
                     img.chrome_under_table = under_table;
+                    img.chrome_para = para_no;
                     img.chrome_flow = flow && matches!(img.slot, ImageSlot::Flow);
                     if img.chrome_flow {
                         img.chrome_leading.clone_from(&leading);
-                        if tab_after && img.w >= text_w - 0.5 {
-                            img.chrome_tab_line = Some(mark_style());
+                        let first_row = row_h <= 0.0 || cursor + img.w <= text_w + 0.5;
+                        if cursor > 0.0 && cursor + img.w > text_w + 0.5 {
+                            drop += row_h;
+                            cursor = 0.0;
+                            row_h = 0.0;
                         }
+                        img.chrome_drop = drop;
+                        if drop > 0.0 {
+                            img.chrome_drop_tab = Some((mark_style(), tab_wrapped));
+                        }
+                        if first_row && drop <= 0.0 && tab_after && img.w >= text_w - 0.5 {
+                            img.chrome_tab_line = Some(mark_style());
+                            tab_wrapped = true;
+                        }
+                        cursor += img.w;
+                        row_h = row_h.max(img.h);
                     }
                     img
                 }),
@@ -13866,7 +13925,8 @@ fn chrome_images_h(fonts: &Fonts, images: &[LaidImage]) -> f32 {
 /// extra leading.
 fn chrome_pic_line(fonts: &Fonts, img: &LaidImage) -> f32 {
     let mult = 1.0 + img.chrome_leading.as_ref().map_or(0.0, |(extra, _)| *extra);
-    img.h
+    chrome_pic_top(fonts, img)
+        + img.h
         + img.chrome_leading.as_ref().map_or(0.0, |(extra, mark)| {
             let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
             extra * face.single_line_pt(mark.size)
@@ -13876,6 +13936,23 @@ fn chrome_pic_line(fonts: &Fonts, img: &LaidImage) -> f32 {
             let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
             face.line_descent_pt(mark.size) + mult * face.single_line_pt(mark.size)
         })
+}
+
+/// How far below its paragraph's top a wrapped chrome picture's row starts:
+/// the picture rows above it and the wrapped tab line between them.
+fn chrome_pic_top(fonts: &Fonts, img: &LaidImage) -> f32 {
+    // Each row above keeps its line's descent (000e3e7b footer: 3pt between
+    // the banners); a wrapped tab adds its own line.
+    let tab = img.chrome_drop_tab.as_ref().map_or(0.0, |(mark, tab)| {
+        let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
+        face.line_descent_pt(mark.size)
+            + if *tab {
+                face.single_line_pt(mark.size)
+            } else {
+                0.0
+            }
+    });
+    img.chrome_drop + tab
 }
 
 /// Header/footer band: its stacked lines plus its laid-out tables.
@@ -16963,17 +17040,41 @@ impl<'a> Layout<'a> {
         } else {
             0.0
         };
+        let mut last_drop = 0.0_f32;
         for img in &images {
-            let lift = if in_header {
-                if img.chrome_under_table && matches!(img.slot, ImageSlot::Flow) {
-                    tables_h
-                } else {
-                    0.0
-                }
-            } else if img.chrome_lead {
-                text_h
+            if img.chrome_flow && img.chrome_drop > last_drop {
+                dx = 0.0;
+            }
+            if img.chrome_flow {
+                last_drop = img.chrome_drop;
+            }
+            let row_top = if img.chrome_flow {
+                chrome_pic_top(self.fonts, img)
             } else {
                 0.0
+            };
+            // A footer's earlier rows stand above its last one.
+            let rows_below = if in_header || !img.chrome_flow {
+                0.0
+            } else {
+                images
+                    .iter()
+                    .filter(|o| o.chrome_flow && o.chrome_para == img.chrome_para)
+                    .map(|o| chrome_pic_top(self.fonts, o) + o.h)
+                    .fold(0.0_f32, f32::max)
+                    - (row_top + img.h)
+            };
+            let lift = if in_header {
+                row_top
+                    + if img.chrome_under_table && matches!(img.slot, ImageSlot::Flow) {
+                        tables_h
+                    } else {
+                        0.0
+                    }
+            } else if img.chrome_lead {
+                text_h + rows_below
+            } else {
+                rows_below
             };
             if img.behind == behind {
                 self.emit_chrome_image(img, in_header, dx, lift, band);

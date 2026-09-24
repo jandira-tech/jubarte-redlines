@@ -2008,6 +2008,40 @@ fn a_character_style_as_pstyle_keeps_normal() {
 }
 
 #[test]
+fn a_header_picture_past_the_measure_wraps_to_a_new_row() {
+    // Redlines vs 000e3e7b: B's inserted full-width banner and A's deleted
+    // VML banner share the header paragraph. Live Word wraps the second
+    // under the first (plus the line's descent); we painted it beside the
+    // first, off the page, and the band stayed one row tall.
+    let pic = |cx: u32, cy: u32| {
+        format!(
+            "<w:r><w:drawing><wp:inline><wp:extent cx=\"{cx}\" cy=\"{cy}\"/>\
+             <wp:docPr id=\"1\" name=\"Picture 1\"/><a:graphic><a:graphicData \
+             uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic><pic:blipFill>\
+             <a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>\
+             </wp:inline></w:drawing></w:r>"
+        )
+    };
+    let body_y = |inner: &str| {
+        let pdf = docx_to_pdf(&header_part_docx_at(&format!("<w:p>{inner}</w:p>"), 0))
+            .expect("banner header");
+        pdf_glyph_text_xy(&pdf, "HdrImgBodyX")
+            .expect("body paints")
+            .1
+    };
+    let one = body_y(&pic(5943600, 1270000));
+    let two = body_y(&format!(
+        "{}{}",
+        pic(5943600, 1270000),
+        pic(5943600, 635000)
+    ));
+    assert!(
+        one - two > 50.0,
+        "the second 50pt banner opens a row below; one {one} two {two}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path
