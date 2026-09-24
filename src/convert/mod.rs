@@ -585,6 +585,10 @@ struct NamedStyle {
     run: RunStyle,
     num_id: Option<String>,
     ilvl: u32,
+    /// The style chain itself sets `w:sz` / `w:rFonts` (not inherited
+    /// document defaults): a character style overlays them on its runs.
+    sets_size: bool,
+    sets_family: bool,
 }
 
 #[derive(Clone, Default)]
@@ -2264,6 +2268,22 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             para.style_name = nm.clone();
         }
         let (num_id, ilvl) = resolve_num_pr(&dom, &raw, &id, 0);
+        let chain_sets = |name: &str| {
+            let mut cur = Some(id.as_str());
+            for _ in 0..12 {
+                let Some(r) = cur.and_then(|c| raw.get(c)) else {
+                    break;
+                };
+                if r.rpr
+                    .is_some_and(|rpr| first_named(&dom, rpr, name).is_some())
+                {
+                    return true;
+                }
+                cur = r.based.as_deref();
+            }
+            false
+        };
+        let (sets_size, sets_family) = (chain_sets("sz"), chain_sets("rFonts"));
         by_id.insert(
             id,
             NamedStyle {
@@ -2271,6 +2291,8 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
                 run,
                 num_id,
                 ilvl,
+                sets_size,
+                sets_family,
             },
         );
     }
@@ -2847,6 +2869,10 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
                 ];
             }
             style.color = rgb;
+        } else if dom.attribute(color, &W::val()) == Some("auto") {
+            // "auto" is Word's automatic colour: it overrides an inherited
+            // one (004b3b3d's runs under a red paragraph style are black).
+            style.color = [0.0, 0.0, 0.0];
         }
     } else {
         // Strict01 Online Video: w14:textFill accent5, no w:color.
@@ -5861,12 +5887,38 @@ fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: b
         return 0.0;
     };
     let col_w = table_col_widths(cols, geom, avail);
-    let rows_h: f32 = rows
+    let rows_h: f32 = table_row_heights(fonts, rows, &col_w, geom, space_for_ul)
         .iter()
-        .enumerate()
-        .map(|(ri, row)| table_row_height_pt(fonts, row, &col_w, geom, ri, space_for_ul))
         .sum();
     rows_h + style.after.max(4.0)
+}
+
+/// Every row's height: each row on its own cells, then a vertically
+/// merged cell whose content outgrows its rows lengthens the last one
+/// (000bf661's header keeps row one at its trHeight).
+fn table_row_heights(
+    fonts: &Fonts,
+    rows: &[Vec<TableCell>],
+    col_w: &[f32],
+    geom: &TableGeom,
+    space_for_ul: bool,
+) -> Vec<f32> {
+    let mut h: Vec<f32> = rows
+        .iter()
+        .enumerate()
+        .map(|(ri, row)| table_row_height_pt(fonts, row, col_w, geom, ri, space_for_ul))
+        .collect();
+    for (ri, row) in rows.iter().enumerate() {
+        for cell in row.iter().filter(|c| c.rowspan > 1) {
+            let last = (ri + cell.rowspan).min(rows.len()) - 1;
+            let need = cell_content_height(fonts, cell, col_w, space_for_ul);
+            let have: f32 = h[ri..=last].iter().sum();
+            if need > have {
+                h[last] += need - have;
+            }
+        }
+    }
+    h
 }
 
 /// Word row height: max cell content (pad_t + sum of paragraph line
@@ -5886,8 +5938,11 @@ fn table_row_height_pt(
     if exact && spec > 0.0 {
         return spec;
     }
+    // A cell merged down over later rows sizes the last of them
+    // (table_row_heights), not this one.
     let content = row
         .iter()
+        .filter(|cell| cell.rowspan <= 1)
         .map(|cell| cell_content_height(fonts, cell, col_w, space_for_ul))
         .fold(0.0_f32, f32::max);
     // An atLeast minimum is the text area: the cells' top and bottom
@@ -8277,6 +8332,15 @@ fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
     }
     if run.color != [0.0, 0.0, 0.0] {
         style.color = run.color;
+    }
+    // A size or face the character style itself sets does apply
+    // (004b3b3d's PageNumber is 8pt Arial; the old mini 336 lock
+    // predates fixtures_500).
+    if named.sets_size {
+        style.size = run.size;
+    }
+    if named.sets_family {
+        style.family.clone_from(&run.family);
     }
 }
 
@@ -11999,7 +12063,7 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
         let pstyle = std::rc::Rc::new(pstyle);
         let mut scan = FieldScan::default();
         let mut line = Vec::new();
-        collect_hf_rec(dom, para, &prun, theme, &mut scan, &mut line);
+        collect_hf_rec(dom, para, &prun, sheet, &mut scan, &mut line);
         let right_frame = dom
             .element(para, &W::p_pr())
             .and_then(|ppr| first_named(dom, ppr, "framePr"))
@@ -12148,10 +12212,16 @@ fn hf_para_is_bare_line(dom: &Dom, root: NodeId, para: NodeId) -> bool {
             // A paragraph holding only anchored drawings is still a line
             // (000ebd12's first-page logo paragraph); inline pictures are
             // sized as chrome images.
+            // mc:Fallback only mirrors the Choice Word renders (000f3a4e's
+            // anchored text box carries a w:pict fallback).
             return !dom.descendants(para, None).into_iter().any(|d| {
-                dom.name_is(d, &W::pict())
+                (dom.name_is(d, &W::pict())
                     || (dom.name_is(d, &W::drawing())
-                        && !dom.descendants(d, Some(&WP::name("inline"))).is_empty())
+                        && !dom.descendants(d, Some(&WP::name("inline"))).is_empty()))
+                    && !dom
+                        .ancestors(d, None)
+                        .iter()
+                        .any(|a| local_name_is(dom, *a, "Fallback"))
             });
         }
         if !(dom.name_is(id, &W::sdt()) || dom.name_is(id, &W::sdt_content())) {
@@ -12226,10 +12296,11 @@ fn collect_hf_rec(
     dom: &Dom,
     node: NodeId,
     base: &RunStyle,
-    theme: &ThemeFonts,
+    sheet: &StyleSheet,
     scan: &mut FieldScan,
     runs: &mut Vec<TextRun>,
 ) {
+    let theme = &sheet.theme;
     if dom.name_is(node, &W::instr_text()) {
         let raw = element_text(dom, node);
         scan.instr.push_str(&raw);
@@ -12277,15 +12348,24 @@ fn collect_hf_rec(
                 break;
             }
         }
-        if fieldish {
-            for i in 0..dom.child_count(node) {
-                collect_hf_rec(dom, dom.child_at(node, i), base, theme, scan, runs);
-            }
-            return;
-        }
+        // The run's character style, then its direct rPr (004b3b3d's
+        // PageNumber runs are 8pt only through rStyle).
         let mut style = base.clone();
         if let Some(rpr) = dom.element(node, &W::r_pr()) {
+            if let Some(named) = first_named(dom, rpr, "rStyle")
+                .and_then(|n| dom.attribute(n, &W::val()))
+                .and_then(|sid| sheet.by_id.get(sid))
+            {
+                apply_named_char_style(&mut style, named);
+            }
             apply_rpr(dom, rpr, &mut style, theme);
+        }
+        if fieldish {
+            // An uncached field's run takes the style of the run holding it.
+            for i in 0..dom.child_count(node) {
+                collect_hf_rec(dom, dom.child_at(node, i), &style, sheet, scan, runs);
+            }
+            return;
         }
         if scan.result
             && let Some(kind) = scan.kind
@@ -12311,7 +12391,7 @@ fn collect_hf_rec(
         return;
     }
     for idx in 0..dom.child_count(node) {
-        collect_hf_rec(dom, dom.child_at(node, idx), base, theme, scan, runs);
+        collect_hf_rec(dom, dom.child_at(node, idx), base, sheet, scan, runs);
     }
 }
 
@@ -12551,9 +12631,8 @@ fn table_rows_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: boo
         return 0.0;
     };
     let col_w = table_col_widths(cols, geom, avail);
-    rows.iter()
-        .enumerate()
-        .map(|(ri, row)| table_row_height_pt(fonts, row, &col_w, geom, ri, space_for_ul))
+    table_row_heights(fonts, rows, &col_w, geom, space_for_ul)
+        .iter()
         .sum()
 }
 
@@ -17058,13 +17137,7 @@ impl<'a> Layout<'a> {
         // tblW dxa/pct is the preferred width (table_bookmark_end Tests 3–5
         // use pct 50ths). Grid-only tables still never stretch.
         let col_w = table_col_widths(cols, geom, avail);
-        let row_h: Vec<f32> = rows
-            .iter()
-            .enumerate()
-            .map(|(ri, row)| {
-                table_row_height_pt(self.fonts, row, &col_w, geom, ri, self.space_for_ul)
-            })
-            .collect();
+        let row_h = table_row_heights(self.fonts, rows, &col_w, geom, self.space_for_ul);
         let used: f32 = col_w.iter().sum();
         // A centred table wider than the measure overhangs both sides
         // (00afb3e6's 534.75pt table starts at 38.6 in a 72..540 measure).

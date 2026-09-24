@@ -2339,6 +2339,66 @@ fn an_underline_without_a_val_draws_nothing() {
 }
 
 #[test]
+fn a_run_color_auto_overrides_the_styles_color() {
+    // fixtures_500 004b3b3d: the paragraph style is red, the runs say
+    // <w:color w:val="auto"/>. Word paints them in automatic black; we
+    // skipped "auto" and kept the style's red.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Red\"><w:name w:val=\"red\"/><w:basedOn w:val=\"Normal\"/>\
+            <w:rPr><w:color w:val=\"FF0000\"/></w:rPr></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"Red\"/></w:pPr>\
+           <w:r><w:rPr><w:color w:val=\"auto\"/></w:rPr><w:t>Automatic</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("color auto");
+    let hay = pdf_content_streams(&pdf).join("\n");
+    assert!(
+        !hay.contains("1.000 0.000 0.000 rg"),
+        "no red text; stream {}",
+        &hay[..hay.len().min(300)]
+    );
+}
+
+#[test]
+fn a_merged_cells_content_grows_the_last_row_it_spans() {
+    // fixtures_500 000bf661: a header table whose first row (trHeight 703)
+    // starts vertical merges holding four text lines; the second row
+    // continues them. Word keeps row one at its trHeight and grows the
+    // last row; we pushed all the merged text into row one.
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblBorders>\
+           <w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+           <w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+           <w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+           <w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+           <w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+           <w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>\
+         </w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+         <w:tr><w:trPr><w:trHeight w:val=\"400\"/></w:trPr>\
+           <w:tc><w:tcPr><w:vMerge w:val=\"restart\"/></w:tcPr>\
+             <w:p><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p>\
+             <w:p><w:r><w:t>Three</w:t></w:r></w:p><w:p><w:r><w:t>Four</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:t>Side</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:trPr><w:trHeight w:val=\"200\"/></w:trPr>\
+           <w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc>\
+           <w:tc><w:p/></w:tc></w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("vMerge rows");
+    let mut ys = pdf_horiz_rule_ys(&pdf);
+    ys.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    // top, the row one / row two boundary, bottom: row one keeps its 20pt.
+    assert!(
+        ys.len() == 3 && (ys[0] - ys[1] - 20.0).abs() < 1.5,
+        "rules {ys:?}"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves
@@ -2547,10 +2607,11 @@ fn file_34_char_styles_xml() -> &'static str {
 }
 
 #[test]
-fn char_style_explicit_sz_stays_para_size_after_mini_336() {
-    // Word applies character-style w:sz (RedBoldCharacter 12pt on an
-    // 11pt para). Overlaying it (mini 334–337) was NR 0-delta but
-    // redline file_34_file_35 −0.49 / mean −0.008. Keep paragraph size.
+fn char_style_explicit_sz_applies_like_word() {
+    // Word applies character-style w:sz (RedBoldCharacter 12pt on an 11pt
+    // paragraph). The old mini 334-337 lock kept the paragraph size for an
+    // old-corpus redline metric; fixtures_500 004b3b3d's PageNumber (8pt)
+    // shows Word's rule.
     let body = "<w:p>\
          <w:r><w:t>plain</w:t></w:r>\
          <w:r><w:rPr><w:rStyle w:val=\"RedBoldCharacter\"/></w:rPr>\
@@ -2561,16 +2622,16 @@ fn char_style_explicit_sz_stays_para_size_after_mini_336() {
         None,
         Some(file_34_char_styles_xml()),
     ))
-    .expect("convert char style sz lock");
+    .expect("convert char style sz");
     let hay = String::from_utf8_lossy(&pdf);
     assert!(
         pdf_has_factory_calibri_11(&hay),
-        "char-style sz overlay ITT-neg; stay 11pt; tail {}",
+        "the plain run stays 11pt; tail {}",
         &hay[hay.len().saturating_sub(320)..]
     );
     assert!(
-        !hay.contains("12 Tf") && !hay.contains("12.00 Tf"),
-        "must not overlay RedBoldCharacter 12pt; tail {}",
+        hay.contains("12 Tf") || hay.contains("12.00 Tf") || hay.contains(" 50 Tf"),
+        "RedBoldCharacter paints at 12pt; tail {}",
         &hay[hay.len().saturating_sub(320)..]
     );
 }
@@ -10713,6 +10774,107 @@ fn a_footer_text_box_paints_its_text() {
     .expect("footer text box");
     let (_, y) = pdf_glyph_text_xy(&pdf, "BoxedContact").expect("the footer text box paints");
     assert!(y < 72.0, "in the footer band; y={y}");
+}
+
+#[test]
+fn header_runs_take_their_character_style() {
+    // fixtures_500 004b3b3d: the header's "1/1" runs carry rStyle
+    // PageNumber (8pt) and no size of their own. Word's header line is 8pt;
+    // we ignored rStyle in headers, drew 11pt and pushed the body 3.4pt down.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"PageNumber\"><w:name w:val=\"page number\"/>\
+            <w:rPr><w:sz w:val=\"16\"/></w:rPr></w:style></w:styles>";
+    let body_top = |rstyle: &str| {
+        let header = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+               <w:p><w:r><w:rPr>{rstyle}</w:rPr><w:t>Qhead</w:t></w:r></w:p></w:hdr>"
+        );
+        let body = "<w:p><w:r><w:t>Zbody</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+               <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"709\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"709\" w:footer=\"720\"/></w:sectPr>";
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[("rIdH1", "header", "header1.xml")],
+            &[
+                ("word/header1.xml", header),
+                ("word/styles.xml", styles.to_string()),
+            ],
+        ))
+        .expect("header char style");
+        pdf_glyph_text_xy(&pdf, "Zbody").expect("body").1
+    };
+    let styled = body_top("<w:rStyle w:val=\"PageNumber\"/>");
+    let direct = body_top("<w:sz w:val=\"16\"/>");
+    assert!(
+        (styled - direct).abs() < 0.05,
+        "an rStyle 8pt header line is an 8pt line; body at {styled} vs {direct}"
+    );
+}
+
+#[test]
+fn a_header_line_holding_only_an_anchored_shape_with_a_vml_fallback_is_a_line() {
+    // fixtures_500 000f3a4e (LibreOffice): the header opens with a
+    // paragraph whose only content is mc:AlternateContent - an anchored
+    // wps text box, with a w:pict in mc:Fallback. Word renders the Choice
+    // and the paragraph stays an empty line above "2"; the Fallback's
+    // w:pict made us drop it.
+    let header = |fallback: bool| {
+        let alt = if fallback {
+            "<mc:AlternateContent><mc:Choice Requires=\"wps\"><w:drawing><wp:anchor distT=\"0\" distB=\"0\" \
+               distL=\"0\" distR=\"0\" simplePos=\"0\" relativeHeight=\"2\" behindDoc=\"1\" locked=\"0\" \
+               layoutInCell=\"1\" allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/>\
+               <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+               <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+               <wp:extent cx=\"100000\" cy=\"100000\"/><wp:wrapNone/><wp:docPr id=\"1\" name=\"s\"/>\
+               <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:wsp><wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></wps:spPr>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice>\
+               <mc:Fallback><w:pict><v:rect style=\"position:absolute;width:8pt;height:8pt\"/></w:pict></mc:Fallback>\
+             </mc:AlternateContent>"
+        } else {
+            ""
+        };
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+               xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+               xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+               xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\" \
+               xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" \
+               xmlns:v=\"urn:schemas-microsoft-com:vml\">\
+               <w:p><w:r>{alt}</w:r></w:p><w:p><w:r><w:t>Qnum</w:t></w:r></w:p></w:hdr>"
+        )
+    };
+    let y = |fallback: bool| {
+        let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+               <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[("rIdH1", "header", "header1.xml")],
+            &[("word/header1.xml", header(fallback))],
+        ))
+        .expect("header shape line");
+        pdf_glyph_text_xy(&pdf, "Qnum").expect("Qnum").1
+    };
+    // The shape paragraph is a line in both: "Qnum" sits one line down
+    // whether or not the VML fallback is present.
+    let with_fallback = y(true);
+    let plain_empty = {
+        // The same header with an empty first paragraph.
+        y(false)
+    };
+    assert!(
+        (with_fallback - plain_empty).abs() < 0.05,
+        "the shape paragraph is an empty line; {with_fallback} vs {plain_empty}"
+    );
 }
 
 #[test]
