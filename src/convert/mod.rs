@@ -8297,6 +8297,15 @@ fn collect_runs_rec(
         }
         return;
     }
+    // A w:br outside any run (PHPWord puts one straight in the w:p, 0065a5f9)
+    // still breaks the line in Word.
+    if ctx.dom.name_is(node, &W::name("br")) {
+        let kind = attr_any(ctx.dom, node, "type").unwrap_or("textWrapping");
+        if kind == "textWrapping" {
+            runs.push(TextRun::new("\n", ctx.base.clone()));
+        }
+        return;
+    }
     if ctx.dom.name_is(node, &W::r()) {
         for idx in 0..ctx.dom.child_count(node) {
             let child = ctx.dom.child_at(node, idx);

@@ -635,6 +635,25 @@ fn table_cell_spacing_opens_each_row_by_twice_the_spacing() {
 }
 
 #[test]
+fn a_br_outside_a_run_still_breaks_the_line() {
+    // fixtures_500 0065a5f9 (PHPWord): <w:br/> sits directly in the w:p
+    // between the title run and the URL hyperlink. Word breaks the line
+    // there; we dropped it and glued "PMChttps://…".
+    let body = "<w:p><w:r><w:t>BrBefore</w:t></w:r><w:br/>\
+                <w:r><w:t>BrAfter</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("loose br");
+    let y = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .1
+    };
+    assert!(
+        y("BrBefore") - y("BrAfter") > 10.0,
+        "the text after the br starts a new line"
+    );
+}
+
+#[test]
 fn a_newline_inside_w_t_is_a_space_not_a_break() {
     // fixtures_500 000312ea (PHPWord): the Heading1 text carries literal
     // newlines ("jeudi 27 avril 2017\nJeudi, 2ème …"). Word draws them as
