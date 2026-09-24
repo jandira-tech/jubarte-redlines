@@ -30430,6 +30430,21 @@ fn identity_h_text_carries_a_to_unicode_map() {
 }
 
 #[test]
+fn a_glyph_shaped_from_several_characters_maps_back_to_all_of_them() {
+    // PR #167 review: `/ToUnicode` held one character per glyph, and a run
+    // whose glyph count differed from its character count gave every glyph
+    // an empty text. Shaping composes `e` + U+0301 into the one `é` glyph,
+    // so "Cafe\u{301}" lost every letter on copy. PDF maps a code to a
+    // UTF-16BE sequence (PDF 32000-1 9.10.3).
+    let body = "<w:p><w:r><w:t>Cafe\u{301}</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert composed accent");
+    let text = String::from_utf8_lossy(&pdf);
+    for code in ["<0043>", "<0061>", "<0066>", "<00650301>"] {
+        assert!(text.contains(code), "the map names {code}");
+    }
+}
+
+#[test]
 fn a_justified_underline_runs_through_the_stretched_spaces() {
     // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
     // underlined word by word; the justify pad after each space was bare.

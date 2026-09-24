@@ -658,7 +658,8 @@ pub(crate) struct Face<'a> {
 }
 
 /// Glyph ids and x advances in font units.
-type ShapedUnits = Arc<[(u16, i32)]>;
+/// (glyph id, x advance in font units, cluster = byte offset of its text).
+type ShapedUnits = Arc<[(u16, i32, u32)]>;
 
 type PlanKey = (
     rustybuzz::Direction,
@@ -828,9 +829,39 @@ impl<'a> Face<'a> {
         let units = self.shaped_units(face, text, kern);
         units
             .iter()
-            .map(|&(gid, x_advance)| {
+            .map(|&(gid, x_advance, _)| {
                 let adv = x_advance as f32 / self.upem * size + word_device_track(size);
                 (gid, adv)
+            })
+            .collect()
+    }
+
+    /// The text behind each glyph `shape_kern(text, _, kern)` returns: its
+    /// cluster's characters on the cluster's first glyph, empty on the
+    /// rest. A glyph shaped from several characters (`e` + U+0301 composed
+    /// to `é`, a lam-alef) carries all of them, for `/ToUnicode`.
+    pub(crate) fn glyph_texts(&self, text: &str, kern: bool) -> Vec<String> {
+        let Some(face) = self.buzz.as_ref() else {
+            return text.chars().map(String::from).collect();
+        };
+        let units = self.shaped_units(face, text, kern);
+        let mut starts: Vec<usize> = units.iter().map(|u| u.2 as usize).collect();
+        starts.sort_unstable();
+        starts.dedup();
+        let mut seen = std::collections::HashSet::new();
+        units
+            .iter()
+            .map(|u| {
+                let at = u.2 as usize;
+                if !seen.insert(at) {
+                    return String::new();
+                }
+                let end = starts
+                    .iter()
+                    .find(|&&s| s > at)
+                    .copied()
+                    .unwrap_or(text.len());
+                text.get(at..end).unwrap_or_default().to_string()
             })
             .collect()
     }
@@ -882,7 +913,7 @@ impl<'a> Face<'a> {
             .glyph_infos()
             .iter()
             .zip(out.glyph_positions())
-            .map(|(info, p)| (info.glyph_id as u16, p.x_advance))
+            .map(|(info, p)| (info.glyph_id as u16, p.x_advance, info.cluster))
             .collect();
         if let Ok(mut cache) = self.shaped.lock() {
             // A long-lived caller (Python / WASM) converts many documents

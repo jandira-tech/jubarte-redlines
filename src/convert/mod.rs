@@ -15096,6 +15096,11 @@ impl<'a> Layout<'a> {
         }
         let chars: Vec<char> = run.text.chars().collect();
         let paired = chars.len() == shaped.len();
+        let pieces = if paired {
+            Vec::new()
+        } else {
+            face.glyph_texts(&run.text, kern)
+        };
         if let Some(name) = run.pageref.as_deref() {
             let glyphs: Vec<u16> = shaped.iter().map(|(g, _)| *g).collect();
             let page_i = self.pages.len().saturating_sub(1);
@@ -15121,7 +15126,7 @@ impl<'a> Layout<'a> {
                     let piece = if paired {
                         chars[i].to_string()
                     } else {
-                        String::new()
+                        pieces.get(i).cloned().unwrap_or_default()
                     };
                     self.current().ops.push(Op::text(
                         fid,

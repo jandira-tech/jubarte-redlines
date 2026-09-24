@@ -278,8 +278,18 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         let mut page_enc: Vec<Option<Vec<u8>>> = Vec::with_capacity(page.ops.len());
         for op in &page.ops {
             let mut enc = None;
-            if let Op::Text { face, text, .. } | Op::Watermark { face, text, .. } = op {
-                enc = winansi_bytes(text);
+            if let Op::Text {
+                face, glyphs, text, ..
+            }
+            | Op::Watermark {
+                face, glyphs, text, ..
+            } = op
+            {
+                // A glyph shaped from several characters is painted by its
+                // id; WinAnsi would paint each character instead.
+                if text.chars().count() == glyphs.len() {
+                    enc = winansi_bytes(text);
+                }
                 if enc.is_some() {
                     if !simple_need.contains(face) {
                         simple_need.push(*face);
@@ -1056,14 +1066,20 @@ fn type0_font_obj(face: &super::font::Face, cid_id: usize, cmap_id: usize) -> Ve
     .into_bytes()
 }
 
-/// The characters behind each glyph id a face paints, for `/ToUnicode`.
+/// The text behind each glyph id a face paints, for `/ToUnicode`.
 /// The face's own cmap answers first (exact, order-free); a glyph it cannot
 /// reach (a shaped form) takes the character at its index when the run has
-/// one glyph per character.
-fn face_unicode_map(face: &super::font::Face, id: FaceRef, pages: &[Page]) -> BTreeMap<u16, char> {
+/// one glyph per character, or its whole text when it is painted alone (a
+/// glyph shaped from several characters).
+fn face_unicode_map(
+    face: &super::font::Face,
+    id: FaceRef,
+    pages: &[Page],
+) -> BTreeMap<u16, String> {
     let parsed = ttf_parser::Face::parse(face.bytes(), 0).ok();
     let mut map = BTreeMap::new();
     let mut zipped = BTreeMap::new();
+    let mut painted = BTreeSet::new();
     for page in pages {
         for op in &page.ops {
             if let Op::Text {
@@ -1074,15 +1090,20 @@ fn face_unicode_map(face: &super::font::Face, id: FaceRef, pages: &[Page]) -> BT
             } = op
                 && *face == id
             {
+                painted.extend(glyphs.iter().copied());
                 for c in text.chars() {
                     if let Some(g) = parsed.as_ref().and_then(|p| p.glyph_index(c)) {
-                        map.entry(g.0).or_insert(c);
+                        map.entry(g.0).or_insert_with(|| c.to_string());
                     }
                 }
                 if glyphs.len() == text.chars().count() {
                     for (&g, c) in glyphs.iter().zip(text.chars()) {
-                        zipped.entry(g).or_insert(c);
+                        zipped.entry(g).or_insert_with(|| c.to_string());
                     }
+                } else if let [g] = glyphs[..]
+                    && !text.is_empty()
+                {
+                    zipped.entry(g).or_insert_with(|| text.clone());
                 }
             }
         }
@@ -1090,30 +1111,28 @@ fn face_unicode_map(face: &super::font::Face, id: FaceRef, pages: &[Page]) -> BT
     for (g, c) in zipped {
         map.entry(g).or_insert(c);
     }
-    map.remove(&0);
+    map.retain(|g, _| *g != 0 && painted.contains(g));
     map
 }
 
 /// A `/ToUnicode` CMap stream (PDF 32000-1 9.10.3) mapping 2-byte CIDs
 /// (= glyph ids under Identity-H) to UTF-16BE.
-fn to_unicode_obj(map: &BTreeMap<u16, char>, compress: bool) -> Vec<u8> {
+fn to_unicode_obj(map: &BTreeMap<u16, String>, compress: bool) -> Vec<u8> {
     let mut cmap = String::from(
         "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n\
          /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n\
          /CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n\
          1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n",
     );
-    let entries: Vec<(&u16, &char)> = map.iter().collect();
+    let entries: Vec<(&u16, &String)> = map.iter().collect();
     for chunk in entries.chunks(100) {
         let _ = writeln!(cmap, "{} beginbfchar", chunk.len());
-        for (g, c) in chunk {
-            let mut units = [0u16; 2];
-            let hex: String = c
-                .encode_utf16(&mut units)
-                .iter()
-                .map(|u| format!("{u:04X}"))
-                .collect();
-            let _ = writeln!(cmap, "<{g:04X}> <{hex}>");
+        for (g, text) in chunk {
+            let _ = write!(cmap, "<{g:04X}> <");
+            for u in text.encode_utf16() {
+                let _ = write!(cmap, "{u:04X}");
+            }
+            cmap.push_str(">\n");
         }
         cmap.push_str("endbfchar\n");
     }
