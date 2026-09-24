@@ -1556,6 +1556,20 @@ fn system_override(id: FaceId) -> Option<PathBuf> {
 /// Century Gothic in DFonts); we painted them as Arial or Calibri.
 /// Candidates are files whose normalised name starts with the family's,
 /// confirmed against the font's own family name.
+/// Word's cloud-font folder for `family`, when the name is one plain path
+/// component: `w:name` is document data, and "../.." or an absolute name
+/// would read fonts from anywhere (PR #167 review).
+fn cloud_font_dir(home: &Path, family: &str) -> Option<PathBuf> {
+    let mut parts = Path::new(family).components();
+    match (parts.next(), parts.next()) {
+        (Some(std::path::Component::Normal(_)), None) => Some(
+            home.join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts")
+                .join(family),
+        ),
+        _ => None,
+    }
+}
+
 pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>)> {
     let stems = cjk_file_stems(family);
     if !stems.is_empty() {
@@ -1581,10 +1595,9 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
     // (dir, whole folder is the family): Word's cloud-font cache keeps each
     // family in its own folder under numeric file names (Poppins/2397….ttf).
     let mut dirs: Vec<(PathBuf, bool)> = DIRS.iter().map(|d| (PathBuf::from(d), false)).collect();
-    if let Some(home) = std::env::var_os("HOME") {
-        let cloud = PathBuf::from(home)
-            .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts")
-            .join(family);
+    if let Some(cloud) =
+        std::env::var_os("HOME").and_then(|home| cloud_font_dir(Path::new(&home), family))
+    {
         dirs.push((cloud, true));
     }
     let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
@@ -2804,6 +2817,21 @@ mod tests {
         let (_, entry) = fonts.classify_in("Serenity", false, false, &table);
         assert_eq!(entry.step, FontStep::Embedded);
         assert_eq!(entry.physical, "LiberationMono");
+    }
+
+    #[test]
+    fn a_family_name_cannot_leave_the_cloud_font_cache() {
+        // PR #167 review: w:name is document data; joining "../.." or an
+        // absolute name onto the cache path read fonts from anywhere.
+        let home = std::path::Path::new("/Users/someone");
+        assert!(cloud_font_dir(home, "Poppins").is_some());
+        assert!(cloud_font_dir(home, "Roboto Condensed").is_some());
+        for bad in ["../../../../etc", "/Library/Fonts", "a/b", "..", ".", ""] {
+            assert!(
+                cloud_font_dir(home, bad).is_none(),
+                "{bad:?} must not map to a folder"
+            );
+        }
     }
 
     #[test]
