@@ -2402,6 +2402,47 @@ fn blip(cx: &str, cy: &str, inner_open: &str, inner_close: &str) -> String {
 }
 
 #[test]
+fn a_space_between_inline_pictures_keeps_them_apart() {
+    // fixtures_500 0034561f: two photos separated by a 16pt space run.
+    // Word leaves the space's 4pt between them; we set them edge to edge.
+    let pic = |id: u32| {
+        format!(
+            "<w:r>{}</w:r>",
+            blip(
+                "2540000",
+                "1270000",
+                &format!("<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\"><!--{id}-->"),
+                "</wp:inline>"
+            )
+        )
+    };
+    let docx = drawing_docx(&format!(
+        "<w:p>{}<w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t xml:space=\"preserve\"> </w:t></w:r>{}</w:p><w:sectPr/>",
+        pic(1),
+        pic(2)
+    ));
+    let pdf = docx_to_pdf(&docx).expect("two pictures");
+    let hay = String::from_utf8_lossy(&pdf);
+    let xs: Vec<f32> = hay
+        .match_indices(" cm /Im")
+        .filter_map(|(i, _)| {
+            let head = &hay[..i];
+            let nums: Vec<f32> = head[head.len().saturating_sub(60)..]
+                .split_whitespace()
+                .filter_map(|v| v.parse().ok())
+                .collect();
+            nums.get(nums.len().wrapping_sub(2)).copied()
+        })
+        .collect();
+    assert_eq!(xs.len(), 2, "two picture draws; {xs:?}");
+    let gap = (xs[1] - xs[0]).abs() - 200.0;
+    assert!(
+        (gap - 4.0).abs() < 0.6,
+        "a 4pt space between; gap={gap} xs={xs:?}"
+    );
+}
+
+#[test]
 fn a_tiny_inline_picture_does_not_grow_its_text_line() {
     // fixtures_500 0005cabe: a 3048-EMU (0.24pt) inline picture ends a
     // text line. Word's line stays the text's height; ours grew ~0.9pt and

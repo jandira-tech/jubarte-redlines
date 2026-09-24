@@ -1247,6 +1247,9 @@ struct LaidImage {
     /// `pic:spPr/a:ln`: Word strokes the picture's own outline (000f5278's
     /// QR code has a black frame).
     outline: Option<([f32; 3], f32)>,
+    /// The width of the spaces between this inline picture and the one
+    /// before it in the paragraph (0034561f's photos stand 4pt apart).
+    gap_before: f32,
 }
 
 struct LaidTextBox {
@@ -6153,6 +6156,7 @@ fn paragraph_block(
                 chrome_flow: false,
                 chrome_leading: None,
                 outline: None,
+                gap_before: 0.0,
             },
         );
     }
@@ -9971,6 +9975,49 @@ fn inside_text_box(dom: &Dom, node: NodeId, top: NodeId) -> bool {
     false
 }
 
+/// Spaces between an inline picture and the picture run before it, as
+/// width: Word keeps them (0034561f's 16pt space sets its photos 4pt
+/// apart). A space is about a quarter em.
+fn space_before_drawing(dom: &Dom, drawing: NodeId) -> f32 {
+    let Some(run) = dom.parent(drawing).filter(|r| dom.name_is(*r, &W::r())) else {
+        return 0.0;
+    };
+    let Some(parent) = dom.parent(run) else {
+        return 0.0;
+    };
+    let siblings: Vec<NodeId> = (0..dom.child_count(parent))
+        .map(|i| dom.child_at(parent, i))
+        .collect();
+    let Some(at) = siblings.iter().position(|n| *n == run) else {
+        return 0.0;
+    };
+    let mut gap = 0.0;
+    for sib in siblings[..at].iter().rev() {
+        if !dom.name_is(*sib, &W::r()) {
+            continue;
+        }
+        if !dom.descendants(*sib, Some(&W::drawing())).is_empty() {
+            return gap;
+        }
+        let text: String = dom
+            .descendants(*sib, Some(&W::t()))
+            .into_iter()
+            .map(|t| element_text(dom, t))
+            .collect();
+        if !text.chars().all(|c| c == ' ') {
+            return 0.0;
+        }
+        let size = dom
+            .element(*sib, &W::r_pr())
+            .and_then(|pr| first_named(dom, pr, "sz"))
+            .and_then(|n| dom.attribute(n, &W::val()))
+            .and_then(|v| v.parse::<f32>().ok())
+            .map_or(11.0, |half| half / 2.0);
+        gap += text.chars().count() as f32 * size * 0.25;
+    }
+    0.0
+}
+
 fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<LaidImage> {
     let mut out = Vec::new();
     // 019d92d9's text box holds an inline flag; laying it out in the host
@@ -10001,6 +10048,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_flow: false,
                         chrome_leading: None,
                         outline: picture_outline(dom, drawing),
+                        gap_before: space_before_drawing(dom, drawing),
                     });
                 } else {
                     out.push(LaidImage {
@@ -10017,6 +10065,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_flow: false,
                         chrome_leading: None,
                         outline: None,
+                        gap_before: 0.0,
                     });
                 }
             }
@@ -10052,6 +10101,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_flow: false,
                         chrome_leading: None,
                         outline: None,
+                        gap_before: 0.0,
                     });
                     continue;
                 };
@@ -10071,6 +10121,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_flow: false,
                     chrome_leading: None,
                     outline: None,
+                    gap_before: 0.0,
                 });
             }
         }
@@ -14948,7 +14999,8 @@ impl<'a> Layout<'a> {
             if row.is_empty() {
                 return;
             }
-            let w: f32 = row.iter().map(|r| r.1).sum();
+            let gaps: f32 = row.iter().skip(1).map(|r| r.0.gap_before).sum();
+            let w: f32 = row.iter().map(|r| r.1).sum::<f32>() + gaps;
             let h = row.iter().map(|r| r.2).fold(0.0_f32, f32::max);
             lay.ensure(h);
             lay.y -= h;
@@ -14958,7 +15010,10 @@ impl<'a> Layout<'a> {
                 Align::Right => left + spare,
                 Align::Left | Align::Justify => left,
             };
-            for (img, dw, dh) in row.drain(..) {
+            for (i, (img, dw, dh)) in row.drain(..).enumerate() {
+                if i > 0 {
+                    x += img.gap_before;
+                }
                 lay.push_image(img, x, lay.y, dw, dh);
                 x += dw;
             }
