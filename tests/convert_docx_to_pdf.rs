@@ -16089,6 +16089,49 @@ fn strike_is_filled_hairline_like_word_quartz() {
 }
 
 #[test]
+fn numpages_glued_to_its_neighbours_still_gets_the_count() {
+    // fixtures_500 00309780: a tabbed header "<tab>1 (NUMPAGES)" paints
+    // through the tab path glyph by glyph; the patch matched only an op
+    // that was exactly the mark and "@@N@@" reached the page.
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p>\
+             <w:r><w:tab/></w:r>\
+             <w:r><w:t xml:space=\"preserve\">Sivu (</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> NUMPAGES \\*Arabic </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+             <w:r><w:t>9</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+             <w:r><w:t>)</w:t></w:r>\
+           </w:p></w:hdr>";
+    let body = "<w:p><w:r><w:t>Alpha</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         <w:p><w:r><w:t>Beta</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", header.to_string())],
+    ))
+    .expect("convert glued numpages");
+    let text: String = pdf_content_streams(&pdf)
+        .iter()
+        .map(|p| stream_glyph_text(p))
+        .collect::<String>()
+        .replace("\\(", "(")
+        .replace("\\)", ")");
+    assert!(
+        !text.contains("@@N@@"),
+        "the mark never reaches the page; {text:?}"
+    );
+    assert!(text.contains("(2)"), "the header reads Sivu (2); {text:?}");
+}
+
+#[test]
 fn numpages_field_uses_real_page_count_not_cached_result() {
     // sample_document footer caches NUMPAGES as "9"; soffice paints the
     // real count. Body has no digits so a "2" glyph can only come from the field.

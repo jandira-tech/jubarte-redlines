@@ -14054,6 +14054,7 @@ impl<'a> Layout<'a> {
         if text.is_empty() {
             return 0.0;
         }
+        let text = chrome_measure_text(text);
         let fid = self.fonts.resolve(
             paint_family(&run.style, text),
             run.style.bold,
@@ -14241,6 +14242,26 @@ impl<'a> Layout<'a> {
             // Word Save-as-PDF omits reflection / shadow+outline as
             // body glyphs (Strict01 p11 18/20pt Video). Keep the line
             // box so 13pp packing holds; do not extra-skip short redlines.
+            return x + self.run_width_pt(run, &run.text);
+        }
+        if chrome_measure_text(&run.text) != run.text {
+            // A page-count mark is patched after layout: one op carrying
+            // the mark, advanced like the digit it becomes (00309780's
+            // tabbed header painted it glyph by glyph, out of the patch's
+            // reach).
+            let fid = self
+                .fonts
+                .resolve(&run.style.family, run.style.bold, run.style.italic);
+            let face = self.fonts.get(fid);
+            self.current().ops.push(Op::text(
+                fid,
+                run.style.paint_size(),
+                x,
+                run.style.paint_y(y),
+                face.glyphs(&run.text),
+                run.style.color,
+                run.text.clone(),
+            ));
             return x + self.run_width_pt(run, &run.text);
         }
         let mut fid = self.fonts.resolve(
