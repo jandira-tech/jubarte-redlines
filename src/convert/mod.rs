@@ -13451,6 +13451,9 @@ struct Layout<'a> {
     front_border_ops: Vec<(usize, Vec<Op>)>,
     /// PDF y of the current paragraph's first-line top (xml 3.4).
     para_top: f32,
+    /// The current paragraph's own space before (pt), for a first line
+    /// that moves to a mid-page column top.
+    para_before: f32,
     /// This paragraph's pBdr joins the previous / next paragraph's box
     /// (Word groups identical borders; set by the block loop).
     pbdr_joins: (bool, bool),
@@ -13775,6 +13778,7 @@ impl<'a> Layout<'a> {
             section_first_page: true,
             front_border_ops: Vec::new(),
             para_top: y,
+            para_before: 0.0,
             pbdr_joins: (false, false),
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
@@ -14315,8 +14319,17 @@ impl<'a> Layout<'a> {
     fn column_break(&mut self) {
         let n = self.page.col_count.max(1);
         if self.col_i + 1 < n {
+            // A paragraph whose first line opens a column mid-page (under a
+            // continuous section's start) keeps its whole space before there
+            // (live Word: 019d92d9's "Controls - cont." sits 4pt under column
+            // one's top); a page-top column drops it.
+            let first_line = (self.y - self.para_top).abs() < 0.01;
             self.col_i += 1;
             self.y = self.col_top.unwrap_or(self.page.height - self.body_top);
+            if self.col_top.is_some() && first_line {
+                self.y -= self.para_before;
+                self.para_top = self.y;
+            }
             self.at_page_top = true;
             self.page_has_body = true;
         } else {
@@ -20348,6 +20361,10 @@ fn layout(
                     // −1.13, file_170 −2.31). Ungated also packed Cicero
                     // 5→4 and file_22 107→102.
                 }
+                // The paragraph's own before, folded into the previous after
+                // just below: a first line that opens a mid-page column
+                // takes it back (`column_break`).
+                lay.para_before = if style.before_auto { 0.0 } else { style.before };
                 if i > 0 && block_para_style(&blocks[i - 1]).is_some() {
                     style.before = 0.0;
                 }

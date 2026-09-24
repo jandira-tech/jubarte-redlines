@@ -1697,6 +1697,36 @@ fn pages_after_a_continuous_section_use_its_top_margin() {
 }
 
 #[test]
+fn a_mid_page_column_top_keeps_the_space_before() {
+    // fixtures_500 019d92d9: a continuous two-column section opens under
+    // text on page one. Live Word starts column two's first paragraph
+    // (before=80) level with column one's, its 4pt before kept; we
+    // dropped it as at a page top and ran column two 4pt high.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+          <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" \
+          w:lineRule=\"auto\"/></w:pPr></w:pPrDefault></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+        </w:styles>";
+    let more: String = (0..60)
+        .map(|i| format!(r#"<w:p><w:pPr><w:spacing w:before="80"/></w:pPr><w:r><w:t>More{i:02}</w:t></w:r></w:p>"#))
+        .collect();
+    let margins = r#"<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="576" w:left="1080"/>"#;
+    let body = format!(
+        r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:p><w:pPr><w:sectPr>{margins}</w:sectPr></w:pPr></w:p>{more}<w:sectPr><w:type w:val="continuous"/>{margins}<w:cols w:num="2" w:space="360"/></w:sectPr>"#
+    );
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(&body, None, Some(styles))).expect("columns");
+    let (_, y0) = pdf_glyph_text_xy(&pdf, "More00").expect("column one");
+    let (x40, y40) = pdf_glyph_text_xy(&pdf, "More40").expect("column two");
+    assert!(x40 > 300.0, "More40 opens column two; x={x40}");
+    assert!(
+        (y40 - y0).abs() < 0.3,
+        "both column tops keep the 4pt before; {y0} vs {y40}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path
