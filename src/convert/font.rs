@@ -1104,7 +1104,31 @@ impl<'a> Fonts<'a> {
                 },
             );
         }
-        let (id, step) = self.resolve_in_step(family, bold, italic, table);
+        let mut visited = HashSet::new();
+        let (id, step, via_default) = self.resolve_walk(family, bold, italic, table, &mut visited);
+        // An unknown family="auto" face paints in the document default,
+        // which may itself be an embedded-only face (PR #167 review).
+        if let Some(default) = via_default
+            && let Some(idx) = self.embedded_index(family_token(default), bold, italic)
+        {
+            let face = FaceRef::Embedded(idx);
+            let exact = self.extra_index.contains_key(&FaceKey {
+                family: family_token(default).to_ascii_lowercase(),
+                bold,
+                italic,
+            });
+            return (
+                face,
+                FontReportEntry {
+                    requested: family.to_string(),
+                    step: FontStep::Embedded,
+                    physical: self.get(face).pdf_name().to_string(),
+                    bold,
+                    italic,
+                    synthetic: (bold || italic) && !exact,
+                },
+            );
+        }
         let face = FaceRef::Catalogue(id);
         (
             face,
@@ -1134,6 +1158,7 @@ impl<'a> Fonts<'a> {
         self.resolve_in_step(family, bold, italic, table).0
     }
 
+    #[cfg(test)]
     fn resolve_in_step(
         &self,
         family: &str,
@@ -1142,21 +1167,25 @@ impl<'a> Fonts<'a> {
         table: &super::font_table::FontTable,
     ) -> (FaceId, FontStep) {
         let mut visited = HashSet::new();
-        self.resolve_walk(family, bold, italic, table, &mut visited)
+        let (id, step, _) = self.resolve_walk(family, bold, italic, table, &mut visited);
+        (id, step)
     }
 
     /// Follow `family` through the font table. Iterative: an altName chain
-    /// is bounded by the table's size, never by the call stack.
-    fn resolve_walk(
+    /// is bounded by the table's size, never by the call stack. The third
+    /// value is the document default an unknown family="auto" face fell
+    /// back to, if the walk took that hop.
+    fn resolve_walk<'t>(
         &self,
-        family: &str,
+        family: &'t str,
         bold: bool,
         italic: bool,
-        table: &super::font_table::FontTable,
+        table: &'t super::font_table::FontTable,
         visited: &mut HashSet<String>,
-    ) -> (FaceId, FontStep) {
+    ) -> (FaceId, FontStep, Option<&'t str>) {
         let mut current = family;
         let mut via_alt = false;
+        let mut via_default = None;
         // The generic of a name the altName chain passed through: a chain
         // that dead-ends (Myriad Pro → absent Segoe UI) keeps it.
         let mut chain_generic = "";
@@ -1222,6 +1251,7 @@ impl<'a> Fonts<'a> {
                 && !default.eq_ignore_ascii_case(primary)
             {
                 current = default;
+                via_default = Some(default);
                 continue;
             }
             break (
@@ -1229,7 +1259,11 @@ impl<'a> Fonts<'a> {
                 FontStep::Unknown,
             );
         };
-        (id, if via_alt { FontStep::AltName } else { step })
+        (
+            id,
+            if via_alt { FontStep::AltName } else { step },
+            via_default,
+        )
     }
 
     /// `family` names an installed catalogue face directly (the report's
@@ -2753,6 +2787,23 @@ mod tests {
         let (_, bold) = fonts.classify_in("Press Start 2P", true, false, &table);
         assert_eq!(bold.step, FontStep::Embedded);
         assert!(bold.synthetic, "missing bold embed is synthetic");
+    }
+
+    #[test]
+    fn an_unknown_auto_family_takes_the_embedded_default_face() {
+        // PR #167 review: the family="auto" fallback resolved the document
+        // default through the catalogue only, so an embedded default face
+        // lost to Cambria.
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("Press Start 2P", false, false, FaceId::MonoRegular.bytes());
+        let mut table = super::super::font_table::parse_font_table_xml(
+            "<w:fonts xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:font w:name=\"Serenity\"><w:family w:val=\"auto\"/></w:font></w:fonts>",
+        );
+        table.set_default_family("Press Start 2P");
+        let (_, entry) = fonts.classify_in("Serenity", false, false, &table);
+        assert_eq!(entry.step, FontStep::Embedded);
+        assert_eq!(entry.physical, "LiberationMono");
     }
 
     #[test]

@@ -974,6 +974,10 @@ const FOOTNOTE_SEP_GAP: f32 = 12.0;
 
 struct TableGeom {
     row_min: Vec<f32>,
+    /// The widest bottom border a cell of the row above restates: Word
+    /// draws it on the shared edge even under a `top=nil` cell and stacks
+    /// it into this row's pitch (0090ba78's 315-twip rows step 16.32pt).
+    bottom_above: Vec<f32>,
     row_exact: Vec<bool>,
     /// `w:trPr/w:cantSplit`: Word keeps the row on one page.
     row_cant_split: Vec<bool>,
@@ -5856,7 +5860,7 @@ fn row_top_rule(row: &[TableCell], geom: &TableGeom, ri: usize) -> f32 {
             cell.borders
                 .map_or(table_rule, |cb| cb.top.map_or(0.0, |(_, w)| w))
         })
-        .fold(0.0_f32, f32::max)
+        .fold(geom.bottom_above.get(ri).copied().unwrap_or(0.0), f32::max)
 }
 
 /// One line box of a paragraph as `emit_runs` lays it out: `para_line_box`
@@ -7458,6 +7462,14 @@ fn table_block(
             _ => Align::Left,
         };
     }
+    let bottom_above: Vec<f32> = std::iter::once(0.0)
+        .chain(rows.iter().map(|row| {
+            row.iter()
+                .filter_map(|cell| cell.borders.and_then(|cb| cb.bottom).map(|(_, w)| w))
+                .fold(0.0_f32, f32::max)
+        }))
+        .take(rows.len())
+        .collect();
     let direct_borders = table_pr(dom, table).and_then(|pr| parse_tbl_borders(dom, pr));
     let unstyled = tdef.is_none();
     let rules = direct_borders
@@ -7474,6 +7486,7 @@ fn table_block(
         geom: {
             Box::new(TableGeom {
                 row_min,
+                bottom_above,
                 row_exact,
                 row_cant_split,
                 pad_v: table_pad_v(dom, table),
