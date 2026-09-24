@@ -1061,6 +1061,8 @@ struct SectionChrome {
     footer_odd: Option<ChromePart>,
     header_images: Vec<LaidImage>,
     footer_images: Vec<LaidImage>,
+    header_boxes: std::rc::Rc<Vec<LaidTextBox>>,
+    footer_boxes: std::rc::Rc<Vec<LaidTextBox>>,
     header_tables: Vec<ChromeTable>,
     footer_tables: Vec<ChromeTable>,
     /// `w:mirrorMargins` (xml leftover).
@@ -5294,6 +5296,8 @@ fn section_chrome(
         footer_odd,
         header_images: header.start.images,
         footer_images: footer.start.images,
+        header_boxes: header.start.boxes,
+        footer_boxes: footer.start.boxes,
         header_tables: header.start.tables,
         footer_tables: footer.start.tables,
         mirror_margins: settings_mirror_margins(pkg),
@@ -11254,6 +11258,8 @@ struct HfChrome {
     footer_odd: Option<ChromePart>,
     header_images: Vec<LaidImage>,
     footer_images: Vec<LaidImage>,
+    header_boxes: std::rc::Rc<Vec<LaidTextBox>>,
+    footer_boxes: std::rc::Rc<Vec<LaidTextBox>>,
     header_tables: Vec<ChromeTable>,
     footer_tables: Vec<ChromeTable>,
     mirror_margins: bool,
@@ -11312,6 +11318,8 @@ fn first_section_hf(
         footer_odd,
         header_images: header.start.images,
         footer_images: footer.start.images,
+        header_boxes: header.start.boxes,
+        footer_boxes: footer.start.boxes,
         header_tables: header.start.tables,
         footer_tables: footer.start.tables,
         mirror_margins: settings_mirror_margins(pkg),
@@ -11331,6 +11339,8 @@ struct ChromePart {
     watermark: Option<Watermark>,
     images: Vec<LaidImage>,
     tables: Vec<ChromeTable>,
+    /// Anchored text boxes and shapes (01838a08's footer text box).
+    boxes: std::rc::Rc<Vec<LaidTextBox>>,
 }
 
 fn empty_chrome() -> ChromePart {
@@ -11341,6 +11351,7 @@ fn empty_chrome() -> ChromePart {
         watermark: None,
         images: Vec::new(),
         tables: Vec::new(),
+        boxes: std::rc::Rc::new(Vec::new()),
     }
 }
 
@@ -11591,12 +11602,30 @@ fn load_chrome_part(
     };
     let runs = collect_hf_runs(&part_dom, root, sheet);
     let mut images = Vec::new();
+    let mut boxes = Vec::new();
+    let watermark = parse_header_watermark(&part_dom, root);
     let mut seen_text = false;
     for para in part_dom.descendants(root, Some(&W::p())) {
         if hf_para_is_shape_text(&part_dom, para) {
             continue;
         }
         let (pstyle, prun) = para_base(&part_dom, para, sheet, None);
+        // Anchored text boxes of a top-level paragraph float over the page
+        // like the body's (a watermark keeps its own path).
+        if watermark.is_none() && !hf_para_in_table(&part_dom, root, para) {
+            boxes.extend(
+                collect_textboxes_styled(
+                    Some((pkg, &path)),
+                    &part_dom,
+                    para,
+                    &prun,
+                    &sheet.theme,
+                    Some(sheet),
+                )
+                .into_iter()
+                .filter(|b| !matches!(b.slot, ImageSlot::Flow)),
+            );
+        }
         let jc = pstyle.align;
         let leading = (pstyle.line_exact.is_none()
             && pstyle.line_at_least.is_none()
@@ -11662,9 +11691,10 @@ fn load_chrome_part(
         runs,
         border: first_para_border(&part_dom, root, edge),
         align,
-        watermark: parse_header_watermark(&part_dom, root),
+        watermark,
         images,
         tables: collect_hf_tables(pkg, &path, &part_dom, root, sheet),
+        boxes: std::rc::Rc::new(boxes),
     }
 }
 
@@ -12328,6 +12358,8 @@ struct Layout<'a> {
     footer_odd: Option<ChromePart>,
     header_images: Vec<LaidImage>,
     footer_images: Vec<LaidImage>,
+    header_boxes: std::rc::Rc<Vec<LaidTextBox>>,
+    footer_boxes: std::rc::Rc<Vec<LaidTextBox>>,
     header_tables: Vec<ChromeTable>,
     footer_tables: Vec<ChromeTable>,
     mirror_margins: bool,
@@ -12675,6 +12707,8 @@ impl<'a> Layout<'a> {
             footer_odd: hf.footer_odd,
             header_images: hf.header_images,
             footer_images: hf.footer_images,
+            header_boxes: hf.header_boxes,
+            footer_boxes: hf.footer_boxes,
             header_tables: hf.header_tables,
             footer_tables: hf.footer_tables,
             mirror_margins: hf.mirror_margins,
@@ -12753,6 +12787,7 @@ impl<'a> Layout<'a> {
             || !next.header.is_empty()
             || next.watermark.is_some()
             || !next.header_images.is_empty()
+            || !next.header_boxes.is_empty()
             || !next.header_tables.is_empty()
         {
             self.header = next.header.clone();
@@ -12764,10 +12799,12 @@ impl<'a> Layout<'a> {
             self.header_even = next.header_even.clone();
             self.header_odd = next.header_odd.clone();
             self.header_images.clone_from(&next.header_images);
+            self.header_boxes = next.header_boxes.clone();
             self.header_tables.clone_from(&next.header_tables);
         }
         if !next.footer.is_empty()
             || !next.footer_images.is_empty()
+            || !next.footer_boxes.is_empty()
             || !next.footer_tables.is_empty()
         {
             self.footer = next.footer.clone();
@@ -12777,6 +12814,7 @@ impl<'a> Layout<'a> {
             self.footer_even = next.footer_even.clone();
             self.footer_odd = next.footer_odd.clone();
             self.footer_images.clone_from(&next.footer_images);
+            self.footer_boxes = next.footer_boxes.clone();
             self.footer_tables.clone_from(&next.footer_tables);
         }
         self.refresh_body_top();
@@ -12806,6 +12844,7 @@ impl<'a> Layout<'a> {
             self.header_align = part.align;
             self.header_bottom = part.border;
             self.header_images = part.images;
+            self.header_boxes = part.boxes;
             self.header_tables = part.tables;
             // Pages after a titlePg first page start under this header
             // (0014add1's four-line default header), not page 1's top.
@@ -12816,6 +12855,7 @@ impl<'a> Layout<'a> {
             self.footer_align = part.align;
             self.footer_top = part.border;
             self.footer_images = part.images;
+            self.footer_boxes = part.boxes;
             self.footer_tables = part.tables;
         }
     }
@@ -12825,6 +12865,7 @@ impl<'a> Layout<'a> {
         self.header_align = part.align;
         self.header_bottom = part.border;
         self.header_images.clone_from(&part.images);
+        self.header_boxes = part.boxes.clone();
         self.header_tables.clone_from(&part.tables);
     }
 
@@ -12833,6 +12874,7 @@ impl<'a> Layout<'a> {
         self.footer_align = part.align;
         self.footer_top = part.border;
         self.footer_images.clone_from(&part.images);
+        self.footer_boxes = part.boxes.clone();
         self.footer_tables.clone_from(&part.tables);
     }
 
@@ -17797,6 +17839,18 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// A header/footer part's anchored boxes, placed like the body's with
+    /// the part's first paragraph top (`top`, PDF y) as their paragraph.
+    fn emit_chrome_boxes(&mut self, boxes: &[LaidTextBox], top: f32) {
+        let saved = (self.y, self.para_top, self.page_has_body);
+        self.y = top;
+        self.para_top = top;
+        for box_ in boxes {
+            self.emit_textbox(box_);
+        }
+        (self.y, self.para_top, self.page_has_body) = saved;
+    }
+
     fn chrome(&mut self) {
         if let Some(color) = self.page_background {
             let (w, h) = (self.page.width, self.page.height);
@@ -17827,6 +17881,23 @@ impl<'a> Layout<'a> {
                 text: mark.text,
                 rotate_deg: mark.rotate_deg,
             });
+        }
+        let header_boxes = self.header_boxes.clone();
+        let footer_boxes = self.footer_boxes.clone();
+        if !header_boxes.is_empty() {
+            let top = self.page.height - self.page.header.max(0.0);
+            self.emit_chrome_boxes(&header_boxes, top);
+        }
+        if !footer_boxes.is_empty() {
+            let band = chrome_band(
+                self.fonts,
+                &self.footer,
+                &self.footer_tables,
+                self.content_width(),
+                self.space_for_ul,
+            ) + chrome_images_h(self.fonts, &self.footer_images);
+            let top = self.page.footer.max(0.0) + band;
+            self.emit_chrome_boxes(&footer_boxes, top);
         }
         if !self.header_images.is_empty() {
             // Moved out and back (not cloned): the vector owns image bytes

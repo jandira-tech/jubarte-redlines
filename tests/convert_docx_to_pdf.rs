@@ -10606,6 +10606,40 @@ fn a_title_page_documents_later_header_pushes_the_body_down() {
 }
 
 #[test]
+fn a_footer_text_box_paints_its_text() {
+    // fixtures_500 01838a08: the footer's contact line is an anchored
+    // text box (wps:txbx). Chrome parts skipped shape text entirely.
+    let footer = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+           xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+           xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+           xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+           <w:p><w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+             relativeHeight=\"2\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+             <wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+             <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+             <wp:extent cx=\"3000000\" cy=\"300000\"/><wp:wrapNone/><wp:docPr id=\"1\" name=\"Text Box 1\"/>\
+             <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp><wps:cNvSpPr txBox=\"1\"/><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"3000000\" cy=\"300000\"/></a:xfrm>\
+             <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></wps:spPr>\
+             <wps:txbx><w:txbxContent><w:p><w:r><w:t>BoxedContact</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+             <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:ftr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer.to_string())],
+    ))
+    .expect("footer text box");
+    let (_, y) = pdf_glyph_text_xy(&pdf, "BoxedContact").expect("the footer text box paints");
+    assert!(y < 72.0, "in the footer band; y={y}");
+}
+
+#[test]
 fn official_sample_npm_package_sits_after_label() {
     // Word p1 npm badge: npm at ~80, @eigenpal at ~133. Collapsed
     // padding parked the package at npm+2.
