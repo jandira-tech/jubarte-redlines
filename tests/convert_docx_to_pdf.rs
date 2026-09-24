@@ -1408,9 +1408,11 @@ fn a_line_break_run_sizes_the_line_it_ends() {
 #[test]
 fn line_height_is_the_tallest_face_including_the_marker() {
     // fixtures_500 011c597c / 0103f846: Word sizes a line by its tallest
-    // face. A Calibri-font marker (12.2pt at 10pt) over Arial 10 body
-    // (11.5pt) makes 12.2pt item lines; a trailing Calibri space does not
-    // (002919b3), it hangs past the line.
+    // face. A Calibri-font marker over Arial 10 body (11.5pt) lifts the
+    // item by Calibri's part above the baseline over Arial's below it:
+    // live Word (2026-09-25) paints these items at 11.52/11.76 on its
+    // 0.24pt grid, 11.64 on average, not Calibri's 12.2pt single line. A
+    // trailing Calibri space does not size the line (002919b3).
     let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
           <w:abstractNum w:abstractNumId=\"0\">\
@@ -1437,12 +1439,48 @@ fn line_height_is_the_tallest_face_including_the_marker() {
     let item_pitch = ys[0] - ys[1];
     let plain_pitch = ys[4] - ys[5];
     assert!(
-        (item_pitch - 12.21).abs() < 0.1,
-        "a Calibri marker makes a 12.2pt line; pitch={item_pitch} ys={ys:?}"
+        (item_pitch - 11.64).abs() < 0.1,
+        "a Calibri marker lifts the Arial line to 11.64pt; pitch={item_pitch} ys={ys:?}"
     );
     assert!(
         (plain_pitch - 11.5).abs() < 0.1,
         "a trailing Calibri space leaves the Arial line at 11.5pt; pitch={plain_pitch}"
+    );
+}
+
+#[test]
+fn a_list_marker_only_grows_the_line_above_the_baseline() {
+    // fixtures_500 00250a49: a 12pt Symbol bullet over Verdana 10. Word
+    // (live, 2026-09-25) lifts the item's first baseline by the bullet's
+    // taller ascent but keeps Verdana's part below it: the first line's
+    // pitch to the second stays Verdana's 12.15pt (single) and 13.97pt
+    // (276 auto). The bullet's own 14.7pt single line made ours 12.69
+    // and 14.9, pushing the page down 0.9pt per item.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
+              <w:lvlText w:val=\"\u{f0b7}\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\
+              <w:rPr><w:rFonts w:ascii=\"Symbol\" w:hAnsi=\"Symbol\"/><w:sz w:val=\"24\"/></w:rPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let verdana =
+        r#"<w:rPr><w:rFonts w:ascii="Verdana" w:hAnsi="Verdana"/><w:sz w:val="20"/></w:rPr>"#;
+    let text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi \
+        omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta epsilon \
+        zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi";
+    let body = format!(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r>{verdana}<w:t>{text}</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("bullet item");
+    let ys = text_baselines(&pdf);
+    assert!(ys.len() >= 2, "a wrapped item; ys={ys:?}");
+    let pitch = ys[0] - ys[1];
+    assert!(
+        (pitch - 12.15).abs() < 0.1,
+        "the bullet leaves Verdana's part below the baseline; pitch={pitch} ys={ys:?}"
     );
 }
 

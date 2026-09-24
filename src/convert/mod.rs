@@ -14076,11 +14076,15 @@ impl<'a> Layout<'a> {
                     }),
                 };
             }
-            single = single.max(face.single_line_pt(size));
             let below = face.line_descent_pt(size);
             up = up.max(face.single_line_pt(size) - below);
+            // A list marker only lifts the line: Word keeps the text's part
+            // below the baseline (live Word: a 12pt Symbol bullet over
+            // Verdana 10 keeps the 12.15pt pitch to line two; a Calibri
+            // marker over Arial 10 makes ~11.6pt items, not Calibri's 12.2).
             let is_marker = run.list_marker || marker.is_some_and(|m| std::ptr::eq(m, *run));
-            if !is_marker {
+            if !is_marker || runs.len() == 1 {
+                single = single.max(face.single_line_pt(size));
                 down = down.max(below);
             }
             ascent = ascent.max(face.ascent_pt(size));
@@ -14090,11 +14094,12 @@ impl<'a> Layout<'a> {
         // across different families.
         let one_family = runs
             .iter()
+            .filter(|r| !(r.list_marker || marker.is_some_and(|m| std::ptr::eq(m, **r))))
             .map(|r| paint_family(&r.style, &r.text).to_ascii_lowercase())
             .collect::<std::collections::HashSet<_>>()
             .len()
             <= 1;
-        let mut natural = if one_family {
+        let mut natural = if one_family && marker.is_none() {
             single
         } else {
             single.max(up + down)
