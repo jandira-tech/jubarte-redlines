@@ -2224,6 +2224,41 @@ fn the_compat_pull_is_the_first_cells_own_left_margin() {
 }
 
 #[test]
+fn contextual_spacing_drops_the_flagged_paragraphs_own_before() {
+    // fixtures_500 0014add1: two NormalWeb paragraphs; only the second has
+    // contextualSpacing, and it inherits the style's 14pt auto before.
+    // Word drops that before (same style above) though the first paragraph
+    // is not flagged: the lines stay one pitch apart.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"NormalWeb\"><w:name w:val=\"Normal (Web)\"/><w:basedOn w:val=\"Normal\"/>\
+            <w:pPr><w:spacing w:before=\"280\" w:after=\"0\"/></w:pPr></w:style>\
+        </w:styles>";
+    let para = |extra: &str, t: &str| {
+        format!(
+            "<w:p><w:pPr><w:pStyle w:val=\"NormalWeb\"/>{extra}</w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "{}{}{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        para("<w:spacing w:before=\"0\" w:after=\"0\"/>", "Zero"),
+        para("<w:contextualSpacing/>", "Flagged"),
+        para("<w:spacing w:before=\"0\" w:after=\"0\"/>", "Third")
+    );
+    let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("contextual");
+    let hay = pdf_content_streams(&pdf).join("\n");
+    let y = |t: &str| pdf_tj_xy(&hay, t).first().map(|p| p.1).expect(t);
+    let gap1 = y("Z") - y("F");
+    let gap2 = y("F") - y("T");
+    assert!(
+        (gap1 - gap2).abs() < 0.05,
+        "the flagged paragraph's 14pt before is dropped; steps {gap1} and {gap2}"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves
@@ -10402,6 +10437,95 @@ fn a_footer_holding_only_an_uncached_page_field_paints_the_number() {
     assert!(
         y < 72.0 && x > 500.0,
         "right-aligned in the footer; at ({x}, {y})"
+    );
+}
+
+#[test]
+fn a_right_framed_header_page_number_shares_the_next_line() {
+    // fixtures_500 0014add1: the header's first paragraph is a frame
+    // (framePr wrap=around, xAlign=right) holding PAGE; the next paragraph
+    // is "N° 1901076". Word floats the number to the right margin on the
+    // "N°" line; painting the frame as its own line pushed "N°" down.
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:pPr><w:framePr w:wrap=\"around\" w:vAnchor=\"text\" w:hAnchor=\"margin\" w:xAlign=\"right\" w:y=\"1\"/></w:pPr>\
+             <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText xml:space=\"preserve\">PAGE  </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>\
+           <w:p><w:r><w:t>Docket</w:t></w:r></w:p></w:hdr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", header.to_string())],
+    ))
+    .expect("framed header number");
+    let (dx, dy) = pdf_glyph_text_xy(&pdf, "Docket").expect("Docket");
+    let (nx, ny) = pdf_glyph_text_xy(&pdf, "1").expect("page number");
+    assert!(
+        (ny - dy).abs() < 0.5 && (532.0..538.5).contains(&nx) && (dx - 72.0).abs() < 0.5,
+        "number at the right margin on the Docket line; Docket ({dx}, {dy}), 1 ({nx}, {ny})"
+    );
+}
+
+#[test]
+fn a_title_page_documents_later_header_pushes_the_body_down() {
+    // fixtures_500 0014add1: titlePg with no first-page header; pages 2+
+    // take a four-line default header taller than the top margin. Word
+    // starts page 2's body under it; we kept page 1's body top there.
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:r><w:t>HeadOne</w:t></w:r></w:p><w:p><w:r><w:t>HeadTwo</w:t></w:r></w:p>\
+           <w:p/><w:p/></w:hdr>";
+    // An even header the settings never switch on (no evenAndOddHeaders).
+    let even = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:p/></w:hdr>";
+    let paras: String = (0..70)
+        .map(|i| format!("<w:p><w:r><w:t>Line{i}</w:t></w:r></w:p>"))
+        .collect();
+    let body = format!(
+        "{paras}<w:sectPr><w:headerReference w:type=\"even\" r:id=\"rIdH2\"/>\
+           <w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1134\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"709\" w:footer=\"720\"/><w:titlePg/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdH2", "header", "header2.xml"),
+        ],
+        &[
+            ("word/header1.xml", header.to_string()),
+            ("word/header2.xml", even.to_string()),
+        ],
+    ))
+    .expect("titlePg header");
+    let pages = pdf_content_streams(&pdf);
+    assert!(pages.len() >= 2, "two pages");
+    let ys = |g: &str| -> Vec<f32> {
+        pdf_cm_tj_xy(&pages[1], g)
+            .into_iter()
+            .map(|p| p.1)
+            .collect()
+    };
+    // The first body line on page 2 sits below the header's two empty
+    // paragraphs too.
+    let first_page_heads = pdf_cm_tj_xy(&pages[0], "HeadOne").len();
+    assert_eq!(first_page_heads, 0, "titlePg: page 1 has no header");
+    assert!(
+        !ys("HeadTwo").is_empty() && !ys("L").is_empty(),
+        "page 2 header and body paint"
+    );
+    let head_y = ys("HeadTwo").into_iter().fold(f32::MAX, f32::min);
+    let body_top = ys("L").into_iter().fold(f32::MIN, f32::max);
+    assert!(
+        head_y - body_top > 30.0,
+        "page 2 body under the header band; HeadTwo y={head_y}, first line y={body_top}"
     );
 }
 

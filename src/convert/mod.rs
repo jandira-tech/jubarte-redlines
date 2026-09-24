@@ -887,6 +887,9 @@ struct TextRun {
     /// The paragraph's list number/bullet: its descent does not deepen
     /// the line (0021f639's Courier "o" keeps TNR's pitch).
     list_marker: bool,
+    /// Header/footer run of a right-aligned `w:framePr` paragraph: it
+    /// floats to the right margin on the next line (0014add1's PAGE).
+    frame_right: bool,
 }
 
 impl TextRun {
@@ -908,6 +911,7 @@ impl TextRun {
             ends_line: false,
             hf_pic_h: 0.0,
             list_marker: false,
+            frame_right: false,
         }
     }
 
@@ -11919,6 +11923,8 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
     // The paragraph before this one, painted or empty: a trailing empty
     // paragraph sits max(its after, this before) below it.
     let mut last: Option<std::rc::Rc<ParaStyle>> = None;
+    // A right-aligned frame's runs, waiting for the line they float on.
+    let mut framed: Vec<TextRun> = Vec::new();
     for para in dom.descendants(node, Some(&W::p())) {
         if hf_para_is_shape_text(dom, para) || hf_para_in_table(dom, node, para) {
             continue;
@@ -11928,6 +11934,17 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
         let mut scan = FieldScan::default();
         let mut line = Vec::new();
         collect_hf_rec(dom, para, &prun, theme, &mut scan, &mut line);
+        let right_frame = dom
+            .element(para, &W::p_pr())
+            .and_then(|ppr| first_named(dom, ppr, "framePr"))
+            .is_some_and(|fp| attr_any(dom, fp, "xAlign") == Some("right"));
+        if right_frame && !line.is_empty() {
+            for mut run in line {
+                run.frame_right = true;
+                framed.push(run);
+            }
+            continue;
+        }
         let border = hf_border_pad(last.as_deref(), &pstyle);
         if line
             .iter()
@@ -11995,11 +12012,19 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
             runs.push(br);
         }
         runs.extend(line);
+        if !framed.is_empty() {
+            for mut run in framed.drain(..) {
+                run.hf_para = Some(pstyle.clone());
+                runs.push(run);
+            }
+        }
         last = Some(pstyle);
     }
     // A part of only empty paragraphs (0003b3ae's blank first-page
     // header) is still their stacked lines: Word starts the body below.
     runs.append(&mut pending);
+    // A frame with no line after it keeps a line of its own.
+    runs.append(&mut framed);
     runs
 }
 
@@ -12775,6 +12800,9 @@ impl<'a> Layout<'a> {
             self.header_bottom = part.border;
             self.header_images = part.images;
             self.header_tables = part.tables;
+            // Pages after a titlePg first page start under this header
+            // (0014add1's four-line default header), not page 1's top.
+            self.refresh_body_top();
         }
         if let Some(part) = self.footer_rest.take() {
             self.footer = part.runs;
@@ -17642,6 +17670,28 @@ impl<'a> Layout<'a> {
     }
 
     fn draw_line_of_runs(&mut self, runs: &[TextRun], y: f32, align: Align) {
+        // A right-framed run (PAGE in a framePr) ends at the right margin
+        // on this line; the rest lays out as if it were not there.
+        if runs.iter().any(|r| r.frame_right) && runs.iter().any(|r| !r.frame_right) {
+            let (frame, rest): (Vec<TextRun>, Vec<TextRun>) =
+                runs.iter().cloned().partition(|r| r.frame_right);
+            let w: f32 = frame
+                .iter()
+                .map(|r| {
+                    let f = self
+                        .fonts
+                        .resolve(&r.style.family, r.style.bold, r.style.italic);
+                    let measure = chrome_measure_text(&r.text);
+                    self.fonts.get(f).width_pt(measure, r.style.layout_size())
+                })
+                .sum();
+            let mut x = self.page.width - self.page.margin_r - w;
+            for run in &frame {
+                x = self.paint_run(run, x, y);
+            }
+            self.draw_line_of_runs(&rest, y, align);
+            return;
+        }
         // A tab moves to its paragraph's stops; it paints no glyph
         // (000f8dcd's email line ended in two .notdef boxes).
         let tabbed = runs.iter().any(|r| r.text.contains('\t'));
@@ -18908,6 +18958,18 @@ fn layout(
                 if let Some(next) = blocks.get(i + 1).and_then(block_para_style) {
                     if same_contextual_pair(&style, next) {
                         style.after = 0.0;
+                    } else if same_contextual_pair(next, &style) {
+                        // contextualSpacing drops the flagged paragraph's own
+                        // before next to its style (0014add1: an unflagged
+                        // NormalWeb above keeps its after only).
+                        style.after = if !style.list_num.is_empty()
+                            && style.list_num == next.list_num
+                            && style.after_auto
+                        {
+                            0.0
+                        } else {
+                            style.after
+                        };
                     } else {
                         // Word inter-para space is max(after, next.before).
                         // Heading2 after=10 + before=18 was 28pt vs Word 18.
