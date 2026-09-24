@@ -30673,6 +30673,46 @@ fn a_cell_line_is_sized_by_its_inked_run_not_its_leading_spaces() {
 }
 
 #[test]
+fn a_cells_plain_after_does_not_cancel_its_table_styles_auto_spacing() {
+    // fixtures_500 00319da4: Table Grid's pPr is after=100 +
+    // afterAutospacing=1 and the cell paragraph writes after=100 alone.
+    // Word merges spacing per attribute, so the paragraph stays
+    // auto-spaced, which is 0 inside a cell. Checked in Word: adding
+    // afterAutospacing="0" to the paragraph brings the 5pt back. We let
+    // the plain after cancel the auto and stacked 5pt under each row.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:style w:type=\"table\" w:styleId=\"TG\"><w:name w:val=\"Table Grid\"/>\
+        <w:pPr><w:spacing w:after=\"100\" w:afterAutospacing=\"1\"/></w:pPr></w:style></w:styles>";
+    let cell = |t: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr>\
+             <w:spacing w:after=\"100\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:t>{t}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblStyle w:val=\"TG\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr>{}</w:tr><w:tr>{}</w:tr></w:tbl>\
+         <w:p/><w:sectPr/>",
+        cell("Q"),
+        cell("Z")
+    );
+    let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("convert auto-spaced cells");
+    let hay = String::from_utf8_lossy(&pdf);
+    let q = [pdf_cm_tj_xy(&hay, "Q"), pdf_tj_xy(&hay, "Q")].concat();
+    let z = [pdf_cm_tj_xy(&hay, "Z"), pdf_tj_xy(&hay, "Z")].concat();
+    let (Some(q), Some(z)) = (q.first(), z.first()) else {
+        panic!("both cells paint: Q {q:?}, Z {z:?}");
+    };
+    let pitch = q.1 - z.1;
+    assert!(
+        pitch < 15.5,
+        "rows are one line apart, without the 5pt after; pitch={pitch}"
+    );
+}
+
+#[test]
 fn a_justified_underline_runs_through_the_stretched_spaces() {
     // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
     // underlined word by word; the justify pad after each space was bare.

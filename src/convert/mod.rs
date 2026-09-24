@@ -6196,6 +6196,26 @@ fn para_base(
     if let Some(ppr) = dom.element(para, &W::p_pr()) {
         apply_ppr(dom, ppr, &mut pstyle);
     }
+    // Spacing merges per attribute: a plain w:after/w:before does not
+    // cancel the table style's auto spacing, only an explicit
+    // w:afterAutospacing / w:beforeAutospacing does (00319da4's header
+    // cells write after=100 under Table Grid's afterAutospacing=1; Word
+    // keeps them one line apart, and gives the 5pt back only with
+    // afterAutospacing="0").
+    if let Some(t) = table_para {
+        let spacing = dom
+            .element(para, &W::p_pr())
+            .and_then(|ppr| first_named(dom, ppr, "spacing"));
+        let sets = |name: &str| spacing.is_some_and(|sp| attr_any(dom, sp, name).is_some());
+        if t.after_auto && !pstyle.after_auto && !sets("afterAutospacing") {
+            pstyle.after = t.after;
+            pstyle.after_auto = true;
+        }
+        if t.before_auto && !pstyle.before_auto && !sets("beforeAutospacing") {
+            pstyle.before = t.before;
+            pstyle.before_auto = true;
+        }
+    }
     (pstyle, rstyle)
 }
 
