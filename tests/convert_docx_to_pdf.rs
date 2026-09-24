@@ -1790,6 +1790,28 @@ fn text_after_a_centred_floating_table_does_not_paint_over_it() {
 }
 
 #[test]
+fn a_headers_leading_auto_space_before_collapses() {
+    // fixtures_500 006eedc2: the header is two empty paragraphs with
+    // beforeAutospacing and after=360. Live Word drops the first one's
+    // auto before at the header distance and spaces the two by
+    // max(after, before): the body starts where the same header without
+    // any before puts it. We added 14 + 14 and ran the body 28pt low.
+    let body_y = |spacing: &str| {
+        let p = format!("<w:p><w:pPr><w:spacing {spacing}/></w:pPr></w:p>");
+        let pdf = docx_to_pdf(&header_part_docx_at(&format!("{p}{p}"), 100)).expect("header");
+        pdf_glyph_text_xy(&pdf, "HdrImgBodyX")
+            .expect("body paints")
+            .1
+    };
+    let auto = body_y(r#"w:before="100" w:beforeAutospacing="1" w:after="720""#);
+    let plain = body_y(r#"w:after="720""#);
+    assert!(
+        (auto - plain).abs() < 0.2,
+        "auto befores add nothing here; auto {auto} plain {plain}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

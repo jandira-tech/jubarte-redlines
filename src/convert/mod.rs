@@ -12933,6 +12933,7 @@ fn hf_para_is_shape_text(dom: &Dom, para: NodeId) -> bool {
 
 fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> {
     let theme = &sheet.theme;
+    let header = dom.name_is(node, &W::name("hdr"));
     // One footer/header <w:p> is one painted line. Flattening sd_2517's
     // "Smith Family Trust" + PAGE into one run list produced Trust106.
     // An empty top-level paragraph above the first line or below the last
@@ -12999,6 +13000,22 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
                     } else {
                         f32::max(p.after, pstyle.before)
                     };
+                } else if let Some(p) = last.as_deref() {
+                    // Stacked leading empty paragraphs: Word's gap between
+                    // them is max(after, before), the earlier after already
+                    // counted (006eedc2's 18pt after over a 14pt auto before).
+                    let before = if same_contextual_pair(p, &pstyle) {
+                        0.0
+                    } else {
+                        (pstyle.before - p.after).max(0.0)
+                    };
+                    first.para_gap = before + pstyle.after;
+                } else if header && pstyle.before_auto {
+                    // A header's first empty paragraph drops its HTML auto
+                    // space before at the header distance; an explicit
+                    // before stays (live Word, 006eedc2: 14pt auto gone,
+                    // 5pt explicit kept).
+                    first.para_gap = pstyle.after;
                 }
                 first.para_gap += border;
                 pending.push(first);
