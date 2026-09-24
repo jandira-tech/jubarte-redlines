@@ -301,8 +301,12 @@ pub(crate) fn evaluate(preset: &Preset, w: f32, h: f32, adj: &[(String, f64)]) -
             cmds: p.cmds.iter().map(Cmd::view).collect(),
         })
         .collect();
-    evaluate_views(preset.av, preset.gd, &paths, w, h, adj)
+    evaluate_views(preset.av, preset.gd, &paths, w, h, adj, 1.0)
 }
+
+/// EMU per point: a custGeom's guides and unsized paths live in the
+/// shape's EMU space (ECMA-376 20.1.9.8 / 20.1.9.15).
+const EMU_PER_PT: f64 = 12_700.0;
 
 /// Evaluate a document's `a:custGeom` for a `w`×`h` box (points).
 pub(crate) fn evaluate_custom(geom: &CustomGeom, w: f32, h: f32) -> Vec<EvalPath> {
@@ -320,9 +324,19 @@ pub(crate) fn evaluate_custom(geom: &CustomGeom, w: f32, h: f32) -> Vec<EvalPath
             cmds: p.cmds.iter().map(OwnedCmd::view).collect(),
         })
         .collect();
-    evaluate_views(&pairs(&geom.av), &pairs(&geom.gd), &paths, w, h, &[])
+    evaluate_views(
+        &pairs(&geom.av),
+        &pairs(&geom.gd),
+        &paths,
+        w,
+        h,
+        &[],
+        EMU_PER_PT,
+    )
 }
 
+/// `units` is guide units per point: presets keep points (1), a custGeom
+/// works in EMU, and a path without its own w/h takes the guides' space.
 fn evaluate_views(
     av: &[(&str, &str)],
     gd: &[(&str, &str)],
@@ -330,14 +344,23 @@ fn evaluate_views(
     w: f32,
     h: f32,
     adj: &[(String, f64)],
+    units: f64,
 ) -> Vec<EvalPath> {
     let (w, h) = (f64::from(w.max(0.01)), f64::from(h.max(0.01)));
-    let g = guides(av, gd, w, h, adj);
+    let g = guides(av, gd, w * units, h * units, adj);
     let val = |tok: &str| operand(tok, &g);
     let mut out = Vec::new();
     for path in paths {
-        let sx = if path.w > 0.0 { w / path.w } else { 1.0 };
-        let sy = if path.h > 0.0 { h / path.h } else { 1.0 };
+        let sx = if path.w > 0.0 {
+            w / path.w
+        } else {
+            1.0 / units
+        };
+        let sy = if path.h > 0.0 {
+            h / path.h
+        } else {
+            1.0 / units
+        };
         let pt = |x: f64, y: f64| ((x * sx) as f32, (y * sy) as f32);
         let mut subpaths: Vec<Subpath> = Vec::new();
         let mut cur = (0.0_f64, 0.0_f64);
@@ -377,8 +400,14 @@ fn evaluate_views(
                         t1 -= std::f64::consts::TAU;
                     }
                     let (cx, cy) = (cur.0 - wr * t0.cos(), cur.1 - hr * t0.sin());
-                    let n = (((t1 - t0).abs() / std::f64::consts::FRAC_PI_2).ceil() as usize * 8)
-                        .max(2);
+                    // `swAng` is document data: past a few turns the arc only
+                    // retraces its ellipse, so cap the tessellation (8 turns
+                    // at 8 points a quarter) and skip a non-finite sweep.
+                    let quarters = (t1 - t0).abs() / std::f64::consts::FRAC_PI_2;
+                    if !quarters.is_finite() {
+                        continue;
+                    }
+                    let n = (quarters.ceil().min(32.0) as usize * 8).max(2);
                     if subpaths.is_empty() {
                         begin(&mut subpaths, cur);
                     }
@@ -474,6 +503,61 @@ mod tests {
             }
         }
         b
+    }
+
+    #[test]
+    fn custom_guides_live_in_the_shapes_emu_space() {
+        // PR #167 review: a custGeom path in EMU (w=1270000 for a 100pt
+        // box) that names the built-in `hc` / `b` guides took them in
+        // points, so L hc,b landed 12700x too close to the origin.
+        let s = |v: &str| v.to_string();
+        let path = |w: f64, h: f64| CustomPath {
+            w,
+            h,
+            fill: Fill::Norm,
+            stroke: true,
+            cmds: vec![OwnedCmd::M(s("0"), s("0")), OwnedCmd::L(s("hc"), s("b"))],
+        };
+        for (w, h) in [(1_270_000.0, 1_270_000.0), (0.0, 0.0)] {
+            let geom = CustomGeom {
+                av: Vec::new(),
+                gd: Vec::new(),
+                paths: vec![path(w, h)],
+            };
+            let out = evaluate_custom(&geom, 100.0, 100.0);
+            let end = *out[0].subpaths[0].pts.last().expect("L point");
+            assert!(
+                (end.0 - 50.0).abs() < 0.01 && (end.1 - 100.0).abs() < 0.01,
+                "path {w}x{h}: L hc,b ends at the box's bottom centre; got {end:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_custom_arc_sweep_is_tessellated_within_a_bound() {
+        // PR #167 review: `swAng` is document-controlled and the arc's
+        // point count grew with it unbounded (a guide formula can make it
+        // any f64, and an infinite sweep never ended).
+        let s = |v: &str| v.to_string();
+        let arc = |sw: &str| CustomGeom {
+            av: Vec::new(),
+            gd: vec![(s("big"), s(sw))],
+            paths: vec![CustomPath {
+                w: 1_270_000.0,
+                h: 1_270_000.0,
+                fill: Fill::None,
+                stroke: true,
+                cmds: vec![
+                    OwnedCmd::M(s("1270000"), s("635000")),
+                    OwnedCmd::A(s("635000"), s("635000"), s("0"), s("big")),
+                ],
+            }],
+        };
+        for sw in ["*/ 21600000 1000 1", "*/ 21600000 21600000 1"] {
+            let out = evaluate_custom(&arc(sw), 100.0, 100.0);
+            let n: usize = out[0].subpaths.iter().map(|p| p.pts.len()).sum();
+            assert!(n <= 300, "sweep {sw}: {n} points");
+        }
     }
 
     #[test]
