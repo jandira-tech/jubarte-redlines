@@ -3047,6 +3047,40 @@ fn an_inline_cell_picture_keeps_its_extent_past_the_cell_text_width() {
 }
 
 #[test]
+fn an_auto_spaced_picture_line_in_a_cell_adds_its_marks_extra_leading() {
+    // fixtures_500 000bf661: a picture-only cell paragraph at line=276
+    // (1.15). Checked in Word: the row is the picture plus 0.15 of the
+    // mark font's single line (TNR 12: +2.2pt; a 24pt mark: +4.4pt; at
+    // line=240: the picture alone). We sized the row on the picture alone.
+    let row_h = |line: u32| {
+        let pic = "<w:drawing><wp:inline><wp:extent cx=\"914400\" cy=\"914400\"/>\
+            <wp:docPr id=\"1\" name=\"Picture 0\" descr=\"dot.png\"/>\
+            <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+              <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+            </a:graphicData></a:graphic></wp:inline></w:drawing>";
+        let mark = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"48\"/></w:rPr>";
+        let docx = drawing_docx(&format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>\
+             <w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"{line}\" w:lineRule=\"auto\"/>{mark}</w:pPr>\
+             <w:r>{mark}{pic}</w:r></w:p></w:tc></w:tr></w:tbl>\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>"
+        ));
+        let pdf = docx_to_pdf(&docx).expect("convert cell picture line");
+        pdf_glyph_text_xy(&pdf, "After")
+            .expect("text after the table")
+            .1
+    };
+    let extra = row_h(240) - row_h(276);
+    assert!(
+        (extra - 4.14).abs() < 0.3,
+        "line=276 adds 0.15 x TNR 24's 27.6pt line; extra={extra}"
+    );
+}
+
+#[test]
 fn a_space_between_inline_pictures_keeps_them_apart() {
     // fixtures_500 0034561f: two photos separated by a 16pt space run.
     // Word leaves the space's 4pt between them; we set them edge to edge.

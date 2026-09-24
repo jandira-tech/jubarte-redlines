@@ -5879,11 +5879,31 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
         })
         .sum();
     let text_h = if cell_para_is_image_only(para) {
-        0.0
+        picture_line_leading(fonts, para)
     } else {
         lines_h.max(line_box)
     };
     para.style.before + images_h + text_h + para.style.after
+}
+
+/// A picture-only cell line's auto multiple above single: the picture plus
+/// that share of its mark's single line (checked in Word on 000bf661:
+/// line=276 adds 0.15 x TNR 12's line, a 24pt mark 0.15 x its own, 240
+/// nothing), as a header picture line does (`chrome_pic_line`).
+fn picture_line_leading(fonts: &Fonts, para: &CellPara) -> f32 {
+    let style = &para.style;
+    if style.line_exact.is_some() || style.line_at_least.is_some() || style.line_mult <= 1.0 {
+        return 0.0;
+    }
+    let mark = style
+        .mark_run
+        .as_deref()
+        .or_else(|| para.runs.first().map(|r| &r.style));
+    let (family, bold, italic, size) = mark.map_or(("Calibri", false, false, 11.0), |m| {
+        (m.family.as_str(), m.bold, m.italic, m.size)
+    });
+    let face = fonts.get(fonts.resolve(family, bold, italic));
+    (style.line_mult - 1.0) * face.single_line_pt(size)
 }
 
 /// Pictures a cell lays out: inline ones, and anchors positioned against
@@ -7547,6 +7567,16 @@ fn table_block(
                 if unstyled_para && let Some(size) = tdef.as_ref().and_then(|t| t.run_size) {
                     r.size = size;
                 }
+                // The paragraph mark's run: a picture-only cell line takes
+                // its auto multiple's extra leading from it.
+                let mut mark = r.clone();
+                if let Some(rpr) = dom
+                    .element(child, &W::p_pr())
+                    .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+                {
+                    apply_rpr(dom, rpr, &mut mark, &sheet.theme);
+                }
+                pstyle.mark_run = Some(std::rc::Rc::new(mark));
                 let (mark, num_id, ilvl) = list_marker(dom, child, sheet, numbering);
                 let mark_style = (!mark.is_empty()).then(|| {
                     let lvl = numbering.level(&num_id, ilvl);
