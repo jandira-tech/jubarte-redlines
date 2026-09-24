@@ -683,6 +683,10 @@ struct TblStyle {
     /// The table style's own pPr sets before/after; otherwise cells keep
     /// the default paragraph style's (010902b5's ListTable3: 6pt each).
     sets_space: bool,
+    /// Below compatibility mode 15, the run size an unstyled cell paragraph
+    /// takes: the table style's own `w:sz`, else docDefaults', never
+    /// Normal's (00004116). `None` in mode 15, where Normal's wins.
+    run_size: Option<f32>,
     first_row_fill: Option<[f32; 3]>,
     band1_fill: Option<[f32; 3]>,
     band2_fill: Option<[f32; 3]>,
@@ -2242,6 +2246,16 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             apply_ppr(&dom, ppr, &mut defaults.para);
         }
     }
+    // docDefaults' own w:sz, the size a legacy table style falls back to.
+    let doc_default_size = dom
+        .descendants(root, Some(&W::name("docDefaults")))
+        .into_iter()
+        .next()
+        .and_then(|dd| first_named(&dom, dd, "rPr"))
+        .and_then(|rpr| first_named(&dom, rpr, "sz"))
+        .and_then(|sz| attr_any(&dom, sz, "val"))
+        .and_then(|v| v.parse::<f32>().ok())
+        .map(|half| half / 2.0);
     let mut tables = HashMap::new();
     let mut implicit_para: Option<String> = None;
     let mut style_names: HashMap<String, String> = HashMap::new();
@@ -2319,6 +2333,19 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         defaults.para = named.para.clone();
         defaults.run = named.run.clone();
     }
+    // Below compatibilityMode 15 an unstyled cell takes the table style's
+    // size (its own w:sz, else docDefaults', else the OOXML 10pt) unless
+    // that size is 10pt, where Normal's stays. Checked in Word, Normal
+    // 12pt throughout: table style none + docDefaults 11/9pt -> 11/9pt;
+    // no docDefaults sz -> 12pt; table style 14/9pt -> 14/9pt; table style
+    // 10pt (00587c73) -> 12pt. Mode 15, or
+    // overrideTableStyleFontSizeAndJustification (the I_am_sharing lock,
+    // mode 14), keeps Normal's throughout.
+    let legacy = settings_compat_mode(pkg) < 15 && !settings_override_table_style_size(pkg);
+    for table in tables.values_mut() {
+        let size = table.run_size.or(doc_default_size).unwrap_or(10.0);
+        table.run_size = (legacy && (size - 10.0).abs() > 0.01).then_some(size);
+    }
     for table in tables.values_mut().filter(|t| !t.sets_line) {
         table.para.line_mult = defaults.para.line_mult;
         table.para.line_exact = defaults.para.line_exact;
@@ -2373,10 +2400,17 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults) -> TblStyle {
             }
         }
     }
+    let run_size = dom
+        .element(style, &W::r_pr())
+        .and_then(|rpr| first_named(dom, rpr, "sz"))
+        .and_then(|sz| attr_any(dom, sz, "val"))
+        .and_then(|v| v.parse::<f32>().ok())
+        .map(|half| half / 2.0);
     let mut out = TblStyle {
         para,
         sets_line,
         sets_space,
+        run_size,
         first_row_fill: None,
         band1_fill: None,
         band2_fill: None,
@@ -4747,6 +4781,26 @@ fn settings_compat_mode_xml(xml: &str) -> u8 {
         }
     }
     12
+}
+
+/// Word's `overrideTableStyleFontSizeAndJustification` compat setting: the
+/// default paragraph style's size and jc win over a table style's.
+fn settings_override_table_style_size(pkg: &PartFs) -> bool {
+    pkg.part_string(&settings_part(pkg))
+        .is_some_and(|xml| settings_override_table_style_size_xml(&xml))
+}
+
+fn settings_override_table_style_size_xml(xml: &str) -> bool {
+    let Some((dom, root)) = settings_dom_xml(xml) else {
+        return false;
+    };
+    dom.descendants(root, Some(&W::name("compatSetting")))
+        .into_iter()
+        .any(|node| {
+            attr_any(&dom, node, "name") == Some("overrideTableStyleFontSizeAndJustification")
+                && attr_any(&dom, node, "uri") == Some(WORD_COMPAT_SETTING_URI)
+                && matches!(attr_any(&dom, node, "val"), Some("1" | "true" | "on"))
+        })
 }
 
 /// `w:evenAndOddHeaders`: type=even header/footer on even page numbers.
@@ -7483,7 +7537,18 @@ fn table_block(
                 if !dom.name_is(child, &W::p()) {
                     continue;
                 }
-                let (mut pstyle, r) = para_base(dom, child, sheet, Some(table_para));
+                let (mut pstyle, mut r) = para_base(dom, child, sheet, Some(table_para));
+                // An explicit table style's size beats the default paragraph
+                // style's in a paragraph with no pStyle (checked in Word on
+                // 00004116: Normal 12pt, docDefaults 11pt, cells paint 11pt;
+                // without the tblStyle they paint 12pt).
+                let unstyled_para = dom
+                    .element(child, &W::p_pr())
+                    .and_then(|ppr| first_named(dom, ppr, "pStyle"))
+                    .is_none();
+                if unstyled_para && let Some(size) = tdef.as_ref().and_then(|t| t.run_size) {
+                    r.size = size;
+                }
                 let (mark, num_id, ilvl) = list_marker(dom, child, sheet, numbering);
                 let mark_style = (!mark.is_empty()).then(|| {
                     let lvl = numbering.level(&num_id, ilvl);
@@ -30130,6 +30195,7 @@ mod table_tests {
                 para,
                 sets_line: true,
                 sets_space: true,
+                run_size: None,
                 first_row_fill: None,
                 band1_fill: parse_hex_color("D3DFEE"),
                 band2_fill: None,

@@ -9432,6 +9432,78 @@ fn styles_without_any_size_paint_word_ten_point() {
 }
 
 #[test]
+fn a_styled_tables_normal_cell_text_takes_the_table_size_over_normals() {
+    // fixtures_500 00004116: docDefaults 11pt, Normal 12pt, and a Table
+    // Grid style with no size. Word paints its unstyled cell text at 11pt:
+    // with an explicit tblStyle the table style's size (else docDefaults')
+    // wins over Normal's. Checked in Word: without the tblStyle the cells
+    // are 12pt; a table-style sz=28 makes them 14pt; the face stays Normal's.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"24\"/></w:rPr></w:style>\
+          <w:style w:type=\"table\" w:styleId=\"TG\"><w:name w:val=\"Table Grid\"/>\
+            <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr></w:style>\
+        </w:styles>";
+    let body = |rpr: &str| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblStyle w:val=\"TG\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>\
+             <w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r>{rpr}<w:t>Cell text</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/><w:sectPr/>"
+        )
+    };
+    let implicit = docx_to_pdf(&docx_with_styles(&body(""), styles)).expect("unsized cell");
+    let explicit = docx_to_pdf(&docx_with_styles(
+        &body("<w:rPr><w:sz w:val=\"22\"/></w:rPr>"),
+        styles,
+    ))
+    .expect("11pt cell");
+    assert_eq!(
+        pdf_content_streams(&implicit),
+        pdf_content_streams(&explicit),
+        "the unsized cell paints like an explicit 11pt run"
+    );
+}
+
+#[test]
+fn a_ten_point_table_style_leaves_normals_size_in_its_cells() {
+    // fixtures_500 00587c73: the same legacy setup (docDefaults 11pt,
+    // Normal 12pt) under a Table Grid whose rPr says 10pt. Word paints
+    // the cells at Normal's 12pt; checked in Word, the table style at 9pt
+    // or 14pt does apply, 10pt alone falls through to Normal.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"24\"/></w:rPr></w:style>\
+          <w:style w:type=\"table\" w:styleId=\"TG\"><w:name w:val=\"Table Grid\"/>\
+            <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+            <w:rPr><w:sz w:val=\"20\"/></w:rPr></w:style>\
+        </w:styles>";
+    let body = |rpr: &str| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblStyle w:val=\"TG\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>\
+             <w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r>{rpr}<w:t>Cell text</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/><w:sectPr/>"
+        )
+    };
+    let implicit = docx_to_pdf(&docx_with_styles(&body(""), styles)).expect("unsized cell");
+    let explicit = docx_to_pdf(&docx_with_styles(
+        &body("<w:rPr><w:sz w:val=\"24\"/></w:rPr>"),
+        styles,
+    ))
+    .expect("12pt cell");
+    assert_eq!(
+        pdf_content_streams(&implicit),
+        pdf_content_streams(&explicit),
+        "the unsized cell paints like an explicit 12pt run"
+    );
+}
+
+#[test]
 fn bordered_row_pitch_adds_the_horizontal_rule() {
     // Word stacks each row's horizontal rule on top of its height: 0.5pt
     // rules make the pitch trHeight/content + 0.5 (fixtures_500 0005052e
