@@ -649,7 +649,18 @@ pub(crate) struct Face<'a> {
     pub bbox: [i16; 4],
     pub widths: Vec<u16>,
     cmap: HashMap<u32, u16>,
+    /// Shape plans by segment (direction, script, language) and kerning:
+    /// building one was a fifth of a conversion when every run built its
+    /// own (redline 0006f790: 21% of samples in `ShapePlan::new`).
+    plans: Mutex<HashMap<PlanKey, Arc<rustybuzz::ShapePlan>>>,
 }
+
+type PlanKey = (
+    rustybuzz::Direction,
+    rustybuzz::Script,
+    Option<rustybuzz::Language>,
+    bool,
+);
 
 impl<'a> Face<'a> {
     pub(crate) fn bytes(&self) -> &[u8] {
@@ -732,6 +743,7 @@ impl<'a> Face<'a> {
         Some(Self {
             bytes,
             buzz,
+            plans: Mutex::new(HashMap::new()),
             pdf_name,
             upem,
             descent,
@@ -825,7 +837,23 @@ impl<'a> Face<'a> {
                 ..,
             ),
         ];
-        let out = rustybuzz::shape(face, &word_pdf, buf);
+        buf.guess_segment_properties();
+        let key = (buf.direction(), buf.script(), buf.language(), kern);
+        let cached = self.plans.lock().ok().and_then(|p| p.get(&key).cloned());
+        let plan = cached.unwrap_or_else(|| {
+            let plan = Arc::new(rustybuzz::ShapePlan::new(
+                face,
+                key.0,
+                Some(key.1),
+                key.2.as_ref(),
+                &word_pdf,
+            ));
+            if let Ok(mut plans) = self.plans.lock() {
+                plans.insert(key.clone(), Arc::clone(&plan));
+            }
+            plan
+        });
+        let out = rustybuzz::shape_with_plan(face, &plan, buf);
         let infos = out.glyph_infos();
         let pos = out.glyph_positions();
         infos
@@ -1975,19 +2003,31 @@ pub(crate) fn add_cjk_fallbacks(embedded: &mut EmbeddedFonts) {
 
 /// Adds the installed faces of every font-table family that the catalogue
 /// does not cover and the document does not embed.
+///
+/// `extra` are the families styles and the theme name; `run_faces` those
+/// runs paint non-East-Asian text in (ascii / hAnsi / cs, theme latin).
+/// A theme lists ~45 script fonts (Mangal, Sylfaen, 游明朝…): loading each
+/// from disk was a third of every conversion, so an East Asian family
+/// loads only for East Asian text or a run that paints in it, and any
+/// other family only when a run paints in it.
 pub(crate) fn add_installed_faces(
     embedded: &mut EmbeddedFonts,
     table: &super::font_table::FontTable,
     extra: &[String],
+    run_faces: &[String],
+    has_cjk: bool,
 ) {
     // East Asian families named only in styles or the theme ("宋体" as the
     // theme's Hans font) are not in the font table but Word draws them.
     for name in extra {
         let lower = name.to_ascii_lowercase();
-        if table.get(name).is_some()
-            || embedded.keys().any(|(f, _, _)| *f == lower)
-            || (cjk_file_stems(name).is_empty() && catalogue_paints_family(name))
-        {
+        let painted = run_faces.iter().any(|n| n == name);
+        let wanted = if cjk_file_stems(name).is_empty() {
+            painted && !catalogue_paints_family(name)
+        } else {
+            has_cjk || painted
+        };
+        if !wanted || table.get(name).is_some() || embedded.keys().any(|(f, _, _)| *f == lower) {
             continue;
         }
         // A family runs name but the table omits (015beda9 has no table
@@ -2427,12 +2467,24 @@ mod tests {
     }
 
     #[test]
+    fn a_theme_script_font_no_run_paints_is_not_loaded() {
+        // A theme lists ~45 per-script faces; reading each from disk was a
+        // third of every conversion though no run paints in them.
+        let mut embedded = EmbeddedFonts::new();
+        let table = super::super::font_table::FontTable::default();
+        let names = ["Roboto Condensed".to_string()];
+        add_installed_faces(&mut embedded, &table, &names, &[], false);
+        assert!(embedded.is_empty(), "nothing painted, nothing loaded");
+    }
+
+    #[test]
     fn a_run_family_missing_from_the_font_table_still_loads_its_faces() {
         // fixtures_500 015beda9 has no fontTable part; its runs name
         // Segoe UI, which Word draws, and only table families were loaded.
         let mut embedded = EmbeddedFonts::new();
         let table = super::super::font_table::FontTable::default();
-        add_installed_faces(&mut embedded, &table, &["Roboto Condensed".to_string()]);
+        let names = ["Roboto Condensed".to_string()];
+        add_installed_faces(&mut embedded, &table, &names, &names, false);
         assert!(embedded.contains_key(&("roboto condensed".to_string(), false, false)));
     }
 

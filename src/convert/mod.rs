@@ -131,13 +131,16 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
     table.set_default_family(&load_stylesheet(&pkg).defaults.run.family);
     let mut embedded = font_table::load_embedded_fonts(&pkg, &table);
     let mut family_names = rfont_names(&xml);
+    let mut run_faces = latin_font_names(&xml);
     for part in ["word/styles.xml", "word/theme/theme1.xml"] {
         if let Some(text) = pkg.part_string(part) {
             family_names.extend(rfont_names(&text));
+            run_faces.extend(latin_font_names(&text));
         }
     }
-    font::add_installed_faces(&mut embedded, &table, &family_names);
-    if xml.chars().any(is_cjk) {
+    let has_cjk = xml.chars().any(is_cjk);
+    font::add_installed_faces(&mut embedded, &table, &family_names, &run_faces, has_cjk);
+    if has_cjk {
         font::add_cjk_fallbacks(&mut embedded);
     }
     let fonts = Fonts::for_document(&embedded);
@@ -2758,6 +2761,32 @@ fn theme_bidi_face(theme: &ThemeFonts, which: &str) -> Option<String> {
 
 /// Font family names a part's markup mentions (`w:rFonts` slots, theme
 /// `typeface`s), deduplicated.
+/// Families that paint non-East-Asian text: run `w:ascii` / `w:hAnsi` /
+/// `w:cs` and the theme's `a:latin` faces (not its per-script list).
+fn latin_font_names(xml: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for key in [
+        "w:ascii=\"",
+        "w:hAnsi=\"",
+        "w:cs=\"",
+        "<a:latin typeface=\"",
+    ] {
+        let mut rest = xml;
+        while let Some(at) = rest.find(key) {
+            rest = &rest[at + key.len()..];
+            let Some(end) = rest.find('"') else {
+                break;
+            };
+            let name = &rest[..end];
+            if !name.is_empty() && !out.iter().any(|n| n == name) {
+                out.push(name.to_string());
+            }
+            rest = &rest[end..];
+        }
+    }
+    out
+}
+
 fn rfont_names(xml: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for key in [
