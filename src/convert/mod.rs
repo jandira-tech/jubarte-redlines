@@ -2523,7 +2523,12 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
         return;
     };
     let slot = slot.to_ascii_lowercase();
-    if slot.contains("major")
+    // minorBidi / majorBidi name the complex-script face, not the latin.
+    if slot.contains("bidi")
+        && let Some(face) = theme_script_face(theme, &slot)
+    {
+        style.family = face;
+    } else if slot.contains("major")
         && let Some(face) = theme.major.as_deref()
     {
         style.family = face.to_string();
@@ -2593,12 +2598,28 @@ fn theme_script_face(theme: &ThemeFonts, slot: &str) -> Option<String> {
     } else if slot.contains("minoreastasia") {
         theme.minor_ea.clone()
     } else if slot.contains("majorcs") || slot.contains("majorbidi") {
-        theme.major_cs.clone()
+        theme_bidi_face(theme, "major")
     } else if slot.contains("minorcs") || slot.contains("minorbidi") {
-        theme.minor_cs.clone()
+        theme_bidi_face(theme, "minor")
     } else {
         None
     }
+}
+
+/// A theme's complex-script face; an empty `a:cs` falls to the Arab script
+/// font of Word's default ar-SA bidi language (0033735c draws Arial).
+fn theme_bidi_face(theme: &ThemeFonts, which: &str) -> Option<String> {
+    let cs = if which == "major" {
+        &theme.major_cs
+    } else {
+        &theme.minor_cs
+    };
+    cs.clone().or_else(|| {
+        theme
+            .script_fonts
+            .get(&(which.to_string(), "Arab".to_string()))
+            .cloned()
+    })
 }
 
 /// Font family names a part's markup mentions (`w:rFonts` slots, theme
@@ -21012,6 +21033,30 @@ mod theme_slot_tests {
             minor: Some("Cambria".into()),
             ..ThemeFonts::default()
         }
+    }
+
+    #[test]
+    fn a_bidi_theme_slot_takes_the_complex_script_face() {
+        // fixtures_500 0033735c: asciiTheme="minorBidi" with an empty
+        // theme minor cs typeface. Word draws Arial (the Arab script
+        // font for the default ar-SA bidi language), not minor latin.
+        let mut theme = ThemeFonts {
+            minor: Some("Calibri".into()),
+            ..ThemeFonts::default()
+        };
+        theme
+            .script_fonts
+            .insert(("minor".into(), "Arab".into()), "Arial".into());
+        assert_eq!(
+            family_from_rfonts(r#"w:asciiTheme="minorBidi""#, &theme),
+            "Arial"
+        );
+        theme.minor_cs = Some("Tahoma".into());
+        assert_eq!(
+            family_from_rfonts(r#"w:asciiTheme="minorBidi""#, &theme),
+            "Tahoma",
+            "a named cs face wins"
+        );
     }
 
     #[test]
