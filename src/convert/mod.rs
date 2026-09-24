@@ -5881,7 +5881,14 @@ fn table_row_height_pt(
         .iter()
         .map(|cell| cell_content_height(fonts, cell, col_w, space_for_ul))
         .fold(0.0_f32, f32::max);
-    content.max(spec) + row_top_rule(row, geom, ri) + row_bottom_rule(row, geom, ri)
+    // An atLeast minimum is the text area: the cells' top and bottom
+    // margins stand outside it (00afb3e6's 300-twip rows with 2pt tcMar
+    // step 19pt; 003dd497's 0.75pt spacers stand 2.25pt apart).
+    let pads = row
+        .iter()
+        .map(|c| c.pad_t + c.pad_b)
+        .fold(0.0_f32, f32::max);
+    content.max(spec + pads) + row_top_rule(row, geom, ri) + row_bottom_rule(row, geom, ri)
 }
 
 /// The table's bottom rule, which Word keeps inside the last row

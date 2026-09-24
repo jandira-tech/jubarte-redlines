@@ -2259,6 +2259,46 @@ fn contextual_spacing_drops_the_flagged_paragraphs_own_before() {
 }
 
 #[test]
+fn an_at_least_row_height_leaves_out_the_cell_margins() {
+    // fixtures_500 00afb3e6: trHeight 300 atLeast, tcMar top/bottom 40,
+    // 7pt text. Word's single-line rows step 19.92pt: the 15pt minimum
+    // plus the 2 + 2pt cell margins (003dd497's 0.75pt spacer rows stand
+    // 2.2pt apart the same way). Counting the margins inside the minimum
+    // made them 15.9.
+    let row = |t: &str| {
+        format!(
+            "<w:tr><w:trPr><w:trHeight w:val=\"300\" w:hRule=\"atLeast\"/></w:trPr>\
+             <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/><w:tcMar>\
+               <w:top w:w=\"40\" w:type=\"dxa\"/><w:bottom w:w=\"40\" w:type=\"dxa\"/></w:tcMar></w:tcPr>\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+               <w:r><w:rPr><w:sz w:val=\"14\"/></w:rPr><w:t>{t}</w:t></w:r></w:p></w:tc></w:tr>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"3000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid>{}{}</w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        row("Qone"),
+        row("Qtwo")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("atLeast rows");
+    let hay = pdf_content_streams(&pdf).join("\n");
+    let mut ys: Vec<f32> = pdf_tj_xy(&hay, "Q")
+        .into_iter()
+        .chain(pdf_cm_tj_xy(&hay, "Q"))
+        .map(|p| p.1)
+        .filter(|y| *y > 1.0)
+        .collect();
+    ys.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.01);
+    assert!(
+        ys.len() == 2 && (ys[0] - ys[1] - 19.0).abs() < 0.1,
+        "15 + 4pt per row; ys={ys:?}"
+    );
+}
+
+#[test]
 fn a_row_with_a_keep_lines_paragraph_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves
