@@ -13058,6 +13058,25 @@ fn load_chrome_part(
                 .iter()
                 .any(|t| hf_node_is_top_level(&part_dom, root, *t));
         para_no += 1;
+        // A page-anchored frame (w:framePr hAnchor/vAnchor="page") holds its
+        // pictures at the frame's page position, out of the band (redlines
+        // vs 000e3e7b whose A carries one: Word paints the banner at the
+        // frame's 13.55pt, 27.8pt and starts the body at the top margin).
+        let frame_at = part_dom
+            .element(para, &W::p_pr())
+            .and_then(|ppr| first_named(&part_dom, ppr, "framePr"))
+            .filter(|fp| {
+                attr_any(&part_dom, *fp, "hAnchor") == Some("page")
+                    && attr_any(&part_dom, *fp, "vAnchor") == Some("page")
+            })
+            .map(|fp| {
+                let at = |name: &str| {
+                    attr_any(&part_dom, fp, name)
+                        .and_then(|v| v.parse::<f32>().ok())
+                        .map_or(0.0, |tw| tw / 20.0)
+                };
+                (at("x"), at("y"), at("w"))
+            });
         // Flow pictures fill rows; one past the measure opens the next row,
         // under the wrapped tab line when the first row's tab wrapped.
         let (mut cursor, mut row_h, mut drop) = (0.0_f32, 0.0_f32, 0.0_f32);
@@ -13071,6 +13090,40 @@ fn load_chrome_part(
                     img.chrome_lead = lead;
                     img.chrome_under_table = under_table;
                     img.chrome_para = para_no;
+                    if let Some((fx, fy, fw)) = frame_at
+                        && matches!(img.slot, ImageSlot::Flow)
+                    {
+                        // The paragraph's jc places it across the frame's
+                        // width (0015dee2's centred logo in a 488pt frame).
+                        let room = (fw - img.w).max(0.0);
+                        let fx = fx
+                            + match jc {
+                                Align::Center => room / 2.0,
+                                Align::Right => room,
+                                Align::Left | Align::Justify => 0.0,
+                            };
+                        img.slot = ImageSlot::Float {
+                            align: Align::Left,
+                            page_x: Some(fx),
+                            page_y: Some(fy),
+                            col_x: None,
+                            para_y: None,
+                            pct_x: None,
+                            pct_y: None,
+                            pct_w: None,
+                            pct_h: None,
+                            v_align: Align::Left,
+                            wrap_square: false,
+                            wrap_top_bottom: false,
+                            dist_l: 0.0,
+                            dist_r: 0.0,
+                            dist_t: 0.0,
+                            dist_b: 0.0,
+                            h_rel: RelFrame::Page,
+                            v_rel: RelFrame::Page,
+                            v_off: None,
+                        };
+                    }
                     if last_para == Some(para) {
                         img.chrome_after = pstyle.after;
                     }

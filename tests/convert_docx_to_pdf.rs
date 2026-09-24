@@ -2098,6 +2098,32 @@ fn a_table_styles_font_beats_the_document_defaults_in_cells() {
 }
 
 #[test]
+fn a_framed_header_picture_sits_at_its_frame_out_of_the_band() {
+    // Redlines vs 000e3e7b: the header's banner paragraph is a page-anchored
+    // frame (framePr hAnchor/vAnchor="page", x=271 y=556 twips). Word paints
+    // the banner at the frame and starts the body at the top margin; we
+    // stacked it as a header line and pushed the body 85pt down.
+    let hdr = "<w:p><w:pPr><w:framePr w:w=\"226\" w:wrap=\"around\" w:vAnchor=\"page\" \
+        w:hAnchor=\"page\" w:x=\"271\" w:y=\"556\"/></w:pPr><w:r><w:drawing><wp:inline>\
+        <wp:extent cx=\"5610225\" cy=\"1438275\"/><wp:docPr id=\"1\" name=\"Picture 1\"/>\
+        <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+        <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic></a:graphicData>\
+        </a:graphic></wp:inline></w:drawing></w:r></w:p>";
+    let pdf = docx_to_pdf(&header_part_docx_at(hdr, 0)).expect("framed header");
+    let (_, y) = pdf_glyph_text_xy(&pdf, "HdrImgBodyX").expect("body paints");
+    assert!(
+        792.0 - y < 90.0,
+        "the body starts at the 72pt margin; baseline {} from the top",
+        792.0 - y
+    );
+    let (x, _, _, _) = *pdf_image_boxes(&pdf).first().expect("banner paints");
+    assert!(
+        (x - 13.55).abs() < 0.5,
+        "the banner sits at the frame's x; x={x}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path
