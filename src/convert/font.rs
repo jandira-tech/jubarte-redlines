@@ -1687,12 +1687,41 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
     // (dir, whole folder is the family): Word's cloud-font cache keeps each
     // family in its own folder under numeric file names (Poppins/2397….ttf).
     let mut dirs: Vec<(PathBuf, bool)> = DIRS.iter().map(|d| (PathBuf::from(d), false)).collect();
-    if let Some(cloud) =
-        std::env::var_os("HOME").and_then(|home| cloud_font_dir(Path::new(&home), family))
-    {
-        dirs.push((cloud, true));
-    }
+    dirs.extend(cloud_font_dirs(family));
     faces_with_user_fonts(family, &dirs, user_font_dir().as_deref())
+}
+
+/// Word's cloud-font folders that may hold `family`, each a whole-family
+/// folder: its own or, when it has none, any whose name starts it. Word files a style
+/// family under its parent (fixtures_500 001d945a: "Script MT Bold" in
+/// "Script MT/", 01838a08: "Roboto Condensed" in "Roboto/"); the faces
+/// still answer only to their own family name. Parent names come from the
+/// cache's own listing, never from the document.
+fn cloud_font_dirs(family: &str) -> Vec<(PathBuf, bool)> {
+    let Some(home) = std::env::var_os("HOME") else {
+        return Vec::new();
+    };
+    let home = Path::new(&home);
+    let own = cloud_font_dir(home, family);
+    if let Some(dir) = own.as_ref().filter(|d| d.is_dir()) {
+        return vec![(dir.clone(), true)];
+    }
+    let mut out: Vec<(PathBuf, bool)> = own.map(|dir| (dir, true)).into_iter().collect();
+    let Some(root) = cloud_font_dir(home, "x").and_then(|d| d.parent().map(Path::to_path_buf))
+    else {
+        return out;
+    };
+    let want = fold_family(family);
+    for dir in sorted_dir_listing(&root).iter() {
+        let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let parent = fold_family(name);
+        if parent.len() >= 3 && parent.len() < want.len() && want.starts_with(&parent) {
+            out.push((dir.clone(), true));
+        }
+    }
+    out
 }
 
 /// `family`'s faces from `dirs`, then from jubarte's own font folder
@@ -2608,6 +2637,27 @@ mod tests {
         let names = ["Helvetica Neue".to_string()];
         add_installed_faces(&mut embedded, &table, &names, &names, false);
         assert!(embedded.contains_key(&("helvetica neue".to_string(), false, false)));
+    }
+
+    #[test]
+    fn a_cloud_face_filed_under_its_parent_family_is_found() {
+        // fixtures_500 001d945a: Word embeds ScriptMTBold, which its cloud
+        // cache files under "Script MT/"; we looked only in
+        // "Script MT Bold/" and drew Cambria.
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let dir = PathBuf::from(home)
+            .join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/Script MT");
+        if !dir.is_dir() {
+            return;
+        }
+        let faces =
+            faces_with_user_fonts("Script MT Bold", &cloud_font_dirs("Script MT Bold"), None);
+        assert!(
+            !faces.is_empty(),
+            "Script MT Bold from the Script MT folder"
+        );
     }
 
     #[test]
