@@ -31569,6 +31569,19 @@ fn a_text_outline_with_no_fill_still_paints_the_text() {
 }
 
 #[test]
+fn a_carriage_return_ends_the_line() {
+    // fixtures_500 00abf747: the footer's last paragraph ends in <w:cr/>,
+    // an extra empty line that lifts the footer one line in Word. We
+    // ignored w:cr (ECMA-376 17.3.3.4: it ends the line like a break).
+    let body = "<w:p><w:r><w:t>Qfirst</w:t><w:cr/><w:t>Zsecond</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert carriage return");
+    let (_, qy) = pdf_glyph_text_xy(&pdf, "Qfirst").expect("Qfirst paints");
+    let (zx, zy) = pdf_glyph_text_xy(&pdf, "Zsecond").expect("Zsecond paints");
+    assert!(qy - zy > 10.0, "Zsecond starts the next line; {qy} vs {zy}");
+    assert!((zx - 72.0).abs() < 0.5, "at the margin; x={zx}");
+}
+
+#[test]
 fn a_justified_underline_runs_through_the_stretched_spaces() {
     // Redline 00189e19__vs__00a4b0b9: inserted text on justified lines was
     // underlined word by word; the justify pad after each space was bare.

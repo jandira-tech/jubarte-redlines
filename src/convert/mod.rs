@@ -9419,6 +9419,12 @@ fn collect_visible_marked(dom: &Dom, node: NodeId, out: &mut String, in_del: boo
         }
         return;
     }
+    // w:cr ends the line like a text-wrapping break (ECMA-376 17.3.3.4;
+    // 00abf747's footer ends in one, a line Word keeps).
+    if !in_del && dom.name_is(node, &W::name("cr")) {
+        out.push('\n');
+        return;
+    }
     if !in_del && (dom.name_is(node, &W::name("tab")) || dom.name_is(node, &W::name("br"))) {
         if dom.name_is(node, &W::name("br")) {
             let kind = dom.attribute(node, &W::name("type"));
