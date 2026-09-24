@@ -1503,6 +1503,9 @@ struct LaidImage {
     chrome_drop_tab: Option<(RunStyle, bool)>,
     /// Index of the chrome paragraph holding the picture.
     chrome_para: u32,
+    /// The part's last paragraph is this picture's: its space after closes
+    /// the band (redlines vs 001cc92b: the header's lone VML banner + 8pt).
+    chrome_after: f32,
     /// `pic:spPr/a:ln`: Word strokes the picture's own outline (000f5278's
     /// QR code has a black frame).
     outline: Option<([f32; 3], f32)>,
@@ -6961,6 +6964,7 @@ fn paragraph_block(
                 chrome_drop: 0.0,
                 chrome_drop_tab: None,
                 chrome_para: 0,
+                chrome_after: 0.0,
                 outline: None,
                 gap_before: 0.0,
             },
@@ -11302,6 +11306,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_drop: 0.0,
                     chrome_drop_tab: None,
                     chrome_para: 0,
+                    chrome_after: 0.0,
                     outline: None,
                     gap_before: 0.0,
                 });
@@ -11336,6 +11341,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
+                        chrome_after: 0.0,
                         outline: picture_outline(dom, drawing),
                         gap_before: space_before_drawing(dom, drawing),
                     });
@@ -11359,6 +11365,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
+                        chrome_after: 0.0,
                         outline: None,
                         gap_before: 0.0,
                     });
@@ -11412,6 +11419,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
+                        chrome_after: 0.0,
                         outline: None,
                         gap_before: 0.0,
                     });
@@ -11441,6 +11449,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_drop: 0.0,
                     chrome_drop_tab: None,
                     chrome_para: 0,
+                    chrome_after: 0.0,
                     outline: None,
                     gap_before: 0.0,
                 });
@@ -12896,6 +12905,16 @@ fn load_chrome_part(
     let watermark = parse_header_watermark(&part_dom, root);
     let mut seen_text = false;
     let mut para_no = 0_u32;
+    // The part's last top-level paragraph (not in a table or a text box).
+    let last_para = part_dom
+        .descendants(root, Some(&W::p()))
+        .into_iter()
+        .rfind(|p| {
+            !hf_para_in_table(&part_dom, root, *p)
+                && part_dom
+                    .ancestors(*p, Some(&W::name("txbxContent")))
+                    .is_empty()
+        });
     for para in part_dom.descendants(root, Some(&W::p())) {
         if hf_para_is_shape_text(&part_dom, para) {
             continue;
@@ -12951,15 +12970,35 @@ fn load_chrome_part(
         // Only a picture-only paragraph stands as its own line; a picture
         // sharing a line with text (000e002d's logo + tabbed title) stays
         // with the text.
+        // An inline VML picture (no position:absolute) flows too (redlines
+        // vs 001cc92b: A's deleted 45.8pt VML banner is the whole header).
+        let vml_inline = part_dom
+            .descendants(para, Some(&W::pict()))
+            .into_iter()
+            .any(|pict| {
+                part_dom
+                    .ancestors(pict, Some(&W::name("txbxContent")))
+                    .is_empty()
+                    && descendants_local(&part_dom, pict, "shape")
+                        .iter()
+                        .any(|sh| {
+                            !descendants_local(&part_dom, *sh, "imagedata").is_empty()
+                                && !attr_any(&part_dom, *sh, "style")
+                                    .unwrap_or("")
+                                    .replace(' ', "")
+                                    .contains("position:absolute")
+                        })
+            });
         let flow = para_own_text(&part_dom, para).trim().is_empty()
-            && part_dom
-                .descendants(para, Some(&WP::name("inline")))
-                .into_iter()
-                .any(|inl| {
-                    part_dom
-                        .ancestors(inl, Some(&W::name("txbxContent")))
-                        .is_empty()
-                });
+            && (vml_inline
+                || part_dom
+                    .descendants(para, Some(&WP::name("inline")))
+                    .into_iter()
+                    .any(|inl| {
+                        part_dom
+                            .ancestors(inl, Some(&W::name("txbxContent")))
+                            .is_empty()
+                    }));
         if !hf_para_in_table(&part_dom, root, para)
             && !para_own_text(&part_dom, para).trim().is_empty()
         {
@@ -12992,6 +13031,9 @@ fn load_chrome_part(
                     img.chrome_lead = lead;
                     img.chrome_under_table = under_table;
                     img.chrome_para = para_no;
+                    if last_para == Some(para) {
+                        img.chrome_after = pstyle.after;
+                    }
                     img.chrome_flow = flow && matches!(img.slot, ImageSlot::Flow);
                     if img.chrome_flow {
                         img.chrome_leading.clone_from(&leading);
@@ -13926,6 +13968,7 @@ fn chrome_images_h(fonts: &Fonts, images: &[LaidImage]) -> f32 {
 fn chrome_pic_line(fonts: &Fonts, img: &LaidImage) -> f32 {
     let mult = 1.0 + img.chrome_leading.as_ref().map_or(0.0, |(extra, _)| *extra);
     chrome_pic_top(fonts, img)
+        + img.chrome_after
         + img.h
         + img.chrome_leading.as_ref().map_or(0.0, |(extra, mark)| {
             let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
@@ -17072,9 +17115,9 @@ impl<'a> Layout<'a> {
                         0.0
                     }
             } else if img.chrome_lead {
-                text_h + rows_below
+                text_h + rows_below + img.chrome_after
             } else {
-                rows_below
+                rows_below + img.chrome_after
             };
             if img.behind == behind {
                 self.emit_chrome_image(img, in_header, dx, lift, band);

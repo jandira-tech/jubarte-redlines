@@ -2042,6 +2042,22 @@ fn a_header_picture_past_the_measure_wraps_to_a_new_row() {
 }
 
 #[test]
+fn an_inline_vml_header_picture_takes_its_line_and_after() {
+    // Redlines vs 001cc92b: the compared header is one paragraph holding
+    // A's deleted inline VML banner (455 x 45.8pt) with Normal's 8pt after.
+    // Word starts the body under banner + after; we let the body run under
+    // the header distance and painted B's first line over the banner.
+    let hdr = r#"<w:p><w:pPr><w:spacing w:after="160"/></w:pPr><w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shape id="Picture 4" style="width:300pt;height:100pt"><v:imagedata r:id="rIdImg"/></v:shape></w:pict></w:r></w:p>"#;
+    let pdf = docx_to_pdf(&header_part_docx_at(hdr, 0)).expect("vml header");
+    let (_, y) = pdf_glyph_text_xy(&pdf, "HdrImgBodyX").expect("body paints");
+    assert!(
+        792.0 - y > 100.0 + 8.0,
+        "the body starts under the 100pt banner and its 8pt after; baseline {} from the top",
+        792.0 - y
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path
