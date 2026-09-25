@@ -33836,3 +33836,49 @@ fn an_ideographic_space_only_paragraph_is_a_line_of_its_mark() {
         "U+3000 sizes like spaces; ascii={ascii} ideo={ideo}"
     );
 }
+
+#[test]
+fn a_drawing_after_a_page_break_opens_the_next_page() {
+    // Live Word (fixtures_500 0071d504's licence box): "<br page/><pict>"
+    // puts the text box at the top of page two. We kept it with the text
+    // before the break and left page two blank.
+    let body = "<w:p><w:r><w:t>PageOne</w:t></w:r></w:p>\
+        <w:p><w:r><w:br w:type=\"page\"/></w:r><w:r><w:pict xmlns:v=\"urn:schemas-microsoft-com:vml\">\
+          <v:shape id=\"b\" type=\"#_x0000_t202\" style=\"width:300pt;height:60pt;mso-position-horizontal:absolute;\
+            mso-position-horizontal-relative:char;mso-position-vertical:absolute;mso-position-vertical-relative:line\">\
+          <v:textbox><w:txbxContent><w:p><w:r><w:t>BoxText</w:t></w:r></w:p></w:txbxContent></v:textbox>\
+          </v:shape></w:pict></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("break then box");
+    assert_eq!(pdf_page_count(&pdf), 2, "two pages");
+    let text = pdf_winansi_text(&pdf);
+    assert!(text.contains("BoxText"), "the box is painted");
+    let y = pdf_glyph_text_xy(&pdf, "BoxText").expect("BoxText").1;
+    assert!(y > 650.0, "the box opens its page, near the top; y={y}");
+}
+
+#[test]
+fn words_own_rockwell_outranks_the_system_collection() {
+    // fixtures_500 0071d504: Word draws its DFonts Rockwell (1.174em
+    // lines) over macOS's Rockwell.ttc (1.0em + gap); 11pt Rockwell at
+    // line 288 steps 15.6pt in Word, 13.2 with the collection's face.
+    let word = "/Applications/Microsoft Word.app/Contents/Resources/DFonts/Rockwell.ttf";
+    let sys = "/System/Library/Fonts/Supplemental/Rockwell.ttc";
+    if !std::path::Path::new(word).is_file() || !std::path::Path::new(sys).is_file() {
+        return;
+    }
+    let para = |t: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"288\" w:lineRule=\"auto\"/></w:pPr>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Rockwell\" w:hAnsi=\"Rockwell\"/><w:sz w:val=\"22\"/></w:rPr>\
+               <w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!("{}{}<w:sectPr/>", para("RockOne"), para("RockTwo"));
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("rockwell");
+    let step = pdf_glyph_text_xy(&pdf, "RockOne").expect("one").1
+        - pdf_glyph_text_xy(&pdf, "RockTwo").expect("two").1;
+    assert!(
+        (step - 15.5).abs() < 0.3,
+        "Word's Rockwell line; step={step}"
+    );
+}

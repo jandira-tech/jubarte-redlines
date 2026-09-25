@@ -1849,6 +1849,10 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
         return Vec::new();
     }
     let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
+    // Faces from collections rank after single-face files: Word draws its
+    // own DFonts Rockwell (hhea 1.174em) over macOS's Rockwell.ttc (1.0em
+    // plus a gap), fixtures_500 0071d504's 15.6pt sidebar lines.
+    let mut collected: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
     for (dir, family_folder) in dirs {
         let family_folder = *family_folder;
         for path in sorted_dir_listing(dir).iter() {
@@ -1872,7 +1876,7 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
                         continue;
                     };
                     if let Some((pass, style)) = face_family_style(&data, family) {
-                        found.push((pass, style, data));
+                        collected.push((pass, style, data));
                     }
                 }
                 continue;
@@ -1889,6 +1893,7 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
             found.push((pass, style, bytes));
         }
     }
+    found.append(&mut collected);
     if found.is_empty() {
         // Word's own fonts carry abbreviated file names (Garamond is
         // GARA.ttf / GARAIT.ttf): match its folder by internal family name

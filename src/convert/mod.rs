@@ -6060,7 +6060,9 @@ fn walk_container(
                     .map(|r| r.style.clone()),
                 _ => None,
             };
-            let (mut parts, seps, trailing) = split_page_breaks(block, page_br, column_br);
+            let media_after = drawings_follow_page_break(dom, child);
+            let (mut parts, seps, trailing) =
+                split_page_breaks(block, page_br, column_br, media_after);
             let (page_br, column_br) = (trailing == Some(false), trailing == Some(true));
             let block = parts.pop().expect("split keeps the paragraph");
             for (i, (part, column)) in parts.into_iter().zip(seps).enumerate() {
@@ -6357,10 +6359,29 @@ fn frame_box(
 /// Cut a paragraph at its in-text page and column breaks: the pieces, the
 /// break after each piece but the last (`true` = column), and the break the
 /// paragraph ends on (`Some(true)` = column), if any.
+/// Every drawing of `para` sits after its first page break (0071d504's
+/// licence text box opens page two: "<br page/><pict>…").
+fn drawings_follow_page_break(dom: &Dom, para: NodeId) -> bool {
+    let nodes = dom.descendants(para, None);
+    let Some(br) = nodes
+        .iter()
+        .position(|n| dom.name_is(*n, &W::name("br")) && attr_any(dom, *n, "type") == Some("page"))
+    else {
+        return false;
+    };
+    let mut drawings = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| dom.name_is(**n, &W::drawing()) || dom.name_is(**n, &W::pict()))
+        .peekable();
+    drawings.peek().is_some() && drawings.all(|(i, _)| i > br)
+}
+
 fn split_page_breaks(
     block: Block,
     page_br: bool,
     column_br: bool,
+    media_after: bool,
 ) -> (Vec<Block>, Vec<bool>, Option<bool>) {
     let fallback = if page_br {
         Some(false)
@@ -6417,8 +6438,15 @@ fn split_page_breaks(
     }
     let ink = |p: &[TextRun]| p.iter().any(|r| !r.text.trim().is_empty() || r.list_marker);
     // Pieces with no ink after the last inked one fold back: their breaks
-    // are the trailing break.
-    let last_ink = pieces.iter().rposition(|p| ink(p)).unwrap_or(0);
+    // are the trailing break. Drawings anchored after the break ink the
+    // last piece: they open the next page.
+    let media = media_after && !(images.is_empty() && boxes.is_empty());
+    let last_ink = if media {
+        pieces.len() - 1
+    } else {
+        pieces.iter().rposition(|p| ink(p)).unwrap_or(0)
+    };
+    let media_at = if media { last_ink } else { 0 };
     let trailing = (last_ink + 1 < pieces.len()).then(|| seps[last_ink]);
     pieces.truncate(last_ink + 1);
     seps.truncate(last_ink);
@@ -6443,12 +6471,12 @@ fn split_page_breaks(
                 runs,
                 style,
                 list: list && i == 0,
-                images: if i == 0 {
+                images: if i == media_at {
                     images.take().unwrap_or_default()
                 } else {
                     Vec::new()
                 },
-                boxes: if i == 0 {
+                boxes: if i == media_at {
                     boxes.take().unwrap_or_default()
                 } else {
                     Vec::new()
