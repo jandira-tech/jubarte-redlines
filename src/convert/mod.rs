@@ -15123,6 +15123,28 @@ impl<'a> Layout<'a> {
         // Roboto 12 = 12.06 + 2.93 = 15.0 (001cc92b); Calibri marker over
         // Arial 10 = Calibri's 12.2; Courier "o" over TNR 11 = TNR's 12.65
         // (0021f639); Symbol over TNR 12 = 14.7.
+        // A right-to-left run's digits and Latin letters paint in its ascii
+        // face (paint_family) and size the line with it: 00205272's
+        // "(مقدماتی-1.5 ساعت)" is Arial with a Calibri "1.5", a Calibri-tall
+        // line in Word.
+        let mixes = |r: &TextRun| {
+            r.style.family_cs.is_some()
+                && r.text.chars().any(is_rtl_char)
+                && r.text.chars().any(|c| c.is_ascii_alphanumeric())
+        };
+        let split: Vec<TextRun> = runs
+            .iter()
+            .filter(|r| mixes(r))
+            .map(|r| {
+                r.with_text(
+                    r.text
+                        .chars()
+                        .filter(char::is_ascii_alphanumeric)
+                        .collect::<String>(),
+                )
+            })
+            .collect();
+        let runs: Vec<&TextRun> = runs.iter().copied().chain(split.iter()).collect();
         let mut up = 0.0_f32;
         let mut down = 0.0_f32;
         let mut single = 0.0_f32;

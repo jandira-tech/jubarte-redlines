@@ -1072,6 +1072,30 @@ fn an_exact_line_puts_its_baseline_four_fifths_down() {
 }
 
 #[test]
+fn a_right_to_left_runs_digits_size_the_line_in_the_ascii_face() {
+    // Word paints the digits of a right-to-left run in its ascii face and
+    // the line takes that face's height: 00205272's Arial heading with a
+    // Calibri "1.5" is a Calibri-tall line. Word at 24pt: "متن 15 آموزشی"
+    // is 1.92pt taller than "متن آموزشی". We sized both as Arial.
+    let line_gap = |text: &str| {
+        let body = format!(
+            "<w:p><w:pPr><w:bidi/><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\" w:cs=\"Arial\"/><w:rtl/><w:sz w:val=\"48\"/><w:szCs w:val=\"48\"/></w:rPr><w:t>{text}</w:t></w:r></w:p><w:p><w:r><w:t>next</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("rtl");
+        let mut ys = text_baselines(&pdf);
+        ys.sort_by(|a, b| b.total_cmp(a));
+        ys.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+        ys[0] - ys[1]
+    };
+    let grew = line_gap("متن 15 آموزشی") - line_gap("متن آموزشی");
+    assert!(
+        // The bundled Carlito stand-in grows 1.62, Word's Calibri 1.96.
+        (grew - 1.92).abs() < 0.4,
+        "Calibri digits make Word's line 1.92pt taller; grew={grew}"
+    );
+}
+
+#[test]
 fn an_at_least_line_puts_its_extra_space_above_the_text() {
     // fixtures_500 00df97e7: Arial 8 under atLeast 330 (16.5pt) sits
     // 7.4pt lower in Word than its ascent from the line top — the 7.3pt
