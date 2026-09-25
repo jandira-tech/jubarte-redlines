@@ -1396,8 +1396,9 @@ fn an_at_least_line_puts_its_extra_space_above_the_text() {
     };
     let short = first_baseline(400);
     let tall = first_baseline(700);
+    // Baselines round to Word's 0.24pt grid: one step of slack.
     assert!(
-        (short - tall - 15.0).abs() < 0.05,
+        (short - tall - 15.0).abs() <= 0.25,
         "15pt more atLeast height is 15pt lower baseline; short={short} tall={tall}"
     );
 }
@@ -11429,8 +11430,9 @@ fn bordered_row_pitch_adds_the_horizontal_rule() {
     };
     let with = pitch(&docx_to_pdf(&minimal_docx_with_settings(&table(ruled), "")).expect("ruled"));
     let without = pitch(&docx_to_pdf(&minimal_docx_with_settings(&table(""), "")).expect("bare"));
+    // Baselines round to Word's 0.24pt grid: one step of slack.
     assert!(
-        ((with - without) - 0.5).abs() < 0.05,
+        ((with - without) - 0.5).abs() <= 0.25,
         "0.5pt rules add 0.5pt per row; with={with} without={without}"
     );
 }
@@ -11598,12 +11600,13 @@ fn pbdr_space_and_width_add_to_the_paragraph() {
         text_baselines(&docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("pbdr"))
     };
     let (with, without) = (ys(true), ys(false));
+    // Baselines round to Word's 0.24pt grid: one step of slack.
     assert!(
-        ((without[0] - with[0]) - 1.5).abs() < 0.05,
+        ((without[0] - with[0]) - 1.5).abs() <= 0.25,
         "the top rule lowers the text by 1.5; with={with:?} without={without:?}"
     );
     assert!(
-        (((with[0] - with[1]) - (without[0] - without[1])) - 1.5).abs() < 0.05,
+        (((with[0] - with[1]) - (without[0] - without[1])) - 1.5).abs() <= 0.25,
         "the bottom rule adds 1.5 before the next paragraph; with={with:?} without={without:?}"
     );
 }
@@ -20369,8 +20372,9 @@ fn header_distance_below_ten_points_is_honoured() {
     let inner = "<w:p><w:r><w:t>HdrTop</w:t></w:r></w:p>";
     let near = top(&docx_to_pdf(&header_part_docx_at(inner, 132)).expect("header 132"));
     let far = top(&docx_to_pdf(&header_part_docx_at(inner, 720)).expect("header 720"));
+    // Baselines round to Word's 0.24pt grid: one step of slack.
     assert!(
-        ((near - far) - 29.4).abs() < 0.05,
+        ((near - far) - 29.4).abs() <= 0.25,
         "132 vs 720 twips is 29.4pt apart; near={near} far={far}"
     );
 }
@@ -20584,8 +20588,9 @@ fn a_header_text_paragraph_after_empty_ones_keeps_its_before() {
         let pdf = docx_to_pdf(&header_part_docx_at(&para(before), 1080)).expect("header before");
         text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max)
     };
+    // Baselines round to Word's 0.24pt grid: one step of slack.
     assert!(
-        (head_y(0) - head_y(40) - 2.0).abs() < 0.05,
+        (head_y(0) - head_y(40) - 2.0).abs() <= 0.25,
         "before=2pt lowers the header text 2pt; before0={} before40={}",
         head_y(0),
         head_y(40)
@@ -20662,8 +20667,10 @@ fn an_opening_header_border_counts_in_the_band() {
     };
     let (head_bare, body_bare) = ys(&bare);
     let (head_ruled, body_ruled) = ys(&ruled);
+    // Baselines round to Word's 0.24pt grid: one step of slack.
     assert!(
-        (head_bare - head_ruled - 4.0).abs() < 0.05 && (body_bare - body_ruled - 4.0).abs() < 0.05,
+        (head_bare - head_ruled - 4.0).abs() <= 0.25
+            && (body_bare - body_ruled - 4.0).abs() <= 0.25,
         "the 3pt rule and 1pt space push text and body 4pt; head {head_bare}->{head_ruled} body {body_bare}->{body_ruled}"
     );
 }
@@ -20683,8 +20690,9 @@ fn the_last_header_text_paragraph_after_closes_the_band() {
         let pdf = docx_to_pdf(&header_part_docx_at(&para(after), 1140)).expect("closing after");
         text_baselines(&pdf).into_iter().fold(f32::MAX, f32::min)
     };
+    // Baselines round to Word's 0.24pt grid: one step of slack.
     assert!(
-        (body_top(0) - body_top(60) - 3.0).abs() < 0.05,
+        (body_top(0) - body_top(60) - 3.0).abs() <= 0.25,
         "the 3pt after pushes the body; after0={} after60={}",
         body_top(0),
         body_top(60)
@@ -20814,18 +20822,19 @@ fn an_empty_header_paragraph_between_text_is_a_line() {
     };
     let empty = format!(r#"<w:p><w:pPr>{sp}</w:pPr></w:p>"#);
     let tab = format!(r#"<w:p><w:pPr>{sp}</w:pPr><w:r><w:tab/></w:r></w:p>"#);
+    // Baselines round to Word's 0.24pt grid: one step of slack.
     assert!(
-        (gap("") - 15.0).abs() < 0.05,
+        (gap("") - 15.0).abs() <= 0.25,
         "adjacent lines are 15pt apart; gap={}",
         gap("")
     );
     assert!(
-        (gap(&empty) - 30.0).abs() < 0.05,
+        (gap(&empty) - 30.0).abs() <= 0.25,
         "an empty paragraph is a line; gap={}",
         gap(&empty)
     );
     assert!(
-        (gap(&tab) - 30.0).abs() < 0.05,
+        (gap(&tab) - 30.0).abs() <= 0.25,
         "a tab-only paragraph is a line; gap={}",
         gap(&tab)
     );
@@ -22274,11 +22283,11 @@ fn space_for_ul_adds_descent_to_wrapped_lines_in_table_cells() {
     );
     let gap = |v: [f32; 4], a: usize, b: usize| v[a] - v[b];
     assert!(
-        gap(on, 0, 1) - gap(off, 0, 1) >= 2.0 - 0.01,
+        gap(on, 0, 1) - gap(off, 0, 1) >= 2.0 - 0.25,
         "wrapped line gets the descent; off={off:?} on={on:?}"
     );
     assert!(
-        gap(on, 1, 2) - gap(off, 1, 2) >= 2.0 - 0.01,
+        gap(on, 1, 2) - gap(off, 1, 2) >= 2.0 - 0.25,
         "last line of the paragraph too; off={off:?} on={on:?}"
     );
     assert!(
@@ -22407,8 +22416,9 @@ fn doc_grid_centres_the_line_in_its_snapped_box() {
     };
     let plain = first("");
     let grid = first(r#"<w:docGrid w:type="lines" w:linePitch="360"/>"#);
+    // Baselines round to Word's 0.24pt grid: one step of slack.
     assert!(
-        (plain - grid - 2.28).abs() < 0.1,
+        (plain - grid - 2.28).abs() <= 0.25,
         "the text sits (18 - 13.43) / 2 lower; plain={plain} grid={grid}"
     );
 }
@@ -25715,8 +25725,9 @@ fn a_footer_paragraph_after_lifts_the_footer() {
             .filter(|y| *y < 100.0)
             .fold(f32::NEG_INFINITY, f32::max)
     };
+    // Baselines round to Word's 0.24pt grid: one step of slack.
     assert!(
-        (footer_y(160) - footer_y(0) - 8.0).abs() < 0.05,
+        (footer_y(160) - footer_y(0) - 8.0).abs() <= 0.25,
         "after=8pt lifts the footer 8pt; after0={} after160={}",
         footer_y(0),
         footer_y(160)
@@ -33903,5 +33914,21 @@ fn ideographic_text_breaks_between_characters() {
     assert!(
         right < 540.0,
         "no glyph starts past the right margin; max x={right}"
+    );
+}
+
+#[test]
+fn baselines_land_on_words_device_grid() {
+    // Word writes each baseline in whole 0.24pt units from the page top
+    // (fixtures_500 001f64a4: cm 639.84 + Tm 325 units). With our
+    // continuous positions now within a hundredth, rounding to that grid
+    // gains 3 fixtures_500 wins and loses none.
+    let body = "<w:p><w:pPr><w:spacing w:before=\"13\"/></w:pPr><w:r><w:t>GridLine</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("grid y");
+    let y = pdf_glyph_text_xy(&pdf, "GridLine").expect("GridLine").1;
+    let units = (792.0 - y) / 0.24;
+    assert!(
+        (units - units.round()).abs() < 0.05,
+        "baseline on the grid; y={y}"
     );
 }

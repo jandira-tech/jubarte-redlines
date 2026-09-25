@@ -496,6 +496,10 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     // their origin; advances were scaled at layout.
                     let sx = *hscale;
                     if let Some((ppem, tc)) = word_device_paint(*size) {
+                        // Word writes baselines in whole device units from
+                        // the page top (0.24pt grid).
+                        let down = page.height - *y;
+                        let y = &(page.height - ((down / 0.24) + 0.5).floor() * 0.24);
                         let a = if (sx - 1.0).abs() > 0.001 {
                             format!("{:.4}", 0.24 * sx)
                         } else {
