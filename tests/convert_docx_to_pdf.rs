@@ -34176,3 +34176,31 @@ fn minimal_pdf_z() -> Vec<u8> {
         <w:r><w:rPr><w:sz w:val=\"20\"/></w:rPr><w:t>Z</w:t></w:r></w:p><w:sectPr/>";
     docx_to_pdf(&minimal_docx_body(body)).expect("latin")
 }
+
+#[test]
+fn a_table_cells_east_asian_line_is_sized_by_its_east_asian_face() {
+    // fixtures_500 004c4763: cell text in a Times New Roman ascii face
+    // with a Chinese eastAsia face steps 23.8pt in Word (YaHei's East
+    // Asian line), as in the body. The cell sized its lines by Times
+    // New Roman (15.9pt) and the page held a third more lines.
+    let para = "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+        <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:eastAsia=\"Microsoft YaHei\"/>\
+        <w:sz w:val=\"24\"/></w:rPr><w:t>重点围绕尾矿</w:t></w:r></w:p>";
+    let z = "<w:p><w:r><w:t>Z</w:t></w:r></w:p><w:sectPr/>";
+    let table = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+         <w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+         {para}</w:tc></w:tr></w:tbl>{z}"
+    );
+    let body = format!("{para}{z}");
+    let y = |xml: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_body(xml)).expect("cjk cell");
+        pdf_glyph_text_xy(&pdf, "Z").expect("Z").1
+    };
+    let (in_cell, in_body) = (y(&table), y(&body));
+    assert!(
+        (in_cell - in_body).abs() < 1.0,
+        "the cell's line is the body's line; cell={in_cell} body={in_body}"
+    );
+}

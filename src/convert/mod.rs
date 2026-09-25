@@ -6760,8 +6760,8 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     base.iter().map(|c| c * scale).collect()
 }
 
-/// A cell paragraph's (size, face): its largest run, in the face of its
-/// largest inked run. Leading spaces in another face do not set the line
+/// A cell paragraph's (size, face): its largest run, in the painting face
+/// of its largest inked run. Leading spaces in another face do not set the line
 /// (003dd497's Calibri spaces before an Arial 25pt title made a Calibri
 /// 25pt line, 1.8pt taller than Word's).
 fn cell_para_face(fonts: &Fonts, para: &CellPara) -> (f32, FaceRef) {
@@ -6785,7 +6785,15 @@ fn cell_para_face(fonts: &Fonts, para: &CellPara) -> (f32, FaceRef) {
     };
     let face_id = largest(true)
         .or_else(|| largest(false))
-        .map(|r| fonts.resolve(&r.style.family, r.style.bold, r.style.italic))
+        // The face that paints the run: Chinese text in a Times New Roman
+        // run sets a YaHei line (004c4763's cells step 23.8pt in Word).
+        .map(|r| {
+            fonts.resolve(
+                paint_family(&r.style, &r.text),
+                r.style.bold,
+                r.style.italic,
+            )
+        })
         .unwrap_or_else(|| FaceId::CarlitoRegular.into());
     (size, face_id)
 }
