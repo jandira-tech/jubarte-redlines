@@ -1690,6 +1690,9 @@ enum ImageSlot {
         page_y: Option<f32>,
         /// `wp:positionH relativeFrom=column|margin` posOffset (pt).
         col_x: Option<f32>,
+        /// `col_x` runs from the anchor's column, not the left margin
+        /// (relativeFrom="column", VML/frame "text").
+        col_in_column: bool,
         /// `wp:positionV relativeFrom=paragraph` posOffset (pt).
         para_y: Option<f32>,
         /// `wp14:pctPosHOffset` as 0..1 of page width.
@@ -1932,6 +1935,7 @@ fn spec_from_float(w: f32, h: f32, slot: ImageSlot) -> Option<AnchorSpec<'static
         page_x,
         page_y,
         col_x,
+        col_in_column,
         para_y,
         v_align,
         wrap_square,
@@ -1951,7 +1955,7 @@ fn spec_from_float(w: f32, h: f32, slot: ImageSlot) -> Option<AnchorSpec<'static
     let (h_from, h_off) = if let Some(px) = page_x {
         ("page", Some(px))
     } else if let Some(cx) = col_x {
-        ("column", Some(cx))
+        (if col_in_column { "column" } else { "margin" }, Some(cx))
     } else {
         (h_rel.as_str(), None)
     };
@@ -6138,6 +6142,7 @@ fn frame_box(
             page_x: Some(x),
             page_y: Some(y),
             col_x: None,
+            col_in_column: false,
             para_y: None,
             pct_x: None,
             pct_y: None,
@@ -8860,6 +8865,7 @@ fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
         page_x: (horz == "page").then_some(x_pt).flatten(),
         page_y: (vert == "page").then_some(y_pt).flatten(),
         col_x: matches!(horz, "margin" | "text").then_some(x_pt).flatten(),
+        col_in_column: horz == "text",
         para_y: (vert == "text").then_some(y_pt).flatten(),
         pct_x: None,
         pct_y: None,
@@ -11989,6 +11995,7 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         col_x: matches!(h_from, "column" | "margin" | "character")
             .then(|| pos_offset_pt(dom, ph))
             .flatten(),
+        col_in_column: h_from == "column",
         para_y: matches!(v_from, "paragraph" | "line")
             .then(|| pos_offset_pt(dom, pv))
             .flatten(),
@@ -12193,6 +12200,7 @@ fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
             page_x: (h_page && h_abs).then_some(mx),
             page_y: (v_page && v_abs).then_some(my),
             col_x: (!h_page && h_abs).then_some(mx),
+            col_in_column: h_rel == "text",
             para_y: (v_para && v_abs).then_some(my),
             pct_x: None,
             pct_y: None,
@@ -13479,6 +13487,7 @@ fn load_chrome_part(
                             page_x: Some(fx),
                             page_y: Some(fy),
                             col_x: None,
+                            col_in_column: false,
                             para_y: None,
                             pct_x: None,
                             pct_y: None,
@@ -17135,7 +17144,7 @@ impl<'a> Layout<'a> {
             margin_r: self.page.margin_r,
             margin_t: self.page.margin_t,
             margin_b: self.page.margin_b,
-            column_x: self.page.margin_l,
+            column_x: self.flow_left(),
             para_top: self.para_top,
             line_top: self.y,
             cursor_x: self.page.margin_l,
@@ -17148,6 +17157,7 @@ impl<'a> Layout<'a> {
             page_x,
             page_y,
             col_x,
+            col_in_column,
             para_y,
             pct_x,
             pct_y,
@@ -17167,6 +17177,9 @@ impl<'a> Layout<'a> {
         let x = match (pct_x, page_x, col_x) {
             (Some(pct), _, _) => pct * self.page.width,
             (_, Some(px), _) => px,
+            // A column-relative offset runs from the anchor's column
+            // (003329b5's "Découvrez" box sits in column 2 of three).
+            (_, _, Some(cx)) if col_in_column => self.flow_left() + cx,
             (_, _, Some(cx)) => self.page.margin_l + cx,
             _ => match align {
                 Align::Left | Align::Justify => {

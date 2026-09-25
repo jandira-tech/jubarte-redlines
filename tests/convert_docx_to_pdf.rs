@@ -706,6 +706,35 @@ fn a_picture_inside_a_text_box_is_not_the_paragraphs_own() {
 }
 
 #[test]
+fn a_column_relative_box_sits_in_its_anchors_column() {
+    // fixtures_500 003329b5: "Découvrez notre formation" is a text box
+    // at column + 47.9pt whose anchor follows a column break. Word puts it
+    // in that column; we measured every column offset from the margin.
+    let tbox = "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>127000</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"1270000\" cy=\"326390\"/><wp:wrapNone/><wp:docPr id=\"9\" name=\"Box\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:p><w:r><w:t>BoxText</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+               <wps:bodyPr lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\"/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>";
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r><w:t>LeftColumn</w:t></w:r><w:r><w:br w:type=\"column\"/></w:r></w:p>\
+         <w:p><w:r>{tbox}</w:r><w:r><w:t>RightColumn</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/><w:cols w:num=\"2\" w:space=\"720\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("column box");
+    let col2 = pdf_glyph_text_xy(&pdf, "RightColumn").expect("col2").0;
+    let boxed = pdf_glyph_text_xy(&pdf, "BoxText").expect("box").0;
+    assert!(
+        (boxed - col2 - 10.0).abs() < 1.0,
+        "the box starts 10pt into column two; col2={col2} box={boxed}"
+    );
+}
+
+#[test]
 fn a_float_in_the_margin_does_not_indent_the_text() {
     // fixtures_500 00af3bb0: a 30pt QR code at column offset -42.7pt
     // (wrapTight) sits wholly in the left margin. Word starts the title at
