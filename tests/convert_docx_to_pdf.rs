@@ -33613,3 +33613,47 @@ fn a_page_relative_border_runs_inward_from_its_space() {
         "the bottom line's outer edge is at 24; {bottom:?}"
     );
 }
+
+#[test]
+fn a_style_numbered_through_another_styles_level_gets_no_number() {
+    // docxide-pdf case73 (live Word agrees): P Heading A/B/C all carry
+    // numId 100 without an ilvl, and level 0 is linked to P Heading A.
+    // Word numbers only A (I., II.) and sets B/C at level 0's first-line
+    // indent with no marker; we counted every paragraph (I. to VI.).
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"100\"><w:multiLevelType w:val=\"multilevel\"/>\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"upperRoman\"/><w:pStyle w:val=\"PA\"/>\
+              <w:lvlText w:val=\"%1.\"/><w:lvlJc w:val=\"left\"/><w:pPr><w:ind w:left=\"720\" w:hanging=\"432\"/></w:pPr></w:lvl>\
+            <w:lvl w:ilvl=\"1\"><w:start w:val=\"1\"/><w:numFmt w:val=\"lowerLetter\"/><w:pStyle w:val=\"PB\"/>\
+              <w:lvlText w:val=\"%2.\"/><w:lvlJc w:val=\"left\"/><w:pPr><w:ind w:left=\"1440\" w:hanging=\"432\"/></w:pPr></w:lvl>\
+          </w:abstractNum><w:num w:numId=\"100\"><w:abstractNumId w:val=\"100\"/></w:num></w:numbering>";
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"PA\"><w:name w:val=\"PA\"/><w:basedOn w:val=\"Normal\"/>\
+            <w:pPr><w:numPr><w:numId w:val=\"100\"/></w:numPr></w:pPr></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"PB\"><w:name w:val=\"PB\"/><w:basedOn w:val=\"Normal\"/>\
+            <w:pPr><w:numPr><w:numId w:val=\"100\"/></w:numPr></w:pPr></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"PA\"/></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p>\
+        <w:p><w:pPr><w:pStyle w:val=\"PB\"/></w:pPr><w:r><w:t>Subpoint</w:t></w:r></w:p>\
+        <w:p><w:pPr><w:pStyle w:val=\"PA\"/></w:pPr><w:r><w:t>Beta</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(
+        body,
+        Some(numbering),
+        Some(styles),
+    ))
+    .expect("linked levels");
+    let text = pdf_winansi_text(&pdf);
+    assert!(text.contains("II."), "Beta is II.; text={text}");
+    assert!(
+        !text.contains("III."),
+        "Subpoint takes no number; text={text}"
+    );
+    let x = pdf_glyph_text_xy(&pdf, "Subpoint").expect("Subpoint").0;
+    assert!(
+        (x - (72.0 + 14.4)).abs() < 0.5,
+        "Subpoint starts at level 0's first line (720 - 432 twips); x={x}"
+    );
+}

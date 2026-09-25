@@ -4138,9 +4138,21 @@ struct Numbering {
     pic_extent: HashMap<u32, (f32, f32)>,
     /// `(abstractNumId, ilvl)` → `lvlPicBulletId`.
     lvl_pic: HashMap<(String, u32), u32>,
+    /// `w:lvl/w:pStyle` keyed by (abstractNumId, ilvl): the style the
+    /// level belongs to.
+    lvl_pstyle: HashMap<(String, u32), String>,
 }
 
 impl Numbering {
+    /// The style `(num_id, ilvl)`'s level is linked to, if any.
+    fn linked_style(&self, num_id: &str, ilvl: u32) -> Option<&str> {
+        let abs = self.instances.get(num_id)?;
+        let resolved = self.resolve_ilvl(abs, ilvl);
+        self.lvl_pstyle
+            .get(&(abs.clone(), resolved))
+            .map(String::as_str)
+    }
+
     fn resolve_ilvl(&self, abs: &str, ilvl: u32) -> u32 {
         let Some(lvls) = self.levels.get(abs) else {
             return ilvl;
@@ -4993,6 +5005,13 @@ fn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Nu
             }
             if first_named(&dom, lvl, "isLgl").is_some_and(|n| !val_is_false(&dom, Some(n))) {
                 numbering.is_lgl.insert((aid.to_string(), ilvl));
+            }
+            if let Some(ps) =
+                first_named(&dom, lvl, "pStyle").and_then(|n| attr_any(&dom, n, "val"))
+            {
+                numbering
+                    .lvl_pstyle
+                    .insert((aid.to_string(), ilvl), ps.to_string());
             }
             if let Some(pic) = first_named(&dom, lvl, "lvlPicBulletId")
                 .and_then(|n| attr_any(&dom, n, "val"))
@@ -7511,6 +7530,13 @@ fn paragraph_block(
             toc: is_toc_style(&pstyle),
         },
     );
+    if marker.is_empty()
+        && !num_id.is_empty()
+        && let Some(lvl) = numbering.level(&num_id, ilvl)
+        && numbering.linked_style(&num_id, ilvl).is_some()
+    {
+        apply_list_level(dom, para, sheet, Some(lvl), &rstyle, &mut pstyle);
+    }
     if !marker.is_empty() {
         let lvl = numbering.level(&num_id, ilvl);
         let marker_style = apply_list_level(dom, para, sheet, lvl, &rstyle, &mut pstyle);
@@ -8459,15 +8485,28 @@ fn list_marker(
     numbering: &mut Numbering,
 ) -> (String, String, u32) {
     let from_para = dom.element(para, &W::p_pr()).map(|ppr| num_pr(dom, ppr));
-    let from_style = dom
+    let style_id = dom
         .element(para, &W::p_pr())
         .and_then(|ppr| first_named(dom, ppr, "pStyle"))
-        .and_then(|ps| dom.attribute(ps, &W::val()))
+        .and_then(|ps| dom.attribute(ps, &W::val()));
+    let from_style = style_id
         .and_then(|sid| sheet.by_id.get(sid))
         .map(|named| (named.num_id.clone(), named.ilvl));
     let (num_id, ilvl) = match (from_para, from_style) {
         (Some((Some(id), ilvl)), _) => (id, ilvl),
-        (_, Some((Some(id), ilvl))) => (id, ilvl),
+        (_, Some((Some(id), ilvl))) => {
+            // A style numbered through a level linked to another style
+            // gets that level's indent but no number and no count
+            // (docxide case73, live Word: P Heading B under a list whose
+            // level 0 is P Heading A's).
+            if numbering
+                .linked_style(&id, ilvl)
+                .is_some_and(|linked| Some(linked) != style_id)
+            {
+                return (String::new(), id, ilvl);
+            }
+            (id, ilvl)
+        }
         _ => return (String::new(), String::new(), 0),
     };
     (numbering.next_marker(&num_id, ilvl), num_id, ilvl)
