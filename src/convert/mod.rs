@@ -1598,6 +1598,10 @@ struct LaidTextBox {
     /// A `wpg:wgp` group's shapes, each painted in its own part of the box
     /// (010300e3's traced signature is a group of custom paths).
     group: Vec<GroupChild>,
+    /// Header/footer box: its anchoring paragraph's estimated distance below
+    /// the part's top, for paragraph-relative offsets (00f49849's sidebar
+    /// text box hangs from the header's fifth paragraph).
+    chrome_para_top: f32,
 }
 
 /// One shape of a group: its box as fractions of the group's box (x, y
@@ -6076,6 +6080,7 @@ fn frame_box(
         insets: [1.0, 1.0, 1.0, 1.0],
         custom: None,
         group: Vec::new(),
+        chrome_para_top: 0.0,
     })
 }
 
@@ -10252,6 +10257,7 @@ fn collect_textboxes_styled(
                     insets: TXBX_INSETS,
                     custom: custom.clone(),
                     group: Vec::new(),
+                    chrome_para_top: 0.0,
                 });
                 continue;
             }
@@ -10291,6 +10297,7 @@ fn collect_textboxes_styled(
                     insets: TXBX_INSETS,
                     custom: custom.clone(),
                     group: Vec::new(),
+                    chrome_para_top: 0.0,
                 });
                 continue;
             }
@@ -10345,6 +10352,7 @@ fn collect_textboxes_styled(
             insets: textbox_insets(dom, shape),
             custom,
             group,
+            chrome_para_top: 0.0,
         });
     }
     // WrapNone accent fills on the same paragraph as an inline chart
@@ -10399,6 +10407,7 @@ fn group_box(
         insets: TXBX_INSETS,
         custom: None,
         group,
+        chrome_para_top: 0.0,
     }
 }
 
@@ -11014,9 +11023,27 @@ fn drawing_is_chart_or_diagram(dom: &Dom, node: NodeId) -> bool {
         || graphic_data_uri_contains(dom, node, "/diagram")
 }
 
+/// A drawing whose text box holds text of its own: pictures inside that
+/// text are content, not the drawing's picture (00f49849's header sidebar
+/// with a QR code). A text box holding only a picture still paints as it
+/// (0049484c).
+fn nested_in_text(dom: &Dom, node: NodeId, drawing: NodeId) -> bool {
+    inside_text_box(dom, node, drawing)
+        && descendants_local(dom, drawing, "txbxContent")
+            .into_iter()
+            .any(|tx| {
+                dom.descendants(tx, Some(&W::t()))
+                    .into_iter()
+                    .any(|t| !element_text(dom, t).trim().is_empty())
+            })
+}
+
+/// The shape's own graphicData, not those of pictures inside its text box
+/// (00f49849's header text box holding a QR code is no picture).
 fn graphic_data_uri_contains(dom: &Dom, node: NodeId, needle: &str) -> bool {
     descendants_local(dom, node, "graphicData")
         .into_iter()
+        .filter(|gd| !nested_in_text(dom, *gd, node))
         .any(|gd| attr_any(dom, gd, "uri").is_some_and(|uri| uri.contains(needle)))
 }
 
@@ -11521,7 +11548,13 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
             }
             continue;
         }
-        for blip in dom.descendants(drawing, Some(&A::name("blip"))) {
+        // A text box's own pictures are its content, not its image
+        // (00f49849's header text box painted its QR code at 131x337pt).
+        for blip in dom
+            .descendants(drawing, Some(&A::name("blip")))
+            .into_iter()
+            .filter(|b| !nested_in_text(dom, *b, drawing))
+        {
             if let Some(rid) = attr_any(dom, blip, "embed") {
                 if let Some(bytes) = resolve_media(pkg, main, rid) {
                     let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);
@@ -11606,6 +11639,14 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                 && !dom
                     .ancestors(root, Some(&MC::name("AlternateContent")))
                     .is_empty()
+            {
+                continue;
+            }
+            // A text box's own pictures and Fallback copies are laid out
+            // elsewhere (00f49849's header text box painted as a 131x337pt
+            // picture, its logo twice).
+            if inside_text_box(dom, root, para)
+                || !dom.ancestors(root, Some(&MC::name("Fallback"))).is_empty()
             {
                 continue;
             }
@@ -11756,7 +11797,9 @@ fn local_text(dom: &Dom, node: NodeId) -> String {
 }
 
 fn drawing_has_blip(dom: &Dom, drawing: NodeId) -> bool {
-    !dom.descendants(drawing, Some(&A::name("blip"))).is_empty()
+    dom.descendants(drawing, Some(&A::name("blip")))
+        .into_iter()
+        .any(|b| !nested_in_text(dom, b, drawing))
 }
 
 fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
@@ -13134,14 +13177,19 @@ fn load_chrome_part(
                     .ancestors(*p, Some(&W::name("txbxContent")))
                     .is_empty()
         });
+    // Estimated top of each top-level paragraph below the part's top: one
+    // line of its largest size (x1.15, its multiple) and max(after, before).
+    let mut para_top = 0.0_f32;
+    let mut last_after = 0.0_f32;
     for para in part_dom.descendants(root, Some(&W::p())) {
         if hf_para_is_shape_text(&part_dom, para) {
             continue;
         }
         let (pstyle, prun) = para_base(&part_dom, para, sheet, None);
+        let top_level = !hf_para_in_table(&part_dom, root, para);
         // Anchored text boxes of a top-level paragraph float over the page
         // like the body's (a watermark keeps its own path).
-        if watermark.is_none() && !hf_para_in_table(&part_dom, root, para) {
+        if watermark.is_none() && top_level {
             boxes.extend(
                 collect_textboxes_styled(
                     Some((pkg, &path)),
@@ -13152,8 +13200,33 @@ fn load_chrome_part(
                     Some(sheet),
                 )
                 .into_iter()
-                .filter(|b| !matches!(b.slot, ImageSlot::Flow)),
+                .filter(|b| !matches!(b.slot, ImageSlot::Flow))
+                .map(|mut b| {
+                    b.chrome_para_top = para_top;
+                    b
+                }),
             );
+        }
+        if top_level {
+            let size = part_dom
+                .descendants(para, Some(&W::name("sz")))
+                .into_iter()
+                .filter(|n| {
+                    part_dom
+                        .ancestors(*n, Some(&W::name("txbxContent")))
+                        .is_empty()
+                })
+                .filter_map(|n| attr_any(&part_dom, n, "val").and_then(|v| v.parse::<f32>().ok()))
+                .map(|half| half / 2.0)
+                .fold(prun.size, f32::max);
+            let line = pstyle
+                .line_exact
+                .or(pstyle.line_at_least.map(|l| l.max(size * 1.15)))
+                .unwrap_or(size * 1.15 * pstyle.line_mult.max(1.0));
+            // A paragraph's own space before sits below its anchor top,
+            // like the body's `para_top` (010ec7df's box 5pt low otherwise).
+            para_top += (pstyle.before - last_after).max(0.0) + line + pstyle.after;
+            last_after = pstyle.after;
         }
         let jc = pstyle.align;
         let leading = (pstyle.line_exact.is_none()
@@ -14625,23 +14698,6 @@ impl<'a> Layout<'a> {
             self.page.width - self.page.margin_l - self.page.margin_r,
             self.space_for_ul,
         ) + chrome_images_h(self.fonts, &self.header_images);
-        if std::env::var_os("JUB_DBG").is_some() {
-            eprintln!(
-                "BAND header_band={header_band} lines={} imgs={} runs={:?}",
-                chrome_band(
-                    self.fonts,
-                    &self.header,
-                    &self.header_tables,
-                    self.page.width - self.page.margin_l - self.page.margin_r,
-                    self.space_for_ul
-                ),
-                chrome_images_h(self.fonts, &self.header_images),
-                self.header
-                    .iter()
-                    .map(|r| r.text.clone())
-                    .collect::<Vec<_>>()
-            );
-        }
         self.body_top = if header_band <= 0.0 || self.page.top_exact {
             self.page.margin_t
         } else {
@@ -19946,8 +20002,14 @@ impl<'a> Layout<'a> {
     fn emit_chrome_boxes(&mut self, boxes: &[LaidTextBox], top: f32) {
         let saved = (self.y, self.para_top, self.page_has_body);
         self.y = top;
-        self.para_top = top;
         for box_ in boxes {
+            // Paragraph-relative offsets hang from the anchoring paragraph
+            // (header boxes only: `top` is the header distance there).
+            self.para_top = if top > self.page.height / 2.0 {
+                top - box_.chrome_para_top
+            } else {
+                top
+            };
             self.emit_textbox(box_);
         }
         (self.y, self.para_top, self.page_has_body) = saved;

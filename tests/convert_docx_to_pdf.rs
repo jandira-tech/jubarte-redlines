@@ -2301,6 +2301,35 @@ fn a_word_font_with_an_abbreviated_file_name_is_found() {
 }
 
 #[test]
+fn a_header_text_box_hangs_from_its_own_paragraph() {
+    // fixtures_500 00f49849: the header's sidebar text box is anchored in
+    // its fifth paragraph, 35pt below it. We hung every header box from the
+    // header distance and painted the sidebar 93pt high.
+    let line = |t: &str| {
+        format!("<w:p><w:r><w:rPr><w:sz w:val=\"24\"/></w:rPr><w:t>{t}</w:t></w:r></w:p>")
+    };
+    let box_para = "<w:p><w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" \
+        simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+        <wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"column\"><wp:posOffset>3000000</wp:posOffset></wp:positionH>\
+        <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>254000</wp:posOffset></wp:positionV>\
+        <wp:extent cx=\"1270000\" cy=\"635000\"/><wp:wrapNone/><wp:docPr id=\"3\" name=\"Text Box 3\"/>\
+        <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+        <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"><wps:spPr>\
+        <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></wps:spPr><wps:txbx><w:txbxContent>\
+        <w:p><w:r><w:t>SideBox</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp>\
+        </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>";
+    let hdr = format!("{}{}{}{box_para}", line("One"), line("Two"), line("Three"));
+    let pdf = docx_to_pdf(&header_part_docx_at(&hdr, 720)).expect("header box");
+    let (_, y) = pdf_glyph_text_xy(&pdf, "SideBox").expect("the box text paints");
+    // Header top 36pt, three 12pt lines (~41pt), then 20pt down.
+    assert!(
+        792.0 - y > 36.0 + 41.0 + 20.0,
+        "the box hangs below its paragraph; {} from the top",
+        792.0 - y
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path
