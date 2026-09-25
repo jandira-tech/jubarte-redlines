@@ -5933,6 +5933,16 @@ fn walk_container(
             // Text after a page break inside the paragraph continues it on
             // the next page (checked in Word: "Aa<br page/>Cc" opens page
             // two with Cc); a break with nothing after it breaks as before.
+            // The run holding the paragraph's last column break: a
+            // break-only paragraph leaves a line of its height behind.
+            let break_run = match &block {
+                Block::Paragraph { runs, .. } => runs
+                    .iter()
+                    .rev()
+                    .find(|r| r.text.contains(COLUMN_BREAK_MARK))
+                    .map(|r| r.style.clone()),
+                _ => None,
+            };
             let (mut parts, seps, trailing) = split_page_breaks(block, page_br, column_br);
             let (page_br, column_br) = (trailing == Some(false), trailing == Some(true));
             let block = parts.pop().expect("split keeps the paragraph");
@@ -5980,6 +5990,29 @@ fn walk_container(
             let sect_mark = sect_here.is_some_and(|s| !is_final_sect(ctx.sects, s));
             if !blank || (!page_br && !sect_br && !column_br && !sect_mark) {
                 blocks.push(block);
+            } else if column_br
+                && let (Some(run_style), Block::Paragraph { style, .. }) = (break_run, &block)
+                && settings_compat_mode(ctx.pkg) >= 15
+            {
+                // From compatibility mode 15 a paragraph holding only a
+                // column break leaves the column one line of the break's
+                // run, without its space before (live Word: 003329b5's
+                // before=338 break-only paragraph ends column one 12.7pt
+                // under the text above, before=0 or not; mode 12 leaves no
+                // line). Its mark then opens the next column.
+                let mut style = style.clone();
+                style.before = 0.0;
+                style.before_auto = false;
+                style.after = 0.0;
+                style.after_auto = false;
+                blocks.push(Block::Paragraph {
+                    runs: vec![TextRun::new(" ", run_style)],
+                    style,
+                    list: false,
+                    images: Vec::new(),
+                    boxes: Vec::new(),
+                    bookmarks: Vec::new(),
+                });
             }
             if let Some(s) = sect_here.filter(|s| !is_final_sect(ctx.sects, *s)) {
                 endnotes.flush_if_sect_end(ctx, dom, s, numbering, blocks);

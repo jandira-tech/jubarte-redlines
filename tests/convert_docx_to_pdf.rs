@@ -762,6 +762,10 @@ fn a_behind_text_shape_paints_under_the_text_before_it() {
 }
 
 fn three_column_section(body: &str) -> Vec<u8> {
+    three_column_section_with(body, "")
+}
+
+fn three_column_section_with(body: &str, settings: &str) -> Vec<u8> {
     let sect = |cols: &str| {
         format!(
             "<w:sectPr><w:type w:val=\"continuous\"/><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
@@ -774,7 +778,7 @@ fn three_column_section(body: &str) -> Vec<u8> {
         &format!(
             "{body}<w:p><w:pPr>{cols}</w:pPr></w:p><w:p><w:r><w:t>Beta</w:t></w:r></w:p>{last}"
         ),
-        "",
+        settings,
     )
 }
 
@@ -813,6 +817,35 @@ fn an_opening_column_break_leaves_no_line_in_the_column_before() {
         alpha - beta < 32.0,
         "one line from Alpha to Beta; alpha={alpha} beta={beta}"
     );
+}
+
+#[test]
+fn a_break_only_paragraph_leaves_a_line_in_the_column_it_ends() {
+    // Live Word, compatibility mode 15 (003329b5 cut down): a paragraph
+    // holding only a column break still takes one line of its run in the
+    // column it leaves, so column one (Alpha, Col1b, the break) outgrows
+    // column two (the mark, Col2): Beta 139.0. Mode 12 leaves no line
+    // (Beta 121.9, under Col1b).
+    let body = "<w:p><w:r><w:t>Alpha</w:t></w:r></w:p><w:p><w:r><w:t>Col1b</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"column\"/></w:r></w:p>\
+         <w:p><w:r><w:t>Col2</w:t></w:r></w:p>";
+    let beta_drop = |settings: &str| {
+        let pdf = docx_to_pdf(&three_column_section_with(body, settings)).expect("columns");
+        let alpha = pdf_glyph_text_xy(&pdf, "Alpha").expect("alpha").1;
+        let col1b = pdf_glyph_text_xy(&pdf, "Col1b").expect("col1b").1;
+        let beta = pdf_glyph_text_xy(&pdf, "Beta").expect("beta").1;
+        (alpha - beta) / (alpha - col1b)
+    };
+    let mode15 = beta_drop(
+        "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+         w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>",
+    );
+    let mode12 = beta_drop("");
+    assert!(
+        mode15 > 2.5,
+        "mode 15: Beta under the break's line; {mode15} pitches"
+    );
+    assert!(mode12 < 2.5, "mode 12: Beta under Col1b; {mode12} pitches");
 }
 
 #[test]
