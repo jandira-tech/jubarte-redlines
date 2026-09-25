@@ -874,6 +874,10 @@ struct TblStyle {
     /// redlines vs 00134233: Table Grid's minor-theme Calibri over the
     /// document's Arial).
     run_family: Option<String>,
+    /// The table style's own `tblPr/tblCellMar` left and right (pt): a
+    /// table setting none of its own takes them (000876cd's custom
+    /// "TableNormal" sets 0, not Word's 108-twip default).
+    cell_mar_lr: (Option<f32>, Option<f32>),
     first_row_fill: Option<[f32; 3]>,
     band1_fill: Option<[f32; 3]>,
     band2_fill: Option<[f32; 3]>,
@@ -2713,6 +2717,17 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
         run_size,
         own_size: run_size,
         run_family,
+        cell_mar_lr: {
+            let mar = dom
+                .element(style, &W::name("tblPr"))
+                .and_then(|pr| first_named(dom, pr, "tblCellMar"));
+            let edge = |name: &str| {
+                mar.and_then(|m| first_named(dom, m, name))
+                    .and_then(|n| attr_any(dom, n, "w"))
+                    .and_then(parse_len)
+            };
+            (edge("left"), edge("right"))
+        },
         first_row_fill: None,
         band1_fill: None,
         band2_fill: None,
@@ -5867,6 +5882,26 @@ fn walk_container(
                     }
                 });
             }
+            // After a trailing column break the paragraph's mark opens the
+            // next column as an empty line (live Word: "BBB" after a
+            // <br column/>-only paragraph starts one line down; a page break
+            // leaves no line). 000876cd's form table sat a line high.
+            let column_mark = match &block {
+                Block::Paragraph { style, .. } if column_br => {
+                    let mut style = style.clone();
+                    style.before = 0.0;
+                    style.before_auto = false;
+                    Some(Block::Paragraph {
+                        runs: Vec::new(),
+                        style,
+                        list: false,
+                        images: Vec::new(),
+                        boxes: Vec::new(),
+                        bookmarks: Vec::new(),
+                    })
+                }
+                _ => None,
+            };
             let blank = block_is_blank(&block);
             // A blank paragraph that only carries a section break is no
             // line, continuous breaks included (0016811c: Word's gap has
@@ -5892,6 +5927,7 @@ fn walk_container(
                 });
             } else if column_br {
                 blocks.push(Block::ColumnBreak);
+                blocks.extend(column_mark);
             }
             // Only a change of columns or side margins is a mid-page event;
             // a same-shape continuous section leaves the flow untouched.
@@ -8196,7 +8232,14 @@ fn table_block(
             cols.push(w);
         }
     }
-    let (tbl_pad_l, tbl_pad_r) = table_pad_h(dom, table);
+    let (mut tbl_pad_l, mut tbl_pad_r) = table_pad_h(dom, table);
+    let direct_mar = table_pr(dom, table)
+        .and_then(|pr| first_named(dom, pr, "tblCellMar"))
+        .is_some();
+    if !direct_mar && let Some(t) = tdef.as_ref() {
+        tbl_pad_l = t.cell_mar_lr.0.unwrap_or(tbl_pad_l);
+        tbl_pad_r = t.cell_mar_lr.1.unwrap_or(tbl_pad_r);
+    }
     let (tbl_pad_t, tbl_pad_b) = table_pad_tb(dom, table);
     let tbl_spacing = table_pr(dom, table)
         .and_then(|pr| first_named(dom, pr, "tblCellSpacing"))
@@ -31786,6 +31829,7 @@ mod table_tests {
                 run_size: None,
                 own_size: None,
                 run_family: None,
+                cell_mar_lr: (None, None),
                 first_row_fill: None,
                 band1_fill: parse_hex_color("D3DFEE"),
                 band2_fill: None,

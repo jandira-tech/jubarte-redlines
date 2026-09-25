@@ -1264,9 +1264,12 @@ fn a_continuous_section_switches_to_its_columns_mid_page() {
     // Columns: (468 - 36) / 2 = 216 wide, the second at 72 + 216 + 36.
     assert!((lx - 72.0).abs() < 0.5, "LeftCol in column 1; lx={lx}");
     assert!((rx - 324.0).abs() < 0.5, "RightCol in column 2; rx={rx}");
+    // Column 2 starts where the section did, not at the page top, a line
+    // down: the column break's paragraph mark opens it (live Word,
+    // 2026-09-25: LeftCol 93.6, RightCol 105.6 with exact 12pt lines).
     assert!(
-        (ry - ly).abs() < 0.5,
-        "column 2 starts where the section did, not at the page top; ly={ly} ry={ry}"
+        ((ly - ry) - 12.0).abs() < 0.5,
+        "column 2 opens a line below the section start; ly={ly} ry={ry}"
     );
 }
 
@@ -2326,6 +2329,51 @@ fn a_header_text_box_hangs_from_its_own_paragraph() {
         792.0 - y > 36.0 + 41.0 + 20.0,
         "the box hangs below its paragraph; {} from the top",
         792.0 - y
+    );
+}
+
+#[test]
+fn a_column_break_paragraphs_mark_opens_the_next_column() {
+    // fixtures_500 000876cd: a paragraph holding only <w:br w:type="column"/>.
+    // Live Word puts its mark on the new column as an empty line, so the
+    // next paragraph starts one line down there (a page break leaves no
+    // such line); we started it at the column top.
+    let body = "<w:p><w:r><w:t>AAA</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr>\
+        <w:r><w:br w:type=\"column\"/></w:r></w:p><w:p><w:r><w:t>BBB</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+        w:bottom=\"1440\" w:left=\"1440\"/><w:cols w:num=\"2\" w:space=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("column break");
+    let (_, a) = pdf_glyph_text_xy(&pdf, "AAA").expect("AAA");
+    let (xb, b) = pdf_glyph_text_xy(&pdf, "BBB").expect("BBB");
+    assert!(xb > 300.0, "BBB is in column two; x={xb}");
+    assert!(
+        a - b > 8.0,
+        "BBB starts a line below the column top; AAA {a} BBB {b}"
+    );
+}
+
+#[test]
+fn a_table_styles_cell_margins_apply() {
+    // fixtures_500 000876cd: the table's style (a custom "TableNormal")
+    // sets tblCellMar 0; Word lays the text at the cell edge. We ignored
+    // the style's margins and used Word's 108-twip default, wrapping the
+    // form's labels a line early.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"table\" w:customStyle=\"1\" w:styleId=\"Zero\"><w:name w:val=\"Zero\"/>\
+            <w:tblPr><w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/>\
+            </w:tblCellMar></w:tblPr></w:style>\
+        </w:styles>";
+    let body = r#"<w:tbl><w:tblPr><w:tblStyle w:val="Zero"/><w:tblW w:w="0" w:type="auto"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="2400"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/></w:tcPr><w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr><w:t>wwwwwww wwwwww</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/><w:sectPr/>"#;
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(body, None, Some(styles))).expect("zero mar");
+    // ~115.6pt of text: one line in the 120pt cell, two under 5.4pt margins.
+    // The cell's line plus the closing empty paragraph's mark.
+    let ys = text_baselines(&pdf);
+    assert_eq!(
+        ys.len(),
+        2,
+        "the words share one line in the marginless cell; ys={ys:?}"
     );
 }
 
