@@ -34494,3 +34494,18 @@ fn a_tall_row_under_a_repeating_header_splits_where_it_starts() {
         "the tall row starts on the page that has room for its first lines; y={y}"
     );
 }
+
+#[test]
+fn a_font_file_named_short_of_its_family_is_found() {
+    // docxide international_terrorism_thesis: Normal is "Arial Unicode MS",
+    // installed as "Arial Unicode.ttf". Word draws it (a 16pt line in the
+    // page-number header); we skipped the file for its short name and set
+    // the header in Arial, 7.6pt short on every page.
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Arial Unicode MS\" w:hAnsi=\"Arial Unicode MS\"/></w:rPr>\
+        <w:t>Abc</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("arial unicode");
+    assert!(
+        String::from_utf8_lossy(&pdf).contains("ArialUnicodeMS"),
+        "the installed Arial Unicode MS paints the run"
+    );
+}

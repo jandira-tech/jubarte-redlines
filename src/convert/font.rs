@@ -1881,7 +1881,16 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
                 }
                 continue;
             }
-            if !is_font || !(family_folder || stem.is_some_and(|s| s.starts_with(&key))) {
+            // A system file may be named short of its family ("Arial
+            // Unicode.ttf" holds "Arial Unicode MS", which Word draws in
+            // international_terrorism_thesis's header); its own name decides.
+            // Word's DFonts keep the name-index path below: Word paints
+            // 012128d3's regular TH SarabunPSK runs in its thsarabun-bold.
+            let short_ok = !dir.ends_with("DFonts");
+            let named = stem.is_some_and(|s| {
+                s.starts_with(&key) || (short_ok && s.len() >= 5 && key.starts_with(&s))
+            });
+            if !is_font || !(family_folder || named) {
                 continue;
             }
             let Ok(bytes) = fs::read(&path) else {
