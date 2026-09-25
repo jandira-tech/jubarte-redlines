@@ -16629,9 +16629,13 @@ impl<'a> Layout<'a> {
             style.indent_right
         };
         let width = (self.content_width() - indent - right_bound).max(40.0);
-        let full_width = (self.content_width() - indent - style.indent_right).max(40.0);
+        // Past the band a line returns to the paragraph's own indent: a
+        // left float (docxide case46's tblpPr table) narrows only the lines
+        // beside it, as a right one does.
+        let full_width =
+            (self.content_width() - (indent - wrap_left) - style.indent_right).max(40.0);
         let reflow = inset_h > 0.5
-            && wrap_right > 0.5
+            && (wrap_right > 0.5 || wrap_left > 0.5)
             && self.tab_stops.iter().all(|t| t.align != TabAlign::Right);
         // Lines at these indices measure `width`; the rest the full measure.
         let mut narrow = 0..usize::MAX;
@@ -16672,6 +16676,11 @@ impl<'a> Layout<'a> {
             if widow_break == Some(line_i) {
                 self.flow_break();
             }
+            let indent = if wrap_left > 0.5 && reflow && !narrow.contains(&line_i) {
+                indent - wrap_left
+            } else {
+                indent
+            };
             // Layout uses the authored point size so line boxes stay on
             // the Word heading/body grid. Tf/advances use paint_size()
             // (300dpi snap: 16→16.08). Snapping the line box dropped
@@ -20205,9 +20214,17 @@ impl<'a> Layout<'a> {
             } else {
                 top
             };
+            // A left float's text starts its distance past the drawn right
+            // edge: the mode<15 pull moves the table left of fx (case46:
+            // 246.6 + 7.2 = 253.8, as Word's 254.1).
+            let inset = if matches!(align, Align::Left) && (fx - pull - saved_ml).abs() < 12.0 {
+                (fx - pull + used + dist - saved_ml).max(0.0)
+            } else {
+                used + dist
+            };
             self.side_float = Some(SideFloat {
                 align,
-                inset: used + dist,
+                inset,
                 top: band_top,
                 bottom: top - th - dist_b,
             });

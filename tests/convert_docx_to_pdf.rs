@@ -34032,3 +34032,40 @@ fn a_percent_text_scale_widens_the_glyphs() {
     assert!((width("150%") - width("150")).abs() < 0.1, "150% is 150");
     assert!(width("150%") > width("100") + 5.0, "150% widens the run");
 }
+
+#[test]
+fn text_past_a_left_floating_table_returns_to_the_margin() {
+    // docxide-pdf case46: a 14pt floating table at the left margin with a
+    // long paragraph after it. Word wraps only the lines beside the table
+    // (at its right edge + 7.2pt) and sets the rest from the margin; we
+    // kept every line beside it.
+    let lorem = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor \
+        incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation \
+        ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit \
+        in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat \
+        non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. EndWord";
+    let body = format!(
+        "<w:p><w:r><w:t>Head</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"3600\" w:type=\"dxa\"/>\
+           <w:tblpPr w:vertAnchor=\"text\" w:horzAnchor=\"margin\" w:tblpX=\"0\" w:tblpY=\"200\" \
+             w:topFromText=\"72\" w:bottomFromText=\"72\" w:leftFromText=\"144\" w:rightFromText=\"144\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"1800\"/><w:gridCol w:w=\"1800\"/></w:tblGrid>\
+           <w:tr><w:trPr><w:trHeight w:val=\"280\" w:hRule=\"exact\"/></w:trPr>\
+             <w:tc><w:p><w:r><w:t>R1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>V1</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:r><w:t>{lorem}</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("left float");
+    let hay = String::from_utf8_lossy(&pdf);
+    let glyphs = pdf_device_xy(&hay, " 0 0 0.24 ");
+    assert!(
+        glyphs
+            .iter()
+            .any(|(x, y)| (x - 72.0).abs() < 0.5 && *y < 665.0),
+        "a line below the table's band starts at the margin; {:?}",
+        &glyphs[..glyphs.len().min(6)]
+    );
+    assert!(
+        glyphs.iter().any(|(x, _)| *x > 245.0 && *x < 256.0),
+        "lines beside it start 7.2pt past its right edge"
+    );
+}
