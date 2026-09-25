@@ -33760,3 +33760,23 @@ fn a_footer_line_starts_on_the_grid_snapped_margin() {
         "footer at the snapped margin; x={x}"
     );
 }
+
+#[test]
+fn a_table_cells_text_edge_lands_on_words_grid() {
+    // fixtures_500 00004116: Word starts cell text on its 0.24pt grid
+    // (303.61, not our 303.56), as it does the page margin.
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"3001\"/><w:gridCol w:w=\"3001\"/></w:tblGrid>\
+          <w:tr><w:tc><w:p><w:r><w:t>CellOne</w:t></w:r></w:p></w:tc>\
+            <w:tc><w:p><w:r><w:t>CellTwo</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1134\" w:right=\"850\" w:bottom=\"1134\" w:left=\"1701\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("grid cells");
+    for word in ["CellOne", "CellTwo"] {
+        let x = pdf_glyph_text_xy(&pdf, word).expect("cell text").0;
+        let units = x / 0.24;
+        assert!(
+            (units - units.round()).abs() < 0.05,
+            "{word} starts on the 0.24pt grid; x={x}"
+        );
+    }
+}

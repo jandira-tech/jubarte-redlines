@@ -20415,7 +20415,10 @@ impl<'a> Layout<'a> {
                                 Align::Right => (inner - line_w).max(0.0),
                                 Align::Left | Align::Justify => 0.0,
                             };
-                            let mut tx = x + pad_l + ind_l + extra;
+                            // The cell's text edge sits on Word's 0.24pt
+                            // grid like the page margin (00004116's cells).
+                            let edge = ((x + pad_l) / 0.24 + 0.5).floor() * 0.24;
+                            let mut tx = edge + ind_l + extra;
                             if li == 0
                                 && let Some(img) = lead
                             {
