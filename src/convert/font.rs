@@ -1777,14 +1777,20 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
             .map(|c| c.to_ascii_lowercase())
             .collect()
     };
-    let key = norm(family);
-    if key.len() < 3 {
-        return Vec::new();
-    }
+    // A name with no Latin key (华文仿宋) can only match a cloud folder by
+    // the family names inside its fonts; file names say nothing about it.
+    let latin = norm(family).len() >= 3;
     // (dir, whole folder is the family): Word's cloud-font cache keeps each
     // family in its own folder under numeric file names (Poppins/2397….ttf).
-    let mut dirs: Vec<(PathBuf, bool)> = DIRS.iter().map(|d| (PathBuf::from(d), false)).collect();
+    let mut dirs: Vec<(PathBuf, bool)> = if latin {
+        DIRS.iter().map(|d| (PathBuf::from(d), false)).collect()
+    } else {
+        Vec::new()
+    };
     dirs.extend(cloud_font_dirs(family));
+    if dirs.is_empty() {
+        return Vec::new();
+    }
     faces_with_user_fonts(family, &dirs, user_font_dir().as_deref())
 }
 
@@ -1817,6 +1823,56 @@ fn cloud_font_dirs(family: &str) -> Vec<(PathBuf, bool)> {
         if parent.len() >= 3 && parent.len() < want.len() && want.starts_with(&parent) {
             out.push((dir.clone(), true));
         }
+    }
+    let latin = want.chars().filter(char::is_ascii_alphanumeric).count() >= 3;
+    if !latin && out.iter().all(|(d, _)| !d.is_dir()) {
+        // Word files a family under its English name and answers to its
+        // localized one too: 华文仿宋 lives in CloudFonts/STFangsong/, whose
+        // name table carries 华文仿宋 for zh-CN (fixtures_500 004599833e).
+        out.extend(
+            cloud_folder_names(&root)
+                .iter()
+                .filter(|(_, names)| names.contains(&want))
+                .map(|(dir, _)| (dir.clone(), true)),
+        );
+    }
+    out
+}
+
+/// Cloud-font folders, each with the folded family names its fonts carry.
+type FolderNames = Vec<(PathBuf, Vec<String>)>;
+
+/// Each cloud-font folder with the family names (IDs 1 and 16, every
+/// language, folded) of its first font, read once per process: a folder
+/// holds one family, and the cache is ~60 MB, too much to read whole.
+fn cloud_folder_names(root: &Path) -> Arc<FolderNames> {
+    static CACHE: LazyLock<Mutex<HashMap<PathBuf, Arc<FolderNames>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = CACHE.lock().ok().and_then(|c| c.get(root).cloned()) {
+        return hit;
+    }
+    let mut out = Vec::new();
+    for dir in sorted_dir_listing(root).iter().filter(|d| d.is_dir()) {
+        let mut names = Vec::new();
+        let first = sorted_dir_listing(dir)
+            .iter()
+            .find_map(|file| fs::read(file).ok());
+        if let Some(bytes) = first
+            && let Ok(face) = ttf_parser::Face::parse(&bytes, 0)
+        {
+            names.extend(face_family_names(&face, ttf_parser::name_id::FAMILY));
+            names.extend(face_family_names(
+                &face,
+                ttf_parser::name_id::TYPOGRAPHIC_FAMILY,
+            ));
+        }
+        names.sort();
+        names.dedup();
+        out.push((dir.clone(), names));
+    }
+    let out = Arc::new(out);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(root.to_path_buf(), Arc::clone(&out));
     }
     out
 }
@@ -1862,7 +1918,10 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
             .collect()
     };
     let key = norm(family);
-    if key.len() < 3 {
+    // Without a Latin key only a whole-family folder can answer; its faces
+    // still have to carry the requested name.
+    let latin = key.len() >= 3;
+    if !latin && dirs.iter().all(|(_, family_folder)| !family_folder) {
         return Vec::new();
     }
     let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
@@ -1880,6 +1939,7 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
             // A collection is named for its whole family (Avenir.ttc holds
             // "Avenir Book"); its faces answer to their own names.
             if ext.eq_ignore_ascii_case("ttc")
+                && latin
                 && stem
                     .as_deref()
                     .is_some_and(|s| s.len() >= 3 && key.starts_with(s))
@@ -1904,9 +1964,10 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
             // Word's DFonts keep the name-index path below: Word paints
             // 012128d3's regular TH SarabunPSK runs in its thsarabun-bold.
             let short_ok = !dir.ends_with("DFonts");
-            let named = stem.is_some_and(|s| {
-                s.starts_with(&key) || (short_ok && s.len() >= 5 && key.starts_with(&s))
-            });
+            let named = latin
+                && stem.is_some_and(|s| {
+                    s.starts_with(&key) || (short_ok && s.len() >= 5 && key.starts_with(&s))
+                });
             if !is_font || !(family_folder || named) {
                 continue;
             }
@@ -1920,7 +1981,7 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
         }
     }
     found.append(&mut collected);
-    if found.is_empty() {
+    if found.is_empty() && latin {
         // Word's own fonts carry abbreviated file names (Garamond is
         // GARA.ttf / GARAIT.ttf): match its folder by internal family name
         // (fixtures_500 00dd36c7 painted Garamond Italic as Times).

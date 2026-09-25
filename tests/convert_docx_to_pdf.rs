@@ -34511,6 +34511,27 @@ fn a_font_file_named_short_of_its_family_is_found() {
 }
 
 #[test]
+fn a_cloud_font_is_found_by_its_localized_family_name() {
+    // fixtures_500 004599833e: runs ask for 华文仿宋. Word's cloud cache
+    // files it as CloudFonts/STFangsong/, whose name table carries 华文仿宋
+    // (zh-CN). Word 16.114.26092233 draws STFangsong; we fell back to YaHei.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let dir = format!(
+        "{home}/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/STFangsong"
+    );
+    if !std::path::Path::new(&dir).is_dir() {
+        return;
+    }
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"华文仿宋\" w:eastAsia=\"华文仿宋\" w:hAnsi=\"华文仿宋\"/></w:rPr>\
+        <w:t>仿宋字体</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("stfangsong");
+    assert!(
+        String::from_utf8_lossy(&pdf).contains("STFangsong"),
+        "Word's cloud STFangsong paints the 华文仿宋 run"
+    );
+}
+
+#[test]
 fn a_cell_style_not_based_on_normal_takes_the_table_styles_spacing_and_size() {
     // fixtures_500 015a4f5a: cells use "Corpo A" (no basedOn, no spacing or
     // size). Word layers docDefaults < table style < paragraph style, so
