@@ -1288,6 +1288,13 @@ struct TableGeom {
     /// A legacy document's pct table width spans the text plus these
     /// (the table's left + right cell margins); 0 in compatibilityMode 15.
     pct_margins: f32,
+    /// An autofit table whose tblGrid another tool wrote (`gridCol`
+    /// carries a `w:type`, which Word never writes): Word fits the columns
+    /// to their content on open (PHPWord's 00046848 label column).
+    content_autofit: bool,
+    /// `w:tblCellSpacing` in points: Word leaves twice it between cells
+    /// and around them.
+    cell_spacing: f32,
 }
 
 /// Preferred table width from `tblW`. Word `pct` is 50ths of a percent
@@ -6673,6 +6680,94 @@ fn para_is_empty_toc_field(dom: &Dom, para: NodeId) -> bool {
         .any(|n| !element_text(dom, n).trim().is_empty())
 }
 
+/// Column widths as laid out: Word's autofit on the cells' content for a
+/// grid another tool wrote, else `table_col_widths`.
+fn resolved_col_widths(
+    fonts: &Fonts,
+    cols: &[f32],
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    avail: f32,
+) -> Vec<f32> {
+    if geom.content_autofit {
+        content_autofit_widths(fonts, cols.len(), rows, geom, avail)
+    } else {
+        table_col_widths(cols, geom, avail)
+    }
+}
+
+/// A cell's (longest word, widest unbroken paragraph) in points.
+fn cell_content_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
+    let mut min = 0.0_f32;
+    let mut max = 0.0_f32;
+    for para in &cell.paras {
+        let indent = para.style.indent_left.max(0.0) + para.style.indent_right.max(0.0);
+        let mut line = 0.0_f32;
+        for run in &para.runs {
+            let face = fonts.get(ink_face(fonts, &run.style, &run.text));
+            let size = run.style.layout_size();
+            let width = |t: &str| face.width_pt(t, size) * run.style.hscale();
+            for (i, piece) in run.text.split('\n').enumerate() {
+                if i > 0 {
+                    max = max.max(line + indent);
+                    line = 0.0;
+                }
+                line += width(piece);
+                for word in piece.split_whitespace() {
+                    min = min.max(width(word) + indent);
+                }
+            }
+        }
+        max = max.max(line + indent);
+    }
+    (min, max.max(min))
+}
+
+/// Word's autofit: each column spans its longest word at least and its
+/// widest paragraph (or its preferred tcW, if wider) at most; the room
+/// past the minimums goes to each column by its max - min. Live Word on
+/// 00046848: a 142pt-preferred label column beside an 800pt paragraph
+/// takes 91pt, wrapping "Kvalifikační úroveň:".
+fn content_autofit_widths(
+    fonts: &Fonts,
+    n: usize,
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    avail: f32,
+) -> Vec<f32> {
+    let mut mins = vec![0.0_f32; n];
+    let mut maxs = vec![0.0_f32; n];
+    for cell in rows.iter().flatten() {
+        if cell.colspan != 1 || cell.col >= n {
+            continue;
+        }
+        let pads = cell.pad_l + cell.pad_r;
+        let (lo, hi) = cell_content_extent(fonts, cell);
+        mins[cell.col] = mins[cell.col].max(lo + pads);
+        maxs[cell.col] = maxs[cell.col].max(hi + pads);
+    }
+    for (j, max) in maxs.iter_mut().enumerate() {
+        if let Some(PrefWidth::Dxa(w)) = geom.pref.get(j) {
+            *max = max.max(*w);
+        }
+        *max = max.max(mins[j]);
+    }
+    let gap = 2.0 * geom.cell_spacing;
+    let room = (avail - gap * (n as f32 + 1.0)).max(0.0);
+    let (lo, hi): (f32, f32) = (mins.iter().sum(), maxs.iter().sum());
+    let k = if hi <= room {
+        1.0
+    } else if lo >= room || hi - lo < 0.01 {
+        0.0
+    } else {
+        (room - lo) / (hi - lo)
+    };
+    mins.iter()
+        .zip(&maxs)
+        .map(|(lo, hi)| lo + (hi - lo) * k + gap)
+        .collect()
+}
+
 fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     let n = cols.len();
     let grid_total: f32 = cols.iter().sum();
@@ -7046,7 +7141,7 @@ fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: b
     else {
         return 0.0;
     };
-    let col_w = table_col_widths(cols, geom, avail);
+    let col_w = resolved_col_widths(fonts, cols, rows, geom, avail);
     let rows_h: f32 = table_row_heights(fonts, rows, &col_w, geom, space_for_ul)
         .iter()
         .sum();
@@ -7199,7 +7294,7 @@ fn keep_next_follow_pt(
         Block::Table {
             cols, rows, geom, ..
         } => {
-            let col_w = table_col_widths(cols, geom, avail);
+            let col_w = resolved_col_widths(fonts, cols, rows, geom, avail);
             rows.first()
                 .map(|row| table_row_height_pt(fonts, row, &col_w, geom, 0, space_for_ul))
                 .unwrap_or(0.0)
@@ -8713,8 +8808,10 @@ fn table_block(
     // Direct child only. descendants() hits tblPrChange's ghost
     // tblGrid first (addition_removal: 13 cols / 5-twip) and the
     // capability matrix wraps into a hairline column.
+    let mut foreign_grid = false;
     if let Some(grid) = direct_named(dom, table, "tblGrid") {
         for col in dom.elements(grid, Some(&W::name("gridCol"))) {
+            foreign_grid |= attr_any(dom, col, "type").is_some();
             let w = dom
                 .attribute(col, &W::name("w"))
                 .and_then(|s| s.parse::<f32>().ok())
@@ -8972,8 +9069,11 @@ fn table_block(
             let (pad_l, pad_r) = cell_pad_h(dom, cell, tbl_pad_l, tbl_pad_r);
             let (pad_t, pad_b) = cell_pad_tb(dom, cell, tbl_pad_t, tbl_pad_b);
             // tblCellSpacing opens a gap above and below every cell
-            // (00046848's 2.5pt rows stand 5pt further apart in Word).
+            // (00046848's 2.5pt rows stand 5pt further apart in Word), and
+            // twice it before each cell: live Word puts 00046848's text
+            // 5pt + its 4pt margin in from the table edge.
             let (pad_t, pad_b) = (pad_t + tbl_spacing, pad_b + tbl_spacing);
+            let pad_l = pad_l + 2.0 * tbl_spacing;
             cells.push(RawCell {
                 paras: cell_paras,
                 nested,
@@ -9044,6 +9144,16 @@ fn table_block(
     let pref = first_row_pref(&raw_rows, &cols);
     let fixed = table_layout_fixed(dom, table);
     let mut rows = resolve_table_merges(raw_rows);
+    // The spacing also stands between the table's edge and its first and
+    // last rows (00046848's first row sits 5pt + its margin down in Word).
+    if tbl_spacing > 0.0 {
+        if let Some(first) = rows.first_mut() {
+            first.iter_mut().for_each(|c| c.pad_t += tbl_spacing);
+        }
+        if let Some(last) = rows.last_mut() {
+            last.iter_mut().for_each(|c| c.pad_b += tbl_spacing);
+        }
+    }
     if let Some(ref style) = tdef {
         apply_tbl_style(&mut rows, style, &look);
     }
@@ -9073,7 +9183,8 @@ fn table_block(
     let first_pad_l = rows
         .first()
         .and_then(|row| row.first())
-        .map_or(tbl_pad_l, |cell| cell.pad_l);
+        // The edge rule pulls by the cell margin alone, not the spacing.
+        .map_or(tbl_pad_l, |cell| cell.pad_l - 2.0 * tbl_spacing);
     let bottom_above: Vec<f32> = std::iter::once(0.0)
         .chain(rows.iter().map(|row| {
             row.iter()
@@ -9163,6 +9274,10 @@ fn table_block(
                 } else {
                     0.0
                 },
+                content_autofit: !fixed
+                    && matches!(table_pref_width(dom, table), TblWidth::Grid)
+                    && foreign_grid,
+                cell_spacing: tbl_spacing,
             })
         },
     }
@@ -15309,7 +15424,7 @@ fn table_rows_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: boo
     else {
         return 0.0;
     };
-    let col_w = table_col_widths(cols, geom, avail);
+    let col_w = resolved_col_widths(fonts, cols, rows, geom, avail);
     table_row_heights(fonts, rows, &col_w, geom, space_for_ul)
         .iter()
         .sum()
@@ -20287,7 +20402,7 @@ impl<'a> Layout<'a> {
         let avail = self.content_width();
         // tblW dxa/pct is the preferred width (table_bookmark_end Tests 3–5
         // use pct 50ths). Grid-only tables still never stretch.
-        let col_w = table_col_widths(cols, geom, avail);
+        let col_w = resolved_col_widths(self.fonts, cols, rows, geom, avail);
         let row_h = table_row_heights(self.fonts, rows, &col_w, geom, self.space_for_ul);
         let used: f32 = col_w.iter().sum();
         // A centred table wider than the measure overhangs both sides

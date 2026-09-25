@@ -658,8 +658,9 @@ fn table_cell_spacing_opens_each_row_by_twice_the_spacing() {
     };
     let plain = pitch("");
     let spaced = pitch("<w:tblCellSpacing w:w=\"50\" w:type=\"dxa\"/>");
+    // Baselines round to the 0.24pt grid: one grid step of slack.
     assert!(
-        (spaced - plain - 5.0).abs() < 0.1,
+        (spaced - plain - 5.0).abs() < 0.3,
         "2 × 2.5pt between rows; plain={plain} spaced={spaced}"
     );
 }
@@ -34269,5 +34270,72 @@ fn a_cell_bullets_trailing_space_does_not_narrow_its_first_line() {
     assert!(
         (yp - yq).abs() < 0.5,
         "the last word stays on the first line; Please y={yp} wordsQ y={yq}"
+    );
+}
+
+fn spaced_table_xy(spacing: u32) -> (f32, f32) {
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/>\
+         <w:tblCellSpacing w:w=\"{spacing}\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Aq</w:t></w:r></w:p></w:tc>\
+         <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Bq</w:t></w:r></w:p></w:tc></w:tr>\
+         </w:tbl><w:p/><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("cell spacing");
+    pdf_glyph_text_xy(&pdf, "Aq").expect("Aq")
+}
+
+#[test]
+fn table_cell_spacing_stands_twice_between_the_table_edge_and_its_text() {
+    // Live Word (compat 15): a 100-twip tblCellSpacing puts the first
+    // cell's text 10pt right of and 10pt below where it sits without
+    // spacing: twice the spacing on each side of every cell. We moved it
+    // 5pt down only.
+    let (x0, y0) = spaced_table_xy(0);
+    let (x1, y1) = spaced_table_xy(100);
+    assert!(
+        ((x1 - x0) - 10.0).abs() < 1.0,
+        "10pt in from the edge; dx={}",
+        x1 - x0
+    );
+    assert!(
+        ((y0 - y1) - 10.0).abs() < 1.0,
+        "10pt down from the top; dy={}",
+        y0 - y1
+    );
+}
+
+#[test]
+fn an_autofit_table_on_a_foreign_grid_fits_its_columns_to_the_content() {
+    // fixtures_500 00046848 (PHPWord): tblW auto, a gridCol carrying
+    // w:type, first-row tcW 3000/6000 and an 800pt paragraph in a later
+    // row. Word fits the columns to the content: the label column drops
+    // from its preferred 150pt to ~105pt. We kept the written grid.
+    let long = "Obsluha pálicích pecí, Přípravář keramických hmot, Točíř keramiky, \
+                Výrobce lisované keramiky, Obráběč keramiky, Výrobce sádrových forem, \
+                Glazovač keramiky, Vylévač keramiky, Obsluha pálicích pecí, Přípravář";
+    let cell = |t: &str, w: Option<u32>| {
+        let pr = w.map_or("<w:tcPr/>".to_string(), |w| {
+            format!("<w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>")
+        });
+        format!("<w:tc>{pr}<w:p><w:r><w:t xml:space=\"preserve\">{t}</w:t></w:r></w:p></w:tc>")
+    };
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"3000\" w:type=\"dxa\"/><w:gridCol w:w=\"6000\" w:type=\"dxa\"/></w:tblGrid>\
+         <w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblLayout w:type=\"autofit\"/></w:tblPr>\
+         <w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl><w:p/><w:sectPr/>",
+        cell("Label one:", Some(3000)),
+        cell("Short", Some(6000)),
+        cell("Another label here:", None),
+        cell(long, None),
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("autofit");
+    let a = pdf_glyph_text_xy(&pdf, "Label").expect("Label").0;
+    let b = pdf_glyph_text_xy(&pdf, "Short").expect("Short").0;
+    assert!(
+        b - a < 135.0,
+        "the label column narrows below its 150pt preference; pitch={}",
+        b - a
     );
 }
