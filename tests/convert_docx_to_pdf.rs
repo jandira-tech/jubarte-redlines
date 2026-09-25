@@ -33360,3 +33360,29 @@ fn bmp_and_gif_pictures_are_painted() {
         );
     }
 }
+
+#[test]
+fn a_cs_only_rfonts_keeps_the_paragraph_styles_latin_font() {
+    // docxide-pdf czech_census_2021_instructions: body text in style
+    // "Body Text" (rFonts ascii/hAnsi Arial) through character style A0
+    // and direct rFonts that name only w:cs. Word sets Arial; we fell back
+    // to the theme's Calibri.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme=\"minorHAnsi\" w:eastAsiaTheme=\"minorHAnsi\" \
+            w:hAnsiTheme=\"minorHAnsi\" w:cstheme=\"minorBidi\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normln\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Body\"><w:name w:val=\"Body Text\"/><w:basedOn w:val=\"Normln\"/>\
+            <w:rPr><w:rFonts w:ascii=\"Arial\" w:eastAsia=\"Arial\" w:hAnsi=\"Arial\" w:cs=\"Arial\"/></w:rPr></w:style>\
+          <w:style w:type=\"character\" w:customStyle=\"1\" w:styleId=\"A0\"><w:name w:val=\"A0\"/>\
+            <w:rPr><w:rFonts w:cs=\"Futura\"/></w:rPr></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"Body\"/></w:pPr>\
+          <w:r><w:rPr><w:rStyle w:val=\"A0\"/><w:rFonts w:cs=\"Arial\"/></w:rPr><w:t>Sčítání</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("cs-only rFonts");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("/BaseFont /Arial") && !hay.contains("/BaseFont /Calibri"),
+        "the run keeps Body Text's Arial"
+    );
+}

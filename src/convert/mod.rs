@@ -2601,7 +2601,28 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             }
             false
         };
-        let (sets_size, sets_family) = (chain_sets("sz", false), chain_sets("rFonts", false));
+        // Only an rFonts naming a Latin slot sets the face: A0's
+        // cs-only rFonts left Body Text's Arial (docxide czech_census).
+        let sets_family = {
+            let mut cur = Some(id.as_str());
+            let mut hit = false;
+            for _ in 0..12 {
+                let Some(r) = cur.and_then(|c| raw.get(c)) else {
+                    break;
+                };
+                if let Some(fonts) = r.rpr.and_then(|pr| first_named(&dom, pr, "rFonts"))
+                    && ["ascii", "hAnsi", "asciiTheme", "hAnsiTheme"]
+                        .iter()
+                        .any(|n| attr_any(&dom, fonts, n).is_some())
+                {
+                    hit = true;
+                    break;
+                }
+                cur = r.based.as_deref();
+            }
+            hit
+        };
+        let sets_size = chain_sets("sz", false);
         let chain_ind = |names: &[&str]| {
             let mut cur = Some(id.as_str());
             for _ in 0..12 {
