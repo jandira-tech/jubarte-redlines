@@ -33882,3 +33882,26 @@ fn words_own_rockwell_outranks_the_system_collection() {
         "Word's Rockwell line; step={step}"
     );
 }
+
+#[test]
+fn ideographic_text_breaks_between_characters() {
+    // docxide-pdf taiwanese_education_fraud_ruling: a run of Chinese with
+    // no spaces fills each justified line in Word; we could only break
+    // at run edges and ran a line far past the margin. Kinsoku holds:
+    // "。" never starts a line.
+    let text = "臺灣臺北地方法院九十四年度簡字第一九九號刑事判決方某於八十三年九月一日起至八十八年八月三十日止擔任某機關人事室主任負責人事公務員津貼審核等業務為依據法令從事公務之人員。";
+    let body = format!(
+        "<w:p><w:r><w:rPr><w:rFonts w:eastAsia=\"MS Mincho\"/><w:sz w:val=\"32\"/></w:rPr><w:t>{text}</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("cjk wrap");
+    let hay = String::from_utf8_lossy(&pdf);
+    let xs: Vec<f32> = pdf_device_xy(&hay, " 0 0 0.24 ")
+        .iter()
+        .map(|p| p.0)
+        .collect();
+    let right = xs.iter().copied().fold(0.0_f32, f32::max);
+    assert!(
+        right < 540.0,
+        "no glyph starts past the right margin; max x={right}"
+    );
+}

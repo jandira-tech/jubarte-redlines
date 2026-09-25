@@ -21748,6 +21748,19 @@ fn hyphen_wrap_pieces(tok: &str) -> Vec<&str> {
     let mut prev: Option<char> = None;
     for (i, ch) in tok.char_indices() {
         let end = i + ch.len_utf8();
+        // Word breaks between ideographs as between words (docxide
+        // taiwanese_education_fraud_ruling: every justified line holds 25
+        // characters), never before closing punctuation or small kana and
+        // never after opening punctuation.
+        if let Some(p) = prev
+            && i > start
+            && (is_cjk_break_char(p) || is_cjk_break_char(ch))
+            && !cjk_no_line_start(ch)
+            && !cjk_no_line_end(p)
+        {
+            out.push(&tok[start..i]);
+            start = i;
+        }
         if ch == '-' && prev.is_some_and(char::is_alphanumeric) && end < tok.len() {
             out.push(&tok[start..end]);
             start = end;
@@ -21756,6 +21769,71 @@ fn hyphen_wrap_pieces(tok: &str) -> Vec<&str> {
     }
     out.push(&tok[start..]);
     out
+}
+
+/// Kinsoku: characters a line may not start with (closing punctuation,
+/// small kana, the prolonged sound mark).
+fn cjk_no_line_start(c: char) -> bool {
+    matches!(
+        c,
+        '、' | '。'
+            | '，'
+            | '．'
+            | '：'
+            | '；'
+            | '？'
+            | '！'
+            | '）'
+            | '」'
+            | '』'
+            | '】'
+            | '〉'
+            | '》'
+            | '〕'
+            | '］'
+            | '｝'
+            | '・'
+            | 'ー'
+            | '々'
+            | 'ぁ'
+            | 'ぃ'
+            | 'ぅ'
+            | 'ぇ'
+            | 'ぉ'
+            | 'っ'
+            | 'ゃ'
+            | 'ゅ'
+            | 'ょ'
+            | 'ゎ'
+            | 'ァ'
+            | 'ィ'
+            | 'ゥ'
+            | 'ェ'
+            | 'ォ'
+            | 'ッ'
+            | 'ャ'
+            | 'ュ'
+            | 'ョ'
+            | 'ヮ'
+            | ','
+            | '.'
+            | ':'
+            | ';'
+            | '?'
+            | '!'
+            | ')'
+            | ']'
+            | '}'
+            | '%'
+    )
+}
+
+/// Kinsoku: characters a line may not end with (opening punctuation).
+fn cjk_no_line_end(c: char) -> bool {
+    matches!(
+        c,
+        '（' | '「' | '『' | '【' | '〈' | '《' | '〔' | '［' | '｛' | '(' | '[' | '{'
+    )
 }
 
 /// Ideographic text breaks between characters, so a run boundary next to
