@@ -3740,12 +3740,9 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
         if let Some(raw) = attr_any(dom, sz, "h").and_then(|s| parse_len(s).map(|pt| (s, pt))) {
             page.height = word_pgsz_pt(raw.0, raw.1);
         }
-        if let Some(orient) = attr_any(dom, sz, "orient")
-            && orient == "landscape"
-            && page.width < page.height
-        {
-            std::mem::swap(&mut page.width, &mut page.height);
-        }
+        // w:orient only tells the printer: Word lays out the page at the
+        // w and h written, even a "landscape" 396 x 612 (docxide
+        // handels_messiah_biblical_analysis, live Word).
     }
     if let Some(mar) = first_named(dom, sect, "pgMar") {
         if let Some(v) = attr_any(dom, mar, "left").and_then(parse_len) {

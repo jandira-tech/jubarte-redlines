@@ -34421,3 +34421,19 @@ fn a_soft_edged_picture_fades_to_nothing_at_its_border() {
         "the soft edge paints through an alpha mask"
     );
 }
+
+#[test]
+fn a_landscape_flag_does_not_swap_a_portrait_page_size() {
+    // docxide handels_messiah_biblical_analysis, and live Word: pgSz
+    // w=7920 h=12240 orient=landscape is a 396 x 612pt page. We swapped
+    // it to 612 x 396 and doubled the page count.
+    let body = "<w:p><w:r><w:t>Hello</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"7920\" w:h=\"12240\" w:orient=\"landscape\"/>\
+        <w:pgMar w:top=\"432\" w:right=\"432\" w:bottom=\"432\" w:left=\"432\" w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("landscape flag");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("/MediaBox [0 0 396.00 612.00]"),
+        "the page keeps its written size"
+    );
+}
