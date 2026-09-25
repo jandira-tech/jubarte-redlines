@@ -2228,6 +2228,30 @@ fn page_break_before_after_an_overflowing_empty_paragraph_skips_no_page() {
 }
 
 #[test]
+fn page_break_before_drops_its_space_before_in_mode_15() {
+    // fixtures_500 00a46f85: live Word opens a pageBreakBefore heading
+    // (before=12 under after=6) at the page top in compatibilityMode 15,
+    // with or without suppressSpBfAfterPgBrk; mode 12 keeps the 6pt excess
+    // (page_break_before_keeps_only_the_before_past_the_previous_after).
+    let body = format!(
+        "<w:p><w:pPr><w:spacing w:after=\"120\"/></w:pPr><w:r><w:t>FirstPage</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pageBreakBefore/><w:spacing w:before=\"240\"/></w:pPr>\
+           <w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>TopHead</w:t></w:r></w:p>{}",
+        letter_body_sect()
+    );
+    let y = heading16_y(&minimal_docx_with_settings(
+        &body,
+        "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+         w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>",
+    ));
+    let top = page_top_16pt_y();
+    assert!(
+        (top - y).abs() < 1.0,
+        "mode 15 drops the space before; top={top} y={y}"
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

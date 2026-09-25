@@ -14717,7 +14717,10 @@ impl<'a> Layout<'a> {
             // suppressSpBfAfterPgBrk): a manual page break drops the next
             // paragraph's space before; pageBreakBefore keeps its excess
             // over the previous paragraph's space after.
-            self.suppress_space_before = next.is_none() && manual;
+            // compatibilityMode 15 drops it after pageBreakBefore too (live
+            // Word: before=12 under after=6 opens at the top, 89.28 vs 95.28
+            // in mode 12 or without a mode; 00a46f85's Nadpis1).
+            self.suppress_space_before = next.is_none() && (manual || self.compat_mode >= 15);
             self.top_credit = self.last_after;
             self.refresh_body_floor();
             self.chrome();
