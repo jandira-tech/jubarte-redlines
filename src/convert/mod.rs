@@ -1602,6 +1602,23 @@ struct LaidImage {
     /// characters of its runs: they push the picture along the line
     /// (0081ba58's logo sits after 36 spaces and three tabs).
     lead_chars: usize,
+    /// The picture follows its paragraph's text with only whitespace and
+    /// pictures after it: Word sets it at the end of the last text line.
+    after_text: bool,
+}
+
+/// The last painted body line: its ops start at `ops_start` on page
+/// `page` (a count of finished pages), its baseline sits `drop` below its
+/// top, and `room` is the measure its text left free (trailing space
+/// included, as a following picture sits after it).
+#[derive(Clone, Copy)]
+struct LastLine {
+    page: usize,
+    ops_start: usize,
+    drop: f32,
+    room: f32,
+    trail: f32,
+    align: Align,
 }
 
 struct LaidTextBox {
@@ -8003,6 +8020,7 @@ fn paragraph_block(
                 outline: None,
                 gap_before: 0.0,
                 lead_chars: 0,
+                after_text: false,
             },
         );
     }
@@ -12697,6 +12715,28 @@ fn lead_chars_before(dom: &Dom, para: NodeId, drawing: NodeId) -> usize {
     0
 }
 
+/// Text before `drawing` in its paragraph and none after it: the picture
+/// ends the paragraph's last line.
+fn trails_text(dom: &Dom, para: NodeId, drawing: NodeId) -> bool {
+    let mut before = false;
+    let mut seen = false;
+    for node in dom.descendants(para, None) {
+        if node == drawing {
+            seen = true;
+        } else if dom.name_is(node, &W::txbx_content()) {
+            return false;
+        } else if dom.name_is(node, &W::t())
+            && !element_text(dom, node).chars().all(char::is_whitespace)
+        {
+            if seen {
+                return false;
+            }
+            before = true;
+        }
+    }
+    before
+}
+
 /// Spaces between an inline picture and the picture run before it, as
 /// width: Word keeps them (0034561f's 16pt space sets its photos 4pt
 /// apart). A space is about a quarter em.
@@ -12825,6 +12865,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     outline: None,
                     gap_before: 0.0,
                     lead_chars: 0,
+                    after_text: false,
                 });
             }
             let child_slot = |slot: ImageSlot| match slot {
@@ -12878,6 +12919,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     outline: None,
                     gap_before: 0.0,
                     lead_chars: 0,
+                    after_text: false,
                 });
             }
             continue;
@@ -12926,6 +12968,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         outline: picture_outline(dom, drawing),
                         gap_before: space_before_drawing(dom, drawing),
                         lead_chars: lead_chars_before(dom, para, drawing),
+                        after_text: trails_text(dom, para, drawing),
                     });
                 } else {
                     out.push(LaidImage {
@@ -12953,6 +12996,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         outline: None,
                         gap_before: 0.0,
                         lead_chars: 0,
+                        after_text: false,
                     });
                 }
             }
@@ -13025,6 +13069,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         outline: None,
                         gap_before: 0.0,
                         lead_chars: 0,
+                        after_text: false,
                     });
                     continue;
                 };
@@ -13058,6 +13103,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     outline: None,
                     gap_before: 0.0,
                     lead_chars: 0,
+                    after_text: false,
                 });
             }
         }
@@ -15756,6 +15802,9 @@ struct Layout<'a> {
     /// Pen end and baseline of the last painted body line: where an
     /// inline picture that fits in that line sits.
     last_line_end: Option<(f32, f32)>,
+    /// How the last painted body line was set, so a picture that follows
+    /// its text can join it (see `LastLine`).
+    last_line: Option<LastLine>,
     /// The current page is its section's first (pgBorders `display`).
     section_first_page: bool,
     /// zOrder=front page-border ops per page index, appended after the
@@ -16124,6 +16173,7 @@ impl<'a> Layout<'a> {
             side_float: None,
             line_probe: LineProbe::default(),
             last_line_end: None,
+            last_line: None,
             section_first_page: true,
             front_border_ops: Vec::new(),
             para_top: y,
@@ -17571,6 +17621,7 @@ impl<'a> Layout<'a> {
                     && !(self.do_not_expand_shift_return && ends_br.get(line_i) == Some(&true)));
             let x = self.flow_left() + indent + extra + first_extra;
             let baseline = self.y;
+            let ops_start = self.current().ops.len();
             if line_i == 0
                 && let Some(mark) = marker
             {
@@ -17604,6 +17655,14 @@ impl<'a> Layout<'a> {
             }
             self.paint_line_number(baseline);
             self.last_line_end = Some((x + line_w, baseline));
+            self.last_line = Some(LastLine {
+                page: self.pages.len(),
+                ops_start,
+                drop,
+                room: leftover - trail,
+                trail,
+                align: style.align,
+            });
             // An exact line is exactly its pitch even under a taller face
             // (0016d88a's exact 10.6pt lines of 10.5pt MS Mincho).
             self.y -= if style.line_exact.is_some() {
@@ -23564,16 +23623,44 @@ fn layout(
                 // One no taller than the text sits on the last line's
                 // baseline and adds no height (0005cabe's 0.24pt dot pushed
                 // the page's last line over).
-                if has_ink && let Some((mut x, baseline)) = lay.last_line_end.take() {
+                let last_line = lay.last_line.take();
+                if has_ink && let Some((mut x, mut baseline)) = lay.last_line_end.take() {
                     let em = runs
                         .iter()
                         .filter(|r| !r.text.trim().is_empty())
                         .map(|r| r.style.size)
                         .fold(0.0_f32, f32::max);
+                    // A taller picture after the text joins its last line
+                    // when it fits: the line deepens to the picture, whose
+                    // bottom is the baseline (a2412654's "Showering" icon).
+                    let mut line = last_line.filter(|l| {
+                        l.page == lay.pages.len()
+                            && inline.len() == images.len()
+                            && inline.iter().all(|img| img.after_text)
+                    });
                     inline.retain(|img| {
                         let (dw, dh) = lay.image_wh(img);
                         if dh > em {
-                            return true;
+                            let Some(l) = line.as_mut().filter(|l| dw <= l.room) else {
+                                line = None;
+                                return true;
+                            };
+                            let dy = (dh - l.drop).max(0.0);
+                            let dx = match l.align {
+                                Align::Center => -(dw + l.trail) / 2.0,
+                                Align::Right => -(dw + l.trail),
+                                Align::Left | Align::Justify => 0.0,
+                            };
+                            for op in &mut lay.current().ops[l.ops_start..] {
+                                shift_op_y(op, -dy);
+                                shift_op_x(op, dx);
+                            }
+                            lay.y -= dy;
+                            baseline -= dy;
+                            x += dx;
+                            l.room -= dw;
+                            l.drop += dy;
+                            l.trail = 0.0;
                         }
                         lay.push_image(img, x, baseline, dw, dh);
                         x += dw;
@@ -25660,6 +25747,48 @@ fn shift_op_y(op: &mut Op, dy: f32) {
             for seg in segments {
                 for p in seg {
                     p.1 += dy;
+                }
+            }
+        }
+        Op::Watermark { .. } => {}
+    }
+}
+
+fn shift_op_x(op: &mut Op, dx: f32) {
+    match op {
+        Op::Text { x, .. }
+        | Op::FillRect { x, .. }
+        | Op::StrokeRect { x, .. }
+        | Op::Jpeg { x, .. }
+        | Op::Rgb { x, .. } => {
+            *x += dx;
+        }
+        Op::Line { x1, x2, .. } => {
+            *x1 += dx;
+            *x2 += dx;
+        }
+        Op::FillPoly { points, .. } | Op::StrokePoly { points, .. } => {
+            for p in points {
+                p.0 += dx;
+            }
+        }
+        Op::FillPath { contours, .. } => {
+            for p in contours.iter_mut().flatten() {
+                p.0 += dx;
+            }
+        }
+        Op::StrokePath { subpaths, .. } => {
+            for p in subpaths.iter_mut().flat_map(|(pts, _)| pts.iter_mut()) {
+                p.0 += dx;
+            }
+        }
+        Op::Cubic {
+            start, segments, ..
+        } => {
+            start.0 += dx;
+            for seg in segments {
+                for p in seg {
+                    p.0 += dx;
                 }
             }
         }

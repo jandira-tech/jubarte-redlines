@@ -5244,7 +5244,7 @@ fn placeable_wmf_blip_paints_rgb_ink() {
     );
     let docx = drawing_docx_media(
         &format!(
-            "<w:p><w:r><w:t>Before</w:t></w:r><w:r>{drawing}</w:r></w:p>\
+            "<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:p><w:r>{drawing}</w:r></w:p>\
              <w:p><w:r><w:t>AfterPic</w:t></w:r></w:p><w:sectPr/>"
         ),
         "clip.wmf",
@@ -5426,7 +5426,7 @@ fn undecodable_inline_blip_still_reserves_flow() {
     const WMF: &[u8] = b"\xd7\xcd\xc6\x9a\x00\x00not-an-image";
     let docx = drawing_docx_media(
         &format!(
-            "<w:p><w:r><w:t>Before</w:t></w:r><w:r>{drawing}</w:r></w:p>\
+            "<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:p><w:r>{drawing}</w:r></w:p>\
              <w:p><w:r><w:t>AfterPic</w:t></w:r></w:p><w:sectPr/>"
         ),
         "clip.wmf",
@@ -34879,5 +34879,92 @@ fn a_cell_style_not_based_on_normal_takes_the_table_styles_spacing_and_size() {
     assert!(
         unstyled < 14.0,
         "docDefaults' single spacing stays without a table style, got {unstyled}"
+    );
+}
+
+#[test]
+fn a_picture_whose_part_name_holds_an_ampersand_still_paints() {
+    // English corpus a2412654: the media part is named
+    // "image1.jpg&ehk=…&r=0&pid=OfficeInsert" and the relationship Target
+    // spells the ampersands as "&amp;". Word finds the picture; we looked up
+    // the escaped name, missed, and drew the 1in missing-picture box.
+    let pic = "<w:drawing><wp:inline><wp:extent cx=\"914400\" cy=\"914400\"/>\
+           <wp:docPr id=\"1\" name=\"Picture 0\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+             <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+             <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+           </a:graphicData></a:graphic></wp:inline></w:drawing>";
+    let plain = drawing_docx_media(
+        &format!("<w:p><w:r>{pic}</w:r></w:p><w:sectPr/>"),
+        "dot.png",
+        TINY_PNG,
+    );
+    let mut src = ZipArchive::new(Cursor::new(plain)).expect("docx zip");
+    let mut out = ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..src.len() {
+        let mut f = src.by_index(i).expect("entry");
+        let mut data = Vec::new();
+        f.read_to_end(&mut data).expect("read");
+        let name = match f.name() {
+            "word/media/dot.png" => "word/media/dot.png&ehk=1&r=0".to_string(),
+            n => n.to_string(),
+        };
+        if name == "word/_rels/document.xml.rels" {
+            data = String::from_utf8(data)
+                .expect("utf8")
+                .replace("media/dot.png\"", "media/dot.png&amp;ehk=1&amp;r=0\"")
+                .into_bytes();
+        }
+        out.start_file(name, SimpleFileOptions::default())
+            .expect("start");
+        out.write_all(&data).expect("write");
+    }
+    let docx = out.finish().expect("zip").into_inner();
+    let pdf = docx_to_pdf(&docx).expect("ampersand picture");
+    assert!(
+        String::from_utf8_lossy(&pdf).contains("/Subtype /Image"),
+        "the picture is found under its unescaped part name"
+    );
+}
+
+#[test]
+fn a_tall_picture_after_the_text_ends_its_last_line() {
+    // English corpus a2412654: "Showering " and then an 89pt inline icon.
+    // Word sets the icon on the text's line, one space after it, and drops
+    // the baseline to the icon's bottom; we started a new line under the
+    // text for the icon.
+    let pic = "<w:drawing><wp:inline><wp:extent cx=\"1129552\" cy=\"1129552\"/>\
+           <wp:docPr id=\"1\" name=\"Picture 0\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+             <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+             <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+           </a:graphicData></a:graphic></wp:inline></w:drawing>";
+    let body = |jc: &str| {
+        format!(
+            "<w:p><w:pPr>{jc}</w:pPr><w:r><w:rPr><w:sz w:val=\"36\"/></w:rPr><w:t xml:space=\"preserve\">ShoweringQ </w:t></w:r>\
+             <w:r>{pic}</w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        )
+    };
+    let text_y = |jc: &str| {
+        let pdf = docx_to_pdf(&drawing_docx_media(&body(jc), "dot.png", TINY_PNG))
+            .expect("text and picture");
+        pdf_glyph_text_xy(&pdf, "ShoweringQ").expect("text")
+    };
+    // The icon is 88.9pt tall from the top margin: the baseline is its
+    // bottom, not a text line above it.
+    let (x, y) = text_y("");
+    assert!(
+        (792.0 - 72.0 - 88.9 - y).abs() < 1.0,
+        "the text sits on the icon's bottom, got baseline {y}"
+    );
+    assert!(x < 73.0, "a left line starts at the margin, got {x}");
+    // Centred, the text and the icon centre together: the text starts
+    // left of where it would centre alone.
+    let (cx, _) = text_y("<w:jc w:val=\"center\"/>");
+    assert!(
+        cx < 306.0 - 50.0,
+        "the centred line holds the text and the icon, got x {cx}"
     );
 }
