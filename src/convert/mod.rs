@@ -4181,6 +4181,9 @@ enum NumFmt {
     IdeographZodiacTraditional,
     IdeographLegalTraditional,
     IdeographEnclosedCircle,
+    ChineseCounting,
+    ChineseCountingThousand,
+    TaiwaneseCountingThousand,
     JapaneseCounting,
     Aiueo,
     Iroha,
@@ -4488,6 +4491,9 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "ideographLegalTraditional" => NumFmt::IdeographLegalTraditional,
         "ideographEnclosedCircle" => NumFmt::IdeographEnclosedCircle,
         "japaneseCounting" => NumFmt::JapaneseCounting,
+        "chineseCounting" | "taiwaneseCounting" => NumFmt::ChineseCounting,
+        "chineseCountingThousand" => NumFmt::ChineseCountingThousand,
+        "taiwaneseCountingThousand" => NumFmt::TaiwaneseCountingThousand,
         "aiueo" => NumFmt::Aiueo,
         "iroha" => NumFmt::Iroha,
         "decimalFullWidth" => NumFmt::DecimalFullWidth,
@@ -4529,6 +4535,9 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::IdeographLegalTraditional => ideograph_legal_traditional_label(n),
         NumFmt::IdeographEnclosedCircle => ideograph_enclosed_circle_label(n),
         NumFmt::JapaneseCounting => japanese_counting_label(n),
+        NumFmt::ChineseCounting => chinese_counting_label(n),
+        NumFmt::ChineseCountingThousand => chinese_counting_thousand(n, '〇', '万'),
+        NumFmt::TaiwaneseCountingThousand => chinese_counting_thousand(n, '零', '萬'),
         NumFmt::Aiueo => cycle_cjk(&AIUEO, n),
         NumFmt::Iroha => cycle_cjk(&IROHA, n),
         NumFmt::DecimalFullWidth => decimal_fullwidth_label(n),
@@ -4761,6 +4770,87 @@ fn ideograph_enclosed_circle_label(n: u32) -> String {
     } else {
         ideograph_digital_label(n)
     }
+}
+
+const CHINESE_DIGITS: [char; 10] = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+
+/// chineseCounting / taiwaneseCounting as Word writes them: counting words
+/// to 九十九, then digit by digit with ○ (U+25CB) for zero (一○一).
+fn chinese_counting_label(n: u32) -> String {
+    let digit = |d: u32| CHINESE_DIGITS[d as usize];
+    match n {
+        0 => '○'.to_string(),
+        1..=9 => digit(n).to_string(),
+        10..=99 => {
+            let mut out = String::new();
+            if n >= 20 {
+                out.push(digit(n / 10));
+            }
+            out.push('十');
+            if !n.is_multiple_of(10) {
+                out.push(digit(n % 10));
+            }
+            out
+        }
+        _ => n
+            .to_string()
+            .chars()
+            .map(|c| match c {
+                '0' => '○',
+                c => digit(c.to_digit(10).unwrap_or(0)),
+            })
+            .collect(),
+    }
+}
+
+/// chineseCountingThousand / taiwaneseCountingThousand as Word writes them:
+/// 一百〇一, 一百一十, 一千〇一十, 一万〇一 (one `zero` per gap, 一十 after
+/// a higher unit, a bare 十 only at the front).
+fn chinese_counting_thousand(n: u32, zero: char, myriad: char) -> String {
+    // `front`: nothing precedes, so ten is a bare 十 (十九, but 一百一十).
+    fn below_myriad(n: u32, zero: char, front: bool) -> String {
+        let mut out = String::new();
+        let mut pending_zero = false;
+        for (div, unit) in [
+            (1000, Some('千')),
+            (100, Some('百')),
+            (10, Some('十')),
+            (1, None),
+        ] {
+            let d = (n / div) % 10;
+            if d == 0 {
+                pending_zero |= !out.is_empty();
+                continue;
+            }
+            if pending_zero {
+                out.push(zero);
+                pending_zero = false;
+            }
+            if !(unit == Some('十') && d == 1 && out.is_empty() && front) {
+                out.push(CHINESE_DIGITS[d as usize]);
+            }
+            if let Some(u) = unit {
+                out.push(u);
+            }
+        }
+        out
+    }
+    if n == 0 {
+        return zero.to_string();
+    }
+    if n < 10_000 {
+        return below_myriad(n, zero, true);
+    }
+    let mut out = chinese_counting_thousand(n / 10_000, zero, myriad);
+    out.push(myriad);
+    let low = n % 10_000;
+    if low > 0 {
+        if low < 1000 {
+            out.push(zero);
+        }
+        out.push_str(&below_myriad(low, zero, false));
+    }
+    out
 }
 
 /// MS-DOCX japaneseCounting: 一, 二, …, 十, 十一, 百, 千, 一万 (not
@@ -25484,7 +25574,7 @@ mod page_num_fmt_labels {
     use super::{
         NumFmt, chicago_label, decimal_fullwidth_label, format_num, ideograph_digital_label,
         ideograph_enclosed_circle_label, ideograph_legal_traditional_label,
-        ideograph_zodiac_traditional_label, japanese_counting_label,
+        ideograph_zodiac_traditional_label, japanese_counting_label, parse_num_fmt,
     };
 
     #[test]
@@ -25583,6 +25673,62 @@ mod page_num_fmt_labels {
         ] {
             assert_eq!(japanese_counting_label(n), want, "{n}");
             assert_eq!(format_num(NumFmt::JapaneseCounting, n), want, "{n}");
+        }
+    }
+
+    #[test]
+    fn chinese_and_taiwanese_counting_match_word() {
+        // Word's oracle (fixtures_500 00243d36 "一、", 0017ac0f): counting
+        // formats count to 99 then go digit-wise with ○ (U+25CB); the
+        // Thousand formats count through, zero 〇 (U+3007) / 零, myriad 万 / 萬.
+        let cases: [(&str, &[(u32, &str)]); 4] = [
+            (
+                "chineseCounting",
+                &[
+                    (1, "一"),
+                    (10, "十"),
+                    (11, "十一"),
+                    (20, "二十"),
+                    (21, "二十一"),
+                    (99, "九十九"),
+                    (100, "一○○"),
+                    (101, "一○一"),
+                    (110, "一一○"),
+                    (1001, "一○○一"),
+                    (10001, "一○○○一"),
+                ],
+            ),
+            ("taiwaneseCounting", &[(15, "十五"), (120, "一二○")]),
+            (
+                "chineseCountingThousand",
+                &[
+                    (10, "十"),
+                    (19, "十九"),
+                    (100, "一百"),
+                    (101, "一百〇一"),
+                    (110, "一百一十"),
+                    (1010, "一千〇一十"),
+                    (1100, "一千一百"),
+                    (10000, "一万"),
+                    (10001, "一万〇一"),
+                ],
+            ),
+            (
+                "taiwaneseCountingThousand",
+                &[
+                    (21, "二十一"),
+                    (101, "一百零一"),
+                    (111, "一百一十一"),
+                    (1001, "一千零一"),
+                    (10000, "一萬"),
+                    (10001, "一萬零一"),
+                ],
+            ),
+        ];
+        for (fmt, rows) in cases {
+            for &(n, want) in rows {
+                assert_eq!(format_num(parse_num_fmt(fmt), n), want, "{fmt} {n}");
+            }
         }
     }
 
