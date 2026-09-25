@@ -10556,7 +10556,10 @@ fn group_children(dom: &Dom, shape: NodeId, text: &GroupText) -> Vec<GroupChild>
         collect_group(
             dom,
             wgp,
-            [0.0, 0.0, 1.0, 1.0],
+            GroupFrame {
+                frac: [0.0, 0.0, 1.0, 1.0],
+                fill: None,
+            },
             text.theme,
             Some(text),
             &mut out,
@@ -10575,7 +10578,10 @@ fn group_pictures(dom: &Dom, drawing: NodeId) -> Vec<([f32; 4], NodeId)> {
         collect_group(
             dom,
             wgp,
-            [0.0, 0.0, 1.0, 1.0],
+            GroupFrame {
+                frac: [0.0, 0.0, 1.0, 1.0],
+                fill: None,
+            },
             &theme,
             None,
             &mut Vec::new(),
@@ -10631,25 +10637,48 @@ fn xfrm_box(dom: &Dom, xfrm: NodeId) -> Option<[f64; 4]> {
     ])
 }
 
+/// A group's place in the outer group's box and the fill its `grpFill`
+/// children inherit from the groups around it.
+#[derive(Clone, Copy)]
+struct GroupFrame {
+    frac: [f32; 4],
+    fill: Option<[f32; 3]>,
+}
+
 fn collect_group(
     dom: &Dom,
     grp: NodeId,
-    frac: [f32; 4],
+    frame: GroupFrame,
     theme: &ThemeFonts,
     text: Option<&GroupText>,
     out: &mut Vec<GroupChild>,
     pics: &mut Vec<([f32; 4], NodeId)>,
 ) {
+    let GroupFrame {
+        frac,
+        fill: parent_fill,
+    } = frame;
     let children: Vec<NodeId> = (0..dom.child_count(grp))
         .map(|i| dom.child_at(grp, i))
         .collect();
-    let Some(xfrm) = children
+    let grp_pr = children
         .iter()
-        .find(|c| local_name_is(dom, **c, "grpSpPr"))
-        .and_then(|pr| descendants_local(dom, *pr, "xfrm").into_iter().next())
+        .copied()
+        .find(|c| local_name_is(dom, *c, "grpSpPr"));
+    let Some(xfrm) = grp_pr.and_then(|pr| descendants_local(dom, pr, "xfrm").into_iter().next())
     else {
         return;
     };
+    // The group's own fill, which `a:grpFill` children take (003329b5's
+    // light-green label panels), else the enclosing group's.
+    let group_fill = grp_pr
+        .and_then(|pr| {
+            (0..dom.child_count(pr))
+                .map(|i| dom.child_at(pr, i))
+                .find(|c| local_name_is(dom, *c, "solidFill"))
+        })
+        .and_then(|f| scheme_color(dom, f, theme))
+        .or(parent_fill);
     let num = |local: &str, key: &str| {
         descendants_local(dom, xfrm, local)
             .into_iter()
@@ -10689,7 +10718,11 @@ fn collect_group(
                 .and_then(|pr| descendants_local(dom, pr, "xfrm").into_iter().next())
                 .and_then(|x| xfrm_box(dom, x));
             if let Some(b) = sub {
-                collect_group(dom, child, place(b), theme, text, out, pics);
+                let frame = GroupFrame {
+                    frac: place(b),
+                    fill: group_fill,
+                };
+                collect_group(dom, child, frame, theme, text, out, pics);
             }
         } else if local_name_is(dom, child, "wsp") {
             let Some(b) = descendants_local(dom, child, "xfrm")
@@ -10700,7 +10733,18 @@ fn collect_group(
                 continue;
             };
             let geom = shape_geom(dom, child);
-            let fill = shape_fill_color(dom, child, theme);
+            let takes_group_fill = descendants_local(dom, child, "spPr")
+                .into_iter()
+                .next()
+                .is_some_and(|sp| {
+                    (0..dom.child_count(sp))
+                        .any(|i| local_name_is(dom, dom.child_at(sp, i), "grpFill"))
+                });
+            let fill = if takes_group_fill {
+                group_fill
+            } else {
+                shape_fill_color(dom, child, theme)
+            };
             let line = shape_line_color(dom, child, theme);
             let custom = cust_geom(dom, child).map(std::rc::Rc::new);
             let polygon = geom_is_preset_polygon(geom) || custom.is_some();

@@ -4129,6 +4129,35 @@ fn blip(cx: &str, cy: &str, inner_open: &str, inner_close: &str) -> String {
 }
 
 #[test]
+fn a_group_fill_child_paints_in_the_groups_fill() {
+    // fixtures_500 003329b5: the "NOS RESSOURCES" panel is a group child
+    // with <a:grpFill/>, taking the group's light green. We drew nothing.
+    let group = "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"1270000\" cy=\"635000\"/><wp:wrapNone/><wp:docPr id=\"9\" name=\"Group\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">\
+             <wpg:wgp xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\" \
+               xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wpg:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"1270000\" cy=\"635000\"/>\
+                 <a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"1270000\" cy=\"635000\"/></a:xfrm>\
+                 <a:solidFill><a:srgbClr val=\"00FF00\"/></a:solidFill></wpg:grpSpPr>\
+               <wps:wsp><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"1270000\" cy=\"635000\"/></a:xfrm>\
+                 <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:grpFill/><a:ln><a:noFill/></a:ln></wps:spPr>\
+                 <wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:anchor></w:drawing>";
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r>{group}</w:r><w:r><w:t>Host</w:t></w:r></w:p><w:sectPr/>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("group fill");
+    let content = String::from_utf8_lossy(&pdf);
+    assert!(
+        content.contains("0.000 1.000 0.000 rg"),
+        "the child takes the group's green"
+    );
+}
+
+#[test]
 fn an_ellipse_picture_shows_through_an_oval() {
     // fixtures_500 003329b5: the photo's spPr is prstGeom "ellipse"; Word
     // crops it to the oval. We painted the whole rectangle.
