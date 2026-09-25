@@ -905,6 +905,22 @@ fn a_break_only_paragraphs_mark_keeps_its_space_before_in_the_next_column() {
 }
 
 #[test]
+fn an_east_asian_hint_leaves_cyrillic_letters_in_the_ascii_face() {
+    // fixtures_500 006ad742: w:hint="eastAsia" on Bulgarian text. Word
+    // paints the Cyrillic in the ascii/hAnsi face; we switched it to the
+    // East Asian one.
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\" \
+        w:eastAsia=\"Times New Roman\" w:hint=\"eastAsia\"/></w:rPr><w:t>гарантиране</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("hinted cyrillic");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("CourierNew"),
+        "Cyrillic stays in the ascii face"
+    );
+    assert!(!hay.contains("TimesNewRoman"), "not the East Asian face");
+}
+
+#[test]
 fn an_hansi_face_paints_only_the_characters_past_ascii() {
     // fixtures_500 003329b5's footer: rFonts hAnsi="Calibri" with no ascii
     // face. Word paints the ASCII letters in the inherited Trebuchet and

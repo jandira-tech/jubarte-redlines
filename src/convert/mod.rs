@@ -3276,10 +3276,12 @@ fn paint_family<'a>(style: &'a RunStyle, text: &str) -> &'a str {
     // w:hint="eastAsia" decides only characters either script may own
     // (curly quotes, dashes, symbols); Latin letters and digits keep the
     // ascii/hAnsi face (00d2ca27's hinted "Suppl 1." is Times New Roman).
+    // Letters of any other script keep it too (006ad742's hinted Cyrillic
+    // "гарантиране" is Arial in Word, not the East Asian face).
     if let Some(ea) = style.family_ea.as_deref()
         && (text.chars().any(is_cjk)
             || (style.hint == FontHint::EastAsia
-                && !text.chars().any(|c| c.is_ascii_alphanumeric())
+                && !text.chars().any(|c| c.is_alphanumeric() && !is_cjk(c))
                 && !text.is_ascii()))
     {
         return ea;
