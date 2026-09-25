@@ -6678,6 +6678,24 @@ fn cell_para_face(fonts: &Fonts, para: &CellPara) -> (f32, FaceRef) {
 /// A cell paragraph's (size, line box) in `cell_para_face`.
 fn cell_para_line_box(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
     let (size, face_id) = cell_para_face(fonts, para);
+    // A list marker only lifts the line, as in the body: the text keeps
+    // its own part below the baseline (003416d6's TNR 12 numbers beside
+    // Verdana 8 items step 12.9pt in Word, not TNR's 13.8).
+    let marker = para.runs.first().filter(|r| r.list_marker);
+    let text = para
+        .runs
+        .iter()
+        .filter(|r| !r.list_marker && !r.text.trim().is_empty())
+        .reduce(|a, b| if b.style.size > a.style.size { b } else { a });
+    if let (Some(m), Some(t)) = (marker, text) {
+        let face_of =
+            |r: &TextRun| fonts.get(fonts.resolve(&r.style.family, r.style.bold, r.style.italic));
+        let (mf, tf) = (face_of(m), face_of(t));
+        let (ms, ts) = (m.style.size.max(1.0), t.style.size.max(1.0));
+        let up = mf.single_line_pt(ms) - mf.line_descent_pt(ms);
+        let natural = tf.single_line_pt(ts).max(up + tf.line_descent_pt(ts));
+        return (size, line_box_from_natural(natural, &para.style));
+    }
     (size, para_line_box(fonts.get(face_id), size, &para.style))
 }
 
@@ -19852,7 +19870,7 @@ impl<'a> Layout<'a> {
                     let mut nlines = 0usize;
                     for para in &cell.paras {
                         let (size, face_id) = cell_para_face(self.fonts, para);
-                        let line_box = para_line_box(self.fonts.get(face_id), size, &para.style);
+                        let line_box = cell_para_line_box(self.fonts, para).1;
                         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
                         let (lines, breaks) =
                             wrap_runs_marked(self.fonts, &para.runs, first_w, rest_w, false);

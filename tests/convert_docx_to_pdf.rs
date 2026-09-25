@@ -2796,6 +2796,42 @@ fn auto_spacing_drops_between_items_of_one_list() {
 }
 
 #[test]
+fn a_cell_list_marker_only_lifts_its_line() {
+    // fixtures_500 003416d6: TNR 12 numbers beside Verdana 8 items in a
+    // table cell step 12.9pt in Word (the number's part above the baseline
+    // over the text's part below); we stepped TNR's whole 13.8.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/><w:lvlText w:val=\"%1\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\
+              <w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"24\"/></w:rPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let item = |t: &str| {
+        format!(
+            "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:rPr><w:rFonts w:ascii=\"Verdana\" w:hAnsi=\"Verdana\"/><w:sz w:val=\"16\"/></w:rPr><w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"dxa\"/></w:tcPr>{}{}</w:tc></w:tr></w:tbl><w:sectPr/>",
+        item("ItemOne"),
+        item("ItemTwo")
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("cell list");
+    let one = pdf_glyph_text_xy(&pdf, "ItemOne").expect("one").1;
+    let two = pdf_glyph_text_xy(&pdf, "ItemTwo").expect("two").1;
+    assert!(
+        one - two < 13.3,
+        "the marker lifts, the text sets the depth; pitch={}",
+        one - two
+    );
+}
+
+#[test]
 fn a_list_paragraph_in_a_text_box_keeps_its_marker_and_indent() {
     // fixtures_500 003329b5: the "NOS METHODES" text box lists its items
     // with Symbol "*" bullets at the level's indent. Box paragraphs were
