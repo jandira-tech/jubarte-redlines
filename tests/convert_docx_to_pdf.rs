@@ -4319,6 +4319,26 @@ fn an_ellipse_picture_shows_through_an_oval() {
 }
 
 #[test]
+fn spaces_and_tabs_push_a_lone_inline_picture_along_its_line() {
+    // fixtures_500 0081ba58: a logo paragraph of spaces and tabs before an
+    // inline picture. Word draws the picture after them (x 259.7); we drew
+    // it at the margin.
+    let pic = blip("457200", "457200", "<wp:inline>", "</wp:inline>");
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">          </w:t></w:r><w:r><w:tab/></w:r><w:r><w:tab/></w:r>\
+         <w:r>{pic}</w:r></w:p><w:sectPr/>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("lead picture");
+    let x = pdf_image_boxes(&pdf).first().expect("picture").0;
+    // 72pt margin + ten spaces, then two tabs: the default stops at 36 and
+    // 72 past the margin put the picture at 144.
+    assert!(
+        (x - 144.0).abs() < 1.0,
+        "the picture follows its lead; x={x}"
+    );
+}
+
+#[test]
 fn an_inline_pictures_effect_extent_takes_room_in_its_line() {
     // fixtures_500 00319da4 (118 files carry one): Word lays an inline
     // picture out at its extent plus wp:effectExtent. Checked in Word: the

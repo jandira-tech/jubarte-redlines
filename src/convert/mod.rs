@@ -1554,6 +1554,10 @@ struct LaidImage {
     /// The width of the spaces between this inline picture and the one
     /// before it in the paragraph (0034561f's photos stand 4pt apart).
     gap_before: f32,
+    /// Spaces and tabs before the paragraph's first inline picture, as
+    /// characters of its runs: they push the picture along the line
+    /// (0081ba58's logo sits after 36 spaces and three tabs).
+    lead_chars: usize,
 }
 
 struct LaidTextBox {
@@ -2164,7 +2168,10 @@ fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop], default_tab: f32) -> Ta
         }
     }
     let grid = if default_tab > 0.5 { default_tab } else { 36.0 };
-    let rel = (x - origin).max(0.0);
+    // A tab standing exactly on a default stop goes to the next one: 3 x
+    // 35.4 divides to 2.9999 in f32 and sent the tab nowhere (0081ba58's
+    // three tabs before its logo).
+    let rel = (x - origin).max(0.0) + 0.01;
     TabStop {
         pos: origin + ((rel / grid).floor() + 1.0) * grid,
         align: TabAlign::Left,
@@ -3930,6 +3937,21 @@ fn parse_pg_borders(dom: &Dom, pb: NodeId) -> PageBorders {
             _ => BorderDisplay::AllPages,
         },
         back: attr_any(dom, pb, "zOrder") == Some("back"),
+    }
+}
+
+#[cfg(test)]
+mod default_tab_tests {
+    use super::*;
+
+    #[test]
+    fn a_tab_on_a_default_stop_goes_to_the_next_one() {
+        // 0081ba58: three tabs after a first one landed on 3 x 35.4 stayed
+        // there (the f32 quotient was 2.9999), losing two stops.
+        let origin = 63.8;
+        let on_stop = origin + 3.0 * 35.4;
+        let next = next_tab_x(on_stop, origin, &[], 35.4);
+        assert!((next - (origin + 4.0 * 35.4)).abs() < 0.01, "{next}");
     }
 }
 
@@ -7346,6 +7368,7 @@ fn paragraph_block(
                 tail_anchor: false,
                 outline: None,
                 gap_before: 0.0,
+                lead_chars: 0,
             },
         );
     }
@@ -11743,6 +11766,32 @@ fn inside_text_box(dom: &Dom, node: NodeId, top: NodeId) -> bool {
     false
 }
 
+/// Characters (spaces, tabs) of the paragraph before `drawing`, when only
+/// whitespace precedes it and it is the paragraph's first drawing; else 0.
+fn lead_chars_before(dom: &Dom, para: NodeId, drawing: NodeId) -> usize {
+    let mut n = 0;
+    for node in dom.descendants(para, None) {
+        if node == drawing {
+            return n;
+        }
+        if dom.name_is(node, &W::drawing()) || dom.name_is(node, &W::txbx_content()) {
+            return 0;
+        }
+        if dom.name_is(node, &W::t()) {
+            let text = element_text(dom, node);
+            if !text.chars().all(|c| c == ' ') {
+                return 0;
+            }
+            n += text.chars().count();
+        } else if dom.name_is(node, &W::name("tab"))
+            && dom.ancestors(node, Some(&W::name("tabs"))).is_empty()
+        {
+            n += 1;
+        }
+    }
+    0
+}
+
 /// Spaces between an inline picture and the picture run before it, as
 /// width: Word keeps them (0034561f's 16pt space sets its photos 4pt
 /// apart). A space is about a quarter em.
@@ -11865,6 +11914,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     tail_anchor: false,
                     outline: None,
                     gap_before: 0.0,
+                    lead_chars: 0,
                 });
             }
             continue;
@@ -11908,6 +11958,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         tail_anchor: false,
                         outline: picture_outline(dom, drawing),
                         gap_before: space_before_drawing(dom, drawing),
+                        lead_chars: lead_chars_before(dom, para, drawing),
                     });
                 } else {
                     out.push(LaidImage {
@@ -11934,6 +11985,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         tail_anchor: false,
                         outline: None,
                         gap_before: 0.0,
+                        lead_chars: 0,
                     });
                 }
             }
@@ -12005,6 +12057,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         tail_anchor: false,
                         outline: None,
                         gap_before: 0.0,
+                        lead_chars: 0,
                     });
                     continue;
                 };
@@ -12037,6 +12090,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     tail_anchor: false,
                     outline: None,
                     gap_before: 0.0,
+                    lead_chars: 0,
                 });
             }
         }
@@ -17651,10 +17705,33 @@ impl<'a> Layout<'a> {
         imgs: &[&LaidImage],
         style: &ParaStyle,
         mark: Option<&RunStyle>,
+        runs: &[TextRun],
     ) {
         if imgs.is_empty() {
             return;
         }
+        // The whitespace before the first picture, laid out like text on
+        // the paragraph's tab stops.
+        let lead = match imgs.first().map(|img| img.lead_chars) {
+            Some(n) if n > 0 && matches!(style.align, Align::Left | Align::Justify) => {
+                let mut left = n;
+                let mut prefix = Vec::new();
+                for run in runs {
+                    if left == 0 {
+                        break;
+                    }
+                    let take: String = run.text.chars().take(left).collect();
+                    left -= take.chars().count();
+                    prefix.push(run.with_text(take));
+                }
+                let stops = std::mem::replace(&mut self.tab_stops, style.tab_stops.clone());
+                let x0 = self.page.margin_l + style.indent_left;
+                let w = self.tab_line_width(&prefix, x0);
+                self.tab_stops = stops;
+                w
+            }
+            _ => 0.0,
+        };
         self.page_has_body = true;
         // 00762acc's logo at line 360: Word adds (1.5 - 1) x the mark's
         // single line under the picture, as in chrome picture paragraphs.
@@ -17674,7 +17751,8 @@ impl<'a> Layout<'a> {
         let left = self.page.margin_l + style.indent_left;
         let room = self.content_width() - style.indent_left - style.indent_right;
         let mut row: Vec<(&LaidImage, f32, f32)> = Vec::new();
-        let flush = |lay: &mut Self, row: &mut Vec<(&LaidImage, f32, f32)>| {
+        let mut lead_now = lead;
+        let mut flush = |lay: &mut Self, row: &mut Vec<(&LaidImage, f32, f32)>| {
             if row.is_empty() {
                 return;
             }
@@ -17687,8 +17765,9 @@ impl<'a> Layout<'a> {
             let mut x = match style.align {
                 Align::Center => left + spare * 0.5,
                 Align::Right => left + spare,
-                Align::Left | Align::Justify => left,
+                Align::Left | Align::Justify => left + lead_now,
             };
+            lead_now = 0.0;
             for (i, (img, dw, dh)) in row.drain(..).enumerate() {
                 if i > 0 {
                     x += img.gap_before;
@@ -22052,7 +22131,7 @@ fn layout(
                 let mark = (!has_ink)
                     .then(|| runs.first().map(|r| &r.style).or(style.mark_run.as_deref()))
                     .flatten();
-                lay.emit_inline_pictures(&inline, &style, mark);
+                lay.emit_inline_pictures(&inline, &style, mark, runs);
                 for img in images
                     .iter()
                     .filter(|img| !matches!(img.slot, ImageSlot::Flow))
