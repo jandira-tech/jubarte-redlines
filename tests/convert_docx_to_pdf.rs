@@ -33657,3 +33657,63 @@ fn a_style_numbered_through_another_styles_level_gets_no_number() {
         "Subpoint starts at level 0's first line (720 - 432 twips); x={x}"
     );
 }
+
+#[test]
+fn each_diagram_paints_its_own_drawing_part() {
+    // docxide-pdf case59: four SmartArt diagrams, each data part naming its
+    // own drawing in dsp:dataModelExt/@relId. We painted the document's
+    // first diagramDrawing in all of them.
+    let diagram = |dm: &str| {
+        format!(
+            "<w:p><w:r><w:drawing><wp:inline xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\">\
+               <wp:extent cx=\"2540000\" cy=\"1270000\"/><wp:docPr id=\"1\" name=\"Diagram\"/>\
+               <a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+                 <a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\">\
+                   <dgm:relIds xmlns:dgm=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\" r:dm=\"{dm}\"/>\
+                 </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"
+        )
+    };
+    let data = |rid: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><dgm:dataModel \
+               xmlns:dgm=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\" \
+               xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><dgm:ptLst/>\
+               <dgm:extLst><a:ext uri=\"http://schemas.microsoft.com/office/drawing/2008/diagram\">\
+                 <dsp:dataModelExt xmlns:dsp=\"http://schemas.microsoft.com/office/drawing/2008/diagram\" relId=\"{rid}\"/>\
+               </a:ext></dgm:extLst></dgm:dataModel>"
+        )
+    };
+    let drawing = |rgb: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><dsp:drawing \
+               xmlns:dsp=\"http://schemas.microsoft.com/office/drawing/2008/diagram\" \
+               xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><dsp:spTree><dsp:sp><dsp:spPr>\
+               <a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"1270000\" cy=\"635000\"/></a:xfrm>\
+               <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"{rgb}\"/></a:solidFill>\
+               </dsp:spPr></dsp:sp></dsp:spTree></dsp:drawing>"
+        )
+    };
+    let body = format!("{}{}<w:sectPr/>", diagram("rIdD1"), diagram("rIdD2"));
+    let docx = hf_docx(
+        &body,
+        &[
+            ("rIdD1", "diagramData", "diagrams/data1.xml"),
+            ("rIdD2", "diagramData", "diagrams/data2.xml"),
+            ("rIdG1", "diagramDrawing", "diagrams/drawing1.xml"),
+            ("rIdG2", "diagramDrawing", "diagrams/drawing2.xml"),
+        ],
+        &[
+            ("word/diagrams/data1.xml", data("rIdG1")),
+            ("word/diagrams/data2.xml", data("rIdG2")),
+            ("word/diagrams/drawing1.xml", drawing("FF0000")),
+            ("word/diagrams/drawing2.xml", drawing("0000FF")),
+        ],
+    );
+    let pdf = docx_to_pdf(&docx).expect("two diagrams");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(hay.contains("1.000 0.000 0.000 rg"), "diagram 1 is red");
+    assert!(
+        hay.contains("0.000 0.000 1.000 rg"),
+        "diagram 2 is blue, its own drawing"
+    );
+}

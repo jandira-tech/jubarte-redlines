@@ -10865,12 +10865,17 @@ fn collect_textboxes_styled(
                 });
                 continue;
             }
-            if !object || diagram {
+            // A diagram without labels still paints its drawing's shapes.
+            let drawn = diagram
+                && src
+                    .and_then(|(pkg, main)| load_diag_shapes(pkg, main, dom, shape, theme))
+                    .is_some_and(|v| !v.is_empty());
+            if !object || (diagram && !drawn) {
                 continue;
             }
         }
         let diag_shapes = if diagram {
-            src.and_then(|(pkg, main)| load_diag_shapes(pkg, main, theme))
+            src.and_then(|(pkg, main)| load_diag_shapes(pkg, main, dom, shape, theme))
                 .unwrap_or_default()
         } else {
             Vec::new()
@@ -11569,8 +11574,29 @@ fn diagram_label_runs(
         .collect()
 }
 
-fn load_diag_shapes(pkg: &PartFs, main: &str, theme: &ThemeFonts) -> Option<Vec<DiagShape>> {
-    let xml = part_xml_by_rel_kind(pkg, main, "diagramDrawing")?;
+/// The drawing part of this diagram: its `dgm:relIds/@r:dm` data part
+/// names it in `dsp:dataModelExt/@relId` (docxide case59's four diagrams
+/// each have their own; the first diagramDrawing painted all four).
+fn diagram_drawing_xml(pkg: &PartFs, main: &str, dom: &Dom, shape: NodeId) -> Option<String> {
+    let ids = descendants_local(dom, shape, "relIds").into_iter().next()?;
+    let dm = attr_any(dom, ids, "dm")?;
+    let data = pkg.part_string(&rel_target_path(pkg, main, dm)?)?;
+    let ext = data.find("dataModelExt")?;
+    let rest = &data[ext..];
+    let at = rest.find("relId=\"")? + "relId=\"".len();
+    let rid = &rest[at..at + rest[at..].find('"')?];
+    pkg.part_string(&rel_target_path(pkg, main, rid)?)
+}
+
+fn load_diag_shapes(
+    pkg: &PartFs,
+    main: &str,
+    host: &Dom,
+    shape: NodeId,
+    theme: &ThemeFonts,
+) -> Option<Vec<DiagShape>> {
+    let xml = diagram_drawing_xml(pkg, main, host, shape)
+        .or_else(|| part_xml_by_rel_kind(pkg, main, "diagramDrawing"))?;
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
     let root = dom.root(doc)?;
@@ -11631,13 +11657,17 @@ fn is_near_white(c: [f32; 3]) -> bool {
     c[0] > 0.95 && c[1] > 0.95 && c[2] > 0.95
 }
 
+/// A `dsp:sp` fill: a scheme slot or an explicit sRGB (docxide case37/59's
+/// srgbClr shapes were dropped as unfilled).
 fn diag_solid_fill(dom: &Dom, sp: NodeId, theme: &ThemeFonts) -> Option<[f32; 3]> {
-    let fill = descendants_local(dom, sp, "solidFill").into_iter().next()?;
-    descendants_local(dom, fill, "schemeClr")
+    let fill = descendants_local(dom, sp, "solidFill")
         .into_iter()
-        .next()
-        .and_then(|n| attr_any(dom, n, "val"))
-        .and_then(|slot| theme.slot_color(slot))
+        .find(|f| {
+            !dom.ancestors(*f, None)
+                .iter()
+                .any(|a| local_name_is(dom, *a, "ln"))
+        })?;
+    scheme_color(dom, fill, theme)
 }
 
 fn diag_ln_stroke(dom: &Dom, sp: NodeId, theme: &ThemeFonts) -> Option<([f32; 3], f32)> {
@@ -11645,11 +11675,10 @@ fn diag_ln_stroke(dom: &Dom, sp: NodeId, theme: &ThemeFonts) -> Option<([f32; 3]
     if !descendants_local(dom, ln, "noFill").is_empty() {
         return None;
     }
-    let color = descendants_local(dom, ln, "schemeClr")
+    let color = descendants_local(dom, ln, "solidFill")
         .into_iter()
         .next()
-        .and_then(|n| attr_any(dom, n, "val"))
-        .and_then(|slot| theme.slot_color(slot))?;
+        .and_then(|f| scheme_color(dom, f, theme))?;
     if is_near_white(color) {
         return None;
     }
