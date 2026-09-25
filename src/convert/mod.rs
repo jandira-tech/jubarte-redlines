@@ -12785,6 +12785,64 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
         // not stretched over all of it (the Achensee redline header logo).
         let group_pics = group_pictures(dom, drawing);
         if !group_pics.is_empty() {
+            // The group wraps text as one box (01242a0a: Word sets the
+            // caption below a two-picture group; each picture wrapping on
+            // its own left a band beside the second one). Its pictures
+            // then paint without wrapping.
+            let wraps = matches!(
+                slot,
+                ImageSlot::Float {
+                    wrap_square: true,
+                    ..
+                } | ImageSlot::Float {
+                    wrap_top_bottom: true,
+                    ..
+                }
+            );
+            if wraps {
+                out.push(LaidImage {
+                    w,
+                    h,
+                    kind: ImageKind::Reserve,
+                    slot,
+                    behind,
+                    z,
+                    crop: None,
+                    rotate_deg: 0.0,
+                    oval: false,
+                    chrome_align: Align::Left,
+                    chrome_lead: false,
+                    chrome_flow: false,
+                    chrome_under_table: false,
+                    inset: [0.0; 4],
+                    chrome_leading: None,
+                    chrome_tab_line: None,
+                    chrome_drop: 0.0,
+                    chrome_drop_tab: None,
+                    chrome_para: 0,
+                    chrome_after: 0.0,
+                    tail_anchor: false,
+                    outline: None,
+                    gap_before: 0.0,
+                    lead_chars: 0,
+                });
+            }
+            let child_slot = |slot: ImageSlot| match slot {
+                ImageSlot::Float { .. } if wraps => {
+                    let mut s = slot;
+                    if let ImageSlot::Float {
+                        wrap_square,
+                        wrap_top_bottom,
+                        ..
+                    } = &mut s
+                    {
+                        *wrap_square = false;
+                        *wrap_top_bottom = false;
+                    }
+                    s
+                }
+                other => other,
+            };
             for (frac, pic) in group_pics {
                 let Some(bytes) = descendants_local(dom, pic, "blip")
                     .into_iter()
@@ -12797,7 +12855,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     w: w * frac[2],
                     h: h * frac[3],
                     kind: decode_image(bytes).unwrap_or(ImageKind::Reserve),
-                    slot: shift_slot(slot, w * frac[0], h * frac[1]),
+                    slot: child_slot(shift_slot(slot, w * frac[0], h * frac[1])),
                     behind,
                     z,
                     crop: src_rect_frac(dom, pic),

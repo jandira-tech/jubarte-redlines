@@ -12900,6 +12900,53 @@ fn a_header_tab_with_no_stop_left_on_the_line_starts_the_next_line() {
 }
 
 #[test]
+fn a_wrapped_picture_group_is_one_obstacle() {
+    // fixtures_500 01242a0a: a wrapSquare wpg group of two pictures fills
+    // the column (427.8pt from 15.8pt in). Word sets the caption below the
+    // group; we wrapped each picture on its own and set the caption in the
+    // band left of the second one, over the first.
+    let pic = |x: u64| {
+        format!(
+            "<pic:pic><pic:nvPicPr><pic:cNvPr id=\"{x}\" name=\"p\"/><pic:cNvPicPr/></pic:nvPicPr>\
+             <pic:blipFill><a:blip r:embed=\"rIdImg\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+             <pic:spPr><a:xfrm><a:off x=\"{x}\" y=\"0\"/><a:ext cx=\"2716530\" cy=\"2438400\"/></a:xfrm>\
+             <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"
+        )
+    };
+    let body = |title: &str, off: u32| {
+        format!(
+            "<w:p><w:r><w:t>{title}</w:t></w:r><w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" \
+           simplePos=\"0\" relativeHeight=\"2\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"column\"><wp:posOffset>200936</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>{off}</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"5433060\" cy=\"1330325\"/><wp:wrapSquare wrapText=\"bothSides\"/><wp:docPr id=\"5\" name=\"Group 5\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">\
+           <wpg:wgp xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">\
+           <wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"5433060\" cy=\"1330325\"/>\
+           <a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"5433060\" cy=\"2438400\"/></a:xfrm></wpg:grpSpPr>{}{}</wpg:wgp>\
+           </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>\
+         <w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:t>CaptionQ</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+            pic(0),
+            pic(2716530)
+        )
+    };
+    let caption_y = |title: &str, off: u32| {
+        let pdf = docx_to_pdf(&drawing_docx_media(&body(title, off), "dot.png", TINY_PNG))
+            .expect("group");
+        pdf_glyph_text_xy(&pdf, "CaptionQ").expect("caption").1
+    };
+    // The group spans 72 down to 72 + 104.7 from the top, over the
+    // caption's first line.
+    let y = caption_y("", 0);
+    assert!(
+        y < 792.0 - 72.0 - 104.7,
+        "the caption sits below the group, got baseline {y}"
+    );
+}
+
+#[test]
 fn header_runs_take_their_character_style() {
     // fixtures_500 004b3b3d: the header's "1/1" runs carry rStyle
     // PageNumber (8pt) and no size of their own. Word's header line is 8pt;
