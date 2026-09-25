@@ -4832,7 +4832,9 @@ fn bullet_glyph(raw: &str) -> String {
     // comments-lots family ~0.008–0.016 and potpourri only +0.006. Keep
     // U+2022; Symbol paints a missing WinAnsi 0x95.
     let t = raw.trim();
-    if t.is_empty() || t.chars().any(|c| (c as u32) >= 0xF000) {
+    // Other symbol-font code points (003329b5's Symbol U+F02A asterisk)
+    // paint through the marker font's own symbol cmap, as Word draws them.
+    if t.is_empty() || t == "\u{F0B7}" {
         return "• ".into();
     }
     format!("{t} ")
@@ -31851,6 +31853,8 @@ mod numbering_tests {
     #[test]
     fn private_use_bullet_becomes_dot() {
         assert_eq!(bullet_glyph("\u{F0B7}"), "• ");
+        // 003329b5: Symbol's asterisk stays itself for the Symbol marker.
+        assert_eq!(bullet_glyph("\u{F02A}"), "\u{F02A} ");
         assert_eq!(bullet_glyph("o"), "o ");
     }
 
