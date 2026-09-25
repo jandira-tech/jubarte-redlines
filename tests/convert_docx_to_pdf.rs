@@ -6067,13 +6067,14 @@ fn official_mcdoc_hello_honors_textbox_first_line_indent() {
 fn official_mcdoc_paints_the_hello_textbox() {
     // mcdoc is a one-page Word oracle (~40 ITT). "hello" lives in a
     // wrapNone wps:txbx inside mc:AlternateContent. Convert emits only
-    // the paragraph end-mark (no 0.60 w box).
+    // the paragraph end-mark. Its a:ln is 9525 EMU black: Word's own PDF
+    // strokes the box 0.75pt (the tuned 0.60 hairline was not Word).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/mcdoc.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert mcdoc");
     assert_eq!(pdf_page_count(&pdf), 1, "mcdoc is one A4 page");
     let text = String::from_utf8_lossy(&pdf);
     assert!(
-        text.contains("0.60 w"),
+        text.contains("0.75 w 0.000 0.000 0.000 RG"),
         "hello textbox must stroke; tail {}",
         &text[text.len().saturating_sub(240)..]
     );
@@ -35087,4 +35088,37 @@ fn a_full_width_picture_ahead_of_the_text_opens_its_paragraph() {
         y < 792.0 - 72.0 - 80.0,
         "the text sits under the banner, got baseline {y}"
     );
+}
+
+#[test]
+fn a_text_box_outline_takes_its_line_colour_and_width() {
+    // English corpus 5fb9cedf: each form box is outlined in a 3pt
+    // accent-blue a:ln (5B9BD5 at lumMod 75%). Word strokes that; we drew
+    // every text rectangle with a 0.6pt black hairline.
+    let tbox = "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"2540000\" cy=\"1270000\"/><wp:wrapNone/><wp:docPr id=\"9\" name=\"Box\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>\
+                 <a:solidFill><a:srgbClr val=\"FFFFFF\"/></a:solidFill>\
+                 <a:ln w=\"38100\"><a:solidFill><a:srgbClr val=\"5B9BD5\"><a:lumMod val=\"75000\"/></a:srgbClr></a:solidFill></a:ln></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:p><w:r><w:t>BoxedQ</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>";
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r>{tbox}</w:r><w:r><w:t>Host</w:t></w:r></w:p><w:sectPr/>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("outlined box");
+    let text = String::from_utf8_lossy(&pdf);
+    let blue_3pt = text.lines().any(|l| {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        f.len() > 5
+            && f[0] == "3.00"
+            && f[1] == "w"
+            && f[5] == "RG"
+            && f[4].parse::<f32>().unwrap_or(0.0) > f[2].parse::<f32>().unwrap_or(1.0) + 0.3
+    });
+    assert!(blue_3pt, "the box is stroked 3pt in its accent blue");
 }

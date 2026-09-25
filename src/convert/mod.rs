@@ -11274,6 +11274,9 @@ fn collect_textboxes_styled(
             .flatten();
         let mut fill = shape_fill_color(dom, shape, theme);
         let line = shape_line_color(dom, shape, theme);
+        let explicit_ln = descendants_local(dom, shape, "ln")
+            .into_iter()
+            .any(|ln| !descendants_local(dom, ln, "solidFill").is_empty());
         let geom = shape_geom(dom, shape);
         if matches!(
             geom,
@@ -11441,9 +11444,15 @@ fn collect_textboxes_styled(
                 && (vml_slot.is_some() || !(fill.is_some() && line.is_none())),
             fill,
             // A text-bearing preset polygon still outlines in its own line
-            // colour; the rectangle keeps the tuned 0.6 black path.
-            line: line.filter(|_| geom_is_preset_polygon(geom)),
-            line_width: 1.0,
+            // colour. A rectangle does too when its a:ln names a fill: Word
+            // strokes 5fb9cedf's form boxes 3pt in their accent blue. One
+            // with only a style reference keeps the tuned 0.6 black path.
+            line: line.filter(|_| geom_is_preset_polygon(geom) || explicit_ln),
+            line_width: if explicit_ln {
+                shape_line_width(dom, shape, theme)
+            } else {
+                1.0
+            },
             geom,
             reserve_only: false,
             behind,
