@@ -33813,3 +33813,26 @@ fn a_bottom_aligned_cells_line_sits_level_with_its_neighbours_last_line() {
         "level baselines; bot={bot} two={two}"
     );
 }
+
+#[test]
+fn an_ideographic_space_only_paragraph_is_a_line_of_its_mark() {
+    // Live Word (fixtures_500 0041d394): a paragraph holding only a 48pt
+    // U+3000 under a 12pt mark is a 12pt line, as plain spaces are; we
+    // sized it by the 48pt space and pushed the poster onto a second page.
+    let step = |text: &str| {
+        let body = format!(
+            "<w:p><w:r><w:t>Before</w:t></w:r></w:p>\
+             <w:p><w:pPr><w:rPr><w:sz w:val=\"24\"/></w:rPr></w:pPr>\
+               <w:r><w:rPr><w:sz w:val=\"96\"/></w:rPr><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p>\
+             <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("space line");
+        pdf_glyph_text_xy(&pdf, "Before").expect("Before").1
+            - pdf_glyph_text_xy(&pdf, "After").expect("After").1
+    };
+    let (ascii, ideo) = (step("   "), step("\u{3000}"));
+    assert!(
+        (ascii - ideo).abs() < 0.5,
+        "U+3000 sizes like spaces; ascii={ascii} ideo={ideo}"
+    );
+}

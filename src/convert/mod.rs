@@ -7647,10 +7647,14 @@ fn paragraph_block(
     // A paragraph of plain spaces is a line of its mark, like an empty one
     // (checked in Word: 28pt spaces under a 12pt mark make a 12pt line,
     // 12pt spaces under a 28pt mark a 28pt one; 00195f87's 12pt spaces
-    // under a 14pt mark stood 2.1pt short).
+    // under a 14pt mark stood 2.1pt short). An ideographic space counts
+    // (live Word: a 48pt U+3000 under a 12pt mark is a 12pt line;
+    // 0041d394's 48pt one kept Word's poster on one page).
     let spaces_only = !runs.is_empty()
         && runs.iter().all(|r| {
-            !r.list_marker && matches!(r.field, FieldKind::None) && r.text.chars().all(|c| c == ' ')
+            !r.list_marker
+                && matches!(r.field, FieldKind::None)
+                && r.text.chars().all(|c| c == ' ' || c == '\u{3000}')
         });
     if spaces_only && floats_only && boxes_float {
         let mut mark = rstyle.clone();
