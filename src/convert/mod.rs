@@ -14505,6 +14505,14 @@ struct Layout<'a> {
     /// The current paragraph's own space before (pt), for a first line
     /// that moves to a mid-page column top.
     para_before: f32,
+    /// The space before the current paragraph applied above `para_top`:
+    /// Word hangs paragraph-relative floats from above it (a before=20
+    /// paragraph's offset-0 shape sits at the space's top, not the text's).
+    para_space_above: f32,
+    /// The part of the paragraph's space before folded into the previous
+    /// paragraph's after: its excess over that after (Word: before=20
+    /// under after=10 hangs the paragraph's floats 10pt above its text).
+    para_fold_share: f32,
     /// This paragraph's pBdr joins the previous / next paragraph's box
     /// (Word groups identical borders; set by the block loop).
     pbdr_joins: (bool, bool),
@@ -14857,6 +14865,8 @@ impl<'a> Layout<'a> {
             front_border_ops: Vec::new(),
             para_top: y,
             para_before: 0.0,
+            para_space_above: 0.0,
+            para_fold_share: 0.0,
             pbdr_joins: (false, false),
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
@@ -16005,9 +16015,11 @@ impl<'a> Layout<'a> {
         // HTML auto spacing never opens a page (00accd5b's first title
         // sits 14pt higher in Word).
         let auto_at_top = self.at_page_top && style.before_auto;
+        let above = self.y;
         if !auto_at_top {
             self.y -= self.page_top_before(style.before);
         }
+        self.para_space_above = std::mem::take(&mut self.para_fold_share) + above - self.y;
         self.at_page_top = false;
         self.suppress_space_before = false;
         // An unjoined top border stacks its space and width above the text
@@ -17276,7 +17288,7 @@ impl<'a> Layout<'a> {
             margin_t: self.page.margin_t,
             margin_b: self.page.margin_b,
             column_x: self.flow_left(),
-            para_top: self.para_top,
+            para_top: self.para_top + self.para_space_above,
             line_top: self.y,
             cursor_x: self.page.margin_l,
         }
@@ -17345,7 +17357,7 @@ impl<'a> Layout<'a> {
             // unclamped: Word runs a tall float off the page foot rather
             // than lifting it (redlines vs 0004c94c: the 295pt photo under
             // A's last paragraph starts at 748pt and leaves the page).
-            (_, _, Some(py)) => self.para_top - py - dh,
+            (_, _, Some(py)) => self.para_top + self.para_space_above - py - dh,
             // Margin-frame offset (tblpY with vertAnchor="margin",
             // positionV relativeFrom="margin"/topMargin/...): from the
             // frame's top, unclamped.
@@ -18837,6 +18849,7 @@ impl<'a> Layout<'a> {
             self.line_probe,
             self.pbdr_joins,
             self.last_line_end,
+            self.para_space_above,
         );
         self.page.margin_l = x + li;
         self.page.margin_r = self.page.width - (x + dw - ri);
@@ -18879,6 +18892,7 @@ impl<'a> Layout<'a> {
             self.line_probe,
             self.pbdr_joins,
             self.last_line_end,
+            self.para_space_above,
         ) = para_state;
         (
             self.y,
@@ -21693,6 +21707,7 @@ fn layout(
                 bookmarks,
             } => {
                 lay.para_top = lay.y;
+                lay.para_space_above = 0.0;
                 let mut style = style.clone();
                 if let Some(next) = blocks.get(i + 1).and_then(block_para_style) {
                     if same_contextual_pair(&style, next) {
@@ -21737,7 +21752,10 @@ fn layout(
                 // just below: a first line that opens a mid-page column
                 // takes it back (`column_break`).
                 lay.para_before = if style.before_auto { 0.0 } else { style.before };
-                if i > 0 && block_para_style(&blocks[i - 1]).is_some() {
+                if i > 0
+                    && let Some(prev) = block_para_style(&blocks[i - 1])
+                {
+                    lay.para_fold_share = (lay.para_before - prev.after).max(0.0);
                     style.before = 0.0;
                 }
                 if style.keep_next {

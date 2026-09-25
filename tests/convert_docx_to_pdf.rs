@@ -4162,6 +4162,42 @@ fn blip(cx: &str, cy: &str, inner_open: &str, inner_close: &str) -> String {
 }
 
 #[test]
+fn a_paragraph_relative_float_hangs_from_above_the_space_before() {
+    // Live Word: "Top", then a before=20 paragraph anchoring a shape at
+    // paragraph offset 0: the shape's top is the paragraph's top above its
+    // space (97.0), not its text line (Anchor at ~107). We hung it from
+    // the text line; 003329b5's backdrops sat their space before too low.
+    let shape = "<w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"1\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>2540000</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"635000\" cy=\"254000\"/><wp:wrapNone/><wp:docPr id=\"5\" name=\"R\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"00FF00\"/></a:solidFill><a:ln><a:noFill/></a:ln></wps:spPr>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>";
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r><w:t>Top</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:before=\"400\"/></w:pPr>{shape}<w:r><w:t>Anchor</w:t></w:r></w:p><w:sectPr/>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("para float");
+    let hay = String::from_utf8_lossy(&pdf);
+    let at =
+        hay.find("0.000 1.000 0.000 rg ").expect("green shape") + "0.000 1.000 0.000 rg ".len();
+    let nums: Vec<f32> = hay[at..]
+        .split_whitespace()
+        .take(4)
+        .filter_map(|v| v.parse().ok())
+        .collect();
+    let shape_top = nums[1] + nums[3];
+    let anchor = pdf_glyph_text_xy(&pdf, "Anchor").expect("anchor").1;
+    assert!(
+        shape_top - anchor > 16.0,
+        "the shape starts above the paragraph's space; top={shape_top} baseline={anchor}"
+    );
+}
+
+#[test]
 fn a_group_fill_child_paints_in_the_groups_fill() {
     // fixtures_500 003329b5: the "NOS RESSOURCES" panel is a group child
     // with <a:grpFill/>, taking the group's light green. We drew nothing.
