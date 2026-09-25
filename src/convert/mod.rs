@@ -17126,6 +17126,30 @@ impl<'a> Layout<'a> {
             squeeze,
         };
         if has_marker {
+            // The tab after a label in the hanging gutter lands on the
+            // indent where the body starts: it takes no room there (a
+            // typed "1."<tab> under a right stop at 209pt squeezed
+            // 008033c9's first line against that stop).
+            let lead_tab = body.first().is_some_and(|r| r.text.starts_with('\t'));
+            // Only with no stop of its own inside the gutter: carbon_farming's
+            // "<tab>(1)<tab>" right-aligns the number at 1021 < 1134.
+            let gutter_stop = self.tab_stops.iter().any(|t| t.pos < indent - 0.01);
+            if lead_tab && style.indent_first < 0.0 && !gutter_stop {
+                let mut trimmed = body.to_vec();
+                let first = &mut trimmed[0];
+                *first = first.with_text(first.text.strip_prefix('\t').unwrap_or(&first.text));
+                if trimmed[0].text.is_empty() {
+                    trimmed.remove(0);
+                }
+                return wrap_runs_tabbed(
+                    self.fonts,
+                    &trimmed,
+                    width,
+                    width,
+                    list,
+                    Some(&tabs(indent)),
+                );
+            }
             return wrap_runs_tabbed(self.fonts, body, width, width, list, Some(&tabs(indent)));
         }
         let hanging = -style.indent_first;

@@ -34069,3 +34069,26 @@ fn text_past_a_left_floating_table_returns_to_the_margin() {
         "lines beside it start 7.2pt past its right edge"
     );
 }
+
+#[test]
+fn a_typed_label_tab_lands_on_the_hanging_indent_not_a_later_right_stop() {
+    // fixtures_500 008033c9: "1."<tab>text in a 284-twip hanging indent
+    // with a right stop at 4179 twips. Word tabs to the indent and fills
+    // the line (live Word: first line ends at 510); we measured the tab
+    // to the right stop and broke the line at 325.
+    let r =
+        "<w:rPr><w:rFonts w:ascii=\"Verdana\" w:hAnsi=\"Verdana\"/><w:sz w:val=\"18\"/></w:rPr>";
+    let body = format!(
+        "<w:p><w:pPr><w:tabs><w:tab w:val=\"right\" w:pos=\"4179\"/></w:tabs>\
+           <w:ind w:left=\"284\" w:hanging=\"284\"/></w:pPr>\
+           <w:r>{r}<w:t>1.</w:t></w:r><w:r>{r}<w:tab/></w:r>\
+           <w:r>{r}<w:t>Crisiskaart, zodat bij crisis de wensen van personen duidelijk zijn (bouwsteen 1. inbreng van personen met verward gedrag en omgeving</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("label tab");
+    let (_, y_first) = pdf_glyph_text_xy(&pdf, "Crisiskaart").expect("first");
+    let (_, y_van) = pdf_glyph_text_xy(&pdf, "duidelijk").expect("duidelijk");
+    assert!(
+        (y_first - y_van).abs() < 0.5,
+        "the first line runs on past 'personen'"
+    );
+}
