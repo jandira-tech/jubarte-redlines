@@ -726,6 +726,9 @@ impl<'a> Face<'a> {
         }
         // GDI puts the external leading (hhea total − win total) above the
         // text: Word's first TNR 12 baseline is winAscent + 0.51pt down.
+        // A win box taller than the line (macOS Palatino: 3396 units over a
+        // 2253 hhea line) does not push the text down: Word sets 009df71a's
+        // Palatino at its hhea ascent, 9.05pt under the margin at 11pt.
         let paint_ascent = face
             .tables()
             .os2
@@ -734,7 +737,11 @@ impl<'a> Face<'a> {
             .map(|os2| {
                 let win_asc = f32::from(os2.windows_ascender());
                 let win_total = win_asc + f32::from(os2.windows_descender()).abs();
-                win_asc + (line_height - win_total).max(0.0)
+                if win_total > line_height {
+                    line_height - line_descent
+                } else {
+                    win_asc + (line_height - win_total)
+                }
             })
             .unwrap_or(ascent);
         let paint_ascent = match east_asian_line {

@@ -34621,6 +34621,38 @@ fn a_blank_section_break_paragraph_opening_the_document_is_a_line() {
 }
 
 #[test]
+fn a_win_box_taller_than_the_line_keeps_the_hhea_ascent() {
+    // fixtures_500 009df71a: macOS Palatino's win box (3396 units) dwarfs
+    // its hhea line (2253). Word sets bold 11pt lines 12.0-12.2pt apart
+    // with the first baseline 80.9 (hhea ascent 9.05 under the margin); we
+    // dropped each line by the win ascent (13.1) and stepped 14.2.
+    if !std::path::Path::new("/System/Library/Fonts/Palatino.ttc").is_file() {
+        return;
+    }
+    let run = "<w:rPr><w:rFonts w:ascii=\"Palatino\" w:hAnsi=\"Palatino\"/><w:b/><w:sz w:val=\"22\"/></w:rPr>";
+    let para = |t: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>{run}</w:pPr>\
+             <w:r>{run}<w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!("{}{}<w:sectPr/>", para("LineOneQ"), para("LineTwoQ"));
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("palatino");
+    let (_, a) = pdf_glyph_text_xy(&pdf, "LineOneQ").expect("one");
+    let (_, b) = pdf_glyph_text_xy(&pdf, "LineTwoQ").expect("two");
+    assert!(
+        (a - b - 12.1).abs() < 0.4,
+        "Palatino 11pt steps its hhea 12.1pt, got {}",
+        a - b
+    );
+    assert!(
+        (792.0 - a - 80.9).abs() < 0.4,
+        "the first baseline sits at the hhea ascent (Word 80.9), got {}",
+        792.0 - a
+    );
+}
+
+#[test]
 fn a_cell_style_not_based_on_normal_takes_the_table_styles_spacing_and_size() {
     // fixtures_500 015a4f5a: cells use "Corpo A" (no basedOn, no spacing or
     // size). Word layers docDefaults < table style < paragraph style, so
