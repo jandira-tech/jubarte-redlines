@@ -405,6 +405,10 @@ struct RunStyle {
     hint: FontHint,
     /// `w:rtl`: a right-to-left run; its digits read as Arabic numbers.
     rtl: bool,
+    /// `w:rFonts/@w:hAnsi` when it differs from the ascii face: Word paints
+    /// characters past U+007F in it (003329b5's footer: Trebuchet ascii,
+    /// Calibri "é’€").
+    family_hansi: Option<String>,
     size: f32,
     bold: bool,
     italic: bool,
@@ -970,6 +974,7 @@ impl Defaults {
                 ea_theme_slot: None,
                 hint: FontHint::Default,
                 rtl: false,
+                family_hansi: None,
                 size: 11.0,
                 bold: false,
                 italic: false,
@@ -3026,8 +3031,26 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
             _ => FontHint::Default,
         };
     }
-    let ascii = attr_any(dom, fonts, "ascii").or_else(|| attr_any(dom, fonts, "hAnsi"));
-    let slot = attr_any(dom, fonts, "asciiTheme").or_else(|| attr_any(dom, fonts, "hAnsiTheme"));
+    let ascii_attr = attr_any(dom, fonts, "ascii");
+    let hansi_attr = attr_any(dom, fonts, "hAnsi");
+    let ascii_slot = attr_any(dom, fonts, "asciiTheme");
+    // An hAnsi face with no ascii one of its own paints only the
+    // characters past U+007F; the ascii ones keep the inherited face.
+    if ascii_attr.is_none()
+        && ascii_slot.is_none()
+        && let Some(hansi) = hansi_attr
+    {
+        style.family_hansi =
+            (!hansi.eq_ignore_ascii_case(&style.family)).then(|| hansi.to_string());
+        return;
+    }
+    if let (Some(a), Some(h)) = (ascii_attr, hansi_attr) {
+        style.family_hansi = (!h.eq_ignore_ascii_case(a)).then(|| h.to_string());
+    } else if ascii_attr.is_some() {
+        style.family_hansi = None;
+    }
+    let ascii = ascii_attr.or(hansi_attr);
+    let slot = ascii_slot.or_else(|| attr_any(dom, fonts, "hAnsiTheme"));
     let display_cache = ascii.is_some_and(|name| name.to_ascii_lowercase().contains("display"));
     if let Some(ascii) = ascii
         && !(display_cache && slot.is_some())
@@ -9463,7 +9486,62 @@ fn collect_runs_in(
     };
     collect_runs_rec(&mut ctx, node, RevMark::None, "", &mut runs);
     flush_pending_comments(&mut ctx, &mut runs);
-    runs
+    split_hansi_runs(runs)
+}
+
+/// Word paints a run's characters past U+007F in its hAnsi face and the
+/// ASCII ones in its ascii face: a run whose two differ splits at each
+/// change (East Asian and complex-script text keep their own rules).
+fn split_hansi_runs(runs: Vec<TextRun>) -> Vec<TextRun> {
+    if runs.iter().all(|r| r.style.family_hansi.is_none()) {
+        return runs;
+    }
+    let mut out = Vec::with_capacity(runs.len());
+    for run in runs {
+        let Some(hansi) = run.style.family_hansi.clone() else {
+            out.push(run);
+            continue;
+        };
+        // In an East Asian run (hint or language) Word gives quotes, dashes
+        // and symbols to the East Asian face (002c5410's “…” in 仿宋);
+        // only Latin letters past ASCII take hAnsi there.
+        let east_asian = run.style.hint == FontHint::EastAsia
+            || run
+                .style
+                .lang_ea
+                .as_deref()
+                .is_some_and(|l| ["zh", "ja", "ko"].iter().any(|p| l.starts_with(p)));
+        let high = |c: char| {
+            !c.is_ascii()
+                && !is_cjk(c)
+                && !is_rtl_char(c)
+                && !is_break_mark(c)
+                && (!east_asian || (c.is_alphabetic() && (c as u32) < 0x2000))
+        };
+        let mut start = 0;
+        let mut piece_high = None;
+        for (at, c) in run.text.char_indices() {
+            // Spaces and other ASCII neutrals stay with the piece they sit in.
+            let class = if c == ' ' { piece_high } else { Some(high(c)) };
+            if piece_high.is_some() && class != piece_high && at > start {
+                let mut piece = run.with_text(&run.text[start..at]);
+                if piece_high == Some(true) {
+                    piece.style.family.clone_from(&hansi);
+                }
+                out.push(piece);
+                start = at;
+            }
+            if class.is_some() {
+                piece_high = class;
+            }
+        }
+        let mut piece = run.with_text(&run.text[start..]);
+        if piece_high == Some(true) {
+            piece.style.family = hansi;
+        }
+        out.push(piece);
+    }
+    out
 }
 
 fn notes_for(ctx: &mut RunCollect<'_>, ids: &[String]) -> Vec<CommentNote> {
@@ -21003,6 +21081,7 @@ fn default_run_style() -> RunStyle {
         ea_theme_slot: None,
         hint: FontHint::Default,
         rtl: false,
+        family_hansi: None,
         size: 11.0,
         bold: false,
         italic: false,

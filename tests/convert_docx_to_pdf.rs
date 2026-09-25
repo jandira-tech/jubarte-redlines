@@ -905,6 +905,22 @@ fn a_break_only_paragraphs_mark_keeps_its_space_before_in_the_next_column() {
 }
 
 #[test]
+fn an_hansi_face_paints_only_the_characters_past_ascii() {
+    // fixtures_500 003329b5's footer: rFonts hAnsi="Calibri" with no ascii
+    // face. Word paints the ASCII letters in the inherited Trebuchet and
+    // only "é’€" in Calibri; we painted the whole run in Calibri.
+    let pdf_of = |text: &str| {
+        let body = format!(
+            "<w:p><w:r><w:rPr><w:rFonts w:hAnsi=\"Courier New\"/></w:rPr><w:t>{text}</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("hansi");
+        String::from_utf8_lossy(&pdf).contains("CourierNew")
+    };
+    assert!(!pdf_of("Plain ascii"), "ASCII keeps the ascii face");
+    assert!(pdf_of("Plain ascii é"), "é takes the hAnsi face");
+}
+
+#[test]
 fn a_horizontally_scaled_run_squeezes_its_glyphs() {
     // fixtures_500 003329b5: "QUI SOMMES NOUS ?" is w:w=60. Word draws
     // the glyphs 60% wide; we only packed the advances, so the full-width
