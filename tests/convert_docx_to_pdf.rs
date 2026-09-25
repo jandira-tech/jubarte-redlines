@@ -2796,6 +2796,35 @@ fn auto_spacing_drops_between_items_of_one_list() {
 }
 
 #[test]
+fn a_tables_rim_keeps_its_own_width_beside_thinner_inside_rules() {
+    // fixtures_500 0011e415: tblBorders frame the table at sz=18 (2.25pt)
+    // round sz=4 dotted inside rules. One width served every edge, so the
+    // last one read (0.5pt) thinned the frame and lifted the content.
+    let row = "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr>";
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/><w:tblBorders>\
+           <w:top w:val=\"single\" w:sz=\"18\" w:color=\"000000\"/><w:left w:val=\"single\" w:sz=\"18\" w:color=\"000000\"/>\
+           <w:bottom w:val=\"single\" w:sz=\"18\" w:color=\"000000\"/><w:right w:val=\"single\" w:sz=\"18\" w:color=\"000000\"/>\
+           <w:insideH w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/><w:insideV w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
+         </w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>{row}{row}</w:tbl><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("framed table");
+    let hs: Vec<f32> = pdf_fill_rects(&pdf, 0.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(w, _)| *w > 100.0)
+        .map(|(_, h)| h)
+        .collect();
+    assert!(
+        hs.iter().any(|h| (h - 2.25).abs() < 0.01),
+        "a 2.25pt rim: {hs:?}"
+    );
+    assert!(
+        hs.iter().any(|h| (h - 0.5).abs() < 0.01),
+        "0.5pt inside rules: {hs:?}"
+    );
+}
+
+#[test]
 fn a_cell_list_marker_only_lifts_its_line() {
     // fixtures_500 003416d6: TNR 12 numbers beside Verdana 8 items in a
     // table cell step 12.9pt in Word (the number's part above the baseline

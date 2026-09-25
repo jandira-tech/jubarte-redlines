@@ -921,8 +921,11 @@ struct TblBorders {
     inside_v: bool,
     color: [f32; 3],
     /// `w:sz` eighths of a point. Word Quartz paints this as a filled
-    /// hairline (sz=4 → 0.5pt), not a stroked path.
+    /// hairline (sz=4 → 0.5pt), not a stroked path. The inside rules'.
     width: f32,
+    /// The rim's (top/bottom/left/right) width, when it differs from the
+    /// inside rules' (0011e415: a 2.25pt frame round 0.5pt dotted rules).
+    outer_width: f32,
 }
 
 /// Per-cell `w:tcBorders`. `Some` means the cell restated edges (even
@@ -2853,7 +2856,9 @@ fn parse_tbl_borders(dom: &Dom, parent: NodeId) -> Option<TblBorders> {
         inside_v: false,
         color: [0.0, 0.0, 0.0],
         width: 0.5,
+        outer_width: 0.5,
     };
+    let (mut outer, mut inner) = (None, None);
     for (local, flag) in [
         ("top", &mut out.top),
         ("bottom", &mut out.bottom),
@@ -2870,8 +2875,14 @@ fn parse_tbl_borders(dom: &Dom, parent: NodeId) -> Option<TblBorders> {
         };
         *flag = true;
         out.color = color;
-        out.width = width;
+        if local.starts_with("inside") {
+            inner = Some(width);
+        } else {
+            outer = Some(width);
+        }
     }
+    out.width = inner.or(outer).unwrap_or(0.5);
+    out.outer_width = outer.or(inner).unwrap_or(0.5);
     // Present `w:tblBorders` is a real override, including all-none
     // (file_22 / sd_2517). Returning None here used to inherit TableGrid.
     Some(out)
@@ -2886,12 +2897,13 @@ fn row_exception_cell_borders(
     first_col: bool,
     last_col: bool,
 ) -> CellBorders {
-    let edge = |on: bool| on.then_some((b.color, b.width));
+    let edge =
+        |rim: bool, on: bool| on.then_some((b.color, if rim { b.outer_width } else { b.width }));
     CellBorders {
-        top: edge(if first_row { b.top } else { b.inside_h }),
-        bottom: edge(if last_row { b.bottom } else { b.inside_h }),
-        left: edge(if first_col { b.left } else { b.inside_v }),
-        right: edge(if last_col { b.right } else { b.inside_v }),
+        top: edge(first_row, if first_row { b.top } else { b.inside_h }),
+        bottom: edge(last_row, if last_row { b.bottom } else { b.inside_h }),
+        left: edge(first_col, if first_col { b.left } else { b.inside_v }),
+        right: edge(last_col, if last_col { b.right } else { b.inside_v }),
     }
 }
 
@@ -8811,8 +8823,12 @@ fn table_block(
     let rules = direct_borders
         .or_else(|| tdef.as_ref().and_then(|t| t.borders))
         .map_or([0.0; 3], |b| {
-            let on = |edge: bool| if edge { b.width } else { 0.0 };
-            [on(b.top), on(b.inside_h), on(b.bottom)]
+            let on = |edge: bool, w: f32| if edge { w } else { 0.0 };
+            [
+                on(b.top, b.outer_width),
+                on(b.inside_h, b.width),
+                on(b.bottom, b.outer_width),
+            ]
         });
     Block::Table {
         cols,
@@ -13050,7 +13066,8 @@ fn cell_left_rule(cell: &TableCell, borders: Option<TblBorders>) -> f32 {
         return cb.left.map_or(0.0, |(_, w)| w);
     }
     match borders {
-        Some(b) if (cell.col == 0 && b.left) || (cell.col > 0 && b.inside_v) => b.width.max(0.24),
+        Some(b) if cell.col == 0 && b.left => b.outer_width.max(0.24),
+        Some(b) if cell.col > 0 && b.inside_v => b.width.max(0.24),
         _ => 0.0,
     }
 }
@@ -20361,26 +20378,34 @@ impl<'a> Layout<'a> {
                 )
             }
         };
-        let thick = match borders {
-            Some(b) => b.width.max(0.24),
-            None => 0.5,
+        let (inner, rim) = match borders {
+            Some(b) => (b.width.max(0.24), b.outer_width.max(0.24)),
+            None => (0.5, 0.5),
         };
+        let pick = |on_rim: bool| if on_rim { rim } else { inner };
+        let (t_th, b_th, l_th, r_th) = (
+            pick(first_row),
+            pick(last_row),
+            pick(first_col),
+            pick(last_col),
+        );
         // A horizontal rule hangs below its edge, inside the row whose
         // pitch it adds to (0005052e 288dpi scan).
         let segs = [
-            (top, x, y2 - thick, x2 - x, thick),
+            (top, x, y2 - t_th, x2 - x, t_th, t_th),
             // The last row holds the table's bottom rule inside its box.
             (
                 bottom,
                 x,
-                if last_row { y } else { y - thick },
+                if last_row { y } else { y - b_th },
                 x2 - x,
-                thick,
+                b_th,
+                b_th,
             ),
-            (left, v_start(x, thick), y, thick, y2 - y),
-            (right, v_start(x2, thick), y, thick, y2 - y),
+            (left, v_start(x, l_th), y, l_th, y2 - y, l_th),
+            (right, v_start(x2, r_th), y, r_th, y2 - y, r_th),
         ];
-        for (on, fx, fy, fw, fh) in segs {
+        for (on, fx, fy, fw, fh, thick) in segs {
             if !on {
                 continue;
             }
@@ -32556,6 +32581,7 @@ mod table_tests {
                     inside_v: false,
                     color: parse_hex_color("4F81BD").unwrap(),
                     width: 1.0,
+                    outer_width: 1.0,
                 }),
             },
         );
