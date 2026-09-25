@@ -707,11 +707,23 @@ impl<'a> Face<'a> {
         // ttf-parser's ascender/descender/line_gap are hhea unless the font
         // sets USE_TYPO_METRICS. Typo metrics under-size Courier (0.80 em
         // vs 1.13) and Arial (1.09 vs 1.15) against Word's line.
-        let line_height =
+        let mut line_height =
             f32::from(face.ascender()) - f32::from(face.descender()) + f32::from(face.line_gap());
         // The line's part below the baseline, from the same table as its
         // height (Courier's typo descender under-sizes it).
-        let line_descent = f32::from(face.descender()).abs();
+        let mut line_descent = f32::from(face.descender()).abs();
+        // Word gives an East Asian face (OS/2 code pages 932/936/949/950/
+        // 1361) 1.3 times its hhea ascent + descent, lineGap aside, the
+        // extra split above and below the text. Live Word at 12pt: SimSun
+        // and MS Mincho step 15.6, YaHei 20.7, Meiryo 23.3, Yu Gothic 17.0.
+        let east_asian_line = cjk_code_pages(&face).then(|| {
+            let body = f32::from(face.ascender()) - f32::from(face.descender());
+            (body * 1.3, (body * 0.3) / 2.0)
+        });
+        if let Some((height, half)) = east_asian_line {
+            line_height = height;
+            line_descent += half;
+        }
         // GDI puts the external leading (hhea total − win total) above the
         // text: Word's first TNR 12 baseline is winAscent + 0.51pt down.
         let paint_ascent = face
@@ -725,6 +737,10 @@ impl<'a> Face<'a> {
                 win_asc + (line_height - win_total).max(0.0)
             })
             .unwrap_or(ascent);
+        let paint_ascent = match east_asian_line {
+            Some((_, half)) => f32::from(face.ascender()) + half,
+            None => paint_ascent,
+        };
         let glyph_count = face.number_of_glyphs();
         let mut widths = vec![0u16; glyph_count as usize];
         for (gid, slot) in widths.iter_mut().enumerate() {
@@ -2379,6 +2395,16 @@ fn pick_ranked_faces(mut found: Vec<(u8, (bool, bool), Vec<u8>)>) -> Vec<((bool,
 /// (pass, (bold, italic)) when the font's own family name is `family`:
 /// pass 0 for name ID 1, 1 for the typographic ID 16 only. A face without
 /// TrueType outlines is skipped: PDF FontFile2 cannot carry CFF.
+/// OS/2 `ulCodePageRange1` names a Japanese, Chinese or Korean code page
+/// (bits 17-21).
+fn cjk_code_pages(face: &ttf_parser::Face) -> bool {
+    face.raw_face()
+        .table(ttf_parser::Tag::from_bytes(b"OS/2"))
+        .and_then(|os2| os2.get(78..82))
+        .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+        .is_some_and(|range| range & (0b1_1111 << 17) != 0)
+}
+
 fn face_family_style(bytes: &[u8], family: &str) -> Option<(u8, (bool, bool))> {
     let face = ttf_parser::Face::parse(bytes, 0).ok()?;
     face.tables().glyf?;
@@ -2483,6 +2509,30 @@ fn sanitize_pdf_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_east_asian_face_takes_word_s_taller_line() {
+        // Live Word at 12pt: SimSun lines step 15.6 (1.3 x its 1.0 em
+        // hhea body), not the hhea 13.7 with its lineGap; the extra splits
+        // around the text (baseline 84.2 under a 72pt margin).
+        let path =
+            Path::new("/Applications/Microsoft Word.app/Contents/Resources/DFonts/Simsun.ttc");
+        let Ok(bytes) = fs::read(path) else {
+            return;
+        };
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        let face = Face::from_bytes(FaceId::SansRegular, bytes, "SimSun".into()).expect("SimSun");
+        assert!(
+            (face.single_line_pt(12.0) - 15.6).abs() < 0.05,
+            "{}",
+            face.single_line_pt(12.0)
+        );
+        assert!(
+            (face.ascent_pt(12.0) - 12.11).abs() < 0.1,
+            "{}",
+            face.ascent_pt(12.0)
+        );
+    }
 
     #[test]
     fn a_slanted_regular_face_is_the_upright_one() {
