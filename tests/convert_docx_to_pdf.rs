@@ -33422,3 +33422,35 @@ fn an_inline_text_box_sits_on_its_paragraphs_line_at_its_indent() {
         "the box is the line: the mark's size adds no empty line; 10pt={small} 24pt={big}"
     );
 }
+
+#[test]
+fn shape_text_is_laid_in_the_presets_text_rectangle() {
+    // docxide-pdf case34: Word centres a triangle's label in the preset's
+    // text rectangle (the lower half, x w/4..3w/4), not in the bounding
+    // box; we set every label in the middle of the box.
+    let at = |prst: &str| {
+        let shape = format!(
+            "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+               relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+               <wp:positionH relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionH>\
+               <wp:positionV relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionV>\
+               <wp:extent cx=\"2540000\" cy=\"2540000\"/><wp:wrapNone/><wp:docPr id=\"9\" name=\"Shape\"/>\
+               <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                 <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                   <wps:spPr><a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>\
+                     <a:solidFill><a:srgbClr val=\"CCCCCC\"/></a:solidFill></wps:spPr>\
+                   <wps:txbx><w:txbxContent><w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"0\"/></w:pPr>\
+                     <w:r><w:t>Label</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+                   <wps:bodyPr lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\" anchor=\"ctr\"/></wps:wsp>\
+               </a:graphicData></a:graphic></wp:anchor></w:drawing>"
+        );
+        let docx = drawing_docx(&format!("<w:p><w:r>{shape}</w:r></w:p><w:sectPr/>"));
+        let pdf = docx_to_pdf(&docx).expect("preset text rect");
+        pdf_glyph_text_xy(&pdf, "Label").expect("Label").1
+    };
+    let (rect, tri) = (at("rect"), at("triangle"));
+    assert!(
+        (rect - tri - 50.0).abs() < 0.5,
+        "the triangle's label centres in its lower half, 50pt below the box centre; rect={rect} tri={tri}"
+    );
+}

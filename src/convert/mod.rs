@@ -14,6 +14,7 @@ mod metafile;
 mod pdf;
 mod preset_geom;
 mod preset_geom_data;
+mod preset_text_rect_data;
 mod word_subst;
 
 use std::cell::{Cell, RefCell};
@@ -1616,6 +1617,8 @@ struct LaidTextBox {
     /// `a:prstGeom/a:avLst` guide values (`fmla="val N"`) for presets
     /// drawn through `preset_geom`.
     adj: Vec<(String, f64)>,
+    /// `a:prstGeom/@prst`: its text rectangle holds the box's paragraphs.
+    prst: String,
     /// The text box's own paragraphs with their resolved styles: laid out
     /// like body paragraphs inside `insets` (010300e3's letter). Empty
     /// keeps the flat-run label path (charts, diagrams, linked boxes).
@@ -6316,6 +6319,7 @@ fn frame_box(
         text_dy: 0.0,
         text_anchor: TextAnchor::Top,
         adj: Vec::new(),
+        prst: String::new(),
         paras: laid,
         insets: [1.0, 1.0, 1.0, 1.0],
         custom: None,
@@ -10637,6 +10641,7 @@ fn collect_textboxes_styled(
                     text_dy: 0.0,
                     text_anchor,
                     adj: preset_adjustments(dom, shape),
+                    prst: shape_prst(dom, shape),
                     paras: Vec::new(),
                     insets: TXBX_INSETS,
                     custom: custom.clone(),
@@ -10677,6 +10682,7 @@ fn collect_textboxes_styled(
                     text_dy: 0.0,
                     text_anchor,
                     adj: preset_adjustments(dom, shape),
+                    prst: shape_prst(dom, shape),
                     paras: Vec::new(),
                     insets: TXBX_INSETS,
                     custom: custom.clone(),
@@ -10732,6 +10738,7 @@ fn collect_textboxes_styled(
             text_dy,
             text_anchor,
             adj: preset_adjustments(dom, shape),
+            prst: shape_prst(dom, shape),
             paras,
             insets: textbox_insets(dom, shape),
             custom,
@@ -10787,6 +10794,7 @@ fn group_box(
         text_dy: 0.0,
         text_anchor: TextAnchor::Top,
         adj: Vec::new(),
+        prst: String::new(),
         paras: Vec::new(),
         insets: TXBX_INSETS,
         custom: None,
@@ -19129,6 +19137,14 @@ impl<'a> Layout<'a> {
     /// anchor moves the finished block, and lines past the bottom are
     /// hidden as Word hides overflow.
     fn emit_textbox_paras(&mut self, box_: &LaidTextBox, x: f32, y: f32, dw: f32, dh: f32) {
+        // Word lays the text in the preset's text rectangle (a triangle's
+        // lower half: docxide case34), the insets inside that.
+        let (x, y, dw, dh) = match preset_geom::text_rect(&box_.prst, dw, dh, &box_.adj) {
+            Some([l, t, r, b]) if box_.custom.is_none() && r > l && b > t => {
+                (x + l, y + dh - b, r - l, b - t)
+            }
+            _ => (x, y, dw, dh),
+        };
         let [li, ti, ri, bi] = box_.insets;
         let saved = (
             self.y,

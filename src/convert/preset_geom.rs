@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 
 use super::preset_geom_data::PRESETS;
+use super::preset_text_rect_data::TEXT_RECTS;
 
 /// `a:path/@fill`: how the path's fill is shaded from the shape fill.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,6 +156,22 @@ pub(crate) struct EvalPath {
     pub fill: Fill,
     pub stroke: bool,
     pub subpaths: Vec<Subpath>,
+}
+
+/// A preset's `a:rect`: the guides its text rectangle reads.
+pub(crate) struct TextRect {
+    pub av: &'static [(&'static str, &'static str)],
+    pub gd: &'static [(&'static str, &'static str)],
+    pub rect: [&'static str; 4],
+}
+
+/// The text rectangle `[l, t, r, b]` (points, y down) of preset `name`
+/// in a `w`×`h` box, or `None` when it is the whole box.
+pub(crate) fn text_rect(name: &str, w: f32, h: f32, adj: &[(String, f64)]) -> Option<[f32; 4]> {
+    let (_, def) = TEXT_RECTS.iter().find(|(n, _)| *n == name)?;
+    let g = guides(def.av, def.gd, f64::from(w), f64::from(h), adj);
+    let at = |k: &str| operand(k, &g) as f32;
+    Some(def.rect.map(at))
 }
 
 pub(crate) fn preset(name: &str) -> Option<&'static Preset> {
