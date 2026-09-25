@@ -5954,12 +5954,12 @@ fn walk_container(
             // After a trailing column break the paragraph's mark opens the
             // next column as an empty line (live Word: "BBB" after a
             // <br column/>-only paragraph starts one line down; a page break
-            // leaves no line). 000876cd's form table sat a line high.
+            // leaves no line). 000876cd's form table sat a line high. The
+            // mark keeps its space before: Word's before=24 break-only
+            // paragraph opens a continuous section's column two 24pt down.
             let column_mark = match &block {
                 Block::Paragraph { style, .. } if column_br => {
-                    let mut style = style.clone();
-                    style.before = 0.0;
-                    style.before_auto = false;
+                    let style = style.clone();
                     Some(Block::Paragraph {
                         runs: Vec::new(),
                         style,

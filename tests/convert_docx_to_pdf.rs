@@ -816,6 +816,25 @@ fn an_opening_column_break_leaves_no_line_in_the_column_before() {
 }
 
 #[test]
+fn a_break_only_paragraphs_mark_keeps_its_space_before_in_the_next_column() {
+    // Live Word: "Alpha", then a before=24 paragraph holding only a column
+    // break, then "Col2": the mark opens column two 24pt down and Col2
+    // follows it (Word 72 -> 124.3). We dropped the mark's space before.
+    let pdf = docx_to_pdf(&three_column_section(
+        "<w:p><w:r><w:t>Alpha</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:before=\"480\"/></w:pPr><w:r><w:br w:type=\"column\"/></w:r></w:p>\
+         <w:p><w:r><w:t>Col2</w:t></w:r></w:p>",
+    ))
+    .expect("columns");
+    let alpha = pdf_glyph_text_xy(&pdf, "Alpha").expect("alpha").1;
+    let col2 = pdf_glyph_text_xy(&pdf, "Col2").expect("col2").1;
+    assert!(
+        alpha - col2 > 40.0,
+        "24pt before plus the mark's line; alpha={alpha} col2={col2}"
+    );
+}
+
+#[test]
 fn a_float_in_the_margin_does_not_indent_the_text() {
     // fixtures_500 00af3bb0: a 30pt QR code at column offset -42.7pt
     // (wrapTight) sits wholly in the left margin. Word starts the title at
