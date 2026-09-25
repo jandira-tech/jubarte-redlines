@@ -33780,3 +33780,36 @@ fn a_table_cells_text_edge_lands_on_words_grid() {
         );
     }
 }
+
+#[test]
+fn a_bottom_aligned_cells_line_sits_level_with_its_neighbours_last_line() {
+    // Live Word (fixtures_500 00afb3e6's spec table): with a two-line
+    // neighbour and single rules, a vAlign=bottom cell's one line shares
+    // the neighbour's second baseline. We counted the row's rules as
+    // slack and set it 1.5pt lower.
+    let para = |t: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"276\" w:lineRule=\"auto\"/></w:pPr>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"14\"/></w:rPr>\
+               <w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let mar = "<w:tcMar><w:top w:w=\"40\" w:type=\"dxa\"/><w:bottom w:w=\"40\" w:type=\"dxa\"/></w:tcMar>";
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/><w:tblBorders>\
+           <w:top w:val=\"single\" w:sz=\"6\" w:color=\"000000\"/><w:bottom w:val=\"single\" w:sz=\"6\" w:color=\"000000\"/>\
+         </w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/>{mar}<w:vAlign w:val=\"bottom\"/></w:tcPr>{}</w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/>{mar}</w:tcPr>{}{}</w:tc></w:tr></w:tbl><w:sectPr/>",
+        para("BotText"),
+        para("TopText"),
+        para("TopTwo")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("bottom cell");
+    let bot = pdf_glyph_text_xy(&pdf, "BotText").expect("BotText").1;
+    let two = pdf_glyph_text_xy(&pdf, "TopTwo").expect("TopTwo").1;
+    assert!(
+        (bot - two).abs() < 0.2,
+        "level baselines; bot={bot} two={two}"
+    );
+}

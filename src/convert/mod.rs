@@ -20277,7 +20277,10 @@ impl<'a> Layout<'a> {
                             cell_content_height(self.fonts, cell, &col_w, self.space_for_ul)
                                 - cell.pad_t
                                 - cell.pad_b;
-                        let slack = (h - cell.pad_t - cell.pad_b - content).max(0.0);
+                        // The row's height counts its top and bottom rules;
+                        // the content box does not (live Word: a bottom
+                        // cell's last line sits level with its neighbour's).
+                        let slack = (h - cell.pad_t - cell.pad_b - content - 2.0 * rule).max(0.0);
                         y_line -= if cell.valign_bottom {
                             slack
                         } else {
