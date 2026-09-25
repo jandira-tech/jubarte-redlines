@@ -909,12 +909,25 @@ impl<'a> Face<'a> {
             plan
         });
         let out = rustybuzz::shape_with_plan(face, &plan, buf);
-        let units: ShapedUnits = out
+        let mut glyphs: Vec<(u16, i32, u32)> = out
             .glyph_infos()
             .iter()
             .zip(out.glyph_positions())
             .map(|(info, p)| (info.glyph_id as u16, p.x_advance, info.cluster))
             .collect();
+        // rustybuzz 0.20 reverses an RTL buffer for a legacy `kern` table
+        // and, with kerning off, skips the reverse back: Arial's Persian
+        // came out in logical order, each word mirrored (00205272).
+        // Visual RTL order runs from the last cluster to the first.
+        if key.0 == rustybuzz::Direction::RightToLeft
+            && glyphs
+                .first()
+                .zip(glyphs.last())
+                .is_some_and(|(a, z)| a.2 < z.2)
+        {
+            glyphs.reverse();
+        }
+        let units: ShapedUnits = glyphs.into();
         if let Ok(mut cache) = self.shaped.lock() {
             // A long-lived caller (Python / WASM) converts many documents
             // through one face; keep the memory bounded.
@@ -1087,6 +1100,12 @@ impl<'a> Fonts<'a> {
             CJK_FALLBACK
         };
         self.embedded_index(key, bold, false)
+    }
+
+    /// Word's Thaana face (MV Boli) for Dhivehi the resolved face lacks.
+    pub(crate) fn thaana_glyph_fallback(&self, bold: bool) -> Option<FaceRef> {
+        self.embedded_index(THAANA_FALLBACK, bold, false)
+            .map(FaceRef::Embedded)
     }
 
     /// The CJK fallback face for a glyph the resolved face lacks.
@@ -2187,6 +2206,25 @@ fn ttc_face_bytes(ttc: &[u8], index: u32) -> Option<Vec<u8>> {
 /// `Fonts::cjk_fallback_index`); no document family can be named this.
 pub(crate) const CJK_FALLBACK: &str = "@cjk";
 pub(crate) const CJK_FALLBACK_JA: &str = "@cjk-ja";
+/// Embedded-map key of the Thaana fallback face.
+pub(crate) const THAANA_FALLBACK: &str = "@thaana";
+
+/// Loads the face Word paints Dhivehi in when the document's font is
+/// missing: MV Boli from Office's cloud fonts (fixtures_500 0003fc93's
+/// Faruma), else the system's Noto Sans Thaana.
+pub(crate) fn add_thaana_fallback(embedded: &mut EmbeddedFonts) {
+    let faces = cached_faces(THAANA_FALLBACK, || {
+        let faces = installed_family_faces("MV Boli");
+        if faces.is_empty() {
+            installed_family_faces("Noto Sans Thaana")
+        } else {
+            faces
+        }
+    });
+    for ((bold, italic), bytes) in faces {
+        embedded.insert((THAANA_FALLBACK.to_string(), bold, italic), bytes);
+    }
+}
 
 fn is_cjk_name_char(c: char) -> bool {
     matches!(c as u32, 0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF66..=0xFF9F)
@@ -2344,7 +2382,19 @@ fn face_family_style(bytes: &[u8], family: &str) -> Option<(u8, (bool, bool))> {
     } else {
         return None;
     };
-    Some((pass, (face.is_bold(), face.is_italic())))
+    // A slant alone is not italic: MV Boli leans -16 degrees but is the
+    // Regular face. Apple's Avenir Next Bold Italic sets no italic bit,
+    // so a slanted face whose subfamily says so still counts.
+    let slanted_name = face.names().into_iter().any(|n| {
+        matches!(n.name_id, 2 | 17)
+            && n.to_string().is_some_and(|f| {
+                let f = f.to_ascii_lowercase();
+                f.contains("italic") || f.contains("oblique")
+            })
+    });
+    let italic = face.style() != ttf_parser::Style::Normal
+        || (face.italic_angle() != 0.0 && (slanted_name || face.tables().os2.is_none()));
+    Some((pass, (face.is_bold(), italic)))
 }
 
 fn cloud_font_override(id: FaceId) -> Option<PathBuf> {
@@ -2419,6 +2469,40 @@ fn sanitize_pdf_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_slanted_regular_face_is_the_upright_one() {
+        // MV Boli (Word's Thaana face) leans -16 degrees yet is the family's
+        // Regular: Word files it by its style bits, not the angle.
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let path = Path::new(&home).join(
+            "Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/MV Boli/29162370688.ttf",
+        );
+        let Ok(bytes) = fs::read(&path) else {
+            return;
+        };
+        assert_eq!(
+            face_family_style(&bytes, "MV Boli"),
+            Some((0, (false, false)))
+        );
+    }
+
+    #[test]
+    fn right_to_left_text_shapes_in_visual_order() {
+        // HarfBuzz returns an RTL run left to right on the page: the last
+        // letter first. Word draws "متن" with its initial meem rightmost.
+        let fonts = Fonts::new();
+        let face = fonts.get(FaceId::SansRegular);
+        let buzz = face.buzz.as_ref().expect("bundled face shapes");
+        let clusters: Vec<u32> = face
+            .shaped_units(buzz, "متن", false)
+            .iter()
+            .map(|u| u.2)
+            .collect();
+        assert_eq!(clusters, vec![4, 2, 0]);
+    }
 
     #[test]
     fn apple_system_symbol_is_not_the_word_overlay() {

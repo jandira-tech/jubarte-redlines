@@ -313,6 +313,9 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
     if has_cjk {
         font::add_cjk_fallbacks(&mut embedded);
     }
+    if xml.chars().any(is_thaana) {
+        font::add_thaana_fallback(&mut embedded);
+    }
     let fonts = Fonts::for_document(&embedded);
     font::with_font_table(table, || {
         let markup = settings_track_revisions(&pkg);
@@ -3176,6 +3179,35 @@ fn rfont_names(xml: &str) -> Vec<String> {
     out
 }
 
+fn is_thaana(c: char) -> bool {
+    ('\u{0780}'..='\u{07BF}').contains(&c)
+}
+
+/// The face Word paints `text` in when its own face lacks the glyphs:
+/// Word's Thaana or CJK face for those scripts, else none (Arial).
+fn script_glyph_fallback(fonts: &Fonts, bold: bool, text: &str) -> Option<FaceRef> {
+    if text.chars().any(is_thaana) {
+        return fonts.thaana_glyph_fallback(bold);
+    }
+    fonts
+        .cjk_glyph_fallback(bold)
+        .filter(|_| text.chars().any(is_cjk))
+}
+
+/// Hebrew, Arabic, Syriac, Thaana, NKo and their presentation forms.
+fn is_rtl_char(c: char) -> bool {
+    matches!(c, '\u{0590}'..='\u{08FF}' | '\u{FB1D}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}')
+}
+
+/// Whether HarfBuzz shapes `text` right to left: its first letter's
+/// script decides, as `guess_segment_properties` does. The glyphs then
+/// run from the last character to the first.
+fn shapes_rtl(text: &str) -> bool {
+    text.chars()
+        .find(|c| c.is_alphabetic())
+        .is_some_and(is_rtl_char)
+}
+
 fn is_cjk(c: char) -> bool {
     matches!(
         c,
@@ -3198,8 +3230,10 @@ fn paint_family<'a>(style: &'a RunStyle, text: &str) -> &'a str {
     {
         return ea;
     }
+    // Right-to-left and Thaana letters are complex script whatever the
+    // hint: Word draws them in the cs font (0003fc93's Faruma runs).
     if let Some(cs) = style.family_cs.as_deref()
-        && style.hint == FontHint::Complex
+        && (style.hint == FontHint::Complex || text.chars().any(is_rtl_char))
     {
         return cs;
     }
@@ -6342,6 +6376,24 @@ fn shaped_lacks_ink(chars: &[char], shaped: &[(u16, f32)]) -> bool {
 fn face_lacks_ink(face: &Face, text: &str) -> bool {
     let chars: Vec<char> = text.chars().collect();
     shaped_lacks_ink(&chars, &face.shape(text, 11.0))
+}
+
+/// The face a run of script text measures in: its own, or paint_run's
+/// fallback when the face has no glyphs for it. A Persian run in a Latin
+/// face wrapped on .notdef boxes (00205272). A lone symbol keeps its own
+/// face's width: Word lays 000aba38's Wingdings "•" marker out as the
+/// .notdef-wide box it measures, whatever face paints it.
+fn ink_face(fonts: &Fonts, style: &RunStyle, text: &str) -> FaceRef {
+    let fid = fonts.resolve(paint_family(style, text), style.bold, style.italic);
+    let script = text.chars().any(|c| is_rtl_char(c) || is_cjk(c));
+    if !script || !face_lacks_ink(fonts.get(fid), text) {
+        return fid;
+    }
+    match script_glyph_fallback(fonts, style.bold, text) {
+        Some(cjk) => cjk,
+        None if style.bold => FaceId::SansBold.into(),
+        None => FaceId::SansRegular.into(),
+    }
 }
 
 fn line_fit_need(natural: f32, ascent: f32, style: &ParaStyle, line_box: f32) -> f32 {
@@ -15082,11 +15134,7 @@ impl<'a> Layout<'a> {
             // fallback (paint_run): 019f3137's "●" in an absent Noto Sans
             // Symbols is Arial in Word, not the 12.25pt stand-in.
             if face_lacks_ink(face, &run.text) {
-                face = match self
-                    .fonts
-                    .cjk_glyph_fallback(run.style.bold)
-                    .filter(|_| run.text.chars().any(is_cjk))
-                {
+                face = match script_glyph_fallback(self.fonts, run.style.bold, &run.text) {
                     Some(cjk) => self.fonts.get(cjk),
                     None => self.fonts.get(if run.style.bold {
                         FaceId::SansBold
@@ -16495,7 +16543,10 @@ impl<'a> Layout<'a> {
     }
 
     fn spaced_glyph_advances(&self, text: &str, shaped: &[(u16, f32)]) -> Vec<f32> {
-        let chars: Vec<char> = text.chars().collect();
+        let mut chars: Vec<char> = text.chars().collect();
+        if shapes_rtl(text) {
+            chars.reverse();
+        }
         let paired = chars.len() == shaped.len();
         shaped
             .iter()
@@ -16519,12 +16570,7 @@ impl<'a> Layout<'a> {
             return 0.0;
         }
         let text = chrome_measure_text(text);
-        let fid = self.fonts.resolve(
-            paint_family(&run.style, text),
-            run.style.bold,
-            run.style.italic,
-        );
-        let face = self.fonts.get(fid);
+        let face = self.fonts.get(ink_face(self.fonts, &run.style, text));
         let size = run.style.layout_size();
         let kern = run.style.kerns_at(size);
         let shaped = face.shape_kern(text, size, kern);
@@ -16809,11 +16855,7 @@ impl<'a> Layout<'a> {
         if ink_missing {
             // East Asian text falls back to Word's CJK face, not Arial,
             // which has no Han glyphs (0025b0d3's text vanished).
-            fid = if let Some(cjk) = self
-                .fonts
-                .cjk_glyph_fallback(run.style.bold)
-                .filter(|_| run.text.chars().any(is_cjk))
-            {
+            fid = if let Some(cjk) = script_glyph_fallback(self.fonts, run.style.bold, &run.text) {
                 cjk
             } else if run.style.bold {
                 FaceId::SansBold.into()
@@ -16863,7 +16905,11 @@ impl<'a> Layout<'a> {
                 color: fill,
             });
         }
-        let chars: Vec<char> = run.text.chars().collect();
+        let mut chars: Vec<char> = run.text.chars().collect();
+        // Glyph i of a right-to-left run is the i-th character from the end.
+        if shapes_rtl(&run.text) {
+            chars.reverse();
+        }
         let paired = chars.len() == shaped.len();
         let pieces = if paired {
             Vec::new()
@@ -21078,6 +21124,7 @@ fn wrap_runs_segment(
     let mut units: Vec<(Vec<WrapPiece<'_>>, bool)> = Vec::new();
     let mut open = false;
     for run in runs {
+        let run_face = fonts.get(ink_face(fonts, &run.style, &run.text));
         for tok in ws_tokens(&run.text) {
             let url = url_wrap_pieces(tok);
             let pieces: Vec<&str> = if url.len() > 1 {
@@ -21091,12 +21138,7 @@ fn wrap_runs_segment(
                 let w = if tok.contains('\t') {
                     0.0
                 } else {
-                    let fid = fonts.resolve(
-                        paint_family(&run.style, tok),
-                        run.style.bold,
-                        run.style.italic,
-                    );
-                    let face = fonts.get(fid);
+                    let face = run_face;
                     let size = run.style.layout_size();
                     // w:spacing tracking widens every letter, as painted
                     // (00080142's +0.35pt Arial packed too many words).
