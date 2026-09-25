@@ -20085,10 +20085,19 @@ impl<'a> Layout<'a> {
                                 // A hanging marker tabs to the indent, not
                                 // to the next default stop.
                                 if run.list_marker && para.style.indent_first < 0.0 {
-                                    let mut mark = run.clone();
-                                    mark.text = run.text.trim_end().to_string();
+                                    // A marker merged with its item's text (same
+                                    // style, 003416d6's "1.\tHukuk, ...") tabs
+                                    // the text after it to the indent too.
+                                    let (head, tail) = run
+                                        .text
+                                        .split_once('\t')
+                                        .unwrap_or((run.text.as_str(), ""));
+                                    let mark = run.with_text(head.trim_end());
                                     tx = self.paint_run(&mark, tx, ty);
                                     tx = tx.max(x + pad_l + para.style.indent_left + extra);
+                                    if !tail.is_empty() {
+                                        tx = self.paint_run(&run.with_text(tail), tx, ty);
+                                    }
                                     continue;
                                 }
                                 tx = self.paint_run(run, tx, ty);

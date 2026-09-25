@@ -2832,6 +2832,36 @@ fn a_cell_list_marker_only_lifts_its_line() {
 }
 
 #[test]
+fn a_cell_marker_sharing_its_texts_style_still_tabs_to_the_indent() {
+    // fixtures_500 003416d6: "1." and its item share a style, so the line
+    // holds one "1.\tHukuk ..." run. Word starts the text at the hanging
+    // indent, 18pt past the number; we painted the tab inside the run.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/><w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"1019\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+         <w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr><w:jc w:val=\"left\"/></w:pPr>\
+           <w:r><w:t>Hukuk item</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("cell marker");
+    let hay = String::from_utf8_lossy(&pdf).into_owned();
+    let number = pdf_glyph_text_xy(&pdf, "1.").map(|p| p.0);
+    let text = pdf_glyph_text_xy(&pdf, "Hukuk").map(|p| p.0);
+    let (Some(number), Some(text)) = (number, text) else {
+        panic!("marker and text painted: {}", hay.len());
+    };
+    assert!(
+        (text - number - 18.0).abs() < 0.6,
+        "the text starts at the indent; number={number} text={text}"
+    );
+}
+
+#[test]
 fn a_list_paragraph_in_a_text_box_keeps_its_marker_and_indent() {
     // fixtures_500 003329b5: the "NOS METHODES" text box lists its items
     // with Symbol "*" bullets at the level's indent. Box paragraphs were
