@@ -686,6 +686,9 @@ enum BorderLine {
     Double,
     Dotted,
     Dashed,
+    /// `thinThickMediumGap` / `thickThinMediumGap`: Word paints both as
+    /// one inward band (see `border_edge`).
+    MediumGap,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3876,6 +3879,7 @@ fn parse_pg_borders(dom: &Dom, pb: NodeId) -> PageBorders {
             "double" => BorderLine::Double,
             "dotted" => BorderLine::Dotted,
             "dashed" | "dashSmallGap" | "dotDash" | "dotDotDash" => BorderLine::Dashed,
+            "thinThickMediumGap" | "thickThinMediumGap" => BorderLine::MediumGap,
             _ => BorderLine::Single,
         };
         Some(PageBorder {
@@ -3926,6 +3930,16 @@ mod pg_border_tests {
         assert!(b.from_page);
         assert_eq!(b.display, BorderDisplay::NotFirstPage);
         assert!(b.back);
+    }
+
+    #[test]
+    fn medium_gap_edges_paint_as_one_band() {
+        // 00205272: Word draws thinThick- and thickThinMediumGap alike.
+        let b = parse(
+            r#"><w:top w:val="thinThickMediumGap" w:sz="24"/><w:bottom w:val="thickThinMediumGap" w:sz="24"/>"#,
+        );
+        assert_eq!(b.top.map(|e| e.line), Some(BorderLine::MediumGap));
+        assert_eq!(b.bottom.map(|e| e.line), Some(BorderLine::MediumGap));
     }
 
     #[test]
@@ -20565,6 +20579,36 @@ impl<'a> Layout<'a> {
             BorderLine::Double => {
                 seg(self, from, to, w);
                 seg(self, from, to, -w);
+            }
+            BorderLine::MediumGap => {
+                // Word's page PDF (00205272, sz=24): from the border's
+                // offset inward, 0.96w of the colour, a 0.48w gap filled
+                // 0.149 grey, 0.48w of the colour, on every edge whichever
+                // of thin/thick the name puts first.
+                let inward = if horizontal {
+                    if a.1 > self.page.height / 2.0 {
+                        -1.0
+                    } else {
+                        1.0
+                    }
+                } else if a.0 < self.page.width / 2.0 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let gap = [0.149; 3];
+                for (mid, thick, color) in [
+                    (0.48 * w, 0.96 * w, e.color),
+                    (1.2 * w, 0.48 * w, gap),
+                    (1.68 * w, 0.48 * w, e.color),
+                ] {
+                    let off = inward * mid;
+                    if horizontal {
+                        self.hairline_h(from, a.1 + off, to, thick, color);
+                    } else {
+                        self.hairline_v(a.0 + off, from, to, thick, color);
+                    }
+                }
             }
             BorderLine::Dotted | BorderLine::Dashed => {
                 let (on, off) = if e.line == BorderLine::Dotted {
