@@ -4129,6 +4129,24 @@ fn blip(cx: &str, cy: &str, inner_open: &str, inner_close: &str) -> String {
 }
 
 #[test]
+fn an_ellipse_picture_shows_through_an_oval() {
+    // fixtures_500 003329b5: the photo's spPr is prstGeom "ellipse"; Word
+    // crops it to the oval. We painted the whole rectangle.
+    let pic = "<w:drawing><wp:inline><wp:extent cx=\"914400\" cy=\"457200\"/>\
+           <wp:docPr id=\"1\" name=\"Picture 0\" descr=\"dot.png\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+             <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+             <pic:spPr><a:prstGeom prst=\"ellipse\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+           </a:graphicData></a:graphic></wp:inline></w:drawing>";
+    let docx = drawing_docx(&format!("<w:p><w:r>{pic}</w:r></w:p><w:sectPr/>"));
+    let pdf = docx_to_pdf(&docx).expect("oval picture");
+    let content = String::from_utf8_lossy(&pdf);
+    let clip = content.find(" c h W n").expect("an elliptical clip");
+    let draw = content.find(" Do").expect("the picture");
+    assert!(clip < draw, "the oval clips the picture");
+}
+
+#[test]
 fn an_inline_pictures_effect_extent_takes_room_in_its_line() {
     // fixtures_500 00319da4 (118 files carry one): Word lays an inline
     // picture out at its extent plus wp:effectExtent. Checked in Word: the

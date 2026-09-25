@@ -100,6 +100,8 @@ pub(crate) enum Op {
         components: u8,
         crop: Option<[f32; 4]>,
         rotate_deg: f32,
+        /// `prstGeom prst="ellipse"`: the picture shows through an oval.
+        oval: bool,
     },
     Rgb {
         x: f32,
@@ -112,6 +114,7 @@ pub(crate) enum Op {
         alpha: Option<Vec<u8>>,
         crop: Option<[f32; 4]>,
         rotate_deg: f32,
+        oval: bool,
     },
     /// Behind-doc Word watermark (header SDT gallery=Watermarks).
     Watermark {
@@ -714,6 +717,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     dh,
                     crop,
                     rotate_deg,
+                    oval,
                     ..
                 }
                 | Op::Rgb {
@@ -723,18 +727,17 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     dh,
                     crop,
                     rotate_deg,
+                    oval,
                     ..
                 } => {
                     img_counter += 1;
-                    stream.push_str(&paint_image(
-                        *x,
-                        *y,
-                        *dw,
-                        *dh,
-                        *crop,
-                        img_counter,
-                        *rotate_deg,
-                    ));
+                    let drawn = paint_image(*x, *y, *dw, *dh, *crop, img_counter, *rotate_deg);
+                    if *oval {
+                        let _ =
+                            writeln!(stream, "q {} W n {drawn}Q", ellipse_path(*x, *y, *dw, *dh));
+                    } else {
+                        stream.push_str(&drawn);
+                    }
                 }
             }
         }
@@ -1223,6 +1226,41 @@ fn gray_xobject(width: u32, height: u32, bytes: &[u8], compress: bool) -> Vec<u8
     out.extend_from_slice(&bytes);
     out.extend_from_slice(b"\nendstream");
     out
+}
+
+/// The ellipse inscribed in the box as four cubic arcs (`m … c … h`).
+fn ellipse_path(x: f32, y: f32, w: f32, h: f32) -> String {
+    const K: f32 = 0.552_284_8;
+    let (rx, ry) = (w * 0.5, h * 0.5);
+    let (cx, cy) = (x + rx, y + ry);
+    let (kx, ky) = (rx * K, ry * K);
+    format!(
+        "{:.2} {cy:.2} m {:.2} {:.2} {:.2} {:.2} {cx:.2} {:.2} c \
+         {:.2} {:.2} {:.2} {:.2} {:.2} {cy:.2} c \
+         {:.2} {:.2} {:.2} {:.2} {cx:.2} {:.2} c \
+         {:.2} {:.2} {:.2} {:.2} {:.2} {cy:.2} c h",
+        cx + rx,
+        cx + rx,
+        cy + ky,
+        cx + kx,
+        cy + ry,
+        cy + ry,
+        cx - kx,
+        cy + ry,
+        cx - rx,
+        cy + ky,
+        cx - rx,
+        cx - rx,
+        cy - ky,
+        cx - kx,
+        cy - ry,
+        cy - ry,
+        cx + kx,
+        cy - ry,
+        cx + rx,
+        cy - ky,
+        cx + rx,
+    )
 }
 
 /// `a:srcRect` l/t/r/b as 0..1. Scale the full image so the uncropped

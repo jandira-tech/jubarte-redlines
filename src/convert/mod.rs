@@ -1503,6 +1503,8 @@ struct LaidImage {
     crop: Option<[f32; 4]>,
     /// `a:xfrm/@rot` degrees (60000ths in OOXML). 0 = unrotated.
     rotate_deg: f32,
+    /// `pic:spPr` `prstGeom prst="ellipse"`: an oval-cropped picture.
+    oval: bool,
     /// Header/footer picture: its paragraph's jc, and whether it comes
     /// before the part's text (00afb3e6's centred logo opens the header).
     chrome_align: Align,
@@ -7264,6 +7266,7 @@ fn paragraph_block(
                 z: 0,
                 crop: None,
                 rotate_deg: 0.0,
+                oval: false,
                 chrome_align: Align::Left,
                 chrome_lead: false,
                 chrome_flow: false,
@@ -11681,6 +11684,9 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     z,
                     crop: src_rect_frac(dom, pic),
                     rotate_deg: 0.0,
+                    oval: descendants_local(dom, pic, "prstGeom")
+                        .iter()
+                        .any(|g| attr_any(dom, *g, "prst") == Some("ellipse")),
                     chrome_align: Align::Left,
                     chrome_lead: false,
                     chrome_flow: false,
@@ -11723,6 +11729,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         z,
                         crop: src_rect_frac(dom, drawing),
                         rotate_deg: drawing_rotate_deg(dom, drawing),
+                        oval: picture_is_oval(dom, drawing),
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
@@ -11748,6 +11755,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         z,
                         crop: None,
                         rotate_deg: drawing_rotate_deg(dom, drawing),
+                        oval: picture_is_oval(dom, drawing),
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
@@ -11818,6 +11826,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         z: 0,
                         crop: None,
                         rotate_deg: 0.0,
+                        oval: false,
                         chrome_align: Align::Left,
                         chrome_lead: false,
                         chrome_flow: false,
@@ -11849,6 +11858,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     z: 0,
                     crop: None,
                     rotate_deg: 0.0,
+                    oval: false,
                     chrome_align: Align::Left,
                     chrome_lead: false,
                     chrome_flow: false,
@@ -11908,6 +11918,15 @@ fn src_rect_frac(dom: &Dom, drawing: NodeId) -> Option<[f32; 4]> {
 }
 
 /// `a:xfrm/@rot` is 60000ths of a degree (ECMA-376 20.1.7.6).
+/// The picture's own geometry is an ellipse (003329b5's oval photo).
+fn picture_is_oval(dom: &Dom, drawing: NodeId) -> bool {
+    descendants_local(dom, drawing, "pic").iter().any(|pic| {
+        descendants_local(dom, *pic, "prstGeom")
+            .iter()
+            .any(|g| attr_any(dom, *g, "prst") == Some("ellipse"))
+    })
+}
+
 fn drawing_rotate_deg(dom: &Dom, drawing: NodeId) -> f32 {
     for xfrm in descendants_local(dom, drawing, "xfrm") {
         if let Some(rot) = attr_any(dom, xfrm, "rot")
@@ -17387,6 +17406,7 @@ impl<'a> Layout<'a> {
                 components: *components,
                 crop: img.crop,
                 rotate_deg: img.rotate_deg,
+                oval: img.oval,
             }),
             ImageKind::Rgb {
                 width,
@@ -17404,6 +17424,7 @@ impl<'a> Layout<'a> {
                 alpha: alpha.clone(),
                 crop: img.crop,
                 rotate_deg: img.rotate_deg,
+                oval: img.oval,
             }),
             ImageKind::Reserve => {}
             ImageKind::Broken => self.current().ops.push(Op::StrokeRect {
@@ -17746,6 +17767,7 @@ impl<'a> Layout<'a> {
                 components: *components,
                 crop: img.crop,
                 rotate_deg: img.rotate_deg,
+                oval: img.oval,
             }),
             ImageKind::Rgb {
                 width,
@@ -17763,6 +17785,7 @@ impl<'a> Layout<'a> {
                 alpha: alpha.clone(),
                 crop: img.crop,
                 rotate_deg: img.rotate_deg,
+                oval: img.oval,
             }),
             ImageKind::Reserve => {}
             ImageKind::Broken => self.current().ops.push(Op::StrokeRect {
