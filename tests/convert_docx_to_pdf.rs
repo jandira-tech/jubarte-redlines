@@ -33294,3 +33294,52 @@ fn a_centred_page_centres_the_layout_box_with_its_last_space_after() {
         "20pt after lifts the centred box by 10pt; flush={flush} spaced={spaced}"
     );
 }
+
+/// 2×1 24-bit BMP: one blue and one red pixel.
+fn tiny_bmp() -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(b"BM");
+    b.extend_from_slice(&62u32.to_le_bytes()); // file size: 54 header + 8 pixel row
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.extend_from_slice(&54u32.to_le_bytes()); // pixel data offset
+    b.extend_from_slice(&40u32.to_le_bytes()); // BITMAPINFOHEADER
+    b.extend_from_slice(&2i32.to_le_bytes());
+    b.extend_from_slice(&1i32.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&24u16.to_le_bytes());
+    b.extend_from_slice(&[0; 24]);
+    b.extend_from_slice(&[0xFF, 0, 0, 0, 0, 0xFF, 0, 0]); // BGR BGR + pad
+    b
+}
+
+/// 1×1 GIF, one black pixel.
+const TINY_GIF: &[u8] = &[
+    0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xFF, 0xFF, 0xFF, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44,
+    0x01, 0x00, 0x3B,
+];
+
+#[test]
+fn bmp_and_gif_pictures_are_painted() {
+    // docxide-pdf case41: its three floating pictures are BMPs, which we
+    // dropped (the image crate had no BMP decoder), so every wrap stood
+    // beside a blank square. GIF media turn up in fixtures_500 too.
+    for (name, bytes) in [("pic.bmp", tiny_bmp()), ("pic.gif", TINY_GIF.to_vec())] {
+        let drawing = blip(
+            "914400",
+            "457200",
+            "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+            "</wp:inline>",
+        );
+        let pdf = docx_to_pdf(&drawing_docx_media(
+            &format!("<w:p><w:r>{drawing}</w:r></w:p><w:sectPr/>"),
+            name,
+            &bytes,
+        ))
+        .expect("convert bmp/gif");
+        assert!(
+            String::from_utf8_lossy(&pdf).contains("/Subtype /Image"),
+            "{name} must be painted as an image XObject"
+        );
+    }
+}
