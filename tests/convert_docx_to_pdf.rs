@@ -884,20 +884,23 @@ fn a_floating_table_in_column_one_leaves_column_two_alone() {
 
 #[test]
 fn a_break_only_paragraphs_mark_keeps_its_space_before_in_the_next_column() {
-    // Live Word: "Alpha", then a before=24 paragraph holding only a column
-    // break, then "Col2": the mark opens column two 24pt down and Col2
-    // follows it (Word 72 -> 124.3). We dropped the mark's space before.
+    // Live Word: "Alpha" (after 10), then a before=24 paragraph with a
+    // 20pt mark holding only a column break, then "Col2": the mark opens
+    // column two with the before's 14pt excess over Alpha's after and its
+    // own 20pt line; Col2 follows (Word 72 -> 124.3, a 52.3pt gap). We
+    // dropped the before (49.4), then took it whole on an 11pt line.
     let pdf = docx_to_pdf(&three_column_section(
         "<w:p><w:r><w:t>Alpha</w:t></w:r></w:p>\
-         <w:p><w:pPr><w:spacing w:before=\"480\"/></w:pPr><w:r><w:br w:type=\"column\"/></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:before=\"480\"/><w:rPr><w:sz w:val=\"40\"/></w:rPr></w:pPr>\
+           <w:r><w:br w:type=\"column\"/></w:r></w:p>\
          <w:p><w:r><w:t>Col2</w:t></w:r></w:p>",
     ))
     .expect("columns");
     let alpha = pdf_glyph_text_xy(&pdf, "Alpha").expect("alpha").1;
     let col2 = pdf_glyph_text_xy(&pdf, "Col2").expect("col2").1;
     assert!(
-        alpha - col2 > 40.0,
-        "24pt before plus the mark's line; alpha={alpha} col2={col2}"
+        alpha - col2 > 50.5 && alpha - col2 < 55.0,
+        "Word's 52.3pt from Alpha to Col2; alpha={alpha} col2={col2}"
     );
 }
 

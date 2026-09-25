@@ -5974,8 +5974,15 @@ fn walk_container(
             let column_mark = match &block {
                 Block::Paragraph { style, .. } if column_br => {
                     let style = style.clone();
+                    // The mark's own size makes the line (003329b5's 20pt
+                    // mark opens column two 23pt deep, not 13).
+                    let runs = style
+                        .mark_run
+                        .as_deref()
+                        .map(|m| vec![TextRun::new(" ", m.clone())])
+                        .unwrap_or_default();
                     Some(Block::Paragraph {
-                        runs: Vec::new(),
+                        runs,
                         style,
                         list: false,
                         images: Vec::new(),
@@ -21776,6 +21783,16 @@ fn layout(
                 {
                     lay.para_fold_share = (lay.para_before - prev.after).max(0.0);
                     style.before = 0.0;
+                } else if i > 1
+                    && matches!(blocks[i - 1], Block::ColumnBreak)
+                    && let Some(prev) = block_para_style(&blocks[i - 2])
+                {
+                    // Across a column break the space before still collapses
+                    // with the paragraph above's after: the new column gets
+                    // only its excess (live Word: a before=24 break mark
+                    // under an after=10 paragraph opens column two 14pt
+                    // down).
+                    style.before = (style.before - prev.after).max(0.0);
                 }
                 if style.keep_next {
                     let pitch = lay.page.grid_pitch;
