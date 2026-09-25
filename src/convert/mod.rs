@@ -6222,8 +6222,11 @@ fn walk_container(
             let blank = block_is_blank(&block);
             // A blank paragraph that only carries a section break is no
             // line, continuous breaks included (0016811c: Word's gap has
-            // no room for its 1.5-spaced mark).
-            let sect_mark = sect_here.is_some_and(|s| !is_final_sect(ctx.sects, s));
+            // no room for its 1.5-spaced mark). Opening the document it is
+            // one (00aa0b03: Word's page starts a 12pt line + 10pt after
+            // down; at the top of a later page it is none again).
+            let sect_mark = sect_here.is_some_and(|s| !is_final_sect(ctx.sects, s))
+                && !(blocks.is_empty() && !page_br && !column_br);
             if !blank || (!page_br && !sect_br && !column_br && !sect_mark) {
                 blocks.push(block);
             } else if column_br

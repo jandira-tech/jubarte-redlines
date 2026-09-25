@@ -34583,6 +34583,44 @@ fn a_styles_part_without_default_properties_takes_words_built_in_ones() {
 }
 
 #[test]
+fn a_blank_section_break_paragraph_opening_the_document_is_a_line() {
+    // fixtures_500 00aa0b03 opens with a blank paragraph that carries only
+    // section 1's break (after=200, single). Word gives it a line and its
+    // after (BodyQ 24.7pt lower than with no such paragraph); after text,
+    // or at the top of a later page, the same paragraph is no line.
+    let sect = "<w:sectPr><w:type w:val=\"continuous\"/><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+        <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+        w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>";
+    let mark = format!(
+        "<w:p><w:pPr><w:spacing w:after=\"200\" w:line=\"240\" w:lineRule=\"auto\"/>{sect}</w:pPr></w:p>"
+    );
+    let body_y = |body: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("section mark");
+        pdf_glyph_text_xy(&pdf, "BodyQ").expect("body").1
+    };
+    let plain = body_y(&format!("<w:p><w:r><w:t>BodyQ</w:t></w:r></w:p>{sect}"));
+    let opening = body_y(&format!(
+        "{mark}<w:p><w:r><w:t>BodyQ</w:t></w:r></w:p>{sect}"
+    ));
+    assert!(
+        (20.0..30.0).contains(&(plain - opening)),
+        "the opening mark is a line plus 10pt after, got {}",
+        plain - opening
+    );
+    let after_text = body_y(&format!(
+        "<w:p><w:r><w:t>TextQ</w:t></w:r></w:p>{mark}<w:p><w:r><w:t>BodyQ</w:t></w:r></w:p>{sect}"
+    ));
+    let text_line = body_y(&format!(
+        "<w:p><w:r><w:t>TextQ</w:t></w:r></w:p><w:p><w:r><w:t>BodyQ</w:t></w:r></w:p>{sect}"
+    ));
+    assert!(
+        (after_text - text_line).abs() < 0.5,
+        "after text the mark is no line, got {}",
+        text_line - after_text
+    );
+}
+
+#[test]
 fn a_cell_style_not_based_on_normal_takes_the_table_styles_spacing_and_size() {
     // fixtures_500 015a4f5a: cells use "Corpo A" (no basedOn, no spacing or
     // size). Word layers docDefaults < table style < paragraph style, so
