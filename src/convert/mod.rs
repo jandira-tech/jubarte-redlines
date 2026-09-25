@@ -403,6 +403,8 @@ struct RunStyle {
     /// replace a named face).
     ea_theme_slot: Option<String>,
     hint: FontHint,
+    /// `w:rtl`: a right-to-left run; its digits read as Arabic numbers.
+    rtl: bool,
     size: f32,
     bold: bool,
     italic: bool,
@@ -964,6 +966,7 @@ impl Defaults {
                 lang_ea: None,
                 ea_theme_slot: None,
                 hint: FontHint::Default,
+                rtl: false,
                 size: 11.0,
                 bold: false,
                 italic: false,
@@ -3231,9 +3234,14 @@ fn paint_family<'a>(style: &'a RunStyle, text: &str) -> &'a str {
         return ea;
     }
     // Right-to-left and Thaana letters are complex script whatever the
-    // hint: Word draws them in the cs font (0003fc93's Faruma runs).
+    // hint: Word draws them in the cs font (0003fc93's Faruma runs). A cs
+    // hint claims only the marks either script may own: digits and Latin
+    // letters keep the ascii face (00205272's "12" is Calibri, the "-"
+    // beside it Arial).
     if let Some(cs) = style.family_cs.as_deref()
-        && (style.hint == FontHint::Complex || text.chars().any(is_rtl_char))
+        && (text.chars().any(is_rtl_char)
+            || (style.hint == FontHint::Complex
+                && !text.chars().any(|c| c.is_ascii_alphanumeric())))
     {
         return cs;
     }
@@ -3256,6 +3264,9 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
         apply_rfonts(dom, fonts, style, theme);
     }
     apply_theme_script_fonts(style, theme);
+    if let Some(rtl) = first_named(dom, rpr, "rtl") {
+        style.rtl = !val_is_false(dom, Some(rtl));
+    }
     if first_named(dom, rpr, "b").is_some() {
         style.bold = !val_is_false(dom, first_named(dom, rpr, "b"));
         style.bold_set = true;
@@ -15969,6 +15980,15 @@ impl<'a> Layout<'a> {
             // A tab's width is its resolved stop, not a glyph: centring,
             // right alignment and justification all start from it.
             let has_tab = line.iter().any(|r| r.text.contains('\t'));
+            // A right-to-left line measures and paints in visual order: its
+            // neutral pieces take their own fonts, as Word draws them.
+            let visual;
+            let line: &[TextRun] = if style.bidi && !has_tab {
+                visual = bidi_visual_line(line);
+                &visual
+            } else {
+                line
+            };
             let shifted = has_tab && matches!(style.align, Align::Center | Align::Right);
             let line_w = if has_tab {
                 self.tab_line_width(line, self.flow_left() + indent + first_extra)
@@ -20728,6 +20748,7 @@ fn default_run_style() -> RunStyle {
         lang_ea: None,
         ea_theme_slot: None,
         hint: FontHint::Default,
+        rtl: false,
         size: 11.0,
         bold: false,
         italic: false,
@@ -20922,6 +20943,156 @@ fn inter_word_gaps(line: &[TextRun]) -> usize {
     let body = joined.trim_end();
     let after_tab = body.rfind('\t').map_or(body, |at| &body[at..]);
     after_tab.chars().filter(|&c| c == ' ').count()
+}
+
+/// A right-to-left paragraph's line in paint order, left to right: the
+/// Unicode bidi algorithm cut down to what Word's Persian and Hebrew lines
+/// need. Letters of an RTL script are R, other letters L, digits EN, or
+/// AN in a w:rtl run; a lone separator between two numbers joins them.
+/// Neutrals between like directions take it, else the paragraph's RTL.
+/// L, EN and AN sit a level above R, the line reverses, and the higher
+/// runs keep their order: 00205272's rtl "صفحات(12-8)" paints "8", "-",
+/// "12" left to right, the word right of them.
+/// Trailing wrap space goes: it hangs off the line's end, unpainted.
+/// An RTL piece keeps its logical text for HarfBuzz to reverse; a
+/// neutral-only one is already visual. Their brackets mirror here:
+/// rustybuzz draws "(" unmirrored where Word draws ")".
+fn bidi_visual_line(line: &[TextRun]) -> Vec<TextRun> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum B {
+        R,
+        L,
+        En,
+        An,
+        N,
+    }
+    let mut cs: Vec<(char, usize)> = Vec::new();
+    for (ri, run) in line.iter().enumerate() {
+        cs.extend(run.text.chars().map(|c| (c, ri)));
+    }
+    while cs.last().is_some_and(|(c, _)| c.is_whitespace()) {
+        cs.pop();
+    }
+    let class = |(c, ri): (char, usize)| {
+        if ('\u{0660}'..='\u{0669}').contains(&c) {
+            B::An
+        } else if c.is_ascii_digit() || ('\u{06F0}'..='\u{06F9}').contains(&c) {
+            // Word reads a w:rtl run's digits as Arabic numbers.
+            if line[ri].style.rtl { B::An } else { B::En }
+        } else if c.is_alphabetic() && is_rtl_char(c) {
+            B::R
+        } else if c.is_alphabetic() {
+            B::L
+        } else {
+            B::N
+        }
+    };
+    let mut k: Vec<B> = cs.iter().map(|&c| class(c)).collect();
+    let n = k.len();
+    // A lone separator joins two numbers: `-` `+` and the common ones two
+    // European numbers, only `,` `.` `:` `/` two Arabic ones.
+    for i in 1..n.saturating_sub(1) {
+        let (a, b) = (k[i - 1], k[i + 1]);
+        if k[i] == B::N && a == b {
+            let joins = match a {
+                B::En => matches!(cs[i].0, '-' | '+' | ',' | '.' | ':' | '/'),
+                B::An => matches!(cs[i].0, ',' | '.' | ':' | '/'),
+                _ => false,
+            };
+            if joins {
+                k[i] = a;
+            }
+        }
+    }
+    let strong = |b: B| if b == B::L { B::L } else { B::R };
+    let neutral: Vec<bool> = k.iter().map(|b| *b == B::N).collect();
+    let mut i = 0;
+    while i < n {
+        if k[i] != B::N {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && k[i] == B::N {
+            i += 1;
+        }
+        let before = if start == 0 {
+            B::R
+        } else {
+            strong(k[start - 1])
+        };
+        let after = if i == n { B::R } else { strong(k[i]) };
+        let dir = if before == after { before } else { B::R };
+        k[start..i].fill(dir);
+    }
+    let level: Vec<u8> = k.iter().map(|b| if *b == B::R { 1 } else { 2 }).collect();
+    let mut order: Vec<usize> = (0..n).collect();
+    let mut i = 0;
+    while i < n {
+        if level[order[i]] < 2 {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && level[order[i]] >= 2 {
+            i += 1;
+        }
+        order[start..i].reverse();
+    }
+    order.reverse();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let first = order[i];
+        let key = (cs[first].1, level[first], cs[first].0.is_whitespace());
+        let start = i;
+        while i < n && {
+            let j = order[i];
+            (cs[j].1, level[j], cs[j].0.is_whitespace()) == key
+        } {
+            i += 1;
+        }
+        let visual: Vec<usize> = order[start..i].to_vec();
+        let text: String = if key.1 == 1 {
+            let logical: String = visual.iter().rev().map(|&j| cs[j].0).collect();
+            if shapes_rtl(&logical) {
+                visual
+                    .iter()
+                    .rev()
+                    .map(|&j| mirror_bracket(cs[j].0, neutral[j]))
+                    .collect()
+            } else {
+                visual
+                    .iter()
+                    .map(|&j| mirror_bracket(cs[j].0, neutral[j]))
+                    .collect()
+            }
+        } else {
+            visual.iter().map(|&j| cs[j].0).collect()
+        };
+        out.push(line[key.0].with_text(text));
+    }
+    out
+}
+
+/// A neutral bracket in a right-to-left run faces the other way.
+fn mirror_bracket(c: char, neutral: bool) -> char {
+    if !neutral {
+        return c;
+    }
+    match c {
+        '(' => ')',
+        ')' => '(',
+        '[' => ']',
+        ']' => '[',
+        '{' => '}',
+        '}' => '{',
+        '<' => '>',
+        '>' => '<',
+        '«' => '»',
+        '»' => '«',
+        other => other,
+    }
 }
 
 fn trailing_ws_pt(fonts: &Fonts, line: &[TextRun]) -> f32 {
@@ -24002,6 +24173,30 @@ mod theme_slot_tests {
             minor: Some("Cambria".into()),
             ..ThemeFonts::default()
         }
+    }
+
+    #[test]
+    fn a_right_to_left_line_paints_its_number_left_of_the_word() {
+        let run = TextRun::new("صفحات(8-12) ", default_run_style());
+        let texts: Vec<String> = bidi_visual_line(&[run])
+            .into_iter()
+            .map(|r| r.text)
+            .collect();
+        assert_eq!(texts, vec!["(", "8-12", "صفحات)"]);
+    }
+
+    #[test]
+    fn an_rtl_runs_numbers_read_right_to_left_across_a_hyphen() {
+        // Word draws 00205272's rtl "صفحات(12-8)" as "(8-12)صفحات" with
+        // "8" leftmost: a w:rtl run's digits are Arabic numbers, which a
+        // hyphen does not join.
+        let mut style = default_run_style();
+        style.rtl = true;
+        let texts: Vec<String> = bidi_visual_line(&[TextRun::new("صفحات(12-8)", style)])
+            .into_iter()
+            .map(|r| r.text)
+            .collect();
+        assert_eq!(texts, vec!["(", "8", "-", "12", "صفحات)"]);
     }
 
     #[test]
