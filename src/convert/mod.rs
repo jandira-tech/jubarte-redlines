@@ -9627,8 +9627,12 @@ fn cell_para_widths(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> (f32, f32) {
             let hang = -para.style.indent_first;
             let fid = fonts.resolve(&mark.style.family, mark.style.bold, mark.style.italic);
             let text = mark.text.trim_end();
-            let mark_w = fonts.get(fid).width_pt(text, mark.style.layout_size());
-            ((first - mark_w.max(hang) + mark_w).max(8.0), rest)
+            let face = fonts.get(fid);
+            let mark_w = face.width_pt(text, mark.style.layout_size());
+            // The wrap measures the marker run whole: a trailing space after
+            // the bullet (010684299's "\u{f0b7} ") is its width, a tab none.
+            let run_w = face.width_pt(&mark.text.replace('\t', ""), mark.style.layout_size());
+            ((first - mark_w.max(hang) + run_w).max(8.0), rest)
         }
         _ => (first, rest),
     }

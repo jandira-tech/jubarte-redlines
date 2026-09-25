@@ -34240,3 +34240,34 @@ fn a_list_markers_lift_is_not_multiplied_by_the_line_spacing() {
         "13.8 x 1.5 + 0.8 lift; step={step}"
     );
 }
+
+#[test]
+fn a_cell_bullets_trailing_space_does_not_narrow_its_first_line() {
+    // fixtures_500 01068429: a cell list's marker text is "\u{f0b7} ".
+    // The first line's width left the space out while the wrap counted
+    // it, so a line that fits in Word wrapped its last word.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
+              <w:lvlText w:val=\"\u{f0b7}\"/><w:suff w:val=\"space\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\
+              <w:rPr><w:rFonts w:ascii=\"Symbol\" w:hAnsi=\"Symbol\" w:hint=\"default\"/></w:rPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    // The cell's text column is 3797 - 216 - 283 twips = 164.9pt; the
+    // words fill 163.2pt of it at 11pt Calibri, 2.5pt short of wrapping.
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"3797\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+        <w:tblGrid><w:gridCol w:w=\"3797\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"3797\" w:type=\"dxa\"/></w:tcPr>\
+        <w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+        <w:spacing w:after=\"0\"/><w:ind w:left=\"283\" w:hanging=\"283\"/></w:pPr>\
+        <w:r><w:t>Please complete all relevant wordsQ</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("cell bullet");
+    let (_, yp) = pdf_glyph_text_xy(&pdf, "Please").expect("Please");
+    let (_, yq) = pdf_glyph_text_xy(&pdf, "wordsQ").expect("wordsQ");
+    assert!(
+        (yp - yq).abs() < 0.5,
+        "the last word stays on the first line; Please y={yp} wordsQ y={yq}"
+    );
+}
