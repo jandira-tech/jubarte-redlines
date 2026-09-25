@@ -413,6 +413,9 @@ struct RunStyle {
     /// Calibri "é’€").
     family_hansi: Option<String>,
     size: f32,
+    /// `w:szCs`: the size of complex-script text (a `w:rtl` run or its
+    /// right-to-left letters); `None` = `size`.
+    size_cs: Option<f32>,
     bold: bool,
     italic: bool,
     underline: bool,
@@ -984,6 +987,7 @@ impl Defaults {
                 rtl: false,
                 family_hansi: None,
                 size: 11.0,
+                size_cs: None,
                 bold: false,
                 italic: false,
                 underline: false,
@@ -3336,6 +3340,12 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
         && let Ok(half) = val.parse::<f32>()
     {
         style.size = half / 2.0;
+    }
+    if let Some(sz) = first_named(dom, rpr, "szCs")
+        && let Some(val) = dom.attribute(sz, &W::val())
+        && let Ok(half) = val.parse::<f32>()
+    {
+        style.size_cs = Some(half / 2.0);
     }
     // A w:lang without @w:eastAsia leaves the inherited East Asian
     // language alone (it only restates the Latin one).
@@ -9992,6 +10002,7 @@ fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
     // predates fixtures_500).
     if named.sets_size {
         style.size = run.size;
+        style.size_cs = run.size_cs;
     }
     if named.sets_family {
         style.family.clone_from(&run.family);
@@ -10366,6 +10377,13 @@ fn collect_runs_rec(
         );
         if style.caps && !style.small_caps {
             text = text.to_uppercase();
+        }
+        // A complex-script run (w:rtl, or right-to-left letters) is sized
+        // by w:szCs (00ba858a's sz 28 / szCs 26 Persian draws at 13pt).
+        if let Some(cs) = style.size_cs
+            && (style.rtl || text.chars().any(is_rtl_char))
+        {
+            style.size = cs;
         }
         if !text.is_empty() {
             let pending_ids = std::mem::take(&mut ctx.pending);
@@ -21802,6 +21820,7 @@ fn default_run_style() -> RunStyle {
         rtl: false,
         family_hansi: None,
         size: 11.0,
+        size_cs: None,
         bold: false,
         italic: false,
         underline: false,

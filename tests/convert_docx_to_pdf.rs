@@ -34149,3 +34149,30 @@ fn a_footer_runs_letter_spacing_is_painted() {
         "4 gaps of 3pt; spaced={spaced} tight={tight}"
     );
 }
+
+#[test]
+fn a_right_to_left_run_takes_its_complex_script_size() {
+    // fixtures_500 00ba858a: runs carry w:sz 28 and w:szCs 26 with
+    // w:rtl; Word draws the Persian text at 13pt (szCs) and spaces its
+    // lines by that size. We ignored szCs and drew 14pt.
+    let body = "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+        <w:r><w:rPr><w:rFonts w:cs=\"Arial\"/><w:sz w:val=\"48\"/><w:szCs w:val=\"20\"/><w:rtl/></w:rPr>\
+        <w:t>سلام</w:t></w:r></w:p>\
+        <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+        <w:r><w:rPr><w:sz w:val=\"20\"/></w:rPr><w:t>Z</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("szCs");
+    let y = pdf_glyph_text_xy(&pdf, "Z").expect("Z").1;
+    let top = pdf_glyph_text_xy(&minimal_pdf_z(), "Z").expect("Z").1;
+    assert!(
+        (y - top).abs() < 3.0,
+        "the 10pt Arabic line is as tall as a 10pt Latin one; y={y} top={top}"
+    );
+}
+
+fn minimal_pdf_z() -> Vec<u8> {
+    let body = "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+        <w:r><w:rPr><w:sz w:val=\"20\"/></w:rPr><w:t>Y</w:t></w:r></w:p>\
+        <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+        <w:r><w:rPr><w:sz w:val=\"20\"/></w:rPr><w:t>Z</w:t></w:r></w:p><w:sectPr/>";
+    docx_to_pdf(&minimal_docx_body(body)).expect("latin")
+}
