@@ -1672,6 +1672,9 @@ struct LaidTextBox {
     /// the part's top, for paragraph-relative offsets (00f49849's sidebar
     /// text box hangs from the header's fifth paragraph).
     chrome_para_top: f32,
+    /// `bodyPr wrap="none"` with `a:spAutoFit`: Word shrinks the box to its
+    /// widest line before aligning it (00243d36's centred page number).
+    fit_width: bool,
 }
 
 /// One shape of a group: its box as fractions of the group's box (x, y
@@ -6594,6 +6597,7 @@ fn frame_box(
         custom: None,
         group: Vec::new(),
         chrome_para_top: 0.0,
+        fit_width: false,
     })
 }
 
@@ -11336,6 +11340,7 @@ fn collect_textboxes_styled(
                     custom: custom.clone(),
                     group: Vec::new(),
                     chrome_para_top: 0.0,
+                    fit_width: false,
                 });
                 continue;
             }
@@ -11377,6 +11382,7 @@ fn collect_textboxes_styled(
                     custom: custom.clone(),
                     group: Vec::new(),
                     chrome_para_top: 0.0,
+                    fit_width: false,
                 });
                 continue;
             }
@@ -11438,6 +11444,7 @@ fn collect_textboxes_styled(
             custom,
             group,
             chrome_para_top: 0.0,
+            fit_width: bodypr_fits_width(dom, shape),
         });
     }
     // WrapNone accent fills on the same paragraph as an inline chart
@@ -11494,6 +11501,7 @@ fn group_box(
         custom: None,
         group,
         chrome_para_top: 0.0,
+        fit_width: false,
     }
 }
 
@@ -11938,6 +11946,17 @@ fn txbx_paragraphs(
 }
 
 /// `bodyPr` insets (EMU) or VML `v:textbox/@inset`, defaulting to Word's.
+/// `wps:bodyPr wrap="none"` with `a:spAutoFit`: the box takes its text's
+/// width (Word's "resize shape to fit text" without wrapping).
+fn bodypr_fits_width(dom: &Dom, shape: NodeId) -> bool {
+    descendants_local(dom, shape, "bodyPr")
+        .first()
+        .is_some_and(|&body| {
+            attr_any(dom, body, "wrap") == Some("none")
+                && !descendants_local(dom, body, "spAutoFit").is_empty()
+        })
+}
+
 fn textbox_insets(dom: &Dom, shape: NodeId) -> [f32; 4] {
     let mut ins = TXBX_INSETS;
     if let Some(body) = descendants_local(dom, shape, "bodyPr").first().copied() {
@@ -19941,6 +19960,17 @@ impl<'a> Layout<'a> {
     }
 
     fn emit_textbox(&mut self, box_: &LaidTextBox, indent_left: f32) {
+        // A fitted box is its widest line wide, plus its insets.
+        let box_w = if box_.fit_width && !box_.paras.is_empty() {
+            let text_w = box_
+                .paras
+                .iter()
+                .map(|(runs, _)| self.line_width_pt(runs))
+                .fold(0.0_f32, f32::max);
+            text_w + box_.insets[0] + box_.insets[2]
+        } else {
+            box_.w
+        };
         self.page_has_body = true;
         let min_dim = if box_.reserve_only || box_.fill.is_some() {
             1.0
@@ -19952,7 +19982,7 @@ impl<'a> Layout<'a> {
         } else {
             24.0
         };
-        let (sized_w, sized_h) = self.sized_wh(box_.slot, box_.w, box_.h, min_w, min_dim);
+        let (sized_w, sized_h) = self.sized_wh(box_.slot, box_w, box_.h, min_w, min_dim);
         let (x, y, dw, dh) = match box_.slot {
             ImageSlot::Flow => {
                 self.ensure(sized_h + 4.0);

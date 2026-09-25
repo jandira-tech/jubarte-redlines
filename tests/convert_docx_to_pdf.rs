@@ -12813,6 +12813,59 @@ fn a_footer_text_box_paints_its_text() {
 }
 
 #[test]
+fn a_centred_auto_fit_text_box_without_wrapping_centres_its_text() {
+    // fixtures_500 00243d36: the page number "— 1 —" sits in a 144pt
+    // footer text box centred on the margin, bodyPr wrap="none" with
+    // a:spAutoFit. Word shrinks the box to its text, so the number is
+    // centred (x 273-329 on A4); we centred the 144pt box and set the text
+    // at its left edge.
+    let footer_with = |para: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+               xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+               xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+               xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">{para}</w:ftr>"
+        )
+    };
+    let boxed = footer_with(
+        "<w:p><w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"2\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"margin\"><wp:align>center</wp:align></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"1828800\" cy=\"1828800\"/><wp:wrapNone/><wp:docPr id=\"1\" name=\"Text Box 1\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+           <wps:wsp><wps:cNvSpPr txBox=\"1\"/><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"1828800\" cy=\"1828800\"/></a:xfrm>\
+           <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></wps:spPr>\
+           <wps:txbx><w:txbxContent><w:p><w:r><w:t>QpageQ</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+           <wps:bodyPr wrap=\"none\" lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\"><a:spAutoFit/></wps:bodyPr>\
+           </wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>",
+    );
+    let centred = footer_with(
+        "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:t>QpageQ</w:t></w:r></w:p>",
+    );
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let x = |footer: String| {
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[("rIdF1", "footer", "footer1.xml")],
+            &[("word/footer1.xml", footer)],
+        ))
+        .expect("footer");
+        pdf_glyph_text_xy(&pdf, "QpageQ").expect("paints").0
+    };
+    let (boxed_x, centred_x) = (x(boxed), x(centred));
+    assert!(
+        (boxed_x - centred_x).abs() < 1.5,
+        "the fitted box centres its text like a centred paragraph: {boxed_x} vs {centred_x}"
+    );
+}
+
+#[test]
 fn header_runs_take_their_character_style() {
     // fixtures_500 004b3b3d: the header's "1/1" runs carry rStyle
     // PageNumber (8pt) and no size of their own. Word's header line is 8pt;
