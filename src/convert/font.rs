@@ -1339,8 +1339,14 @@ impl<'a> Fonts<'a> {
             // CSS-style list row (`"Foo", Bar, serif`) is keyed by the full
             // string, not by its first token.
             let whole = current.trim();
+            // The family/pitch generic stands behind an entry that describes
+            // its face (a panose past the family kind) or names an altName:
+            // 019d9ee6's Myriad Pro (swiss, altName Segoe UI) is Arial in
+            // Word, while 01177cdf's Museo Sans (0200…0, "modern", no
+            // altName) takes the document's default.
             if chain_generic.is_empty()
                 && let Some(entry) = table.get(primary)
+                && entry_describes(entry)
             {
                 chain_generic = super::word_subst::generic_physical(entry.family, entry.pitch);
             }
@@ -1382,14 +1388,25 @@ impl<'a> Fonts<'a> {
             // panose) paints in the document's default font: 010300e3's
             // Serenity and 00b5aa69's Shivaji01 are Calibri there.
             if let Some(entry) = table.get(primary)
-                && matches!(entry.family, super::font_table::FontFamilyClass::Auto)
-                && entry.panose.is_none_or(|p| p.iter().all(|b| *b == 0))
-                && let Some(default) = table.default_family()
-                && !default.eq_ignore_ascii_case(primary)
+                && !entry_describes(entry)
             {
-                current = default;
-                via_default = Some(default);
-                continue;
+                // A default that is itself missing leaves Word's own
+                // Calibri (01177cdf's theme Museo Sans).
+                match table.default_family() {
+                    Some(default)
+                        if via_default.is_none() && !default.eq_ignore_ascii_case(primary) =>
+                    {
+                        current = default;
+                        via_default = Some(default);
+                        continue;
+                    }
+                    _ => {
+                        break (
+                            Self::face_from_physical("Calibri", bold, italic),
+                            FontStep::Generic,
+                        );
+                    }
+                }
             }
             break (
                 Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
@@ -2520,6 +2537,16 @@ fn sanitize_pdf_name(name: &str) -> String {
         .collect()
 }
 
+/// A font-table entry Word substitutes by its generic: one with a panose
+/// that says something beyond its family kind (`0200…0` and all-zero say
+/// nothing) or with an altName.
+fn entry_describes(entry: &super::font_table::FontEntry) -> bool {
+    entry.alt_name.is_some()
+        || entry
+            .panose
+            .is_some_and(|p| p.iter().skip(1).any(|b| *b != 0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2788,9 +2815,11 @@ mod tests {
 
     #[test]
     fn resolve_font_table_swiss_generic_is_arial() {
+        // The generic needs a panose that describes the face; a bare entry
+        // takes the default (a_bare_missing_entry_takes_the_default…).
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                 <w:font w:name="SomeSwiss"><w:family w:val="swiss"/></w:font>
+                 <w:font w:name="SomeSwiss"><w:panose1 w:val="020B0604020202020204"/><w:family w:val="swiss"/></w:font>
                </w:fonts>"#,
         );
         let fonts = Fonts::new();
@@ -2804,7 +2833,7 @@ mod tests {
     fn resolve_font_table_roman_generic_is_times() {
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                 <w:font w:name="SomeRoman"><w:family w:val="roman"/></w:font>
+                 <w:font w:name="SomeRoman"><w:panose1 w:val="02020603050405020304"/><w:family w:val="roman"/></w:font>
                </w:fonts>"#,
         );
         let fonts = Fonts::new();
@@ -2816,15 +2845,55 @@ mod tests {
 
     #[test]
     fn resolve_font_table_fixed_pitch_is_courier() {
+        // A fixed-pitch entry that describes its face (a panose past the
+        // family kind) still falls to Courier; a bare one does not (see
+        // the next test, live Word 2026-09-25: Calibri).
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                 <w:font w:name="SomeFixed"><w:pitch w:val="fixed"/></w:font>
+                 <w:font w:name="SomeFixed"><w:panose1 w:val="02070309020205020404"/><w:pitch w:val="fixed"/></w:font>
                </w:fonts>"#,
         );
         let fonts = Fonts::new();
         assert_eq!(
             fonts.resolve_in("SomeFixed", false, false, &table),
             FaceId::MonoRegular
+        );
+    }
+
+    #[test]
+    fn a_bare_missing_entry_takes_the_default_not_its_generic() {
+        // fixtures_500 01177cdf: theme "Museo Sans 300" is absent; its entry
+        // says modern/variable with panose 0200…0 and no altName. Word
+        // paints it in Calibri, not the modern generic Courier New (live
+        // Word gives Calibri for bare modern/roman/swiss entries alike).
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="Museo Sans 300"><w:panose1 w:val="02000000000000000000"/>
+                   <w:family w:val="modern"/><w:notTrueType/><w:pitch w:val="variable"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("Museo Sans 300", false, false, &table),
+            FaceId::CarlitoRegular
+        );
+    }
+
+    #[test]
+    fn a_missing_entry_with_an_alt_name_keeps_its_generic() {
+        // fixtures_500 019d9ee6: Myriad Pro (swiss, panose all zero, altName
+        // an absent Segoe UI) is Arial in Word's PDF.
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="Myriad Pro"><w:altName w:val="Qwertzu Absent"/>
+                   <w:panose1 w:val="00000000000000000000"/><w:family w:val="swiss"/>
+                   <w:notTrueType/><w:pitch w:val="variable"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("Myriad Pro", false, false, &table),
+            FaceId::SansRegular
         );
     }
 
@@ -3040,7 +3109,7 @@ mod tests {
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
                  <w:font w:name="標楷體"><w:charset w:val="88"/><w:family w:val="script"/><w:pitch w:val="fixed"/></w:font>
                  <w:font w:name="HGP行書体"><w:charset w:val="80"/><w:family w:val="script"/></w:font>
-                 <w:font w:name="SomeLatin"><w:family w:val="swiss"/></w:font>
+                 <w:font w:name="SomeLatin"><w:panose1 w:val="020B0604020202020204"/><w:family w:val="swiss"/></w:font>
                </w:fonts>"#,
         );
         let mut embedded = EmbeddedFonts::new();
@@ -3299,7 +3368,7 @@ mod tests {
     fn classify_swiss_generic_step_is_generic() {
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                 <w:font w:name="SomeSwiss"><w:family w:val="swiss"/></w:font>
+                 <w:font w:name="SomeSwiss"><w:panose1 w:val="020B0604020202020204"/><w:family w:val="swiss"/></w:font>
                </w:fonts>"#,
         );
         let fonts = Fonts::new();
