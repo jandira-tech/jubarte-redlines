@@ -11908,15 +11908,30 @@ fn chart_title(dom: &Dom, root: NodeId) -> String {
     if deleted {
         return String::new();
     }
-    if let Some(title) = descendants_local(dom, root, "title").into_iter().next() {
-        for local in ["t", "v"] {
-            for n in descendants_local(dom, title, local) {
-                let s = element_text(dom, n);
-                if !s.trim().is_empty() {
-                    return s;
-                }
+    // The chart's own c:title (not an axis title): absent, the chart has
+    // none (docxide case29: Word paints no title); present without text,
+    // it is Word's automatic one, the lone series' name or "Chart Title".
+    let chart = descendants_local(dom, root, "chart")
+        .into_iter()
+        .next()
+        .unwrap_or(root);
+    let Some(title) = (0..dom.child_count(chart))
+        .map(|i| dom.child_at(chart, i))
+        .find(|c| local_name_is(dom, *c, "title"))
+    else {
+        return String::new();
+    };
+    for local in ["t", "v"] {
+        for n in descendants_local(dom, title, local) {
+            let s = element_text(dom, n);
+            if !s.trim().is_empty() {
+                return s;
             }
         }
+    }
+    let series = descendants_local(dom, root, "ser");
+    if series.len() == 1 {
+        return chart_ser_name(dom, series[0], 0);
     }
     "Chart Title".into()
 }
@@ -32309,7 +32324,8 @@ mod drawing_tests {
   </c:ser>
 </c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
         let data = parse_chart(xml).expect("chart");
-        assert_eq!(data.title, "Chart Title");
+        // No c:title element: Word paints no title (docxide case29).
+        assert_eq!(data.title, "");
         assert_eq!(data.cats, ["A", "B"]);
         assert_eq!(data.series.len(), 2);
         assert!((data.series[0][0] - 4.3).abs() < 0.01);
