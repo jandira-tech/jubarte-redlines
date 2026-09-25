@@ -33386,3 +33386,39 @@ fn a_cs_only_rfonts_keeps_the_paragraph_styles_latin_font() {
         "the run keeps Body Text's Arial"
     );
 }
+
+#[test]
+fn an_inline_text_box_sits_on_its_paragraphs_line_at_its_indent() {
+    // docxide-pdf arizona_physical_education_standards: the green
+    // standards box is an inline wps text box alone in a paragraph with
+    // ind left=380. Word sets it on that paragraph's line at the indent;
+    // we laid an empty line first (14pt lower) and started at the margin.
+    let at = |mark_sz: &str| {
+        let tbox = "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+           <wp:extent cx=\"2540000\" cy=\"635000\"/><wp:docPr id=\"9\" name=\"Box\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>\
+                 <a:solidFill><a:srgbClr val=\"D1E0B4\"/></a:solidFill></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:p><w:r><w:t>BoxText</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+               <wps:bodyPr lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\"/></wps:wsp></a:graphicData></a:graphic>\
+           </wp:inline></w:drawing>";
+        let docx = drawing_docx(&format!(
+            "<w:p><w:r><w:t>Above</w:t></w:r></w:p>\
+             <w:p><w:pPr><w:ind w:left=\"380\"/><w:rPr><w:sz w:val=\"{mark_sz}\"/></w:rPr></w:pPr>\
+               <w:r><w:rPr><w:sz w:val=\"{mark_sz}\"/></w:rPr>{tbox}</w:r></w:p><w:sectPr/>"
+        ));
+        let pdf = docx_to_pdf(&docx).expect("inline text box");
+        pdf_glyph_text_xy(&pdf, "BoxText").expect("BoxText")
+    };
+    let (x, small) = at("20");
+    let (_, big) = at("48");
+    assert!(
+        (x - 91.0).abs() < 0.5,
+        "the box starts at the 19pt indent; x={x}"
+    );
+    assert!(
+        (small - big).abs() < 0.5,
+        "the box is the line: the mark's size adds no empty line; 10pt={small} 24pt={big}"
+    );
+}

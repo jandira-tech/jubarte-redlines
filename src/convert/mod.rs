@@ -18987,7 +18987,7 @@ impl<'a> Layout<'a> {
         }
     }
 
-    fn emit_textbox(&mut self, box_: &LaidTextBox) {
+    fn emit_textbox(&mut self, box_: &LaidTextBox, indent_left: f32) {
         self.page_has_body = true;
         let min_dim = if box_.reserve_only || box_.fill.is_some() {
             1.0
@@ -19004,7 +19004,7 @@ impl<'a> Layout<'a> {
             ImageSlot::Flow => {
                 self.ensure(sized_h + 4.0);
                 self.y -= sized_h;
-                let pos = (self.page.margin_l, self.y);
+                let pos = (self.page.margin_l + indent_left, self.y);
                 // Rectangle 3 reserve_only (Strict01 167pt hole) then
                 // Chart 1: Word ChartSpace PDF y≈291.8 / fitz 248.2.
                 // 4pt after the hole parked it at 288.9 / 251.1. KEEP
@@ -20647,7 +20647,7 @@ impl<'a> Layout<'a> {
             } else {
                 top
             };
-            self.emit_textbox(box_);
+            self.emit_textbox(box_, 0.0);
         }
         (self.y, self.para_top, self.page_has_body) = saved;
     }
@@ -22176,11 +22176,14 @@ fn layout(
                 // Normal line box. Rectangle 3 reserve_only (167pt hole)
                 // and Chart 1 (Strict01 p1) are that pattern. Cover/gallery
                 // wrapNone floats are not Flow and still overlay.
+                // An inline text box (or canvas) is its paragraph's line too
+                // (docxide arizona; isla's Venn canvas spans Word's 297.6pt
+                // from "Example:" to "Vocabulary" only without the line).
                 let skip_hole_line = !has_ink
                     && boxes.iter().any(|b| {
                         matches!(b.slot, ImageSlot::Flow)
                             && b.h > 16.0
-                            && (b.reserve_only || b.chart.is_some())
+                            && (b.reserve_only || b.chart.is_some() || !b.paras.is_empty())
                     });
                 let skip_empty_line = skip_hole_line
                     || (!has_ink
@@ -22301,7 +22304,7 @@ fn layout(
                     // label backdrops hid "QUI SOMMES NOUS ?").
                     let page = lay.pages.len();
                     let start = lay.current().ops.len();
-                    lay.emit_textbox(box_);
+                    lay.emit_textbox(box_, style.indent_left);
                     if box_.behind && lay.pages.len() == page {
                         let at = lay.behind_end.min(start);
                         let ops: Vec<Op> = lay.current().ops.drain(start..).collect();
