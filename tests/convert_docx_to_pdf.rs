@@ -33932,3 +33932,33 @@ fn baselines_land_on_words_device_grid() {
         "baseline on the grid; y={y}"
     );
 }
+
+#[test]
+fn only_run_properties_before_the_text_apply_and_all_of_them_do() {
+    // fixtures_500 001f2a51 (kla.tv source lists): "<w:t/><w:rPr><w:sz 18/>"
+    // stays 11pt in Word, while a hyperlink run carrying rStyle then sz
+    // in two rPr elements is 9pt. We took the late rPr and only the first.
+    let gap = |run: &str| {
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Above</w:t></w:r></w:p>\
+             <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr>{run}</w:p>\
+             <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Below</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("rPr order");
+        pdf_glyph_text_xy(&pdf, "Above").expect("Above").1
+            - pdf_glyph_text_xy(&pdf, "Below").expect("Below").1
+    };
+    let plain = gap("<w:r><w:t>Middle</w:t></w:r>");
+    let small = gap("<w:r><w:rPr><w:sz w:val=\"18\"/></w:rPr><w:t>Middle</w:t></w:r>");
+    let late = gap("<w:r><w:t>Middle</w:t><w:rPr><w:sz w:val=\"18\"/></w:rPr></w:r>");
+    let two =
+        gap("<w:r><w:rPr><w:b/></w:rPr><w:rPr><w:sz w:val=\"18\"/></w:rPr><w:t>Middle</w:t></w:r>");
+    assert!(
+        (late - plain).abs() < 0.3,
+        "late rPr ignored; late={late} plain={plain}"
+    );
+    assert!(
+        (two - small).abs() < 0.3,
+        "second rPr applies; two={two} small={small}"
+    );
+}

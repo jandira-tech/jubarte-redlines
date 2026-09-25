@@ -10222,9 +10222,10 @@ fn collect_runs_rec(
                 collect_runs_rec(ctx, child, mark, author, runs);
             }
         }
-        if let Some(rpr) = ctx.dom.element(node, &W::r_pr())
-            && first_named(ctx.dom, rpr, "vanish").is_some_and(|n| !val_is_false(ctx.dom, Some(n)))
-        {
+        let rprs = leading_rprs(ctx.dom, node);
+        if rprs.iter().any(|rpr| {
+            first_named(ctx.dom, *rpr, "vanish").is_some_and(|n| !val_is_false(ctx.dom, Some(n)))
+        }) {
             // webHidden is web-view only (ECMA-376 17.3.2.42). Word print
             // and Save-as-PDF still paint those runs (TOC leaders / PAGEREF).
             return;
@@ -10233,7 +10234,7 @@ fn collect_runs_rec(
         if ctx.math_vert != VertAlign::Baseline {
             style.vert = ctx.math_vert;
         }
-        if let Some(rpr) = ctx.dom.element(node, &W::r_pr()) {
+        for &rpr in &rprs {
             if let Some(sid) =
                 first_named(ctx.dom, rpr, "rStyle").and_then(|n| ctx.dom.attribute(n, &W::val()))
                 && let Some(named) = ctx.styles.and_then(|s| s.get(sid))
@@ -11786,6 +11787,23 @@ fn para_own_text(dom: &Dom, para: NodeId) -> String {
         .filter(|t| dom.ancestors(*t, Some(&W::txbx_content())).is_empty())
         .map(|t| element_text(dom, t))
         .collect()
+}
+
+/// A run's `w:rPr` elements that come before its content, in order: Word
+/// applies each (001f2a51's hyperlink runs carry rStyle then sz in two)
+/// and ignores one after the text (its `<w:t/><w:rPr><w:sz 18/>` titles
+/// stay 11pt).
+fn leading_rprs(dom: &Dom, run: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for i in 0..dom.child_count(run) {
+        let child = dom.child_at(run, i);
+        if dom.name_is(child, &W::r_pr()) {
+            out.push(child);
+        } else if dom.text_value(child).is_none() {
+            break;
+        }
+    }
+    out
 }
 
 fn element_text(dom: &Dom, node: NodeId) -> String {
