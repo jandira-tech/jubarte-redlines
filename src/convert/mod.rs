@@ -20660,16 +20660,22 @@ impl<'a> Layout<'a> {
             if splittable {
                 self.split_work_row(&mut work, ri, &col_w);
             }
+            let pages_before = self.pages.len();
             if splittable && self.y - work[ri].1 < self.body_floor && !self.at_page_top {
                 self.ensure(work[ri].1);
                 self.split_work_row(&mut work, ri, &col_w);
             }
+            // A row none of which fits here opens the next page, where the
+            // header rows repeat above it (00178ea9's page two).
+            let broke_here = self.pages.len() > pages_before;
             let rh = work[ri].1;
             let will_break = self.nested_depth == 0
                 && header_n > 0
                 && ri >= header_n
-                && !self.at_page_top
-                && self.y - rh - header_h < self.body_floor;
+                // Only a row that does not fit here breaks the page; the
+                // repeated header goes on the next page, not into this one's
+                // room (015e4665's split row stayed whole and left 230pt).
+                && (broke_here || (!self.at_page_top && self.y - rh < self.body_floor));
             self.ensure(rh + if will_break { header_h } else { 0.0 });
             let paint: Vec<usize> = if will_break {
                 (0..header_n).chain(std::iter::once(ri)).collect()

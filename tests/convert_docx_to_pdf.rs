@@ -3175,12 +3175,14 @@ fn picture_bullet_uses_its_shape_extent() {
 #[test]
 fn tbl_header_repeats_on_overflow_page() {
     // file_34 / uipriority: `w:trPr/w:tblHeader` is Word's repeating
-    // header. Without it, overflow pages lose Feature/Description.
+    // header. Without it, overflow pages lose Feature/Description. Sixty
+    // rows overflow the page; forty fit on it (the old "overflow" came from
+    // reserving header room on the first page).
     let mut rows = String::from(
         "<w:tr><w:trPr><w:tblHeader/></w:trPr>\
            <w:tc><w:p><w:r><w:t>HdrCol</w:t></w:r></w:p></w:tc></w:tr>",
     );
-    for i in 0..40 {
+    for i in 0..60 {
         rows.push_str(&format!(
             "<w:tr><w:tc><w:p><w:r><w:t>Body{i:02}</w:t></w:r></w:p></w:tc></w:tr>"
         ));
@@ -34461,5 +34463,34 @@ fn a_vertical_section_runs_its_lines_down_the_page() {
     assert!(
         content.contains(" cm 0 1 -1 0 0 0 cm BT"),
         "each kanji stands upright"
+    );
+}
+
+#[test]
+fn a_tall_row_under_a_repeating_header_splits_where_it_starts() {
+    // fixtures_500 015e4665 (live Word): a table with a tblHeader row; a
+    // tall row that starts near a page's end splits there, the header
+    // repeating on the next page. We asked room for the row and the header
+    // on this page and moved the whole row on, leaving 230pt blank.
+    let filler: String = (0..40)
+        .map(|i| format!("<w:p><w:r><w:t>Filler{i}</w:t></w:r></w:p>"))
+        .collect();
+    let lines: String = (0..30)
+        .map(|i| format!("<w:p><w:r><w:t>RowLine{i}</w:t></w:r></w:p>"))
+        .collect();
+    let body = format!(
+        "{filler}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid>\
+         <w:tr><w:trPr><w:tblHeader/></w:trPr><w:tc><w:p><w:r><w:t>HeadRow</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc><w:p><w:r><w:t>ShortRow</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc>{lines}</w:tc></w:tr></w:tbl><w:p/><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("header split");
+    // The filler ends low on page one; the row's first line follows it
+    // there, not at the top of page two.
+    let y = pdf_glyph_text_xy(&pdf, "RowLine0").expect("RowLine0").1;
+    assert!(
+        y < 400.0,
+        "the tall row starts on the page that has room for its first lines; y={y}"
     );
 }
