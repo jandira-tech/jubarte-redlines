@@ -15292,7 +15292,7 @@ fn hf_styled_lines(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<(Vec<Text
                     (rest - p.indent_first, rest)
                 });
         let pieces = if line.iter().any(|r| r.text.contains('\t')) {
-            Vec::new()
+            hf_tab_line_breaks(fonts, &line, width)
         } else {
             wrap_runs(fonts, &line, first, room, false)
         };
@@ -15311,6 +15311,106 @@ fn hf_styled_lines(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<(Vec<Text
         }));
     }
     out
+}
+
+/// A tab-laid header/footer line, cut before each tab that has no stop
+/// left on the line and whose text would run past the right edge (00e23d67:
+/// Word right-aligns "Program Studi … Surabaya" on the margin stop, then
+/// moves the second tab and "Surabaya, 17-09-2024" to the next line). One
+/// piece when nothing breaks; the pieces carry on from their tab.
+fn hf_tab_line_breaks(fonts: &Fonts, line: &[TextRun], width: f32) -> Vec<Vec<TextRun>> {
+    let Some(para) = line.iter().find_map(|r| r.hf_para.clone()) else {
+        return Vec::new();
+    };
+    // A ptab centre stop resolves at paint time; leave such lines whole.
+    if para.tab_stops.iter().any(|t| t.pos < 0.0) {
+        return Vec::new();
+    }
+    let right = width - para.indent_right;
+    // Every character with its run and width.
+    let chars: Vec<(usize, char, f32)> = line
+        .iter()
+        .enumerate()
+        .flat_map(|(ri, run)| {
+            let face = fonts.get(ink_face(fonts, &run.style, &run.text));
+            let size = run.style.layout_size();
+            run.text.chars().map(move |ch| {
+                let w = if ch == '\t' {
+                    0.0
+                } else {
+                    face.width_pt(ch.encode_utf8(&mut [0; 4]), size) * run.style.hscale()
+                };
+                (ri, ch, w)
+            })
+        })
+        .collect();
+    let seg_after = |k: usize| -> f32 {
+        chars[k + 1..]
+            .iter()
+            .take_while(|(_, ch, _)| *ch != '\t')
+            .map(|(_, _, w)| w)
+            .sum()
+    };
+    let stop_after = |from: f32| para.tab_stops.iter().find(|t| t.pos > from + 0.01);
+    // Cut points (char index of the tab that starts a new line).
+    let mut cuts = Vec::new();
+    let mut pos = hf_line_indent(&para, line);
+    let mut k = 0;
+    while k < chars.len() {
+        let (_, ch, w) = chars[k];
+        if ch != '\t' {
+            pos += w;
+            k += 1;
+            continue;
+        }
+        let seg = seg_after(k);
+        let end = match stop_after(pos) {
+            Some(t) => match t.align {
+                TabAlign::Right => t.pos.max(pos + seg),
+                TabAlign::Center => (t.pos + seg * 0.5).max(pos + seg),
+                _ => t.pos + seg,
+            },
+            None if pos > para.indent_left + 0.5 && pos + seg > right + 0.5 => {
+                // No stop left and the text overflows: the tab starts the
+                // next line and resolves from its start.
+                cuts.push(k);
+                pos = para.indent_left;
+                continue;
+            }
+            None => pos + seg,
+        };
+        pos = end;
+        k += 1 + chars[k + 1..]
+            .iter()
+            .take_while(|(_, c, _)| *c != '\t')
+            .count();
+    }
+    if cuts.is_empty() {
+        return Vec::new();
+    }
+    let mut pieces: Vec<Vec<TextRun>> = vec![Vec::new()];
+    let mut buf = String::new();
+    let mut buf_run: Option<usize> = None;
+    let flush = |pieces: &mut Vec<Vec<TextRun>>, buf: &mut String, run: Option<usize>| {
+        if let (Some(ri), false) = (run, buf.is_empty())
+            && let Some(piece) = pieces.last_mut()
+        {
+            piece.push(line[ri].with_text(std::mem::take(buf)));
+        }
+    };
+    for (idx, &(ri, ch, _)) in chars.iter().enumerate() {
+        if buf_run != Some(ri) || cuts.contains(&idx) {
+            flush(&mut pieces, &mut buf, buf_run);
+            if cuts.contains(&idx) {
+                pieces.push(Vec::new());
+            }
+            buf_run = Some(ri);
+        }
+        buf.push(ch);
+    }
+    flush(&mut pieces, &mut buf, buf_run);
+    pieces.retain(|p| !p.is_empty());
+    pieces
 }
 
 /// A header/footer line's left indent: its paragraph's, plus the first-line

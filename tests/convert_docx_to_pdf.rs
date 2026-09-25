@@ -12866,6 +12866,40 @@ fn a_centred_auto_fit_text_box_without_wrapping_centres_its_text() {
 }
 
 #[test]
+fn a_header_tab_with_no_stop_left_on_the_line_starts_the_next_line() {
+    // fixtures_500 00e23d67: the header's first tab right-aligns
+    // "Program Studi … Surabaya" on the right tab at the margin; the second
+    // tab has no stop left, so Word moves it and "Surabaya, 17-09-2024" to
+    // the next line, right-aligned on the same stop. We kept one line and
+    // painted the date past the margin.
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:pPr><w:tabs><w:tab w:val=\"right\" w:pos=\"9360\"/></w:tabs></w:pPr>\
+             <w:r><w:tab/><w:t>HeadQ</w:t></w:r><w:r><w:tab/><w:t>DateQ</w:t></w:r></w:p></w:hdr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", header.to_string())],
+    ))
+    .expect("header tabs");
+    let (head_x, head_y) = pdf_glyph_text_xy(&pdf, "HeadQ").expect("head");
+    let (date_x, date_y) = pdf_glyph_text_xy(&pdf, "DateQ").expect("date");
+    assert!(
+        head_y - date_y > 8.0,
+        "DateQ starts the next line: {head_y} vs {date_y}"
+    );
+    assert!(
+        date_x < 540.0 && head_x > 480.0,
+        "both right-align on the stop at the margin: head {head_x}, date {date_x}"
+    );
+}
+
+#[test]
 fn header_runs_take_their_character_style() {
     // fixtures_500 004b3b3d: the header's "1/1" runs carry rStyle
     // PageNumber (8pt) and no size of their own. Word's header line is 8pt;
