@@ -35063,3 +35063,28 @@ fn a_first_page_header_without_title_pg_never_shows() {
         "a first-page header needs titlePg to show"
     );
 }
+
+#[test]
+fn a_full_width_picture_ahead_of_the_text_opens_its_paragraph() {
+    // English corpus 6f884742: a heading paragraph opens with a 468pt
+    // inline banner, then its text. Word sets the banner on the first line
+    // and the text under it; we set the text first and the banner below.
+    let pic = "<w:drawing><wp:inline><wp:extent cx=\"5943600\" cy=\"1016000\"/>\
+           <wp:docPr id=\"1\" name=\"Picture 0\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+             <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+             <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+           </a:graphicData></a:graphic></wp:inline></w:drawing>";
+    let body = format!(
+        "<w:p><w:r>{pic}</w:r><w:r><w:t>HeadingQ</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&drawing_docx_media(&body, "dot.png", TINY_PNG)).expect("banner");
+    let (_, y) = pdf_glyph_text_xy(&pdf, "HeadingQ").expect("heading");
+    // The banner is 80pt tall from the top margin (792 - 72).
+    assert!(
+        y < 792.0 - 72.0 - 80.0,
+        "the text sits under the banner, got baseline {y}"
+    );
+}
