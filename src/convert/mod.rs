@@ -6816,8 +6816,15 @@ fn cell_para_line_box(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
         let (mf, tf) = (face_of(m), face_of(t));
         let (ms, ts) = (m.style.size.max(1.0), t.style.size.max(1.0));
         let up = mf.single_line_pt(ms) - mf.line_descent_pt(ms);
-        let natural = tf.single_line_pt(ts).max(up + tf.line_descent_pt(ts));
-        return (size, line_box_from_natural(natural, &para.style));
+        let own = tf.single_line_pt(ts);
+        let natural = own.max(up + tf.line_descent_pt(ts));
+        // A multiple spaces the text's own line; the marker's lift is
+        // added once (as in the body's `lifted_line_box`).
+        let st = &para.style;
+        if st.line_exact.is_none() && st.line_at_least.is_none() && st.line_mult > 1.0 {
+            return (size, line_box_from_natural(own, st) + (natural - own));
+        }
+        return (size, line_box_from_natural(natural, st));
     }
     (size, para_line_box(fonts.get(face_id), size, &para.style))
 }
@@ -15891,8 +15898,12 @@ impl<'a> Layout<'a> {
         let mut fit = 0usize;
         for (line_i, line) in lines.iter().enumerate() {
             let (natural, ascent) = self.line_face_metrics(line, marker.filter(|_| line_i == 0));
-            let line_box =
-                grid_line_box(natural, style, para_grid_pitch(style, self.page.grid_pitch));
+            let grid = para_grid_pitch(style, self.page.grid_pitch);
+            let line_box = if grid > 0.5 {
+                grid_line_box(natural, style, grid)
+            } else {
+                self.lifted_line_box(line, marker.filter(|_| line_i == 0), natural, style)
+            };
             if y - line_fit_need(natural, ascent, style, line_box) < self.body_floor {
                 break;
             }
@@ -15915,6 +15926,29 @@ impl<'a> Layout<'a> {
     /// Word sizes a line by its tallest face: the single-line height and
     /// ascent are the max over the line's runs and its list marker
     /// (011c597c's Symbol bullets make 14.7pt lines under Times 12).
+    /// A line's auto box when a list marker lifts it: Word multiplies the
+    /// text's own line and adds the marker's lift once (00019a41's 12pt
+    /// Symbol bullets over Arial 12 at 1.5 step 21.5pt, not 1.5 x 14.6).
+    fn lifted_line_box(
+        &self,
+        line: &[TextRun],
+        marker: Option<&TextRun>,
+        natural: f32,
+        style: &ParaStyle,
+    ) -> f32 {
+        let multiple =
+            style.line_exact.is_none() && style.line_at_least.is_none() && style.line_mult > 1.0;
+        if !multiple || (marker.is_none() && !line.iter().any(|r| r.list_marker)) {
+            return line_box_from_natural(natural, style);
+        }
+        let text: Vec<TextRun> = line.iter().filter(|r| !r.list_marker).cloned().collect();
+        if text.iter().all(|r| r.text.trim().is_empty()) {
+            return line_box_from_natural(natural, style);
+        }
+        let (own, _) = self.line_face_metrics(&text, None);
+        line_box_from_natural(own, style) + (natural - own).max(0.0)
+    }
+
     fn line_face_metrics(&self, line: &[TextRun], marker: Option<&TextRun>) -> (f32, f32) {
         // Whitespace-only runs do not size the line: a trailing Calibri
         // space (002919b3) or an Aptos tab between Times TOC text keeps
@@ -16807,7 +16841,8 @@ impl<'a> Layout<'a> {
             let line_box = if grid > 0.5 {
                 grid_line_box(natural + ul_extra, style, grid)
             } else {
-                line_box_from_natural(natural, style) + ul_extra
+                self.lifted_line_box(line, marker.filter(|_| line_i == 0), natural, style)
+                    + ul_extra
             };
             // On a docGrid the text sits centred in its snapped box: 00d2ca27's
             // TNR 12 double lines on a 15.6pt grid start 8.7pt down.

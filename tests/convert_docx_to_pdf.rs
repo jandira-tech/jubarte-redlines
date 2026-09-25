@@ -34204,3 +34204,39 @@ fn a_table_cells_east_asian_line_is_sized_by_its_east_asian_face() {
         "the cell's line is the body's line; cell={in_cell} body={in_body}"
     );
 }
+
+#[test]
+fn a_list_markers_lift_is_not_multiplied_by_the_line_spacing() {
+    // fixtures_500 00019a41: 12pt Symbol bullets over Arial 12 at 1.5
+    // lines step 21.5pt in Word: the text's 13.8pt line times 1.5 plus
+    // the bullet's 0.8pt lift, once. We multiplied the lifted 14.6pt line
+    // (21.9pt) and the page overflowed.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
+              <w:lvlText w:val=\"\u{f0b7}\"/>\
+              <w:pPr><w:ind w:left=\"1429\" w:hanging=\"360\"/></w:pPr>\
+              <w:rPr><w:rFonts w:ascii=\"Symbol\" w:hAnsi=\"Symbol\" w:hint=\"default\"/></w:rPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let item = |t: &str| {
+        format!(
+            "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+             <w:spacing w:after=\"0\" w:line=\"360\" w:lineRule=\"auto\"/>\
+             <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"24\"/></w:rPr></w:pPr>\
+             <w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"24\"/></w:rPr>\
+             <w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!("{}{}<w:sectPr/>", item("First"), item("Second"));
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("bullets 1.5");
+    let a = pdf_glyph_text_xy(&pdf, "First").expect("First").1;
+    let b = pdf_glyph_text_xy(&pdf, "Second").expect("Second").1;
+    let step = a - b;
+    assert!(
+        (step - 21.5).abs() < 0.2,
+        "13.8 x 1.5 + 0.8 lift; step={step}"
+    );
+}
