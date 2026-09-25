@@ -17031,15 +17031,9 @@ impl<'a> Layout<'a> {
             let glyphs: Vec<u16> = shaped.iter().map(|(g, _)| *g).collect();
             let page_i = self.pages.len().saturating_sub(1);
             let op_i = self.current().ops.len();
-            self.current().ops.push(Op::text(
-                fid,
-                size,
-                x,
-                y,
-                glyphs,
-                run.style.color,
-                run.text.clone(),
-            ));
+            self.current().ops.push(
+                Op::text(fid, size, x, y, glyphs, run.style.color, run.text.clone()).scaled(scale),
+            );
             self.pageref_ops.push((page_i, op_i, name.to_string()));
         } else {
             let mut gx = x;
@@ -17054,15 +17048,10 @@ impl<'a> Layout<'a> {
                     } else {
                         pieces.get(i).cloned().unwrap_or_default()
                     };
-                    self.current().ops.push(Op::text(
-                        fid,
-                        size,
-                        gx,
-                        y,
-                        vec![*gid],
-                        run.style.color,
-                        piece,
-                    ));
+                    self.current().ops.push(
+                        Op::text(fid, size, gx, y, vec![*gid], run.style.color, piece)
+                            .scaled(scale),
+                    );
                 }
                 gx += adv_pt;
             }

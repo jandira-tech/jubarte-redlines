@@ -835,6 +835,21 @@ fn a_break_only_paragraphs_mark_keeps_its_space_before_in_the_next_column() {
 }
 
 #[test]
+fn a_horizontally_scaled_run_squeezes_its_glyphs() {
+    // fixtures_500 003329b5: "QUI SOMMES NOUS ?" is w:w=60. Word draws
+    // the glyphs 60% wide; we only packed the advances, so the full-width
+    // letters overlapped.
+    let body =
+        "<w:p><w:r><w:rPr><w:w w:val=\"50\"/></w:rPr><w:t>Squeezed</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("scaled");
+    let content = pdf_content_streams(&pdf).join("\n");
+    assert!(
+        content.contains("0.1200 0 0 0.24") || content.contains("q 0.5000 0 0 1 "),
+        "the glyphs carry the 50% scale"
+    );
+}
+
+#[test]
 fn a_float_in_the_margin_does_not_indent_the_text() {
     // fixtures_500 00af3bb0: a 30pt QR code at column offset -42.7pt
     // (wrapTight) sits wholly in the left margin. Word starts the title at
@@ -23097,7 +23112,8 @@ fn official_file_146_title_box_sits_on_top_margin() {
 fn pdf_device_xy(hay: &str, ppem_tf: &str) -> Vec<(f32, f32)> {
     let mut out = Vec::new();
     let mut from = 0;
-    let needle = "0.24 0 0 0.24 ";
+    // Any horizontal scale: w:w text is `0.4800 0 0 0.24 x y cm`.
+    let needle = " 0 0 0.24 ";
     while let Some(rel) = hay[from..].find(needle) {
         let rest = &hay[from + rel + needle.len()..];
         let mut parts = rest.split_whitespace();

@@ -28,6 +28,8 @@ pub(crate) enum Op {
         /// simple TrueType font like Word Quartz (hinted by MuPDF). Empty or
         /// non-WinAnsi text stays on Identity-H CID.
         text: String,
+        /// `w:w` horizontal scale of the glyphs (1.0 = none).
+        hscale: f32,
     },
     Line {
         x1: f32,
@@ -244,7 +246,16 @@ impl Op {
             glyphs,
             color,
             text: text.into(),
+            hscale: 1.0,
         }
+    }
+
+    /// The same text drawn `scale` times as wide (`w:w`).
+    pub(crate) fn scaled(mut self, scale: f32) -> Self {
+        if let Self::Text { hscale, .. } = &mut self {
+            *hscale = scale;
+        }
+        self
     }
 }
 
@@ -459,6 +470,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     glyphs,
                     color,
                     text: _,
+                    hscale,
                 } => {
                     if glyphs.is_empty() {
                         continue;
@@ -474,10 +486,23 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         format!("<{hex}>")
                     };
                     let (r, g, b) = (color[0], color[1], color[2]);
+                    // A `w:w` scale squeezes the glyphs themselves about
+                    // their origin; advances were scaled at layout.
+                    let sx = *hscale;
                     if let Some((ppem, tc)) = word_device_paint(*size) {
+                        let a = if (sx - 1.0).abs() > 0.001 {
+                            format!("{:.4}", 0.24 * sx)
+                        } else {
+                            "0.24".into()
+                        };
                         let _ = writeln!(
                             stream,
-                            "q 0.24 0 0 0.24 {x:.2} {y:.2} cm BT /{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg {tc:.4} Tc 0 0 Td {lit} Tj ET Q",
+                            "q {a} 0 0 0.24 {x:.2} {y:.2} cm BT /{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg {tc:.4} Tc 0 0 Td {lit} Tj ET Q",
+                        );
+                    } else if (sx - 1.0).abs() > 0.001 {
+                        let _ = writeln!(
+                            stream,
+                            "q {sx:.4} 0 0 1 {x:.2} {y:.2} cm BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg 0 0 Td {lit} Tj ET Q",
                         );
                     } else {
                         let tc = word_device_track(*size);
