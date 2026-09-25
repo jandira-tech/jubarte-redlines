@@ -35122,3 +35122,50 @@ fn a_text_box_outline_takes_its_line_colour_and_width() {
     });
     assert!(blue_3pt, "the box is stroked 3pt in its accent blue");
 }
+
+#[test]
+fn text_on_a_centre_tab_wraps_by_its_centred_width() {
+    // English corpus 5fb9cedf: a 22pt title after a centre tab at 5360
+    // twips. Word centres it on the stop in one line; we measured it from
+    // the stop, overflowed the line and wrapped "Inventory".
+    let body = "<w:p><w:pPr><w:tabs><w:tab w:val=\"center\" w:pos=\"5360\"/></w:tabs></w:pPr>\
+         <w:r><w:rPr><w:b/><w:sz w:val=\"44\"/></w:rPr><w:tab/><w:t>Participant Interest InventoryQ</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("centre tab");
+    let (_, first) = pdf_glyph_text_xy(&pdf, "Participant").expect("first word");
+    let (_, last) = pdf_glyph_text_xy(&pdf, "InventoryQ").expect("last word");
+    assert!(
+        (first - last).abs() < 0.5,
+        "the centred title stays on one line: {first} vs {last}"
+    );
+}
+
+#[test]
+fn a_small_picture_ahead_of_the_text_opens_its_line() {
+    // English corpus 5fb9cedf: a 96pt logo, then the title. Word sets the
+    // title on the logo's line, its baseline at the logo's bottom; we set
+    // the title first and the logo on a row under it.
+    let pic = "<w:drawing><wp:inline><wp:extent cx=\"1219200\" cy=\"762000\"/>\
+           <wp:docPr id=\"1\" name=\"Picture 0\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+             <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+             <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+           </a:graphicData></a:graphic></wp:inline></w:drawing>";
+    let body = format!(
+        "<w:p><w:r>{pic}</w:r><w:r><w:t xml:space=\"preserve\"> LogoTitleQ</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&drawing_docx_media(&body, "dot.png", TINY_PNG)).expect("logo line");
+    let (x, y) = pdf_glyph_text_xy(&pdf, "LogoTitleQ").expect("title");
+    // The logo is 96pt wide and 60pt tall from the top margin.
+    assert!(
+        x > 72.0 + 96.0 - 1.0,
+        "the title follows the logo, got x {x}"
+    );
+    assert!(
+        (792.0 - 72.0 - 60.0 - y).abs() < 1.0,
+        "the title sits on the logo's bottom, got baseline {y}"
+    );
+}

@@ -1621,6 +1621,16 @@ struct LastLine {
     align: Align,
 }
 
+/// A paragraph's first painted line, so inline pictures ahead of its text
+/// can open it: `line` as for `LastLine`, its ops ending at `ops_end`.
+#[derive(Clone, Copy)]
+struct FirstLine {
+    line: LastLine,
+    ops_end: usize,
+    baseline: f32,
+    tab_led: bool,
+}
+
 struct LaidTextBox {
     w: f32,
     h: f32,
@@ -15806,6 +15816,9 @@ struct Layout<'a> {
     /// How the last painted body line was set, so a picture that follows
     /// its text can join it (see `LastLine`).
     last_line: Option<LastLine>,
+    /// The paragraph's first painted line: where its ops end, its
+    /// baseline, and whether a tab opens it (see `FirstLine`).
+    first_line: Option<FirstLine>,
     /// The current page is its section's first (pgBorders `display`).
     section_first_page: bool,
     /// zOrder=front page-border ops per page index, appended after the
@@ -16180,6 +16193,7 @@ impl<'a> Layout<'a> {
             line_probe: LineProbe::default(),
             last_line_end: None,
             last_line: None,
+            first_line: None,
             section_first_page: true,
             front_border_ops: Vec::new(),
             para_top: y,
@@ -17682,6 +17696,20 @@ impl<'a> Layout<'a> {
                 trail,
                 align: style.align,
             });
+            if line_i == 0 {
+                self.first_line = self.last_line.map(|l| FirstLine {
+                    line: l,
+                    ops_end: self.current().ops.len(),
+                    baseline,
+                    // A tab before the first ink places the text on its
+                    // stop wherever the line starts.
+                    tab_led: line
+                        .iter()
+                        .flat_map(|r| r.text.chars())
+                        .take_while(|c| c.is_whitespace())
+                        .any(|c| c == '\t'),
+                });
+            }
             // An exact line is exactly its pitch even under a taller face
             // (0016d88a's exact 10.6pt lines of 10.5pt MS Mincho).
             self.y -= if style.line_exact.is_some() {
@@ -23291,7 +23319,19 @@ fn wrap_runs_segment(
         }
     }
     let mut line_spaces = 0.0_f32;
-    for (unit, is_space) in units {
+    // The text after each unit up to the next tab: a centre or right stop
+    // sets it back by half or all of it, as at paint time. Measured from
+    // the stop alone, 5fb9cedf's centred title overflowed and wrapped.
+    let tails: Vec<f32> = (0..units.len())
+        .map(|i| {
+            units[i + 1..]
+                .iter()
+                .take_while(|(u, _)| u.iter().all(|(_, tok, _)| !tok.contains('\t')))
+                .map(|(u, _)| u.iter().map(|(_, _, w)| w).sum::<f32>())
+                .sum()
+        })
+        .collect();
+    for (ui, (unit, is_space)) in units.into_iter().enumerate() {
         let mut w: f32 = unit.iter().map(|(_, _, w)| w).sum();
         // A tab jumps to the next stop from where it stands (00996ee5's
         // leading tab took 35pt of the first line in Word).
@@ -23301,10 +23341,38 @@ fn wrap_runs_segment(
         {
             let start = if line_i == 0 { t.first_start } else { t.start };
             let mut pos = start + x;
-            for (run, tok, _) in &unit {
-                for ch in tok.chars() {
+            let char_w = |run: &TextRun, ch: char| {
+                let fid = fonts.resolve(&run.style.family, run.style.bold, run.style.italic);
+                fonts
+                    .get(fid)
+                    .width_pt(ch.encode_utf8(&mut [0; 4]), run.style.layout_size())
+                    * run.style.hscale()
+            };
+            let chars: Vec<(&TextRun, char)> = unit
+                .iter()
+                .flat_map(|(run, tok, _)| tok.chars().map(move |ch| (*run, ch)))
+                .collect();
+            for (k, &(run, ch)) in chars.iter().enumerate() {
+                {
                     if ch == '\t' {
-                        pos = next_tab_x(pos, 0.0, t.stops, t.default_tab);
+                        let stop = next_tab_stop(pos, 0.0, t.stops, t.default_tab);
+                        let rest = &chars[k + 1..];
+                        let own: f32 = rest
+                            .iter()
+                            .take_while(|(_, c)| *c != '\t')
+                            .map(|&(r, c)| char_w(r, c))
+                            .sum();
+                        let after = own
+                            + if rest.iter().any(|(_, c)| *c == '\t') {
+                                0.0
+                            } else {
+                                tails[ui]
+                            };
+                        pos = match stop.align {
+                            TabAlign::Center => (stop.pos - after * 0.5).max(pos),
+                            TabAlign::Right => (stop.pos - after).max(pos),
+                            _ => stop.pos,
+                        };
                     } else {
                         let fid =
                             fonts.resolve(&run.style.family, run.style.bold, run.style.italic);
@@ -23693,7 +23761,57 @@ fn layout(
                         after_pics.before = 0.0;
                         lay.emit_runs(runs, &after_pics, *list, wrap);
                     } else {
+                        lay.first_line = None;
                         lay.emit_runs(runs, &style, *list, wrap);
+                        // Inline pictures ahead of text that fit its first
+                        // line open that line: it deepens to them and the
+                        // text follows them (5fb9cedf's logo, then a centre
+                        // tab to its title).
+                        let first = lay.first_line.take().filter(|f| {
+                            f.line.page == lay.pages.len()
+                                && has_ink
+                                && !flow.is_empty()
+                                && flow.len() == images.len()
+                                && flow
+                                    .iter()
+                                    .all(|img| img.lead_chars != usize::MAX && !img.after_text)
+                        });
+                        if let Some(f) = first {
+                            let sizes: Vec<(f32, f32)> =
+                                flow.iter().map(|img| lay.image_wh(img)).collect();
+                            let pics_w: f32 = sizes.iter().map(|s| s.0).sum::<f32>()
+                                + flow.iter().skip(1).map(|img| img.gap_before).sum::<f32>();
+                            let fits = f.tab_led
+                                || (matches!(f.line.align, Align::Left | Align::Justify)
+                                    && pics_w <= f.line.room);
+                            if fits {
+                                let h = sizes.iter().map(|s| s.1).fold(0.0_f32, f32::max);
+                                let dy = (h - f.line.drop).max(0.0);
+                                let dx = if f.tab_led { 0.0 } else { pics_w };
+                                let ops = &mut lay.current().ops;
+                                for op in &mut ops[f.line.ops_start..f.ops_end] {
+                                    shift_op_x(op, dx);
+                                }
+                                for op in &mut ops[f.line.ops_start..] {
+                                    shift_op_y(op, -dy);
+                                }
+                                lay.y -= dy;
+                                if let Some(end) = lay.last_line_end.as_mut() {
+                                    end.1 -= dy;
+                                }
+                                let baseline = f.baseline - dy;
+                                let mut x =
+                                    lay.page.margin_l + style.indent_left + style.indent_first;
+                                for (k, (img, (w, ih))) in flow.iter().zip(&sizes).enumerate() {
+                                    if k > 0 {
+                                        x += img.gap_before;
+                                    }
+                                    lay.push_image(img, x, baseline, *w, *ih);
+                                    x += w;
+                                }
+                                lead_pictures_done = true;
+                            }
+                        }
                     }
                     lay.paint_hrule(&style);
                     lay.pbdr_joins = (false, false);
