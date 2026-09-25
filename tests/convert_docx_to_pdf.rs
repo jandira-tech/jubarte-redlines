@@ -33579,3 +33579,37 @@ fn customxml_wrapped_blocks_and_cells_are_laid_out() {
         assert!(pdf_literal_td_y(&pdf, word).is_some(), "{word} is painted");
     }
 }
+
+#[test]
+fn a_page_relative_border_runs_inward_from_its_space() {
+    // docxide-pdf case68 (live Word agrees): offsetFrom="page", sz=24,
+    // space=24 fills 24-27 from each page edge; we centred the 3pt line on
+    // 24 (22.5-25.5), half of it past the frame Word draws.
+    let body = "<w:p><w:r><w:t>Bordered</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+           <w:pgBorders w:offsetFrom=\"page\">\
+             <w:top w:val=\"single\" w:sz=\"24\" w:space=\"24\" w:color=\"FF0000\"/>\
+             <w:left w:val=\"single\" w:sz=\"24\" w:space=\"24\" w:color=\"FF0000\"/>\
+             <w:bottom w:val=\"single\" w:sz=\"24\" w:space=\"24\" w:color=\"FF0000\"/>\
+             <w:right w:val=\"single\" w:sz=\"24\" w:space=\"24\" w:color=\"FF0000\"/>\
+           </w:pgBorders></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert pgBorders");
+    let boxes = pdf_fill_boxes_in(&String::from_utf8_lossy(&pdf), 1.0, 0.0, 0.0);
+    let left = boxes
+        .iter()
+        .find(|(_, _, w, h)| *w < 6.0 && *h > 400.0)
+        .expect("left edge");
+    assert!(
+        (left.0 - 24.0).abs() < 0.2,
+        "the left line's outer edge is at 24; {left:?}"
+    );
+    let bottom = boxes
+        .iter()
+        .find(|(_, y, w, h)| *w > 400.0 && *h < 6.0 && *y < 100.0)
+        .expect("bottom edge");
+    assert!(
+        (bottom.1 - 24.0).abs() < 0.2,
+        "the bottom line's outer edge is at 24; {bottom:?}"
+    );
+}

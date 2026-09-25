@@ -21171,6 +21171,8 @@ impl<'a> Layout<'a> {
         let mr = self.page.margin_r;
         let mt = self.page.margin_t;
         let mb = self.page.margin_b;
+        // Measured from the page, `space` is the line's outer edge and the
+        // line runs inward (live Word, case68: 3pt at 24 fills 24-26.88).
         let edge_x = |space: f32, left: bool| {
             if b.from_page {
                 if left { space } else { pw - space }
@@ -21213,33 +21215,32 @@ impl<'a> Layout<'a> {
             .or(b.right)
             .map(|e| edge_y(e.space, false))
             .unwrap_or(0.0);
+        // How far the painted line's centre sits inside that outer edge:
+        // a double's outer line starts there (00ba858a: 24-24.48), and a
+        // medium-gap compound already runs inward from the offset.
+        let half = |e: PageBorder| {
+            let w = e.width.max(0.24);
+            match (b.from_page, e.line) {
+                (false, _) | (true, BorderLine::MediumGap) => 0.0,
+                (true, BorderLine::Double) => 1.5 * w,
+                (true, _) => w / 2.0,
+            }
+        };
         if let Some(e) = b.top {
-            self.border_edge(
-                e,
-                (left, edge_y(e.space, true)),
-                (right, edge_y(e.space, true)),
-            );
+            let y = edge_y(e.space, true) - half(e);
+            self.border_edge(e, (left, y), (right, y));
         }
         if let Some(e) = b.bottom {
-            self.border_edge(
-                e,
-                (left, edge_y(e.space, false)),
-                (right, edge_y(e.space, false)),
-            );
+            let y = edge_y(e.space, false) + half(e);
+            self.border_edge(e, (left, y), (right, y));
         }
         if let Some(e) = b.left {
-            self.border_edge(
-                e,
-                (edge_x(e.space, true), bot),
-                (edge_x(e.space, true), top),
-            );
+            let x = edge_x(e.space, true) + half(e);
+            self.border_edge(e, (x, bot), (x, top));
         }
         if let Some(e) = b.right {
-            self.border_edge(
-                e,
-                (edge_x(e.space, false), bot),
-                (edge_x(e.space, false), top),
-            );
+            let x = edge_x(e.space, false) - half(e);
+            self.border_edge(e, (x, bot), (x, top));
         }
         if !b.back {
             // zOrder front (the default): over body ink. Park the ops and
