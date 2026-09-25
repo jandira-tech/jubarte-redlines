@@ -33563,3 +33563,19 @@ fn the_empty_paragraph_after_a_table_stays_a_line_before_heading2() {
         "the empty paragraph is a line; bare={bare} tailed={tailed}"
     );
 }
+
+#[test]
+fn customxml_wrapped_blocks_and_cells_are_laid_out() {
+    // docxide-pdf case67: w:customXml wraps a body paragraph, a table row
+    // and a cell's paragraph. Word lays their content out like unwrapped
+    // content; we dropped the wrapped paragraph and cell text.
+    let body = "<w:customXml w:element=\"BlockTag\"><w:p><w:r><w:t>BlockWrapped</w:t></w:r></w:p></w:customXml>\
+        <w:tbl><w:tblGrid><w:gridCol w:w=\"2400\"/></w:tblGrid>\
+          <w:tr><w:tc><w:customXml w:element=\"CellTag\"><w:p><w:r><w:t>CellWrapped</w:t></w:r></w:p></w:customXml></w:tc></w:tr>\
+          <w:customXml w:element=\"RowTag\"><w:tr><w:tc><w:p><w:r><w:t>RowWrapped</w:t></w:r></w:p></w:tc></w:tr></w:customXml>\
+        </w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("customXml");
+    for word in ["BlockWrapped", "CellWrapped", "RowWrapped"] {
+        assert!(pdf_literal_td_y(&pdf, word).is_some(), "{word} is painted");
+    }
+}

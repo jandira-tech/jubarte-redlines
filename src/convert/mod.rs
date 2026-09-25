@@ -6177,6 +6177,10 @@ fn walk_container(
             if !block_is_blank(&block) {
                 blocks.push(block);
             }
+        } else if local_name_is(dom, child, "customXml") {
+            // A customXml wrapper's blocks are the body's own (docxide
+            // case67's "Block-level customXml content").
+            walk_container(ctx, dom, child, numbering, blocks, endnotes);
         } else if dom.name_is(child, &W::sdt())
             && let Some(content) = dom.element(child, &W::sdt_content())
         {
@@ -8648,7 +8652,19 @@ fn table_block(
     // Direct `w:tr` only — descendants() would flatten nested tables into this one.
     // Repeating-section w:sdt rows (Strict01 100/200/300) are Word-faithful,
     // but painting them sends file_196 past Word's 13pp on our looser packing.
-    let all_rows = dom.elements(table, Some(&W::tr()));
+    // customXml-wrapped rows are the table's own (docxide case67).
+    let all_rows: Vec<NodeId> = (0..dom.child_count(table))
+        .map(|i| dom.child_at(table, i))
+        .flat_map(|c| {
+            if local_name_is(dom, c, "customXml") {
+                dom.elements(c, Some(&W::tr()))
+            } else if dom.name_is(c, &W::tr()) {
+                vec![c]
+            } else {
+                Vec::new()
+            }
+        })
+        .collect();
     let row_count = all_rows.len();
     // The rules an edge a cell's tcBorders leaves unnamed falls back to.
     let table_borders = table_pr(dom, table)
@@ -9087,6 +9103,8 @@ fn cell_children_in_order(dom: &Dom, node: NodeId, out: &mut Vec<NodeId>) {
             if let Some(content) = dom.element(child, &W::sdt_content()) {
                 cell_children_in_order(dom, content, out);
             }
+        } else if local_name_is(dom, child, "customXml") {
+            cell_children_in_order(dom, child, out);
         } else {
             out.push(child);
         }
