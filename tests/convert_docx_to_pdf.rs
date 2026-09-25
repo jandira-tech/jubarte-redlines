@@ -33536,3 +33536,30 @@ fn a_drawing_canvas_paints_its_background_and_shapes() {
         "the 50 × 30pt blue shape; shape={shape:?}"
     );
 }
+
+#[test]
+fn the_empty_paragraph_after_a_table_stays_a_line_before_heading2() {
+    // docxide-pdf case15: every table is followed by an empty <w:p/> and a
+    // Heading2. Word keeps that paragraph's line (" " at 153.0 between
+    // Alice at 139.0 and the heading at 180.5); we dropped it.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Heading2\"><w:name w:val=\"heading 2\"/><w:basedOn w:val=\"Normal\"/></w:style>\
+        </w:styles>";
+    let gap = |tail: &str| {
+        let body = format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:p><w:r><w:t>CellText</w:t></w:r></w:p></w:tc></w:tr></w:tbl>{tail}\
+             <w:p><w:pPr><w:pStyle w:val=\"Heading2\"/></w:pPr><w:r><w:t>HeadText</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("table tail");
+        pdf_literal_td_y(&pdf, "CellText").expect("cell")
+            - pdf_literal_td_y(&pdf, "HeadText").expect("head")
+    };
+    let (bare, tailed) = (gap(""), gap("<w:p/>"));
+    assert!(
+        tailed - bare > 10.0,
+        "the empty paragraph is a line; bare={bare} tailed={tailed}"
+    );
+}

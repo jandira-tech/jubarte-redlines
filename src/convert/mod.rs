@@ -22375,27 +22375,10 @@ fn layout(
                         && images
                             .iter()
                             .any(|im| matches!(im.slot, ImageSlot::Flow) && im.h > 8.0));
-                // table_bookmark_end: Word's required empty <w:p> after a
-                // table does not keep a Normal line box when the next
-                // block is Heading2 (Tests 1–7 stay on page 1). Keep
-                // after=10; skipping that too pulls Test 8 onto page 1.
-                // Heading1 (file_170 / potpourri) must keep the line —
-                // collapsing those dropped file_170 ~5 ITT.
-                let skip_table_tail = !has_ink
-                    && images.is_empty()
-                    && boxes.is_empty()
-                    && i > 0
-                    && matches!(blocks[i - 1], Block::Table { .. })
-                    && matches!(
-                        blocks.get(i + 1),
-                        Some(Block::Paragraph { style, .. }) if style.style_id == "Heading2"
-                    );
-                if skip_table_tail {
-                    if !lay.at_page_top {
-                        lay.y -= style.after;
-                        lay.at_page_top = false;
-                    }
-                } else if has_ink || (images.is_empty() && boxes.is_empty()) || !skip_empty_line {
+                // Word keeps the empty paragraph after a table as a line,
+                // Heading2 next or not (docxide case15; fixtures_500
+                // 00189bfa's " " line 16.5pt over heading 8).
+                if has_ink || (images.is_empty() && boxes.is_empty()) || !skip_empty_line {
                     if lay.side_float.is_some_and(|sf| lay.y <= sf.bottom + 0.5) {
                         lay.side_float = None;
                     }
