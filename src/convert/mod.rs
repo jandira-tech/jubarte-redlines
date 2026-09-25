@@ -4028,7 +4028,7 @@ struct NumLevel {
     italic: bool,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Numbering {
     instances: HashMap<String, String>,
     levels: HashMap<String, HashMap<u32, NumLevel>>,
@@ -7288,6 +7288,7 @@ fn paragraph_block(
         &rstyle,
         &sheet.theme,
         Some(sheet),
+        Some(numbering),
     );
     // Word paints empty TitlePage/DocumentTitle with the style's rPr
     // (Arial 18 / exact 20 / after 24). Factory Calibri 11 stretched
@@ -10229,7 +10230,7 @@ fn collect_textboxes(
     base: &RunStyle,
     theme: &ThemeFonts,
 ) -> Vec<LaidTextBox> {
-    collect_textboxes_styled(src, dom, para, base, theme, None)
+    collect_textboxes_styled(src, dom, para, base, theme, None, None)
 }
 
 /// `collect_textboxes` with the document's styles, so each text box
@@ -10241,6 +10242,7 @@ fn collect_textboxes_styled(
     base: &RunStyle,
     theme: &ThemeFonts,
     sheet: Option<&StyleSheet>,
+    numbering: Option<&Numbering>,
 ) -> Vec<LaidTextBox> {
     let mut out = Vec::new();
     let shapes = shape_roots(dom, para);
@@ -10281,7 +10283,7 @@ fn collect_textboxes_styled(
             .unwrap_or(0.0);
         let paras = match (sheet, txbx) {
             (Some(sheet), Some(n)) if txbx_lays_out_paragraphs(dom, shape, n) => {
-                txbx_paragraphs(dom, n, sheet, theme)
+                txbx_paragraphs(dom, n, sheet, theme, numbering)
             }
             _ => Vec::new(),
         };
@@ -10728,7 +10730,7 @@ fn collect_group(
                 if let Some(sheet) = text.sheet
                     && txbx_lays_out_paragraphs(dom, child, txbx)
                 {
-                    shape.paras = txbx_paragraphs(dom, txbx, sheet, theme);
+                    shape.paras = txbx_paragraphs(dom, txbx, sheet, theme, None);
                 }
                 shape.insets = textbox_insets(dom, child);
                 shape.text_anchor = shape_text_anchor(dom, child);
@@ -10871,7 +10873,10 @@ fn txbx_paragraphs(
     txbx: NodeId,
     sheet: &StyleSheet,
     theme: &ThemeFonts,
+    numbering: Option<&Numbering>,
 ) -> Vec<(Vec<TextRun>, ParaStyle)> {
+    // A box's lists number on their own copy of the document's lists.
+    let mut numbering = numbering.cloned();
     dom.descendants(txbx, Some(&W::p()))
         .into_iter()
         .filter(|p| {
@@ -10880,12 +10885,12 @@ fn txbx_paragraphs(
                 .is_none_or(|a| *a == txbx)
         })
         .map(|p| {
-            let (style, run) = para_base(dom, p, sheet, None);
+            let (mut style, run) = para_base(dom, p, sheet, None);
             let mut runs = collect_runs(dom, p, &run, theme);
             // An empty paragraph is a line of its mark (010300e3's 8pt
             // blank between "Dear Ms. Smith:" and the letter).
             if runs.is_empty() {
-                let mut mark = run;
+                let mut mark = run.clone();
                 if let Some(rpr) = dom
                     .element(p, &W::p_pr())
                     .and_then(|ppr| dom.element(ppr, &W::r_pr()))
@@ -10893,6 +10898,20 @@ fn txbx_paragraphs(
                     apply_rpr(dom, rpr, &mut mark, theme);
                 }
                 runs.push(TextRun::new(" ", mark));
+            }
+            // A list paragraph in a box keeps its bullet and the level's
+            // indent, as in the body (003329b5's "*" items in the
+            // "NOS METHODES" box).
+            if let Some(numbering) = numbering.as_mut() {
+                let (marker, num_id, ilvl) = list_marker(dom, p, sheet, numbering);
+                if !marker.is_empty() && numbering.pic_image(&num_id, ilvl).is_none() {
+                    style.list_num.clone_from(&num_id);
+                    let lvl = numbering.level(&num_id, ilvl);
+                    let marker_style = apply_list_level(dom, p, sheet, lvl, &run, &mut style);
+                    let mut mark = TextRun::new(marker, marker_style);
+                    mark.list_marker = true;
+                    runs.insert(0, mark);
+                }
             }
             (runs, style)
         })
@@ -13332,6 +13351,7 @@ fn load_chrome_part(
                     &prun,
                     &sheet.theme,
                     Some(sheet),
+                    None,
                 )
                 .into_iter()
                 .filter(|b| !matches!(b.slot, ImageSlot::Flow))

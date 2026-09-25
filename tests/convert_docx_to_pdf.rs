@@ -2674,6 +2674,44 @@ fn auto_spacing_drops_between_items_of_one_list() {
 }
 
 #[test]
+fn a_list_paragraph_in_a_text_box_keeps_its_marker_and_indent() {
+    // fixtures_500 003329b5: the "NOS METHODES" text box lists its items
+    // with Symbol "*" bullets at the level's indent. Box paragraphs were
+    // built without the numbering: no marker, and the style's indent.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:r><w:drawing xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+           xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+           <wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" relativeHeight=\"1\" \
+           behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"3175000\" cy=\"635000\"/><wp:wrapNone/><wp:docPr id=\"9\" name=\"Box\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+                 <w:r><w:t>Item</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+               <wps:bodyPr lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\"/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("box list");
+    let item = pdf_glyph_text_xy(&pdf, "Item").expect("item").0;
+    let marker = pdf_glyph_text_xy(&pdf, "1.")
+        .expect("the box's list marker")
+        .0;
+    assert!(
+        (item - 72.0 - 36.0).abs() < 1.0 && (marker - 72.0 - 18.0).abs() < 1.0,
+        "marker hangs at 18pt, text at the level's 36pt; marker={marker} item={item}"
+    );
+}
+
+#[test]
 fn numbering_start_override_restarts_the_second_instance() {
     // xml_parts_plan numbering leftovers: w:lvlOverride/w:startOverride
     // on a second w:num sharing the abstract. Without it, CharlieOV
