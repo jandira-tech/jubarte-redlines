@@ -6150,8 +6150,10 @@ fn text_box_paragraphs_lay_out_as_paragraphs_inside_the_insets() {
         "one exact 12pt line apart; ys={ys:?}"
     );
     let x0 = glyphs.iter().map(|g| g.0).fold(f32::MAX, f32::min);
+    // Word rounds the box's text edge to its 0.24pt device grid (22.95
+    // paints at 23.04): the inset is right within half a grid step.
     assert!(
-        (x0 - (15.75 + 7.2)).abs() < 0.05,
+        (x0 - (15.75 + 7.2)).abs() <= 0.121,
         "text starts at the 7.2pt left inset; x0={x0}"
     );
 }
@@ -33716,4 +33718,20 @@ fn each_diagram_paints_its_own_drawing_part() {
         hay.contains("0.000 0.000 1.000 rg"),
         "diagram 2 is blue, its own drawing"
     );
+}
+
+#[test]
+fn the_left_margin_lands_on_words_device_grid() {
+    // fixtures_500 0007ed60 and 294 more: an 85.05pt (1701 twip) left
+    // margin starts Word's lines at 84.96, the margin rounded to its
+    // 1/300in grid; indents then add exactly (014caa99's 72 + 45 = 117.0).
+    let body = "<w:p><w:r><w:t>Snapped</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:ind w:firstLine=\"720\"/></w:pPr><w:r><w:t>Indented</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1134\" w:right=\"850\" w:bottom=\"1134\" w:left=\"1701\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("grid margin");
+    let x = pdf_glyph_text_xy(&pdf, "Snapped").expect("Snapped").0;
+    assert!((x - 84.96).abs() < 0.01, "85.05 rounds to 84.96; x={x}");
+    let xi = pdf_glyph_text_xy(&pdf, "Indented").expect("Indented").0;
+    assert!((xi - 120.96).abs() < 0.01, "84.96 + 36; x={xi}");
 }

@@ -16772,6 +16772,13 @@ impl<'a> Layout<'a> {
                 };
                 self.paint_run(mark, mx, baseline);
             }
+            // Word puts the page's left margin on its 1/300in grid (85.05pt
+            // paints at 84.96: 295 of fixtures_500's 300 off-grid margins)
+            // and adds indents exactly (014caa99's 72 + 45 stays 117.0).
+            // A text box's inner edge (its margin while nested) snaps too:
+            // keeping it exact lost 0.436 over 313 files.
+            let margin = self.page.margin_l;
+            let x = x + ((margin / 0.24) + 0.5).floor() * 0.24 - margin;
             if justify {
                 self.paint_justified_line(line, x, baseline, justify_left);
             } else {
