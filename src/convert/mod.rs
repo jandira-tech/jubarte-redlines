@@ -7671,6 +7671,12 @@ fn paragraph_block(
         let mut mark = rstyle.clone();
         apply_rpr(dom, rpr, &mut mark, &sheet.theme);
         pstyle.mark_run = Some(std::rc::Rc::new(mark));
+    } else if !floats_only && runs.iter().all(|r| r.text.trim().is_empty()) {
+        // An inline picture's line takes its multiple's extra from the
+        // paragraph's own run style even when the mark sets nothing
+        // (docxide case78: 1.15 over Arial 11 adds 1.9pt under each
+        // picture).
+        pstyle.mark_run = Some(std::rc::Rc::new(rstyle.clone()));
     }
     // A paragraph of plain spaces is a line of its mark, like an empty one
     // (checked in Word: 28pt spaces under a 12pt mark make a 12pt line,

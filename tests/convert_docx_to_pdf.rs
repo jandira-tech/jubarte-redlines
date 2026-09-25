@@ -33962,3 +33962,30 @@ fn only_run_properties_before_the_text_apply_and_all_of_them_do() {
         "second rPr applies; two={two} small={small}"
     );
 }
+
+#[test]
+fn an_inline_picture_line_takes_its_multiples_extra_without_a_mark_rpr() {
+    // docxide-pdf case78: picture paragraphs under a 1.15 docDefaults line
+    // set no mark properties. Word still adds (1.15 - 1) x the style's
+    // single line under each picture; we added nothing and every caption
+    // below rose 1.9pt more.
+    let pic = blip(
+        "1270000",
+        "635000",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let gap = |line: &str| {
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"{line}\" w:lineRule=\"auto\"/></w:pPr><w:r>{pic}</w:r></w:p>\
+             <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Caption</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("picture line");
+        pdf_glyph_text_xy(&pdf, "Caption").expect("Caption").1
+    };
+    let (single, multi) = (gap("240"), gap("276"));
+    assert!(
+        single - multi > 1.0,
+        "1.15 lowers the caption; single={single} multi={multi}"
+    );
+}
