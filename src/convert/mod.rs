@@ -12519,11 +12519,13 @@ fn src_rect_frac(dom: &Dom, drawing: NodeId) -> Option<[f32; 4]> {
             .unwrap_or(0.0)
             / 100_000.0
     };
-    let l = p("l").clamp(0.0, 1.0);
-    let t = p("t").clamp(0.0, 1.0);
-    let r = p("r").clamp(0.0, 1.0);
-    let b = p("b").clamp(0.0, 1.0);
-    if l + r + t + b < 0.001 {
+    // A negative inset pads the picture inside its frame (docxide case78:
+    // l=-20000 leaves a blank strip, the image in the frame's right 5/6).
+    let l = p("l").clamp(-1.0, 1.0);
+    let t = p("t").clamp(-1.0, 1.0);
+    let r = p("r").clamp(-1.0, 1.0);
+    let b = p("b").clamp(-1.0, 1.0);
+    if l.abs() + r.abs() + t.abs() + b.abs() < 0.001 {
         None
     } else {
         Some([l, t, r, b])

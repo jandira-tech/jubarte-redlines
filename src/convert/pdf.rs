@@ -1283,7 +1283,7 @@ fn paint_image(
     rotate_deg: f32,
 ) -> String {
     let inner = match crop {
-        Some([l, t, r, b]) if l + r + t + b > 0.001 => {
+        Some([l, t, r, b]) if l.abs() + r.abs() + t.abs() + b.abs() > 0.001 => {
             let fw = (1.0 - l - r).max(0.001);
             let fh = (1.0 - t - b).max(0.001);
             let sx = dw / fw;

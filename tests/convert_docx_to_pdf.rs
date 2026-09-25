@@ -33989,3 +33989,31 @@ fn an_inline_picture_line_takes_its_multiples_extra_without_a_mark_rpr() {
         "1.15 lowers the caption; single={single} multi={multi}"
     );
 }
+
+#[test]
+fn a_negative_src_rect_pads_the_picture_inside_its_frame() {
+    // docxide-pdf case78: srcRect l=-20000 leaves a blank strip on the
+    // left; Word draws the image in the frame's right 1/1.2. We clamped
+    // negative insets to 0 and stretched it over the whole frame.
+    let drawing = "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+           <wp:extent cx=\"1524000\" cy=\"635000\"/><wp:docPr id=\"1\" name=\"P\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+             <pic:pic><pic:nvPicPr><pic:cNvPr id=\"0\" name=\"p\"/><pic:cNvPicPr/></pic:nvPicPr>\
+             <pic:blipFill><a:blip r:embed=\"rIdImg\"/><a:srcRect l=\"-20000\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+             <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+           </a:graphicData></a:graphic></wp:inline></w:drawing>";
+    let pdf = docx_to_pdf(&drawing_docx(&format!(
+        "<w:p><w:r>{drawing}</w:r></w:p><w:sectPr/>"
+    )))
+    .expect("negative crop");
+    let text = String::from_utf8_lossy(&pdf);
+    // 120pt frame at x=72: the image is 100pt wide from x = 72 + 20.
+    assert!(
+        text.contains("100.00 0 0 50.00 92.00"),
+        "image scaled to 1/1.2 and shifted right; snippet {}",
+        text.split("/Im")
+            .next()
+            .map(|s| &s[s.len().saturating_sub(200)..])
+            .unwrap_or("")
+    );
+}
