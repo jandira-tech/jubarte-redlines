@@ -5934,8 +5934,14 @@ fn walk_container(
             let (mut parts, seps, trailing) = split_page_breaks(block, page_br, column_br);
             let (page_br, column_br) = (trailing == Some(false), trailing == Some(true));
             let block = parts.pop().expect("split keeps the paragraph");
-            for (part, column) in parts.into_iter().zip(seps) {
-                blocks.push(part);
+            for (i, (part, column)) in parts.into_iter().zip(seps).enumerate() {
+                // Nothing before a paragraph's opening column break is no
+                // line: live Word ends the column at the paragraph above
+                // ("Alpha" then "<br column/>Col2": the next section opens
+                // one line under Alpha).
+                if !(column && i == 0 && block_is_blank(&part)) {
+                    blocks.push(part);
+                }
                 blocks.push(if column {
                     Block::ColumnBreak
                 } else {
@@ -14351,6 +14357,9 @@ struct Layout<'a> {
     /// Where a continuous section's columns began on this page: a column
     /// break returns there, not to the page top.
     col_top: Option<f32>,
+    /// The lowest y a column of this page's continuous multi-column section
+    /// has reached: the next section starts under the tallest column.
+    col_floor: Option<f32>,
     margin_l0: f32,
     margin_r0: f32,
     placed_comments: HashSet<String>,
@@ -14718,6 +14727,7 @@ impl<'a> Layout<'a> {
             do_not_expand_shift_return: hf.do_not_expand_shift_return,
             col_i: 0,
             col_top: None,
+            col_floor: None,
             margin_l0: page.margin_l,
             margin_r0: page.margin_r,
             placed_comments: HashSet::new(),
@@ -14942,6 +14952,7 @@ impl<'a> Layout<'a> {
         self.section_first_page = false;
         self.col_i = 0;
         self.col_top = None;
+        self.col_floor = None;
         if self.page.ln_restart == 0 {
             self.ln_i = self.page.ln_start.max(1);
         }
@@ -15061,6 +15072,7 @@ impl<'a> Layout<'a> {
             self.side_float = None;
             self.col_i = 0;
             self.col_top = None;
+            self.col_floor = None;
             self.y = self.page.height - self.body_top;
             self.page_has_body = false;
             self.at_page_top = true;
@@ -15279,6 +15291,12 @@ impl<'a> Layout<'a> {
     /// margins apply at once; its top/bottom wait for the next page (the
     /// floor is fixed when a page starts).
     fn start_continuous_section(&mut self, next: &PageSetup) {
+        // A continuous section opens under the tallest column of the one
+        // before, not under whichever column it ended in (003329b5's
+        // "NOS RESSOURCES" sits under column three's last line).
+        if let Some(floor) = self.col_floor.take() {
+            self.y = self.y.min(floor);
+        }
         self.page.col_count = next.col_count;
         self.page.col_space = next.col_space;
         self.page.col_custom = next.col_custom;
@@ -15303,6 +15321,7 @@ impl<'a> Layout<'a> {
             // (live Word: 019d92d9's "Controls - cont." sits 4pt under column
             // one's top); a page-top column drops it.
             let first_line = (self.y - self.para_top).abs() < 0.01;
+            self.col_floor = Some(self.col_floor.map_or(self.y, |f| f.min(self.y)));
             self.col_i += 1;
             self.y = self.col_top.unwrap_or(self.page.height - self.body_top);
             if self.col_top.is_some() && first_line {

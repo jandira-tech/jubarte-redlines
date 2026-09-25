@@ -761,6 +761,60 @@ fn a_behind_text_shape_paints_under_the_text_before_it() {
     );
 }
 
+fn three_column_section(body: &str) -> Vec<u8> {
+    let sect = |cols: &str| {
+        format!(
+            "<w:sectPr><w:type w:val=\"continuous\"/><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/>{cols}</w:sectPr>"
+        )
+    };
+    let cols = sect("<w:cols w:num=\"3\" w:space=\"720\"/>");
+    let last = sect("");
+    minimal_docx_with_settings(
+        &format!(
+            "{body}<w:p><w:pPr>{cols}</w:pPr></w:p><w:p><w:r><w:t>Beta</w:t></w:r></w:p>{last}"
+        ),
+        "",
+    )
+}
+
+#[test]
+fn a_continuous_section_opens_under_its_tallest_column() {
+    // Live Word: column one holds "Alpha" and "Col1b", columns two and
+    // three one line each; "Beta" opens under Col1b (Word 97 -> 114). We
+    // opened it under the last column, on Col1b's own line.
+    let pdf = docx_to_pdf(&three_column_section(
+        "<w:p><w:r><w:t>Alpha</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>Col1b</w:t></w:r><w:r><w:br w:type=\"column\"/></w:r><w:r><w:t>Col2</w:t></w:r>\
+         <w:r><w:br w:type=\"column\"/></w:r><w:r><w:t>Col3</w:t></w:r></w:p>",
+    ))
+    .expect("columns");
+    let col1b = pdf_glyph_text_xy(&pdf, "Col1b").expect("col1b").1;
+    let beta = pdf_glyph_text_xy(&pdf, "Beta").expect("beta").1;
+    assert!(
+        col1b - beta > 10.0,
+        "Beta sits under Col1b; col1b={col1b} beta={beta}"
+    );
+}
+
+#[test]
+fn an_opening_column_break_leaves_no_line_in_the_column_before() {
+    // Live Word: "Alpha" then "<br column/>Col2" ends column one at Alpha,
+    // so the next section opens one line under it (Word 72 -> 97). We gave
+    // the empty text before the break a line of its own.
+    let pdf = docx_to_pdf(&three_column_section(
+        "<w:p><w:r><w:t>Alpha</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"column\"/></w:r><w:r><w:t>Col2</w:t></w:r></w:p>",
+    ))
+    .expect("columns");
+    let alpha = pdf_glyph_text_xy(&pdf, "Alpha").expect("alpha").1;
+    let beta = pdf_glyph_text_xy(&pdf, "Beta").expect("beta").1;
+    assert!(
+        alpha - beta < 32.0,
+        "one line from Alpha to Beta; alpha={alpha} beta={beta}"
+    );
+}
+
 #[test]
 fn a_float_in_the_margin_does_not_indent_the_text() {
     // fixtures_500 00af3bb0: a 30pt QR code at column offset -42.7pt
