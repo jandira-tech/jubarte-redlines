@@ -658,6 +658,10 @@ struct PageSetup {
     header: f32,
     footer: f32,
     valign_center: bool,
+    /// `w:textDirection w:val="tbRl"`: vertical text. The section lays out
+    /// on the page turned a quarter (width/height and margins swapped) and
+    /// the writer turns it back.
+    vertical: bool,
     /// `w:pgNumType w:start`. `None` means continue from the previous section.
     page_num_start: Option<u32>,
     page_num_fmt: PageNumFmt,
@@ -1065,6 +1069,7 @@ impl Defaults {
                 header: 36.0,
                 footer: 36.0,
                 valign_center: false,
+                vertical: false,
                 page_num_start: None,
                 page_num_fmt: PageNumFmt::Decimal,
                 chap_style: None,
@@ -3742,6 +3747,11 @@ fn load_page_setup(dom: &Dom, body: NodeId, fallback: &PageSetup) -> PageSetup {
 
 fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
     let mut page = *fallback;
+    // A vertical fallback is stored turned; restore its physical geometry
+    // before this section's own values land.
+    if page.vertical {
+        turn_page(&mut page, false);
+    }
     if let Some(sz) = first_named(dom, sect, "pgSz") {
         if let Some(raw) = attr_any(dom, sz, "w").and_then(|s| parse_len(s).map(|pt| (s, pt))) {
             page.width = word_pgsz_pt(raw.0, raw.1);
@@ -3930,7 +3940,28 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
                 .map_or(0.0, |v| v / 4096.0);
         }
     }
+    let vertical = first_named(dom, sect, "textDirection")
+        .and_then(|n| attr_any(dom, n, "val"))
+        .is_some_and(|v| matches!(v, "tbRl" | "tbRlV"));
+    if vertical {
+        turn_page(&mut page, true);
+    }
     page
+}
+
+/// Turns a section's page a quarter for vertical text (`on`), or back.
+/// Lines run down the physical page and stack right to left: the laid-out
+/// page's left/right margins are the physical top/bottom, its top the
+/// physical right and its bottom the physical left.
+fn turn_page(page: &mut PageSetup, on: bool) {
+    std::mem::swap(&mut page.width, &mut page.height);
+    let (l, r, t, b) = (page.margin_l, page.margin_r, page.margin_t, page.margin_b);
+    if on {
+        (page.margin_l, page.margin_r, page.margin_t, page.margin_b) = (t, b, r, l);
+    } else {
+        (page.margin_l, page.margin_r, page.margin_t, page.margin_b) = (b, t, l, r);
+    }
+    page.vertical = on;
 }
 
 /// Single-byte-width characters: ASCII and the half-width forms block.
@@ -15629,6 +15660,7 @@ impl<'a> Layout<'a> {
         let y = page.height - body_top;
         let (pw, ph) = (page.width, page.height);
         let mut first = Page::new(pw, ph);
+        first.vertical = page.vertical;
         first.markup_pane = page.balloon_gutter > 0.0;
         first.margin_r = page.margin_r;
         let mut lay = Self {
@@ -15890,6 +15922,7 @@ impl<'a> Layout<'a> {
 
     fn fresh_page(&self) -> Page {
         let mut page = Page::new(self.page.width, self.page.height);
+        page.vertical = self.page.vertical;
         page.markup_pane = self.page.balloon_gutter > 0.0;
         page.margin_r = self.page.margin_r;
         page

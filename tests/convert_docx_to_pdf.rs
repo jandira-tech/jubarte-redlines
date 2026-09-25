@@ -34437,3 +34437,29 @@ fn a_landscape_flag_does_not_swap_a_portrait_page_size() {
         "the page keeps its written size"
     );
 }
+
+#[test]
+fn a_vertical_section_runs_its_lines_down_the_page() {
+    // fixtures_500 00603679: every section is w:textDirection tbRl. Word
+    // sets the Japanese text in columns running down the landscape page,
+    // right to left, kanji upright. We set it in horizontal lines.
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:eastAsia=\"MS Mincho\"/></w:rPr><w:t>無名抄</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"16838\" w:h=\"11906\" w:orient=\"landscape\"/>\
+        <w:pgMar w:top=\"1701\" w:right=\"1985\" w:bottom=\"1701\" w:left=\"1701\" w:header=\"851\" w:footer=\"992\"/>\
+        <w:textDirection w:val=\"tbRl\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("vertical");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("/MediaBox [0 0 841.92 595.20]"),
+        "the page keeps its landscape size"
+    );
+    let content = pdf_content_streams(&pdf).join("\n");
+    assert!(
+        content.contains("q 0 -1 1 0 0 595.20 cm"),
+        "the laid-out page is turned onto the physical one"
+    );
+    assert!(
+        content.contains(" cm 0 1 -1 0 0 0 cm BT"),
+        "each kanji stands upright"
+    );
+}

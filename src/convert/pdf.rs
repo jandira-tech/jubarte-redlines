@@ -149,6 +149,9 @@ pub(crate) struct Page {
     pub markup_pane: bool,
     /// The section's right margin, which sets the pasteboard's scale.
     pub margin_r: f32,
+    /// Laid out turned a quarter for vertical text (`tbRl`): the writer
+    /// turns it back and stands CJK glyphs upright.
+    pub vertical: bool,
 }
 
 impl Page {
@@ -160,6 +163,7 @@ impl Page {
             comments: Vec::new(),
             markup_pane: false,
             margin_r: 0.0,
+            vertical: false,
         }
     }
 }
@@ -424,6 +428,11 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
             .markup_pane
             .then(|| markup_chrome(page.width, page.height, page.margin_r))
             .flatten();
+        if page.vertical {
+            // Laid-out x runs down the page, laid-out y leftward from the
+            // right edge: X = y, Y = width - x.
+            let _ = writeln!(stream, "q 0 -1 1 0 0 {:.2} cm", page.width);
+        }
         if let Some(m) = markup {
             let _ = writeln!(
                 stream,
@@ -475,9 +484,46 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     y,
                     glyphs,
                     color,
-                    text: _,
+                    text,
                     hscale,
                 } => {
+                    if page.vertical
+                        && text.chars().any(stands_upright)
+                        && text.chars().count() == glyphs.len()
+                        && let Some((_, name)) = res_for(*face, false)
+                    {
+                        let f = fonts.get(*face);
+                        let (r, g, b) = (color[0], color[1], color[2]);
+                        let mut gx = *x;
+                        for (ch, gid) in text.chars().zip(glyphs.iter()) {
+                            let adv = f.advance_pt(ch, *size) * *hscale;
+                            if stands_upright(ch) {
+                                // Stand the glyph up about its em box's
+                                // centre; small marks sit in the cell's upper
+                                // right in vertical setting.
+                                let (cx, cy) = (gx + adv / 2.0, *y + 0.38 * size);
+                                let lift = if matches!(ch, '、' | '。' | '，' | '．') {
+                                    0.55 * size
+                                } else {
+                                    0.0
+                                };
+                                let _ = writeln!(
+                                    stream,
+                                    "q 1 0 0 1 {cx:.2} {cy:.2} cm 0 1 -1 0 0 0 cm BT /{name} {size:.2} Tf \
+                                     {r:.3} {g:.3} {b:.3} rg {ox:.2} {oy:.2} Td <{gid:04X}> Tj ET Q",
+                                    ox = lift - adv / 2.0,
+                                    oy = lift - 0.38 * size,
+                                );
+                            } else {
+                                let _ = writeln!(
+                                    stream,
+                                    "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {gx:.2} {y:.2} Td <{gid:04X}> Tj ET",
+                                );
+                            }
+                            gx += adv;
+                        }
+                        continue;
+                    }
                     if glyphs.is_empty() {
                         continue;
                     }
@@ -751,6 +797,9 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         if markup.is_some() {
             stream.push_str("Q\n");
         }
+        if page.vertical {
+            stream.push_str("Q\n");
+        }
         let content_id = objs.len() + 1;
         objs.push(stream_object(&stream, options.compress));
         let mut annot_refs = String::new();
@@ -784,8 +833,10 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                 "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w:.2} {h:.2}] \
                    /Contents {content_id} 0 R \
                    /Resources << /Font << {font_res} >> /XObject << {xobjects} >>{ext_gstate} >>{annots} >>",
-                w = page.width,
-                h = page.height,
+                // A vertical page was laid out turned: its physical width
+                // is the laid-out height.
+                w = if page.vertical { page.height } else { page.width },
+                h = if page.vertical { page.width } else { page.height },
             )
             .into_bytes(),
         );
@@ -1497,6 +1548,48 @@ fn finalize_pdf(objects: &[Vec<u8>]) -> Vec<u8> {
         .as_bytes(),
     );
     out
+}
+
+/// A character that stands upright in vertical text: ideographs, kana and
+/// full-width forms. Brackets, dashes and the long-vowel mark turn with the
+/// line, as do Latin letters and digits.
+fn stands_upright(c: char) -> bool {
+    let cjk = matches!(
+        c,
+        '\u{3000}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' | '\u{FF00}'..='\u{FFEF}' | '\u{20000}'..='\u{2FA1F}'
+    );
+    cjk && !matches!(
+        c,
+        '〈' | '〉'
+            | '《'
+            | '》'
+            | '「'
+            | '」'
+            | '『'
+            | '』'
+            | '【'
+            | '】'
+            | '〔'
+            | '〕'
+            | '〖'
+            | '〗'
+            | '〘'
+            | '〙'
+            | '〚'
+            | '〛'
+            | '（'
+            | '）'
+            | '［'
+            | '］'
+            | '｛'
+            | '｝'
+            | 'ー'
+            | '〜'
+            | '～'
+            | '－'
+            | '＝'
+            | '\u{3000}'
+    )
 }
 
 #[cfg(test)]
