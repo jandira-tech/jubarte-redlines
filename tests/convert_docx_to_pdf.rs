@@ -34339,3 +34339,65 @@ fn an_autofit_table_on_a_foreign_grid_fits_its_columns_to_the_content() {
         b - a
     );
 }
+
+#[test]
+fn a_spaced_autofit_tables_columns_share_the_text_width_plus_its_margins() {
+    // fixtures_500 00046848, live Word: labels in Arial 10 bold beside an
+    // 800pt paragraph, 2.5pt cell spacing, 4pt margins. The label column's
+    // text starts 104.9pt before the second's: the autofit room is the
+    // text width plus the table's margins, less the gaps, and each
+    // column's minimum and maximum carry its margins (not the gap).
+    let long = "Obsluha pálicích pecí, Přípravář keramických hmot, Točíř keramiky, \
+                Výrobce lisované keramiky, Obráběč keramiky, Výrobce sádrových forem, \
+                Glazovač keramiky, Vylévač keramiky";
+    let rpr = |b: bool| {
+        format!(
+            "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>{}<w:sz w:val=\"20\"/></w:rPr>",
+            if b { "<w:b/>" } else { "" }
+        )
+    };
+    let cell = |t: &str, b: bool, w: Option<u32>| {
+        let pr = w.map_or("<w:tcPr/>".to_string(), |w| {
+            format!("<w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>")
+        });
+        format!(
+            "<w:tc>{pr}<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r>{}<w:t xml:space=\"preserve\">{t}</w:t></w:r></w:p></w:tc>",
+            rpr(b)
+        )
+    };
+    let rows = [
+        ("Odborný směr:", "Sklářská, keramická výroba"),
+        ("Kvalifikační úroveň:", "Střední vzdělání"),
+        ("Příbuzné specializace:", long),
+        ("Regulovaná jednotka práce:", "ne"),
+    ];
+    let trs: String = rows
+        .iter()
+        .enumerate()
+        .map(|(i, (a, b))| {
+            let w = |v| (i == 0).then_some(v);
+            format!(
+                "<w:tr>{}{}</w:tr>",
+                cell(a, true, w(3000)),
+                cell(b, false, w(6000))
+            )
+        })
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"3000\" w:type=\"dxa\"/><w:gridCol w:w=\"6000\" w:type=\"dxa\"/></w:tblGrid>\
+         <w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblCellSpacing w:w=\"50\" w:type=\"dxa\"/>\
+         <w:tblLayout w:type=\"autofit\"/><w:tblCellMar><w:top w:w=\"80\" w:type=\"dxa\"/>\
+         <w:left w:w=\"80\" w:type=\"dxa\"/><w:right w:w=\"80\" w:type=\"dxa\"/><w:bottom w:w=\"80\" w:type=\"dxa\"/>\
+         </w:tblCellMar></w:tblPr>{trs}</w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("spaced autofit");
+    let a = pdf_glyph_text_xy(&pdf, "Odborn").expect("label").0;
+    let b = pdf_glyph_text_xy(&pdf, "Skl").expect("value").0;
+    assert!(
+        ((b - a) - 104.9).abs() < 1.5,
+        "the label column's pitch; pitch={}",
+        b - a
+    );
+}

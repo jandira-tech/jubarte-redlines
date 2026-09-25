@@ -6741,7 +6741,8 @@ fn content_autofit_widths(
         if cell.colspan != 1 || cell.col >= n {
             continue;
         }
-        let pads = cell.pad_l + cell.pad_r;
+        // The spacing inset in pad_l is the column's gap, counted below.
+        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
         let (lo, hi) = cell_content_extent(fonts, cell);
         mins[cell.col] = mins[cell.col].max(lo + pads);
         maxs[cell.col] = maxs[cell.col].max(hi + pads);
@@ -6753,7 +6754,10 @@ fn content_autofit_widths(
         *max = max.max(mins[j]);
     }
     let gap = 2.0 * geom.cell_spacing;
-    let room = (avail - gap * (n as f32 + 1.0)).max(0.0);
+    // A legacy document's autofit spans the text plus the table's cell
+    // margins, as its pct tables do (00046848's lines reach 525pt in a
+    // 523pt measure).
+    let room = (avail + geom.pct_margins - gap * (n as f32 + 1.0)).max(0.0);
     let (lo, hi): (f32, f32) = (mins.iter().sum(), maxs.iter().sum());
     let k = if hi <= room {
         1.0
