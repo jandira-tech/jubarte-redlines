@@ -735,6 +735,33 @@ fn a_column_relative_box_sits_in_its_anchors_column() {
 }
 
 #[test]
+fn a_behind_text_shape_paints_under_the_text_before_it() {
+    // fixtures_500 003329b5: a behindDoc green backdrop anchored after
+    // "QUI SOMMES NOUS ?" painted over it. Word draws behind shapes first.
+    let shape = "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"1\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>-254000</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"2540000\" cy=\"508000\"/><wp:wrapNone/><wp:docPr id=\"9\" name=\"Back\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"00FF00\"/></a:solidFill><a:ln><a:noFill/></a:ln></wps:spPr>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>";
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r><w:t>HostText</w:t></w:r></w:p>\
+         <w:p><w:r>{shape}</w:r><w:r><w:t>Anchor</w:t></w:r></w:p><w:sectPr/>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("behind shape");
+    let content = pdf_content_streams(&pdf).join("\n");
+    let green = content.find("0.000 1.000 0.000 rg").expect("green fill");
+    let host = content.find("(H").expect("host text");
+    assert!(
+        green < host,
+        "the behind shape paints before the text above its anchor"
+    );
+}
+
+#[test]
 fn a_float_in_the_margin_does_not_indent_the_text() {
     // fixtures_500 00af3bb0: a 30pt QR code at column offset -42.7pt
     // (wrapTight) sits wholly in the left margin. Word starts the title at

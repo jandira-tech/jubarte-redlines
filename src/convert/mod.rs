@@ -14296,6 +14296,9 @@ struct Layout<'a> {
     body_floor: f32,
     page_has_body: bool,
     chrome_end: usize,
+    /// Where the page's next behind-text box goes: past the chrome and the
+    /// behind boxes already under the body text.
+    behind_end: usize,
     at_page_top: bool,
     /// True when this page top was reached by overflow or a manual
     /// `w:br type=page`: the space before is dropped. Document start keeps
@@ -14682,6 +14685,7 @@ impl<'a> Layout<'a> {
             body_floor,
             page_has_body: false,
             chrome_end: 0,
+            behind_end: 0,
             at_page_top: true,
             suppress_space_before: false,
             top_credit: 0.0,
@@ -14748,6 +14752,7 @@ impl<'a> Layout<'a> {
         lay.apply_mirror_margins();
         lay.chrome();
         lay.chrome_end = lay.current().ops.len();
+        lay.behind_end = lay.chrome_end;
         lay
     }
 
@@ -14959,6 +14964,7 @@ impl<'a> Layout<'a> {
         self.refresh_body_floor();
         self.chrome();
         self.chrome_end = self.current().ops.len();
+        self.behind_end = self.chrome_end;
     }
 
     fn center_first_page_body(&mut self) {
@@ -15070,6 +15076,7 @@ impl<'a> Layout<'a> {
             self.refresh_body_floor();
             self.chrome();
             self.chrome_end = self.current().ops.len();
+            self.behind_end = self.chrome_end;
         } else if let Some(sec) = next {
             self.apply_section(sec);
             self.y = self.page.height - self.body_top;
@@ -21802,7 +21809,19 @@ fn layout(
                     lay.para_top = saved;
                 }
                 for box_ in boxes {
+                    // A behindDoc box goes under the page's body text, not
+                    // over the lines already painted (003329b5's green
+                    // label backdrops hid "QUI SOMMES NOUS ?").
+                    let page = lay.pages.len();
+                    let start = lay.current().ops.len();
                     lay.emit_textbox(box_);
+                    if box_.behind && lay.pages.len() == page {
+                        let at = lay.behind_end.min(start);
+                        let ops: Vec<Op> = lay.current().ops.drain(start..).collect();
+                        let n = ops.len();
+                        lay.current().ops.splice(at..at, ops);
+                        lay.behind_end = at + n;
+                    }
                 }
                 if skip_empty_line {
                     // Mini 623–626: skipping Normal after=8 under a
