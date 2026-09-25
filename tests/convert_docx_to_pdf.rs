@@ -34653,6 +34653,40 @@ fn a_win_box_taller_than_the_line_keeps_the_hhea_ascent() {
 }
 
 #[test]
+fn ideographs_in_a_latin_east_asian_font_break_as_words_before_mode_15() {
+    // fixtures_500 005919f8: compatibility mode 12, eastAsia font Calibri.
+    // Word's oracle keeps "报告讲座主题…" as one word: it moves whole under
+    // "1." and splits by character only at that line's end. An East Asian
+    // eastAsia font (SimSun) or mode 15 breaks between ideographs again.
+    // Longer than a line, as Word's sentence is.
+    let cjk =
+        "报告讲座主题为连续谱中的束缚态涉及量子力学电磁和声学谐振器中的束缚态和非束缚态".repeat(2);
+    let body = |ea: &str| {
+        format!(
+            "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\" w:eastAsia=\"{ea}\"/></w:rPr>\
+             <w:t xml:space=\"preserve\">1. Zq{cjk}</w:t></w:r></w:p><w:sectPr/>"
+        )
+    };
+    let rows = |ea: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_body(&body(ea))).expect("ideograph words");
+        (
+            pdf_glyph_text_xy(&pdf, "1.").expect("marker").1,
+            pdf_glyph_text_xy(&pdf, "Zq").expect("word").1,
+        )
+    };
+    let (marker, word) = rows("Calibri");
+    assert!(
+        marker - word > 10.0,
+        "the ideograph run moves under \"1.\" as one word, got {marker} vs {word}"
+    );
+    let (marker, word) = rows("SimSun");
+    assert!(
+        (marker - word).abs() < 0.5,
+        "an East Asian font breaks between ideographs, got {marker} vs {word}"
+    );
+}
+
+#[test]
 fn a_cell_style_not_based_on_normal_takes_the_table_styles_spacing_and_size() {
     // fixtures_500 015a4f5a: cells use "Corpo A" (no basedOn, no spacing or
     // size). Word layers docDefaults < table style < paragraph style, so

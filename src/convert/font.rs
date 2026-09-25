@@ -646,6 +646,8 @@ pub(crate) struct Face<'a> {
     line_descent: f32,
     /// Win ascent when USE_TYPO_METRICS is unset (Liberation ↔ Arial).
     paint_ascent: f32,
+    /// An East Asian face (OS/2 code pages 932/936/949/950/1361).
+    east_asian: bool,
     pub bbox: [i16; 4],
     pub widths: Vec<u16>,
     cmap: HashMap<u32, u16>,
@@ -780,6 +782,7 @@ impl<'a> Face<'a> {
             line_height,
             line_descent,
             paint_ascent,
+            east_asian: east_asian_line.is_some(),
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
             cmap,
@@ -1157,6 +1160,17 @@ impl<'a> Fonts<'a> {
         } else {
             None
         }
+    }
+
+    /// `family` is present and not an East Asian face: Calibri, not SimSun
+    /// (or a CJK name that is not installed, whose substitute says nothing).
+    pub(crate) fn family_is_latin_only(&self, family: &str) -> bool {
+        if !family.is_ascii() || !cjk_file_stems(family).is_empty() {
+            return false;
+        }
+        let present =
+            self.embedded_index(family, false, false).is_some() || catalogue_paints_family(family);
+        present && !self.get(self.resolve(family, false, false)).east_asian
     }
 
     pub(crate) fn get(&self, id: impl Into<FaceRef>) -> &Face<'a> {

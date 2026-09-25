@@ -348,6 +348,7 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
             let mut blocks = collect_blocks(&pkg, &main, &dom, body, &sheet, &fonts);
             let compat_mode = settings_compat_mode(&pkg);
             at_least_off_grid(&mut blocks, compat_mode);
+            mark_ideograph_words(&mut blocks, &fonts, compat_mode);
             let display = number_footnote_refs(&mut blocks);
             resolve_cell_fields(&mut blocks);
             let footnotes = FootnoteCatalog {
@@ -459,6 +460,10 @@ struct RunStyle {
     /// `w14:shadow`+`w14:textOutline` to filled bars, not body glyphs
     /// (Strict01 p11 18/20pt Video). Skip those runs as extractable text.
     effect_skip: bool,
+    /// Ideographs break only as a word (whole, or by character when longer
+    /// than the line): before compatibility mode 15, under a Latin eastAsia
+    /// font. See `mark_ideograph_words`.
+    ideograph_words: bool,
 }
 
 /// Word Save-as-PDF snaps type size to integer ppem at 300 dpi
@@ -1025,6 +1030,7 @@ impl Defaults {
                 vert: VertAlign::Baseline,
                 kern_half: 0,
                 effect_skip: false,
+                ideograph_words: false,
             },
             para: ParaStyle {
                 mark_run: None,
@@ -5356,6 +5362,38 @@ fn at_least_off_grid(blocks: &mut [Block], compat_mode: u8) {
             && style.line_at_least.is_some()
         {
             style.snap_to_grid = false;
+        }
+    }
+}
+
+/// Before compatibility mode 15 Word breaks ideographs between characters
+/// only when the run's eastAsia font is an East Asian one. Under a Latin
+/// one (005919f8: Calibri) a run of ideographs is a word: Word's oracle
+/// moves it whole to the next line and splits it only at a line's end.
+fn mark_ideograph_words(blocks: &mut [Block], fonts: &Fonts, compat_mode: u8) {
+    if compat_mode >= 15 {
+        return;
+    }
+    let mark = |runs: &mut [TextRun]| {
+        for run in runs {
+            run.style.ideograph_words = run
+                .style
+                .family_ea
+                .as_deref()
+                .is_some_and(|f| fonts.family_is_latin_only(f));
+        }
+    };
+    for block in blocks {
+        match block {
+            Block::Paragraph { runs, .. } => mark(runs),
+            Block::Table { rows, .. } => {
+                for cell in rows.iter_mut().flatten() {
+                    for para in &mut cell.paras {
+                        mark(&mut para.runs);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -22200,6 +22238,7 @@ fn default_run_style() -> RunStyle {
         vert: VertAlign::Baseline,
         kern_half: 0,
         effect_skip: false,
+        ideograph_words: false,
     }
 }
 
@@ -22290,7 +22329,7 @@ type WrapPiece<'r> = (&'r TextRun, &'r str, f32);
 
 /// Word's line may end after a hyphen-minus that follows a letter or digit
 /// and precedes more text: `sham-vaccinated` → `sham-` | `vaccinated`.
-fn hyphen_wrap_pieces(tok: &str) -> Vec<&str> {
+fn hyphen_wrap_pieces(tok: &str, ideograph_breaks: bool) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut prev: Option<char> = None;
@@ -22301,6 +22340,7 @@ fn hyphen_wrap_pieces(tok: &str) -> Vec<&str> {
         // characters), never before closing punctuation or small kana and
         // never after opening punctuation.
         if let Some(p) = prev
+            && ideograph_breaks
             && i > start
             && (is_cjk_break_char(p) || is_cjk_break_char(ch))
             && !cjk_no_line_start(ch)
@@ -22832,7 +22872,7 @@ fn wrap_runs_segment(
             let pieces: Vec<&str> = if url.len() > 1 {
                 url
             } else {
-                hyphen_wrap_pieces(tok)
+                hyphen_wrap_pieces(tok, !run.style.ideograph_words)
             };
             let last = pieces.len().saturating_sub(1);
             for (i, tok) in pieces.into_iter().enumerate() {
@@ -22852,8 +22892,9 @@ fn wrap_runs_segment(
                     && !is_space
                     && units.last().is_some_and(|(u, _)| {
                         let prev = u.last().and_then(|(_, t, _)| t.chars().last());
-                        !prev.is_some_and(is_cjk_break_char)
-                            && !tok.chars().next().is_some_and(is_cjk_break_char)
+                        run.style.ideograph_words
+                            || (!prev.is_some_and(is_cjk_break_char)
+                                && !tok.chars().next().is_some_and(is_cjk_break_char))
                     });
                 if glue && let Some((unit, _)) = units.last_mut() {
                     unit.push((run, tok, w));
@@ -22907,15 +22948,38 @@ fn wrap_runs_segment(
         // Body lines only: a table column autofits its longest word
         // (0129b302's "19.720.000"), and CJK text already breaks per
         // character where our fallback faces run wide (002c5410).
-        let cjk = unit.iter().any(|(_, tok, _)| tok.chars().any(is_cjk));
-        if tabs.is_some() && !cjk && !is_space && w > limit * 1.02 && limit > 0.0 {
+        let cjk = unit
+            .iter()
+            .any(|(run, tok, _)| !run.style.ideograph_words && tok.chars().any(is_cjk));
+        let ideograph_word = unit
+            .iter()
+            .any(|(run, tok, _)| run.style.ideograph_words && tok.chars().any(is_cjk));
+        if (tabs.is_some() || ideograph_word)
+            && !cjk
+            && !is_space
+            && w > limit * 1.02
+            && limit > 0.0
+        {
+            // An ideograph word starts its own line before it splits
+            // (005919f8: Word leaves "1." alone above the sentence).
+            if x > 0.0 && ideograph_word {
+                lines.push(Vec::new());
+                line_i += 1;
+                x = 0.0;
+                line_spaces = 0.0;
+            }
             for (run, tok, _) in unit {
-                let fid = fonts.resolve(
-                    paint_family(&run.style, tok),
-                    run.style.bold,
-                    run.style.italic,
-                );
-                let face = fonts.get(fid);
+                // Ideographs under a Latin eastAsia font paint in the
+                // fallback face; measure them in it, as the unit was.
+                let face = if ideograph_word {
+                    fonts.get(ink_face(fonts, &run.style, tok))
+                } else {
+                    fonts.get(fonts.resolve(
+                        paint_family(&run.style, tok),
+                        run.style.bold,
+                        run.style.italic,
+                    ))
+                };
                 let size = run.style.layout_size();
                 for ch in tok.chars() {
                     let piece = ch.to_string();
