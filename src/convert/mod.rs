@@ -14530,11 +14530,10 @@ fn pick_section_hf(
     let even_explicit = sect_has_typed_ref(dom, sect, local, "even");
     let even = (settings_even_and_odd_headers(pkg) && (even_explicit || chrome_present(&even_raw)))
         .then_some(even_raw);
-    let odd = if chrome_present(&default) {
-        default.clone()
-    } else {
-        first.clone()
-    };
+    // The first-page part shows only under titlePg: without it Word never
+    // uses it, even when the section has no default part (English corpus
+    // 54b21048's first-only header is on none of Word's 30 pages).
+    let odd = default.clone();
     // titlePg gives page 1 the first-page part, blank when the section has
     // none: 0016811c hides its page number with an explicit blank one, and
     // 000105a2 (default reference only) has no header on page 1 in Word.
@@ -14549,16 +14548,9 @@ fn pick_section_hf(
             even,
             odd,
         }
-    } else if chrome_present(&default) {
-        PickedHf {
-            start: default,
-            rest: None,
-            even,
-            odd,
-        }
     } else {
         PickedHf {
-            start: first,
+            start: default,
             rest: None,
             even,
             odd,
@@ -17471,6 +17463,19 @@ impl<'a> Layout<'a> {
             lines = reflowed;
             ends_br = vec![false; lines.len()];
             narrow = 0..n;
+        }
+        // The empty line after a trailing break holds only the paragraph
+        // mark, so the mark's own run sizes it (469e5710's 8pt mark under
+        // a 16pt "____" line keeps the paragraph on Word's page 1).
+        if lines.len() > 1
+            && ends_br.get(lines.len() - 2) == Some(&true)
+            && let Some(mark) = style.mark_run.as_deref()
+            && let Some(last) = lines.last_mut()
+            && last.iter().all(|r| r.text.is_empty())
+        {
+            for run in last.iter_mut() {
+                run.style = mark.clone();
+            }
         }
         let widow_break = self.widow_break(&lines, marker, style);
         for (line_i, line) in lines.iter().enumerate() {
@@ -23604,6 +23609,7 @@ fn layout(
                 // Word keeps the empty paragraph after a table as a line,
                 // Heading2 next or not (docxide case15; fixtures_500
                 // 00189bfa's " " line 16.5pt over heading 8).
+                let mut lead_pictures_done = false;
                 if has_ink || (images.is_empty() && boxes.is_empty()) || !skip_empty_line {
                     if lay.side_float.is_some_and(|sf| lay.y <= sf.bottom + 0.5) {
                         lay.side_float = None;
@@ -23637,7 +23643,49 @@ fn layout(
                         until,
                         from,
                     };
-                    lay.emit_runs(runs, &style, *list, wrap);
+                    // Inline pictures ahead of the text that leave its
+                    // first word no room take the paragraph's first line;
+                    // the text wraps under them (6f884742's full-width
+                    // banner opens its "Step by step" heading).
+                    let flow: Vec<&LaidImage> = images
+                        .iter()
+                        .filter(|img| matches!(img.slot, ImageSlot::Flow))
+                        .collect();
+                    let leads = has_ink
+                        && !flow.is_empty()
+                        && flow.len() == images.len()
+                        && flow
+                            .iter()
+                            .all(|img| img.lead_chars != usize::MAX && !img.after_text)
+                        && {
+                            let room = lay.content_width() - style.indent_left - style.indent_right;
+                            let pics: f32 = flow
+                                .iter()
+                                .enumerate()
+                                .map(|(k, img)| {
+                                    lay.image_wh(img).0 + if k > 0 { img.gap_before } else { 0.0 }
+                                })
+                                .sum();
+                            let word = runs.iter().find_map(|r| {
+                                r.text
+                                    .split_whitespace()
+                                    .next()
+                                    .map(|w| lay.run_width_pt(r, w))
+                            });
+                            word.is_some_and(|w| pics + w > room)
+                        };
+                    if leads {
+                        lay.y -= lay.page_top_before(style.before);
+                        lay.at_page_top = false;
+                        lay.suppress_space_before = false;
+                        lay.emit_inline_pictures(&flow, &style, None, runs);
+                        lead_pictures_done = true;
+                        let mut after_pics = style.clone();
+                        after_pics.before = 0.0;
+                        lay.emit_runs(runs, &after_pics, *list, wrap);
+                    } else {
+                        lay.emit_runs(runs, &style, *list, wrap);
+                    }
                     lay.paint_hrule(&style);
                     lay.pbdr_joins = (false, false);
                     if pushed {
@@ -23652,7 +23700,7 @@ fn layout(
                 // cover pictures sit side by side); floats place themselves.
                 let mut inline: Vec<&LaidImage> = images
                     .iter()
-                    .filter(|img| matches!(img.slot, ImageSlot::Flow))
+                    .filter(|img| !lead_pictures_done && matches!(img.slot, ImageSlot::Flow))
                     .collect();
                 // One no taller than the text sits on the last line's
                 // baseline and adds no height (0005cabe's 0.24pt dot pushed

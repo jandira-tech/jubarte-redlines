@@ -35004,3 +35004,62 @@ fn a_headers_first_paragraph_keeps_its_space_before() {
         "space before moves the header's first line down 12pt, got {drop}"
     );
 }
+
+#[test]
+fn the_line_after_a_trailing_break_is_the_marks_size() {
+    // English corpus 469e5710: "______" at 16pt then <w:br/>, the mark at
+    // 8pt. The empty line after the break holds only the mark, so it is an
+    // 8pt line; sized by the 16pt break run it pushed the paragraph off
+    // Word's page 1.
+    let gap = |mark: u32| {
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>\
+               <w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"{mark}\"/></w:rPr></w:pPr>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"32\"/></w:rPr><w:t>LineQ</w:t></w:r>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"32\"/></w:rPr><w:br/></w:r></w:p>\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"32\"/></w:rPr><w:t>NextQ</w:t></w:r></w:p>\
+             <w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("break");
+        pdf_glyph_text_xy(&pdf, "LineQ").expect("LineQ").1
+            - pdf_glyph_text_xy(&pdf, "NextQ").expect("NextQ").1
+    };
+    // The 8pt mark's line is 16pt shorter than a 32pt one (Calibri single
+    // line ~1.22em).
+    let d = gap(64) - gap(16);
+    assert!(
+        (d - 1.22 * 24.0).abs() < 1.5,
+        "the empty line after the break follows the mark's size, got {d}"
+    );
+}
+
+#[test]
+fn a_first_page_header_without_title_pg_never_shows() {
+    // English corpus 54b21048: the section references only a type="first"
+    // header and has no w:titlePg. Word shows no header on any page; we
+    // took the first-page part for every page.
+    let plain = header_part_docx("<w:p><w:r><w:t>FirstOnlyQ</w:t></w:r></w:p>");
+    let mut src = ZipArchive::new(Cursor::new(plain)).expect("docx zip");
+    let mut out = ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..src.len() {
+        let mut f = src.by_index(i).expect("entry");
+        let mut data = Vec::new();
+        f.read_to_end(&mut data).expect("read");
+        let name = f.name().to_string();
+        if name == "word/document.xml" {
+            data = String::from_utf8(data)
+                .expect("utf8")
+                .replace("w:type=\"default\"", "w:type=\"first\"")
+                .into_bytes();
+        }
+        out.start_file(name, SimpleFileOptions::default())
+            .expect("start");
+        out.write_all(&data).expect("write");
+    }
+    let pdf = docx_to_pdf(&out.finish().expect("zip").into_inner()).expect("first-only header");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "FirstOnlyQ").is_none(),
+        "a first-page header needs titlePg to show"
+    );
+}
