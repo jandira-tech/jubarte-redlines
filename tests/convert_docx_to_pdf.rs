@@ -34092,3 +34092,23 @@ fn a_typed_label_tab_lands_on_the_hanging_indent_not_a_later_right_stop() {
         "the first line runs on past 'personen'"
     );
 }
+
+#[test]
+fn latin_inside_east_asian_text_takes_the_ascii_face_and_a_quarter_em_gap() {
+    // Live Word: in "令和元年5月6日FM…" the Latin letters and digits paint
+    // in the run's ascii face and sit a quarter em (3pt at 12pt) off the
+    // ideographs on each side. We painted the whole run in the East Asian
+    // face with no gap.
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"MS Mincho\"/>\
+        <w:sz w:val=\"24\"/></w:rPr><w:t>漢Q漢</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("autospace");
+    let x = pdf_glyph_text_xy(&pdf, "Q").expect("Q").0;
+    assert!(
+        (x - 87.0).abs() < 0.3,
+        "Q after one 12pt ideograph and a 3pt gap; x={x}"
+    );
+    assert!(
+        String::from_utf8_lossy(&pdf).contains("/BaseFont /Arial"),
+        "Q in Arial"
+    );
+}

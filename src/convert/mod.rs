@@ -9817,9 +9817,65 @@ fn collect_runs_in(
     split_hansi_runs(runs)
 }
 
-/// Word paints a run's characters past U+007F in its hAnsi face and the
-/// ASCII ones in its ascii face: a run whose two differ splits at each
-/// change (East Asian and complex-script text keep their own rules).
+/// Word picks a run's face per character: in a run with an East Asian
+/// face, ideographs take it and Latin letters and digits the ascii one
+/// (live Word: "令和元年5月6日FM" paints 5, 6, F, M in Century). The pieces
+/// of `text` at every script change, when it mixes them; spaces and
+/// punctuation stay with the piece before them.
+fn script_pieces<'t>(style: &RunStyle, text: &'t str) -> Option<Vec<&'t str>> {
+    if style.family_ea.is_none()
+        || !text.chars().any(is_cjk)
+        || !text.chars().any(|c| c.is_alphanumeric() && !is_cjk(c))
+    {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut class: Option<bool> = None;
+    for (i, c) in text.char_indices() {
+        let this = if is_cjk(c) {
+            Some(true)
+        } else if c.is_alphanumeric() {
+            Some(false)
+        } else {
+            None
+        };
+        if let (Some(now), Some(before)) = (this, class)
+            && now != before
+        {
+            out.push(&text[start..i]);
+            start = i;
+        }
+        if this.is_some() {
+            class = this;
+        }
+    }
+    out.push(&text[start..]);
+    (out.len() > 1).then_some(out)
+}
+
+/// autoSpaceDE / autoSpaceDN: Word sets a quarter em between an East
+/// Asian piece and a Latin or digit one that touch (live Word: 3pt at
+/// 12pt around "5", "FM" and "abc" in "令和元年5月6日FM西東京abc放送").
+fn script_gap(style: &RunStyle, before: &str, after: &str) -> f32 {
+    let (Some(a), Some(b)) = (before.chars().last(), after.chars().next()) else {
+        return 0.0;
+    };
+    let class = |c: char| {
+        if is_cjk(c) {
+            Some(true)
+        } else if c.is_alphanumeric() {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    match (class(a), class(b)) {
+        (Some(x), Some(y)) if x != y => style.layout_size() * 0.25,
+        _ => 0.0,
+    }
+}
+
 fn split_hansi_runs(runs: Vec<TextRun>) -> Vec<TextRun> {
     if runs.iter().all(|r| r.style.family_hansi.is_none()) {
         return runs;
@@ -17432,6 +17488,17 @@ impl<'a> Layout<'a> {
         if text.is_empty() {
             return 0.0;
         }
+        if let Some(pieces) = script_pieces(&run.style, text) {
+            let gaps: f32 = pieces
+                .windows(2)
+                .map(|w| script_gap(&run.style, w[0], w[1]))
+                .sum();
+            return pieces
+                .iter()
+                .map(|p| self.run_width_pt(run, p))
+                .sum::<f32>()
+                + gaps;
+        }
         let text = chrome_measure_text(text);
         let face = self.fonts.get(ink_face(self.fonts, &run.style, text));
         let size = run.style.layout_size();
@@ -17619,6 +17686,18 @@ impl<'a> Layout<'a> {
     }
 
     fn paint_run(&mut self, run: &TextRun, x: f32, y: f32) -> f32 {
+        if run.checkbox.is_none()
+            && let Some(pieces) = script_pieces(&run.style, &run.text)
+        {
+            let mut x = x;
+            for (i, piece) in pieces.iter().enumerate() {
+                if i > 0 {
+                    x += script_gap(&run.style, pieces[i - 1], piece);
+                }
+                x = self.paint_run(&run.with_text(*piece), x, y);
+            }
+            return x;
+        }
         if run.style.effect_skip {
             // Word Save-as-PDF omits reflection / shadow+outline as
             // body glyphs (Strict01 p11 18/20pt Video). Keep the line
