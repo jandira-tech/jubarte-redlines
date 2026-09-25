@@ -5795,8 +5795,32 @@ fn walk_container(
     blocks: &mut Vec<Block>,
     endnotes: &mut EndnoteBag,
 ) {
-    for idx in 0..dom.child_count(node) {
-        let child = dom.child_at(node, idx);
+    // Consecutive paragraphs sharing a page-anchored w:framePr float as one
+    // box at the frame's page position (001d5e43's bordered "For Clerk's
+    // Use Only" frame); the box rides the next paragraph.
+    let mut frame: Option<(String, Vec<NodeId>)> = None;
+    let mut frame_boxes: Vec<LaidTextBox> = Vec::new();
+    let count = dom.child_count(node);
+    for idx in 0..=count {
+        let child = (idx < count).then(|| dom.child_at(node, idx));
+        let key = child
+            .filter(|c| dom.name_is(*c, &W::p()))
+            .and_then(|c| page_frame_key(dom, c));
+        if let Some((k, _)) = frame.as_ref()
+            && key.as_deref() != Some(k.as_str())
+        {
+            let (_, paras) = frame.take().expect("a frame");
+            if let Some(b) = frame_box(ctx, dom, &paras, numbering) {
+                frame_boxes.push(b);
+            }
+        }
+        if let (Some(c), Some(k)) = (child, key) {
+            frame.get_or_insert_with(|| (k, Vec::new())).1.push(c);
+            continue;
+        }
+        let Some(child) = child else {
+            break;
+        };
         if dom.name_is(child, &W::p()) {
             if para_base(dom, child, ctx.sheet, None).0.page_break_before && !blocks.is_empty() {
                 blocks.push(Block::PageBreak {
@@ -5818,7 +5842,10 @@ fn walk_container(
                     && next_sect_pr(ctx.sects, s).is_none_or(|n| sect_starts_new_page(dom, n))
             });
             endnotes.observe_para(dom, child);
-            let block = paragraph_block(ctx, dom, child, false, numbering);
+            let mut block = paragraph_block(ctx, dom, child, false, numbering);
+            if let Block::Paragraph { boxes, .. } = &mut block {
+                boxes.append(&mut frame_boxes);
+            }
             // Text after a page break inside the paragraph continues it on
             // the next page (checked in Word: "Aa<br page/>Cc" opens page
             // two with Cc); a break with nothing after it breaks as before.
@@ -5936,6 +5963,122 @@ fn walk_container(
 /// pictures and the bookmarks; the last keeps the space after. Returns the
 /// parts and whether a break still follows the last one (a break with no
 /// ink after it, or `page_br` for a paragraph without a marked break).
+/// A body paragraph's page-anchored frame (hAnchor/vAnchor="page" with an
+/// x and y), as a key its sibling frame paragraphs share.
+fn page_frame_key(dom: &Dom, para: NodeId) -> Option<String> {
+    let fp = dom
+        .element(para, &W::p_pr())
+        .and_then(|ppr| first_named(dom, ppr, "framePr"))?;
+    let attr = |n: &str| attr_any(dom, fp, n).unwrap_or("").to_string();
+    (attr("hAnchor") == "page"
+        && attr("vAnchor") == "page"
+        && !attr("x").is_empty()
+        && !attr("y").is_empty())
+    .then(|| {
+        ["x", "y", "w", "h", "hRule", "wrap", "hSpace", "vSpace"]
+            .iter()
+            .map(|n| attr(n))
+            .collect::<Vec<_>>()
+            .join("|")
+    })
+}
+
+/// The frame's paragraphs laid out as a floating text box: the frame's size
+/// and page position, its paragraphs' shared border as the outline, text
+/// wrapping around it by hSpace when `wrap="around"`.
+fn frame_box(
+    ctx: &WalkCtx<'_>,
+    dom: &Dom,
+    paras: &[NodeId],
+    numbering: &mut Numbering,
+) -> Option<LaidTextBox> {
+    let first = *paras.first()?;
+    let fp = dom
+        .element(first, &W::p_pr())
+        .and_then(|ppr| first_named(dom, ppr, "framePr"))?;
+    let tw = |n: &str| {
+        attr_any(dom, fp, n)
+            .and_then(|v| v.parse::<f32>().ok())
+            .map(|v| v / 20.0)
+    };
+    let (x, y) = (tw("x")?, tw("y")?);
+    let mut laid = Vec::new();
+    let mut outline: Option<([f32; 3], f32)> = None;
+    for &p in paras {
+        if let Block::Paragraph {
+            runs, mut style, ..
+        } = paragraph_block(ctx, dom, p, false, numbering)
+        {
+            if outline.is_none()
+                && let Some((color, width, _)) = style.border_top.or(style.border_left)
+            {
+                outline = Some((color, width));
+            }
+            style.border_top = None;
+            style.border_bottom = None;
+            style.border_left = None;
+            style.border_right = None;
+            laid.push((runs, style));
+        }
+    }
+    let line_guess: f32 = laid
+        .iter()
+        .map(|(runs, style)| runs_size(runs).max(10.0) * 1.2 * style.line_mult.max(1.0))
+        .sum();
+    let w = tw("w").unwrap_or(144.0);
+    let h = tw("h").filter(|h| *h > 0.0).unwrap_or(line_guess);
+    let around = attr_any(dom, fp, "wrap").is_none_or(|v| v == "around");
+    let h_space = tw("hSpace").unwrap_or(0.0);
+    let v_space = tw("vSpace").unwrap_or(0.0);
+    Some(LaidTextBox {
+        w,
+        h,
+        runs: Vec::new(),
+        slot: ImageSlot::Float {
+            align: Align::Left,
+            page_x: Some(x),
+            page_y: Some(y),
+            col_x: None,
+            para_y: None,
+            pct_x: None,
+            pct_y: None,
+            pct_w: None,
+            pct_h: None,
+            v_align: Align::Left,
+            wrap_square: around,
+            wrap_top_bottom: false,
+            dist_l: h_space,
+            dist_r: h_space,
+            dist_t: v_space,
+            dist_b: v_space,
+            h_rel: RelFrame::Page,
+            v_rel: RelFrame::Page,
+            v_off: None,
+        },
+        chart: None,
+        stroke: outline.is_some(),
+        fill: None,
+        line: outline.map(|o| o.0),
+        line_width: outline.map_or(0.75, |o| o.1),
+        geom: ShapeGeom::Box,
+        reserve_only: false,
+        behind: false,
+        z: 0,
+        flip_h: false,
+        flip_v: false,
+        tail_end: false,
+        diag_shapes: Vec::new(),
+        text_dx: 0.0,
+        text_dy: 0.0,
+        text_anchor: TextAnchor::Top,
+        adj: Vec::new(),
+        paras: laid,
+        insets: [1.0, 1.0, 1.0, 1.0],
+        custom: None,
+        group: Vec::new(),
+    })
+}
+
 /// Cut a paragraph at its in-text page and column breaks: the pieces, the
 /// break after each piece but the last (`true` = column), and the break the
 /// paragraph ends on (`Some(true)` = column), if any.
@@ -14482,6 +14625,23 @@ impl<'a> Layout<'a> {
             self.page.width - self.page.margin_l - self.page.margin_r,
             self.space_for_ul,
         ) + chrome_images_h(self.fonts, &self.header_images);
+        if std::env::var_os("JUB_DBG").is_some() {
+            eprintln!(
+                "BAND header_band={header_band} lines={} imgs={} runs={:?}",
+                chrome_band(
+                    self.fonts,
+                    &self.header,
+                    &self.header_tables,
+                    self.page.width - self.page.margin_l - self.page.margin_r,
+                    self.space_for_ul
+                ),
+                chrome_images_h(self.fonts, &self.header_images),
+                self.header
+                    .iter()
+                    .map(|r| r.text.clone())
+                    .collect::<Vec<_>>()
+            );
+        }
         self.body_top = if header_band <= 0.0 || self.page.top_exact {
             self.page.margin_t
         } else {

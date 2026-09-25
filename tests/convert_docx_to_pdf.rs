@@ -2252,6 +2252,41 @@ fn page_break_before_drops_its_space_before_in_mode_15() {
 }
 
 #[test]
+fn a_page_anchored_body_frame_floats_out_of_the_flow() {
+    // fixtures_500 001d5e43: the body opens with four paragraphs in one
+    // page-anchored frame (x=8634 y=721 twips, 144pt square, bordered).
+    // Word floats the frame at its page position and starts the text at
+    // the top margin; we stacked the frame's paragraphs in the flow and
+    // pushed the page 103pt down.
+    let frame = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:framePr w:w="2880" w:h="2880" w:hRule="exact" w:hSpace="187" w:wrap="around" w:vAnchor="page" w:hAnchor="page" w:x="8634" w:y="721"/><w:pBdr><w:top w:val="single" w:sz="6" w:space="1" w:color="AEAAAA"/><w:left w:val="single" w:sz="6" w:space="1" w:color="AEAAAA"/><w:bottom w:val="single" w:sz="6" w:space="1" w:color="AEAAAA"/><w:right w:val="single" w:sz="6" w:space="1" w:color="AEAAAA"/></w:pBdr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let body = format!(
+        "{}{}<w:p><w:r><w:t>BodyStart</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"720\" w:bottom=\"720\" w:left=\"1440\"/></w:sectPr>",
+        frame("ClerkUse"),
+        frame("OnlyHere")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("body frame");
+    let (_, y) = pdf_glyph_text_xy(&pdf, "BodyStart").expect("body paints");
+    assert!(
+        792.0 - y < 90.0,
+        "the body starts at the margin; {} from the top",
+        792.0 - y
+    );
+    let (x, fy) = pdf_glyph_text_xy(&pdf, "ClerkUse").expect("frame paints");
+    assert!(x > 430.0, "the frame sits at its page x; x={x}");
+    assert!(
+        792.0 - fy < 60.0,
+        "the frame sits at its page y; {} from the top",
+        792.0 - fy
+    );
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path
