@@ -328,7 +328,9 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
             sheet.defaults.page.gutter_at_top = settings_flag(&pkg, "gutterAtTop");
             // Word Save-as-PDF All Markup (file_27): gray balloon pasteboard + scale.
             // Ins-only trackRevisions (file_6) stays full-page / 0.24 cm.
-            if markup && document_wants_markup_pane(&pkg, &main) {
+            if (markup && document_wants_markup_pane(&pkg, &main))
+                || document_has_comments(&pkg, &main)
+            {
                 sheet.defaults.page.balloon_gutter = 144.0;
             }
             let page = load_page_setup(&dom, body, &sheet.defaults.page);
@@ -5481,6 +5483,14 @@ fn document_wants_markup_pane(pkg: &PartFs, main: &str) -> bool {
         w_revision_count(&xml, "<w:del") >= MARKUP_PANE_MIN_DEL
             && w_revision_count(&xml, "<w:ins") >= MARKUP_PANE_MIN_INS
     })
+}
+
+/// Word's PDF export draws the comment pane on every page of a document
+/// with comments, tracked or not (docxide case63/case64, fixtures_500
+/// 00b0c1ee).
+fn document_has_comments(pkg: &PartFs, main: &str) -> bool {
+    pkg.part_string(main)
+        .is_some_and(|xml| w_revision_count(&xml, "<w:commentReference") > 0)
 }
 
 fn w_revision_count(xml: &str, tag: &str) -> usize {
@@ -15018,6 +15028,7 @@ impl<'a> Layout<'a> {
         let (pw, ph) = (page.width, page.height);
         let mut first = Page::new(pw, ph);
         first.markup_pane = page.balloon_gutter > 0.0;
+        first.margin_r = page.margin_r;
         let mut lay = Self {
             fonts,
             page,
@@ -15278,6 +15289,7 @@ impl<'a> Layout<'a> {
     fn fresh_page(&self) -> Page {
         let mut page = Page::new(self.page.width, self.page.height);
         page.markup_pane = self.page.balloon_gutter > 0.0;
+        page.margin_r = self.page.margin_r;
         page
     }
 

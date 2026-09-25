@@ -28536,13 +28536,15 @@ fn shipped_docx_to_pdf_places_comment_on_range_page() {
     // Bravo is the first (and only) text on page 2, so it sits at the
     // default body origin. Content streams are separate PDF objects, so
     // glyph page ids are not reliable — the annot's /Annots page is.
+    // A commented document gets Word's markup pane, which scales the page
+    // (mr 72: 224/300), so Bravo's origin is 72 × 0.7467 + 0.96 = 54.72.
     assert!(
-        note.x > 60.0 && note.x < 100.0,
+        note.x > 50.0 && note.x < 100.0,
         "annot x must be at Bravo's left-origin; {note:?}"
     );
     assert!(
-        note.y > 680.0 && note.y < 740.0,
-        "annot y must be at Bravo's first-line baseline; {note:?}"
+        note.y > 600.0 && note.y < 740.0,
+        "annot y must be at Bravo's (scaled) first-line baseline; {note:?}"
     );
 }
 
@@ -31698,15 +31700,30 @@ fn track_revisions_few_dels_do_not_paint_balloon_pane() {
 }
 
 #[test]
-fn official_comments_lots_has_no_markup_pane() {
-    // comments-lots has no trackRevisions; Word stays 0.24 cm / no pasteboard.
-    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/docx_lots_of_comments.docx";
-    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert comments-lots");
-    assert_eq!(pdf_page_count(&pdf), 9, "Word comments-lots is 9pp");
-    let hs = pdf_fill_hs(&pdf, 0.949, 0.949, 0.949);
+fn a_commented_document_gets_the_markup_pane_scaled_by_its_right_margin() {
+    // fixtures_500 00b0c1ee and docxide-pdf case63/case64: comments and no
+    // trackRevisions, yet Word's PDF export draws the gray comment pane on
+    // every page. The page scale is a whole 1/300 that fits the page less
+    // its right margin plus the 257.3pt pane: mr 90 gives 229/300, pane
+    // from x 406.38. (The corpus comments-lots PDFs were exported with
+    // comments hidden, so they carry no pane.)
+    let body = "<w:p><w:commentRangeStart w:id=\"1\"/><w:r><w:t>Noted</w:t></w:r>\
+         <w:commentRangeEnd w:id=\"1\"/><w:r><w:commentReference w:id=\"1\"/></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1800\" w:bottom=\"1440\" w:left=\"1800\"/></w:sectPr>";
+    let comments = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:comments xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:comment w:id=\"1\" w:author=\"Ada\" w:initials=\"A\"><w:p><w:r><w:t>Why?</w:t></w:r></w:p>\
+        </w:comment></w:comments>";
+    let pdf = docx_to_pdf(&comments_docx(body, comments)).expect("convert commented doc");
+    let text = String::from_utf8_lossy(&pdf);
     assert!(
-        !hs.iter().any(|h| *h > 400.0),
-        "comments-lots must not grow a markup pane; hs={hs:?}"
+        text.contains("q 0.7633 0 0 0.7633 0.96 "),
+        "page scaled by 229/300 from x 0.96"
+    );
+    assert!(
+        text.contains("0.949 0.949 0.949 rg 406.4"),
+        "pane starts 9.15pt past the text edge, scaled"
     );
 }
 

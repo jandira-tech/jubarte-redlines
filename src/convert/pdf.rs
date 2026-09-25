@@ -147,6 +147,8 @@ pub(crate) struct Page {
     pub comments: Vec<PdfComment>,
     /// Word All-Markup pasteboard: scale content, paint gray balloon column.
     pub markup_pane: bool,
+    /// The section's right margin, which sets the pasteboard's scale.
+    pub margin_r: f32,
 }
 
 impl Page {
@@ -157,13 +159,17 @@ impl Page {
             height,
             comments: Vec::new(),
             markup_pane: false,
+            margin_r: 0.0,
         }
     }
 }
 
-/// Word Save-as-PDF All Markup (file_27): letter content is scaled into the
-/// left ~415pt and a 0.949 gray balloon sits on the right. Landscape uses
-/// the matching Word path (cm 0.184 vs portrait 0.1752).
+/// Word Save-as-PDF All Markup: the page is scaled by `k` from x = 0.96
+/// and a 0.949 gray pane 257.3pt wide (page units) overlaps its right
+/// margin from 9.15pt past the text edge. `k` is a whole 1/300 fitting
+/// page and pane into the paper width less 8pt (file_27 mr 54: 219/300;
+/// docxide case63/64 mr 90: 229/300; fixtures_500 00b0c1ee A4: 228/300;
+/// landscape mr 36: 230/300).
 #[derive(Clone, Copy)]
 struct MarkupChrome {
     gx: f32,
@@ -175,30 +181,27 @@ struct MarkupChrome {
     ty: f32,
 }
 
-fn markup_chrome(width: f32, height: f32) -> Option<MarkupChrome> {
-    if (width - 612.0).abs() < 2.0 && (height - 792.0).abs() < 2.0 {
-        Some(MarkupChrome {
-            gx: 414.9576,
-            gy: 107.52,
-            gw: 187.8144,
-            gh: 578.16,
-            k: 0.73,
-            tx: 0.96,
-            ty: 107.52,
-        })
-    } else if (width - 792.0).abs() < 2.0 && (height - 612.0).abs() < 2.0 {
-        Some(MarkupChrome {
-            gx: 587.552,
-            gy: 71.04,
-            gw: 197.248,
-            gh: 469.2,
-            k: 0.184 / 0.24,
-            tx: 0.96,
-            ty: 71.04,
-        })
-    } else {
-        None
+const MARKUP_PANE_W: f32 = 257.3;
+const MARKUP_PANE_GAP: f32 = 9.15;
+
+fn markup_chrome(width: f32, height: f32, margin_r: f32) -> Option<MarkupChrome> {
+    let span = width - margin_r + MARKUP_PANE_GAP + MARKUP_PANE_W;
+    if span <= 0.0 {
+        return None;
     }
+    let k = ((width - 8.0) / span * 300.0).floor() / 300.0;
+    let tx = 0.96;
+    let gh = height * k;
+    let ty = ((height - gh) / 2.0 / 0.24).round() * 0.24;
+    Some(MarkupChrome {
+        gx: tx + (width - margin_r + MARKUP_PANE_GAP) * k,
+        gy: ty,
+        gw: MARKUP_PANE_W * k,
+        gh,
+        k,
+        tx,
+        ty,
+    })
 }
 
 impl Op {
@@ -419,7 +422,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         let mut stream = String::new();
         let markup = page
             .markup_pane
-            .then(|| markup_chrome(page.width, page.height))
+            .then(|| markup_chrome(page.width, page.height, page.margin_r))
             .flatten();
         if let Some(m) = markup {
             let _ = writeln!(
