@@ -34401,3 +34401,23 @@ fn a_spaced_autofit_tables_columns_share_the_text_width_plus_its_margins() {
         b - a
     );
 }
+
+#[test]
+fn a_soft_edged_picture_fades_to_nothing_at_its_border() {
+    // docxide case57: `a:softEdge` pictures fade out over the radius in
+    // Word; we painted them with hard edges.
+    let smask = |effect: &str| {
+        let pic = blip("457200", "457200", "<wp:inline>", "</wp:inline>").replace(
+            "</pic:blipFill></pic:pic>",
+            &format!("</pic:blipFill><pic:spPr>{effect}</pic:spPr></pic:pic>"),
+        );
+        let docx = drawing_docx(&format!("<w:p><w:r>{pic}</w:r></w:p><w:sectPr/>"));
+        let pdf = docx_to_pdf(&docx).expect("soft edge");
+        String::from_utf8_lossy(&pdf).contains("/SMask")
+    };
+    assert!(!smask(""), "an opaque picture needs no mask");
+    assert!(
+        smask("<a:effectLst><a:softEdge rad=\"76200\"/></a:effectLst>"),
+        "the soft edge paints through an alpha mask"
+    );
+}

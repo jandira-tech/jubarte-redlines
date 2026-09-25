@@ -12553,6 +12553,10 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
             if let Some(rid) = attr_any(dom, blip, "embed") {
                 if let Some(bytes) = resolve_media(pkg, main, rid) {
                     let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);
+                    let kind = match soft_edge_pt(dom, drawing) {
+                        Some(rad) if w > 0.0 && h > 0.0 => soften_edges(kind, rad / w, rad / h),
+                        _ => kind,
+                    };
                     let inset = if matches!(slot, ImageSlot::Flow) {
                         inline_effect_pt(dom, drawing)
                     } else {
@@ -13719,6 +13723,53 @@ fn washed_out(kind: ImageKind) -> ImageKind {
             }
         }
         other => other,
+    }
+}
+
+/// A picture's `a:softEdge` radius in points.
+fn soft_edge_pt(dom: &Dom, drawing: NodeId) -> Option<f32> {
+    let pic = descendants_local(dom, drawing, "spPr").into_iter().next()?;
+    let edge = descendants_local(dom, pic, "softEdge").into_iter().next()?;
+    let rad = attr_any(dom, edge, "rad")?.parse::<f32>().ok()? / 12_700.0;
+    (rad > 0.0).then_some(rad)
+}
+
+/// `a:softEdge`: Word fades the picture to nothing at its border over the
+/// radius (case57's photos). `fx`/`fy` are the radius as a fraction of the
+/// picture's width and height.
+fn soften_edges(kind: ImageKind, fx: f32, fy: f32) -> ImageKind {
+    let (width, height, bytes, alpha) = match kind {
+        ImageKind::Jpeg { bytes, .. } => {
+            let Ok(img) = image::load_from_memory(&bytes) else {
+                return ImageKind::Reserve;
+            };
+            let rgb = img.to_rgb8();
+            (rgb.width(), rgb.height(), rgb.into_raw(), None)
+        }
+        ImageKind::Rgb {
+            width,
+            height,
+            bytes,
+            alpha,
+        } => (width, height, bytes, alpha),
+        other => return other,
+    };
+    let (rx, ry) = ((fx * width as f32).max(1.0), (fy * height as f32).max(1.0));
+    let mut alpha = alpha.unwrap_or_else(|| vec![255; (width * height) as usize]);
+    for y in 0..height {
+        for x in 0..width {
+            let dx = (x.min(width - 1 - x) as f32 + 0.5) / rx;
+            let dy = (y.min(height - 1 - y) as f32 + 0.5) / ry;
+            let f = dx.min(dy).min(1.0);
+            let a = &mut alpha[(y * width + x) as usize];
+            *a = (f32::from(*a) * f).round() as u8;
+        }
+    }
+    ImageKind::Rgb {
+        width,
+        height,
+        bytes,
+        alpha: Some(alpha),
     }
 }
 
