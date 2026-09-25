@@ -2287,6 +2287,20 @@ fn a_page_anchored_body_frame_floats_out_of_the_flow() {
 }
 
 #[test]
+fn a_word_font_with_an_abbreviated_file_name_is_found() {
+    // fixtures_500 00dd36c7: Word's own Garamond ships as GARA.ttf /
+    // GARAIT.ttf, which the file-name match never reached; we painted
+    // Garamond Italic in the Times fallback. Only where Word's fonts are.
+    if !word_dfonts_available() {
+        return;
+    }
+    let body = r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="Garamond" w:hAnsi="Garamond"/><w:i/></w:rPr><w:t>Garamond text</w:t></w:r></w:p><w:sectPr/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("garamond");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(hay.contains("Garamond"), "the Garamond face is embedded");
+}
+
+#[test]
 fn a_justified_cell_paragraph_spreads_its_lines_to_the_cell() {
     // fixtures_500 00297360: jc=both in a one-cell letter. Word stretches
     // every line but the last to the cell's right edge; the cell path

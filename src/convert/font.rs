@@ -1782,7 +1782,7 @@ fn faces_with_user_fonts(
 /// Word's cloud cache hidden, 010ec7df 0.442 -> 0.447 and 015beda9 gets
 /// Word's 4 pages). EB Garamond for Garamond was tried and dropped: its
 /// metrics are further from Monotype's than the Times fallback (00dd36c7
-/// 0.181 -> 0.079). Cooper Black and Script MT have no open equivalent.
+/// 0.181 -> 0.079); Word's own GARA*.ttf is now found by family name. Cooper Black and Script MT have no open equivalent.
 fn open_stand_in(family: &str) -> Option<&'static str> {
     (fold_family(family) == "segoeui").then_some("Selawik")
 }
@@ -1840,7 +1840,70 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
             found.push((pass, style, bytes));
         }
     }
+    if found.is_empty() {
+        // Word's own fonts carry abbreviated file names (Garamond is
+        // GARA.ttf / GARAIT.ttf): match its folder by internal family name
+        // (fixtures_500 00dd36c7 painted Garamond Italic as Times).
+        for (dir, _) in dirs.iter().filter(|(d, _)| d.ends_with("DFonts")) {
+            for (path, names) in font_name_index(dir).iter() {
+                if !names.contains(&key) {
+                    continue;
+                }
+                let Ok(bytes) = fs::read(path) else {
+                    continue;
+                };
+                if let Some((pass, style)) = face_family_style(&bytes, family) {
+                    found.push((pass, style, bytes));
+                }
+            }
+        }
+    }
     pick_ranked_faces(found)
+}
+
+/// Font files with their normalised family names.
+type FontNameIndex = Arc<Vec<(PathBuf, Vec<String>)>>;
+
+/// Each `.ttf`/`.otf` in `dir` with its normalised family names (name IDs
+/// 1 and 16), read once per process.
+fn font_name_index(dir: &Path) -> FontNameIndex {
+    static CACHE: LazyLock<Mutex<HashMap<PathBuf, FontNameIndex>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = CACHE.lock().ok().and_then(|c| c.get(dir).cloned()) {
+        return hit;
+    }
+    let norm = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    let mut out = Vec::new();
+    for path in sorted_dir_listing(dir).iter() {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !(ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf")) {
+            continue;
+        }
+        let Ok(bytes) = fs::read(path) else {
+            continue;
+        };
+        let Ok(face) = ttf_parser::Face::parse(&bytes, 0) else {
+            continue;
+        };
+        let names: Vec<String> = face
+            .names()
+            .into_iter()
+            .filter(|n| matches!(n.name_id, 1 | 16) && n.is_unicode())
+            .filter_map(|n| n.to_string())
+            .map(|n| norm(&n))
+            .collect();
+        out.push((path.clone(), names));
+    }
+    let out = Arc::new(out);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(dir.to_path_buf(), Arc::clone(&out));
+    }
+    out
 }
 
 /// jubarte's own font folder: `$JUBARTE_FONT_DIR`, else the platform's
