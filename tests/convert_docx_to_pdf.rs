@@ -622,7 +622,7 @@ fn numid_zero_over_a_numbered_style_drops_its_list_indent() {
     // Word renders it flush left (every line at the margin); we kept the
     // style's 19.85pt indent for the wrapped lines.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
           <w:style w:type=\"paragraph\" w:styleId=\"Prop\"><w:name w:val=\"Prop\"/>\
             <w:pPr><w:numPr><w:numId w:val=\"1\"/></w:numPr><w:ind w:left=\"720\" w:hanging=\"720\"/></w:pPr></w:style>\
@@ -3865,7 +3865,7 @@ fn title_kern_val_28_tightens_av_pairs() {
         let k = if kern { "<w:kern w:val=\"28\"/>" } else { "" };
         format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-             <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
                <w:style w:type=\"paragraph\" w:styleId=\"Title\">\
                  <w:rPr><w:sz w:val=\"56\"/>{k}</w:rPr>\
                </w:style></w:styles>"
@@ -3971,7 +3971,7 @@ fn file_34_char_styles_xml() -> &'static str {
     // file_34 / uipriority: custom character styles carry w:sz on the
     // style rPr; the run only has rStyle (no direct sz).
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-     <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+     <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
          <w:name w:val=\"Normal\"/>\
          <w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style>\
@@ -4020,7 +4020,7 @@ fn hyperlink_char_style_without_sz_keeps_para_size_after_mini_333() {
     // NamedStyle.run onto a 16pt heading would shrink sd_2517 TOC
     // (already gated) and body hyperlinks. Unset sz must not overlay.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
              <w:name w:val=\"Normal\"/>\
              <w:rPr><w:sz w:val=\"32\"/></w:rPr></w:style>\
@@ -14381,7 +14381,7 @@ fn page_field_continues_across_section_without_start() {
 
 fn heading1_before_480_styles() -> &'static str {
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
           <w:style w:type=\"paragraph\" w:styleId=\"Heading1\">\
             <w:name w:val=\"heading 1\"/>\
             <w:pPr><w:spacing w:before=\"480\" w:after=\"0\"/></w:pPr>\
@@ -15243,7 +15243,7 @@ fn table_style_firstrow_sz_stays_para_size_after_mini_459() {
     // family −0.13 / clones −0.09, 16 drops 0 gains. Quartz raster stays
     // closer to factory 11.04. Keep para size.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
           <w:style w:type=\"table\" w:styleId=\"MediumList2-Accent1\">\
             <w:tblStylePr w:type=\"firstRow\">\
               <w:rPr><w:sz w:val=\"24\"/></w:rPr>\
@@ -15640,7 +15640,7 @@ fn light_shading_accent1_styles() -> &'static str {
     // bold-only. Run w:b val=0 must clear that bold; unstyled cell text
     // keeps 365F91 (Word "Executive / Sales").
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
           <w:style w:type=\"table\" w:styleId=\"LightShading-Accent1\">\
             <w:rPr><w:color w:val=\"365F91\" w:themeColor=\"accent1\" w:themeShade=\"BF\"/></w:rPr>\
             <w:tblStylePr w:type=\"firstRow\"><w:rPr><w:b/></w:rPr></w:tblStylePr>\
@@ -15793,7 +15793,7 @@ fn table_style_firstrow_italic_from_tblstylepr() {
     // is w:b + w:i (not bold-only). Word Quartz embeds Aptos-BoldItalic.
     // KEEP applied firstRow bold only.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
           <w:style w:type=\"table\" w:styleId=\"LightShading-Accent1\">\
             <w:tblStylePr w:type=\"firstRow\">\
               <w:rPr><w:b/><w:i/><w:sz w:val=\"24\"/></w:rPr>\
@@ -24612,10 +24612,14 @@ fn table_tr_height_at_least_single_line_matches_soffice_row() {
     // 3×gridCol=3120, trHeight atLeast 360, empty Normal, docDefaults
     // after=200 line=276. Word keeps docDefaults' after in an unstyled
     // table's cells (fixtures_500 001d945a sits 30pt off without it), so
-    // the content (one 1.15 line + 10) outgrows the 18pt minimum.
+    // the content (one 1.15 line + 10) outgrows the 18pt minimum. Word
+    // draws this exact document (Calibri 11 rPrDefault, as the sources
+    // carry) with rules 25.92pt apart.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
-           <w:docDefaults><w:pPrDefault><w:pPr>\
+           <w:docDefaults><w:rPrDefault><w:rPr>\
+             <w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/>\
+           </w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
              <w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>\
            </w:pPr></w:pPrDefault></w:docDefaults>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
@@ -24659,8 +24663,8 @@ fn table_tr_height_at_least_single_line_matches_soffice_row() {
     let gaps: Vec<f32> = ys.windows(2).map(|w| w[0] - w[1]).collect();
     for gap in &gaps {
         assert!(
-            (24.0..=25.0).contains(gap),
-            "one 1.15 line + docDefaults' 10pt after outgrows atLeast-360; gaps={gaps:?}"
+            (gap - 25.92).abs() < 0.25,
+            "one 1.15 line + docDefaults' 10pt after outgrows atLeast-360 (Word: 25.92); gaps={gaps:?}"
         );
     }
 }
@@ -32353,7 +32357,7 @@ fn an_empty_cell_paragraph_is_a_line() {
     // so rows are 27.6pt apart. Skipping them packed the menu onto two
     // pages (Word three).
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
              <w:name w:val=\"Normal\"/>\
              <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"24\"/></w:rPr></w:style>\
@@ -34528,6 +34532,53 @@ fn a_cloud_font_is_found_by_its_localized_family_name() {
     assert!(
         String::from_utf8_lossy(&pdf).contains("STFangsong"),
         "Word's cloud STFangsong paints the 华文仿宋 run"
+    );
+}
+
+#[test]
+fn a_styles_part_without_default_properties_takes_words_built_in_ones() {
+    // fixtures_500 015beda9 (METEOR export): styles.xml has no w:docDefaults.
+    // Word's oracle lays it out exactly as rPrDefault Aptos 12pt kern 2 and
+    // pPrDefault after=160 line=278. On this document Word steps 23.5pt
+    // (Arial 11 plus the Aptos "©": hAnsi, which Normal leaves unset) and
+    // `<w:docDefaults/>` lays out the same. Empty rPrDefault / pPrDefault
+    // mean the OOXML defaults: single-spaced Times New Roman.
+    let styles = |defaults: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+            <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{defaults}\
+              <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+                <w:rPr><w:rFonts w:ascii=\"Arial\"/><w:sz w:val=\"22\"/></w:rPr></w:style>\
+            </w:styles>"
+        )
+    };
+    let run = |defaults: &str| {
+        let body = "<w:p><w:r><w:t>ParaOneQ ©</w:t></w:r></w:p>\
+            <w:p><w:r><w:t>ParaTwoQ</w:t></w:r></w:p><w:sectPr/>";
+        let pdf = docx_to_pdf(&numbering_docx_with_styles(
+            body,
+            None,
+            Some(&styles(defaults)),
+        ))
+        .expect("default properties");
+        let (_, a) = pdf_glyph_text_xy(&pdf, "ParaOneQ").expect("para one");
+        let (_, b) = pdf_glyph_text_xy(&pdf, "ParaTwoQ").expect("para two");
+        (a - b, String::from_utf8_lossy(&pdf).contains("Aptos"))
+    };
+    for defaults in ["", "<w:docDefaults/>"] {
+        let (step, aptos) = run(defaults);
+        assert!(
+            (step - 23.5).abs() < 0.4,
+            "{defaults:?}: Word steps 23.5pt, got {step}"
+        );
+        assert!(aptos, "{defaults:?}: the unset hAnsi slot paints in Aptos");
+    }
+    let (step, aptos) = run(
+        "<w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>",
+    );
+    assert!(
+        step < 14.0 && !aptos,
+        "empty default properties stay single-spaced without Aptos, got {step}"
     );
 }
 

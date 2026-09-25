@@ -2548,6 +2548,27 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     // And the size: with no `w:sz` anywhere Word runs at the OOXML
     // default 10pt, not the new-document 11 (fixtures_500 003c9ddd).
     defaults.run.size = 10.0;
+    // A missing pPrDefault / rPrDefault takes Word's built-in defaults:
+    // after=160 line=278, Aptos 12pt kern 1pt. The oracle reproduces
+    // fixtures_500 015beda9 (no docDefaults) line for line from exactly
+    // those; `<w:docDefaults/>` lays out the same. Present but empty, they
+    // mean the OOXML ones: single-spaced Times New Roman.
+    if !has("pPrDefault") {
+        defaults.para.after = 8.0;
+        defaults.para.line_mult = 278.0 / 240.0;
+    }
+    if !has("rPrDefault") {
+        defaults.run.size = 12.0;
+        defaults.run.kern_half = 2;
+        defaults.run.family = "Aptos".into();
+        for slot in [
+            &mut defaults.run.family_hansi,
+            &mut defaults.run.family_ea,
+            &mut defaults.run.family_cs,
+        ] {
+            *slot = Some("Aptos".into());
+        }
+    }
     if let Some(dd) = dom
         .descendants(root, Some(&W::name("docDefaults")))
         .into_iter()
@@ -3144,8 +3165,16 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
     }
     if let (Some(a), Some(h)) = (ascii_attr, hansi_attr) {
         style.family_hansi = (!h.eq_ignore_ascii_case(a)).then(|| h.to_string());
-    } else if ascii_attr.is_some() {
-        style.family_hansi = None;
+    } else if let Some(a) = ascii_attr {
+        // An ascii face alone leaves an hAnsi face set below it in place
+        // (015beda9: Normal's ascii Segoe UI over Word's built-in Aptos
+        // defaults, and Word paints "©" in Aptos). With no hAnsi of its
+        // own below, hAnsi follows the ascii face: 0012788b's docDefaults
+        // ascii Times New Roman + hAnsiTheme paints Cyrillic in Times.
+        style.family_hansi = style
+            .family_hansi
+            .take()
+            .filter(|h| !h.eq_ignore_ascii_case(a));
     }
     let ascii = ascii_attr.or(hansi_attr);
     let slot = ascii_slot.or_else(|| attr_any(dom, fonts, "hAnsiTheme"));
