@@ -34112,3 +34112,40 @@ fn latin_inside_east_asian_text_takes_the_ascii_face_and_a_quarter_em_gap() {
         "Q in Arial"
     );
 }
+
+#[test]
+fn a_footer_runs_letter_spacing_is_painted() {
+    // fixtures_500 013d00cf: the footer's "Page" carries w:spacing 60
+    // (3pt); Word spaces its letters as in the body. The chrome painter
+    // dropped the tracking.
+    let footer = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:p><w:r><w:rPr><w:spacing w:val=\"60\"/></w:rPr><w:t>PageX</w:t></w:r></w:p></w:ftr>";
+    let plain = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:p><w:r><w:t>PageX</w:t></w:r></w:p></w:ftr>";
+    let span = |ftr: &str| {
+        let body = "<w:p><w:r><w:t>BodyZ</w:t></w:r></w:p>\
+             <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+               <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[("rIdF1", "footer", "footer1.xml")],
+            &[("word/footer1.xml", ftr.to_string())],
+        ))
+        .expect("footer spacing");
+        let hay = String::from_utf8_lossy(&pdf);
+        let xs: Vec<f32> = pdf_device_xy(&hay, " 0 0 0.24 ")
+            .iter()
+            .filter(|p| p.1 < 100.0)
+            .map(|p| p.0)
+            .collect();
+        xs.iter().copied().fold(0.0_f32, f32::max) - xs.iter().copied().fold(f32::MAX, f32::min)
+    };
+    let (spaced, tight) = (span(footer), span(plain));
+    assert!(
+        spaced - tight > 11.0,
+        "4 gaps of 3pt; spaced={spaced} tight={tight}"
+    );
+}

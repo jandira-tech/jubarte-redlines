@@ -21078,7 +21078,10 @@ impl<'a> Layout<'a> {
                 // line is not a glyph.
                 let text = r.text.replace('\t', "");
                 let measure = chrome_measure_text(&text);
+                // w:spacing tracks every letter here too (013d00cf's
+                // "P a g e" footer label).
                 self.fonts.get(f).width_pt(measure, r.style.layout_size())
+                    + r.style.track * measure.chars().count().saturating_sub(1) as f32
             })
             .sum();
         let extra = match align {
@@ -21096,6 +21099,10 @@ impl<'a> Layout<'a> {
                 run
             };
             if run.text.is_empty() {
+                continue;
+            }
+            if run.style.track.abs() > 0.01 && chrome_measure_text(&run.text) == run.text {
+                x = self.paint_run(run, x, y);
                 continue;
             }
             let fid = self
