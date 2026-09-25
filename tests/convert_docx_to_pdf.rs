@@ -394,6 +394,25 @@ fn font_table_altname_unknown_family_embeds_cambria() {
 }
 
 #[test]
+fn a_missing_arabic_charset_font_is_arial() {
+    // Word draws an absent Arabic-charset face in Arial, its spaces too
+    // (fixtures_500 00205272's "B Compset": 3.33pt spaces at 12pt, the
+    // Arial space). The unknown-family row made it Cambria.
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"B Compset\" w:hAnsi=\"B Compset\"/></w:rPr>\
+                <w:t>Hello world</w:t></w:r></w:p><w:sectPr/>";
+    let docx = minimal_docx_with_font_table(
+        body,
+        "<w:font w:name=\"B Compset\"><w:panose1 w:val=\"00000400000000000000\"/><w:charset w:val=\"B2\"/><w:family w:val=\"auto\"/><w:pitch w:val=\"variable\"/></w:font>",
+    );
+    let pdf = docx_to_pdf(&docx).expect("convert");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("Arial") && !text.contains("Cambria"),
+        "a missing charset-B2 face paints in Arial"
+    );
+}
+
+#[test]
 fn shipped_docx_to_pdf_writes_real_pdf_with_a_page() {
     let bytes = std::fs::read(FIXTURE).expect("fixture");
     let pdf = docx_to_pdf(&bytes).expect("convert");

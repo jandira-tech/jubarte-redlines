@@ -1348,6 +1348,20 @@ impl<'a> Fonts<'a> {
                     FontStep::Generic,
                 );
             }
+            // A missing Arabic or Hebrew face (charset B2 / B1) is Arial in
+            // Word, spaces and all: 00205272's absent "B Compset" draws
+            // Persian and 3.33pt spaces in Arial, not Cambria.
+            if let Some(entry) = table.get(primary)
+                && entry
+                    .charset
+                    .as_deref()
+                    .is_some_and(|c| c.eq_ignore_ascii_case("B2") || c.eq_ignore_ascii_case("B1"))
+            {
+                break (
+                    Self::face_from_physical("Arial", bold, italic),
+                    FontStep::Generic,
+                );
+            }
             // An unknown face Word knows nothing about (family="auto", no
             // panose) paints in the document's default font: 010300e3's
             // Serenity and 00b5aa69's Shivaji01 are Calibri there.
