@@ -3440,7 +3440,9 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     }
     if let Some(w) = first_named(dom, rpr, "w")
         && let Some(val) = attr_any(dom, w, "val")
-        && let Ok(pct) = val.parse::<f32>()
+        // ST_TextScale is a whole number or, in strict and newer files,
+        // a percentage string (docxide case24: "150%").
+        && let Ok(pct) = val.trim().trim_end_matches('%').parse::<f32>()
         && pct > 0.0
     {
         style.scale = pct / 100.0;

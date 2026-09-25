@@ -34017,3 +34017,18 @@ fn a_negative_src_rect_pads_the_picture_inside_its_frame() {
             .unwrap_or("")
     );
 }
+
+#[test]
+fn a_percent_text_scale_widens_the_glyphs() {
+    // docxide-pdf case24: w:w val="150%" (ST_TextScale as a percentage
+    // string) widens the text as val="150" does; we read it as 100%.
+    let width = |val: &str| {
+        let body = format!(
+            "<w:p><w:r><w:rPr><w:w w:val=\"{val}\"/></w:rPr><w:t>Wide</w:t></w:r><w:r><w:t>Tail</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("text scale");
+        pdf_glyph_text_xy(&pdf, "Tail").expect("Tail").0
+    };
+    assert!((width("150%") - width("150")).abs() < 0.1, "150% is 150");
+    assert!(width("150%") > width("100") + 5.0, "150% widens the run");
+}
