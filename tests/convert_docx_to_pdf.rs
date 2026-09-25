@@ -33454,3 +33454,85 @@ fn shape_text_is_laid_in_the_presets_text_rectangle() {
         "the triangle's label centres in its lower half, 50pt below the box centre; rect={rect} tri={tri}"
     );
 }
+
+#[test]
+fn a_vml_horizontal_rule_paints_across_the_text_width() {
+    // docxide-pdf isla_language_lesson_plan (and 9 more fixtures): a
+    // `v:rect o:hr="t"` is Word's horizontal line. Live Word paints it on
+    // the paragraph's baseline, hrpct/1000 of the text width (all of it
+    // when absent), in its fillcolor (a shaded rule's bevel face half
+    // toward white); we painted nothing.
+    let rule = |extra: &str| {
+        let body = format!(
+            "<w:p><w:r><w:t>Before</w:t></w:r></w:p>\
+             <w:p><w:r><w:pict xmlns:v=\"urn:schemas-microsoft-com:vml\" \
+               xmlns:o=\"urn:schemas-microsoft-com:office:office\"><v:rect id=\"r1\" style=\"width:0;height:1.5pt\" o:hralign=\"center\" \
+               o:hrstd=\"t\" {extra} o:hr=\"t\" fillcolor=\"#a0a0a0\" stroked=\"f\"/></w:pict></w:r></w:p>\
+             <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("hr");
+        pdf_fill_rects(&pdf, 0.627, 0.627, 0.627)
+    };
+    let full = rule("o:hrnoshade=\"t\"");
+    assert!(
+        full.iter()
+            .any(|(w, h)| (w - 468.0).abs() < 0.5 && (h - 1.5).abs() < 0.1),
+        "a 468 × 1.5pt gray rule; rects={full:?}"
+    );
+    let half = rule("o:hrnoshade=\"t\" o:hrpct=\"500\"");
+    assert!(
+        half.iter().any(|(w, _)| (w - 234.0).abs() < 0.5),
+        "hrpct 500 is half the width; rects={half:?}"
+    );
+}
+
+#[test]
+fn a_fixed_width_rule_keeps_its_width_and_named_colour() {
+    // fixtures_500 000014a9: `width:108pt` under o:hrpct="0" with
+    // fillcolor="black [3213]" is a 108pt black signature line, not a
+    // full-width gray one.
+    let body = "<w:p><w:r><w:pict xmlns:v=\"urn:schemas-microsoft-com:vml\" \
+           xmlns:o=\"urn:schemas-microsoft-com:office:office\"><v:rect id=\"r1\" \
+           style=\"width:108pt;height:1pt\" o:hrpct=\"0\" o:hralign=\"center\" o:hrstd=\"t\" \
+           o:hrnoshade=\"t\" o:hr=\"t\" fillcolor=\"black [3213]\" stroked=\"f\"/></w:pict></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("fixed rule");
+    let rects = pdf_fill_rects(&pdf, 0.0, 0.0, 0.0);
+    assert!(
+        rects
+            .iter()
+            .any(|(w, h)| (w - 108.0).abs() < 0.5 && (h - 1.0).abs() < 0.1),
+        "a 108 × 1pt black rule; rects={rects:?}"
+    );
+}
+
+#[test]
+fn a_drawing_canvas_paints_its_background_and_shapes() {
+    // fixtures_500 00019a41's pool diagram and docxide isla's Venn diagram
+    // are wpc:wpc drawing canvases: Word paints the canvas background and
+    // each shape at its EMU offset from the canvas; we painted nothing.
+    let canvas = "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+       <wp:extent cx=\"2540000\" cy=\"1270000\"/><wp:docPr id=\"9\" name=\"Canvas\"/>\
+       <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas\">\
+         <wpc:wpc xmlns:wpc=\"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas\" \
+           xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+           <wpc:bg><a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill></wpc:bg><wpc:whole/>\
+           <wps:wsp><wps:spPr><a:xfrm><a:off x=\"127000\" y=\"127000\"/><a:ext cx=\"635000\" cy=\"381000\"/></a:xfrm>\
+             <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"0000FF\"/></a:solidFill></wps:spPr>\
+             <wps:bodyPr/></wps:wsp>\
+         </wpc:wpc></a:graphicData></a:graphic></wp:inline></w:drawing>";
+    let docx = drawing_docx(&format!("<w:p><w:r>{canvas}</w:r></w:p><w:sectPr/>"));
+    let pdf = docx_to_pdf(&docx).expect("canvas");
+    let bg = pdf_fill_rects(&pdf, 1.0, 0.0, 0.0);
+    let shape = pdf_fill_rects(&pdf, 0.0, 0.0, 1.0);
+    assert!(
+        bg.iter()
+            .any(|(w, h)| (w - 200.0).abs() < 0.5 && (h - 100.0).abs() < 0.5),
+        "the 200 × 100pt red canvas background; bg={bg:?}"
+    );
+    assert!(
+        shape
+            .iter()
+            .any(|(w, h)| (w - 50.0).abs() < 0.5 && (h - 30.0).abs() < 0.5),
+        "the 50 × 30pt blue shape; shape={shape:?}"
+    );
+}

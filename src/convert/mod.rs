@@ -536,6 +536,8 @@ struct ParaStyle {
     /// The paragraph mark's own run style (pPr/rPr with a size or face):
     /// a picture-only line takes its multiple's leading from it (0023298b).
     mark_run: Option<std::rc::Rc<RunStyle>>,
+    /// A VML horizontal line (`v:rect o:hr="t"`) the paragraph holds.
+    hrule: Option<HRule>,
     align: Align,
     after: f32,
     before: f32,
@@ -1005,6 +1007,7 @@ impl Defaults {
             },
             para: ParaStyle {
                 mark_run: None,
+                hrule: None,
                 align: Align::Left,
                 after: 10.0,
                 before: 0.0,
@@ -7344,6 +7347,102 @@ fn apply_latent_ppr(style_id: &str, para: &mut ParaStyle, run: &mut RunStyle, th
     }
 }
 
+/// A VML horizontal line: Word paints it on its paragraph's baseline.
+#[derive(Clone, Copy)]
+struct HRule {
+    /// Share of the text width (`o:hrpct`/1000; 0 means all of it).
+    frac: f32,
+    /// An explicit `width` under `o:hrpct="0"` (000014a9's 108pt rules).
+    width: Option<f32>,
+    h: f32,
+    color: [f32; 3],
+    align: Align,
+}
+
+/// A VML colour: `#rrggbb`, `#rgb` or one of the 16 named colours, any
+/// ` [n]` scheme index after it ignored (`black [3213]`).
+fn vml_color(v: &str) -> Option<[f32; 3]> {
+    let v = v.split_whitespace().next()?;
+    if let Some(hex) = v.strip_prefix('#') {
+        if hex.len() == 3 {
+            let long: String = hex.chars().flat_map(|c| [c, c]).collect();
+            return parse_hex_color(&long);
+        }
+        return parse_hex_color(hex);
+    }
+    let hex = match v.to_ascii_lowercase().as_str() {
+        "black" => "000000",
+        "white" => "FFFFFF",
+        "gray" | "grey" => "808080",
+        "silver" => "C0C0C0",
+        "red" => "FF0000",
+        "maroon" => "800000",
+        "yellow" => "FFFF00",
+        "olive" => "808000",
+        "lime" => "00FF00",
+        "green" => "008000",
+        "aqua" => "00FFFF",
+        "teal" => "008080",
+        "blue" => "0000FF",
+        "navy" => "000080",
+        "fuchsia" => "FF00FF",
+        "purple" => "800080",
+        _ => return None,
+    };
+    parse_hex_color(hex)
+}
+
+/// An `o:` (urn:schemas-microsoft-com:office:office) attribute.
+fn o_attr<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
+    dom.attribute(
+        node,
+        &XName::get(local, "urn:schemas-microsoft-com:office:office"),
+    )
+}
+
+/// The paragraph's `v:rect o:hr="t"` (not a Fallback copy), if any.
+fn para_hrule(dom: &Dom, para: NodeId) -> Option<HRule> {
+    let rect = descendants_local(dom, para, "rect").into_iter().find(|r| {
+        o_attr(dom, *r, "hr") == Some("t")
+            && !dom
+                .ancestors(*r, None)
+                .iter()
+                .any(|a| local_name_is(dom, *a, "Fallback"))
+    })?;
+    let h = attr_any(dom, rect, "style")
+        .and_then(|st| vml_style_pt(st, "height"))
+        .unwrap_or(1.5);
+    let pct = o_attr(dom, rect, "hrpct")
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(0.0);
+    let fill = attr_any(dom, rect, "fillcolor")
+        .and_then(vml_color)
+        .unwrap_or([0.627, 0.627, 0.627]);
+    let width = attr_any(dom, rect, "style")
+        .and_then(|st| vml_style_pt(st, "width"))
+        .filter(|w| *w > 0.0 && pct <= 0.0);
+    // Word shades a rule without o:hrnoshade as a bevel whose face is far
+    // lighter than its fillcolor (fixtures_500 00b540dd: lumas 202-229
+    // under #a0a0a0); half toward white stands for it.
+    let color = if o_attr(dom, rect, "hrnoshade") == Some("t") {
+        fill
+    } else {
+        fill.map(|c| (c + 1.0) / 2.0)
+    };
+    let align = match o_attr(dom, rect, "hralign") {
+        Some("center") => Align::Center,
+        Some("right") => Align::Right,
+        _ => Align::Left,
+    };
+    Some(HRule {
+        frac: if pct > 0.0 { pct / 1000.0 } else { 1.0 },
+        width,
+        h,
+        color,
+        align,
+    })
+}
+
 fn paragraph_block(
     ctx: &WalkCtx<'_>,
     dom: &Dom,
@@ -7353,6 +7452,7 @@ fn paragraph_block(
 ) -> Block {
     let sheet = ctx.sheet;
     let (mut pstyle, rstyle) = para_base(dom, para, sheet, None);
+    pstyle.hrule = para_hrule(dom, para);
     let (marker, num_id, ilvl) = list_marker(dom, para, sheet, numbering);
     // numId=0 over a numbered style removes the list and the style's list
     // indent with it (000ebd12 Förslagstext: ind 397/397 renders flush
@@ -10519,7 +10619,7 @@ fn collect_textboxes_styled(
         // second, empty stroked box (000f5278's QR code ran 188pt long).
         if dom.name_is(shape, &W::drawing())
             && graphic_data_uri_contains(dom, shape, "drawingml/2006/picture")
-            && descendants_local(dom, shape, "wgp").is_empty()
+            && drawing_group(dom, shape).is_none()
         {
             continue;
         }
@@ -10603,7 +10703,24 @@ fn collect_textboxes_styled(
         }
         let line = if group.is_empty() { line } else { None };
         if chart.is_none() && !group.is_empty() {
-            out.push(group_box(w, h, slot, geom, behind, z, group));
+            let mut boxed = group_box(w, h, slot, geom, behind, z, group);
+            // A canvas paints its own background and outline under its
+            // shapes (00019a41's pool, isla's Venn frame).
+            if let Some(wpc) = descendants_local(dom, shape, "wpc").into_iter().next() {
+                let part = |name: &str| {
+                    (0..dom.child_count(wpc))
+                        .map(|i| dom.child_at(wpc, i))
+                        .find(|c| local_name_is(dom, *c, name))
+                };
+                boxed.geom = ShapeGeom::Box;
+                boxed.fill = part("bg").and_then(|bg| shape_fill_color(dom, bg, theme));
+                if let Some(whole) = part("whole") {
+                    boxed.line = shape_line_color(dom, whole, theme);
+                    boxed.stroke = boxed.line.is_some() && !shape_ln_is_nofill(dom, whole);
+                    boxed.line_width = shape_line_width(dom, whole, theme);
+                }
+            }
+            out.push(boxed);
             continue;
         }
         if empty && chart.is_none() {
@@ -10803,17 +10920,32 @@ fn group_box(
     }
 }
 
+/// The drawing's top group: a `wpg:wgp`, or a `wpc:wpc` canvas with its
+/// `wp:extent` (EMU), whose children are placed like a group's.
+fn drawing_group(dom: &Dom, drawing: NodeId) -> Option<(NodeId, Option<[f64; 2]>)> {
+    if let Some(wgp) = descendants_local(dom, drawing, "wgp").into_iter().next() {
+        return Some((wgp, None));
+    }
+    let wpc = descendants_local(dom, drawing, "wpc").into_iter().next()?;
+    let ext = descendants_local(dom, drawing, "extent")
+        .into_iter()
+        .next()?;
+    let num = |k: &str| attr_any(dom, ext, k).and_then(|v| v.parse::<f64>().ok());
+    Some((wpc, Some([num("cx")?, num("cy")?])))
+}
+
 /// The shapes of the drawing's `wpg:wgp` group (nested groups flattened),
 /// each placed through the group's `chOff`/`chExt` child space.
 fn group_children(dom: &Dom, shape: NodeId, text: &GroupText) -> Vec<GroupChild> {
     let mut out = Vec::new();
-    if let Some(wgp) = descendants_local(dom, shape, "wgp").into_iter().next() {
+    if let Some((wgp, canvas)) = drawing_group(dom, shape) {
         collect_group(
             dom,
             wgp,
             GroupFrame {
                 frac: [0.0, 0.0, 1.0, 1.0],
                 fill: None,
+                canvas,
             },
             text.theme,
             Some(text),
@@ -10828,7 +10960,7 @@ fn group_children(dom: &Dom, shape: NodeId, text: &GroupText) -> Vec<GroupChild>
 /// box as fractions of the group's box (x, y from the top-left, w, h).
 fn group_pictures(dom: &Dom, drawing: NodeId) -> Vec<([f32; 4], NodeId)> {
     let mut pics = Vec::new();
-    if let Some(wgp) = descendants_local(dom, drawing, "wgp").into_iter().next() {
+    if let Some((wgp, canvas)) = drawing_group(dom, drawing) {
         let theme = ThemeFonts::default();
         collect_group(
             dom,
@@ -10836,6 +10968,7 @@ fn group_pictures(dom: &Dom, drawing: NodeId) -> Vec<([f32; 4], NodeId)> {
             GroupFrame {
                 frac: [0.0, 0.0, 1.0, 1.0],
                 fill: None,
+                canvas,
             },
             &theme,
             None,
@@ -10898,6 +11031,9 @@ fn xfrm_box(dom: &Dom, xfrm: NodeId) -> Option<[f64; 4]> {
 struct GroupFrame {
     frac: [f32; 4],
     fill: Option<[f32; 3]>,
+    /// A `wpc:wpc` drawing canvas's extent (EMU): it has no `grpSpPr`, its
+    /// children sit at EMU offsets from its top-left.
+    canvas: Option<[f64; 2]>,
 }
 
 fn collect_group(
@@ -10912,6 +11048,7 @@ fn collect_group(
     let GroupFrame {
         frac,
         fill: parent_fill,
+        canvas,
     } = frame;
     let children: Vec<NodeId> = (0..dom.child_count(grp))
         .map(|i| dom.child_at(grp, i))
@@ -10920,10 +11057,10 @@ fn collect_group(
         .iter()
         .copied()
         .find(|c| local_name_is(dom, *c, "grpSpPr"));
-    let Some(xfrm) = grp_pr.and_then(|pr| descendants_local(dom, pr, "xfrm").into_iter().next())
-    else {
+    let xfrm = grp_pr.and_then(|pr| descendants_local(dom, pr, "xfrm").into_iter().next());
+    if xfrm.is_none() && canvas.is_none() {
         return;
-    };
+    }
     // The group's own fill, which `a:grpFill` children take (003329b5's
     // light-green label panels), else the enclosing group's.
     let group_fill = grp_pr
@@ -10935,13 +11072,14 @@ fn collect_group(
         .and_then(|f| scheme_color(dom, f, theme))
         .or(parent_fill);
     let num = |local: &str, key: &str| {
-        descendants_local(dom, xfrm, local)
-            .into_iter()
-            .next()
+        xfrm.and_then(|x| descendants_local(dom, x, local).into_iter().next())
             .and_then(|n| attr_any(dom, n, key))
             .and_then(|v| v.parse::<f64>().ok())
     };
-    let Some(ext) = xfrm_box(dom, xfrm) else {
+    let Some(ext) = xfrm
+        .and_then(|x| xfrm_box(dom, x))
+        .or_else(|| canvas.map(|[cx, cy]| [0.0, 0.0, cx, cy]))
+    else {
         return;
     };
     let (cox, coy) = (
@@ -10966,7 +11104,7 @@ fn collect_group(
         ]
     };
     for child in children {
-        if local_name_is(dom, child, "grpSp") {
+        if local_name_is(dom, child, "grpSp") || local_name_is(dom, child, "wgp") {
             let sub = (0..dom.child_count(child))
                 .map(|i| dom.child_at(child, i))
                 .find(|c| local_name_is(dom, *c, "grpSpPr"))
@@ -10976,6 +11114,7 @@ fn collect_group(
                 let frame = GroupFrame {
                     frac: place(b),
                     fill: group_fill,
+                    canvas: None,
                 };
                 collect_group(dom, child, frame, theme, text, out, pics);
             }
@@ -11019,6 +11158,7 @@ fn collect_group(
             shape.line_width = shape_line_width(dom, child, theme);
             shape.custom = custom;
             shape.adj = preset_adjustments(dom, child);
+            shape.prst = shape_prst(dom, child);
             shape.flip_h = flip_h;
             shape.flip_v = flip_v;
             // A grouped text box carries its own text (the Achensee
@@ -14059,6 +14199,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
     };
     let mut style = ParaStyle {
         mark_run: None,
+        hrule: None,
         align: Align::Left,
         after: 0.0,
         before: 0.0,
@@ -14412,8 +14553,10 @@ fn hf_para_is_bare_line(dom: &Dom, root: NodeId, para: NodeId) -> bool {
             // sized as chrome images.
             // mc:Fallback only mirrors the Choice Word renders (000f3a4e's
             // anchored text box carries a w:pict fallback).
+            // A VML horizontal line is its paragraph's line too (isla's
+            // header rule under the District/Title row).
             return !dom.descendants(para, None).into_iter().any(|d| {
-                (dom.name_is(d, &W::pict())
+                (dom.name_is(d, &W::pict()) && para_hrule(dom, d).is_none()
                     || (dom.name_is(d, &W::drawing())
                         && !dom.descendants(d, Some(&WP::name("inline"))).is_empty()))
                     && !dom
@@ -15755,6 +15898,29 @@ impl<'a> Layout<'a> {
 
     fn col_width(&self) -> f32 {
         self.col_width_at(self.col_i)
+    }
+
+    /// Paint the paragraph's VML horizontal line, bottom on its last
+    /// line's baseline (live Word: 1.5pt rule under a 12pt mark).
+    fn paint_hrule(&mut self, style: &ParaStyle) {
+        let (Some(hr), Some((_, baseline))) = (style.hrule, self.last_line_end) else {
+            return;
+        };
+        let left = self.flow_left() + style.indent_left;
+        let avail = (self.content_width() - style.indent_left - style.indent_right).max(0.0);
+        let w = hr.width.map_or(avail * hr.frac.min(1.0), |w| w.min(avail));
+        let x = match hr.align {
+            Align::Center => left + (avail - w) / 2.0,
+            Align::Right => left + avail - w,
+            Align::Left | Align::Justify => left,
+        };
+        self.current().ops.push(Op::FillRect {
+            x,
+            y: baseline,
+            w,
+            h: hr.h,
+            color: hr.color,
+        });
     }
 
     fn flow_left(&self) -> f32 {
@@ -22199,7 +22365,10 @@ fn layout(
                     && boxes.iter().any(|b| {
                         matches!(b.slot, ImageSlot::Flow)
                             && b.h > 16.0
-                            && (b.reserve_only || b.chart.is_some() || !b.paras.is_empty())
+                            && (b.reserve_only
+                                || b.chart.is_some()
+                                || !b.paras.is_empty()
+                                || !b.group.is_empty())
                     });
                 let skip_empty_line = skip_hole_line
                     || (!has_ink
@@ -22260,6 +22429,7 @@ fn layout(
                         from,
                     };
                     lay.emit_runs(runs, &style, *list, wrap);
+                    lay.paint_hrule(&style);
                     lay.pbdr_joins = (false, false);
                     if pushed {
                         lay.para_top = anchor_top;
