@@ -8,6 +8,7 @@
 //! same metric-compatible substitutes soffice embeds), Word `docDefaults`
 //! (Calibri 11 / line 276 / after 200 twips), and `sectPr` page geometry.
 
+mod altchunk;
 mod font;
 mod font_table;
 mod metafile;
@@ -289,6 +290,14 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
     let xml = pkg
         .part_string(&main)
         .ok_or(ConvertError::MissingDocument)?;
+    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.
+    let xml = if xml.contains("<w:altChunk") {
+        altchunk::expand(&xml, |rid| {
+            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))
+        })
+    } else {
+        xml
+    };
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
     let root = dom.root(doc).ok_or(ConvertError::MissingDocument)?;
