@@ -34968,3 +34968,39 @@ fn a_tall_picture_after_the_text_ends_its_last_line() {
         "the centred line holds the text and the icon, got x {cx}"
     );
 }
+
+#[test]
+fn a_justified_header_paragraph_justifies_its_wrapped_lines() {
+    // English corpus cc8d2643: the header's title paragraph takes jc=both
+    // from Normal and wraps; Word spreads its first line to the margin.
+    // We set every header line ragged.
+    let long = "X".repeat(75);
+    let pdf = docx_to_pdf(&header_part_docx(&format!(
+        "<w:p><w:pPr><w:jc w:val=\"both\"/></w:pPr><w:r><w:t>AlphaQ BetaQ {long}</w:t></w:r></w:p>"
+    )))
+    .expect("justified header");
+    let (x, _) = pdf_glyph_text_xy(&pdf, "BetaQ").expect("BetaQ");
+    assert!(
+        x > 450.0,
+        "the wrapped first line spreads to the right margin, got BetaQ at {x}"
+    );
+}
+
+#[test]
+fn a_headers_first_paragraph_keeps_its_space_before() {
+    // English corpus cc8d2643: the header's first paragraph has
+    // before=120; Word sets its text 6pt under the header distance. We
+    // dropped the space as at the top of a page.
+    let y = |before: u32| {
+        let pdf = docx_to_pdf(&header_part_docx(&format!(
+            "<w:p><w:pPr><w:spacing w:before=\"{before}\"/></w:pPr><w:r><w:t>HeadQ</w:t></w:r></w:p>"
+        )))
+        .expect("header");
+        pdf_glyph_text_xy(&pdf, "HeadQ").expect("HeadQ").1
+    };
+    let drop = y(0) - y(240);
+    assert!(
+        (drop - 12.0).abs() < 0.5,
+        "space before moves the header's first line down 12pt, got {drop}"
+    );
+}

@@ -16046,10 +16046,15 @@ fn hf_closing_after(runs: &[TextRun]) -> f32 {
 /// Top border width + space of a part whose first paragraph paints text
 /// (006cfed2's footer rule stands 1pt over "CONFIDENTIEL").
 fn hf_opening_pad(runs: &[TextRun]) -> f32 {
+    // An explicit space before the part's first text paragraph stays at the
+    // header distance (cc8d2643's before=120 title sits 6pt down); an HTML
+    // auto one drops, as for a leading empty paragraph.
     runs.first()
         .filter(|r| r.text != HF_LINE_BREAK)
         .and_then(|r| r.hf_para.as_deref())
-        .map_or(0.0, |p| hf_border_pad(None, p))
+        .map_or(0.0, |p| {
+            hf_border_pad(None, p) + if p.before_auto { 0.0 } else { p.before }
+        })
 }
 
 /// One empty header/footer paragraph line: its mark's line box.
@@ -21744,6 +21749,27 @@ impl<'a> Layout<'a> {
 
     /// A header/footer line starts from the left margin on Word's 1/300in
     /// grid, as body lines do (00049f27's footer at 84.96, not 85.05).
+    /// A header/footer line: a justified paragraph's line that wraps on
+    /// spreads to its measure as body lines do (cc8d2643's header title).
+    fn draw_hf_line(&mut self, runs: &[TextRun], y: f32, align: Align, wraps_on: bool) {
+        if wraps_on
+            && matches!(align, Align::Justify)
+            && !runs
+                .iter()
+                .any(|r| r.text.contains('\t') || r.text.contains("@@"))
+            && let Some(p) = runs.iter().find_map(|r| r.hf_para.as_deref())
+        {
+            let indent = hf_line_indent(p, runs);
+            let width = self.content_width() - indent - p.indent_right;
+            let natural = self.line_width_pt(runs) - trailing_ws_pt(self.fonts, runs);
+            if width > natural {
+                self.paint_justified_line(runs, self.page.margin_l + indent, y, width - natural);
+                return;
+            }
+        }
+        self.draw_line_of_runs(runs, y, align);
+    }
+
     fn draw_line_of_runs(&mut self, runs: &[TextRun], y: f32, align: Align) {
         let exact = self.page.margin_l;
         self.page.margin_l = ((exact / 0.24) + 0.5).floor() * 0.24;
@@ -22028,7 +22054,11 @@ impl<'a> Layout<'a> {
                     self.hf_top_rule(above.as_deref(), p, top);
                 }
                 let align = para.as_ref().map_or(self.header_align, |p| p.align);
-                self.draw_line_of_runs(line, y, align);
+                let wraps_on = lines
+                    .get(i + 1)
+                    .and_then(|(l, _)| l.first())
+                    .is_some_and(|r| r.hf_cont);
+                self.draw_hf_line(line, y, align, wraps_on);
                 let next = lines
                     .get(i + 1)
                     .and_then(|(l, _)| l.iter().find_map(|r| r.hf_para.clone()))
@@ -22179,7 +22209,11 @@ impl<'a> Layout<'a> {
                     .first()
                     .and_then(|r| r.hf_para.as_ref())
                     .map_or(self.footer_align, |p| p.align);
-                self.draw_line_of_runs(line, y + baselines[i], align);
+                let wraps_on = lines
+                    .get(i + 1)
+                    .and_then(|(l, _)| l.first())
+                    .is_some_and(|r| r.hf_cont);
+                self.draw_hf_line(line, y + baselines[i], align, wraps_on);
                 let para = line.iter().find_map(|r| r.hf_para.clone());
                 let next = lines
                     .get(i + 1)
