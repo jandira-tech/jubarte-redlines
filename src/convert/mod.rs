@@ -15327,15 +15327,18 @@ impl<'a> Layout<'a> {
         let start = self.chrome_end;
         let avail_top = self.page.height - self.body_top;
         let avail_bot = self.body_floor;
-        let Some((min_y, max_y)) = body_op_yrange(&self.pages[0].ops[start..]) else {
+        if body_op_yrange(&self.pages[0].ops[start..]).is_none() {
             return;
-        };
-        let used = max_y - min_y;
+        }
+        // Word centres the laid-out box, from the body top down to the
+        // cursor past the last paragraph's space after (docxide case69),
+        // not the ink.
+        let used = avail_top - self.y.max(avail_bot);
         let avail = avail_top - avail_bot;
         if used >= avail - 1.0 {
             return;
         }
-        let dy = avail_top - (avail - used) / 2.0 - max_y;
+        let dy = -(avail - used) / 2.0;
         for op in &mut self.pages[0].ops[start..] {
             shift_op_y(op, dy);
         }

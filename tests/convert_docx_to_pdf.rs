@@ -33271,3 +33271,26 @@ fn a_cell_icon_before_its_text_shares_the_first_line() {
         "an icon no taller than the line keeps the baseline; plain y={py} icon y={iy}"
     );
 }
+
+#[test]
+fn a_centred_page_centres_the_layout_box_with_its_last_space_after() {
+    // docxide-pdf case69: a vAlign=center section. Word centres the laid
+    // out box, the last paragraph's space after included (the title sits
+    // at 355.07); we centred the ink and set it 7.7pt lower.
+    let y = |after: &str| {
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:after=\"{after}\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+               <w:r><w:t>Centred</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+               <w:vAlign w:val=\"center\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("centred page");
+        pdf_literal_td_y(&pdf, "Centred").expect("Centred")
+    };
+    let (flush, spaced) = (y("0"), y("400"));
+    assert!(
+        (spaced - flush - 10.0).abs() < 0.3,
+        "20pt after lifts the centred box by 10pt; flush={flush} spaced={spaced}"
+    );
+}
