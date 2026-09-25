@@ -849,6 +849,40 @@ fn a_break_only_paragraph_leaves_a_line_in_the_column_it_ends() {
 }
 
 #[test]
+fn a_floating_table_in_column_one_leaves_column_two_alone() {
+    // fixtures_500 003329b5: a tblpPr table filling column one under its
+    // intro sent column two's lines that reach the table's band under the
+    // table's bottom, and on to a third page. Column two is beside it.
+    let rows: String = (0..12)
+        .map(|i| format!("<w:tr><w:tc><w:tcPr><w:tcW w:w=\"4200\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Row{i}</w:t></w:r></w:p></w:tc></w:tr>"))
+        .collect();
+    let intro: String = (0..4)
+        .map(|i| format!("<w:p><w:r><w:t>Intro{i}</w:t></w:r></w:p>"))
+        .collect();
+    let col2: String = (0..12)
+        .map(|i| format!("<w:p><w:r><w:t>Side{i}</w:t></w:r></w:p>"))
+        .collect();
+    let body = format!(
+        "{intro}<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"141\" w:rightFromText=\"141\" w:vertAnchor=\"text\" \
+           w:horzAnchor=\"page\" w:tblpX=\"1440\" w:tblpY=\"1\"/><w:tblW w:w=\"4200\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"4200\"/></w:tblGrid>{rows}</w:tbl>\
+         <w:p><w:r><w:br w:type=\"column\"/></w:r></w:p>{col2}\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" \
+           w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/><w:cols w:num=\"2\" w:space=\"720\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("float table");
+    let ys: Vec<f32> = (0..12)
+        .map(|i| {
+            pdf_glyph_text_xy(&pdf, &format!("Side{i}"))
+                .expect("side line")
+                .1
+        })
+        .collect();
+    let widest = ys.windows(2).map(|w| w[0] - w[1]).fold(0.0_f32, f32::max);
+    assert!(widest < 40.0, "column two steps line by line; ys={ys:?}");
+}
+
+#[test]
 fn a_break_only_paragraphs_mark_keeps_its_space_before_in_the_next_column() {
     // Live Word: "Alpha", then a before=24 paragraph holding only a column
     // break, then "Col2": the mark opens column two 24pt down and Col2

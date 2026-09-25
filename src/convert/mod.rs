@@ -15450,6 +15450,10 @@ impl<'a> Layout<'a> {
             // one's top); a page-top column drops it.
             let first_line = (self.y - self.para_top).abs() < 0.01;
             self.col_floor = Some(self.col_floor.map_or(self.y, |f| f.min(self.y)));
+            // A floating table beside column one's text is no float for
+            // the next column's (003329b5's table sent column two's lines
+            // under it and onto a third page).
+            self.side_float = None;
             self.col_i += 1;
             self.y = self.col_top.unwrap_or(self.page.height - self.body_top);
             if self.col_top.is_some() && first_line {
