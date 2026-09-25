@@ -20789,7 +20789,16 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// A header/footer line starts from the left margin on Word's 1/300in
+    /// grid, as body lines do (00049f27's footer at 84.96, not 85.05).
     fn draw_line_of_runs(&mut self, runs: &[TextRun], y: f32, align: Align) {
+        let exact = self.page.margin_l;
+        self.page.margin_l = ((exact / 0.24) + 0.5).floor() * 0.24;
+        self.draw_line_of_runs_at(runs, y, align);
+        self.page.margin_l = exact;
+    }
+
+    fn draw_line_of_runs_at(&mut self, runs: &[TextRun], y: f32, align: Align) {
         // A right-framed run (PAGE in a framePr) ends at the right margin
         // on this line; the rest lays out as if it were not there.
         let framed = |r: &TextRun| r.frame_right || r.frame_center;

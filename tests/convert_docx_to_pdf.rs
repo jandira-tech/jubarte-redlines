@@ -33735,3 +33735,28 @@ fn the_left_margin_lands_on_words_device_grid() {
     let xi = pdf_glyph_text_xy(&pdf, "Indented").expect("Indented").0;
     assert!((xi - 120.96).abs() < 0.01, "84.96 + 36; x={xi}");
 }
+
+#[test]
+fn a_footer_line_starts_on_the_grid_snapped_margin() {
+    // fixtures_500 00049f27: an 85.05pt margin's footer line starts at
+    // 84.96 in Word, like its body lines; we painted it at 85.05.
+    let footer = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:p><w:r><w:t>FootLine</w:t></w:r></w:p></w:ftr>";
+    let body = "<w:p><w:r><w:t>BodyZ</w:t></w:r></w:p>\
+         <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1134\" w:right=\"850\" w:bottom=\"1134\" w:left=\"1701\" \
+             w:header=\"708\" w:footer=\"708\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer.to_string())],
+    ))
+    .expect("grid footer");
+    let x = pdf_glyph_text_xy(&pdf, "FootLine").expect("FootLine").0;
+    assert!(
+        (x - 84.96).abs() < 0.01,
+        "footer at the snapped margin; x={x}"
+    );
+}
