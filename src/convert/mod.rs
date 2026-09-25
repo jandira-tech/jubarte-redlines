@@ -22344,6 +22344,29 @@ fn cjk_no_line_start(c: char) -> bool {
     )
 }
 
+/// Closing CJK punctuation Word lets hang past the right edge (overflowPunct).
+/// Word's oracle on 0022e7ab: 、。，．」） hang; ！, ー and kana wrap instead.
+fn cjk_hangs(c: char) -> bool {
+    matches!(c, '、' | '。' | '，' | '．' | '」' | '）')
+}
+
+/// Width of the hanging punctuation that ends a wrap unit. The line's fit
+/// test leaves it out: "予定です。" stays on one line with "。" past the edge.
+fn hanging_punct_width(fonts: &Fonts, unit: &[WrapPiece<'_>]) -> f32 {
+    let Some((run, tok, w)) = unit.last() else {
+        return 0.0;
+    };
+    let body = tok.trim_end_matches(cjk_hangs);
+    if body.len() == tok.len() {
+        return 0.0;
+    }
+    let size = run.style.layout_size();
+    let face = fonts.get(ink_face(fonts, &run.style, &run.text));
+    let kept = face.width_pt_kern(body, size, run.style.kerns_at(size)) * run.style.hscale()
+        + run.style.track * body.chars().count() as f32;
+    (w - kept).max(0.0)
+}
+
 /// Kinsoku: characters a line may not end with (opening punctuation).
 fn cjk_no_line_end(c: char) -> bool {
     matches!(
@@ -22837,7 +22860,8 @@ fn wrap_runs_segment(
         }
         let limit = if line_i == 0 { first_width } else { width };
         let squeezed = tabs.is_some_and(|t| x + w - limit <= t.squeeze * line_spaces);
-        if !is_space && x + w > limit && x > 0.0 && !squeezed {
+        let hang = hanging_punct_width(fonts, &unit);
+        if !is_space && x + w - hang > limit && x > 0.0 && !squeezed {
             lines.push(Vec::new());
             line_i += 1;
             x = 0.0;
@@ -25820,6 +25844,24 @@ mod theme_slot_tests {
         let runs = [TextRun::new("aaaa sham-vaccinated", style)];
         let lines = wrap_texts(&runs, body_width("aaaa sham-") + 1.0);
         assert_eq!(lines, ["aaaa sham-", "vaccinated"]);
+    }
+
+    #[test]
+    fn closing_cjk_punctuation_hangs_past_the_right_edge() {
+        // fixtures_500 0022e7ab: Word keeps "…届く予定です。" on one line with
+        // "。" past the margin (565.3 vs 559.3). Word's oracle hangs 、。，．」）
+        // but wraps ！, ー and kana to the next line with the character before.
+        let style = Defaults::word().run;
+        let ink = |t: &str| {
+            fonts()
+                .get(ink_face(fonts(), &style, t))
+                .width_pt(t, style.layout_size())
+        };
+        let width = ink("あああ予定です") + 1.0;
+        let hung = [TextRun::new("あああ予定です。", style.clone())];
+        assert_eq!(wrap_texts(&hung, width), ["あああ予定です。"]);
+        let bang = [TextRun::new("あああ予定です！", style.clone())];
+        assert_eq!(wrap_texts(&bang, width), ["あああ予定で", "す！"]);
     }
 
     #[test]
