@@ -16167,10 +16167,23 @@ impl<'a> Layout<'a> {
             } else {
                 0.0
             };
+            // An auto multiple under single takes its cut off the top: the
+            // text rises into the line above and the lines step by the box
+            // (live Word: Trebuchet 11 at line=182 steps 9.6pt, its first
+            // line 2.7pt above the margin; we stepped ascent + 1).
+            let shrink = if style.line_exact.is_none()
+                && style.line_at_least.is_none()
+                && grid <= 0.5
+                && line_box < natural
+            {
+                natural - line_box
+            } else {
+                0.0
+            };
             let drop = if style.line_exact.is_some() {
                 exact_baseline(line_box)
             } else {
-                ascent + rise
+                ascent + rise - shrink
             };
             self.y -= grid_pad + drop;
             let first_extra = if line_i == 0 && marker.is_none() {

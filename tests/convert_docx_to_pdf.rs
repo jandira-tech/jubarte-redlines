@@ -1292,6 +1292,27 @@ fn a_right_to_left_runs_digits_size_the_line_in_the_ascii_face() {
 }
 
 #[test]
+fn an_auto_multiple_under_single_steps_by_its_box() {
+    // Live Word: Trebuchet-sized 11pt text at line=182 (0.758) steps
+    // 9.6pt, its first line rising 2.7pt above the margin. We never
+    // stepped less than the ascent plus a point (11.3pt; 003329b5's
+    // intro paragraphs pushed its table and second column to page 3).
+    let body = "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"182\" w:lineRule=\"auto\"/></w:pPr>\
+        <w:r><w:t>First line text that is long enough to wrap onto a second line of the same paragraph \
+        in the default page width and a third one as well for good measure here</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("tight lines");
+    let mut ys = text_baselines(&pdf);
+    ys.sort_by(|a, b| b.total_cmp(a));
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    assert!(ys.len() >= 2, "wraps: {ys:?}");
+    let pitch = ys[0] - ys[1];
+    assert!(
+        pitch < 10.5,
+        "a 0.758 multiple steps under the ascent; pitch={pitch}"
+    );
+}
+
+#[test]
 fn an_at_least_line_puts_its_extra_space_above_the_text() {
     // fixtures_500 00df97e7: Arial 8 under atLeast 330 (16.5pt) sits
     // 7.4pt lower in Word than its ascent from the line top — the 7.3pt
