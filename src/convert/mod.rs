@@ -6721,9 +6721,11 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
         .iter()
         .map(|line| line_box + ul_line_extra(line, size, space_for_ul))
         .sum();
+    let lead = cell_lead_picture(para);
     let images_h: f32 = para
         .images
         .iter()
+        .filter(|img| !lead.is_some_and(|l| std::ptr::eq(l, *img)))
         .map(|img| {
             let (_, _, drop, room) = cell_image_place(img, para.style.align);
             if room {
@@ -6736,9 +6738,17 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
     let text_h = if cell_para_is_image_only(para) {
         picture_line_leading(fonts, para)
     } else {
-        lines_h.max(line_box)
+        lines_h.max(line_box) + cell_lead_rise(fonts, para)
     };
     para.style.before + images_h + text_h + para.style.after
+}
+
+/// How far a leading inline picture stands above its line's ascent.
+fn cell_lead_rise(fonts: &Fonts, para: &CellPara) -> f32 {
+    cell_lead_picture(para).map_or(0.0, |img| {
+        let (size, face_id) = cell_para_face(fonts, para);
+        (cell_image_wh(img).1 - fonts.get(face_id).ascent_pt(size)).max(0.0)
+    })
 }
 
 /// A picture-only cell line's auto multiple above single: the picture plus
@@ -6798,6 +6808,32 @@ fn cell_image_place(img: &LaidImage, para_align: Align) -> (Align, Option<f32>, 
             !img.behind && (wrap_square || wrap_top_bottom),
         ),
     }
+}
+
+/// A cell paragraph's inline picture that opens its first text line
+/// (header2 of 006ad742: an 18pt icon, then "INFO SHEET"): it stands on the
+/// line's baseline and the text follows it, not a line of its own.
+fn cell_lead_picture(para: &CellPara) -> Option<&LaidImage> {
+    if para.runs.iter().all(|r| r.text.trim().is_empty())
+        || matches!(para.style.align, Align::Center | Align::Right)
+    {
+        return None;
+    }
+    // An icon-sized one: a larger picture keeps a line to itself, the text
+    // wrapping under it (00f45b1b's 192pt photo).
+    let size = para
+        .runs
+        .iter()
+        .map(|r| r.style.size)
+        .fold(0.0_f32, f32::max)
+        .max(1.0);
+    para.images.first().filter(|img| {
+        let (w, h) = cell_image_wh(img);
+        matches!(img.slot, ImageSlot::Flow)
+            && img.lead_chars == 0
+            && h <= 2.0 * size
+            && w <= 4.0 * size
+    })
 }
 
 /// A cell paragraph whose only content is inline pictures: its line is
@@ -9328,6 +9364,7 @@ fn cell_para_measure(style: &ParaStyle, wrap_w: f32) -> (f32, f32) {
 /// (00297360's "1." in an 18.15pt hang).
 fn cell_para_widths(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> (f32, f32) {
     let (first, rest) = cell_para_measure(&para.style, wrap_w);
+    let first = first - cell_lead_picture(para).map_or(0.0, |img| cell_image_wh(img).0);
     match para.runs.first() {
         Some(mark) if mark.list_marker && para.style.indent_first < 0.0 => {
             let hang = -para.style.indent_first;
@@ -11803,7 +11840,8 @@ fn inside_text_box(dom: &Dom, node: NodeId, top: NodeId) -> bool {
 }
 
 /// Characters (spaces, tabs) of the paragraph before `drawing`, when only
-/// whitespace precedes it and it is the paragraph's first drawing; else 0.
+/// whitespace precedes it and it is the paragraph's first drawing: 0 for
+/// nothing before it, `usize::MAX` when text precedes it.
 fn lead_chars_before(dom: &Dom, para: NodeId, drawing: NodeId) -> usize {
     let mut n = 0;
     for node in dom.descendants(para, None) {
@@ -11816,7 +11854,7 @@ fn lead_chars_before(dom: &Dom, para: NodeId, drawing: NodeId) -> usize {
         if dom.name_is(node, &W::t()) {
             let text = element_text(dom, node);
             if !text.chars().all(|c| c == ' ') {
-                return 0;
+                return usize::MAX;
             }
             n += text.chars().count();
         } else if dom.name_is(node, &W::name("tab"))
@@ -17750,7 +17788,11 @@ impl<'a> Layout<'a> {
         // The whitespace before the first picture, laid out like text on
         // the paragraph's tab stops.
         let lead = match imgs.first().map(|img| img.lead_chars) {
-            Some(n) if n > 0 && matches!(style.align, Align::Left | Align::Justify) => {
+            Some(n)
+                if n > 0
+                    && n != usize::MAX
+                    && matches!(style.align, Align::Left | Align::Justify) =>
+            {
                 let mut left = n;
                 let mut prefix = Vec::new();
                 for run in runs {
@@ -19944,7 +19986,12 @@ impl<'a> Layout<'a> {
                             y_line -= used;
                         }
                         y_line -= para.style.before;
-                        for img in &para.images {
+                        let lead = cell_lead_picture(para);
+                        for img in para
+                            .images
+                            .iter()
+                            .filter(|img| !lead.is_some_and(|l| std::ptr::eq(l, *img)))
+                        {
                             let (dw, dh) = cell_image_wh(img);
                             let (align, col_x, drop, room) =
                                 cell_image_place(img, para.style.align);
@@ -19978,6 +20025,9 @@ impl<'a> Layout<'a> {
                         };
                         let line_count = lines.len();
                         for (li, line) in lines.into_iter().enumerate() {
+                            if li == 0 {
+                                y_line -= cell_lead_rise(self.fonts, para);
+                            }
                             let ty = y_line - ascent;
                             if ty < bottom {
                                 break;
@@ -20055,6 +20105,13 @@ impl<'a> Layout<'a> {
                                 Align::Left | Align::Justify => 0.0,
                             };
                             let mut tx = x + pad_l + ind_l + extra;
+                            if li == 0
+                                && let Some(img) = lead
+                            {
+                                let (dw, dh) = cell_image_wh(img);
+                                self.push_image(img, tx, ty, dw, dh);
+                                tx += dw;
+                            }
                             // A negative right indent runs past the cell edge.
                             self.clip_right = Some(x + w + (-para.style.indent_right).max(0.0));
                             // Justified lines spread to the cell's measure like

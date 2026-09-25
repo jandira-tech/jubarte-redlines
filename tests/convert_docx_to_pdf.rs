@@ -33239,3 +33239,35 @@ fn a_tracked_section_change_is_not_a_section_break() {
         "the live A4 size"
     );
 }
+
+#[test]
+fn a_cell_icon_before_its_text_shares_the_first_line() {
+    // fixtures_500 006ad742: each contact cell opens with an inline icon
+    // then its text. Word sets the text right after the icon on the same
+    // line; we stacked the icon above the text and pushed every row down.
+    let icon = blip(
+        "127000",
+        "127000",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let at = |lead: &str| {
+        let docx = drawing_docx(&format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:p>{lead}<w:r><w:t>IconText</w:t></w:r></w:p></w:tc></w:tr>\
+             </w:tbl><w:sectPr/>"
+        ));
+        let pdf = docx_to_pdf(&docx).expect("cell icon");
+        pdf_glyph_text_xy(&pdf, "IconText").expect("IconText")
+    };
+    let (px, py) = at("");
+    let (ix, iy) = at(&format!("<w:r>{icon}</w:r>"));
+    assert!(
+        (ix - px - 10.0).abs() < 0.5,
+        "text starts one 10pt icon to the right; plain x={px} icon x={ix}"
+    );
+    assert!(
+        (iy - py).abs() < 0.5,
+        "an icon no taller than the line keeps the baseline; plain y={py} icon y={iy}"
+    );
+}
