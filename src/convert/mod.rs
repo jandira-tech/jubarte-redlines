@@ -803,6 +803,10 @@ struct NamedStyle {
     /// (019d92d9 Bulleted 270/270 over 360/360; 0005cabe Lista1 left=426
     /// alone keeps the level's hanging 360).
     sets_ind: (bool, bool),
+    /// The style chain itself sets spacing after / before / line. What it
+    /// leaves unset comes from docDefaults (or Normal, when the chain runs
+    /// through it) and gives way to a table style's pPr in a cell.
+    sets_spacing: [bool; 3],
     /// `w:type="character"` (or numbering): named by a paragraph's pStyle,
     /// Word ignores it and keeps the default paragraph style.
     not_para: bool,
@@ -2669,6 +2673,26 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             }
             false
         };
+        let chain_spacing = |names: &[&str]| {
+            let mut cur = Some(id.as_str());
+            for _ in 0..12 {
+                let Some(r) = cur.and_then(|c| raw.get(c)) else {
+                    break;
+                };
+                if let Some(sp) = r.ppr.and_then(|pr| first_named(&dom, pr, "spacing"))
+                    && names.iter().any(|n| attr_any(&dom, sp, n).is_some())
+                {
+                    return true;
+                }
+                cur = r.based.as_deref();
+            }
+            false
+        };
+        let sets_spacing = [
+            chain_spacing(&["after", "afterLines", "afterAutospacing"]),
+            chain_spacing(&["before", "beforeLines", "beforeAutospacing"]),
+            chain_spacing(&["line", "lineRule"]),
+        ];
         let style_not_para = not_para.contains(&id);
         let sets_ind = (
             chain_ind(&["left", "start"]),
@@ -2684,6 +2708,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
                 sets_size,
                 sets_family,
                 sets_ind,
+                sets_spacing,
                 not_para: style_not_para,
             },
         );
@@ -7382,30 +7407,51 @@ fn block_is_blank(block: &Block) -> bool {
     }
 }
 
-/// Word layers docDefaults + Normal < table style < paragraph style. A
-/// resolved named style still carries the docDefaults/Normal values it did
-/// not set itself; those must not override the table style's spacing.
-fn keep_table_spacing_unset_by_style(pstyle: &mut ParaStyle, table: &ParaStyle, base: &ParaStyle) {
-    if pstyle.after == base.after {
+/// Word layers docDefaults < table style < paragraph style. A resolved
+/// named style still carries the docDefaults (or Normal) values its chain
+/// did not set; those must not override the table style's spacing. Decided
+/// by the chain, not by value: 015a4f5a's Corpo A has no basedOn, so it
+/// carries docDefaults' after=200 line=276, which differ from Normal's
+/// after=0 line=240 yet are not its own (Word: Table Normal's 0/240).
+///
+/// Only what the table style sets itself overrides: with none (00003fff's
+/// unstyled table), a No Spacing cell paragraph keeps its docDefaults 0/240,
+/// not the Normal spacing that stands in for the table's.
+fn keep_table_spacing_unset_by_style(
+    pstyle: &mut ParaStyle,
+    table: &TableParaSpacing,
+    style_sets: [bool; 3],
+) {
+    let [sets_after, sets_before, sets_line] = style_sets;
+    let [table_space, table_line] = table.sets;
+    let table = table.para;
+    if table_space && !sets_after {
         pstyle.after = table.after;
     }
-    if pstyle.before == base.before {
+    if table_space && !sets_before {
         pstyle.before = table.before;
     }
-    let line = |s: &ParaStyle| (s.line_mult, s.line_exact, s.line_at_least);
-    if line(pstyle) == line(base) {
+    if table_line && !sets_line {
         pstyle.line_mult = table.line_mult;
         pstyle.line_exact = table.line_exact;
         pstyle.line_at_least = table.line_at_least;
     }
 }
 
+/// A cell's table-style paragraph properties, and whether the table style
+/// itself sets its spacing / line (else they stand in for Normal's).
+struct TableParaSpacing<'a> {
+    para: &'a ParaStyle,
+    sets: [bool; 2],
+}
+
 fn para_base(
     dom: &Dom,
     para: NodeId,
     sheet: &StyleSheet,
-    table_para: Option<&ParaStyle>,
+    table_spacing: Option<&TableParaSpacing>,
 ) -> (ParaStyle, RunStyle) {
+    let table_para = table_spacing.map(|t| t.para);
     let mut pstyle = sheet.defaults.para.clone();
     let mut rstyle = sheet.defaults.run.clone();
     if let Some(t) = table_para {
@@ -7441,8 +7487,8 @@ fn para_base(
         } else if let Some(named) = sheet.by_id.get(sid) {
             pstyle = named.para.clone();
             rstyle = named.run.clone();
-            if let Some(t) = table_para {
-                keep_table_spacing_unset_by_style(&mut pstyle, t, &sheet.defaults.para);
+            if let Some(t) = table_spacing {
+                keep_table_spacing_unset_by_style(&mut pstyle, t, named.sets_spacing);
             }
         } else {
             // Word still applies latent built-in heading spacing when the
@@ -8944,7 +8990,13 @@ fn table_block(
                 if !dom.name_is(child, &W::p()) {
                     continue;
                 }
-                let (mut pstyle, mut r) = para_base(dom, child, sheet, Some(table_para));
+                let table_spacing = TableParaSpacing {
+                    para: table_para,
+                    sets: tdef
+                        .as_ref()
+                        .map_or([false; 2], |t| [t.sets_space, t.sets_line]),
+                };
+                let (mut pstyle, mut r) = para_base(dom, child, sheet, Some(&table_spacing));
                 // An explicit table style's size beats the default paragraph
                 // style's in a paragraph with no pStyle (checked in Word on
                 // 00004116: Normal 12pt, docDefaults 11pt, cells paint 11pt;
@@ -8953,7 +9005,20 @@ fn table_block(
                     .element(child, &W::p_pr())
                     .and_then(|ppr| first_named(dom, ppr, "pStyle"))
                     .is_none();
+                // A pStyle whose chain sets no size (015a4f5a's Corpo A, no
+                // basedOn) sits over the table style's own size, as Word
+                // layers docDefaults < table style < paragraph style.
+                let styled_unsized = !unstyled_para
+                    && dom
+                        .element(child, &W::p_pr())
+                        .and_then(|ppr| first_named(dom, ppr, "pStyle"))
+                        .and_then(|ps| dom.attribute(ps, &W::val()))
+                        .and_then(|sid| sheet.by_id.get(sid))
+                        .is_some_and(|named| !named.not_para && !named.sets_size);
                 if unstyled_para && let Some(size) = tdef.as_ref().and_then(|t| t.run_size) {
+                    r.size = size;
+                } else if styled_unsized && let Some(size) = tdef.as_ref().and_then(|t| t.own_size)
+                {
                     r.size = size;
                 } else if unstyled_para
                     && !sheet.defaults.normal_run.0

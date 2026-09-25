@@ -34509,3 +34509,65 @@ fn a_font_file_named_short_of_its_family_is_found() {
         "the installed Arial Unicode MS paints the run"
     );
 }
+
+#[test]
+fn a_cell_style_not_based_on_normal_takes_the_table_styles_spacing_and_size() {
+    // fixtures_500 015a4f5a: cells use "Corpo A" (no basedOn, no spacing or
+    // size). Word layers docDefaults < table style < paragraph style, so
+    // the table style's after=0 line=240 and 10pt stand: rows ~11.5pt
+    // apart. We kept docDefaults' after=200 line=276 and 11pt (~22.6pt).
+    // With no table style (00003fff's No Spacing cells) docDefaults' own
+    // single spacing stays; Normal's after=200 never reaches them.
+    let styles = |tbl_ppr: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+            <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+              <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault>\
+                <w:pPrDefault><w:pPr>{tbl_ppr}</w:pPr></w:pPrDefault></w:docDefaults>\
+              <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+                <w:pPr><w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/></w:pPr>\
+                <w:rPr><w:sz w:val=\"24\"/></w:rPr></w:style>\
+              <w:style w:type=\"paragraph\" w:styleId=\"CorpoA\"><w:name w:val=\"Corpo A\"/></w:style>\
+              <w:style w:type=\"table\" w:styleId=\"TN\"><w:name w:val=\"TN\"/>\
+                <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+                <w:rPr><w:sz w:val=\"20\"/></w:rPr></w:style>\
+            </w:styles>"
+        )
+    };
+    let row = |t: &str| {
+        format!(
+            "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:pStyle w:val=\"CorpoA\"/></w:pPr><w:r><w:t>{t}</w:t></w:r></w:p></w:tc></w:tr>"
+        )
+    };
+    let pitch = |tbl_style: &str, defaults_ppr: &str| {
+        let body = format!(
+            "<w:tbl><w:tblPr>{tbl_style}<w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>{}{}</w:tbl><w:sectPr/>",
+            row("RowOneQ"),
+            row("RowTwoQ")
+        );
+        let pdf = docx_to_pdf(&numbering_docx_with_styles(
+            &body,
+            None,
+            Some(&styles(defaults_ppr)),
+        ))
+        .expect("cell style");
+        let (_, a) = pdf_glyph_text_xy(&pdf, "RowOneQ").expect("row one");
+        let (_, b) = pdf_glyph_text_xy(&pdf, "RowTwoQ").expect("row two");
+        a - b
+    };
+    let styled = pitch(
+        r#"<w:tblStyle w:val="TN"/>"#,
+        r#"<w:spacing w:after="200" w:line="276" w:lineRule="auto"/>"#,
+    );
+    assert!(
+        (styled - 11.5).abs() < 0.8,
+        "10pt single rows under the table style, got {styled}"
+    );
+    let unstyled = pitch("", "");
+    assert!(
+        unstyled < 14.0,
+        "docDefaults' single spacing stays without a table style, got {unstyled}"
+    );
+}
