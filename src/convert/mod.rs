@@ -5320,6 +5320,9 @@ fn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Nu
         }
     }
     let mut style_links: HashMap<String, String> = HashMap::new();
+    // An abstract that is only a `w:numStyleLink` borrows the levels of the
+    // abstract carrying the matching `w:styleLink` (edbbb194's "Judgments").
+    let mut linked_to: HashMap<String, String> = HashMap::new();
     for abs in dom.descendants(root, Some(&W::name("abstractNum"))) {
         let Some(aid) = attr_any(&dom, abs, "abstractNumId") else {
             continue;
@@ -5328,6 +5331,11 @@ fn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Nu
             first_named(&dom, abs, "styleLink").and_then(|n| dom.attribute(n, &W::val()))
         {
             style_links.insert(name.to_string(), aid.to_string());
+        }
+        if let Some(name) =
+            first_named(&dom, abs, "numStyleLink").and_then(|n| dom.attribute(n, &W::val()))
+        {
+            linked_to.insert(aid.to_string(), name.to_string());
         }
         let mut lvls = HashMap::new();
         for lvl in dom.descendants(abs, Some(&W::name("lvl"))) {
@@ -5371,6 +5379,13 @@ fn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Nu
                 first_named(&dom, num, "numStyleLink")
                     .and_then(|n| dom.attribute(n, &W::val()))
                     .and_then(|name| style_links.get(name).cloned())
+            })
+            .map(|aid| {
+                linked_to
+                    .get(&aid)
+                    .and_then(|name| style_links.get(name))
+                    .cloned()
+                    .unwrap_or(aid)
             });
         let Some(aid) = aid else {
             continue;
@@ -10050,8 +10065,8 @@ fn table_block(
     if cols.is_empty() && occupancy > 0 {
         cols = vec![80.0; occupancy];
     }
-    let pref = first_row_pref(&raw_rows, &cols);
     let fixed = table_layout_fixed(dom, table);
+    let pref = column_prefs(&raw_rows, &cols, fixed);
     let mut rows = resolve_table_merges(raw_rows);
     // A row sets all its cells at their largest top margin: 17c3e72c's
     // question text starts level with the tcMar-top "1." beside it, and
@@ -10569,10 +10584,13 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
     }
 }
 
-/// First-row preferred widths per grid column. A spanned cell's width is
-/// shared in proportion to the grid columns it covers (0005052e: tcW 1662
-/// over grid 1231/431), evenly only when that grid is empty.
-fn first_row_pref(raw_rows: &[Vec<RawCell>], grid: &[f32]) -> Vec<PrefWidth> {
+/// Preferred widths per grid column, from the first row. A spanned cell's
+/// width is shared in proportion to the grid columns it covers (0005052e:
+/// tcW 1662 over grid 1231/431), evenly only when that grid is empty.
+/// A fixed table then widens each column to its widest single-cell tcW in
+/// any later row (live Word probe: rows 500/4000/500/500 then 2340x4 lay
+/// out 99.3/170.0/99.3/99.3pt of a 468pt table; a908db22).
+fn column_prefs(raw_rows: &[Vec<RawCell>], grid: &[f32], fixed: bool) -> Vec<PrefWidth> {
     let mut pref = vec![PrefWidth::Auto; grid.len()];
     let Some(row) = raw_rows.first() else {
         return pref;
@@ -10601,6 +10619,22 @@ fn first_row_pref(raw_rows: &[Vec<RawCell>], grid: &[f32]) -> Vec<PrefWidth> {
             }
         }
         col += span;
+    }
+    for row in raw_rows.iter().skip(1).filter(|_| fixed) {
+        let mut col = 0usize;
+        for cell in row {
+            let span = cell.colspan.max(1);
+            if span == 1
+                && let Some(slot) = pref.get_mut(col)
+            {
+                match (*slot, cell.pref) {
+                    (PrefWidth::Dxa(a), PrefWidth::Dxa(b)) if b > a => *slot = PrefWidth::Dxa(b),
+                    (PrefWidth::Pct(a), PrefWidth::Pct(b)) if b > a => *slot = PrefWidth::Pct(b),
+                    _ => {}
+                }
+            }
+            col += span;
+        }
     }
     pref
 }
@@ -10987,6 +11021,10 @@ struct RunCollect<'a> {
     field_instr: String,
     field_result: bool,
     field_emitted: bool,
+    /// A FORMDROPDOWN's chosen entry, painted by its instruction run.
+    dropdown: Option<String>,
+    /// Inside a FORMDROPDOWN: its result runs never paint.
+    in_dropdown: bool,
     /// OMML `m:sSup` / `m:sSub` overlay (Strict01 binomial).
     math_vert: VertAlign,
     /// file_146 pBdr-bottom section heads keep generator xml:space pads.
@@ -11028,6 +11066,8 @@ fn collect_runs_in(
         field_instr: String::new(),
         field_result: false,
         field_emitted: false,
+        dropdown: None,
+        in_dropdown: false,
         math_vert: VertAlign::Baseline,
         keep_xml_space: para_keeps_xml_space(dom, node),
     };
@@ -11459,6 +11499,8 @@ fn collect_runs_rec(
                 ctx.field_instr.clear();
                 ctx.field_result = false;
                 ctx.field_emitted = false;
+                ctx.dropdown = form_dropdown(ctx.dom, node);
+                ctx.in_dropdown = ctx.dropdown.is_some();
             }
             "separate" => ctx.field_result = true,
             "end" => {
@@ -11468,6 +11510,8 @@ fn collect_runs_rec(
                 ctx.field_instr.clear();
                 ctx.field_result = false;
                 ctx.field_emitted = false;
+                ctx.dropdown = None;
+                ctx.in_dropdown = false;
             }
             _ => {}
         }
@@ -11562,6 +11606,24 @@ fn collect_runs_rec(
             let mut run = TextRun::new(CHECKBOX_SPACE, boxed);
             run.checkbox = Some(checked);
             runs.push(run);
+        }
+        // Word paints a legacy dropdown's entry in the run holding its
+        // instruction text and ignores any result runs (live probes;
+        // edbbb194's JUDGMENT / Petitioner fields have none).
+        if ctx.dropdown.is_some() && first_named(ctx.dom, node, "instrText").is_some() {
+            let entry = ctx.dropdown.take().unwrap_or_default();
+            let entry = if style.caps && !style.small_caps {
+                entry.to_uppercase()
+            } else {
+                entry
+            };
+            let mut run = TextRun::new(entry, style.clone());
+            run.rev = mark != RevMark::None;
+            runs.push(run);
+            ctx.field_emitted = true;
+        }
+        if ctx.in_dropdown && ctx.field_result {
+            return;
         }
         let mut footnote_id = None;
         let mut note_ref = false;
@@ -11866,6 +11928,27 @@ const CHECKBOX_SPACE: &str = "\u{2003}";
 /// A run's `fldChar begin` carrying `w:ffData/w:checkBox`: the box size in
 /// points (`w:size`, else the run's font size) and whether it is checked
 /// (`w:checked`, else `w:default`).
+/// A FORMDROPDOWN begin `w:fldChar`'s shown entry: `w:result`, else
+/// `w:default`, else the first `w:listEntry`.
+fn form_dropdown(dom: &Dom, fld: NodeId) -> Option<String> {
+    let list = first_named(dom, fld, "ffData").and_then(|ff| first_named(dom, ff, "ddList"))?;
+    let index = |name: &str| {
+        first_named(dom, list, name)
+            .and_then(|n| attr_any(dom, n, "val"))
+            .and_then(|v| v.parse::<usize>().ok())
+    };
+    let entries: Vec<&str> = (0..dom.child_count(list))
+        .map(|i| dom.child_at(list, i))
+        .filter(|&n| dom.name_is(n, &W::name("listEntry")))
+        .filter_map(|n| attr_any(dom, n, "val"))
+        .collect();
+    let chosen = index("result").or_else(|| index("default")).unwrap_or(0);
+    entries
+        .get(chosen)
+        .or_else(|| entries.first())
+        .map(|e| (*e).to_string())
+}
+
 fn form_checkbox(dom: &Dom, run: NodeId) -> Option<(Option<f32>, bool)> {
     let fld = first_named(dom, run, "fldChar")?;
     if attr_any(dom, fld, "fldCharType") != Some("begin") {

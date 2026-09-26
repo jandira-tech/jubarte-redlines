@@ -15,6 +15,154 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-26
+
+A Word-fidelity pass on `jubarte convert`, driven by a 500 + 500-file corpus
+of Word-exported PDFs (HF `superdoc-dev/docx-corpus`, plus 451 Word redlines
+of them). Every rule was reconstructed from a live-Word probe — synthetic
+document, Word export, measured numbers — and is written down with its probe
+and implementing commit in [`docs/WORD_LAYOUT_RULES.md`](docs/WORD_LAYOUT_RULES.md).
+The per-document bake-off on the 500-file set moved from 129/500 to 284/500
+wins between milestone merges (mean Jaccard 0.134 → 0.360 at the first).
+
+The redline engine is unchanged: `compare_documents` emits the same bytes as
+0.9.1. All work is in `src/convert`, the CLI, and the OPC package layer.
+
+### Added
+
+- **Painted revision marks.** `jubarte convert --revisions conventional|word|custom`
+  with `--revision-palette` for `custom` (library: `PdfOptions::revisions`,
+  `RevisionStyle` / `RevisionPalette`; Python:
+  `docx_to_pdf(…, revisions=…, revision_palette=…)`; wasm/npm:
+  `docxToPdf(bytes, compress?, revisions?, revisionPalette?)`).
+  `conventional` (the default) is the legal-redline convention — deletions
+  red struck through, insertions blue double-underlined, moves green;
+  `word` reproduces Microsoft Word's own markup, including the per-author
+  colour palette by first appearance, and is what the fidelity gates
+  measure.
+- **Word's redline chrome.** A document with comments — or an inserted or
+  deleted table cell — gets Word's balloon pane, scaled by the right margin;
+  change bars stand where Word draws them.
+- **Fonts install beside the binary.** `scripts/install.sh` (Windows:
+  `scripts\install.ps1`) copies the bundled open faces — Roboto Condensed
+  (the exact files Word's cloud cache draws) and Selawik, Microsoft's
+  metric-compatible stand-in for Segoe UI — into `$JUBARTE_FONT_DIR` or the
+  per-user font directory instead of embedding them. Word's own cloud-font
+  cache is read too, including localized family names and folders with
+  numeric file names; macOS fonts are found by family name and Mac Roman
+  names, not only file names.
+- **East Asian layout.** Word's CJK fallback faces and East Asian families
+  named outside `fontTable.xml`; vertical `w:textDirection="tbRl"` sections;
+  ideographic line breaking with kinsoku; closing CJK punctuation hangs past
+  the right edge; Latin inside East Asian text takes the `ascii` face and a
+  quarter-em gap; Chinese and Taiwanese counting list formats; East Asian
+  faces take Word's 1.3× line.
+- **Right-to-left.** `w:bidi` paragraphs mirror their alignment and indents;
+  `w:bidiVisual` tables run from the right margin; RTL lines paint in visual
+  order; RTL runs take their `w:szCs` size; `minorBidi`/`majorBidi` theme
+  slots take the complex-script face; Thaana fallback; a missing Arabic or
+  Hebrew charset face is Arial.
+- **`w:altChunk`.** HTML and MHT alternate content renders.
+- **Frames.** `w:framePr` — including a style's `framePr`, and in headers
+  and footers — floats its paragraph; page-anchored body frames float as
+  boxes; auto-height frames grow to their paragraphs; a frame narrows every
+  paragraph beside it and needs more than an inch of column to do so; with
+  room on both sides its label sits on the left.
+- **Text boxes and shapes.** Header/footer text boxes; shapes and text boxes
+  anchored in table cells and inside content controls; list paragraphs in
+  boxes keep their marker and indent; `sizeRel` percentages take their own
+  frame and `spAutoFit` boxes fit their text; VML groups place children in
+  group coordinates and honour `grpFill`; VML lines stroke where Word draws
+  them; `w10:wrap`; VML pictures honour the `imagedata` crop; drawing groups
+  and canvases; custom geometry paths in EMU with bound-arc tessellation;
+  `a:prstClr`/`a:sysClr` colours; block arrows point their own way.
+- **Effects.** `a:softEdge` fades, `a:duotone` recolouring, Word's "Washout"
+  picture watermark, ellipse picture crops, text outlines with no fill, and
+  `w:w` horizontal text scale measured as well as painted.
+- **Metafiles and rasters.** EMF paths, Béziers and window/viewport mapping;
+  WMF `META_POLYPOLYGON` with 0-based object handles; BMP and GIF pictures;
+  CMYK photos embed as RGB.
+- **Fields and forms.** `FORMCHECKBOX` legacy form fields; `PAGE` counts the
+  page, in header/footer text boxes too; `w:fldData` stays binary.
+- **Page furniture.** `tblCellSpacing` gaps; continuous sections that switch
+  columns and side margins mid-page; page borders, including the medium-gap
+  inward band and page-relative placement; `vAlign=center` centres the
+  layout box; `titlePg` without a first-page part leaves page one bare; the
+  page background lays out a header where the section has none; each
+  SmartArt diagram paints its own drawing; a chart without `c:title` paints
+  no title.
+- **Word's layout rules** (probed, then implemented): `docGrid` charSpace in
+  4096ths of a point, halved for half-width; compat mode 15; widow/orphan
+  control on by default as in Word; `keepNext`/`keepLines` holding table
+  rows together; `pageBreakBefore` never skipping a page; `contextualSpacing`
+  per paragraph; baselines on the 0.24pt device grid and the left margin on
+  the 1/300in grid; justified Word 2013 lines squeezing their spaces to keep
+  a word.
+- **`/ToUnicode` on every Identity-H font**, so text copies and searches out
+  of the exported PDF; a glyph shaped from several characters maps to all of
+  them.
+
+### Fixed
+
+- **Floating objects and wrapping.** Square/tight/through wraps carve the
+  wrap polygon — a blocked line steps past the polygon, not the extent;
+  `topAndBottom` floats push later lines; tight page banners move the
+  paragraph above their anchor; behind-text boxes paint under the body;
+  `distT`/`distB` stay off the body for header floats; front floats stack by
+  `relativeHeight` across pictures and boxes; `wp:align` aligns within its
+  `relativeFrom` frame; a float anchored after a page-spanning paragraph
+  lands on its last page; floating tables keep the lines above their offset,
+  break across pages when taller than the page, and lift to keep a page of
+  rows.
+- **Tables.** Autofit measures a word by the pieces it may break into and
+  widens to the longest word — a too-narrow column takes the saved grid, a
+  spanning cell widens its columns, vertical text keeps its width; `pct` vs
+  `dxa` widths under `noWrap`; a zero `dxa` width is auto; `gridBefore` /
+  `gridAfter` leave their grid columns empty; `tblPrEx`; cell margins and
+  `tcBorders` edges apply per Word's order; vertically merged cells grow the
+  last row they span; nested tables add no tail to their cell; `w:hideMark`
+  rows and cells; PHPWord tables without `tblInd` stay at the margin; a word
+  wider than its cell breaks at the edge.
+- **Headers and footers.** Floats, text boxes and pictures — wrapping into
+  rows, beside text, behind text, framed — sit where Word puts them; tabs
+  past the margin wrap and wrapped lines drop the logo height; lines take
+  the paragraph's style, `jc`, line rule and spacing; bottom borders take
+  room; tracked changes and ptabs paint.
+- **Lines, fonts and measurement.** A line is as tall as its tallest painted
+  face, marker included; `hhea` — not OS/2 typo — metrics for the single
+  line box, with typo-metrics faces putting the gap above the text; GDI
+  external leading above the first baseline; glyphs laid out at the authored
+  size and painted at the device size; hidden-mark paragraphs, cells and
+  rows take no line; letter spacing in headers/footers and character spacing
+  in the wrap measure; a missing font paints in its installed `altName`.
+- **Tabs, lists and indents.** A hanging indent is an implicit tab stop; a
+  list marker lifts only its own line; numbering-level `pPr`/`jc` and
+  `lvlOverride` apply; the label's tab lands on the hanging indent, not a
+  later right stop; a typed lone symbol does not hang like a bullet; `w:cr`
+  ends the line and a line feed inside `w:t` is a space.
+- **Spacing and pagination.** Space before collapses at page and column
+  tops the way the break leaves it; a page break inside a paragraph moves
+  the rest to the next page; column-break marks take a line; a section break
+  takes the type of the section it starts; odd/even parity survives a
+  numbering restart; a page nothing was placed on never breaks; a tracked
+  section change is not a section break.
+- **Package layer.** Relationship targets are XML-unescaped before
+  resolving, so part names containing `&amp;` resolve to the right part.
+- **PDF output.** Horizontally scaled runs squeeze their glyphs; every
+  Identity-H font carries `/ToUnicode` (see Added).
+- **Harness.** Six tests added since `fb241e2` were missing `#[test]` and
+  never ran — restored. The 76/398 sweep and the 50-row smoke now convert
+  with `--revisions word`, matching the markup the gate scores.
+
+### Performance
+
+- Font lookups and shaped words are memoised, PDF content ops are written in
+  place, shape plans are reused, and faces load only for the families a run
+  paints.
+- Embedded TrueType faces are subsetted (glyph ids kept) and font programs
+  and image samples always deflate — `--compress` remains about the page
+  content streams.
+
 ## [0.9.1] - 2026-09-22
 
 ### Added
@@ -437,6 +585,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.9.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.2
 [0.9.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.1
 [0.9.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.0
 [0.8.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.8.0

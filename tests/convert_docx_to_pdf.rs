@@ -1865,6 +1865,34 @@ fn direct_ind_left_keeps_the_numbering_level_hanging() {
 }
 
 #[test]
+fn an_abstract_nums_style_link_takes_the_linked_abstracts_levels() {
+    // English part b edbbb194: num 6 -> abstract 2, which holds no levels,
+    // only `w:numStyleLink` "Judgments"; abstract 3 carries `w:styleLink`
+    // "Judgments" and the "[%1]" level. Word numbers the paragraphs [1],
+    // [2]; we looked for numStyleLink on w:num only and painted none.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"2\"><w:numStyleLink w:val=\"Judgments\"/></w:abstractNum>\
+          <w:abstractNum w:abstractNumId=\"3\"><w:styleLink w:val=\"Judgments\"/>\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"[%1]\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"720\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"4\"><w:abstractNumId w:val=\"3\"/></w:num>\
+          <w:num w:numId=\"6\"><w:abstractNumId w:val=\"2\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"6\"/></w:numPr></w:pPr>\
+           <w:r><w:t>Linked</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("style link");
+    let (x, _) = pdf_glyph_text_xy(&pdf, "Linked").expect("body text");
+    assert!(
+        (x - 108.0).abs() < 1.0,
+        "text sits past the [1] marker at the level's 720tw indent; x={x}"
+    );
+    assert!(pdf_glyph_text_xy(&pdf, "[1]").is_some(), "the [1] marker paints");
+}
+
+#[test]
 fn a_numbering_levels_jc_overrides_its_paragraph_styles() {
     // English corpus 8aea3634: items 6 and 7 are "heading 1" (jc=center)
     // with a direct numPr whose level's pPr says jc=left. Word sets them
@@ -2154,6 +2182,46 @@ fn a_form_checkbox_paints_a_box_and_takes_its_advance() {
 }
 
 #[test]
+fn a_form_dropdown_paints_its_chosen_entry_in_the_instruction_runs_format() {
+    // English part b edbbb194: FORMDROPDOWN fields (JUDGMENT, Petitioner)
+    // carry no result runs; we painted nothing. Live Word probes: the entry
+    // is w:result, else w:default, else the first; result runs are ignored
+    // (BOGUS never paints); the run holding the instruction text formats
+    // it (a bold begin run over a plain instruction run paints plain).
+    let dd = |list: &str, begin: &str, instr: &str, result: &str, tail: &str| {
+        let sep = if result.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{result}</w:t></w:r>"#)
+        };
+        format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">x </w:t></w:r><w:r>{begin}<w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="D"/><w:enabled/><w:ddList>{list}<w:listEntry w:val="ALPHA"/><w:listEntry w:val="BETA"/><w:listEntry w:val="GAMMA"/></w:ddList></w:ffData></w:fldChar></w:r><w:r>{instr}<w:instrText xml:space="preserve"> FORMDROPDOWN </w:instrText></w:r>{sep}<w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> {tail}</w:t></w:r></w:p>"#
+        )
+    };
+    let big = r#"<w:rPr><w:sz w:val="48"/></w:rPr>"#;
+    let body = format!(
+        "{}{}{}{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        dd(r#"<w:result w:val="2"/>"#, "", "", "BOGUS", "One"),
+        dd(r#"<w:default w:val="1"/>"#, "", "", "", "Two"),
+        dd("", big, "", "", "Plain"),
+        dd("", "", big, "", "Large"),
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("dropdowns");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "GAMMA").is_some() && pdf_glyph_text_xy(&pdf, "BETA").is_some(),
+        "the chosen entries paint"
+    );
+    assert!(pdf_glyph_text_xy(&pdf, "BOGUS").is_none(), "result runs are ignored");
+    let (plain, _) = pdf_glyph_text_xy(&pdf, "Plain").expect("tail after a big begin run");
+    let (large, _) = pdf_glyph_text_xy(&pdf, "Large").expect("tail after a big instruction run");
+    assert!(
+        large > plain + 20.0,
+        "ALPHA takes the instruction run's 24pt, not the begin run's; plain={plain} large={large}"
+    );
+}
+
+#[test]
 fn a_continuous_section_keeps_its_custom_column_gaps() {
     // fixtures_500 019d92d9: a continuous section with columns 3240/180,
     // 3240/180, 3600. Word starts column two at 54 + 162 + 9 = 225; the
@@ -2333,6 +2401,35 @@ fn a_headers_leading_auto_space_before_collapses() {
     assert!(
         (auto - plain).abs() < 0.2,
         "auto befores add nothing here; auto {auto} plain {plain}"
+    );
+}
+
+#[test]
+fn a_fixed_columns_preferred_width_is_its_widest_tcw_in_any_row() {
+    // Redlines vs a908db22: a fixed table whose first row asks for a bogus
+    // 8789-twip column. Live Word probe: a fixed 9360-twip table with rows
+    // 500/4000/500/500 then 2340x4 lays out 99.3/170.0/99.3/99.3pt, each
+    // column's widest tcW over all rows scaled to the table. We took the
+    // first row's alone (column three at 454.8).
+    let row = |w: [u32; 4], tag: &str| -> String {
+        let tcs: String = w
+            .iter()
+            .enumerate()
+            .map(|(i, w)| format!(r#"<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{tag}{i}</w:t></w:r></w:p></w:tc>"#))
+            .collect();
+        format!("<w:tr>{tcs}</w:tr>")
+    };
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="2340"/><w:gridCol w:w="2340"/><w:gridCol w:w="2340"/><w:gridCol w:w="2340"/></w:tblGrid>{}{}</w:tbl><w:p/><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>"#,
+        row([500, 4000, 500, 500], "Fa"),
+        row([2340; 4], "Fb")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("fixed table");
+    let (x1, _) = pdf_glyph_text_xy(&pdf, "Fb1").expect("column two paints");
+    let (x2, _) = pdf_glyph_text_xy(&pdf, "Fb2").expect("column three paints");
+    assert!(
+        (x1 - 171.8).abs() < 1.0 && (x2 - 341.8).abs() < 1.0,
+        "Word puts column two at 171.8 and three at 341.8; x1={x1} x2={x2}"
     );
 }
 
@@ -12620,6 +12717,26 @@ fn inline_pictures_in_one_paragraph_sit_side_by_side() {
     assert!(
         same_row && (xs[0] - 198.0).abs() < 0.1 && (xs[2] - 342.0).abs() < 0.1,
         "the pictures share one centred line; boxes={boxes:?}"
+    );
+}
+
+#[test]
+fn an_inline_picture_after_a_tab_sits_on_its_text_line() {
+    // English part b 7eb842c8: "1." tab, an 11.2pt audio icon, then text.
+    // Word sets the icon on the first line's baseline and the text after
+    // it; we painted it a line lower and set the text over its slot, which
+    // pushed the page down 9pt.
+    let pic = r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="141896" cy="142875"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    let body = format!(
+        r#"<w:p><w:pPr><w:ind w:left="272" w:hanging="272"/></w:pPr><w:r><w:t>1.</w:t></w:r><w:r><w:tab/></w:r>{pic}<w:r><w:t xml:space="preserve"> Listen</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("icon after a tab");
+    let (lx, ly) = pdf_glyph_text_xy(&pdf, "Listen").expect("text paints");
+    let boxes = pdf_image_boxes(&pdf);
+    let &(ix, iy, iw, _) = boxes.first().expect("icon paints");
+    assert!(
+        (iy - ly).abs() < 1.5 && lx >= ix + iw,
+        "icon on the text baseline, text after it; icon={boxes:?} text=({lx},{ly})"
     );
 }
 

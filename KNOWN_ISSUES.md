@@ -9,6 +9,10 @@ SPDX-License-Identifier: AGPL-3.0-only
 Engine defects and unresolved design conflicts. Tests covering them are marked
 `#[ignore = "KNOWN ISSUE <n> …"]` — run them with `cargo test -- --ignored`.
 
+> **Re-checked 2026-09-26 (0.9.2):** all open items below are on the
+> compare/validity path. The 0.9.2 release was confined to `src/convert`,
+> the CLI and the OPC layer — the statuses here are unchanged.
+
 ## 1. MovedSource / `w:moveFrom` text kind — **SETTLED 2026-07-16 (Word wins)**
 
 **Contract (hard test):** under `w:moveFrom`, emit **`w:t`** (never `w:delText`).

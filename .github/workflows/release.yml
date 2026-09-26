@@ -1,0 +1,254 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Tag-driven release: push `vX.Y.Z` (see VERSIONING.md) and this builds the
+# `jubarte` CLI for the five desktop targets and attaches the archives to a
+# GitHub release named `jubarte vX.Y.Z`, with the matching CHANGELOG.md
+# section as the release notes.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# The release job publishes; the build jobs only read the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: check
+        run: |
+          set -euo pipefail
+          ver="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$ver" != "$tag" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} but Cargo.toml says ${ver} — run scripts/bump-version.mjs ${tag} first"
+            exit 1
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    name: jubarte ${{ matrix.artifact }}
+    needs: version
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: linux-aarch64
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --bin jubarte --target ${{ matrix.target }}
+
+      - name: Stage archive (unix)
+        if: runner.os != 'Windows'
+        env:
+          VER: ${{ needs.version.outputs.version }}
+          ART: ${{ matrix.artifact }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          stage="jubarte-${VER}-${ART}"
+          mkdir -p "$stage/fonts" dist
+          cp "target/${TARGET}/release/jubarte" "$stage/"
+          cp LICENSE "$stage/"
+          # The faces Word draws that non-Windows hosts lack. The binary does
+          # not embed them; it reads $JUBARTE_FONT_DIR or the per-user dir.
+          cp assets/fonts/extra/*.ttf "$stage/fonts/"
+          {
+            echo "Copy these fonts into \$JUBARTE_FONT_DIR, or into the per-user"
+            echo "jubarte fonts directory (scripts/install.sh --fonts-only does"
+            echo "this from a source checkout):"
+            echo "  macOS   ~/Library/Application Support/jubarte/fonts"
+            echo "  Linux   \$XDG_DATA_HOME/jubarte/fonts (default ~/.local/share/jubarte/fonts)"
+            echo ""
+            echo "RobotoCondensed-*.ttf — Apache-2.0 — (c) 2011 Google Inc."
+            echo "Selawik-*.ttf         — OFL-1.1   — (c) 2015 Microsoft Corporation"
+          } > "$stage/fonts/NOTICE.txt"
+          tar -czf "dist/${stage}.tar.gz" "$stage"
+
+      - name: Stage archive (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VER: ${{ needs.version.outputs.version }}
+          ART: ${{ matrix.artifact }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $stage = "jubarte-$env:VER-$env:ART"
+          New-Item -ItemType Directory -Force "$stage/fonts", dist | Out-Null
+          Copy-Item "target/$env:TARGET/release/jubarte.exe" "$stage/"
+          Copy-Item LICENSE "$stage/"
+          Copy-Item assets/fonts/extra/*.ttf "$stage/fonts/"
+          @"
+          Copy these fonts into %JUBARTE_FONT_DIR%, or into the per-user
+          jubarte fonts directory: %APPDATA%\jubarte\fonts
+
+          RobotoCondensed-*.ttf - Apache-2.0 - (c) 2011 Google Inc.
+          Selawik-*.ttf         - OFL-1.1   - (c) 2015 Microsoft Corporation
+          "@ | Set-Content "$stage/fonts/NOTICE.txt"
+          Compress-Archive -Path $stage -DestinationPath "dist/$stage.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jubarte-${{ needs.version.outputs.version }}-${{ matrix.artifact }}
+          path: dist/
+          if-no-files-found: error
+
+  # PyPI abi3 wheels for the platforms README advertises. The release job
+  # attaches them to the GitHub release; scripts/release.sh re-uploads the
+  # same files to PyPI, so wheels are built once, on clean CI machines.
+  wheels:
+    name: wheel ${{ matrix.artifact }}
+    needs: version
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+            artifact: manylinux-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64
+            artifact: manylinux-aarch64
+          - os: macos-15-intel
+            target: x86_64
+            artifact: macos-x86_64
+          - os: macos-latest
+            target: aarch64
+            artifact: macos-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          working-directory: jubarte-python
+          sccache: "true"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ needs.version.outputs.version }}-${{ matrix.artifact }}
+          path: jubarte-python/dist/
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs: [version, binaries, wheels]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # previous tag → "Full Changelog" compare link
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: jubarte-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: PyPI sdist
+        run: |
+          set -euo pipefail
+          pipx run maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Release notes from CHANGELOG.md
+        env:
+          VER: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Body of the `## [VER] - date` section, up to the next heading.
+          awk -v ver="$VER" '
+            index($0, "## [" ver "] - ") == 1 { on=1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::no CHANGELOG.md section for ${VER}"
+            exit 1
+          fi
+          # scripts/release.sh puts --github-summary in the annotated tag
+          # body; it leads the release notes when present.
+          body="$(git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" 2>/dev/null || true)"
+          if [ -n "$body" ]; then
+            { printf '%s\n\n' "$body"; cat notes.md; } > notes.tmp
+            mv notes.tmp notes.md
+          fi
+          prev="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$prev" ]; then
+            printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+              "${{ github.repository }}" "$prev" "$GITHUB_REF_NAME" >> notes.md
+          fi
+          cat notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          pre=""
+          case "$VER" in *-*) pre="--prerelease";; esac
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "${{ github.repository }}" \
+            --title "jubarte v${VER}" \
+            --notes-file notes.md \
+            $pre \
+            dist/*

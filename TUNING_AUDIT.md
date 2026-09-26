@@ -6,6 +6,10 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Convert tuning-constant audit (plan Step 8)
 
+> **Snapshot:** row line numbers are as of the audit commits (`ab27d3f`,
+> refreshed `03adf51`, 2026-09). `src/convert` has grown since — treat the
+> line column as approximate and re-grep the symbol to locate a site.
+
 One row per `src/convert` site that `grep -n -i` matches as a word-boundary
 `mini` (the historical mini-bench locks), plus the Step 8 starters
 `word_device_track` / `word_device_paint` / `word_device_pt` and the

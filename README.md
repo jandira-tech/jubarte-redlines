@@ -47,13 +47,15 @@ everywhere.
 | Word-valid output | Produces native `w:ins` / `w:del` / move / format-change markup that Word opens without repair |
 | Lossless package | Keeps parts, relationships, headers/footers, footnotes, styles, and media from the original |
 | Library + CLI + bindings | `compare_documents` in-process (Rust); `jubarte` binary for shell/CI; PyO3 wheels on PyPI; wasm-bindgen package on npm |
-| DOCX → PDF | Independent Word-style PDF renderer (`convert::docx_to_pdf`) — no LibreOffice, no Word |
+| DOCX → PDF | Independent Word-style PDF renderer (`convert::docx_to_pdf`) — no LibreOffice, no Word; paints tracked changes in conventional marks or Word's own |
 | Safety | `#![forbid]`-style policy: **`unsafe_code = "deny"`** at the crate root — 100% safe Rust today |
 | Supply chain | CI runs **cargo-deny**, **REUSE** license compliance, fmt, clippy `-D warnings`, MSRV **1.88** |
 
 ## Install
 
-**CLI**
+**CLI** — prebuilt binaries (Linux/macOS/Windows, x86_64 + aarch64) on the
+[Releases](https://github.com/jandira-tech/jubarte-redlines/releases) page,
+or build from source:
 
 ```sh
 cargo install jubarte-redlines
@@ -82,7 +84,7 @@ cargo add jubarte-redlines --no-default-features
 
 ```toml
 # Cargo.toml
-jubarte-redlines = { version = "0.7", default-features = false }
+jubarte-redlines = { version = "0.9", default-features = false }
 ```
 
 Rust import path is `jubarte::…` (library crate name); the package/repo name is
@@ -112,6 +114,8 @@ from jubarte_redlines import compare_documents, get_revisions, docx_to_pdf
 redline = compare_documents(original_bytes, modified_bytes, author="Reviewer")
 revs = get_revisions(redline)        # list[dict], same shape as `jubarte revisions --json`
 pdf = docx_to_pdf(redline)           # Word-style PDF bytes
+pdf = docx_to_pdf(redline, revisions="word")        # tracked changes as Word paints them
+pdf = docx_to_pdf(redline, compress=True)           # deflate the content streams
 ```
 
 **JavaScript / WebAssembly** ([npm](https://www.npmjs.com/package/jubarte-wasm)
@@ -125,6 +129,11 @@ npm install jubarte-wasm
 const { compareDocuments, docxToPdf } = require("jubarte-wasm"); // full build
 const { compareDocuments: compareSlim } = require("jubarte-wasm/slim"); // no PDF, ~2.4 MB wasm
 // browser: import init, { compareDocuments } from "jubarte-wasm/web" (or "jubarte-wasm/web-slim")
+
+docxToPdf(bytes);                            // conventional redline marks
+docxToPdf(bytes, true);                      // + deflate content streams
+docxToPdf(bytes, false, "word");             // Microsoft Word's own markup
+docxToPdf(bytes, false, "custom", "deleted=#AA0000:strike");
 ```
 
 ## CLI
@@ -139,6 +148,7 @@ jubarte accept redline.docx -o final.docx # accept every revision
 jubarte reject redline.docx -o clean.docx # reject every revision
 jubarte convert contract.docx             # independent DOCX → PDF
 jubarte convert redline.docx --revisions word   # tracked changes as Word paints them
+jubarte convert contract.docx --compress --font-report fonts.json
 ```
 
 `jubarte convert` paints tracked changes in the conventional redline marks by
@@ -150,8 +160,44 @@ where it landed). `--revisions word` reproduces Microsoft Word's own markup
 sets your own (kinds: deleted, inserted, moved-from, moved-to; lines: strike,
 double-strike, underline, double-underline, plain).
 
+`--compress` deflates the PDF's page content streams (font programs and
+image samples always deflate); `--font-report FILE` writes the per-document
+font-resolution table as JSON.
+
 Run `jubarte --help` for author/date stamping, `--detail-threshold`, and
 `--powertools-faithful` (classic PowerTools-compatible mode).
+
+### What `jubarte convert` renders
+
+The PDF engine is a Word layout reconstruction, not a generic OOXML
+renderer: every rule was measured against live Microsoft Word (synthetic
+probe document → Word's own PDF export → read back the numbers) and the
+rules, probes and implementing commits are written down in
+[`docs/WORD_LAYOUT_RULES.md`](docs/WORD_LAYOUT_RULES.md). Coverage includes:
+
+- **Tracked changes** — conventional marks, Word's own markup (per-author
+  palette, balloon pane for comments and cell changes, change bars), or a
+  custom palette.
+- **Text** — Word's line breaking and device-grid baselines, justification,
+  `w:spacing`/`w:ind`, widow/orphan and keep rules, `docGrid`, letter
+  spacing, `w:w` horizontal scale, vertical (`tbRl`) sections, ideographic
+  line breaking with kinsoku, CJK punctuation hanging, RTL (`w:bidi`
+  paragraphs, `w:bidiVisual` tables, complex-script sizes and theme slots).
+- **Fonts** — the metric-compatible open faces (Carlito, Liberation),
+  embedded `w:embed*` fonts, Word's cloud-font cache, East Asian and
+  complex-script fallback, `hhea` line metrics. Every Identity-H font
+  carries `/ToUnicode`, so PDF text copies and searches correctly.
+- **Tables** — autofit, `gridBefore`/`gridAfter`, merged and vertically
+  merged cells, `tcBorders`/`tblCellMar`/`tblCellSpacing`, floating tables
+  with page breaking, `w:hideMark` rows.
+- **Graphics** — VML shapes/lines/groups and `w10:wrap`, DrawingML shapes,
+  text boxes and canvases, custom preset geometry, `softEdge`/`duotone`/
+  washout effects, picture crops, SmartArt, charts; EMF/WMF metafiles, BMP
+  and GIF.
+- **Page model** — headers/footers with their own floats and text boxes,
+  `w:framePr` floating frames, continuous sections and mid-page column
+  changes, page borders and backgrounds, footnote separators, `PAGE` and
+  legacy `FORMCHECKBOX` fields, `w:altChunk` (HTML/MHT) content.
 
 ### Convert fidelity gate
 
@@ -185,7 +231,10 @@ such row in the commit. Baselines: `tools/convert_baseline_{76,398}.tsv` and
 | `document_comparer::compare_documents_with_settings` | Same with `WmlComparerSettings` |
 | `document_comparer::get_revisions` | Inspect tracked changes |
 | `document_comparer::accept_revisions` / `reject_revisions` | Flatten a redline |
-| `convert::docx_to_pdf` | Independent DOCX → PDF (not LibreOffice) |
+| `convert::docx_to_pdf` / `docx_to_pdf_with` / `docx_to_pdf_report` | Independent DOCX → PDF (not LibreOffice); `report` also returns the font-resolution table |
+| `convert::PdfOptions { compress, revisions }` | Stream compression and how tracked changes are painted |
+| `convert::RevisionStyle` / `RevisionPalette` | `Conventional`, `Word`, or a `Custom` palette (`RevisionPalette::parse` takes the CLI's `kind=#RRGGBB:lines` spec) |
+| `convert::pdf_page_count` | Page count of a PDF's bytes (0 if unreadable) |
 
 ### Feature flags
 
@@ -212,7 +261,15 @@ Independent measurements on
 (LibreOffice-rendered PDFs vs a committed **Microsoft Word** redline oracle).
 Higher fidelity = closer to Word. Numbers below are the **full 763-document
 corpus** (not a curated subset). Full tables: that repo’s `RESULTS.md` /
-`docs/SPEED.md`. Snapshot: **v0.7.0**.
+`docs/SPEED.md`. Snapshot: **v0.7.0** — the last full-corpus stamp; 0.8.x
+changed redline output (losslessness and Word-validity fixes) without a
+re-measure, so treat the numbers as a floor, not a current score.
+
+`jubarte convert` fidelity is measured separately, as pixel-level Jaccard
+against Word's own PDF exports — see [Convert fidelity gate](#convert-fidelity-gate).
+On the 500-file `superdoc-dev/docx-corpus` bake-off the per-document win
+count moved from 129/500 to 284/500 across the 0.9.1 → 0.9.2 work (mean
+Jaccard 0.134 → 0.360 at the first milestone merge).
 
 ### Fidelity — `script_redlines` (0–100 vs Word), full 763-doc corpus
 
@@ -303,13 +360,22 @@ src/
   lib.rs                 — public crate root (`jubarte`)
   document_comparer.rs   — compare / accept / reject / get_revisions
   comparer/              — atomize, LCS, produce, tables, notes, …
+  convert/               — DOCX → PDF engine (layout, fonts, shapes, metafiles)
+  opc/                   — DOCX/ZIP package layer
+  xmllinq/               — the untyped DOM the comparer and converter share
   bin/jubarte.rs         — CLI
+assets/fonts/            — open faces (embedded) + extra/ installed beside the binary
 benches/redline.rs       — Criterion
+examples/                — alloc/peak-memory profilers (mem_profile, mem_attribute, alloc_attribute)
 jubarte-wasm/            — wasm-bindgen adapter → npm `jubarte-wasm` (full + slim builds)
 jubarte-python/          — PyO3/maturin adapter → PyPI `jubarte-redlines`
 jubarte-rust-inproc/     — long-lived stdin worker (fair speed lane)
-tests/                   — integration + goldens
-tools/                   — validate-docx, parity, perf harnesses
+jubarte-app/             — Tauri desktop shell (separate changelog/version)
+tests/                   — integration + goldens + schema/validity oracles
+tools/                   — validate-docx, parity, perf harnesses, convert baselines
+scripts/                 — install.sh/ps1, sweeps, word-probe, bump-version.mjs
+planning/                — sample50 check/baseline for the convert gate
+docs/                    — WORD_LAYOUT_RULES, SPEED_REVIEW, BENCHMARK_M233, bench_classes
 ```
 
 ## Known issues

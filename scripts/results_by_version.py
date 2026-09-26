@@ -484,12 +484,7 @@ def docx_to_pdf_pooled() -> None:
     neurotic_398()
     redlined_compared_set()
     pooled(CLEAN_CORPORA, 'pool:clean', 'docx→pdf — every clean corpus pooled (no redlines)', 'clean')
-    pooled(
-        CLEAN_CORPORA | REDLINE_CORPORA,
-        'pool:all',
-        'docx→pdf — every corpus pooled (clean + redlines)',
-        'clean + redlines',
-    )
+    pooled(REDLINE_CORPORA, 'pool:redlines', 'docx→pdf — every redlined corpus pooled (redlines only)', 'redlines')
 
 
 def pdf_to_docx() -> None:
@@ -554,7 +549,7 @@ def render() -> str:
         '',
         'The docx→pdf docxide-metrics tables pool the per-document Jaccard of every corpus the tools',
         'converted, each scored against the Microsoft Word® PDF export of the same document: one table',
-        'for the clean corpora, one for all of them (clean + redlines). A competitor pools its best run',
+        'for the clean corpora, one for the redlined documents only. A competitor pools its best run',
         'per corpus; the Corpora column shows which corpora (and how many documents) each row covers,',
         'so a row missing a corpus is averaged over fewer documents.',
         '',
