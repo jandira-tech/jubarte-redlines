@@ -282,6 +282,11 @@ rule:
   - c1 takes its shade (linear sRGB) and satMod (HSL) transforms.
   - Part a c301012f: green 70AD47 under accent5, shade 45%, satMod 135%, to
     white paints A4B6D6.
+- **A float's `wp:align` aligns within its `relativeFrom` frame.** page/left
+  is x 0 and page/right ends at the page edge. Only margin, column and
+  character align inside the margins.
+  - Part a 1f3856c4: the letterhead at page/left and the footer logo at
+    page/right sat 70.9pt in.
 
 ## Open, measured but not yet reconstructed
 

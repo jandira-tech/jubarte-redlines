@@ -19433,6 +19433,7 @@ impl<'a> Layout<'a> {
             pct_y,
             pct_w,
             v_align,
+            h_rel,
             v_rel,
             v_off,
             ..
@@ -19451,30 +19452,35 @@ impl<'a> Layout<'a> {
             // (003329b5's "Découvrez" box sits in column 2 of three).
             (_, _, Some(cx)) if col_in_column => self.flow_left() + cx,
             (_, _, Some(cx)) => self.page.margin_l + cx,
-            _ => match align {
-                Align::Left | Align::Justify => {
-                    if page_sized {
-                        0.0
-                    } else {
-                        self.page.margin_l
+            // Alignment within the anchor's own frame: page/left is the
+            // page edge, not the margin (1f3856c4's letterhead at x 0).
+            _ => {
+                let (left, right) = if page_sized {
+                    (0.0, self.page.width)
+                } else {
+                    self.anchor_h_frame(h_rel)
+                };
+                match align {
+                    Align::Left | Align::Justify => left,
+                    Align::Right => right - dw,
+                    // Centred even when wider than its frame: Word overhangs
+                    // both sides (00aaa7af 801pt table in a 714pt measure).
+                    Align::Center
+                        if !page_sized
+                            && !matches!(
+                                h_rel,
+                                RelFrame::Page
+                                    | RelFrame::LeftMargin
+                                    | RelFrame::RightMargin
+                                    | RelFrame::InsideMargin
+                                    | RelFrame::OutsideMargin
+                            ) =>
+                    {
+                        self.page.margin_l + (self.content_width() - dw) * 0.5
                     }
+                    Align::Center => left + (right - left - dw) * 0.5,
                 }
-                Align::Right => {
-                    let inset = if page_sized { 0.0 } else { self.page.margin_r };
-                    self.page.width - inset - dw
-                }
-                // Centred even when wider than its frame: Word overhangs
-                // both sides (00aaa7af 801pt table in a 714pt measure).
-                Align::Center => {
-                    let origin = if page_sized { 0.0 } else { self.page.margin_l };
-                    let avail = if page_sized {
-                        self.page.width
-                    } else {
-                        self.content_width()
-                    };
-                    origin + (avail - dw) * 0.5
-                }
-            },
+            }
         };
         let y = match (pct_y, page_y, para_y) {
             (Some(pct), _, _) => ((1.0 - pct) * self.page.height - dh).max(0.0),
@@ -19523,6 +19529,20 @@ impl<'a> Layout<'a> {
             (_, Some(off), _) => self.page.height - self.page.margin_t - off,
             (_, _, Some(py)) => self.y - py,
             _ => self.y,
+        }
+    }
+
+    /// ST_RelFromH frame as `(left, right)` on the current page; column
+    /// and character keep the margins.
+    fn anchor_h_frame(&self, h_rel: RelFrame) -> (f32, f32) {
+        let page = &self.page;
+        match h_rel {
+            RelFrame::Page => (0.0, page.width),
+            RelFrame::LeftMargin | RelFrame::InsideMargin => (0.0, page.margin_l),
+            RelFrame::RightMargin | RelFrame::OutsideMargin => {
+                (page.width - page.margin_r, page.width)
+            }
+            _ => (page.margin_l, page.width - page.margin_r),
         }
     }
 

@@ -34549,6 +34549,46 @@ fn a_duotone_picture_maps_its_luminance_between_the_two_colours() {
 }
 
 #[test]
+fn a_page_aligned_float_aligns_to_the_page_edge_not_the_margin() {
+    // English corpus 1f3856c4: a letterhead picture at positionH
+    // relativeFrom="page" align left sits at x 0, and the footer logo at
+    // page/right ends at the page edge. We aligned both inside the
+    // margins, 70.9pt in.
+    let x_right = |from: &str, align: &str| {
+        let open = format!(
+            "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+             relativeHeight=\"1\" behindDoc=\"1\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+             <wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"{from}\"><wp:align>{align}</wp:align>\
+             </wp:positionH><wp:positionV relativeFrom=\"page\"><wp:align>top</wp:align></wp:positionV>"
+        );
+        let pic = blip("914400", "914400", &open, "<wp:wrapNone/></wp:anchor>");
+        let docx = drawing_docx(&format!(
+            "<w:p><w:r>{pic}<w:t>Body</w:t></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" \
+             w:footer=\"720\"/></w:sectPr>"
+        ));
+        let pdf = docx_to_pdf(&docx).expect("aligned float");
+        let (x, _, w, _) = *pdf_image_boxes(&pdf).first().expect("picture paints");
+        (x, x + w)
+    };
+    let (left, _) = x_right("page", "left");
+    assert!(
+        left.abs() < 0.5,
+        "page/left sits at the page edge; x={left}"
+    );
+    let (_, right) = x_right("page", "right");
+    assert!(
+        (right - 612.0).abs() < 0.5,
+        "page/right ends at the page edge; right={right}"
+    );
+    let (_, right) = x_right("margin", "right");
+    assert!(
+        (right - 540.0).abs() < 0.5,
+        "margin/right ends at the right margin; right={right}"
+    );
+}
+
+#[test]
 fn a_landscape_flag_does_not_swap_a_portrait_page_size() {
     // docxide handels_messiah_biblical_analysis, and live Word: pgSz
     // w=7920 h=12240 orient=landscape is a 396 x 612pt page. We swapped
