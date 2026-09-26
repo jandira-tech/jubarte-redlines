@@ -507,3 +507,46 @@ fn t15_simple_fields_hoisted_out_of_revisions() {
     assert_eq!(child_locals(&dom, last), vec!["ins"]);
     assert_eq!(dom.value(root), "Page  of 9");
 }
+
+#[test]
+fn t16_office_extension_namespaces_become_ignorable_on_the_part_root() {
+    use jubarte::comparer::finalize::declare_extension_namespaces_ignorable;
+    const MC_URI: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    const W15_URI: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
+    const W16CID_URI: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid";
+    // A Mac-era numbering root (MC bound to `ve`, no Ignorable) that received
+    // B's abstractNum/num carrying Word 2012/2016 extension attributes.
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:numbering xmlns:w=\"{w}\" xmlns:ve=\"{MC_URI}\" xmlns:w14=\"{W14_URI}\">\
+             <w:abstractNum xmlns:w15=\"{W15_URI}\" w:abstractNumId=\"1\" w15:restartNumberingAfterBreak=\"0\"/>\
+             <w:num xmlns:w16cid=\"{W16CID_URI}\" w:numId=\"1\" w16cid:durableId=\"42\"/>\
+             </w:numbering>",
+            w = W::URI
+        ),
+    );
+    declare_extension_namespaces_ignorable(&mut dom, root);
+    let mc_ignorable = jubarte::xmllinq::XNamespace::get(MC_URI).name("Ignorable");
+    let tokens: Vec<String> = dom
+        .attribute(root, &mc_ignorable)
+        .unwrap_or("")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    // w14 is declared but unused: it stays out; the used two go in.
+    assert_eq!(
+        tokens,
+        vec!["w15", "w16cid"],
+        "{}",
+        dom.serialize_element(root)
+    );
+    let xmlns = jubarte::xmllinq::XNamespace::xmlns();
+    assert_eq!(dom.attribute(root, &xmlns.name("w15")), Some(W15_URI));
+    assert_eq!(dom.attribute(root, &xmlns.name("w16cid")), Some(W16CID_URI));
+    // Idempotent: a second pass changes nothing.
+    let once = dom.serialize_element(root);
+    declare_extension_namespaces_ignorable(&mut dom, root);
+    assert_eq!(dom.serialize_element(root), once);
+}

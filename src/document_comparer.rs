@@ -812,6 +812,78 @@ fn ppr_child_rank(local: &str) -> usize {
         .unwrap_or(usize::MAX)
 }
 
+/// M492: deleted paragraphs keep their A-ORIGINAL direct spacing.
+/// Word preserves the source paragraph's own w:spacing on del-marked
+/// paragraphs (file_22 × file_23 oracle: 31 deleted paras carry their
+/// line=240/atLeast declarations; we stripped all but one — each
+/// stripped para renders at the taller docDefaults line and the
+/// accumulated height drifts the pagination, the long-standing
+/// 115-vs-116-page mystery). Finalize passes can't see provenance, so
+/// restore here from A's package: any del-marked paragraph whose
+/// A-source para (matched by w14:paraId) declared w:spacing gets the
+/// original attributes back when the output paragraph lost them.
+///
+/// Only `w:` attributes are restored: A's working copy carries the
+/// comparer's `pt14:Unid` stamps, which must not come back as `w:Unid`.
+/// Returns the rewritten `out_xml`, or `None` when nothing changed.
+fn restore_deleted_paragraph_spacing(a_xml: &str, out_xml: &str) -> Option<String> {
+    let w14_pid = crate::namespaces::W14::name("paraId");
+    let mut a_spacing: std::collections::HashMap<String, Vec<(String, String)>> =
+        std::collections::HashMap::new();
+    let mut ad = Dom::new();
+    let d = ad.parse_xdocument(a_xml);
+    let r = ad.root(d)?;
+    for pnode in ad.descendants(r, Some(&W::p())) {
+        let Some(pid) = ad.attribute(pnode, &w14_pid).map(str::to_string) else {
+            continue;
+        };
+        if let Some(ppr) = ad.element(pnode, &W::p_pr())
+            && let Some(sp) = ad.element(ppr, &W::name("spacing"))
+        {
+            let attrs: Vec<(String, String)> = ad
+                .attributes(sp)
+                .into_iter()
+                .filter(|(n, _)| n.namespace_name() == W::URI)
+                .map(|(n, v)| (n.local_name().to_string(), v))
+                .collect();
+            if !attrs.is_empty() {
+                a_spacing.insert(pid, attrs);
+            }
+        }
+    }
+    if a_spacing.is_empty() {
+        return None;
+    }
+    let mut pd = Dom::new();
+    let d = pd.parse_xdocument(out_xml);
+    let root = pd.root(d)?;
+    let mut changed = false;
+    for pnode in pd.descendants(root, Some(&W::p())) {
+        let Some(pid) = pd.attribute(pnode, &w14_pid).map(str::to_string) else {
+            continue;
+        };
+        let Some(attrs) = a_spacing.get(&pid) else {
+            continue;
+        };
+        let Some(ppr) = pd.element(pnode, &W::p_pr()) else {
+            continue;
+        };
+        let mark_del = pd
+            .element(ppr, &W::r_pr())
+            .is_some_and(|r| pd.element(r, &W::name("del")).is_some());
+        if !mark_del || pd.element(ppr, &W::name("spacing")).is_some() {
+            continue;
+        }
+        let sp = pd.new_element(W::name("spacing"));
+        for (n, v) in attrs {
+            pd.set_attribute_value(sp, &W::name(n), Some(v));
+        }
+        insert_child_by_rank(&mut pd, ppr, sp, "spacing", &ppr_child_rank);
+        changed = true;
+    }
+    changed.then(|| pd.serialize_element(root))
+}
+
 /// Children of a style's `w:pPr`/`w:rPr` that are not formatting: revision
 /// records, section properties, and revision-save ids.
 fn is_style_prop_noise(name: &crate::xmllinq::XName) -> bool {
@@ -4903,79 +4975,12 @@ fn compare_documents_impl(
         ensure_factory_package_chrome(&mut out, &main1);
         repair_missing_core_relationships(&mut out, &main1);
         // M492: deleted paragraphs keep their A-ORIGINAL direct spacing.
-        // Word preserves the source paragraph's own w:spacing on del-marked
-        // paragraphs (file_22 × file_23 oracle: 31 deleted paras carry their
-        // line=240/atLeast declarations; we stripped all but one — each
-        // stripped para renders at the taller docDefaults line and the
-        // accumulated height drifts the pagination, the long-standing
-        // 115-vs-116-page mystery). Finalize passes can't see provenance, so
-        // restore here from A's package: any del-marked paragraph whose
-        // A-source para (matched by w14:paraId) declared w:spacing gets the
-        // original attributes back when the output paragraph lost them.
         if let (Some(a_xml), Some(out_xml)) = (
             pkg1.part_string("word/document.xml"),
             out.part_string(&main1),
-        ) {
-            let mut a_spacing: std::collections::HashMap<String, Vec<(String, String)>> =
-                std::collections::HashMap::new();
-            {
-                let mut ad = Dom::new();
-                let d = ad.parse_xdocument(&a_xml);
-                if let Some(r) = ad.root(d) {
-                    let w14_pid = crate::namespaces::W14::name("paraId");
-                    for pnode in ad.descendants(r, Some(&W::p())) {
-                        let Some(pid) = ad.attribute(pnode, &w14_pid).map(str::to_string) else {
-                            continue;
-                        };
-                        if let Some(ppr) = ad.element(pnode, &W::p_pr())
-                            && let Some(sp) = ad.element(ppr, &W::name("spacing"))
-                        {
-                            let attrs: Vec<(String, String)> = ad
-                                .attributes(sp)
-                                .into_iter()
-                                .map(|(n, v)| (n.local_name().to_string(), v))
-                                .collect();
-                            if !attrs.is_empty() {
-                                a_spacing.insert(pid, attrs);
-                            }
-                        }
-                    }
-                }
-            }
-            if !a_spacing.is_empty() {
-                let mut pd = Dom::new();
-                let d = pd.parse_xdocument(&out_xml);
-                if let Some(root) = pd.root(d) {
-                    let w14_pid = crate::namespaces::W14::name("paraId");
-                    let mut changed = false;
-                    for pnode in pd.descendants(root, Some(&W::p())) {
-                        let Some(pid) = pd.attribute(pnode, &w14_pid).map(str::to_string) else {
-                            continue;
-                        };
-                        let Some(attrs) = a_spacing.get(&pid) else {
-                            continue;
-                        };
-                        let Some(ppr) = pd.element(pnode, &W::p_pr()) else {
-                            continue;
-                        };
-                        let mark_del = pd
-                            .element(ppr, &W::r_pr())
-                            .is_some_and(|r| pd.element(r, &W::name("del")).is_some());
-                        if !mark_del || pd.element(ppr, &W::name("spacing")).is_some() {
-                            continue;
-                        }
-                        let sp = pd.new_element(W::name("spacing"));
-                        for (n, v) in attrs {
-                            pd.set_attribute_value(sp, &W::name(n), Some(v));
-                        }
-                        insert_child_by_rank(&mut pd, ppr, sp, "spacing", &ppr_child_rank);
-                        changed = true;
-                    }
-                    if changed {
-                        out.set_part(&main1, pd.serialize_element(root).into_bytes());
-                    }
-                }
-            }
+        ) && let Some(restored) = restore_deleted_paragraph_spacing(&a_xml, &out_xml)
+        {
+            out.set_part(&main1, restored.into_bytes());
         }
         // M491: B's DOCUMENT-FINAL paragraph mark never materializes as a
         // mid-document insertion — Word EQ-pairs the two documents' final
@@ -5643,6 +5648,7 @@ fn compare_documents_impl(
                 crate::comparer::finalize::remove_powertools_scratch_markup(&mut vd, vr);
                 // Last: every pass above may append properties out of order.
                 crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
+                crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
                 out.set_part(&part, vd.serialize_element(vr).into_bytes());
             }
         }
@@ -5705,6 +5711,41 @@ mod tests {
             .or_else(|| dom.descendants(root, None).first().copied())
             .expect("styles root");
         (root, styles)
+    }
+
+    /// A's working copy carries `pt14:Unid` on its spacing; the restored
+    /// spacing on the deleted paragraph must hold only the `w:` attributes.
+    #[test]
+    fn restored_deleted_spacing_leaves_scratch_unids_behind() {
+        let ns = format!(
+            "xmlns:w=\"{}\" xmlns:w14=\"{}\" xmlns:pt14=\"{}\"",
+            W::URI,
+            crate::namespaces::W14::URI,
+            crate::namespaces::PT::URI
+        );
+        let a = format!(
+            "<w:document {ns}><w:body><w:p w14:paraId=\"4B0CC135\"><w:pPr>\
+             <w:spacing w:line=\"276\" w:lineRule=\"auto\" pt14:Unid=\"76\"/></w:pPr>\
+             <w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"
+        );
+        let out = format!(
+            "<w:document {ns}><w:body><w:p w14:paraId=\"4B0CC135\"><w:pPr>\
+             <w:jc w:val=\"right\"/><w:rPr><w:del w:id=\"1\" w:author=\"a\"/></w:rPr></w:pPr>\
+             </w:p></w:body></w:document>"
+        );
+        let restored = restore_deleted_paragraph_spacing(&a, &out).expect("spacing restored");
+        let mut dom = Dom::new();
+        let d = dom.parse_xdocument(&restored);
+        let root = dom.root(d).unwrap();
+        let sp = dom.descendants(root, Some(&W::name("spacing")))[0];
+        let mut names: Vec<String> = dom
+            .attributes(sp)
+            .into_iter()
+            .map(|(n, _)| n.clark())
+            .collect();
+        names.sort();
+        let w = |l: &str| W::name(l).clark();
+        assert_eq!(names, vec![w("line"), w("lineRule")], "{restored}");
     }
 
     /// `next_free_revision_id` must be one greater than the max numeric id on
