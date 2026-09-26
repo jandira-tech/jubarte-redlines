@@ -2459,7 +2459,16 @@ pub(crate) fn add_installed_faces(
         if catalogue_paints_family(&entry.name) || embedded.keys().any(|(f, _, _)| *f == lower) {
             continue;
         }
-        let faces = cached_faces(&entry.name, || installed_family_faces(&entry.name));
+        let mut faces = cached_faces(&entry.name, || installed_family_faces(&entry.name));
+        // An absent family draws in its installed altName (b88ac900's
+        // "BernhardFashion BT" → Gabriola in Word's PDF).
+        if faces.is_empty()
+            && let Some(alt) = entry.alt_name.as_deref()
+            && cjk_file_stems(&entry.name).is_empty()
+            && !catalogue_paints_family(alt)
+        {
+            faces = cached_faces(alt, || installed_family_faces(alt));
+        }
         // Runs may name the family by its altName ("MS Mincho" for the
         // table's "ＭＳ 明朝"); the same faces answer to both.
         if let Some(alt) = entry.alt_name.as_deref()

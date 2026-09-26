@@ -413,6 +413,34 @@ fn a_missing_arabic_charset_font_is_arial() {
 }
 
 #[test]
+fn a_missing_font_paints_in_its_installed_altname() {
+    // Word draws an absent face in its w:altName when that font is
+    // installed (fixtures_500 b88ac900's "BernhardFashion BT", altName
+    // Gabriola: Word's PDF embeds Gabriola). We drew the Cambria row.
+    let path = std::path::Path::new(
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts/Gabriola.ttf",
+    );
+    if !path.is_file() {
+        return;
+    }
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"BernhardFashion BT\" \
+                w:hAnsi=\"BernhardFashion BT\"/></w:rPr>\
+                <w:t>Welcome</w:t></w:r></w:p><w:sectPr/>";
+    let docx = minimal_docx_with_font_table(
+        body,
+        "<w:font w:name=\"BernhardFashion BT\"><w:altName w:val=\"Gabriola\"/>\
+         <w:charset w:val=\"00\"/><w:family w:val=\"decorative\"/>\
+         <w:pitch w:val=\"variable\"/></w:font>",
+    );
+    let pdf = docx_to_pdf(&docx).expect("convert");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("Gabriola") && !text.contains("Cambria"),
+        "the installed altName Gabriola is the physical face"
+    );
+}
+
+#[test]
 fn shipped_docx_to_pdf_writes_real_pdf_with_a_page() {
     let bytes = std::fs::read(FIXTURE).expect("fixture");
     let pdf = docx_to_pdf(&bytes).expect("convert");
