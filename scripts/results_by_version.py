@@ -53,6 +53,7 @@ EN_TAGS = {
     # Clean rebuild of 23abeb2 (older binaries deleted first), 2026-09-26.
     'fresh0926f': 'jubarte@23abeb2 (fresh build)',
     'fresh0926g': 'jubarte@23abeb2 (fresh build)',
+    'compressed0926': 'jubarte@23abeb2 --compress',
 }
 # Competitor versions of the English corpus (installed latest, 2026-09-25).
 EN_COMPETITORS = {
@@ -306,6 +307,11 @@ class Sample:
 SAMPLES: list[Sample] = []
 
 
+def jub(tag: str) -> str:
+    """A run tagged `compressed` (convert --compress) is its own tool."""
+    return 'jubarte-compressed' if 'compressed' in tag else 'jubarte'
+
+
 def sample(corpus: str, tool: str, version: str, when: datetime, scores: dict[str, float]) -> None:
     scores = {k: float(v) for k, v in scores.items() if isinstance(v, (int, float))}
     if scores:
@@ -327,7 +333,7 @@ def english_corpus() -> None:
             name = path.parent.name
             tag = name.split(f'enfull_{p}_')[-1].split(f'en{p}_full_')[-1].split('en_r_base_')[-1]
             version = EN_TAGS.get(tag, f'jubarte@{tag}')
-            sample(corpus, 'jubarte', version, when_of(None, path), {k: r['jubarte'] for k, r in rows.items()})
+            sample(corpus, jub(tag), version, when_of(None, path), {k: r['jubarte'] for k, r in rows.items()})
         comp = LOOP / 'runs' / f'en_{p}_competitors.json'
         if comp.exists():
             for tool, rows in json.loads(comp.read_text()).items():
@@ -355,7 +361,7 @@ def fixtures_500() -> None:
         if len(scores) < 400 or not any(scores.values()):
             continue  # partial runs, and runs whose output folder was missing
         tag = path.parent.name.removeprefix('full_')
-        sample('fixtures_500', 'jubarte', EN_TAGS.get(tag, f'jubarte@{tag}'), when_of(None, path), scores)
+        sample('fixtures_500', jub(tag), EN_TAGS.get(tag, f'jubarte@{tag}'), when_of(None, path), scores)
 
 
 def docxide_suite() -> None:
@@ -374,7 +380,7 @@ def docxide_suite() -> None:
             continue
         tag = path.parent.name.removeprefix('dx_')
         scores = {k: r['new'] for k, r in rows.items() if isinstance(r, dict) and r.get('new') is not None}
-        sample('dxsuite', 'jubarte', EN_TAGS.get(tag, f'jubarte@{tag}'), when_of(None, path), scores)
+        sample('dxsuite', jub(tag), EN_TAGS.get(tag, f'jubarte@{tag}'), when_of(None, path), scores)
 
 
 def neurotic_398() -> None:
@@ -389,6 +395,8 @@ def neurotic_398() -> None:
             version = str(t.get('version') or 'unversioned')
             # jubarte-first (the 0.2.0 docxToPdf adapter) is its own tool, not jubarte.
             name = 'jubarte-first' if 'jubarte-first' in version else tool
+            if name == 'jubarte':
+                name = jub(path.name)
             sample(
                 'nb398', name, str(t.get('version') or 'unversioned'), when_of(doc.get('generated_at'), path), per_doc
             )
@@ -406,7 +414,7 @@ def redlined_compared_set() -> None:
         if len(rows) < 900:
             continue
         tag = path.name.removesuffix('_rows.json').removeprefix('rl_')
-        sample('compared', 'jubarte', EN_TAGS.get(tag, f'jubarte@{tag}'), when_of(None, path), rows)
+        sample('compared', jub(tag), EN_TAGS.get(tag, f'jubarte@{tag}'), when_of(None, path), rows)
 
 
 def ours(tool: str) -> bool:
