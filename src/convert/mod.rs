@@ -23949,9 +23949,15 @@ fn layout(
                     // A taller picture after the text joins its last line
                     // when it fits: the line deepens to the picture, whose
                     // bottom is the baseline (a2412654's "Showering" icon).
+                    // Floating pictures take no part: 675bc160's anchored
+                    // crest (wrapNone) left its inline one off the line.
+                    let flow = images
+                        .iter()
+                        .filter(|img| matches!(img.slot, ImageSlot::Flow))
+                        .count();
                     let mut line = last_line.filter(|l| {
                         l.page == lay.pages.len()
-                            && inline.len() == images.len()
+                            && inline.len() == flow
                             && inline.iter().all(|img| img.after_text)
                     });
                     inline.retain(|img| {

@@ -35317,3 +35317,41 @@ fn a_text_boxs_deleted_paragraphs_keep_their_lines() {
     assert!(top > bottom + 5.0, "two lines, not one: {top} vs {bottom}");
 }
 
+#[test]
+fn a_floating_picture_does_not_keep_a_trailing_picture_off_the_text_line() {
+    // English redline 675bc160: an anchored crest (wrapNone), "Western ",
+    // then a 114x83pt inline crest. Word sets the inline crest on the
+    // text's line with or without the anchored one; the anchor made us
+    // put "Western" on a line of its own above the picture.
+    let inline = "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+        <wp:extent cx=\"1447800\" cy=\"1051560\"/><wp:docPr id=\"1\" name=\"P1\"/>\
+        <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+        <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+        <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+        </a:graphicData></a:graphic></wp:inline></w:drawing></w:r>";
+    let anchor = "<w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" \
+        simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+        <wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"column\"><wp:posOffset>1981200</wp:posOffset></wp:positionH>\
+        <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>-517525</wp:posOffset></wp:positionV>\
+        <wp:extent cx=\"631190\" cy=\"505460\"/><wp:wrapNone/><wp:docPr id=\"2\" name=\"A\"/>\
+        <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+        <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+        <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+        </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>";
+    let western_y = |lead: &str| {
+        let body = format!(
+            "<w:p><w:r><w:t>Top</w:t></w:r></w:p><w:p/><w:p/><w:p/>\
+             <w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>{lead}\
+             <w:r><w:t xml:space=\"preserve\">WesternQ </w:t></w:r>{inline}</w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx_media(&body, "dot.png", TINY_PNG)).expect("crest line");
+        pdf_glyph_text_xy(&pdf, "WesternQ").expect("text").1
+    };
+    let (plain, anchored) = (western_y(""), western_y(anchor));
+    assert!(
+        (plain - anchored).abs() < 1.0,
+        "the anchored crest leaves the text on the picture's line: {plain} vs {anchored}"
+    );
+}
