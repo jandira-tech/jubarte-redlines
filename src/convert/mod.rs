@@ -7405,7 +7405,7 @@ fn cell_para_text_h(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
     }
     let (size, line_box) = cell_para_line_box(fonts, para);
     let (first_w, rest_w) = cell_para_widths(fonts, para, wrap_w);
-    let lines = wrap_runs(fonts, &para.runs, first_w, rest_w, false);
+    let (lines, _) = wrap_cell_runs(fonts, &para.runs, first_w, rest_w);
     let lines_h: f32 = lines
         .iter()
         .map(|line| line_box + ul_line_extra(line, size, space_for_ul))
@@ -19288,7 +19288,7 @@ impl<'a> Layout<'a> {
             // at x=367–522). rest_w also subtracts w:right=720 so 9.02
             // wrapped an extra line and dropped 11.01 off p3.
             let remain = (stop.pos - indent - last_w).max(8.0);
-            let extra = wrap_runs_segment(self.fonts, &suffix, remain, rest_w, false, None);
+            let extra = wrap_runs_segment(self.fonts, &suffix, remain, rest_w, false, None, false);
             if let Some(last) = lines.last_mut()
                 && let Some(first) = extra.first()
             {
@@ -22544,7 +22544,7 @@ impl<'a> Layout<'a> {
                         let line_box = cell_para_line_box(self.fonts, para).1;
                         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
                         let (lines, breaks) =
-                            wrap_runs_marked(self.fonts, &para.runs, first_w, rest_w, false);
+                            wrap_cell_runs(self.fonts, &para.runs, first_w, rest_w);
                         nlines += lines.len().max(1);
                         para_lines.push((size, line_box, face_id, lines, breaks));
                     }
@@ -22984,7 +22984,7 @@ impl<'a> Layout<'a> {
         wrap_w: f32,
     ) -> Option<(CellPara, CellPara)> {
         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
-        let lines = wrap_runs(self.fonts, &para.runs, first_w, rest_w, false);
+        let lines = wrap_cell_runs(self.fonts, &para.runs, first_w, rest_w).0;
         let (size, line_box) = cell_para_line_box(self.fonts, para);
         let mut used = para.style.before;
         let mut n = 0;
@@ -24547,6 +24547,18 @@ fn wrap_runs_marked(
     wrap_runs_tabbed(fonts, runs, first_width, width, list, None)
 }
 
+/// A table cell's lines: a word wider than the cell breaks at the
+/// character that reaches its edge (08c53c4f's "3127" / "1" in a year
+/// column the 100% table cannot widen), as body lines do.
+fn wrap_cell_runs(
+    fonts: &Fonts,
+    runs: &[TextRun],
+    first_width: f32,
+    width: f32,
+) -> (Vec<Vec<TextRun>>, Vec<bool>) {
+    wrap_runs_split(fonts, runs, first_width, width, false, None, true)
+}
+
 /// Where a paragraph's lines start relative to the tab origin (the flow
 /// left edge), so a tab can take its real jump while wrapping.
 struct WrapTabs<'a> {
@@ -24566,6 +24578,20 @@ fn wrap_runs_tabbed(
     width: f32,
     list: bool,
     tabs: Option<&WrapTabs<'_>>,
+) -> (Vec<Vec<TextRun>>, Vec<bool>) {
+    wrap_runs_split(fonts, runs, first_width, width, list, tabs, false)
+}
+
+/// `char_break`: a word wider than the line breaks by character even
+/// without tab stops (table cells; body lines always pass their tabs).
+fn wrap_runs_split(
+    fonts: &Fonts,
+    runs: &[TextRun],
+    first_width: f32,
+    width: f32,
+    list: bool,
+    tabs: Option<&WrapTabs<'_>>,
+    char_break: bool,
 ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
     let mut segments: Vec<Vec<TextRun>> = vec![Vec::new()];
     // The run holding each break, per ended segment.
@@ -24612,7 +24638,15 @@ fn wrap_runs_tabbed(
             start: t.start,
             squeeze: t.squeeze,
         });
-        let wrapped = wrap_runs_segment(fonts, seg, fw, width, list && i == 0, seg_tabs.as_ref());
+        let wrapped = wrap_runs_segment(
+            fonts,
+            seg,
+            fw,
+            width,
+            list && i == 0,
+            seg_tabs.as_ref(),
+            char_break,
+        );
         let more = i + 1 < segments.len();
         let n = wrapped.len();
         for (j, mut line) in wrapped.into_iter().enumerate() {
@@ -24640,6 +24674,7 @@ fn wrap_runs_segment(
     width: f32,
     list: bool,
     tabs: Option<&WrapTabs<'_>>,
+    char_break: bool,
 ) -> Vec<Vec<TextRun>> {
     let mut lines: Vec<Vec<TextRun>> = vec![Vec::new()];
     let mut x = 0.0;
@@ -24778,8 +24813,9 @@ fn wrap_runs_segment(
         // run that overshoots by a hair (002ed0b9's dotted fill-in lines,
         // one line in Word) is measurement noise, not a break.
         let limit = if line_i == 0 { first_width } else { width };
-        // Body lines only: a table column autofits its longest word
-        // (0129b302's "19.720.000"), and CJK text already breaks per
+        // Body lines and cells: a table column autofits its longest word
+        // (0129b302's "19.720.000") where it has room, so only a word
+        // wider than its laid-out cell breaks; CJK text already breaks per
         // character where our fallback faces run wide (002c5410).
         let cjk = unit
             .iter()
@@ -24787,7 +24823,7 @@ fn wrap_runs_segment(
         let ideograph_word = unit
             .iter()
             .any(|(run, tok, _)| run.style.ideograph_words && tok.chars().any(is_cjk));
-        if (tabs.is_some() || ideograph_word)
+        if (tabs.is_some() || char_break || ideograph_word)
             && !cjk
             && !is_space
             && w > limit * 1.02

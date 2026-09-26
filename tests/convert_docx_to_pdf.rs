@@ -12854,10 +12854,9 @@ fn official_table_bookmark_test_eight_ignores_fixed_tblcellmar_left() {
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 2, "expected page 2 for Test 8");
     let mut grouped: Vec<(f32, Vec<f32>)> = Vec::new();
+    // Cells paint one after another; a line's glyphs gather by y.
     for (x, y) in pdf_device_xy(&pages[1], "46 Tf") {
-        if let Some((ly, xs)) = grouped.last_mut()
-            && (*ly - y).abs() <= 0.6
-        {
+        if let Some((_, xs)) = grouped.iter_mut().find(|(ly, _)| (*ly - y).abs() <= 0.6) {
             xs.push(x);
         } else {
             grouped.push((y, vec![x]));
@@ -37119,6 +37118,36 @@ fn nowrap_cell_with_a_pct_width_still_wraps() {
     assert!(
         sy - yy > 8.0,
         "the 94pt cell wraps its text: Sourcez y {sy}, Yearz y {yy}"
+    );
+}
+
+#[test]
+fn a_word_wider_than_its_cell_breaks_at_the_edge() {
+    // 08c53c4f: a 100% table of 23 columns leaves each year column less
+    // than "31271" at 8pt; Word breaks it "3127" / "1" inside the cell
+    // rather than running it over the next column.
+    let cell = |text: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"250\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:rPr><w:sz w:val=\"16\"/></w:rPr>\
+               <w:t>{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"500\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+           <w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"250\"/><w:gridCol w:w=\"250\"/></w:tblGrid>\
+           <w:tr>{}{}</w:tr></w:tbl><w:sectPr/>",
+        cell("31271"),
+        cell("Q")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("narrow cell");
+    let (_, y3) = pdf_glyph_text_xy(&pdf, "3").expect("3 painted");
+    // The last digit, painted just before the next cell's "Q".
+    let (_, y1) = pdf_glyph_text_xy(&pdf, "1Q").expect("last 1 painted");
+    assert!(
+        y3 - y1 > 6.0,
+        "the 12.5pt cell breaks 31271 onto a second line: first y {y3}, last digit y {y1}"
     );
 }
 
