@@ -4,9 +4,12 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# C4 decision memo — pre-existing tracked changes (`suggesting_*`)
+# C4 decision memo — pre-existing tracked changes (`suggesting_*`) — reviewed 2026-09-26
 
-**Status:** **DEFERRED — waiting on Arthur**
+**Status:** **DEFERRED — waiting on Arthur** (re-checked 2026-09-26: still no
+option pick; `accept(redline) ≡ B` remains the shipped contract through
+0.9.2, so the C4 fixtures are still the open residual in
+`docs/bench_classes.md`)
 **Date:** 2026-07-16
 **Class:** C4-preexisting-revisions (`suggesting_*` fixtures)
 **Plan task:** B4

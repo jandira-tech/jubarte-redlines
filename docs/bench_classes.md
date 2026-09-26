@@ -4,13 +4,23 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Bench defect classes (Ratchet-1 ledger)
+# Bench defect classes (Ratchet-1 ledger) — reviewed 2026-09-26
 
 **Baseline pin:** `jubarte-rust@9fcc4289e375` (2026-07-16)
 **Corpora:** word_based `n=164` (mean 90.04, `<50`=8) · randomized `n=196` (mean 83.19, `<50`=16)
 **Aggregate:** 360 docs · mean **86.31** · `<50`=**24**
 
 Tool: `tools/bench_classes.py` — every fixture with `overall_score < 90` is assigned to **exactly one** class below (first matching rule wins).
+
+> **Re-checked 2026-09-26 (0.9.2):** the 360-doc lane below is the Ratchet-1
+> ledger as of the last pin `e12c880586ec` — it closed at aggregate **87.85**,
+> ~0.15 short of the 88 bar, and the residue is C4. The public
+> `script_redlines` table has since moved to the 763-doc corpus
+> `5ed816028d99`: latest stamp `jubarte-rust@17ea47e9a0d7` (2026-08-13),
+> mean **84.47** / median **92.66**, rank **#1** (RESULTS.md). Class
+> statuses are still accurate — the C1–C3 and C5 mechanisms landed
+> (tests `m146`–`m151` are all in-tree); **C4 was never decided** (memo:
+> `docs/C4_preexisting_revisions_decision.md`).
 
 ## Classification rules
 

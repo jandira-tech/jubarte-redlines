@@ -363,7 +363,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         }
         if want_cid {
             let cid_id = objs.len() + 1;
-            objs.push(cid_font_obj(face, desc_id));
+            objs.push(cid_font_obj(face, desc_id, &used_gids));
             let cmap_id = objs.len() + 1;
             objs.push(to_unicode_obj(
                 &face_unicode_map(face, *face_id, pages),
@@ -490,11 +490,18 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         // The text object left open by the last plain glyph run: its font,
         // size, colour and tracking, so the next run in the same state
         // only moves the text matrix (a page was one `BT … ET` per glyph).
-        let mut open_text: Option<String> = None;
+        // The pen is kept in hundredths as printed, so each next glyph moves
+        // by an exact relative `Td` (lines are one glyph per op).
+        let mut open_text: Option<((String, String), Option<(i64, i64)>)> = None;
+        let mut page_tc = "0".to_string();
         for (op_idx, op) in page.ops.iter().enumerate() {
             let plain_text = matches!(op, Op::Text { .. }) && !page.vertical;
             if !plain_text && open_text.take().is_some() {
                 stream.push_str("ET\n");
+            }
+            if !plain_text && page_tc != "0" {
+                stream.push_str("0 Tc\n");
+                page_tc = "0".to_string();
             }
             match op {
                 Op::Text {
@@ -561,48 +568,76 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     // A `w:w` scale squeezes the glyphs themselves about
                     // their origin; advances were scaled at layout.
                     let sx = *hscale;
-                    if (word_device_paint(*size).is_some() || (sx - 1.0).abs() > 0.001)
-                        && open_text.take().is_some()
-                    {
-                        stream.push_str("ET\n");
-                    }
-                    if let Some((ppem, tc)) = word_device_paint(*size) {
+                    // Every glyph run sits in a text object keyed by its
+                    // state (font, size, colour, tracking): a run in the open
+                    // object's state only sets the text matrix. Word-device
+                    // and `w:w` runs carry their scale in that matrix (it was
+                    // a `q … cm BT … ET Q` per glyph; the product is the same).
+                    let (state, tc, matrix) = if let Some((ppem, tc)) = word_device_paint(*size) {
                         // Word writes baselines in whole device units from
                         // the page top (0.24pt grid).
                         let down = page.height - *y;
-                        let y = &(page.height - ((down / 0.24) + 0.5).floor() * 0.24);
+                        let y = page.height - ((down / 0.24) + 0.5).floor() * 0.24;
                         let a = if (sx - 1.0).abs() > 0.001 {
                             format!("{:.4}", 0.24 * sx)
                         } else {
                             "0.24".into()
                         };
-                        let _ = writeln!(
-                            stream,
-                            "q {a} 0 0 0.24 {x:.2} {y:.2} cm BT /{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg {tc:.4} Tc 0 0 Td {lit} Tj ET Q",
-                        );
+                        (
+                            format!("/{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg "),
+                            format!("{tc:.4}"),
+                            Some(format!("{a} 0 0 0.24 {x:.2} {y:.2} Tm")),
+                        )
                     } else if (sx - 1.0).abs() > 0.001 {
-                        let _ = writeln!(
-                            stream,
-                            "q {sx:.4} 0 0 1 {x:.2} {y:.2} cm BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg 0 0 Td {lit} Tj ET Q",
-                        );
+                        (
+                            format!("/{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg "),
+                            "0".to_string(),
+                            Some(format!("{sx:.4} 0 0 1 {x:.2} {y:.2} Tm")),
+                        )
                     } else {
                         let tc = word_device_track(*size);
-                        let tc_op = if tc.abs() > 0.00005 {
-                            format!("{tc:.5} Tc ")
+                        let tc = if tc.abs() > 0.00005 {
+                            format!("{tc:.5}")
                         } else {
-                            String::new()
+                            "0".to_string()
                         };
-                        let state = format!("/{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {tc_op}");
-                        if open_text.as_deref() == Some(state.as_str()) {
-                            let _ = writeln!(stream, "1 0 0 1 {x:.2} {y:.2} Tm {lit} Tj");
-                        } else {
-                            if open_text.take().is_some() {
-                                stream.push_str("ET\n");
-                            }
-                            let _ = writeln!(stream, "BT {state}{x:.2} {y:.2} Td {lit} Tj");
-                            open_text = Some(state);
+                        (format!("/{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg "), tc, None)
+                    };
+                    let pen = matrix.is_none().then(|| (hundredths(*x), hundredths(*y)));
+                    let state = (state, tc);
+                    let open_pen = match open_text.take() {
+                        Some((open, open_pen)) if open == state => Some(open_pen),
+                        Some(_) => {
+                            stream.push_str("ET\n");
+                            None
+                        }
+                        None => None,
+                    };
+                    if open_pen.is_none() {
+                        let _ = write!(stream, "BT {}", state.0);
+                        // `Tc` outlives `ET` (a device run's used to end at
+                        // its `Q`): it is set only when it changes.
+                        if state.1 != page_tc {
+                            let _ = write!(stream, "{} Tc ", state.1);
+                            page_tc.clone_from(&state.1);
                         }
                     }
+                    match (&matrix, pen, open_pen) {
+                        (Some(m), _, _) => {
+                            let _ = writeln!(stream, "{m} {lit} Tj");
+                        }
+                        (None, Some((hx, hy)), Some(Some((px, py)))) => {
+                            let (dx, dy) = (fmt_hundredths(hx - px), fmt_hundredths(hy - py));
+                            let _ = writeln!(stream, "{dx} {dy} Td {lit} Tj");
+                        }
+                        (None, _, Some(_)) => {
+                            let _ = writeln!(stream, "1 0 0 1 {x:.2} {y:.2} Tm {lit} Tj");
+                        }
+                        (None, _, None) => {
+                            let _ = writeln!(stream, "{x:.2} {y:.2} Td {lit} Tj");
+                        }
+                    }
+                    open_text = Some((state, pen));
                 }
                 Op::Watermark {
                     face,
@@ -1104,6 +1139,28 @@ fn subset_keep_gids(ttf: &[u8], used: &BTreeSet<u16>) -> Option<Vec<u8>> {
     Some(write_sfnt(u32_at(ttf, dir)?, &out_tables))
 }
 
+/// `v` in hundredths exactly as `{v:.2}` prints it, so relative moves add
+/// back up to the printed absolute position.
+fn hundredths(v: f32) -> i64 {
+    let printed = format!("{v:.2}");
+    let (whole, frac) = printed.split_once('.').unwrap_or((&printed, "0"));
+    let negative = whole.starts_with('-');
+    let magnitude = whole.trim_start_matches('-').parse::<i64>().unwrap_or(0) * 100
+        + frac.parse::<i64>().unwrap_or(0);
+    if negative { -magnitude } else { magnitude }
+}
+
+/// Hundredths as the shortest decimal: `0`, `6`, `-12.5`, `0.07`.
+fn fmt_hundredths(h: i64) -> String {
+    let sign = if h < 0 { "-" } else { "" };
+    let (whole, frac) = (h.abs() / 100, h.abs() % 100);
+    match frac {
+        0 => format!("{sign}{whole}"),
+        f if f % 10 == 0 => format!("{sign}{whole}.{}", f / 10),
+        f => format!("{sign}{whole}.{f:02}"),
+    }
+}
+
 /// A `cmap` of one format 4 subtable mapping only the characters whose
 /// glyphs the subset keeps (Word's subsets carry ~150 bytes; the face's own
 /// was 8.5 KB). `None` keeps the face's cmap: a symbol face (Symbol,
@@ -1257,30 +1314,42 @@ fn simple_ttf_obj(face: &super::font::Face, desc_id: usize) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Faces are embedded whole, and `/W` carries a width for every glyph in the
-/// face rather than only the ids the page ops reference.
-///
-/// The tradeoff is deliberate for now: subsetting means rebuilding `loca` /
-/// `glyf` / `cmap` and remapping every emitted glyph id, and a wrong subset is
-/// a silently missing glyph in an oracle diff. It costs size — on a 217-page
-/// redline the five embedded faces are 5.5 MB of a 48.8 MB file, and `/W`
-/// lists thousands of unused widths. `PdfOptions::compress` recovers most of
-/// that (5.5 MB → 3.0 MB) without touching glyph data; narrowing `/W` to the
-/// referenced ids is the cheaper next step if it is not enough.
-fn cid_font_obj(face: &super::font::Face, desc_id: usize) -> Vec<u8> {
+/// The Identity-H descendant font. `/W` lists only the glyph ids the pages
+/// use (`used`, the same set the program is subset to): every other id has no
+/// outline, and listing the whole face made a CJK font dictionary 212 KB.
+fn cid_font_obj(face: &super::font::Face, desc_id: usize, used: &BTreeSet<u16>) -> Vec<u8> {
     let name = face.pdf_name();
-    let widths = face.pdf_widths_1000();
-    let w_list = widths
-        .iter()
-        .map(i32::to_string)
-        .collect::<Vec<_>>()
-        .join(" ");
+    let w_list = cid_widths(&face.pdf_widths_1000(), used);
     format!(
         "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /{name} \
            /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> \
-           /FontDescriptor {desc_id} 0 R /DW 500 /W [0 [{w_list}]] /CIDToGIDMap /Identity >>"
+           /FontDescriptor {desc_id} 0 R /DW 500 /W [{w_list}] /CIDToGIDMap /Identity >>"
     )
     .into_bytes()
+}
+
+/// The `/W` entries for the glyph ids the pages use.
+fn cid_widths(widths: &[i32], used: &BTreeSet<u16>) -> String {
+    let mut out = String::new();
+    let mut prev: Option<u16> = None;
+    for &g in used {
+        let Some(w) = widths.get(usize::from(g)) else {
+            continue;
+        };
+        if prev.is_some_and(|p| p + 1 == g) {
+            let _ = write!(out, " {w}");
+        } else {
+            if prev.is_some() {
+                out.push_str("] ");
+            }
+            let _ = write!(out, "{g} [{w}");
+        }
+        prev = Some(g);
+    }
+    if prev.is_some() {
+        out.push(']');
+    }
+    out
 }
 
 fn type0_font_obj(face: &super::font::Face, cid_id: usize, cmap_id: usize) -> Vec<u8> {
@@ -1798,6 +1867,26 @@ mod tests {
         assert_eq!(adv(&sub, a), adv(&full, a), "used metrics kept");
         assert_eq!(adv(&sub, b), Some(0), "unused metrics zeroed");
         assert_eq!(sub.number_of_glyphs(), full.number_of_glyphs());
+    }
+
+    /// `/W` listed a width for every glyph in the face: a CJK face's font
+    /// dictionary was 212 KB of a 319 KB PDF (6292aea9, Word 98 KB). Only
+    /// the used ids are listed, one `first [w …]` entry per consecutive run.
+    #[test]
+    fn cid_widths_list_only_the_used_glyph_runs() {
+        let widths: Vec<i32> = (0..40_000).map(|g| 500 + g % 7).collect();
+        let used = std::collections::BTreeSet::from([0u16, 3, 4, 5, 30_000]);
+        assert_eq!(super::cid_widths(&widths, &used), "0 [500] 3 [503 504 505] 30000 [505]");
+    }
+
+    /// Glyph moves inside one text object are relative: they must add back
+    /// up to the absolute position the page printed before (`{:.2}`).
+    #[test]
+    fn relative_moves_round_trip_the_printed_hundredths() {
+        for (v, h, shown) in [(730.4, 73040, "730.4"), (-0.05, -5, "-0.05"), (6.0, 600, "6"), (-12.5, -1250, "-12.5"), (0.07, 7, "0.07")] {
+            assert_eq!(super::hundredths(v), h, "{v}");
+            assert_eq!(super::fmt_hundredths(h), shown);
+        }
     }
 
     /// Cambria loads from Cambria.ttc: the collection was embedded whole

@@ -4,11 +4,24 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Speed bench review — inproc vs CLI (plan Workstream C)
+# Speed bench review — inproc vs CLI (plan Workstream C) — reviewed 2026-09-26
 
 **Date:** 2026-07-16
 **Baseline pin:** `jubarte-rust@9fcc4289e375`
 **Corpus:** `redline_speed_bench` 5000 pairs, seed 42
+
+> **Re-checked 2026-09-26 (0.9.2):** resolved. The pass condition — *inproc ≤
+> CLI on median AND mean AND wall* — is now met by measurement. The
+> 2026-08-15 stamp puts `jubarte-rust-inproc` at **25.98 mean / 6.35 median**
+> over the same 5000 pairs, ahead of the CLI's **34.75 / 11.72** (2026-08-13;
+> RESULTS.md, "Redline speed"). The heavy tail was algorithmic, not
+> worker-process retention: `31e0e90` killed a superlinear path in the
+> document-scale fold check plus three sibling hot spots (worst pair
+> 837→678 ms, output-identical). No worker-recycle logic was ever needed —
+> `jubarte-rust-inproc/src/main.rs` still runs one warm process on the same
+> `COMPARE` path protocol. The worker now lives **in this repo** at
+> `jubarte-rust-inproc/`; it was bench-repo-only when this review was
+> written.
 
 ## Measured baseline
 
@@ -21,7 +34,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 ## Protocol forensics (C1 Step 1)
 
-Inproc worker (`neurotic_docx_bench/.../jubarte-rust-inproc`):
+Inproc worker (`jubarte-rust-inproc/` — vendored in-repo now; bench-repo-only at review time):
 
 ```
 COMPARE <basePath> <nextPath> <outPath>
@@ -54,7 +67,7 @@ This does **not** yet isolate heap retention from fixture order, system load, or
 
 Plan C1: *inproc ≤ CLI on median AND mean AND wall, **or** residual gap has a written measured cause.*
 
-**Verdict (provisional):** residual gap **documented as hypothesis** — mean/wall inproc loss *may* be long-lived process heap retention; median already favors inproc. Do **not** quote mean/wall as “algorithm win” for either side until a retention fix (periodic worker recycle, or arena reset) lands **or** worker-RSS evidence confirms the cause.
+**Verdict (provisional at 2026-07-16 — superseded by the re-check note above):** residual gap **documented as hypothesis** — mean/wall inproc loss *may* be long-lived process heap retention; median already favors inproc. Do **not** quote mean/wall as “algorithm win” for either side until a retention fix (periodic worker recycle, or arena reset) lands **or** worker-RSS evidence confirms the cause.
 
 ## Hygiene (C2)
 
@@ -73,6 +86,6 @@ Every Workstream B corpus gate must record `mean_speed` / `median_speed` from `b
 
 ## Follow-ups (not blocking this review)
 
-1. Recycle the inproc worker every N compares (or RSS threshold) and re-measure mean/wall.
+1. ~~Recycle the inproc worker every N compares (or RSS threshold) and re-measure mean/wall.~~ **Closed 2026-09-26:** never needed — the gap was the LCS superlinear tail, fixed in `31e0e90`; post-fix stamps show inproc ahead on median, mean and wall.
 2. Size-bucketed median-by-fixture-decile in `redline_speed_bench.ts` (optional TS change).
 3. Interleaved reps with RSS sidecar to plot monotonic growth.

@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Word layout rules we reconstructed
+# Word layout rules we reconstructed — reviewed 2026-09-26
 
 Microsoft Word is the reference for `jubarte convert`. We do not have Word's
 source. Every rule here was measured on live Word for Mac (the Quartz print
@@ -21,6 +21,13 @@ the probe wins.
 
 This file covers the rules found while beating the English corpus: HF
 `superdoc-dev/docx-corpus`, 500 + 500 files, plus 451 Word redlines of them.
+
+> **Re-checked 2026-09-26 (0.9.2):** still the live rulebook — the newest
+> entries carry live-Word probes from today's session and each convert fix
+> updates this file in the same commit. Pooled outcome vs Word's own exports
+> (RESULTS.md): **jubarte 0.9.2 ranks #1 on both pools** — mean Jaccard
+> 0.647 / median 0.732 over 2,102 clean docs, and 0.466 / 0.492 over 1,416
+> redlined docs.
 
 ## Shading
 

@@ -4,9 +4,21 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Benchmark stamp — HEAD `d094de0aed36` (M233)
+# Benchmark stamp — HEAD `d094de0aed36` (M233) — reviewed 2026-09-26
 
 Generated 2026-07-16 06:01 UTC. Binary content-hash pin: **jubarte-rust@9fcc4289e375**.
+
+> **Re-checked 2026-09-26 (0.9.2):** the numbers below still describe the M233
+> pin only — this is a historical stamp, not the headline table. The public
+> `script_redlines` lane has since moved to the 763-doc corpus `5ed816028d99`:
+> latest stamp `jubarte-rust@17ea47e9a0d7` (2026-08-13) mean **84.47** /
+> median **92.66**, rank **#1** (RESULTS.md). The §3 speed anomaly (warm
+> inproc losing on mean/wall) is resolved — `jubarte-rust-inproc` stamps
+> **25.98 mean / 6.35 median** over the same 5000 pairs (2026-08-15), ahead
+> of the CLI's 34.75 / 11.72 (2026-08-13); see `docs/SPEED_REVIEW.md`. And the
+> inproc worker is now vendored in-repo at `jubarte-rust-inproc/` — the
+> reproduce recipe below still builds it out of the bench checkout; see the
+> corrected commands there.
 
 Ship bar (primary ledger): **script_redlines mean ≥ 90 and median ≥ 90**.
 
@@ -99,8 +111,9 @@ document.xml digests: all fixtures **match=YES** (self-consistency).
 # install pin
 cargo build --release --bin jubarte --features cli
 cp -f target/release/jubarte ../neurotic_docx_bench/src/neurotic_docx_bench/utils/jubarte/jubarte-rust/{jubarte,redline}
-( cd ../neurotic_docx_bench/src/neurotic_docx_bench/utils/jubarte/jubarte-rust-inproc && cargo build --release )
-cp -f ../neurotic_docx_bench/src/neurotic_docx_bench/utils/jubarte/jubarte-rust-inproc/target/release/jubarte-inproc   ../neurotic_docx_bench/src/neurotic_docx_bench/utils/jubarte/jubarte-rust/{jubarte-inproc,jubarte-worker}
+# the inproc worker is vendored in-repo (was bench-repo-only when this stamp was written)
+( cd jubarte-rust-inproc && cargo build --release )
+cp -f jubarte-rust-inproc/target/release/jubarte-inproc   ../neurotic_docx_bench/src/neurotic_docx_bench/utils/jubarte/jubarte-rust/{jubarte-inproc,jubarte-worker}
 
 # quality — main
 ( cd ../neurotic_docx_bench && uv run bench run --only jubarte-rust --rerun --accept-compare --no-gate )

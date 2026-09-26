@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Word driver audit
+# Word driver audit — reviewed 2026-09-26
 
 Audit of every script across `neurotic_docx_bench`, `jubarte-first` and `jubarte-redlines`
 that drives Microsoft Word for Mac to redline a document or export a PDF.
@@ -21,6 +21,17 @@ output corpora, all tracked in git. No macOS, Word or `osascript` was available 
 nothing was re-run; where a claim rests on a past run it cites that run's artifact. Every
 other claim is traceable to a file and line, to documented Microsoft/Apple behaviour, or is
 marked unverified.
+
+> **Re-checked 2026-09-26 (0.9.2):** the audit stands — its citations are
+> pinned to the revisions above and those pins remain the frame of reference.
+> What moved underneath: the family-F scripts (`word-open-probe.sh`,
+> `word-probe-sweep.sh`, `redline-sweep.sh`) are still in `scripts/`, but
+> `jubarte convert` (`src/convert`) now renders DOCX→PDF **without** Word —
+> so since the 0.9.x convert work these drivers' remaining job is producing
+> the Word *oracles* jubarte is scored against (compare redlines, reference
+> PDFs), not doing any conversion themselves. The `jubarte-rust-inproc`
+> worker the speed sweep drives is also now vendored in-repo at
+> `jubarte-rust-inproc/`.
 
 ---
 
