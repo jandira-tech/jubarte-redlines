@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Versioning & release — jubarte family
 
-All products under `ooxmlsdk/jubarte*` share **Semantic Versioning**
+All products under `jubarte*` share **Semantic Versioning**
 ([semver.org](https://semver.org/)) and **Keep a Changelog**
 ([keepachangelog.com](https://keepachangelog.com/)). Pre-1.0 rule (this family):
 
@@ -16,24 +16,24 @@ All products under `ooxmlsdk/jubarte*` share **Semantic Versioning**
 | **patch** (`0.x.y`) | bugfixes, Q0 perf micro-wins, docs, package validity — no intentional Q1 semantic change |
 | **major** (`1.0.0+`) | reserved for first stable API freeze |
 
-## Repos in this folder
+## Repos
 
 | repo | artifact | version files | bump tool |
 |---|---|---|---|
-| **jubarte-rs** | crates.io crate + CLI `jubarte` | `Cargo.toml` `[package].version`, `CHANGELOG.md` | `bun scripts/bump-version.mjs x.y.z` |
-| **jubarte-app** | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `bun run bump x.y.z` |
-| **jubarte-site** | marketing/site (optional) | `package.json` | manual / site deploy only |
+| **jubarte-redlines** (this repo) | crates.io crate + CLI `jubarte` | `Cargo.toml` `[package].version`, `CHANGELOG.md` | `bun scripts/bump-version.mjs x.y.z` |
+| **jubarte-app** (`jubarte-app/` submodule) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `bun run bump x.y.z` |
+| **jubarte-site** (`jubarte-app/jubarte-site/`) | marketing/site (optional) | `package.json` | manual / site deploy only |
 
 `jubarte-app` depends on the engine via:
 
 ```toml
-jubarte = { path = "../../jubarte-rs", default-features = false }
+jubarte = { package = "jubarte-redlines", path = "../..", default-features = false }
 ```
 
 So **always version and release jubarte-rs first**, then bump the app if the
 shell needs a store build that embeds the new engine.
 
-## Step-by-step: cut an engine release (jubarte-rs)
+## Step-by-step: cut an engine release (jubarte-redlines)
 
 1. **Quality gate (do not skip)**  
    - `cargo test --all-features` (only known pre-existing failures allowed)
@@ -50,8 +50,8 @@ shell needs a store build that embeds the new engine.
 2. **Decide the bump**  
    - Perf banked-without-wall + package/notes validity → usually **patch** or **minor**  
      if the release aggregates many accepted ships.  
-   - This branch stack (parity restore + package validity + accept skips + name cache)
-     is a **minor** (`0.1.0` → `0.2.0`).
+   - New public API or features (e.g. the `convert` revision-painting options)
+     → **minor** is the safer call even when behavior is additive.
 
 3. **Codemod the version**  
    ```bash
@@ -81,6 +81,11 @@ shell needs a store build that embeds the new engine.
    git tag -a v0.2.0 -m "v0.2.0"
    # push when ready: git push && git push --tags
    ```
+   Pushing `v*` runs `.github/workflows/release.yml`: it refuses a tag that
+   does not match `Cargo.toml`, builds `jubarte` for linux/macos/windows
+   (x86_64 + aarch64), and creates the `jubarte vX.Y.Z` GitHub release with
+   the CHANGELOG section as notes and the archives + `SHA256SUMS.txt`
+   attached.
 
 7. **Bench stamp** (full Word-visual ledger)  
    From `neurotic_docx_bench` (sibling of `ooxmlsdk` or `BENCH_DIR`):  
@@ -90,8 +95,28 @@ shell needs a store build that embeds the new engine.
    That generates redlines, renders, scores **script_redlines**, and
    **accepted_changes** (accept-all on tool redlines vs Word accepted oracle).
 
-8. **Publish** (when crates.io is intentional)  
-   `cargo publish` from a clean tree matching the tag.
+8. **Publish**  
+   `scripts/release.sh x.y.z` is the one-stop path: it re-checks the gates,
+   syncs every manifest/lockfile (including the ones `bump-version.mjs` does
+   not own), commits, tags, pushes, and publishes crates.io + npm + PyPI,
+   while `.github/workflows/release.yml` builds the binaries/wheels and
+   creates the GitHub release.
+
+   Five per-release summaries are **required flags** — each lands in the
+   channel its registry accepts:
+
+   | flag | lands in |
+   |---|---|
+   | `--changelog-summary` | `> **Summary.** …` under `## [x.y.z]` in CHANGELOG.md |
+   | `--crates-summary` | `[package.metadata.release-notes]` in Cargo.toml (ships in the `.crate`) |
+   | `--npm-summary` | `releaseNotes."x.y.z"` in the npm package.json (published packument) |
+   | `--pypi-summary` | `# release-notes` comment in `jubarte-python/pyproject.toml` (ships in the sdist) |
+   | `--github-summary` | annotated-tag body → top of the GitHub release notes |
+
+   `--*-comments` aliases work too. The verify step greps each registry/
+   artifact to prove the note shipped. `scripts/release.sh x.y.z --dry-run`
+   rehearses everything locally; every publish step skips a version that is
+   already live, so a failed run can simply be re-run.
 
 ## Step-by-step: cut an app release (jubarte-app)
 

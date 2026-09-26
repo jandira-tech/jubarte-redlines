@@ -339,7 +339,13 @@ fn read_i32(data: &[u8], off: usize) -> Option<i32> {
 enum GdiObj {
     Empty,
     Brush([u8; 3]),
-    Pen { color: [u8; 3], width: i32 },
+    Pen {
+        color: [u8; 3],
+        width: i32,
+    },
+    /// A palette, font, region or pattern brush: it holds its table slot
+    /// but paints nothing we replay.
+    Other,
 }
 
 fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
@@ -365,6 +371,7 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let mut brush = [0_u8, 0, 0];
     let mut pen = [0_u8, 0, 0];
     let mut pen_w = 1_i32;
+    let mut winding = false;
     let mut off = 22 + 18;
     while off + 6 <= data.len() {
         let size = read_u32(data, off)? as usize;
@@ -419,11 +426,18 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                     };
                 }
             }
+            // CreatePalette / PatternBrush / DIBPatternBrush / Font /
+            // Region take the lowest free slot like a brush or pen, so
+            // later handles count them (Strict01's palette is slot 0).
+            0x00F7 | 0x01F9 | 0x0142 | 0x02FB | 0x06FF => {
+                if let Some(i) = objects.iter().position(|o| matches!(o, GdiObj::Empty)) {
+                    objects[i] = GdiObj::Other;
+                }
+            }
+            0x0106 => winding = read_u16(data, payload).unwrap_or(1) == 2,
             0x012D => {
+                // Object handles are 0-based table indices (b88ac900).
                 let idx = read_u16(data, payload).unwrap_or(0) as usize;
-                // Placeable Office WMFs use 1-based object handles (Select 1
-                // after the first CreateBrush lands in slot 0).
-                let idx = idx.saturating_sub(1);
                 if let Some(obj) = objects.get(idx) {
                     match *obj {
                         GdiObj::Brush(c) => brush = c,
@@ -431,13 +445,12 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                             pen = color;
                             pen_w = width;
                         }
-                        GdiObj::Empty => {}
+                        GdiObj::Empty | GdiObj::Other => {}
                     }
                 }
             }
             0x01F0 => {
                 let idx = read_u16(data, payload).unwrap_or(0) as usize;
-                let idx = idx.saturating_sub(1);
                 if let Some(slot) = objects.get_mut(idx) {
                     *slot = GdiObj::Empty;
                 }
@@ -453,6 +466,25 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                     p += 4;
                 }
                 canvas.fill_polygon(&pts, brush);
+            }
+            // META_POLYPOLYGON: ring count, each ring's point count, then
+            // every ring's points, filled as one shape (b88ac900's logo).
+            0x0538 => {
+                let rings = read_u16(data, payload).unwrap_or(0) as usize;
+                let mut p = payload + 2 + 2 * rings;
+                let mut subpaths = Vec::with_capacity(rings);
+                for r in 0..rings {
+                    let n = read_u16(data, payload + 2 + 2 * r)? as usize;
+                    let mut ring = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        let x = read_i16(data, p)? as i32;
+                        let y = read_i16(data, p + 2)? as i32;
+                        ring.push(map.map(x, y));
+                        p += 4;
+                    }
+                    subpaths.push(ring);
+                }
+                canvas.fill_path(&subpaths, brush, winding);
             }
             0x0325 => {
                 let n = read_u16(data, payload).unwrap_or(0) as usize;
@@ -671,9 +703,9 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                 let mut line = vec![start];
                 if bezier {
                     let mut p0 = start;
-                    for trio in rest.chunks_exact(3) {
-                        line.extend(flatten_bezier(p0, trio[0], trio[1], trio[2]));
-                        p0 = trio[2];
+                    for &[c1, c2, end] in rest.as_chunks::<3>().0 {
+                        line.extend(flatten_bezier(p0, c1, c2, end));
+                        p0 = end;
                     }
                 } else {
                     line.extend_from_slice(rest);
@@ -725,7 +757,7 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                             pen = color;
                             pen_w = width;
                         }
-                        GdiObj::Empty => {}
+                        GdiObj::Empty | GdiObj::Other => {}
                     }
                 }
             }
@@ -1187,5 +1219,71 @@ mod emf_path_tests {
         let (w, h, rgb) = rasterize(&d).expect("raster");
         assert!(dark(&rgb, w, w / 5, h / 2), "the ring inks");
         assert!(!dark(&rgb, w, w / 2, h / 2), "the counter stays open");
+    }
+}
+
+#[cfg(test)]
+mod wmf_object_tests {
+    //! English corpus b88ac900: the kennel logo's clipart is a placeable
+    //! WMF of META_POLYPOLYGON records selecting brushes by 0-based
+    //! object-table index. We skipped the records (a blank picture) and
+    //! read index n as slot n-1.
+    use super::*;
+
+    fn wmf(records: &[(u16, Vec<u16>)], nobj: u16) -> Vec<u8> {
+        let mut d = vec![0u8; 22];
+        d[0..4].copy_from_slice(&PLACEABLE_KEY);
+        for (i, v) in [0_i16, 0, 100, 100].iter().enumerate() {
+            d[6 + 2 * i..8 + 2 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        d[14..16].copy_from_slice(&1440u16.to_le_bytes());
+        let mut header = vec![0u8; 18];
+        header[0..2].copy_from_slice(&1u16.to_le_bytes());
+        header[2..4].copy_from_slice(&9u16.to_le_bytes());
+        header[10..12].copy_from_slice(&nobj.to_le_bytes());
+        d.extend_from_slice(&header);
+        for (func, params) in records.iter().chain([(0_u16, Vec::new())].iter()) {
+            d.extend_from_slice(&(3 + params.len() as u32).to_le_bytes());
+            d.extend_from_slice(&func.to_le_bytes());
+            for p in params {
+                d.extend_from_slice(&p.to_le_bytes());
+            }
+        }
+        d
+    }
+
+    fn brush(r: u8, g: u8, b: u8) -> (u16, Vec<u16>) {
+        (0x02FC, vec![0, u16::from_le_bytes([r, g]), u16::from(b), 0])
+    }
+
+    #[test]
+    fn a_polypolygon_fills_with_the_brush_selected_by_zero_based_index() {
+        let square = vec![1, 4, 10, 10, 90, 10, 90, 90, 10, 90];
+        let d = wmf(
+            &[
+                brush(255, 0, 0),
+                (0x012D, vec![0]),
+                // PS_NULL pen into slot 1.
+                (0x02FA, vec![5, 0, 0, 0, 0]),
+                (0x012D, vec![1]),
+                brush(0, 0, 255),
+                (0x012D, vec![2]),
+                (0x01F0, vec![0]),
+                (0x0106, vec![2]),
+                (0x0538, square),
+            ],
+            3,
+        );
+        let (w, h, px) = rasterize(&d).expect("wmf");
+        let at = |x: u32, y: u32| {
+            let i = ((y * h / 100) * w + x * w / 100) as usize * 3;
+            [px[i], px[i + 1], px[i + 2]]
+        };
+        assert_eq!(
+            at(50, 50),
+            [0, 0, 255],
+            "the square fills with the blue brush"
+        );
+        assert_eq!(at(5, 5), [255, 255, 255], "outside stays white");
     }
 }

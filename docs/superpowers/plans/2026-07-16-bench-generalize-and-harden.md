@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Jubarte-rs: Best Practices, Benchmark Generalization, Speed Review, Validity Hardening — Implementation Plan
+# Jubarte-rs: Best Practices, Benchmark Generalization, Speed Review, Validity Hardening — Implementation Plan — reviewed 2026-09-26
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Execute ONE measured increment at a time; never hide a quality change inside a cleanup or performance change (LCS_PERF_PLAN.md doctrine applies).
 
@@ -13,6 +13,24 @@ SPDX-License-Identifier: AGPL-3.0-only
 **Architecture:** Four independent workstreams (A: crate hygiene, B: score generalization, C: speed-bench review, D: validity gates) that share one non-negotiable protocol: every behavior change is red→green TDD'd, then corpus-gated on **both** corpora before merge. Workstream D builds a three-ring validity oracle (Rust-native invariants in CI everywhere → OpenXmlValidator sweep locally → real-Word open probe as release gate).
 
 **Tech stack:** Rust 1.88+ / edition 2024, Criterion, samply, clippy workspace lints, DocumentFormat.OpenXml validator (tiny dotnet CLI), LibreOffice render harness (`../neurotic_docx_bench`), macOS Microsoft Word via `scripts/word-open-probe.sh`.
+
+> **Re-checked 2026-09-26 (0.9.2) — execution status:** everything landed
+> except **B4**. A landed: `[lints]` table in `Cargo.toml`, `deny.toml`,
+> `#![warn(missing_docs)]` on `src/lib.rs`. B0–B3 + B5 landed:
+> `tools/bench_classes.py`, `docs/bench_classes.md`, tests `m146`–`m151`;
+> Ratchet-1 closed at aggregate **87.85**, ~0.15 short of the 88 bar — the
+> residue is C4, and **B4 is still deferred** (Arthur never recorded an
+> option pick; see `docs/C4_preexisting_revisions_decision.md`). C closed:
+> the inproc anomaly resolved to an algorithmic superlinear tail, killed in
+> `31e0e90` — the worker it measured is now vendored in-repo at
+> `jubarte-rust-inproc/` (Task C1 says "it lives in the bench repo, not
+> here" — stale). D landed: Ring 1 `tests/common/validity.rs`, Ring 1½
+> `tests/schema_consistency.rs` + `tests/data/wml_main_schema.json`, Ring 2
+> `tools/validate-docx/` + blessed `tools/validity_baseline.tsv`, Ring 3 gate
+> in `VERSIONING.md`; KNOWN ISSUE 1 settled — `w:t` under `w:moveFrom`,
+> `w:delText` under `w:del`. Note the ledger lane has since been superseded
+> as the headline metric by the 763-doc corpus `5ed816028d99` (jubarte-rust
+> 84.47 / 92.66, rank #1, 2026-08-13 — RESULTS.md).
 
 ---
 
@@ -259,7 +277,7 @@ for n, r in sorted(latest.items()):
 
 **Files:**
 - Read: `../neurotic_docx_bench/src/neurotic_docx_bench/utils/jubarte/jubarte-rust-inproc/src/*.rs`, `../neurotic_docx_bench/scripts/redline_speed_bench.ts` (worker protocol + timing loop)
-- Possibly modify: the inproc worker crate (it lives in the bench repo, not here)
+- Possibly modify: the inproc worker crate — now vendored in-repo at `jubarte-rust-inproc/` (it lived only in the bench repo when this plan was written)
 
 A warm worker (16.95 median) that loses on mean (56.0 vs 52.1) and wall (280 s vs 260 s) means the tail is worker-specific. Candidate causes, in test order:
 

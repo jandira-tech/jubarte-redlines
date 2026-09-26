@@ -8,6 +8,13 @@ features bump the **minor**, fixes bump the **patch**).
 See [README → Versioning & release](README.md#versioning--release) for how to cut
 a new version.
 
+## [0.9.2] — 2026-09-26
+
+### Changed
+- **Engine upgraded to jubarte-redlines 0.9.2**, and the app version now
+  follows the engine's. PDF conversion gains the 0.9.x Word-fidelity pass and
+  smaller `--compress` output; redline behaviour is unchanged.
+
 ## [0.7.1] — 2026-08-16
 
 ### Changed

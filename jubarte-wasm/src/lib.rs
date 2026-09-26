@@ -92,11 +92,25 @@ pub fn get_revisions(docx: &[u8]) -> Result<String, JsValue> {
 /// never layout metrics.
 /// `compress` (optional, default `false`) deflates the PDF's streams
 /// (`/FlateDecode`): much smaller output, no longer plain text.
+/// `revisions` (optional, default `"conventional"`) paints tracked changes:
+/// `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
+/// `revisionPalette` (`"deleted=#AA0000:strike,..."`).
 #[cfg(feature = "pdf")]
 #[wasm_bindgen(js_name = docxToPdf)]
-pub fn docx_to_pdf(docx: &[u8], compress: Option<bool>) -> Result<Vec<u8>, JsValue> {
+pub fn docx_to_pdf(
+    docx: &[u8],
+    compress: Option<bool>,
+    revisions: Option<String>,
+    revision_palette: Option<String>,
+) -> Result<Vec<u8>, JsValue> {
+    let revisions = jubarte::convert::RevisionStyle::from_choice(
+        revisions.as_deref().unwrap_or("conventional"),
+        revision_palette.as_deref(),
+    )
+    .map_err(|e| JsValue::from_str(&e))?;
     let options = jubarte::convert::PdfOptions {
         compress: compress.unwrap_or(false),
+        revisions,
     };
     jubarte::convert::docx_to_pdf_with(docx, options).map_err(js_err)
 }

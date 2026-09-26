@@ -6,7 +6,21 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Plan: use the Open XML SDK schema data as an oracle (minimal hand-rolling)
 
-Status: PLANNED — nothing implemented yet. Written 2026-07-13.
+Status: **W1 and W2 shipped** (written 2026-07-13; updated 2026-09-26).
+
+- **W1 — DONE.** `tests/data/wml_main_schema.json` is vendored (with its
+  `.license` sidecar and `tests/data/README.md` provenance) and
+  `tests/schema_consistency.rs` runs every `cargo test` as the Ring 1½
+  oracle: it flattens each container's `Particle` (Choice members treated
+  as unordered groups) and asserts pairwise order agreement against the
+  exported `comparer::order_tables`, with documented PowerTools
+  divergences allowlisted.
+- **W2 — DONE.** `tools/validate-docx/` (minimal console project on
+  `DocumentFormat.OpenXml`) is committed, and `tools/validity_baseline.tsv`
+  is the ratchet baseline (first blessed 2026-09-05; see KNOWN_ISSUES §4
+  for the key-format re-bless). Ring 2 in the README validity table.
+- **W3 — deferred**, per plan: only if W2 shows CI missing regressions.
+- **W4 — standing rule**, unchanged.
 
 ## Goal
 

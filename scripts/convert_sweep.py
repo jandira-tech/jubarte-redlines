@@ -261,7 +261,7 @@ def convert_and_score(
         for job in jobs:
             out = work / f"{job.stem}.pdf"
             proc = subprocess.run(
-                [str(jubarte), "convert", str(job.docx), "-o", str(out), "--force"],
+                [str(jubarte), "convert", str(job.docx), "-o", str(out), "--force", "--revisions", "word"],
                 capture_output=True,
                 text=True,
                 check=False,

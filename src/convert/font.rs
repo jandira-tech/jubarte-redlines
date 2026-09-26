@@ -646,6 +646,8 @@ pub(crate) struct Face<'a> {
     line_descent: f32,
     /// Win ascent when USE_TYPO_METRICS is unset (Liberation ↔ Arial).
     paint_ascent: f32,
+    /// An East Asian face (OS/2 code pages 932/936/949/950/1361).
+    east_asian: bool,
     pub bbox: [i16; 4],
     pub widths: Vec<u16>,
     cmap: HashMap<u32, u16>,
@@ -707,13 +709,37 @@ impl<'a> Face<'a> {
         // ttf-parser's ascender/descender/line_gap are hhea unless the font
         // sets USE_TYPO_METRICS. Typo metrics under-size Courier (0.80 em
         // vs 1.13) and Arial (1.09 vs 1.15) against Word's line.
-        let line_height =
+        let mut line_height =
             f32::from(face.ascender()) - f32::from(face.descender()) + f32::from(face.line_gap());
         // The line's part below the baseline, from the same table as its
         // height (Courier's typo descender under-sizes it).
-        let line_descent = f32::from(face.descender()).abs();
+        let mut line_descent = f32::from(face.descender()).abs();
+        // Word gives an East Asian face (OS/2 code pages 932/936/949/950/
+        // 1361) 1.3 times its hhea ascent + descent, lineGap aside, the
+        // extra split above and below the text. Live Word at 12pt: SimSun
+        // and MS Mincho step 15.6, YaHei 20.7, Meiryo 23.3, Yu Gothic 17.0.
+        let east_asian_line = cjk_code_pages(&face).then(|| {
+            let body = f32::from(face.ascender()) - f32::from(face.descender());
+            (body * 1.3, (body * 0.3) / 2.0)
+        });
+        if let Some((height, half)) = east_asian_line {
+            line_height = height;
+            line_descent += half;
+        }
+        // macOS Helvetica: Word's single line is 1.2 em, not its 1.0 em
+        // hhea body, with the win descent below the baseline (English part
+        // a 18f71536: 14.40pt lines at 12pt). Futura and Palatino follow
+        // their hhea lines, so the rule is Helvetica's own.
+        let helvetica = pdf_name == "Helvetica" || pdf_name.starts_with("Helvetica-");
+        if helvetica && let Some(os2) = face.tables().os2 {
+            line_height = upem * 1.2;
+            line_descent = f32::from(os2.windows_descender()).abs();
+        }
         // GDI puts the external leading (hhea total − win total) above the
         // text: Word's first TNR 12 baseline is winAscent + 0.51pt down.
+        // A win box taller than the line (macOS Palatino: 3396 units over a
+        // 2253 hhea line) does not push the text down: Word sets 009df71a's
+        // Palatino at its hhea ascent, 9.05pt under the margin at 11pt.
         let paint_ascent = face
             .tables()
             .os2
@@ -722,9 +748,29 @@ impl<'a> Face<'a> {
             .map(|os2| {
                 let win_asc = f32::from(os2.windows_ascender());
                 let win_total = win_asc + f32::from(os2.windows_descender()).abs();
-                win_asc + (line_height - win_total).max(0.0)
+                if win_total > line_height {
+                    line_height - line_descent
+                } else {
+                    win_asc + (line_height - win_total)
+                }
             })
             .unwrap_or(ascent);
+        // A USE_TYPO_METRICS face sets its typo lineGap above the text:
+        // live Word puts 16pt Gabriola's baseline 22.08 under the margin
+        // (ascent 10.94 + lineGap 11.20), Poppins 12's at 13.92.
+        let typo_line = face
+            .tables()
+            .os2
+            .is_some_and(|os2| os2.use_typographic_metrics());
+        let paint_ascent = if typo_line {
+            line_height - line_descent
+        } else {
+            paint_ascent
+        };
+        let paint_ascent = match east_asian_line {
+            Some((_, half)) => f32::from(face.ascender()) + half,
+            None => paint_ascent,
+        };
         let glyph_count = face.number_of_glyphs();
         let mut widths = vec![0u16; glyph_count as usize];
         for (gid, slot) in widths.iter_mut().enumerate() {
@@ -757,6 +803,7 @@ impl<'a> Face<'a> {
             line_height,
             line_descent,
             paint_ascent,
+            east_asian: east_asian_line.is_some(),
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
             cmap,
@@ -909,12 +956,25 @@ impl<'a> Face<'a> {
             plan
         });
         let out = rustybuzz::shape_with_plan(face, &plan, buf);
-        let units: ShapedUnits = out
+        let mut glyphs: Vec<(u16, i32, u32)> = out
             .glyph_infos()
             .iter()
             .zip(out.glyph_positions())
             .map(|(info, p)| (info.glyph_id as u16, p.x_advance, info.cluster))
             .collect();
+        // rustybuzz 0.20 reverses an RTL buffer for a legacy `kern` table
+        // and, with kerning off, skips the reverse back: Arial's Persian
+        // came out in logical order, each word mirrored (00205272).
+        // Visual RTL order runs from the last cluster to the first.
+        if key.0 == rustybuzz::Direction::RightToLeft
+            && glyphs
+                .first()
+                .zip(glyphs.last())
+                .is_some_and(|(a, z)| a.2 < z.2)
+        {
+            glyphs.reverse();
+        }
+        let units: ShapedUnits = glyphs.into();
         if let Ok(mut cache) = self.shaped.lock() {
             // A long-lived caller (Python / WASM) converts many documents
             // through one face; keep the memory bounded.
@@ -1089,6 +1149,12 @@ impl<'a> Fonts<'a> {
         self.embedded_index(key, bold, false)
     }
 
+    /// Word's Thaana face (MV Boli) for Dhivehi the resolved face lacks.
+    pub(crate) fn thaana_glyph_fallback(&self, bold: bool) -> Option<FaceRef> {
+        self.embedded_index(THAANA_FALLBACK, bold, false)
+            .map(FaceRef::Embedded)
+    }
+
     /// The CJK fallback face for a glyph the resolved face lacks.
     pub(crate) fn cjk_glyph_fallback(&self, bold: bool) -> Option<FaceRef> {
         self.embedded_index(CJK_FALLBACK, bold, false)
@@ -1115,6 +1181,17 @@ impl<'a> Fonts<'a> {
         } else {
             None
         }
+    }
+
+    /// `family` is present and not an East Asian face: Calibri, not SimSun
+    /// (or a CJK name that is not installed, whose substitute says nothing).
+    pub(crate) fn family_is_latin_only(&self, family: &str) -> bool {
+        if !family.is_ascii() || !cjk_file_stems(family).is_empty() {
+            return false;
+        }
+        let present =
+            self.embedded_index(family, false, false).is_some() || catalogue_paints_family(family);
+        present && !self.get(self.resolve(family, false, false)).east_asian
     }
 
     pub(crate) fn get(&self, id: impl Into<FaceRef>) -> &Face<'a> {
@@ -1304,8 +1381,14 @@ impl<'a> Fonts<'a> {
             // CSS-style list row (`"Foo", Bar, serif`) is keyed by the full
             // string, not by its first token.
             let whole = current.trim();
+            // The family/pitch generic stands behind an entry that describes
+            // its face (a panose past the family kind) or names an altName:
+            // 019d9ee6's Myriad Pro (swiss, altName Segoe UI) is Arial in
+            // Word, while 01177cdf's Museo Sans (0200…0, "modern", no
+            // altName) takes the document's default.
             if chain_generic.is_empty()
                 && let Some(entry) = table.get(primary)
+                && entry_describes(entry)
             {
                 chain_generic = super::word_subst::generic_physical(entry.family, entry.pitch);
             }
@@ -1329,18 +1412,43 @@ impl<'a> Fonts<'a> {
                     FontStep::Generic,
                 );
             }
+            // A missing Arabic or Hebrew face (charset B2 / B1) is Arial in
+            // Word, spaces and all: 00205272's absent "B Compset" draws
+            // Persian and 3.33pt spaces in Arial, not Cambria.
+            if let Some(entry) = table.get(primary)
+                && entry
+                    .charset
+                    .as_deref()
+                    .is_some_and(|c| c.eq_ignore_ascii_case("B2") || c.eq_ignore_ascii_case("B1"))
+            {
+                break (
+                    Self::face_from_physical("Arial", bold, italic),
+                    FontStep::Generic,
+                );
+            }
             // An unknown face Word knows nothing about (family="auto", no
             // panose) paints in the document's default font: 010300e3's
             // Serenity and 00b5aa69's Shivaji01 are Calibri there.
             if let Some(entry) = table.get(primary)
-                && matches!(entry.family, super::font_table::FontFamilyClass::Auto)
-                && entry.panose.is_none_or(|p| p.iter().all(|b| *b == 0))
-                && let Some(default) = table.default_family()
-                && !default.eq_ignore_ascii_case(primary)
+                && !entry_describes(entry)
             {
-                current = default;
-                via_default = Some(default);
-                continue;
+                // A default that is itself missing leaves Word's own
+                // Calibri (01177cdf's theme Museo Sans).
+                match table.default_family() {
+                    Some(default)
+                        if via_default.is_none() && !default.eq_ignore_ascii_case(primary) =>
+                    {
+                        current = default;
+                        via_default = Some(default);
+                        continue;
+                    }
+                    _ => {
+                        break (
+                            Self::face_from_physical("Calibri", bold, italic),
+                            FontStep::Generic,
+                        );
+                    }
+                }
             }
             break (
                 Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
@@ -1711,14 +1819,20 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
             .map(|c| c.to_ascii_lowercase())
             .collect()
     };
-    let key = norm(family);
-    if key.len() < 3 {
-        return Vec::new();
-    }
+    // A name with no Latin key (华文仿宋) can only match a cloud folder by
+    // the family names inside its fonts; file names say nothing about it.
+    let latin = norm(family).len() >= 3;
     // (dir, whole folder is the family): Word's cloud-font cache keeps each
     // family in its own folder under numeric file names (Poppins/2397….ttf).
-    let mut dirs: Vec<(PathBuf, bool)> = DIRS.iter().map(|d| (PathBuf::from(d), false)).collect();
+    let mut dirs: Vec<(PathBuf, bool)> = if latin {
+        DIRS.iter().map(|d| (PathBuf::from(d), false)).collect()
+    } else {
+        Vec::new()
+    };
     dirs.extend(cloud_font_dirs(family));
+    if dirs.is_empty() {
+        return Vec::new();
+    }
     faces_with_user_fonts(family, &dirs, user_font_dir().as_deref())
 }
 
@@ -1752,6 +1866,56 @@ fn cloud_font_dirs(family: &str) -> Vec<(PathBuf, bool)> {
             out.push((dir.clone(), true));
         }
     }
+    let latin = want.chars().filter(char::is_ascii_alphanumeric).count() >= 3;
+    if !latin && out.iter().all(|(d, _)| !d.is_dir()) {
+        // Word files a family under its English name and answers to its
+        // localized one too: 华文仿宋 lives in CloudFonts/STFangsong/, whose
+        // name table carries 华文仿宋 for zh-CN (fixtures_500 004599833e).
+        out.extend(
+            cloud_folder_names(&root)
+                .iter()
+                .filter(|(_, names)| names.contains(&want))
+                .map(|(dir, _)| (dir.clone(), true)),
+        );
+    }
+    out
+}
+
+/// Cloud-font folders, each with the folded family names its fonts carry.
+type FolderNames = Vec<(PathBuf, Vec<String>)>;
+
+/// Each cloud-font folder with the family names (IDs 1 and 16, every
+/// language, folded) of its first font, read once per process: a folder
+/// holds one family, and the cache is ~60 MB, too much to read whole.
+fn cloud_folder_names(root: &Path) -> Arc<FolderNames> {
+    static CACHE: LazyLock<Mutex<HashMap<PathBuf, Arc<FolderNames>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = CACHE.lock().ok().and_then(|c| c.get(root).cloned()) {
+        return hit;
+    }
+    let mut out = Vec::new();
+    for dir in sorted_dir_listing(root).iter().filter(|d| d.is_dir()) {
+        let mut names = Vec::new();
+        let first = sorted_dir_listing(dir)
+            .iter()
+            .find_map(|file| fs::read(file).ok());
+        if let Some(bytes) = first
+            && let Ok(face) = ttf_parser::Face::parse(&bytes, 0)
+        {
+            names.extend(face_family_names(&face, ttf_parser::name_id::FAMILY));
+            names.extend(face_family_names(
+                &face,
+                ttf_parser::name_id::TYPOGRAPHIC_FAMILY,
+            ));
+        }
+        names.sort();
+        names.dedup();
+        out.push((dir.clone(), names));
+    }
+    let out = Arc::new(out);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(root.to_path_buf(), Arc::clone(&out));
+    }
     out
 }
 
@@ -1782,7 +1946,7 @@ fn faces_with_user_fonts(
 /// Word's cloud cache hidden, 010ec7df 0.442 -> 0.447 and 015beda9 gets
 /// Word's 4 pages). EB Garamond for Garamond was tried and dropped: its
 /// metrics are further from Monotype's than the Times fallback (00dd36c7
-/// 0.181 -> 0.079). Cooper Black and Script MT have no open equivalent.
+/// 0.181 -> 0.079); Word's own GARA*.ttf is now found by family name. Cooper Black and Script MT have no open equivalent.
 fn open_stand_in(family: &str) -> Option<&'static str> {
     (fold_family(family) == "segoeui").then_some("Selawik")
 }
@@ -1796,10 +1960,17 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
             .collect()
     };
     let key = norm(family);
-    if key.len() < 3 {
+    // Without a Latin key only a whole-family folder can answer; its faces
+    // still have to carry the requested name.
+    let latin = key.len() >= 3;
+    if !latin && dirs.iter().all(|(_, family_folder)| !family_folder) {
         return Vec::new();
     }
     let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
+    // Faces from collections rank after single-face files: Word draws its
+    // own DFonts Rockwell (hhea 1.174em) over macOS's Rockwell.ttc (1.0em
+    // plus a gap), fixtures_500 0071d504's 15.6pt sidebar lines.
+    let mut collected: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
     for (dir, family_folder) in dirs {
         let family_folder = *family_folder;
         for path in sorted_dir_listing(dir).iter() {
@@ -1810,6 +1981,7 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
             // A collection is named for its whole family (Avenir.ttc holds
             // "Avenir Book"); its faces answer to their own names.
             if ext.eq_ignore_ascii_case("ttc")
+                && latin
                 && stem
                     .as_deref()
                     .is_some_and(|s| s.len() >= 3 && key.starts_with(s))
@@ -1823,12 +1995,22 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
                         continue;
                     };
                     if let Some((pass, style)) = face_family_style(&data, family) {
-                        found.push((pass, style, data));
+                        collected.push((pass, style, data));
                     }
                 }
                 continue;
             }
-            if !is_font || !(family_folder || stem.is_some_and(|s| s.starts_with(&key))) {
+            // A system file may be named short of its family ("Arial
+            // Unicode.ttf" holds "Arial Unicode MS", which Word draws in
+            // international_terrorism_thesis's header); its own name decides.
+            // Word's DFonts keep the name-index path below: Word paints
+            // 012128d3's regular TH SarabunPSK runs in its thsarabun-bold.
+            let short_ok = !dir.ends_with("DFonts");
+            let named = latin
+                && stem.is_some_and(|s| {
+                    s.starts_with(&key) || (short_ok && s.len() >= 5 && key.starts_with(&s))
+                });
+            if !is_font || !(family_folder || named) {
                 continue;
             }
             let Ok(bytes) = fs::read(&path) else {
@@ -1840,7 +2022,71 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
             found.push((pass, style, bytes));
         }
     }
+    found.append(&mut collected);
+    if found.is_empty() && latin {
+        // Word's own fonts carry abbreviated file names (Garamond is
+        // GARA.ttf / GARAIT.ttf): match its folder by internal family name
+        // (fixtures_500 00dd36c7 painted Garamond Italic as Times).
+        for (dir, _) in dirs.iter().filter(|(d, _)| d.ends_with("DFonts")) {
+            for (path, names) in font_name_index(dir).iter() {
+                if !names.contains(&key) {
+                    continue;
+                }
+                let Ok(bytes) = fs::read(path) else {
+                    continue;
+                };
+                if let Some((pass, style)) = face_family_style(&bytes, family) {
+                    found.push((pass, style, bytes));
+                }
+            }
+        }
+    }
     pick_ranked_faces(found)
+}
+
+/// Font files with their normalised family names.
+type FontNameIndex = Arc<Vec<(PathBuf, Vec<String>)>>;
+
+/// Each `.ttf`/`.otf` in `dir` with its normalised family names (name IDs
+/// 1 and 16), read once per process.
+fn font_name_index(dir: &Path) -> FontNameIndex {
+    static CACHE: LazyLock<Mutex<HashMap<PathBuf, FontNameIndex>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = CACHE.lock().ok().and_then(|c| c.get(dir).cloned()) {
+        return hit;
+    }
+    let norm = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    let mut out = Vec::new();
+    for path in sorted_dir_listing(dir).iter() {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !(ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf")) {
+            continue;
+        }
+        let Ok(bytes) = fs::read(path) else {
+            continue;
+        };
+        let Ok(face) = ttf_parser::Face::parse(&bytes, 0) else {
+            continue;
+        };
+        let names: Vec<String> = face
+            .names()
+            .into_iter()
+            .filter(|n| matches!(n.name_id, 1 | 16) && n.is_unicode())
+            .filter_map(|n| n.to_string())
+            .map(|n| norm(&n))
+            .collect();
+        out.push((path.clone(), names));
+    }
+    let out = Arc::new(out);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(dir.to_path_buf(), Arc::clone(&out));
+    }
+    out
 }
 
 /// jubarte's own font folder: `$JUBARTE_FONT_DIR`, else the platform's
@@ -2007,7 +2253,7 @@ fn face_family_names(face: &ttf_parser::Face<'_>, id: u16) -> Vec<String> {
     face.names()
         .into_iter()
         .filter(|n| n.name_id == id)
-        .filter_map(|n| n.to_string())
+        .filter_map(|n| name_text(&n))
         .map(|n| fold_family(&n))
         .collect()
 }
@@ -2124,6 +2370,25 @@ fn ttc_face_bytes(ttc: &[u8], index: u32) -> Option<Vec<u8>> {
 /// `Fonts::cjk_fallback_index`); no document family can be named this.
 pub(crate) const CJK_FALLBACK: &str = "@cjk";
 pub(crate) const CJK_FALLBACK_JA: &str = "@cjk-ja";
+/// Embedded-map key of the Thaana fallback face.
+pub(crate) const THAANA_FALLBACK: &str = "@thaana";
+
+/// Loads the face Word paints Dhivehi in when the document's font is
+/// missing: MV Boli from Office's cloud fonts (fixtures_500 0003fc93's
+/// Faruma), else the system's Noto Sans Thaana.
+pub(crate) fn add_thaana_fallback(embedded: &mut EmbeddedFonts) {
+    let faces = cached_faces(THAANA_FALLBACK, || {
+        let faces = installed_family_faces("MV Boli");
+        if faces.is_empty() {
+            installed_family_faces("Noto Sans Thaana")
+        } else {
+            faces
+        }
+    });
+    for ((bold, italic), bytes) in faces {
+        embedded.insert((THAANA_FALLBACK.to_string(), bold, italic), bytes);
+    }
+}
 
 fn is_cjk_name_char(c: char) -> bool {
     matches!(c as u32, 0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF66..=0xFF9F)
@@ -2206,7 +2471,16 @@ pub(crate) fn add_installed_faces(
         if catalogue_paints_family(&entry.name) || embedded.keys().any(|(f, _, _)| *f == lower) {
             continue;
         }
-        let faces = cached_faces(&entry.name, || installed_family_faces(&entry.name));
+        let mut faces = cached_faces(&entry.name, || installed_family_faces(&entry.name));
+        // An absent family draws in its installed altName (b88ac900's
+        // "BernhardFashion BT" → Gabriola in Word's PDF).
+        if faces.is_empty()
+            && let Some(alt) = entry.alt_name.as_deref()
+            && cjk_file_stems(&entry.name).is_empty()
+            && !catalogue_paints_family(alt)
+        {
+            faces = cached_faces(alt, || installed_family_faces(alt));
+        }
         // Runs may name the family by its altName ("MS Mincho" for the
         // table's "ＭＳ 明朝"); the same faces answer to both.
         if let Some(alt) = entry.alt_name.as_deref()
@@ -2262,26 +2536,67 @@ fn pick_ranked_faces(mut found: Vec<(u8, (bool, bool), Vec<u8>)>) -> Vec<((bool,
 }
 
 /// (pass, (bold, italic)) when the font's own family name is `family`:
-/// pass 0 for name ID 1, 1 for the typographic ID 16 only. A face without
+/// pass 0 for name ID 1, 4 for the typographic ID 16 only, plus 2 for a
+/// face that is not normal width and 1 for one off its style's weight. A face without
 /// TrueType outlines is skipped: PDF FontFile2 cannot carry CFF.
+/// OS/2 `ulCodePageRange1` names a Japanese, Chinese or Korean code page
+/// (bits 17-21).
+fn cjk_code_pages(face: &ttf_parser::Face) -> bool {
+    face.raw_face()
+        .table(ttf_parser::Tag::from_bytes(b"OS/2"))
+        .and_then(|os2| os2.get(78..82))
+        .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+        .is_some_and(|range| range & (0b1_1111 << 17) != 0)
+}
+
+/// A name record's text: Unicode records as ttf-parser decodes them, and
+/// Macintosh Roman ones when plain ASCII. Apple's Futura.ttc names its
+/// family only in a Mac Roman record, which `to_string` leaves undecoded.
+fn name_text(n: &ttf_parser::name::Name) -> Option<String> {
+    n.to_string().or_else(|| {
+        (n.platform_id == ttf_parser::PlatformId::Macintosh
+            && n.encoding_id == 0
+            && n.name.is_ascii())
+        .then(|| n.name.iter().map(|&b| char::from(b)).collect())
+    })
+}
+
 fn face_family_style(bytes: &[u8], family: &str) -> Option<(u8, (bool, bool))> {
     let face = ttf_parser::Face::parse(bytes, 0).ok()?;
     face.tables().glyf?;
     let has = |id: u16| {
         face.names().into_iter().any(|n| {
-            n.name_id == id
-                && n.to_string()
-                    .is_some_and(|f| f.eq_ignore_ascii_case(family))
+            n.name_id == id && name_text(&n).is_some_and(|f| f.eq_ignore_ascii_case(family))
         })
     };
-    let pass = if has(ttf_parser::name_id::FAMILY) {
+    let named = if has(ttf_parser::name_id::FAMILY) {
         0
     } else if has(ttf_parser::name_id::TYPOGRAPHIC_FAMILY) {
-        1
+        4
     } else {
         return None;
     };
-    Some((pass, (face.is_bold(), face.is_italic())))
+    // A normal-width face ranks before a condensed or expanded one of the
+    // same style (Papyrus.ttc holds Condensed ahead of Regular; Word draws
+    // the Regular, English corpus 469e5710), and a face at its style's
+    // weight before a SemiBold or Light one (20c18b4b's Open Sans).
+    let target = if face.is_bold() { 700 } else { 400 };
+    let pass = named
+        + 2 * u8::from(face.width() != ttf_parser::Width::Normal)
+        + u8::from(face.weight().to_number().abs_diff(target) > 50);
+    // A slant alone is not italic: MV Boli leans -16 degrees but is the
+    // Regular face. Apple's Avenir Next Bold Italic sets no italic bit,
+    // so a slanted face whose subfamily says so still counts.
+    let slanted_name = face.names().into_iter().any(|n| {
+        matches!(n.name_id, 2 | 17)
+            && name_text(&n).is_some_and(|f| {
+                let f = f.to_ascii_lowercase();
+                f.contains("italic") || f.contains("oblique")
+            })
+    });
+    let italic = face.style() != ttf_parser::Style::Normal
+        || (face.italic_angle() != 0.0 && (slanted_name || face.tables().os2.is_none()));
+    Some((pass, (face.is_bold(), italic)))
 }
 
 fn cloud_font_override(id: FaceId) -> Option<PathBuf> {
@@ -2353,9 +2668,98 @@ fn sanitize_pdf_name(name: &str) -> String {
         .collect()
 }
 
+/// A font-table entry Word substitutes by its generic: one with a panose
+/// that says something beyond its family kind (`0200…0` and all-zero say
+/// nothing) or with an altName.
+fn entry_describes(entry: &super::font_table::FontEntry) -> bool {
+    entry.alt_name.is_some()
+        || entry
+            .panose
+            .is_some_and(|p| p.iter().skip(1).any(|b| *b != 0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_east_asian_face_takes_word_s_taller_line() {
+        // Live Word at 12pt: SimSun lines step 15.6 (1.3 x its 1.0 em
+        // hhea body), not the hhea 13.7 with its lineGap; the extra splits
+        // around the text (baseline 84.2 under a 72pt margin).
+        let path =
+            Path::new("/Applications/Microsoft Word.app/Contents/Resources/DFonts/Simsun.ttc");
+        let Ok(bytes) = fs::read(path) else {
+            return;
+        };
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        let face = Face::from_bytes(FaceId::SansRegular, bytes, "SimSun".into()).expect("SimSun");
+        assert!(
+            (face.single_line_pt(12.0) - 15.6).abs() < 0.05,
+            "{}",
+            face.single_line_pt(12.0)
+        );
+        assert!(
+            (face.ascent_pt(12.0) - 12.11).abs() < 0.1,
+            "{}",
+            face.ascent_pt(12.0)
+        );
+    }
+
+    #[test]
+    fn a_typo_metrics_face_sets_its_line_gap_above_the_text() {
+        // Live Word, 16pt Gabriola (USE_TYPO_METRICS, typo lineGap 2867 of
+        // 4096) under a 72pt margin: baseline 94.08, the typo ascent plus
+        // the whole lineGap (22.13), not the ascent alone (10.94). Poppins
+        // 12 follows too (13.92 = 1.05 + 0.10 em); Candara (no flag) not.
+        let path =
+            Path::new("/Applications/Microsoft Word.app/Contents/Resources/DFonts/Gabriola.ttf");
+        let Ok(bytes) = fs::read(path) else {
+            return;
+        };
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        let face =
+            Face::from_bytes(FaceId::SansRegular, bytes, "Gabriola".into()).expect("Gabriola");
+        assert!(
+            (face.ascent_pt(16.0) - 22.13).abs() < 0.1,
+            "{}",
+            face.ascent_pt(16.0)
+        );
+    }
+
+    #[test]
+    fn a_slanted_regular_face_is_the_upright_one() {
+        // MV Boli (Word's Thaana face) leans -16 degrees yet is the family's
+        // Regular: Word files it by its style bits, not the angle.
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let path = Path::new(&home).join(
+            "Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/MV Boli/29162370688.ttf",
+        );
+        let Ok(bytes) = fs::read(&path) else {
+            return;
+        };
+        assert_eq!(
+            face_family_style(&bytes, "MV Boli"),
+            Some((0, (false, false)))
+        );
+    }
+
+    #[test]
+    fn right_to_left_text_shapes_in_visual_order() {
+        // HarfBuzz returns an RTL run left to right on the page: the last
+        // letter first. Word draws "متن" with its initial meem rightmost.
+        let fonts = Fonts::new();
+        let face = fonts.get(FaceId::SansRegular);
+        let buzz = face.buzz.as_ref().expect("bundled face shapes");
+        let clusters: Vec<u32> = face
+            .shaped_units(buzz, "متن", false)
+            .iter()
+            .map(|u| u.2)
+            .collect();
+        assert_eq!(clusters, vec![4, 2, 0]);
+    }
 
     #[test]
     fn apple_system_symbol_is_not_the_word_overlay() {
@@ -2563,9 +2967,11 @@ mod tests {
 
     #[test]
     fn resolve_font_table_swiss_generic_is_arial() {
+        // The generic needs a panose that describes the face; a bare entry
+        // takes the default (a_bare_missing_entry_takes_the_default…).
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                 <w:font w:name="SomeSwiss"><w:family w:val="swiss"/></w:font>
+                 <w:font w:name="SomeSwiss"><w:panose1 w:val="020B0604020202020204"/><w:family w:val="swiss"/></w:font>
                </w:fonts>"#,
         );
         let fonts = Fonts::new();
@@ -2579,7 +2985,7 @@ mod tests {
     fn resolve_font_table_roman_generic_is_times() {
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                 <w:font w:name="SomeRoman"><w:family w:val="roman"/></w:font>
+                 <w:font w:name="SomeRoman"><w:panose1 w:val="02020603050405020304"/><w:family w:val="roman"/></w:font>
                </w:fonts>"#,
         );
         let fonts = Fonts::new();
@@ -2591,15 +2997,55 @@ mod tests {
 
     #[test]
     fn resolve_font_table_fixed_pitch_is_courier() {
+        // A fixed-pitch entry that describes its face (a panose past the
+        // family kind) still falls to Courier; a bare one does not (see
+        // the next test, live Word 2026-09-25: Calibri).
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                 <w:font w:name="SomeFixed"><w:pitch w:val="fixed"/></w:font>
+                 <w:font w:name="SomeFixed"><w:panose1 w:val="02070309020205020404"/><w:pitch w:val="fixed"/></w:font>
                </w:fonts>"#,
         );
         let fonts = Fonts::new();
         assert_eq!(
             fonts.resolve_in("SomeFixed", false, false, &table),
             FaceId::MonoRegular
+        );
+    }
+
+    #[test]
+    fn a_bare_missing_entry_takes_the_default_not_its_generic() {
+        // fixtures_500 01177cdf: theme "Museo Sans 300" is absent; its entry
+        // says modern/variable with panose 0200…0 and no altName. Word
+        // paints it in Calibri, not the modern generic Courier New (live
+        // Word gives Calibri for bare modern/roman/swiss entries alike).
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="Museo Sans 300"><w:panose1 w:val="02000000000000000000"/>
+                   <w:family w:val="modern"/><w:notTrueType/><w:pitch w:val="variable"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("Museo Sans 300", false, false, &table),
+            FaceId::CarlitoRegular
+        );
+    }
+
+    #[test]
+    fn a_missing_entry_with_an_alt_name_keeps_its_generic() {
+        // fixtures_500 019d9ee6: Myriad Pro (swiss, panose all zero, altName
+        // an absent Segoe UI) is Arial in Word's PDF.
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="Myriad Pro"><w:altName w:val="Qwertzu Absent"/>
+                   <w:panose1 w:val="00000000000000000000"/><w:family w:val="swiss"/>
+                   <w:notTrueType/><w:pitch w:val="variable"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        assert_eq!(
+            fonts.resolve_in("Myriad Pro", false, false, &table),
+            FaceId::SansRegular
         );
     }
 
@@ -2727,6 +3173,68 @@ mod tests {
     }
 
     #[test]
+    fn macos_helvetica_takes_word_s_one_point_two_em_line() {
+        // English part a 18f71536 (12pt, line=248 auto): Word's lines step
+        // 14.88, a 14.40pt single line, 1.2 em, where Helvetica's hhea body
+        // is 1.0 em; the first baseline sits 0.975 em down (win ascent 0.95
+        // plus the 0.025 em the win box leaves of that line).
+        if !Path::new("/System/Library/Fonts/Helvetica.ttc").is_file() {
+            return;
+        }
+        let faces = installed_family_faces("Helvetica");
+        let (_, bytes) = faces
+            .into_iter()
+            .find(|(style, _)| *style == (false, false))
+            .expect("regular Helvetica");
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        let ps = ttf_postscript_name(bytes).expect("postscript name");
+        let face = Face::from_bytes(FaceId::SansRegular, bytes, sanitize_pdf_name(&ps))
+            .expect("Helvetica");
+        assert!(
+            (face.single_line_pt(12.0) - 14.4).abs() < 0.02,
+            "{}",
+            face.single_line_pt(12.0)
+        );
+        assert!(
+            (face.ascent_pt(12.0) - 11.7).abs() < 0.02,
+            "{}",
+            face.ascent_pt(12.0)
+        );
+    }
+
+    #[test]
+    fn a_collection_whose_upright_face_is_medium_is_the_regular() {
+        // English corpus 87098dc3: Word draws "Futura" from macOS's
+        // Futura.ttc, whose upright face is "Futura Medium" (weight 500,
+        // no Regular). The text fell to Arial.
+        if !Path::new("/System/Library/Fonts/Supplemental/Futura.ttc").is_file() {
+            return;
+        }
+        let faces = installed_family_faces("Futura");
+        assert!(
+            faces.iter().any(|(style, _)| *style == (false, false)),
+            "a regular Futura face from the system collection"
+        );
+    }
+
+    #[test]
+    fn a_collection_prefers_its_normal_width_face() {
+        // English corpus 469e5710: macOS's Papyrus.ttc holds "Papyrus
+        // Condensed" before "Papyrus Regular", both family "Papyrus". Word
+        // draws the regular; we took the condensed face.
+        if !Path::new("/System/Library/Fonts/Supplemental/Papyrus.ttc").is_file() {
+            return;
+        }
+        let faces = installed_family_faces("Papyrus");
+        let regular = faces
+            .iter()
+            .find(|(style, _)| *style == (false, false))
+            .expect("a regular Papyrus face");
+        let face = ttf_parser::Face::parse(&regular.1, 0).expect("face");
+        assert_eq!(face.width(), ttf_parser::Width::Normal);
+    }
+
+    #[test]
     fn a_cff_face_is_not_embedded() {
         // CodeRabbit #166: the PDF writer emits FontFile2 (TrueType); a CFF
         // .otf would be embedded as an unreadable program. It is refused.
@@ -2815,7 +3323,7 @@ mod tests {
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
                  <w:font w:name="標楷體"><w:charset w:val="88"/><w:family w:val="script"/><w:pitch w:val="fixed"/></w:font>
                  <w:font w:name="HGP行書体"><w:charset w:val="80"/><w:family w:val="script"/></w:font>
-                 <w:font w:name="SomeLatin"><w:family w:val="swiss"/></w:font>
+                 <w:font w:name="SomeLatin"><w:panose1 w:val="020B0604020202020204"/><w:family w:val="swiss"/></w:font>
                </w:fonts>"#,
         );
         let mut embedded = EmbeddedFonts::new();
@@ -3074,7 +3582,7 @@ mod tests {
     fn classify_swiss_generic_step_is_generic() {
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                 <w:font w:name="SomeSwiss"><w:family w:val="swiss"/></w:font>
+                 <w:font w:name="SomeSwiss"><w:panose1 w:val="020B0604020202020204"/><w:family w:val="swiss"/></w:font>
                </w:fonts>"#,
         );
         let fonts = Fonts::new();
