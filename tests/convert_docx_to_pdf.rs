@@ -2789,6 +2789,40 @@ fn a_text_anchored_frame_floats_beside_the_next_paragraph() {
 }
 
 #[test]
+fn a_frame_needs_more_than_an_inch_beside_it() {
+    // Live Word: a text-anchored frame leaving 72pt of the column beside
+    // it sends the next paragraph under it (baseline 83 -> 165); 76pt
+    // wraps it beside ("Contact for " / "further ").
+    let body_for = |gap: i64| {
+        let x = (gap + 9) * 20;
+        let w = (468 - gap - 11) * 20;
+        let frame = |text: &str| {
+            format!(
+                r#"<w:p><w:pPr><w:framePr w:w="{w}" w:h="541" w:hSpace="180" w:wrap="around" w:vAnchor="text" w:hAnchor="margin" w:x="{x}" w:y="75"/><w:pBdr><w:top w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:left w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:right w:val="single" w:sz="6" w:space="1" w:color="auto"/></w:pBdr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+            )
+        };
+        format!(
+            "<w:p><w:r><w:t>Before line</w:t></w:r></w:p>{}{}\
+             <w:p><w:r><w:t>Contact for further information: after the frame text wraps here</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+            frame("FrameOne"),
+            frame("FrameTwo")
+        )
+    };
+    let drop = |gap: i64| {
+        let pdf = docx_to_pdf(&minimal_docx_body(&body_for(gap))).expect("frame gap");
+        let (_, before) = pdf_glyph_text_xy(&pdf, "Before").expect("before paints");
+        let (_, contact) = pdf_glyph_text_xy(&pdf, "Contact").expect("contact paints");
+        before - contact
+    };
+    let d = drop(72);
+    assert!(d > 60.0, "a 72pt gap: the paragraph goes under; {d}");
+    let d = drop(76);
+    assert!(d < 30.0, "a 76pt gap: the paragraph wraps beside; {d}");
+}
+
+#[test]
 fn a_word_font_with_an_abbreviated_file_name_is_found() {
     // fixtures_500 00dd36c7: Word's own Garamond ships as GARA.ttf /
     // GARAIT.ttf, which the file-name match never reached; we painted

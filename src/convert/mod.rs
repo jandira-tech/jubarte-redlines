@@ -1739,6 +1739,9 @@ struct LaidTextBox {
     /// The owning run's `w:position` (pt, up): an inline box's bottom sits
     /// this far over the baseline (212a1c9d's title bar beside its logo).
     raise: f32,
+    /// A `w:framePr` frame: text wraps beside it only through a gap wider
+    /// than an inch, else goes under it (live Word: 72pt under, 76 beside).
+    frame: bool,
 }
 
 /// One shape of a group: its box as fractions of the group's box (x, y
@@ -2900,6 +2903,10 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
 /// Narrower than this beside a floating table, no text fits: Word moves
 /// the line below the table.
 const MIN_SIDE_FLOAT_ROOM_PT: f32 = 18.0;
+
+/// A text frame needs a wider gap: text goes under it through an inch or
+/// less (live Word: 72pt under, 76pt beside).
+const MIN_SIDE_FRAME_ROOM_PT: f32 = 72.5;
 
 fn is_auto_spacing(dom: &Dom, spacing: NodeId, name: &str) -> bool {
     attr_any(dom, spacing, name).is_some_and(|v| matches!(v, "1" | "true" | "on"))
@@ -6859,6 +6866,7 @@ fn frame_box(
         chrome_para_top: 0.0,
         fit_width: false,
         raise: 0.0,
+        frame: true,
     })
 }
 
@@ -12063,6 +12071,7 @@ fn collect_textboxes_styled(
                     chrome_para_top: 0.0,
                     fit_width: false,
                     raise: run_raise_pt(dom, shape),
+                    frame: false,
                 });
                 continue;
             }
@@ -12106,6 +12115,7 @@ fn collect_textboxes_styled(
                     chrome_para_top: 0.0,
                     fit_width: false,
                     raise: run_raise_pt(dom, shape),
+                    frame: false,
                 });
                 continue;
             }
@@ -12175,6 +12185,7 @@ fn collect_textboxes_styled(
             chrome_para_top: 0.0,
             fit_width: bodypr_fits_width(dom, shape),
             raise: run_raise_pt(dom, shape),
+            frame: false,
         });
     }
     // WrapNone accent fills on the same paragraph as an inline chart
@@ -12233,6 +12244,7 @@ fn group_box(
         chrome_para_top: 0.0,
         fit_width: false,
         raise: 0.0,
+        frame: false,
     }
 }
 
@@ -18454,7 +18466,7 @@ impl<'a> Layout<'a> {
         let mut first_hit = false;
         let mut from_min = f32::MAX;
         let max_side = self.content_width() * 0.7;
-        let mut consider = |slot: ImageSlot, w: f32, h: f32| {
+        let mut consider = |slot: ImageSlot, w: f32, h: f32, frame: bool| {
             let ImageSlot::Float {
                 align,
                 wrap_square,
@@ -18476,7 +18488,9 @@ impl<'a> Layout<'a> {
             };
             let hits = from < self.line_probe.h;
             let (dw, _) = self.sized_wh(slot, w, h, 1.0, 1.0);
-            if dw >= max_side {
+            // A frame keeps its own inch rule below; other wide floats
+            // are page banners with no side room.
+            if dw >= max_side && !frame {
                 return;
             }
             let (fx, _) = self.float_xy(dw, h.max(1.0), slot);
@@ -18485,6 +18499,11 @@ impl<'a> Layout<'a> {
             // (001c1554's picture 490pt into the column wraps text left).
             let placed = page_x.is_some() || col_x.is_some() || pct_x.is_some();
             let right_room = self.page.margin_l + self.content_width() - (fx + dw + dist_r);
+            // Through an inch or less the text goes under a frame
+            // (apply_top_bottom_wrap).
+            if frame && text_room.max(right_room) < MIN_SIDE_FRAME_ROOM_PT {
+                return;
+            }
             let text_left = match align {
                 Align::Right => Some(dw + dist_l),
                 Align::Left if placed && text_room > right_room => {
@@ -18515,10 +18534,10 @@ impl<'a> Layout<'a> {
             }
         };
         for img in images {
-            consider(img.slot, img.w, img.h);
+            consider(img.slot, img.w, img.h, false);
         }
         for box_ in boxes {
-            consider(box_.slot, box_.w, box_.h);
+            consider(box_.slot, box_.w, box_.h, box_.frame);
         }
         if let Some(sf) = self.side_float_holds_line() {
             first_hit = true;
@@ -18575,7 +18594,7 @@ impl<'a> Layout<'a> {
         let mut hangs: Option<(f32, f32)> = None;
         let left_edge = self.flow_left();
         let right_edge = left_edge + self.content_width();
-        let mut consider = |slot: ImageSlot, w: f32, h: f32| {
+        let mut consider = |slot: ImageSlot, w: f32, h: f32, min_room: f32| {
             let ImageSlot::Float {
                 wrap_top_bottom,
                 wrap_square,
@@ -18595,8 +18614,8 @@ impl<'a> Layout<'a> {
             let no_side_room = wrap_square && {
                 let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
                 let (fx, fy) = self.float_xy(dw, dh.max(1.0), slot);
-                fx - dist_l - left_edge < MIN_SIDE_FLOAT_ROOM_PT
-                    && right_edge - (fx + dw + dist_r) < MIN_SIDE_FLOAT_ROOM_PT
+                fx - dist_l - left_edge < min_room
+                    && right_edge - (fx + dw + dist_r) < min_room
                     && fy - dist_b > self.body_floor
             };
             if !wrap_top_bottom && !no_side_room {
@@ -18616,10 +18635,15 @@ impl<'a> Layout<'a> {
             jump = jump.min(fy - dist_b);
         };
         for img in images {
-            consider(img.slot, img.w, img.h);
+            consider(img.slot, img.w, img.h, MIN_SIDE_FLOAT_ROOM_PT);
         }
         for box_ in boxes {
-            consider(box_.slot, box_.w, box_.h);
+            let min_room = if box_.frame {
+                MIN_SIDE_FRAME_ROOM_PT
+            } else {
+                MIN_SIDE_FLOAT_ROOM_PT
+            };
+            consider(box_.slot, box_.w, box_.h, min_room);
         }
         if hangs.is_some() {
             self.tb_band = hangs;
