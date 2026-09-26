@@ -4294,6 +4294,9 @@ struct NumLevel {
     suff_nothing: bool,
     /// `w:lvlJc=right`: marker right edge at hanging end (body start).
     jc_right: bool,
+    /// The level's `w:pPr/w:jc`: the paragraph's alignment when its numPr
+    /// is direct (8aea3634's centred heading 1 items sit left).
+    jc: Option<Align>,
     /// Numbering `w:tabs` (`val=num` is a left stop at hanging indent).
     tab_stops: Vec<TabStop>,
     /// lvl `w:rPr/w:sz` in pt. None = inherit the paragraph run.
@@ -4391,6 +4394,7 @@ impl Numbering {
             family: parent.family,
             suff_nothing: parent.suff_nothing,
             jc_right: parent.jc_right,
+            jc: parent.jc,
             tab_stops: parent.tab_stops,
             size: parent.size,
             underline: parent.underline,
@@ -5415,6 +5419,15 @@ fn parse_num_level(dom: &Dom, lvl: NodeId) -> NumLevel {
         jc_right: first_named(dom, lvl, "lvlJc")
             .and_then(|n| attr_any(dom, n, "val"))
             .is_some_and(|v| v.eq_ignore_ascii_case("right") || v.eq_ignore_ascii_case("end")),
+        jc: first_named(dom, lvl, "pPr")
+            .and_then(|ppr| first_named(dom, ppr, "jc"))
+            .and_then(|n| attr_any(dom, n, "val"))
+            .map(|v| match v {
+                "center" => Align::Center,
+                "right" | "end" => Align::Right,
+                "both" | "distribute" => Align::Justify,
+                _ => Align::Left,
+            }),
         tab_stops,
         size,
         underline,
@@ -9062,6 +9075,18 @@ fn apply_list_level(
         }
         if lvl.hanging > 0.0 && !style_first && !direct_has(&["hanging", "firstLine"]) {
             pstyle.indent_first = -lvl.hanging;
+        }
+        // Like its w:ind, a direct numPr's level jc beats the paragraph
+        // style's; a direct w:jc still wins.
+        let direct_jc = dom
+            .element(para, &W::p_pr())
+            .and_then(|ppr| first_named(dom, ppr, "jc"))
+            .is_some();
+        if let Some(jc) = lvl.jc
+            && direct_num
+            && !direct_jc
+        {
+            pstyle.align = jc;
         }
         pstyle.list_jc_right = lvl.jc_right;
         merge_tab_stops(&mut pstyle.tab_stops, &lvl.tab_stops);
@@ -34590,6 +34615,7 @@ mod numbering_tests {
                 family: String::new(),
                 suff_nothing: false,
                 jc_right: false,
+                jc: None,
                 tab_stops: Vec::new(),
                 size: None,
                 underline: false,
@@ -34732,6 +34758,7 @@ mod numbering_tests {
                 family: String::new(),
                 suff_nothing: false,
                 jc_right: false,
+                jc: None,
                 tab_stops: Vec::new(),
                 size: None,
                 underline: false,
@@ -34750,6 +34777,7 @@ mod numbering_tests {
                 family: String::new(),
                 suff_nothing: false,
                 jc_right: false,
+                jc: None,
                 tab_stops: Vec::new(),
                 size: None,
                 underline: false,
@@ -34791,6 +34819,7 @@ mod numbering_tests {
                 family: String::new(),
                 suff_nothing: false,
                 jc_right: false,
+                jc: None,
                 tab_stops: Vec::new(),
                 size: None,
                 underline: false,
@@ -34809,6 +34838,7 @@ mod numbering_tests {
                 family: String::new(),
                 suff_nothing: false,
                 jc_right: false,
+                jc: None,
                 tab_stops: Vec::new(),
                 size: None,
                 underline: false,
@@ -34827,6 +34857,7 @@ mod numbering_tests {
                 family: String::new(),
                 suff_nothing: false,
                 jc_right: false,
+                jc: None,
                 tab_stops: Vec::new(),
                 size: None,
                 underline: false,
@@ -34861,6 +34892,7 @@ mod numbering_tests {
                 family: String::new(),
                 suff_nothing: false,
                 jc_right: false,
+                jc: None,
                 tab_stops: Vec::new(),
                 size: None,
                 underline: false,
@@ -34879,6 +34911,7 @@ mod numbering_tests {
                 family: String::new(),
                 suff_nothing: true,
                 jc_right: false,
+                jc: None,
                 tab_stops: Vec::new(),
                 size: None,
                 underline: false,
@@ -34907,6 +34940,7 @@ mod numbering_tests {
                 family: String::new(),
                 suff_nothing: false,
                 jc_right: false,
+                jc: None,
                 tab_stops: vec![TabStop {
                     pos: 90.0,
                     align: TabAlign::Left,

@@ -1700,6 +1700,40 @@ fn direct_ind_left_keeps_the_numbering_level_hanging() {
 }
 
 #[test]
+fn a_numbering_levels_jc_overrides_its_paragraph_styles() {
+    // English corpus 8aea3634: items 6 and 7 are "heading 1" (jc=center)
+    // with a direct numPr whose level's pPr says jc=left. Word sets them
+    // at the level's indent like the other items; we centred them.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/><w:jc w:val=\"left\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:styleId=\"Titre1\"><w:name w:val=\"heading 1\"/>\
+            <w:pPr><w:jc w:val=\"center\"/></w:pPr></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"Titre1\"/><w:numPr><w:ilvl w:val=\"0\"/>\
+           <w:numId w:val=\"1\"/></w:numPr></w:pPr><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(
+        body,
+        Some(numbering),
+        Some(styles),
+    ))
+    .expect("level jc");
+    let x = pdf_glyph_text_xy(&pdf, "Body").expect("Body").0;
+    assert!(
+        (x - 108.0).abs() < 1.0,
+        "the text starts at the level's 720tw indent; x={x}"
+    );
+}
+
+#[test]
 fn all_lowercase_small_caps_line_keeps_its_authored_height() {
     // fixtures_500 000f4c0b: small caps paint lowercase at 80%, but the
     // run is still 12pt; its line is a 12pt line, not a 9.6pt one.

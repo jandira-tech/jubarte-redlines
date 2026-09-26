@@ -287,6 +287,10 @@ rule:
   character align inside the margins.
   - Part a 1f3856c4: the letterhead at page/left and the footer logo at
     page/right sat 70.9pt in.
+- **A numbering level's `w:pPr/w:jc` beats the paragraph style's `jc`.**
+  This holds when the paragraph's `numPr` is direct and it carries no direct
+  `jc`.
+  - Part a 8aea3634: its numbered Titre1 (heading 1, centred) items sit left.
 
 ## Open, measured but not yet reconstructed
 
