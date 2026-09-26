@@ -5475,7 +5475,7 @@ fn parse_num_level(dom: &Dom, lvl: NodeId) -> NumLevel {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
     let (left, hanging) = lvl_indent(dom, lvl);
-    let family = lvl_marker_family(dom, lvl);
+    let family = lvl_marker_family(dom, lvl, fmt, &text);
     let (size, underline, bold, italic) = lvl_marker_rpr(dom, lvl);
     let suff_nothing = first_named(dom, lvl, "suff")
         .and_then(|n| attr_any(dom, n, "val"))
@@ -5511,17 +5511,43 @@ fn parse_num_level(dom: &Dom, lvl: NodeId) -> NumLevel {
     }
 }
 
-fn lvl_marker_family(dom: &Dom, lvl: NodeId) -> String {
+/// The level's own marker face. `hAnsi` names the face of non-ASCII
+/// characters only: a marker that is all ASCII ("1.", "(a)", "IV") under an
+/// `hAnsi`-only level keeps the face the paragraph gives it (2386218b: a
+/// level with only hAnsi="Arial Unicode MS" still painted "1." in Times).
+fn lvl_marker_family(dom: &Dom, lvl: NodeId, fmt: &str, text: &str) -> String {
     let Some(rpr) = first_named(dom, lvl, "rPr") else {
         return String::new();
     };
     let Some(fonts) = first_named(dom, rpr, "rFonts") else {
         return String::new();
     };
-    attr_any(dom, fonts, "ascii")
-        .or_else(|| attr_any(dom, fonts, "hAnsi"))
-        .unwrap_or("")
-        .to_string()
+    if let Some(ascii) = attr_any(dom, fonts, "ascii") {
+        return ascii.to_string();
+    }
+    let ascii_number = matches!(
+        fmt,
+        "decimal"
+            | "decimalZero"
+            | "upperRoman"
+            | "lowerRoman"
+            | "upperLetter"
+            | "lowerLetter"
+            | "ordinal"
+            | "cardinalText"
+            | "ordinalText"
+            | "none"
+            | "bullet"
+    );
+    let mut literal = text.split('%').enumerate().flat_map(|(i, part)| {
+        // After a `%`, the level digit is a placeholder, not marker text.
+        let skip = usize::from(i > 0 && part.starts_with(|c: char| c.is_ascii_digit()));
+        part.chars().skip(skip)
+    });
+    if ascii_number && literal.all(|c| c.is_ascii()) {
+        return String::new();
+    }
+    attr_any(dom, fonts, "hAnsi").unwrap_or("").to_string()
 }
 
 fn lvl_marker_rpr(dom: &Dom, lvl: NodeId) -> (Option<f32>, bool, bool, bool) {

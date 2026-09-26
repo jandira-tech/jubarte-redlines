@@ -28,6 +28,33 @@ wins between milestone merges (mean Jaccard 0.134 → 0.360 at the first).
 The redline engine is unchanged: `compare_documents` emits the same bytes as
 0.9.1. All work is in `src/convert`, the CLI, and the OPC package layer.
 
+### Performance
+
+- Smaller PDFs, same pages. Subset faces now also drop glyph names
+  (`post` format 3), unused metrics and every `cmap`/`name` record the PDF
+  does not read; a collection (`.ttc`) face subsets like a lone font instead
+  of embedding the whole collection. A CID font's `/W` lists only the glyph
+  ids the pages use (a CJK face's widths were 212 KB of a 319 KB PDF). A
+  picture repeated on many pages is embedded once. Plain glyph runs in the
+  same font, size, colour and tracking share one text object and move by
+  relative `Td`, so a page is no longer one `BT … ET` per glyph. Word-device
+  glyphs (11.04/16.08pt body sizes) keep their own `q … cm … Q`: MuPDF hints
+  them differently when the 0.24 scale sits in the text matrix.
+- With `--compress`, over 3,325 corpus documents the average PDF is 250 KB
+  against Word's 319 KB (0.78×) and smaller than Word's on every corpus
+  (before this it was about 499 KB). Glyph positions are unchanged and the
+  docxide-metrics scores with them (scorer A/B: 0.5884 → 0.5885, no document
+  moved by more than 0.01).
+
+  Comparative size on the 2,344 documents every tool converted (English
+  corpus and redlined set, `--compress`): jubarte 283 KB, Word 362 KB,
+  LibreOffice 26.8 266 KB, docxide-pdf 0.17.1 108 KB. docxide-pdf and
+  LibreOffice write smaller files at the cost of fidelity: both substitute
+  faces (Calibri became Arial in docxide-pdf's output and Carlito in
+  LibreOffice's), and both trail jubarte by a wide margin on every corpus.
+  The size target is Word's own, which jubarte beats while scoring highest
+  against Word's output.
+
 ### Added
 
 - **Painted revision marks.** `jubarte convert --revisions conventional|word|custom`
@@ -104,6 +131,11 @@ The redline engine is unchanged: `compare_documents` emits the same bytes as
 
 ### Fixed
 
+- **List markers with an `hAnsi`-only face.** A numbering level whose
+  `w:rFonts` names only `hAnsi` (e.g. Arial Unicode MS) painted its ASCII
+  number in that face and took its taller line; `hAnsi` covers non-ASCII
+  characters only, so `1.` now stays in the text's ASCII face and line
+  pitch, as in Word.
 - **Floating objects and wrapping.** Square/tight/through wraps carve the
   wrap polygon — a blocked line steps past the polygon, not the extent;
   `topAndBottom` floats push later lines; tight page banners move the
