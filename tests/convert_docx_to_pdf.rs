@@ -6004,6 +6004,232 @@ fn a_front_picture_over_a_later_lower_box_paints_above_it() {
     );
 }
 
+mod front_float_stacking {
+    use super::{blip, docx_to_pdf, drawing_docx, pdf_content_streams, pdf_page_count};
+
+    const RED: &str = "1.000 0.000 0.000 rg";
+    const GREEN: &str = "0.000 1.000 0.000 rg";
+    const BLUE: &str = "0.000 0.000 1.000 rg";
+    const PICTURE: &str = "72.00 0 0 72.00";
+    const SMALL_PICTURE: &str = "36.00 0 0 36.00";
+
+    fn anchor(z: u32, behind: bool) -> String {
+        format!(
+            r#"<wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0"
+                relativeHeight="{z}" behindDoc="{}" locked="0" layoutInCell="1" allowOverlap="1">
+                <wp:positionH relativeFrom="page"><wp:posOffset>1270000</wp:posOffset></wp:positionH>
+                <wp:positionV relativeFrom="page"><wp:posOffset>1270000</wp:posOffset></wp:positionV>
+                <wp:wrapNone/>"#,
+            u8::from(behind)
+        )
+    }
+
+    fn picture(id: u32, z: u32, behind: bool, extent: &str) -> String {
+        blip(extent, extent, &anchor(z, behind), "</wp:anchor>")
+            .replace("id=\"1\"", &format!("id=\"{id}\""))
+    }
+
+    fn shape(id: u32, z: u32, behind: bool, color: &str) -> String {
+        format!(
+            r#"<w:drawing>{}
+                <wp:extent cx="914400" cy="914400"/><wp:docPr id="{id}" name="Box {id}"/>
+                <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                  <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                    <wps:spPr><a:xfrm><a:ext cx="914400" cy="914400"/></a:xfrm>
+                      <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                      <a:solidFill><a:srgbClr val="{color}"/></a:solidFill><a:ln><a:noFill/></a:ln>
+                    </wps:spPr><wps:bodyPr/>
+                  </wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>"#,
+            anchor(z, behind)
+        )
+    }
+
+    fn paragraph(drawing: &str) -> String {
+        // The shared PDF stream reader identifies page content by text ops.
+        format!("<w:p><w:r>{drawing}</w:r><w:r><w:t>Anchor</w:t></w:r></w:p>")
+    }
+
+    fn pages(body: &str, expected_pages: usize) -> Vec<String> {
+        let pdf = docx_to_pdf(&drawing_docx(&format!("{body}<w:sectPr/>")))
+            .expect("convert front-float fixture");
+        assert_eq!(pdf_page_count(&pdf), expected_pages);
+        let streams = pdf_content_streams(&pdf);
+        assert_eq!(streams.len(), expected_pages);
+        streams
+    }
+
+    fn paint_order(content: &str, markers: &[&str]) {
+        let positions: Vec<_> = markers
+            .iter()
+            .map(|marker| {
+                let positions: Vec<_> = content.match_indices(marker).map(|(i, _)| i).collect();
+                assert_eq!(positions.len(), 1, "paint {marker:?} exactly once");
+                positions[0]
+            })
+            .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "expected paint order {markers:?}; positions={positions:?}"
+        );
+    }
+
+    // Separate paragraphs ensure these exercise layout's cross-anchor tracking,
+    // rather than only the parser's sorting within a single paragraph.
+    #[test]
+    fn pictures_and_boxes_sort_in_both_anchor_orders_at_z_boundaries() {
+        for (first_z, second_z) in [(0, u32::MAX), (u32::MAX, 0), (5, 5)] {
+            for first_is_picture in [false, true] {
+                for second_is_picture in [false, true] {
+                    let (first, first_marker) = if first_is_picture {
+                        (picture(1, first_z, false, "914400"), PICTURE)
+                    } else {
+                        (shape(1, first_z, false, "FF0000"), RED)
+                    };
+                    let (second, second_marker) = if second_is_picture {
+                        (picture(2, second_z, false, "457200"), SMALL_PICTURE)
+                    } else {
+                        (shape(2, second_z, false, "00FF00"), GREEN)
+                    };
+                    let content = pages(&(paragraph(&first) + &paragraph(&second)), 1);
+                    let expected = if first_z > second_z {
+                        [second_marker, first_marker]
+                    } else {
+                        [first_marker, second_marker]
+                    };
+                    paint_order(&content[0], &expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_insertions_keep_all_previously_moved_ranges_valid() {
+        // The third float retains the red box while lifting the picture;
+        // the fourth must lift all three, including the already moved picture.
+        let body = paragraph(&picture(1, u32::MAX, false, "914400"))
+            + &paragraph(&shape(2, 2, false, "FF0000"))
+            + "<w:p><w:r><w:t>Body</w:t></w:r></w:p>"
+            + &paragraph(&shape(3, 4, false, "0000FF"))
+            + &paragraph(&shape(4, 0, false, "00FF00"));
+        paint_order(&pages(&body, 1)[0], &["(B", GREEN, RED, BLUE, PICTURE]);
+    }
+
+    #[test]
+    fn moving_a_picture_preserves_its_outline_after_the_image() {
+        let outlined = picture(1, 5, false, "914400").replace(
+            "</pic:pic>",
+            r#"<pic:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:ln w="12700"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:ln></pic:spPr></pic:pic>"#,
+        );
+        let body = paragraph(&outlined) + &paragraph(&shape(2, 0, false, "00FF00"));
+        paint_order(
+            &pages(&body, 1)[0],
+            &[GREEN, PICTURE, "0.000 0.000 1.000 RG"],
+        );
+    }
+
+    #[test]
+    fn moving_a_box_keeps_fill_outline_and_text_together() {
+        let labelled = shape(1, 5, false, "FF0000")
+            .replace(
+                "<a:ln><a:noFill/></a:ln>",
+                r#"<a:ln w="12700"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:ln>"#,
+            )
+            .replace(
+                "<wps:bodyPr/>",
+                "<wps:txbx><w:txbxContent><w:p><w:r><w:t>Label</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/>",
+            );
+        let body = paragraph(&labelled)
+            + &paragraph(&picture(2, 2, false, "914400"))
+            + &paragraph(&shape(3, 0, false, "00FF00"));
+        let content = pages(&body, 1);
+        paint_order(&content[0], &[GREEN, PICTURE, RED, "(L"]);
+        let fill = content[0].find(RED).unwrap();
+        let label = content[0].find("(L").unwrap();
+        // A box outline is emitted as four separate edge strokes.
+        let edges: Vec<_> = content[0]
+            .match_indices("0.000 0.000 1.000 RG")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(edges.len(), 4, "each edge must paint exactly once");
+        assert!(
+            edges.iter().all(|&i| fill < i && i < label),
+            "all edges must stay between the moved box's fill and text"
+        );
+    }
+
+    #[test]
+    fn inserting_behind_boxes_updates_ranges_before_later_front_reordering() {
+        let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>".to_owned()
+            + &paragraph(&picture(1, 5, false, "914400"))
+            + &paragraph(&shape(2, u32::MAX, true, "FF0000"))
+            + &paragraph(&shape(3, u32::MAX, true, "0000FF"))
+            + &paragraph(&shape(4, 0, false, "00FF00"));
+        paint_order(&pages(&body, 1)[0], &[RED, BLUE, "(B", GREEN, PICTURE]);
+    }
+
+    #[test]
+    fn behind_pictures_do_not_join_the_front_stack() {
+        let body = paragraph(&picture(1, u32::MAX, true, "914400"))
+            + "<w:p><w:r><w:t>Body</w:t></w:r></w:p>"
+            + &paragraph(&shape(2, 5, false, "FF0000"))
+            + &paragraph(&shape(3, 0, false, "00FF00"));
+        paint_order(&pages(&body, 1)[0], &[PICTURE, "(B", GREEN, RED]);
+    }
+
+    #[test]
+    fn inline_pictures_do_not_reorder_earlier_front_floats() {
+        let inline =
+            blip("914400", "914400", "<wp:inline>", "</wp:inline>").replace("id=\"1\"", "id=\"2\"");
+        let body = paragraph(&shape(1, 5, false, "FF0000")) + &paragraph(&inline);
+        paint_order(&pages(&body, 1)[0], &[RED, PICTURE]);
+    }
+
+    #[test]
+    fn inline_boxes_do_not_reorder_earlier_front_floats() {
+        let inline = shape(2, 0, false, "00FF00")
+            .replace(&anchor(0, false), "<wp:inline>")
+            .replace("</wp:anchor>", "</wp:inline>");
+        let body = paragraph(&picture(1, 5, false, "914400")) + &paragraph(&inline);
+        paint_order(&pages(&body, 1)[0], &[PICTURE, GREEN]);
+    }
+
+    #[test]
+    fn invisible_float_does_not_capture_surrounding_paint_operations() {
+        let invisible = shape(2, 0, false, "FF0000").replace(
+            r#"<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>"#,
+            "<a:noFill/>",
+        );
+        let body = paragraph(&picture(1, 5, false, "914400"))
+            + &paragraph(&invisible)
+            + &paragraph(&shape(3, 2, false, "00FF00"));
+        let content = pages(&body, 1);
+        assert!(!content[0].contains(RED));
+        paint_order(&content[0], &[GREEN, PICTURE]);
+    }
+
+    #[test]
+    fn stacking_is_page_local_even_after_behind_box_insertion() {
+        let body = paragraph(&picture(1, u32::MAX, false, "914400"))
+            + "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>"
+            + &paragraph(&shape(2, 5, false, "FF0000"))
+            + &paragraph(&shape(3, u32::MAX, true, "0000FF"))
+            + &paragraph(&shape(4, 0, false, "00FF00"));
+        let content = pages(&body, 2);
+        paint_order(&content[0], &[PICTURE]);
+        for marker in [RED, GREEN, BLUE] {
+            assert!(
+                !content[0].contains(marker),
+                "page two's box stayed on page two"
+            );
+        }
+        assert!(
+            !content[1].contains(" Do"),
+            "page one's picture stayed on page one"
+        );
+        paint_order(&content[1], &[BLUE, GREEN, RED]);
+    }
+}
+
 fn inline_green_group(cx: u32, cy: u32) -> String {
     format!(
         "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
