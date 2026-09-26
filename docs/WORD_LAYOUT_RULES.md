@@ -142,6 +142,33 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 
 Parked in `macnames-parked.patch` until the Helvetica line rule has a test.
 
+## VML lines, e8b5bc6
+
+- **A standalone `v:line`** takes its `from`/`to` as lengths in its anchor
+  frame. Probe: `from="72pt,300pt" to="400pt,300pt"` strokes exactly there.
+  It uses its `strokecolor` and `strokeweight`. A bare number is in pixels.
+- **A `v:line` inside a `v:group`** takes group coordinates, using the group's
+  `coordsize` and `coordorigin`, scaled onto the group's box. The group is what
+  gets anchored.
+- **A line that names no frame** is placed in VML's default "text" frame: its
+  paragraph and column, not the page. Example: part a bc404781's form rules
+  name only the horizontal frame, and Word hangs them from their paragraph.
+- **Open:** a character-relative anchor (`mso-position-horizontal-relative:char`)
+  starts at the anchor character's x. We still take it at the column edge.
+
+## A header picture after text (measured, not yet implemented)
+
+In a header paragraph, text followed by an inline picture keeps Word's body
+rule:
+
+- If the picture fits beside the text, it shares the line. The line deepens
+  to the picture and the picture's bottom is the baseline. jubarte does this.
+- If the picture does not fit, the text keeps line 1 and the picture opens
+  line 2 below it.
+  - Probe: text bottom 43.0, picture 45.3–135.3, body 152.2.
+  - jubarte puts the picture first (redline 7429fdae's "RA ID" above its
+    journal banner).
+
 ## Open, measured but not yet reconstructed
 
 - **Heading before a full-page box.** A `keepNext` heading followed by an inline
