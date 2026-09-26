@@ -1718,6 +1718,9 @@ struct LaidTextBox {
     /// `bodyPr wrap="none"` with `a:spAutoFit`: Word shrinks the box to its
     /// widest line before aligning it (00243d36's centred page number).
     fit_width: bool,
+    /// The owning run's `w:position` (pt, up): an inline box's bottom sits
+    /// this far over the baseline (212a1c9d's title bar beside its logo).
+    raise: f32,
 }
 
 /// One shape of a group: its box as fractions of the group's box (x, y
@@ -6711,6 +6714,7 @@ fn frame_box(
         group: Vec::new(),
         chrome_para_top: 0.0,
         fit_width: false,
+        raise: 0.0,
     })
 }
 
@@ -11609,6 +11613,7 @@ fn collect_textboxes_styled(
                 slot
             };
             let mut boxed = group_box(w, h, slot, geom, behind, z, group);
+            boxed.raise = run_raise_pt(dom, shape);
             // A canvas paints its own background and outline under its
             // shapes (00019a41's pool, isla's Venn frame).
             if let Some(wpc) = descendants_local(dom, shape, "wpc").into_iter().next() {
@@ -11670,6 +11675,7 @@ fn collect_textboxes_styled(
                     group: Vec::new(),
                     chrome_para_top: 0.0,
                     fit_width: false,
+                    raise: run_raise_pt(dom, shape),
                 });
                 continue;
             }
@@ -11712,6 +11718,7 @@ fn collect_textboxes_styled(
                     group: Vec::new(),
                     chrome_para_top: 0.0,
                     fit_width: false,
+                    raise: run_raise_pt(dom, shape),
                 });
                 continue;
             }
@@ -11780,6 +11787,7 @@ fn collect_textboxes_styled(
             group,
             chrome_para_top: 0.0,
             fit_width: bodypr_fits_width(dom, shape),
+            raise: run_raise_pt(dom, shape),
         });
     }
     // WrapNone accent fills on the same paragraph as an inline chart
@@ -11837,6 +11845,7 @@ fn group_box(
         group,
         chrome_para_top: 0.0,
         fit_width: false,
+        raise: 0.0,
     }
 }
 
@@ -12283,6 +12292,23 @@ fn txbx_paragraphs(
 /// `bodyPr` insets (EMU) or VML `v:textbox/@inset`, defaulting to Word's.
 /// `wps:bodyPr wrap="none"` with `a:spAutoFit`: the box takes its text's
 /// width (Word's "resize shape to fit text" without wrapping).
+/// The `w:position` (pt) of the run holding `node`, 0 outside a run.
+fn run_raise_pt(dom: &Dom, node: NodeId) -> f32 {
+    let mut at = Some(node);
+    while let Some(n) = at {
+        if dom.name_is(n, &W::r()) {
+            return dom
+                .element(n, &W::r_pr())
+                .and_then(|pr| first_named(dom, pr, "position"))
+                .and_then(|pos| attr_any(dom, pos, "val"))
+                .and_then(|v| v.parse::<f32>().ok())
+                .map_or(0.0, |half| half / 2.0);
+        }
+        at = dom.parent(n);
+    }
+    0.0
+}
+
 fn bodypr_fits_width(dom: &Dom, shape: NodeId) -> bool {
     descendants_local(dom, shape, "bodyPr")
         .first()
@@ -16373,6 +16399,9 @@ struct Layout<'a> {
     /// paragraph: later lines that meet it start under it (8aea3634's
     /// rule under an empty paragraph sits above its heading).
     tb_band: Option<(f32, f32)>,
+    /// The last row of inline pictures: (page, pen x after it, its bottom,
+    /// its height). An inline box in the same textless paragraph joins it.
+    pic_row: Option<(usize, f32, f32, f32)>,
     line_probe: LineProbe,
     /// Pen end and baseline of the last painted body line: where an
     /// inline picture that fits in that line sits.
@@ -16758,6 +16787,7 @@ impl<'a> Layout<'a> {
             nested_depth: 0,
             side_float: None,
             tb_band: None,
+            pic_row: None,
             line_probe: LineProbe::default(),
             last_line_end: None,
             last_line: None,
@@ -19764,6 +19794,7 @@ impl<'a> Layout<'a> {
         mark: Option<&RunStyle>,
         runs: &[TextRun],
     ) {
+        self.pic_row = None;
         if imgs.is_empty() {
             return;
         }
@@ -19836,6 +19867,7 @@ impl<'a> Layout<'a> {
                 lay.push_image(img, x, lay.y, dw, dh);
                 x += dw;
             }
+            lay.pic_row = Some((lay.pages.len(), x, lay.y, h));
             lay.y -= extra;
         };
         for img in imgs {
@@ -24774,7 +24806,47 @@ fn layout(
                 if lay.pages.len() > pages_before {
                     lay.para_top = lay.page.height - lay.body_top;
                 }
+                let mut row = lay
+                    .pic_row
+                    .take()
+                    .filter(|r| !has_ink && r.0 == lay.pages.len());
                 for box_ in boxes {
+                    if !has_ink && matches!(box_.slot, ImageSlot::Flow) && !box_.reserve_only {
+                        // An inline box after the paragraph's pictures shares
+                        // their line when it fits, past a tab to its stop
+                        // (212a1c9d's title bar beside its logo).
+                        if let Some((_, x, bottom, h)) = row.as_mut() {
+                            let bx = if runs.iter().any(|r| r.text.contains('\t')) {
+                                next_tab_x(
+                                    *x,
+                                    lay.flow_left(),
+                                    &style.tab_stops,
+                                    lay.page.default_tab,
+                                )
+                            } else {
+                                *x
+                            };
+                            let right =
+                                lay.page.margin_l + lay.content_width() - style.indent_right;
+                            if bx + box_.w <= right + 0.5 && box_.h + box_.raise <= *h + 0.5 {
+                                lay.paint_box_at(box_, bx, *bottom + box_.raise, box_.w, box_.h);
+                                *x = bx + box_.w;
+                                continue;
+                            }
+                        }
+                        // An exact line holds its inline box on its baseline
+                        // and grows by nothing (8aea3634's 0.5pt rule in a
+                        // 1pt paragraph).
+                        if images.is_empty()
+                            && let Some(e) = style.line_exact
+                            && box_.h <= e + 0.01
+                        {
+                            let top = lay.y + style.after + e;
+                            let x = lay.page.margin_l + style.indent_left;
+                            lay.paint_box_at(box_, x, top - 0.8 * e, box_.w, box_.h);
+                            continue;
+                        }
+                    }
                     // A behindDoc box goes under the page's body text, not
                     // over the lines already painted (003329b5's green
                     // label backdrops hid "QUI SOMMES NOUS ?").

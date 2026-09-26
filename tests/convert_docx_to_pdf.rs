@@ -5922,6 +5922,80 @@ fn wrap_square_below_the_float_uses_full_measure() {
     );
 }
 
+fn inline_green_group(cx: u32, cy: u32) -> String {
+    format!(
+        "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+           <wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:docPr id=\"2\" name=\"G\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">\
+             <wpg:wgp xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\" \
+               xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/>\
+                 <a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm></wpg:grpSpPr>\
+               <wps:wsp><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
+                 <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>\
+                 <a:solidFill><a:srgbClr val=\"00FF00\"/></a:solidFill><a:ln><a:noFill/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp>\
+             </wpg:wgp></a:graphicData></a:graphic></wp:inline></w:drawing>"
+    )
+}
+
+#[test]
+fn an_inline_group_after_a_picture_and_tab_shares_the_pictures_line() {
+    // 212a1c9d: a textless paragraph holds the logo, a tab and the title
+    // bar (an inline group raised by its run's w:position). Word draws the
+    // bar at the tab stop beside the logo, its foot 28.5pt over the logo's
+    // baseline; we stacked it as a block under the logo.
+    let pic = blip("457200", "457200", "<wp:inline>", "</wp:inline>");
+    let group = inline_green_group(914400, 228600);
+    let docx = drawing_docx(&format!(
+        "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r>{pic}</w:r><w:r><w:tab/></w:r>\
+         <w:r><w:rPr><w:position w:val=\"20\"/></w:rPr>{group}</w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("convert picture + tab + group");
+    let hay = String::from_utf8_lossy(&pdf);
+    // Picture 72..108 on the line whose baseline is 720 - 36 = 684; the
+    // default stop after 108 is 144; the 10pt raise lifts the foot to 694.
+    let at = hay.find("0.000 1.000 0.000 rg").expect("green group");
+    let paint = &hay[at..][..60.min(hay.len() - at)];
+    assert!(
+        paint.starts_with("0.000 1.000 0.000 rg 144.00 694.00 72.00 18.00 re f"),
+        "the group sits at the tab stop, raised over the baseline; paint={paint}"
+    );
+}
+
+#[test]
+fn an_exact_line_holds_an_inline_rule_group_without_growing() {
+    // 8aea3634: the heading's rule is an inline 0.5pt group alone in an
+    // exact 12pt paragraph. Word keeps the paragraph 12pt; we laid the
+    // group out as its own block and pushed the text below 4.5pt down.
+    let text = |with: bool| {
+        let rule = if with {
+            format!("<w:r>{}</w:r>", inline_green_group(914400, 6350))
+        } else {
+            String::new()
+        };
+        let docx = drawing_docx(&format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Top</w:t></w:r></w:p>\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"exact\"/></w:pPr>{rule}</w:p>\
+             <w:p><w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        ));
+        let pdf = docx_to_pdf(&docx).expect("convert exact rule line");
+        let hay = String::from_utf8_lossy(&pdf).into_owned();
+        pdf_device_xy(&hay, "67 Tf")
+            .into_iter()
+            .last()
+            .expect("After 16pt")
+    };
+    let (bare, ruled) = (text(false), text(true));
+    assert!(
+        (bare.1 - ruled.1).abs() < 0.5,
+        "the rule adds no height to its exact line; bare={bare:?} ruled={ruled:?}"
+    );
+}
+
 #[test]
 fn a_top_and_bottom_float_below_its_paragraph_pushes_the_next_one_under_it() {
     // 8aea3634: a rule hangs 11.7pt under its empty anchor paragraph and

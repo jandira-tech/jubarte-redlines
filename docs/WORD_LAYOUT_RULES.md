@@ -297,6 +297,15 @@ rule:
   - Part a 8aea3634: the rule 11.7pt under an empty paragraph sits above its
     heading. With the rule 0.5pt or 5pt tall, the gap from the rule's foot to
     the next rule stays 12.30pt.
+- **An inline box in a textless paragraph shares the pictures' line.** An
+  inline text box or group after inline pictures sits at the next tab stop on
+  the pictures' line. Its foot is at the baseline plus its run's
+  `w:position`, and it is not stacked as a block of its own.
+  - Part b 212a1c9d: the title bar is beside the logo, x 177.4, its foot
+    29.0pt over the logo's baseline.
+- **An exact-height line holds an inline box without growing.**
+  - Part a 8aea3634: an inline 0.5pt rule group in an exact 12pt paragraph
+    leaves the next baseline where an empty paragraph would.
 
 ## Open, measured but not yet reconstructed
 
