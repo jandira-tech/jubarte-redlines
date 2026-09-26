@@ -225,7 +225,10 @@ jobs:
             exit 1
           fi
           # scripts/release.sh puts --github-summary in the annotated tag
-          # body; it leads the release notes when present.
+          # body; it leads the release notes when present. actions/checkout
+          # leaves the tag lightweight (actions/checkout#290), so fetch the
+          # annotated tag object before reading its body.
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
           body="$(git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME" 2>/dev/null || true)"
           if [ -n "$body" ]; then
             { printf '%s\n\n' "$body"; cat notes.md; } > notes.tmp
