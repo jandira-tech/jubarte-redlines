@@ -596,11 +596,16 @@ pub(crate) fn html_to_wml(html: &str) -> String {
             continue;
         }
         if name == "script" || name == "style" {
-            let close = format!("</{name}");
-            i = src[i..]
-                .to_ascii_lowercase()
-                .find(&close)
-                .map_or(src.len(), |e| i + e);
+            // Skip the element's raw text and its closing tag; a stray or
+            // self-closed tag has no body to skip.
+            if !closing && !inner.ends_with('/') {
+                let close = format!("</{name}");
+                i = src[i..]
+                    .to_ascii_lowercase()
+                    .find(&close)
+                    .and_then(|e| src[i + e..].find('>').map(|g| i + e + g + 1))
+                    .unwrap_or(src.len());
+            }
             continue;
         }
         if closing {
@@ -914,6 +919,10 @@ mod tests {
                 wml.contains(">After</w:t>"),
                 "style content is skipped, but the following paragraph must survive: {wml}"
             );
+            // A self-closed or stray closing tag has no body to swallow.
+            let wml = html_to_wml("<p>A<script/>B</script>C</p><p>D</p>");
+            assert!(wml.contains(">A</w:t>") && wml.contains(">D</w:t>"), "{wml}");
+            assert!(wml.contains("B") && wml.contains("C"), "{wml}");
         }
 
         #[test]

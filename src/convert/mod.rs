@@ -38199,7 +38199,7 @@ mod regression_tests {
     }
 
     #[test]
-    fn word_marks_use_author_ink_for_insertions_and_red_for_deletions() {
+    fn word_marks_use_author_ink_for_insertions_and_deletions() {
         with_revision_style(RevisionStyle::Word, || {
             for kind in [RevMark::Ins, RevMark::MoveTo] {
                 let mut style = Defaults::word().run;
@@ -38207,10 +38207,12 @@ mod regression_tests {
                 assert_eq!(style.color, [0.1, 0.2, 0.3]);
                 assert!(style.underline && !style.underline_double && !style.strike);
             }
+            // Live Word: a second author's deletion is 0078D4 beside the
+            // first author's D13438, so a deletion takes its author's ink.
             for kind in [RevMark::Del, RevMark::MoveFrom] {
                 let mut style = Defaults::word().run;
                 apply_rev(&mut style, kind, [0.1, 0.2, 0.3]);
-                assert_eq!(style.color, [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0]);
+                assert_eq!(style.color, [0.1, 0.2, 0.3]);
                 assert!(style.strike && !style.strike_double && !style.underline);
             }
         });
