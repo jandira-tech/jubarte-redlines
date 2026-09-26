@@ -12895,6 +12895,53 @@ fn a_hidemark_cell_below_the_first_row_drops_its_trailing_break_line() {
 }
 
 #[test]
+fn an_empty_hidemark_row_opening_the_document_keeps_its_line() {
+    // English b/35e46f6e opens with a table whose first row is an empty
+    // w:hideMark cell; Word keeps that row a line tall (its letterhead
+    // sits 13.7pt down), where the same row anywhere else collapses.
+    // Live Word 2026-09-26: at the document's start the row stands 15pt
+    // (two such rows: only the first); after a paragraph, a page break
+    // or a section break it collapses.
+    let table = |empty_rows: usize| {
+        let empty = r#"<w:tr><w:tc><w:tcPr><w:tcW w:w="5000" w:type="pct"/><w:hideMark/></w:tcPr><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:p></w:tc></w:tr>"#;
+        let text = r#"<w:tr><w:tc><w:tcPr><w:tcW w:w="5000" w:type="pct"/><w:hideMark/></w:tcPr><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:t>RowA</w:t></w:r></w:p></w:tc></w:tr>"#;
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr><w:tblGrid><w:gridCol w:w="9360"/></w:tblGrid>{}{text}</w:tbl>"#,
+            empty.repeat(empty_rows)
+        )
+    };
+    let row_a = |body: String| {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(
+            &(body + "<w:p/><w:sectPr/>"),
+            "",
+        ))
+        .expect("hideMark start");
+        pdf_glyph_text_xy(&pdf, "RowA").expect("row paints").1
+    };
+    let bare = row_a(table(0));
+    let one = row_a(table(1));
+    let two = row_a(table(2));
+    assert!(
+        bare - one > 10.0,
+        "the opening empty row keeps a line; {bare} vs {one}"
+    );
+    assert!(
+        (one - two).abs() < 0.5,
+        "only the first row keeps it; {one} vs {two}"
+    );
+    let above = |rows: usize| {
+        row_a(format!(
+            "<w:p><w:r><w:t>Above</w:t></w:r></w:p>{}",
+            table(rows)
+        ))
+    };
+    assert!(
+        (above(0) - above(1)).abs() < 0.5,
+        "after a paragraph the empty row collapses"
+    );
+}
+
+#[test]
 fn autospacing_is_dropped_at_a_cells_edges() {
     // fixtures_500 0129b302: cell paragraphs with before/afterAutospacing
     // (no table style). Word drops the auto space before a cell's first

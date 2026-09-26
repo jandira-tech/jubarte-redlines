@@ -352,6 +352,7 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
             mark_ideograph_words(&mut blocks, &fonts, compat_mode);
             let display = number_footnote_refs(&mut blocks);
             resolve_cell_fields(&mut blocks);
+            keep_opening_row_mark(&mut blocks);
             let footnotes = FootnoteCatalog {
                 notes: load_footnotes(&pkg, &main, &sheet),
                 display,
@@ -1473,6 +1474,8 @@ struct TableCell {
     /// `w:hideMark`: an empty cell's end-of-cell mark does not size its
     /// row (003dd497's spacer rows collapse to their trHeight).
     hide_mark: bool,
+    /// A `w:gridBefore`/`w:gridAfter` placeholder, not a drafted cell.
+    grid_skip: bool,
     borders: Option<CellBorders>,
     /// Fill came from `tblStylePr` (GridTable4 band1Horz), not direct
     /// `tcPr/shd`. Word paints that shd at cell height with x-inset
@@ -1524,6 +1527,7 @@ impl TableCell {
             nowrap: self.nowrap,
             vertical: self.vertical,
             hide_mark: self.hide_mark,
+            grid_skip: self.grid_skip,
             borders: self.borders,
             style_fill: self.style_fill,
         }
@@ -1572,6 +1576,7 @@ struct RawCell {
     /// `w:textDirection` btLr/tbRl: the text runs up or down the cell.
     vertical: bool,
     hide_mark: bool,
+    grid_skip: bool,
     borders: Option<CellBorders>,
 }
 
@@ -8727,6 +8732,21 @@ fn document_bookmark_texts(blocks: &[Block]) -> HashMap<String, String> {
 /// Resolve REF / missing PAGEREF / NUMWORDS results inside table cells
 /// before layout, so row heights and paint both see the result text
 /// (top-level paragraphs resolve in `emit_runs`).
+/// A table opening the document keeps its first row's end marks: Word
+/// stands an empty `w:hideMark` first row one line tall there, though the
+/// same row collapses after a paragraph or a page or section break, and a
+/// second empty row still collapses (live Word 2026-09-26; English
+/// b/35e46f6e's letterhead sits 13.7pt down).
+fn keep_opening_row_mark(blocks: &mut [Block]) {
+    if let Some(Block::Table { rows, .. }) = blocks.first_mut()
+        && let Some(row) = rows.first_mut()
+    {
+        for cell in row.iter_mut().filter(|c| !c.grid_skip) {
+            cell.hide_mark = false;
+        }
+    }
+}
+
 fn resolve_cell_fields(blocks: &mut [Block]) {
     let known = document_bookmark_names(blocks);
     let texts = document_bookmark_texts(blocks);
@@ -9981,6 +10001,7 @@ fn table_block(
                 nowrap: cell_nowrap(dom, cell) && !fixed_width_cell(dom, table, cell),
                 vertical: cell_vertical(dom, cell),
                 hide_mark,
+                grid_skip: false,
                 borders,
             });
         }
@@ -10645,6 +10666,7 @@ fn grid_skip_cell(span: usize, pref: PrefWidth, pad_l: f32, pad_r: f32) -> RawCe
         nowrap: false,
         vertical: false,
         hide_mark: true,
+        grid_skip: true,
         borders: Some(CellBorders::default()),
     }
 }
@@ -10702,6 +10724,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
         nowrap: true,
         vertical: false,
         hide_mark: false,
+        grid_skip: false,
         borders: None,
     }
 }
@@ -10876,6 +10899,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
                 nowrap: raw.nowrap,
                 vertical: raw.vertical,
                 hide_mark: raw.hide_mark,
+                grid_skip: raw.grid_skip,
                 borders: raw.borders,
                 style_fill: false,
             });
