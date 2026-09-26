@@ -169,10 +169,68 @@ enum Command {
         /// cannot be read with `strings` or `grep`.
         #[arg(long)]
         compress: bool,
+        /// Write a JSON font-resolution report (`[{requested, step, physical,
+        /// bold, italic, synthetic}, …]`) for this document (plan Step 2f).
+        #[arg(long, value_name = "FILE")]
+        font_report: Option<PathBuf>,
+        /// How tracked changes are painted: `conventional` (deletions red
+        /// struck through, insertions blue double-underlined, moves green),
+        /// `word` (what Microsoft Word's Save as PDF paints), or `custom`
+        /// (see --revision-palette).
+        #[arg(long, value_enum, default_value_t = Revisions::Conventional)]
+        revisions: Revisions,
+        /// Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with
+        /// kinds deleted, inserted, moved-from, moved-to and lines strike,
+        /// double-strike, underline, double-underline, plain. Kinds left out
+        /// keep their conventional mark.
+        #[arg(long, value_name = "SPEC")]
+        revision_palette: Option<String>,
     },
 }
 
+/// `jubarte convert --revisions`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum Revisions {
+    /// Red strike, blue double underline, green moves.
+    Conventional,
+    /// Microsoft Word's own markup.
+    Word,
+    /// --revision-palette.
+    Custom,
+}
+
+/// The library's revision style for `--revisions` / `--revision-palette`.
+fn revision_style(
+    revisions: Revisions,
+    palette: Option<&str>,
+) -> Result<jubarte::convert::RevisionStyle, String> {
+    use jubarte::convert::{RevisionPalette, RevisionStyle};
+    match (revisions, palette) {
+        (Revisions::Custom, Some(spec)) => Ok(RevisionStyle::Custom(
+            RevisionPalette::parse(spec).map_err(|e| format!("--revision-palette: {e}"))?,
+        )),
+        (Revisions::Custom, None) => Err("--revisions custom needs --revision-palette".to_string()),
+        (_, Some(_)) => Err("--revision-palette needs --revisions custom".to_string()),
+        (Revisions::Conventional, None) => Ok(RevisionStyle::Conventional),
+        (Revisions::Word, None) => Ok(RevisionStyle::Word),
+    }
+}
+
 /// No-clobber contract shared by every writing subcommand.
+/// Whether two CLI paths name the same file, whether or not it exists yet
+/// (`out.pdf` and `./out.pdf` do; the parent directory is canonicalized).
+fn same_path(a: &Path, b: &Path) -> bool {
+    fn key(p: &Path) -> Option<PathBuf> {
+        let name = p.file_name()?;
+        let parent = match p.parent() {
+            Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        Some(std::fs::canonicalize(parent).ok()?.join(name))
+    }
+    a == b || matches!((key(a), key(b)), (Some(x), Some(y)) if x == y)
+}
+
 fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
     if output.exists() && !force {
         return Err(format!(
@@ -205,21 +263,46 @@ fn run_convert(
     output: Option<&Path>,
     force: bool,
     compress: bool,
+    font_report: Option<&Path>,
+    revisions: jubarte::convert::RevisionStyle,
 ) -> Result<(), String> {
     let output = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| file.with_extension("pdf"));
+    if let Some(report) = font_report {
+        // The report is written after the PDF (or the input is read first),
+        // so a shared path would silently replace one with the other.
+        for (other, what) in [(output.as_path(), "PDF output"), (file, "input")] {
+            if same_path(report, other) {
+                return Err(format!(
+                    "--font-report '{}' is the same file as the {what}",
+                    report.display()
+                ));
+            }
+        }
+    }
     ensure_writable(&output, force)?;
+    if let Some(report) = font_report {
+        ensure_writable(report, force)?;
+    }
     let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
-    let options = jubarte::convert::PdfOptions { compress };
-    let pdf = jubarte::convert::docx_to_pdf_with(&bytes, options)
+    let options = jubarte::convert::PdfOptions {
+        compress,
+        revisions,
+    };
+    let converted = jubarte::convert::docx_to_pdf_report(&bytes, options)
         .map_err(|e| format!("convert failed: {e}"))?;
-    std::fs::write(&output, &pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
-    let pages = jubarte::convert::pdf_page_count(&pdf);
+    std::fs::write(&output, &converted.pdf)
+        .map_err(|e| format!("writing {}: {e}", output.display()))?;
+    if let Some(report) = font_report {
+        let json = jubarte::convert::font_report_json(&converted.font_report);
+        std::fs::write(report, json).map_err(|e| format!("writing {}: {e}", report.display()))?;
+    }
+    let pages = jubarte::convert::pdf_page_count(&converted.pdf);
     println!(
         "wrote {} ({} bytes, {pages} page{})",
         output.display(),
-        pdf.len(),
+        converted.pdf.len(),
         if pages == 1 { "" } else { "s" }
     );
     Ok(())
@@ -397,8 +480,22 @@ fn main() -> ExitCode {
             output,
             force,
             compress,
+            font_report,
+            revisions,
+            revision_palette,
         }) => {
-            return exit_code(run_convert(&file, output.as_deref(), force, compress));
+            let style = match revision_style(revisions, revision_palette.as_deref()) {
+                Ok(style) => style,
+                Err(e) => return exit_code(Err(e)),
+            };
+            return exit_code(run_convert(
+                &file,
+                output.as_deref(),
+                force,
+                compress,
+                font_report.as_deref(),
+                style,
+            ));
         }
         None => {}
     }
@@ -416,6 +513,33 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jubarte::convert::{MarkLines, RevisionStyle};
+
+    #[test]
+    fn convert_revisions_default_to_conventional_and_validate_the_palette() {
+        let cli =
+            Cli::try_parse_from(["jubarte", "convert", "in.docx", "--revisions", "word"]).unwrap();
+        let Some(Command::Convert { revisions, .. }) = cli.command else {
+            panic!("expected convert");
+        };
+        assert_eq!(revisions, Revisions::Word);
+        assert_eq!(
+            revision_style(Revisions::Conventional, None),
+            Ok(RevisionStyle::Conventional)
+        );
+        assert!(revision_style(Revisions::Custom, None).is_err());
+        assert!(revision_style(Revisions::Word, Some("deleted=#000000")).is_err());
+        let Ok(RevisionStyle::Custom(p)) = revision_style(
+            Revisions::Custom,
+            Some("deleted=#112233:double-strike,moved-to=#00FF00:underline"),
+        ) else {
+            panic!("custom palette parses");
+        };
+        assert_eq!(p.deleted.color, [0x11, 0x22, 0x33]);
+        assert_eq!(p.deleted.strike, MarkLines::Double);
+        assert_eq!(p.moved_to.underline, MarkLines::Single);
+        assert!(revision_style(Revisions::Custom, Some("deleted=red")).is_err());
+    }
     use clap::CommandFactory;
 
     fn job_of(args: &[&str]) -> Job {
@@ -646,5 +770,124 @@ mod tests {
             Some(Command::Revisions { file, .. }) => assert_eq!(file, PathBuf::from("b.docx")),
             other => panic!("expected revisions subcommand, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn convert_subcommand_parses_font_report() {
+        let cli = Cli::try_parse_from([
+            "jubarte",
+            "convert",
+            "in.docx",
+            "--font-report",
+            "out.json",
+            "-o",
+            "out.pdf",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Convert {
+                file,
+                output,
+                font_report,
+                compress,
+                force,
+                revisions,
+                revision_palette,
+            }) => {
+                assert_eq!(revisions, Revisions::Conventional);
+                assert!(revision_palette.is_none());
+                assert_eq!(file, PathBuf::from("in.docx"));
+                assert_eq!(output.as_deref(), Some(Path::new("out.pdf")));
+                assert_eq!(font_report.as_deref(), Some(Path::new("out.json")));
+                assert!(!compress && !force);
+            }
+            other => panic!("expected convert subcommand, got {other:?}"),
+        }
+    }
+
+    fn tiny_docx_bytes(family: &str) -> Vec<u8> {
+        use std::io::{Cursor, Write};
+        let mut buf = Vec::new();
+        {
+            let mut z = zip::ZipWriter::new(Cursor::new(&mut buf));
+            let opt = zip::write::SimpleFileOptions::default();
+            z.start_file("[Content_Types].xml", opt).unwrap();
+            z.write_all(
+                br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#,
+            )
+            .unwrap();
+            z.start_file("_rels/.rels", opt).unwrap();
+            z.write_all(
+                br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdM" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#,
+            )
+            .unwrap();
+            z.start_file("word/document.xml", opt).unwrap();
+            let doc = format!(
+                r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:rFonts w:ascii="{family}" w:hAnsi="{family}"/></w:rPr><w:t>HELLO</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>"#
+            );
+            z.write_all(doc.as_bytes()).unwrap();
+            z.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn convert_rejects_a_font_report_path_equal_to_the_pdf() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let docx = dir.path().join("in.docx");
+        let pdf = dir.path().join("out.pdf");
+        std::fs::write(&docx, tiny_docx_bytes("Calibri")).expect("docx");
+        let same = dir.path().join(".").join("out.pdf");
+        let err = run_convert(
+            &docx,
+            Some(&pdf),
+            false,
+            false,
+            Some(&same),
+            RevisionStyle::Word,
+        )
+        .expect_err("report over the PDF must be refused");
+        assert!(err.contains("same file as the PDF output"), "{err}");
+        assert!(!pdf.exists(), "nothing is written when the paths collide");
+        let err = run_convert(
+            &docx,
+            Some(&pdf),
+            false,
+            false,
+            Some(&docx),
+            RevisionStyle::Word,
+        )
+        .expect_err("report over the input must be refused");
+        assert!(err.contains("same file as the input"), "{err}");
+        assert!(std::fs::read(&docx).expect("docx").starts_with(b"PK"));
+    }
+
+    #[test]
+    fn convert_font_report_writes_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let docx = dir.path().join("in.docx");
+        let pdf = dir.path().join("out.pdf");
+        let report = dir.path().join("fonts.json");
+        std::fs::write(&docx, tiny_docx_bytes("DefinitelyNotAFont")).expect("docx");
+        run_convert(
+            &docx,
+            Some(&pdf),
+            false,
+            false,
+            Some(&report),
+            RevisionStyle::Word,
+        )
+        .expect("convert");
+        assert!(pdf.exists());
+        let json = std::fs::read_to_string(&report).expect("report");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+        let rows = v.as_array().expect("array");
+        assert!(
+            rows.iter().any(|row| {
+                row.get("requested").and_then(|x| x.as_str()) == Some("DefinitelyNotAFont")
+                    && row.get("step").and_then(|x| x.as_str()) == Some("unknown")
+            }),
+            "report missing unknown family: {json}"
+        );
     }
 }

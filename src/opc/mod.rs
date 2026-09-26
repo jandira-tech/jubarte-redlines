@@ -140,7 +140,10 @@ impl PartFs {
     /// `resolveRelTarget(sourcePart, relTarget)` — resolve a rel target relative
     /// to its source part. Style-preserving (input style is echoed back).
     pub fn resolve_rel_target(&self, source_part: &str, rel_target: &str) -> String {
-        OpcPackage::resolve_rel_target(source_part, rel_target)
+        // The relationships reader keeps the Target attribute as written, so
+        // "image1.jpg&amp;ehk=…" names the part "image1.jpg&ehk=…".
+        let target = crate::xmllinq::parse::unescape_xml_text(rel_target);
+        OpcPackage::resolve_rel_target(source_part, &target)
     }
 
     /// `contentTypeFor(part)`.

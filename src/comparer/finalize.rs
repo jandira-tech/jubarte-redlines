@@ -11219,7 +11219,10 @@ pub fn hoist_hyperlinks_out_of_revisions(dom: &mut Dom, root: NodeId) {
     let mut next_id = dom
         .descendants_and_self(root, None)
         .into_iter()
-        .filter_map(|n| dom.attribute(n, &W::id()).and_then(|v| v.parse::<u32>().ok()))
+        .filter_map(|n| {
+            dom.attribute(n, &W::id())
+                .and_then(|v| v.parse::<u32>().ok())
+        })
         .max()
         .unwrap_or(0)
         + 1;
@@ -11243,7 +11246,9 @@ pub fn hoist_hyperlinks_out_of_revisions(dom: &mut Dom, root: NodeId) {
 /// One step of [`hoist_hyperlinks_out_of_revisions`]: replace `rev` in its parent
 /// with the alternating sequence of same-shaped revisions and hyperlinks.
 fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u32) {
-    let Some(rev_name) = dom.name(rev) else { return };
+    let Some(rev_name) = dom.name(rev) else {
+        return;
+    };
     let hyperlink = W::hyperlink();
     let attrs = dom.attributes(rev);
     let children = dom.nodes(rev);
