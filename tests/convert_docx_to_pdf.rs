@@ -1050,6 +1050,45 @@ fn a_tight_banner_steps_the_blocked_line_down_by_whole_lines() {
 }
 
 #[test]
+fn a_tight_float_steps_past_its_polygon_not_its_extent() {
+    // 8b342c8d (Word): a 216pt paragraph-anchored tight picture whose
+    // polygon stops at 21450/21600 lets the next text start under the
+    // polygon (Flu at 320.4), not a whole line under the extent (332.6).
+    let picture = |poly_y: u32| {
+        blip(
+            "7200000",
+            "1873250",
+            &format!(
+                "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+                   relativeHeight=\"1\" behindDoc=\"1\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+                   <wp:simplePos x=\"0\" y=\"0\"/>\
+                   <wp:positionH relativeFrom=\"column\"><wp:posOffset>-295275</wp:posOffset></wp:positionH>\
+                   <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+                   <wp:wrapTight wrapText=\"bothSides\"><wp:wrapPolygon edited=\"0\">\
+                   <wp:start x=\"0\" y=\"0\"/><wp:lineTo x=\"0\" y=\"{poly_y}\"/>\
+                   <wp:lineTo x=\"21535\" y=\"{poly_y}\"/><wp:lineTo x=\"21535\" y=\"0\"/>\
+                   <wp:lineTo x=\"0\" y=\"0\"/></wp:wrapPolygon></wp:wrapTight>"
+            ),
+            "</wp:anchor>",
+        )
+    };
+    let top = |poly_y: u32| {
+        banner_case_top(
+            &format!(
+                "<w:p><w:r>{}</w:r><w:r><w:t>StepLine</w:t></w:r></w:p>",
+                picture(poly_y)
+            ),
+            "StepLine",
+        )
+    };
+    let (full, short) = (top(21600), top(20000));
+    assert!(
+        full - short > 10.0,
+        "the short polygon frees the line a step sooner; full={full} short={short}"
+    );
+}
+
+#[test]
 fn a_page_banner_anchored_below_also_pushes_the_paragraph_above() {
     // Live Word: an empty paragraph, then the banner's anchor paragraph.
     // The banner also moves the empty line above its anchor: square puts

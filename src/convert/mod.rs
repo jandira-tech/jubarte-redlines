@@ -1844,6 +1844,9 @@ enum ImageSlot {
         /// `wp:wrapTight` / wrapThrough: the body wraps the polygon, so a
         /// header float's distT/distB never reach the body (live Word).
         wrap_polygon: bool,
+        /// The wrap polygon's lowest point as a fraction of the height
+        /// (`wp:wrapPolygon` y / 21600); 1 without one.
+        poly_bottom: f32,
         /// `wp:anchor/@distL` in points (114300 EMU = 9pt).
         dist_l: f32,
         /// `wp:anchor/@distR` in points.
@@ -6840,6 +6843,7 @@ fn frame_box(
             wrap_square: around,
             wrap_top_bottom: false,
             wrap_polygon: false,
+            poly_bottom: 1.0,
             dist_l: h_space,
             dist_r: h_space,
             dist_t: v_space,
@@ -10276,6 +10280,7 @@ fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
         wrap_square: true,
         wrap_top_bottom: false,
         wrap_polygon: false,
+        poly_bottom: 1.0,
         dist_l: dist("leftFromText"),
         dist_r: dist("rightFromText"),
         dist_t: dist("topFromText"),
@@ -12073,6 +12078,7 @@ fn collect_textboxes_styled(
                     wrap_square: false,
                     wrap_top_bottom: false,
                     wrap_polygon: false,
+                    poly_bottom: 1.0,
                     dist_l: 0.0,
                     dist_r: 0.0,
                     dist_t: 0.0,
@@ -13681,6 +13687,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                 } | ImageSlot::Float {
                     wrap_top_bottom: true,
                     wrap_polygon: false,
+                    poly_bottom: 1.0,
                     ..
                 }
             );
@@ -14320,6 +14327,7 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         wrap_square,
         wrap_top_bottom,
         wrap_polygon,
+        poly_bottom: wrap_polygon_bottom(dom, drawing),
         dist_l: emu_pt("distL") + effect_pt("l"),
         dist_r: emu_pt("distR") + effect_pt("r"),
         dist_t: emu_pt("distT") + effect_pt("t"),
@@ -14655,6 +14663,7 @@ fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
             wrap_square: matches!(wrap.as_str(), "square" | "tight" | "through"),
             wrap_top_bottom: matches!(wrap.as_str(), "topandbottom" | "top-and-bottom"),
             wrap_polygon: matches!(wrap.as_str(), "tight" | "through"),
+            poly_bottom: 1.0,
             dist_l: vml_style_pt(style, "mso-wrap-distance-left").unwrap_or(0.0),
             dist_r: vml_style_pt(style, "mso-wrap-distance-right").unwrap_or(0.0),
             dist_t: vml_style_pt(style, "mso-wrap-distance-top").unwrap_or(0.0),
@@ -15178,6 +15187,24 @@ fn pos_offset_pt(dom: &Dom, node: Option<NodeId>) -> Option<f32> {
         .parse::<f64>()
         .ok()
         .map(|emu| (emu / 12700.0) as f32)
+}
+
+/// `wp:wrapPolygon`'s lowest vertex as a fraction of the extent (21600
+/// units); 1 when there is none.
+fn wrap_polygon_bottom(dom: &Dom, drawing: NodeId) -> f32 {
+    let Some(poly) = first_named_any(dom, drawing, "wrapPolygon") else {
+        return 1.0;
+    };
+    let lowest = ["start", "lineTo"]
+        .iter()
+        .flat_map(|local| dom.descendants(poly, Some(&WP::name(local))))
+        .filter_map(|pt| attr_any(dom, pt, "y")?.parse::<f32>().ok())
+        .fold(f32::MIN, f32::max);
+    if lowest > 0.0 {
+        (lowest / 21600.0).min(1.0)
+    } else {
+        1.0
+    }
 }
 
 fn first_named_any(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {
@@ -16153,6 +16180,7 @@ fn chrome_part_xml(
                             wrap_square: false,
                             wrap_top_bottom: false,
                             wrap_polygon: false,
+                            poly_bottom: 1.0,
                             dist_l: 0.0,
                             dist_r: 0.0,
                             dist_t: 0.0,
@@ -18731,6 +18759,7 @@ impl<'a> Layout<'a> {
                 wrap_top_bottom,
                 wrap_square,
                 wrap_polygon,
+                poly_bottom,
                 dist_l,
                 dist_r,
                 dist_t,
@@ -18768,8 +18797,10 @@ impl<'a> Layout<'a> {
             // A tight/through one steps the line down whole single lines
             // (live Word: a 612pt banner to 80pt moves Aptos 12 from the
             // 72pt margin to 86.72, one to 87pt to 101.36).
+            // It steps past the polygon, not the extent (8b342c8d's
+            // 21450/21600 polygon frees Flu at Word's 320.4).
             jump = jump.min(if wrap_polygon && !wrap_top_bottom {
-                self.step_under(fy - dist_b)
+                self.step_under(fy + dh * (1.0 - poly_bottom))
             } else {
                 fy - dist_b
             });
@@ -18812,6 +18843,7 @@ impl<'a> Layout<'a> {
             let ImageSlot::Float {
                 wrap_square: true,
                 wrap_polygon,
+                poly_bottom,
                 dist_l,
                 dist_r,
                 dist_t,
@@ -18835,7 +18867,12 @@ impl<'a> Layout<'a> {
             {
                 return;
             }
-            let (top, bottom) = (fy + dh + dist_t, fy - dist_b);
+            let bottom = if wrap_polygon {
+                fy + dh * (1.0 - poly_bottom)
+            } else {
+                fy - dist_b
+            };
+            let top = fy + dh + dist_t;
             if bottom >= self.y {
                 return;
             }
@@ -20909,13 +20946,21 @@ impl<'a> Layout<'a> {
         if !img.behind && matches!(img.slot, ImageSlot::Float { .. }) {
             self.stack_front_float(page, start, img.z);
         }
-        self.hold_square_float(img.slot, x, y, dw, dh);
+        self.hold_square_float(img.slot, x, y, dw, dh, MIN_SIDE_FLOAT_ROOM_PT);
     }
 
     /// A square-wrapped picture keeps narrowing the paragraphs after its
     /// anchor while its band lasts (00df9dc4's left pictures: every
     /// paragraph beside them starts at x=323), like a floating table.
-    fn hold_square_float(&mut self, slot: ImageSlot, x: f32, y: f32, dw: f32, dh: f32) {
+    fn hold_square_float(
+        &mut self,
+        slot: ImageSlot,
+        x: f32,
+        y: f32,
+        dw: f32,
+        dh: f32,
+        min_room: f32,
+    ) {
         let ImageSlot::Float {
             wrap_square: true,
             dist_l,
@@ -20932,7 +20977,7 @@ impl<'a> Layout<'a> {
         let left_room = x - dist_l - left_edge;
         let right_room = right_edge - (x + dw + dist_r);
         let bottom = y - dist_b;
-        if left_room.max(right_room) < MIN_SIDE_FLOAT_ROOM_PT || bottom >= self.y {
+        if left_room.max(right_room) < min_room || bottom >= self.y {
             return;
         }
         let (align, inset) = if right_room >= left_room {
@@ -20986,7 +21031,7 @@ impl<'a> Layout<'a> {
             let right_edge = left_edge + self.content_width();
             let room = (x - dist_l - left_edge).max(right_edge - (x + dw + dist_r));
             if room >= MIN_SIDE_FLOAT_ROOM_PT {
-                self.hold_square_float(slot, x, y, dw, dh);
+                self.hold_square_float(slot, x, y, dw, dh, MIN_SIDE_FLOAT_ROOM_PT);
                 return;
             }
         }
