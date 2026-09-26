@@ -26277,13 +26277,11 @@ fn ins_xml_space_padding_explodes_underline() {
 }
 
 #[test]
-fn revision_authors_use_soffice_palette() {
-    // Word colors tracked changes by author. First author is #D13438,
-    // unknown second is blue #0040A0 (soffice gold on first-author was
-    // ITT-wrong). Mini 732 slot-1 #005B70 ITT-neg NR median. Known names
-    // (thomas.v / sara.k / anon-contributor / Online User) are keyed
-    // separately; this test uses unknown names so the index palette
-    // still stands.
+fn revision_authors_take_words_palette_by_first_appearance() {
+    // Live Word 2026-09-25: authors take Word's 20-colour palette in order
+    // of first appearance, insertions and deletions alike: first D13438,
+    // second 0078D4. (Was locked to soffice's #0040A0 second author and an
+    // always-red deletion, tuned on session-dependent Word colours.)
     let body = "<w:p>\
            <w:del w:id=\"0\" w:author=\"alice\">\
              <w:r><w:delText>gone</w:delText></w:r></w:del>\
@@ -26293,32 +26291,30 @@ fn revision_authors_use_soffice_palette() {
              <w:r><w:t>two</w:t></w:r></w:ins>\
          </w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert authors");
-    let text = String::from_utf8_lossy(&pdf);
+    let text = pdf_content_streams(&pdf).concat();
     assert!(
-        text.contains("0.820 0.204 0.220"),
-        "first author must paint Word #D13438; tail {}",
-        &text[text.len().saturating_sub(280)..]
+        text.contains("0.820 0.204 0.220 rg"),
+        "first author paints Word #D13438"
     );
     assert!(
-        text.contains("0.000 0.251 0.627"),
-        "unknown second author must paint soffice blue #0040A0; tail {}",
-        &text[text.len().saturating_sub(280)..]
+        text.contains("0.000 0.471 0.831 rg"),
+        "second author paints Word #0078D4"
     );
     assert!(
         !text.contains("0.000 0.502 0.000"),
-        "must not still use type-green insertions"
+        "no conventional green insertions"
     );
     assert!(
-        !text.contains("1.000 0.000 0.000 rg") && !text.contains("1.000 0.000 0.000 RG"),
-        "must not still use type-red deletions"
+        !text.contains("1.000 0.000 0.000 rg"),
+        "no conventional red deletions"
     );
 }
 
 #[test]
-fn thomas_v_ins_is_word_teal_by_name() {
-    // sample/file_146 Word thomas.v ins is #005B70 whether first-seen
-    // index is 1 (sample) or 2 (file_146 Arthur-first). Slot-1 retune
-    // (mini 732) ITT-neg. Name-keyed. Del stays always-red (mini 239).
+fn an_authors_name_does_not_fix_its_colour() {
+    // thomas.v took #005B70 (palette slot 19) in old Word references only
+    // because of its place in a long Word session; a fresh Word colours by
+    // order of first appearance, so here it is the third colour, 5C2E91.
     let body = "<w:p>\
            <w:ins w:id=\"1\" w:author=\"Arthur Souza Rodrigues\">\
              <w:r><w:t>one</w:t></w:r></w:ins>\
@@ -26328,24 +26324,19 @@ fn thomas_v_ins_is_word_teal_by_name() {
              <w:r><w:t>three</w:t></w:r></w:ins>\
          </w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert thomas.v");
-    let text = String::from_utf8_lossy(&pdf);
+    let text = pdf_content_streams(&pdf).concat();
     assert!(
-        text.contains("0.000 0.357 0.439"),
-        "thomas.v ins is Word #005B70 at first-seen index 2; tail {}",
-        &text[text.len().saturating_sub(240)..]
+        text.contains("0.361 0.180 0.569 rg"),
+        "third author paints Word #5C2E91"
     );
-    assert!(
-        text.contains("0.000 0.251 0.627"),
-        "unknown slot-1 (pat) stays soffice #0040A0 (mini 732 lock)"
-    );
+    assert!(!text.contains("0.000 0.357 0.439"), "no name-keyed teal");
 }
 
 #[test]
-fn sara_k_anon_online_user_ins_stay_index_palette_after_mini_737() {
-    // Word sara.k #69797E / anon-contributor #8E562E / Online User
-    // #881798 ins is Word-faithful, but mini 737 ITT-neg NR median
-    // 53.8906→53.881 (eigenpal_2 −0.030 is half the even-n median
-    // pair). Keep the soffice index palette except thomas.v (KEEP 733).
+fn three_named_authors_take_the_first_three_palette_colours() {
+    // sara.k / anon-contributor / Online User were locked to soffice's
+    // index palette after a median retune; live Word gives them the first
+    // three colours of its palette in order of appearance.
     let body = "<w:p>\
            <w:ins w:id=\"1\" w:author=\"sara.k\">\
              <w:r><w:t>sara</w:t></w:r></w:ins>\
@@ -26355,31 +26346,18 @@ fn sara_k_anon_online_user_ins_stay_index_palette_after_mini_737() {
              <w:r><w:t>demo</w:t></w:r></w:ins>\
          </w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert extra names");
-    let text = String::from_utf8_lossy(&pdf);
+    let text = pdf_content_streams(&pdf).concat();
     assert!(
-        text.contains("0.820 0.204 0.220"),
-        "sara.k first-seen stays palette[0] #D13438; tail {}",
-        &text[text.len().saturating_sub(240)..]
+        text.contains("0.820 0.204 0.220 rg"),
+        "sara.k first: #D13438"
     );
     assert!(
-        text.contains("0.000 0.251 0.627"),
-        "anon-contributor slot 1 stays soffice #0040A0"
+        text.contains("0.000 0.471 0.831 rg"),
+        "anon-contributor second: #0078D4"
     );
     assert!(
-        text.contains("0.314 0.596 0.094"),
-        "Online User slot 2 stays soffice olive #509818"
-    );
-    assert!(
-        !text.contains("0.412 0.475 0.494"),
-        "mini 737 sara.k Word #69797E ITT-neg"
-    );
-    assert!(
-        !text.contains("0.557 0.337 0.180"),
-        "mini 737 anon-contributor Word #8E562E ITT-neg"
-    );
-    assert!(
-        !text.contains("0.533 0.090 0.596"),
-        "mini 737 Online User Word #881798 ITT-neg"
+        text.contains("0.361 0.180 0.569 rg"),
+        "Online User third: #5C2E91"
     );
 }
 
@@ -26389,7 +26367,8 @@ fn official_eigenpal_2_median_leftovers_stay_locked_catalog() {
     // leftovers on that pair ARE the lock catalog: Courier 9.60 (mini
     // 99 −0.52), xml:space wrap (mini 401 −6.8), stacked insideV (mini
     // 271 RL file_146 −0.73), extra name-keys (mini 737 median −0.010).
-    // Do not retry those as a new class. KEEP 733 thomas.v teal stands.
+    // Do not retry those as a new class. Author colours follow Word's
+    // palette by first appearance (2026-09-25), not these name keys.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/eigenpal_docx_editor_suggesting_mixed_edits_2.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert eigenpal_2");
     assert_eq!(pdf_page_count(&pdf), 3, "Word eigenpal_2 is 3pp");
@@ -26401,18 +26380,6 @@ fn official_eigenpal_2_median_leftovers_stay_locked_catalog() {
     assert!(
         !hay.contains("9.60 Tf"),
         "mini 99 Courier 9.60 ITT-neg eigenpal_2"
-    );
-    assert!(
-        hay.contains("0.000 0.357 0.439"),
-        "KEEP 733 thomas.v ins teal stands"
-    );
-    assert!(
-        !hay.contains("0.412 0.475 0.494"),
-        "mini 737 sara.k slate ITT-neg"
-    );
-    assert!(
-        !hay.contains("0.533 0.090 0.596"),
-        "mini 737 Online User purple ITT-neg"
     );
 }
 
@@ -35246,4 +35213,40 @@ fn automatic_text_turns_white_on_dark_shading() {
         .contains(white),
         "highlight keeps automatic text black"
     );
+}
+
+#[test]
+fn revisions_take_words_author_palette_in_order_of_appearance() {
+    // Live Word 2026-09-25: a fresh Word colours each author, insertions and
+    // deletions alike, from a 20-colour palette in order of first appearance
+    // (D13438, 0078D4, 5C2E91, 498205, ...; the 21st wraps). Probe: Anna's
+    // insertion and deletion D13438, Boris's deletion and insertion 0078D4.
+    // We painted every deletion red and the second author a darker blue.
+    let rev = |kind: &str, author: &str, text: &str| {
+        let t = if kind == "del" { "delText" } else { "t" };
+        format!(
+            "<w:{kind} w:id=\"1\" w:author=\"{author}\" w:date=\"2026-01-01T00:00:00Z\">\
+             <w:r><w:{t}>{text}</w:{t}></w:r></w:{kind}>"
+        )
+    };
+    let body = format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">Keep </w:t></w:r>{}{}{}{}</w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>",
+        rev("ins", "Anna", "InsAnna"),
+        rev("del", "Boris", "DelBoris"),
+        rev("ins", "Cleo", "InsCleo"),
+        rev("del", "Anna", "DelAnna"),
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("three authors");
+    let content = pdf_content_streams(&pdf).concat();
+    for (rgb, who) in [
+        ("0.820 0.204 0.220 rg", "Anna, first: D13438"),
+        (
+            "0.000 0.471 0.831 rg",
+            "Boris, second: 0078D4 (his deletion too)",
+        ),
+        ("0.361 0.180 0.569 rg", "Cleo, third: 5C2E91"),
+    ] {
+        assert!(content.contains(rgb), "{who}");
+    }
 }

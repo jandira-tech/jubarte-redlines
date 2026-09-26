@@ -10489,33 +10489,18 @@ struct AuthorColors {
 }
 
 impl AuthorColors {
+    /// Word's "by author" ink: a fresh Word gives each author the next of
+    /// 20 colours in order of first appearance, insertions and deletions
+    /// alike; the 21st wraps (live Word 2026-09-25, a 30-author probe).
+    /// It is not keyed by name: one Word session keeps assigning, so the
+    /// same author took different colours across a batch.
     fn color(&mut self, author: &str) -> [f32; 3] {
-        // Word Save-as-PDF first-author ins is #D13438 with or without
-        // w:trackRevisions (file_176 / file_19 / CiceroDo: ~4800 gold
-        // chars vs Word red). soffice gold #C09000 is an ITT miss.
-        // Second/third authors stay Word-blue / olive by first-seen
-        // index. Mini 732 put Word #005B70 in slot 1 and ITT-neg'd NR
-        // median (file_146 / eigenpal_2: sara.k occupies slot 1).
-        // Word maps thomas.v ins to #005B70 by *name* on sample and
-        // file_146 (first-seen index 1 vs 2). Mini 737 name-keyed
-        // sara.k #69797E / anon-contributor #8E562E / Online User
-        // #881798 ITT-neg NR median (eigenpal_2 −0.030). Keep those
-        // on the soffice index palette. `w:trackRevisions` still
-        // gates the Reviewing Pane, not the first-author hue.
-        let key = if author.is_empty() { "\0" } else { author };
-        if key.eq_ignore_ascii_case("thomas.v") {
-            // Occupy a first-seen slot so later authors do not shift
-            // (mini 732 slot-1 retune ITT-neg). Color is name-keyed.
-            if !self.names.iter().any(|n| n == key) {
-                self.names.push(key.to_string());
-            }
-            return [0.0, 91.0 / 255.0, 112.0 / 255.0];
-        }
-        let palette = [
-            [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0],
-            [0.0, 64.0 / 255.0, 160.0 / 255.0],
-            [80.0 / 255.0, 152.0 / 255.0, 24.0 / 255.0],
+        const PALETTE: [u32; 20] = [
+            0xD13438, 0x0078D4, 0x5C2E91, 0x498205, 0xCC3595, 0x7160E8, 0x038387, 0x6D5700,
+            0xCF0F1F, 0x4E6AED, 0xB146C2, 0x394146, 0x0B6A0B, 0xCA5010, 0x750B1C, 0x5D5A58,
+            0x881798, 0x69797E, 0x005B70, 0x8E562E,
         ];
+        let key = if author.is_empty() { "\0" } else { author };
         let idx = match self.names.iter().position(|n| n == key) {
             Some(i) => i,
             None => {
@@ -10523,7 +10508,8 @@ impl AuthorColors {
                 self.names.len() - 1
             }
         };
-        palette[idx % palette.len()]
+        let rgb = PALETTE[idx % PALETTE.len()];
+        [(rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF].map(|c| c as f32 / 255.0)
     }
 }
 
@@ -10586,12 +10572,10 @@ fn apply_rev(style: &mut RunStyle, mark: RevMark, color: [f32; 3]) {
     match mark {
         RevMark::None | RevMark::MoveFrom | RevMark::MoveTo => {}
         RevMark::Del => {
+            // A deletion takes its author's ink, as an insertion does
+            // (live Word: Boris's deletion 0078D4 beside Anna's D13438).
             style.strike = true;
-            // Word Quartz deletion ink is #D13438 (addition_removal p3
-            // capability matrix). Author gold on delText zeroed color_sim
-            // there. Second/third-author del as ins palette (mini 239)
-            // dropped no-redline median 53.4615→53.4464. Keep always-red.
-            style.color = [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0];
+            style.color = color;
             style.color_auto = false;
         }
         RevMark::Ins => {
