@@ -22966,7 +22966,6 @@ impl<'a> Layout<'a> {
         } else {
             self.flow_left()
         };
-        let table_left = origin + shift + ind - pull;
         // A floating table that would run past its page's foot is laid out
         // in the flow and breaks across pages (0011e415's page-anchored
         // table continues on page 2).
@@ -22974,12 +22973,49 @@ impl<'a> Layout<'a> {
             let th: f32 = row_h.iter().sum();
             self.float_table_top(slot) - th < self.body_floor
         });
+        let mut table_left = origin + shift + ind - pull;
         if overflows
             && self.nested_depth == 0
             && let Some(slot) = geom.float
         {
-            // It starts where it floats (0011e415's first row at 219pt).
-            self.y = self.float_table_top(slot);
+            // It starts where it floats (0011e415's first row at 219pt),
+            // lifted so the leading rows one body page holds end above
+            // the page's edge. Live Word 2026-09-26, 17.46pt rows under a
+            // 36pt margin at tblpY 114, 200 or 300: 30 rows fit a page,
+            // so the table starts at 612 - 30 x 17.46 = 87.6 (29 rows in
+            // all: 105; tblpY 72 stays).
+            let room = self.page.height - self.body_top - self.body_floor;
+            let mut lead = 0.0_f32;
+            for h in &row_h {
+                if lead + h > room {
+                    break;
+                }
+                lead += h;
+            }
+            let top = self.float_table_top(slot);
+            self.y = if matches!(
+                slot,
+                ImageSlot::Float {
+                    page_y: Some(_),
+                    ..
+                }
+            ) {
+                top.max(lead)
+            } else {
+                top
+            };
+            // Every page of it keeps the float's column (a 360pt centred
+            // table's border at 216 on pages 1-3), not the margin.
+            let th: f32 = row_h.iter().sum();
+            let (fx, _) = self.float_xy(used.max(1.0), th.max(1.0), slot);
+            let centred_float = matches!(
+                slot,
+                ImageSlot::Float {
+                    align: Align::Center | Align::Right,
+                    ..
+                }
+            );
+            table_left = if centred_float { fx } else { fx + ind - pull };
         }
         if let Some(slot) = geom.float
             && self.nested_depth == 0

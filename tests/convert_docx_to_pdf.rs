@@ -36720,6 +36720,64 @@ fn an_inserted_or_deleted_table_cell_brings_the_balloon_pane() {
 }
 
 #[test]
+fn a_long_page_floating_table_lifts_to_keep_a_page_of_rows_and_its_column() {
+    // English b/49913824: a page-anchored, centred floating table runs
+    // over three pages; we dropped it to the margin at x = 36. Live Word
+    // 2026-09-26 (compat 15, 36pt margins, 17pt exact rows, tblpY 114): a
+    // 3-row table starts at 114; with 31 or 60 rows it lifts to 84.5, so
+    // the 31 rows one body page holds (527pt) end at the page's 612pt
+    // edge. Every page keeps the centred 360pt column (border at 216).
+    let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+    let body = |rows: usize| {
+        let cell = |txt: String| {
+            format!(
+                "<w:tc><w:tcPr><w:tcW w:w=\"3600\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>{txt}</w:t></w:r></w:p></w:tc>"
+            )
+        };
+        let trs: String = (0..rows)
+            .map(|i| {
+                format!(
+                    "<w:tr><w:trPr><w:trHeight w:val=\"340\" w:hRule=\"exact\"/></w:trPr>{}{}</w:tr>",
+                    cell(format!("Row{i}A")),
+                    cell(format!("Row{i}B"))
+                )
+            })
+            .collect();
+        format!(
+            "<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" \
+             w:vertAnchor=\"page\" w:horzAnchor=\"margin\" w:tblpXSpec=\"center\" w:tblpY=\"2280\"/>\
+             <w:tblW w:w=\"7200\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"3600\"/><w:gridCol w:w=\"3600\"/></w:tblGrid>{trs}</w:tbl>\
+             <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"15840\" w:h=\"12240\" w:orient=\"landscape\"/>\
+             <w:pgMar w:top=\"720\" w:right=\"720\" w:bottom=\"720\" w:left=\"720\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+        )
+    };
+    let first = |rows: usize| {
+        let pdf =
+            docx_to_pdf(&minimal_docx_with_settings(&body(rows), settings)).expect("float table");
+        let row0 = pdf_glyph_text_xy(&pdf, "Row0A").expect("first row paints");
+        let last = pdf_glyph_text_xy(&pdf, &format!("Row{}A", rows - 1)).expect("last row paints");
+        (row0, last)
+    };
+    let ((short_x, short_y), _) = first(3);
+    for rows in [31, 60] {
+        let ((x, y), (last_x, _)) = first(rows);
+        assert!(
+            (y - short_y - 29.5).abs() < 1.0,
+            "{rows} rows lift about 29.5pt over tblpY; lift {}",
+            y - short_y
+        );
+        assert!(
+            (x - short_x).abs() < 0.5 && (last_x - short_x).abs() < 0.5,
+            "{rows} rows keep the centred column: {x} / {last_x} vs {short_x}"
+        );
+    }
+}
+
+#[test]
 fn even_and_odd_pages_keep_their_parity_across_a_numbering_restart() {
     // English redline df4265bd (w:evenAndOddHeaders): its sections restart
     // numbering at 1 after a page numbered 1, and Word prints a blank page
