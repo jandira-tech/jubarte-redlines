@@ -332,3 +332,9 @@ rule:
 - **Batch compares.** In `word_redline.py`'s default batch mode, "open produced
   2 new documents" happens about every other pair after a compare. Notes are in
   `neurotic_docx_bench/scripts/WORD_SCRIPTS_REVIEW_2026-09-25.md`.
+- A picture inside a `v:group` is placed in the group's coordinate space:
+  its unitless left/top/width/height are relative to `coordorigin` and
+  scaled by the group's box / `coordsize` (nested groups repeat that), and
+  the outermost group's margin and relative frame place the result.
+  b 069252c3's org chart was painted at page (0,0) from the child's own
+  unitless box; Word paints it at (128.5, 284.9).

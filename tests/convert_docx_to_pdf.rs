@@ -5102,6 +5102,30 @@ fn vml_images_take_the_slot_of_their_own_shape() {
 }
 
 #[test]
+fn a_vml_group_places_its_pictures_in_group_coordinates() {
+    // 069252c3's org chart is a picture inside a `v:group`: the child's
+    // left/top/width/height are in the group's coordorigin/coordsize
+    // space, scaled onto the group's box. We painted it at page (0,0);
+    // Word paints it where the group maps it.
+    let body = "<w:p><w:r><w:pict>\
+           <v:group style=\"position:absolute;margin-left:200pt;margin-top:100pt;width:200pt;height:100pt;\
+             mso-position-horizontal-relative:page;mso-position-vertical-relative:page\" \
+             coordorigin=\"1000,500\" coordsize=\"2000,1000\">\
+             <v:shape style=\"position:absolute;left:2000;top:1000;width:1000;height:500\">\
+               <v:imagedata r:id=\"rIdImg\"/></v:shape>\
+           </v:group>\
+         </w:pict></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert VML group picture");
+    let (x, y) = image_cm_xy(&pdf, "100.00", "50.00");
+    assert!(
+        (x - 300.0).abs() < 0.5 && (y - (792.0 - 150.0 - 50.0)).abs() < 0.5,
+        "group child at page (300,150): {x},{y}"
+    );
+}
+
+#[test]
 fn xfrm_rot_ninety_rotates_image_cm() {
     // xml leftover / media rotation: pic:spPr a:xfrm/@rot is 60000ths of a
     // degree (ECMA-376 20.1.7.6). 5400000 = 90°. Unrotated paint is

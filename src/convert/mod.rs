@@ -13898,6 +13898,28 @@ fn vml_owner_slot(dom: &Dom, im: NodeId, root: NodeId) -> Option<ImageSlot> {
             break;
         }
         if VML_BOXES.iter().any(|l| local_name_is(dom, n, l))
+            && let Some((group, [x, y, _, _])) = vml_group_box(dom, n, root)
+        {
+            let mut slot = vml_shape_slot(dom, group)?;
+            if let ImageSlot::Float {
+                page_x,
+                page_y,
+                col_x,
+                para_y,
+                v_off,
+                ..
+            } = &mut slot
+            {
+                for v in [page_x, col_x].into_iter().flatten() {
+                    *v += x;
+                }
+                for v in [page_y, para_y, v_off].into_iter().flatten() {
+                    *v += y;
+                }
+            }
+            return Some(slot);
+        }
+        if VML_BOXES.iter().any(|l| local_name_is(dom, n, l))
             && let Some(slot) = vml_shape_slot(dom, n)
         {
             return Some(slot);
@@ -13916,6 +13938,11 @@ fn vml_owner_extent_pt(dom: &Dom, im: NodeId, root: NodeId) -> (f32, f32) {
             break;
         }
         if VML_BOXES.iter().any(|l| local_name_is(dom, n, l))
+            && let Some((_, [_, _, w, h])) = vml_group_box(dom, n, root)
+        {
+            return (w, h);
+        }
+        if VML_BOXES.iter().any(|l| local_name_is(dom, n, l))
             && let Some(style) = attr_any(dom, n, "style")
             && let (Some(w), Some(h)) =
                 (vml_style_pt(style, "width"), vml_style_pt(style, "height"))
@@ -13925,6 +13952,66 @@ fn vml_owner_extent_pt(dom: &Dom, im: NodeId, root: NodeId) -> (f32, f32) {
         node = dom.parent(n);
     }
     vml_extent_pt(dom, root)
+}
+
+/// A shape inside `v:group`s is placed in its group's coordinate space
+/// (coordorigin/coordsize, unitless) scaled onto the group's box; nested
+/// groups repeat that. Returns the outermost group and the shape's box in
+/// points from that group's top-left (069252c3's org chart).
+fn vml_group_box(dom: &Dom, shape: NodeId, root: NodeId) -> Option<(NodeId, [f32; 4])> {
+    if local_name_is(dom, shape, "group") {
+        return None;
+    }
+    let num = |v: &str| v.trim().parse::<f32>().ok();
+    let pair = |node: NodeId, key: &str, dflt: [f32; 2]| {
+        attr_any(dom, node, key)
+            .and_then(|raw| {
+                let mut it = raw.split(',');
+                Some([num(it.next()?)?, it.next().and_then(num).unwrap_or(dflt[1])])
+            })
+            .unwrap_or(dflt)
+    };
+    let local_box = |node: NodeId| -> Option<[f32; 4]> {
+        let style = attr_any(dom, node, "style")?;
+        let get = |k: &str| num(vml_style_token(style, k));
+        Some([
+            get("left").unwrap_or(0.0),
+            get("top").unwrap_or(0.0),
+            get("width")?,
+            get("height")?,
+        ])
+    };
+    let groups: Vec<NodeId> = dom
+        .ancestors(shape, None)
+        .into_iter()
+        .take_while(|a| *a != root)
+        .filter(|a| local_name_is(dom, *a, "group"))
+        .collect();
+    let (&outer, _) = groups.split_last()?;
+    let mut rect = local_box(shape)?;
+    for &g in &groups {
+        let origin = pair(g, "coordorigin", [0.0, 0.0]);
+        let size = pair(g, "coordsize", [1000.0, 1000.0]);
+        let frame = if g == outer {
+            let style = attr_any(dom, g, "style")?;
+            [
+                0.0,
+                0.0,
+                vml_style_pt(style, "width")?,
+                vml_style_pt(style, "height")?,
+            ]
+        } else {
+            local_box(g)?
+        };
+        let (sx, sy) = (frame[2] / size[0].max(1.0), frame[3] / size[1].max(1.0));
+        rect = [
+            frame[0] + (rect[0] - origin[0]) * sx,
+            frame[1] + (rect[1] - origin[1]) * sy,
+            rect[2] * sx,
+            rect[3] * sy,
+        ];
+    }
+    Some((outer, rect))
 }
 
 /// One VML shape's `position:absolute` slot, or `None` when it flows.
