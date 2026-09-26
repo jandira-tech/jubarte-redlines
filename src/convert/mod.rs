@@ -1837,6 +1837,9 @@ enum ImageSlot {
         wrap_square: bool,
         /// `wp:wrapTopAndBottom` — body only above and below the band.
         wrap_top_bottom: bool,
+        /// `wp:wrapTight` / wrapThrough: the body wraps the polygon, so a
+        /// header float's distT/distB never reach the body (live Word).
+        wrap_polygon: bool,
         /// `wp:anchor/@distL` in points (114300 EMU = 9pt).
         dist_l: f32,
         /// `wp:anchor/@distR` in points.
@@ -6764,6 +6767,7 @@ fn frame_box(
             v_align: Align::Left,
             wrap_square: around,
             wrap_top_bottom: false,
+            wrap_polygon: false,
             dist_l: h_space,
             dist_r: h_space,
             dist_t: v_space,
@@ -10180,6 +10184,7 @@ fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
         v_align: Align::Left,
         wrap_square: true,
         wrap_top_bottom: false,
+        wrap_polygon: false,
         dist_l: dist("leftFromText"),
         dist_r: dist("rightFromText"),
         dist_t: dist("topFromText"),
@@ -11930,6 +11935,7 @@ fn collect_textboxes_styled(
                     v_align: Align::Left,
                     wrap_square: false,
                     wrap_top_bottom: false,
+                    wrap_polygon: false,
                     dist_l: 0.0,
                     dist_r: 0.0,
                     dist_t: 0.0,
@@ -13527,6 +13533,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     ..
                 } | ImageSlot::Float {
                     wrap_top_bottom: true,
+                    wrap_polygon: false,
                     ..
                 }
             );
@@ -14119,9 +14126,9 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         _ => Align::Left,
     };
     let (pct_w, pct_h) = size_rel_pct(dom, drawing);
-    let wrap_square = first_named_any(dom, drawing, "wrapSquare").is_some()
-        || first_named_any(dom, drawing, "wrapTight").is_some()
+    let wrap_polygon = first_named_any(dom, drawing, "wrapTight").is_some()
         || first_named_any(dom, drawing, "wrapThrough").is_some();
+    let wrap_square = first_named_any(dom, drawing, "wrapSquare").is_some() || wrap_polygon;
     let anchor = first_named_any(dom, drawing, "anchor");
     let emu_pt = |name: &str| {
         anchor
@@ -14165,6 +14172,7 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         v_align,
         wrap_square,
         wrap_top_bottom,
+        wrap_polygon,
         dist_l: emu_pt("distL") + effect_pt("l"),
         dist_r: emu_pt("distR") + effect_pt("r"),
         dist_t: emu_pt("distT") + effect_pt("t"),
@@ -14469,6 +14477,7 @@ fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
             v_align,
             wrap_square: matches!(wrap.as_str(), "square" | "tight" | "through"),
             wrap_top_bottom: matches!(wrap.as_str(), "topandbottom" | "top-and-bottom"),
+            wrap_polygon: matches!(wrap.as_str(), "tight" | "through"),
             dist_l: vml_style_pt(style, "mso-wrap-distance-left").unwrap_or(0.0),
             dist_r: vml_style_pt(style, "mso-wrap-distance-right").unwrap_or(0.0),
             dist_t: vml_style_pt(style, "mso-wrap-distance-top").unwrap_or(0.0),
@@ -15966,6 +15975,7 @@ fn chrome_part_xml(
                             v_align: Align::Left,
                             wrap_square: false,
                             wrap_top_bottom: false,
+                            wrap_polygon: false,
                             dist_l: 0.0,
                             dist_r: 0.0,
                             dist_t: 0.0,
@@ -20616,12 +20626,20 @@ impl<'a> Layout<'a> {
             wrap_top_bottom,
             dist_l,
             dist_r,
+            wrap_polygon,
             dist_t,
             dist_b,
             ..
         } = slot
         else {
             return;
+        };
+        // Tight and through wrap the polygon: the vertical distances do not
+        // reach the body (03fcabcc's letterhead, distB 12pt).
+        let (dist_t, dist_b) = if wrap_polygon {
+            (0.0, 0.0)
+        } else {
+            (dist_t, dist_b)
         };
         let bottom = y - dist_b;
         if !(wrap_square || wrap_top_bottom) || bottom >= self.y {

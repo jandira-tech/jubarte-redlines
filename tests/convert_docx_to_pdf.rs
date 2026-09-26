@@ -2545,6 +2545,42 @@ fn a_header_float_wraps_the_body_text() {
 }
 
 #[test]
+fn a_tight_header_float_keeps_its_distance_off_the_body() {
+    // Live Word: a full-width header float ending at 65pt with distB 24pt
+    // pushes the body baseline to 100.3 when square, but tight and through
+    // wrap its polygon and leave the body at 83.3. 03fcabcc's wrapThrough
+    // letterhead (distB 12pt) keeps its body where it was.
+    let poly = "<wp:wrapPolygon edited=\"0\"><wp:start x=\"0\" y=\"0\"/><wp:lineTo x=\"0\" y=\"21600\"/>\
+        <wp:lineTo x=\"21600\" y=\"21600\"/><wp:lineTo x=\"21600\" y=\"0\"/><wp:lineTo x=\"0\" y=\"0\"/></wp:wrapPolygon>";
+    let body_top = |wrap: String| {
+        let img = blip(
+            "6756400",
+            "571500",
+            "<wp:anchor distT=\"0\" distB=\"304800\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+               relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+               <wp:simplePos x=\"0\" y=\"0\"/>\
+               <wp:positionH relativeFrom=\"page\"><wp:posOffset>508000</wp:posOffset></wp:positionH>\
+               <wp:positionV relativeFrom=\"page\"><wp:posOffset>254000</wp:posOffset></wp:positionV>",
+            &format!("{wrap}</wp:anchor>"),
+        );
+        let hdr = format!("<w:p><w:r>{img}</w:r><w:r><w:t>Head</w:t></w:r></w:p>");
+        let pdf = docx_to_pdf(&header_part_docx_at(&hdr, 720)).expect("header float");
+        792.0
+            - pdf_glyph_text_xy(&pdf, "HdrImgBodyX")
+                .expect("body paints")
+                .1
+    };
+    let top = body_top("<wp:wrapSquare wrapText=\"bothSides\"/>".into());
+    assert!(top > 95.0, "square: distB pushes the body, baseline {top}");
+    for wrap in ["wrapTight", "wrapThrough"] {
+        let top = body_top(format!(
+            "<wp:{wrap} wrapText=\"bothSides\">{poly}</wp:{wrap}>"
+        ));
+        assert!(top < 90.0, "{wrap}: body stays put, baseline {top}");
+    }
+}
+
+#[test]
 fn a_float_anchored_after_a_page_spanning_paragraph_lands_on_its_last_page() {
     // Redlines vs 017447de: B's deleted pictures are anchored after all of
     // a four-page paragraph, positioned from the paragraph with tight wrap.
