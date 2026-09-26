@@ -1000,8 +1000,9 @@ struct Defaults {
     para: ParaStyle,
     page: PageSetup,
     /// compatibilityMode below 15: a pct table width is measured on the
-    /// text width plus the table's left and right cell margins.
-    legacy_tables: bool,
+    /// text width plus the table's left and right cell margins, and a
+    /// header tab left at the right margin stays on its line.
+    legacy_compat: bool,
     /// The default paragraph style's own w:spacing sets [after, before,
     /// line]: a table style's pPr does not override those in its cells.
     normal_spacing: [bool; 3],
@@ -1116,7 +1117,7 @@ impl Defaults {
                 grid_pitch: 0.0,
                 grid_char: 0.0,
             },
-            legacy_tables: false,
+            legacy_compat: false,
             normal_spacing: [false; 3],
             normal_run: (false, false),
         }
@@ -1187,6 +1188,10 @@ struct TextRun {
     /// First run of a header/footer paragraph's wrapped continuation line:
     /// the paragraph's first-line indent does not apply to it.
     hf_cont: bool,
+    /// Header/footer run of a compatibilityMode 15 document: a tab left at
+    /// the right margin with no stop wraps (ecd9fba7; mode 14 keeps it on
+    /// the line, 7695f5c2).
+    hf_tab_wrap: bool,
     /// A FORMCHECKBOX legacy form field: an em space advanced like Word's
     /// box (1.15 x the box size) that paints the box, crossed when checked.
     checkbox: Option<bool>,
@@ -1214,6 +1219,7 @@ impl TextRun {
             frame_right: false,
             frame_center: false,
             hf_cont: false,
+            hf_tab_wrap: false,
             checkbox: None,
         }
     }
@@ -2573,7 +2579,7 @@ fn collect_script_fonts(
 fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     let theme = load_theme(pkg);
     let mut defaults = Defaults::word();
-    defaults.legacy_tables = settings_compat_mode(pkg) < 15;
+    defaults.legacy_compat = settings_compat_mode(pkg) < 15;
     let mut raw: std::collections::HashMap<String, RawStyle> = std::collections::HashMap::new();
     let Some(xml) = pkg.part_string(&main_rel_part(pkg, "styles", "word/styles.xml")) else {
         return StyleSheet {
@@ -9861,7 +9867,7 @@ fn table_block(
                 // Only margins something defines: with no table style and
                 // no tblCellMar Word's are 0 (00f0e7f3's bare styles part;
                 // Word's 60% table with no styles part is 60% of the text).
-                pct_margins: if sheet.defaults.legacy_tables
+                pct_margins: if sheet.defaults.legacy_compat
                     && (!sheet.tables.is_empty()
                         || table_pr(dom, table)
                             .is_some_and(|pr| first_named(dom, pr, "tblCellMar").is_some()))
@@ -16173,6 +16179,7 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
         for run in &mut line {
             run.hf_para = Some(pstyle.clone());
             run.hf_pic_h = pic_h;
+            run.hf_tab_wrap = !sheet.defaults.legacy_compat;
         }
         if runs.is_empty() {
             // Below leading empty paragraphs the text keeps its before,
@@ -16332,10 +16339,16 @@ fn hf_styled_lines(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<(Vec<Text
         }
         let last = pieces.len() - 1;
         out.extend(pieces.into_iter().enumerate().map(|(i, mut piece)| {
-            if i > 0
-                && let Some(head) = piece.first_mut()
-            {
-                head.hf_cont = true;
+            if i > 0 {
+                // The paragraph's inline picture stands on its first line;
+                // a wrapped line is one text line tall (ecd9fba7's "19/03"
+                // under the 36pt logo).
+                for run in &mut piece {
+                    run.hf_pic_h = 0.0;
+                }
+                if let Some(head) = piece.first_mut() {
+                    head.hf_cont = true;
+                }
             }
             (piece, if i == last { gap } else { 0.0 })
         }));
@@ -16357,6 +16370,7 @@ fn hf_tab_line_breaks(fonts: &Fonts, line: &[TextRun], width: f32) -> Vec<Vec<Te
         return Vec::new();
     }
     let right = width - para.indent_right;
+    let wrap15 = line.iter().any(|r| r.hf_tab_wrap);
     // Every character with its run and width.
     let chars: Vec<(usize, char, f32)> = line
         .iter()
@@ -16400,11 +16414,29 @@ fn hf_tab_line_breaks(fonts: &Fonts, line: &[TextRun], width: f32) -> Vec<Vec<Te
                 TabAlign::Center => (t.pos + seg * 0.5).max(pos + seg),
                 _ => t.pos + seg,
             },
-            None if pos > para.indent_left + 0.5 && pos + seg > right + 0.5 => {
-                // No stop left and the text overflows: the tab starts the
-                // next line and resolves from its start.
-                cuts.push(k);
+            None if pos > para.indent_left + 0.5
+                && (pos + seg > right + 0.5 || wrap15 && pos >= right - 0.5) =>
+            {
+                // No stop left and the text overflows, or the tab stands at
+                // the margin with nowhere to go: it starts the next line
+                // and resolves from its start. A tab with no text of its
+                // own takes the word glued before it along (ecd9fba7's
+                // "CCPR 19/03" right-aligned at the margin, then two tabs:
+                // Word wraps "19/03"); a tab carrying text moves alone
+                // (00e23d67 keeps "…Negeri Surabaya" and wraps only
+                // "⇥Surabaya, 17-09-2024").
+                let mut at = k;
+                while wrap15 && seg <= 0.01 && at > 0 && !matches!(chars[at - 1].1, '\t' | ' ') {
+                    at -= 1;
+                }
+                // A word that already opens a line (or has no space
+                // before it) stays; only the tab moves.
+                if at == 0 || chars[at - 1].1 == '\t' || cuts.contains(&at) {
+                    at = k;
+                }
+                cuts.push(at);
                 pos = para.indent_left;
+                k = at;
                 continue;
             }
             None => pos + seg,

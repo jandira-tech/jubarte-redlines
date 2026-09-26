@@ -36866,3 +36866,173 @@ fn a_grid_after_row_at_the_page_end_moves_whole() {
         assert!((a - b).abs() < 0.05, "{key}: {b} vs {a} without gridAfter");
     }
 }
+
+#[test]
+fn a_header_tab_past_the_margin_wraps_with_its_word() {
+    // ecd9fba7's header ends "CCPR 19/03" on the right stop at the margin
+    // and two tabs with no stop left: Word wraps "19/03" (glued to the tab
+    // after it) onto a second header line, leaving "CCPR" at the right.
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:pPr><w:tabs><w:tab w:val=\"center\" w:pos=\"4536\"/>\
+             <w:tab w:val=\"right\" w:pos=\"9072\"/></w:tabs></w:pPr>\
+             <w:r><w:t>Logo</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>(V1, 25 May 2019)</w:t></w:r>\
+             <w:r><w:tab/></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>CCPR 19/03</w:t></w:r>\
+             <w:r><w:tab/></w:r><w:r><w:tab/></w:r></w:p></w:hdr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1417\" w:right=\"1417\" w:bottom=\"1417\" w:left=\"1417\" \
+             w:header=\"708\" w:footer=\"708\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdSet", "settings", "settings.xml"),
+        ],
+        &[
+            ("word/header1.xml", header.to_string()),
+            ("word/settings.xml", compat_mode_settings(15)),
+        ],
+    ))
+    .expect("convert wrapping header");
+    let (cx, cy) = pdf_literal_td_xy(&pdf, "CCPR").expect("CCPR painted");
+    let (nx, ny) = pdf_literal_td_xy(&pdf, "19/03").expect("19/03 painted on its own");
+    assert!(
+        cy - ny > 8.0,
+        "19/03 on the next line: CCPR y {cy}, 19/03 y {ny}"
+    );
+    assert!(nx < 80.0, "19/03 starts the line at the margin, got {nx}");
+    assert!(
+        cx > 480.0,
+        "CCPR stays right-aligned at the margin, got {cx}"
+    );
+}
+
+#[test]
+fn a_header_tab_with_text_past_the_margin_wraps_alone() {
+    // 00e23d67's header right-aligns "… Negeri Surabaya" on the stop at the
+    // margin, then a tab carrying "Surabaya, 17-09-2024" with no stop left:
+    // Word wraps only the tab and its text; "Surabaya" stays on line one.
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:pPr><w:tabs><w:tab w:val=\"right\" w:pos=\"8505\"/></w:tabs></w:pPr>\
+             <w:r><w:tab/><w:t xml:space=\"preserve\">Program Politeknik Negeri </w:t></w:r>\
+             <w:r><w:t>Kotaz</w:t></w:r><w:r><w:rPr><w:sz w:val=\"16\"/></w:rPr><w:tab/>\
+             <w:t>Datez 17-09-2024</w:t></w:r></w:p></w:hdr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1417\" w:right=\"1701\" w:bottom=\"1417\" w:left=\"1701\" \
+             w:header=\"708\" w:footer=\"708\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", header.to_string())],
+    ))
+    .expect("convert wrapping header");
+    let (_, py) = pdf_literal_td_xy(&pdf, "Program").expect("Program painted");
+    let (kx, ky) = pdf_literal_td_xy(&pdf, "Kotaz").expect("Kotaz painted");
+    let (_, dy) = pdf_literal_td_xy(&pdf, "Datez").expect("Datez painted");
+    assert!(
+        (py - ky).abs() < 0.5,
+        "Kotaz stays on line one: Program y {py}, Kotaz y {ky}"
+    );
+    assert!(kx > 400.0, "Kotaz ends at the right stop, got x {kx}");
+    assert!(py - dy > 6.0, "the tab's text wraps: Datez y {dy}");
+}
+
+#[test]
+fn a_header_line_wrapped_past_a_logo_keeps_its_own_height() {
+    // ecd9fba7's header opens with a 36pt inline logo; the wrapped "19/03"
+    // line below it is one text line tall in Word (tops 61.9 then 74.4),
+    // not a second logo's height.
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+           xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\">\
+           <w:p><w:pPr><w:tabs><w:tab w:val=\"center\" w:pos=\"4536\"/>\
+             <w:tab w:val=\"right\" w:pos=\"9072\"/></w:tabs></w:pPr>\
+             <w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+               <wp:extent cx=\"920186\" cy=\"461176\"/><wp:docPr id=\"4\" name=\"Logo\"/>\
+             </wp:inline></w:drawing></w:r>\
+             <w:r><w:tab/></w:r><w:r><w:t>(V1, 25 May 2019)</w:t></w:r>\
+             <w:r><w:tab/></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>CCPR 19/03</w:t></w:r>\
+             <w:r><w:tab/></w:r><w:r><w:tab/></w:r></w:p></w:hdr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1417\" w:right=\"1417\" w:bottom=\"1417\" w:left=\"1417\" \
+             w:header=\"708\" w:footer=\"708\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdSet", "settings", "settings.xml"),
+        ],
+        &[
+            ("word/header1.xml", header.to_string()),
+            ("word/settings.xml", compat_mode_settings(15)),
+        ],
+    ))
+    .expect("convert logo header");
+    let (_, cy) = pdf_literal_td_xy(&pdf, "CCPR").expect("CCPR painted");
+    let (_, ny) = pdf_literal_td_xy(&pdf, "19/03").expect("19/03 painted on its own");
+    assert!(
+        (8.0..16.0).contains(&(cy - ny)),
+        "19/03 one text line below CCPR: CCPR y {cy}, 19/03 y {ny}"
+    );
+}
+
+fn compat_mode_settings(mode: u8) -> String {
+    format!(
+        "<?xml version=\"1.0\"?>\
+         <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+             w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"{mode}\"/></w:compat>\
+         </w:settings>"
+    )
+}
+
+#[test]
+fn a_compat_14_header_tab_at_the_margin_stays_on_its_line() {
+    // 7695f5c2 carries ecd9fba7's header in compatibilityMode 14: Word
+    // keeps "CCPR 19/03" whole on the logo line; only mode 15 wraps it.
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:pPr><w:tabs><w:tab w:val=\"center\" w:pos=\"4536\"/>\
+             <w:tab w:val=\"right\" w:pos=\"9072\"/></w:tabs></w:pPr>\
+             <w:r><w:t>Logo</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>(V1, 25 May 2019)</w:t></w:r>\
+             <w:r><w:tab/></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>CCPR 19/03</w:t></w:r>\
+             <w:r><w:tab/></w:r><w:r><w:tab/></w:r></w:p>\
+           <w:p><w:r><w:t>Nextz</w:t></w:r></w:p></w:hdr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1417\" w:right=\"1417\" w:bottom=\"1417\" w:left=\"1417\" \
+             w:header=\"708\" w:footer=\"708\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdSet", "settings", "settings.xml"),
+        ],
+        &[
+            ("word/header1.xml", header.to_string()),
+            ("word/settings.xml", compat_mode_settings(14)),
+        ],
+    ))
+    .expect("convert compat 14 header");
+    let (_, ly) = pdf_glyph_text_xy(&pdf, "Logo").expect("Logo painted");
+    let (cx, cy) = pdf_glyph_text_xy(&pdf, "CCPR 19/03").expect("CCPR 19/03 painted whole");
+    assert!(
+        (cy - ly).abs() < 0.5 && cx > 440.0,
+        "CCPR 19/03 at {cx},{cy}"
+    );
+    // One line plus the paragraph's 8pt after is 25.4pt; a wrapped tab
+    // line would add another 15.4pt.
+    let (_, ny) = pdf_glyph_text_xy(&pdf, "Nextz").expect("Nextz painted");
+    assert!(
+        ly - ny < 32.0,
+        "no wrapped tab line between: Logo y {ly}, Nextz y {ny}"
+    );
+}
