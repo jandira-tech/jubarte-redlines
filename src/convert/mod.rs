@@ -18465,7 +18465,6 @@ impl<'a> Layout<'a> {
         // a float holds that line, else the nearest lower band beside it.
         let mut first_hit = false;
         let mut from_min = f32::MAX;
-        let max_side = self.content_width() * 0.7;
         let mut consider = |slot: ImageSlot, w: f32, h: f32, frame: bool| {
             let ImageSlot::Float {
                 align,
@@ -18488,20 +18487,22 @@ impl<'a> Layout<'a> {
             };
             let hits = from < self.line_probe.h;
             let (dw, _) = self.sized_wh(slot, w, h, 1.0, 1.0);
-            // A frame keeps its own inch rule below; other wide floats
-            // are page banners with no side room.
-            if dw >= max_side && !frame {
-                return;
-            }
             let (fx, _) = self.float_xy(dw, h.max(1.0), slot);
             let text_room = (fx - dist_l - self.page.margin_l).max(0.0);
             // A float placed by offset keeps text on its roomier side
             // (001c1554's picture 490pt into the column wraps text left).
             let placed = page_x.is_some() || col_x.is_some() || pct_x.is_some();
             let right_room = self.page.margin_l + self.content_width() - (fx + dw + dist_r);
-            // Through an inch or less the text goes under a frame
-            // (apply_top_bottom_wrap).
-            if frame && text_room.max(right_room) < MIN_SIDE_FRAME_ROOM_PT {
+            // Through too narrow a gap the text goes under the float
+            // (apply_top_bottom_wrap): an inch for a frame. A wide square
+            // float with room still wraps (live Word: a 75% shape leaving
+            // 106pt), only a banner with no side room does not.
+            let min_room = if frame {
+                MIN_SIDE_FRAME_ROOM_PT
+            } else {
+                MIN_SIDE_FLOAT_ROOM_PT
+            };
+            if text_room.max(right_room) < min_room {
                 return;
             }
             let text_left = match align {

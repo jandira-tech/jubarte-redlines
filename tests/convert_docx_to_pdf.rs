@@ -2823,6 +2823,41 @@ fn a_frame_needs_more_than_an_inch_beside_it() {
 }
 
 #[test]
+fn a_wide_square_float_with_room_beside_it_wraps_the_text() {
+    // Live Word: a margin-placed square shape leaving a 106pt gap (distL
+    // 9pt) takes 75% of the column; the paragraph still wraps into the gap
+    // ("Contact for further " / "information: after "). We skipped floats
+    // over 70% of the column as page banners and ran the line under it.
+    let gap = 106_i64;
+    let (x, w) = ((gap + 9) * 12700, (468 - gap - 9) * 12700);
+    let shape = format!(
+        "<w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:simplePos x=\"0\" y=\"0\"/>\
+           <wp:positionH relativeFrom=\"margin\"><wp:posOffset>{x}</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>50800</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"{w}\" cy=\"635000\"/><wp:wrapSquare wrapText=\"bothSides\"/><wp:docPr id=\"5\" name=\"R\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"DDDDDD\"/></a:solidFill></wps:spPr>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r><w:t>Before line</w:t></w:r></w:p>\
+         <w:p>{shape}<w:r><w:t>Contact for further information: after the frame text wraps here</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("wide float");
+    let (_, contact) = pdf_glyph_text_xy(&pdf, "Contact").expect("contact paints");
+    let (ix, info) = pdf_glyph_text_xy(&pdf, "information").expect("information paints");
+    assert!(
+        contact - info > 10.0 && (ix - 72.0).abs() < 1.0,
+        "the gap takes 'Contact for further', the next line 'information'; {contact} vs {info} at {ix}"
+    );
+}
+
+#[test]
 fn a_word_font_with_an_abbreviated_file_name_is_found() {
     // fixtures_500 00dd36c7: Word's own Garamond ships as GARA.ttf /
     // GARAIT.ttf, which the file-name match never reached; we painted
