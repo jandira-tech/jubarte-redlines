@@ -38,6 +38,16 @@ GROK = ROOT / 'grok_run'
 LOOP = Path(os.environ.get('JUBARTE_LOOP', '/Users/arthrod/temp/T/jubarte-loop'))
 DXSUITE = Path(os.environ.get('DOCXIDE_SUITE', '/Users/arthrod/temp/T/docxide_suite'))
 
+# Superseded --compress runs, dropped: the writer that embedded whole fonts (23abeb2), and
+# 1b72452, whose device-scale glyphs MuPDF hinted differently (fixed in 530f46c).
+SUPERSEDED = 'superseded --compress'
+SUPERSEDED_FILES = {
+    'docxide_metrics_jubarte-23abeb2-compressed.json',
+    'docxide_metrics_jubarte-1b72452-compressed.json',
+}
+# The harness records the binary's own version; 530f46c is the 0.9.2 line (Cargo.toml lags).
+FILE_VERSIONS = {'docxide_metrics_jubarte-530f46c-compressed.json': 'jubarte 0.9.2 --compress'}
+
 # The English-corpus full runs record a tag, not the binary: en_full.sh BIN TAG.
 EN_TAGS = {
     'full0926b': 'jubarte@1da7e08',
@@ -53,7 +63,10 @@ EN_TAGS = {
     # Clean rebuild of 23abeb2 (older binaries deleted first), 2026-09-26.
     'fresh0926f': 'jubarte 0.9.2',
     'fresh0926g': 'jubarte 0.9.2',
-    'compressed0926': 'jubarte 0.9.2 --compress',
+    'compressed0926': SUPERSEDED,
+    'compressed0926b': SUPERSEDED,
+    # Subset fonts, narrowed /W, shared text objects (530f46c), 2026-09-26.
+    'compressed0926c': 'jubarte 0.9.2 --compress',
 }
 # Competitor versions of the English corpus (installed latest, 2026-09-25).
 EN_COMPETITORS = {
@@ -314,7 +327,7 @@ def jub(tag: str) -> str:
 
 def sample(corpus: str, tool: str, version: str, when: datetime, scores: dict[str, float]) -> None:
     scores = {k: float(v) for k, v in scores.items() if isinstance(v, (int, float))}
-    if scores:
+    if scores and version != SUPERSEDED:
         SAMPLES.append(Sample(corpus, TOOL_NAMES.get(tool, tool), version, when, scores))
 
 
@@ -385,6 +398,8 @@ def docxide_suite() -> None:
 
 def neurotic_398() -> None:
     for path in sorted(RES.glob('docxide_metrics*.json')):
+        if path.name in SUPERSEDED_FILES:
+            continue
         doc = json.loads(path.read_text())
         if 'word' not in str(doc.get('oracle') or '').lower():
             continue
@@ -397,9 +412,8 @@ def neurotic_398() -> None:
             name = 'jubarte-first' if 'jubarte-first' in version else tool
             if name == 'jubarte':
                 name = jub(path.name)
-            sample(
-                'nb398', name, str(t.get('version') or 'unversioned'), when_of(doc.get('generated_at'), path), per_doc
-            )
+            version = FILE_VERSIONS.get(path.name, version)
+            sample('nb398', name, version, when_of(doc.get('generated_at'), path), per_doc)
 
 
 def redlined_compared_set() -> None:

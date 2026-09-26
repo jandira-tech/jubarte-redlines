@@ -40,20 +40,11 @@ The redline engine is unchanged: `compare_documents` emits the same bytes as
   relative `Td`, so a page is no longer one `BT … ET` per glyph. Word-device
   glyphs (11.04/16.08pt body sizes) keep their own `q … cm … Q`: MuPDF hints
   them differently when the 0.24 scale sits in the text matrix.
-- With `--compress`, over 3,325 corpus documents the average PDF is 250 KB
-  against Word's 319 KB (0.78×) and smaller than Word's on every corpus
-  (before this it was about 499 KB). Glyph positions are unchanged and the
-  docxide-metrics scores with them (scorer A/B: 0.5884 → 0.5885, no document
-  moved by more than 0.01).
-
-  Comparative size on the 2,344 documents every tool converted (English
-  corpus and redlined set, `--compress`): jubarte 283 KB, Word 362 KB,
-  LibreOffice 26.8 266 KB, docxide-pdf 0.17.1 108 KB. docxide-pdf and
-  LibreOffice write smaller files at the cost of fidelity: both substitute
-  faces (Calibri became Arial in docxide-pdf's output and Carlito in
-  LibreOffice's), and both trail jubarte by a wide margin on every corpus.
-  The size target is Word's own, which jubarte beats while scoring highest
-  against Word's output.
+- With `--compress` the average PDF is smaller than Word's on every corpus:
+  145 KB against Word's 208 KB (0.70×) over the 2,102 clean documents and
+  377 KB against 449 KB (0.84×) over the 1,416 redlines. Glyph positions are unchanged and the docxide-metrics
+  scores with them: mean Jaccard 0.6469 clean / 0.4654 redlines against
+  0.6468 / 0.4656 without `--compress`.
 
 ### Added
 
