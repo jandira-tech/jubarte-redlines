@@ -25607,7 +25607,9 @@ fn multiline_cell_tcmar_top_stays_flush_after_mini_464() {
     // file_146 listing first line Word yMin 86.3 vs flush 80.9 is tcMar
     // top=100. First-line paint inset + pad_t row extra (not mini 188
     // pad_t+pad_b) was mini 464: NR 58.9475/50.4487 vs KEEP 460
-    // 59.46/53.4527 (median −3). Keep multi-line flush.
+    // 59.46/53.4527 (median −3). Keep multi-line flush. file_146's rows
+    // margin every cell; live Word (2026-09-26 probe of this very row)
+    // sets the unmargined Alpha cell level with Xrayy, both 5pt down.
     let body = "<w:tbl><w:tblGrid>\
            <w:gridCol w:w=\"4680\"/><w:gridCol w:w=\"4680\"/>\
          </w:tblGrid>\
@@ -25643,8 +25645,8 @@ fn multiline_cell_tcmar_top_stays_flush_after_mini_464() {
     );
     let drop = a_y - x_y;
     assert!(
-        (4.0..=6.0).contains(&drop),
-        "tcMar top 100 twips insets the first line 5pt; drop={drop} A={a_y} X={x_y}"
+        drop.abs() < 0.5,
+        "the row's 5pt top margin insets both cells alike; drop={drop} A={a_y} X={x_y}"
     );
     assert!(
         hay.contains("(C)") && hay.contains("(Z)"),
@@ -37462,5 +37464,27 @@ fn a_vertical_cell_word_is_not_broken_by_character() {
     assert!(
         y_body - y_after < 30.0,
         "the row stays one line tall: Body y {y_body}, After y {y_after}"
+    );
+}
+
+#[test]
+fn a_row_sets_every_cell_at_its_largest_top_margin() {
+    // 17c3e72c (Word's PDF): only the "1." cell carries tcMar top=57, yet
+    // the question beside it starts on the same line and the row grows
+    // by the margin; Word sets a row's cells at their largest top margin.
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/>\
+        <w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+        <w:tblGrid><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"5000\"/></w:tblGrid><w:tr>\
+        <w:tc><w:tcPr><w:tcW w:w=\"1000\" w:type=\"dxa\"/><w:tcMar><w:top w:w=\"200\" w:type=\"dxa\"/></w:tcMar></w:tcPr>\
+        <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>One</w:t></w:r></w:p></w:tc>\
+        <w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"dxa\"/></w:tcPr>\
+        <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Two</w:t></w:r></w:p></w:tc>\
+        </w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("row margins");
+    let (_, y_one) = pdf_glyph_text_xy(&pdf, "One").expect("One painted");
+    let (_, y_two) = pdf_glyph_text_xy(&pdf, "Two").expect("Two painted");
+    assert!(
+        (y_one - y_two).abs() < 0.5,
+        "both cells start 10pt down: One y {y_one}, Two y {y_two}"
     );
 }

@@ -9896,6 +9896,13 @@ fn table_block(
     let pref = first_row_pref(&raw_rows, &cols);
     let fixed = table_layout_fixed(dom, table);
     let mut rows = resolve_table_merges(raw_rows);
+    // A row sets all its cells at their largest top margin: 17c3e72c's
+    // question text starts level with the tcMar-top "1." beside it, and
+    // live Word sets an unmargined cell level with a tcMar-top neighbour.
+    for row in &mut rows {
+        let top = row.iter().map(|c| c.pad_t).fold(0.0_f32, f32::max);
+        row.iter_mut().for_each(|c| c.pad_t = top);
+    }
     // The spacing also stands between the table's edge and its first and
     // last rows (00046848's first row sits 5pt + its margin down in Word).
     if tbl_spacing > 0.0 {
