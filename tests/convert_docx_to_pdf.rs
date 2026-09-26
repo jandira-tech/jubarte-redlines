@@ -37373,3 +37373,23 @@ fn a_cell_line_takes_the_height_of_its_own_runs() {
         );
     }
 }
+
+#[test]
+fn an_autofit_column_of_vertical_text_keeps_its_width() {
+    // 1c99b5cd: an autofit table's 13pt first column holds btLr "Theory
+    // Topics"; the text runs along the row, so Word keeps the column at
+    // its grid width instead of widening it to "Theory".
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr>\
+        <w:tblGrid><w:gridCol w:w=\"500\"/><w:gridCol w:w=\"5500\"/></w:tblGrid><w:tr>\
+        <w:tc><w:tcPr><w:tcW w:w=\"500\" w:type=\"dxa\"/><w:textDirection w:val=\"btLr\"/></w:tcPr>\
+        <w:p><w:r><w:t>Theory Topics</w:t></w:r></w:p></w:tc>\
+        <w:tc><w:tcPr><w:tcW w:w=\"5500\" w:type=\"dxa\"/></w:tcPr>\
+        <w:p><w:r><w:t>Body</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("vertical cell");
+    let (x_body, _) = pdf_glyph_text_xy(&pdf, "Body").expect("Body painted");
+    // Page margin 72 + 25pt column + 5.4pt cell margin.
+    assert!(
+        x_body < 105.0,
+        "the vertical column stays 25pt wide: next cell text at x {x_body}"
+    );
+}

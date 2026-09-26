@@ -1464,6 +1464,8 @@ struct TableCell {
     /// `tcMar` bottom (falls back to `tblCellMar`).
     pad_b: f32,
     nowrap: bool,
+    /// `w:textDirection` btLr/tbRl: the text runs up or down the cell.
+    vertical: bool,
     /// `w:hideMark`: an empty cell's end-of-cell mark does not size its
     /// row (003dd497's spacer rows collapse to their trHeight).
     hide_mark: bool,
@@ -1516,6 +1518,7 @@ impl TableCell {
             pad_t: self.pad_t,
             pad_b: self.pad_b,
             nowrap: self.nowrap,
+            vertical: self.vertical,
             hide_mark: self.hide_mark,
             borders: self.borders,
             style_fill: self.style_fill,
@@ -1562,6 +1565,8 @@ struct RawCell {
     pad_t: f32,
     pad_b: f32,
     nowrap: bool,
+    /// `w:textDirection` btLr/tbRl: the text runs up or down the cell.
+    vertical: bool,
     hide_mark: bool,
     borders: Option<CellBorders>,
 }
@@ -7158,7 +7163,9 @@ fn autofit_to_words(
 ) -> Vec<f32> {
     let mut mins = vec![0.0_f32; widths.len()];
     for cell in rows.iter().flatten() {
-        if cell.colspan != 1 || cell.col >= widths.len() {
+        // Vertical text runs along the row, not across the column: 1c99b5cd's
+        // btLr "Theory Topics" column stays 13pt wide in Word.
+        if cell.colspan != 1 || cell.col >= widths.len() || cell.vertical {
             continue;
         }
         let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
@@ -9799,6 +9806,7 @@ fn table_block(
                 pad_t,
                 pad_b,
                 nowrap: cell_nowrap(dom, cell) && !fixed_width_cell(dom, table, cell),
+                vertical: cell_vertical(dom, cell),
                 hide_mark: first_named(dom, cell, "tcPr")
                     .and_then(|pr| direct_named(dom, pr, "hideMark"))
                     .is_some_and(|n| !val_is_false(dom, Some(n))),
@@ -10408,6 +10416,7 @@ fn grid_skip_cell(span: usize, pref: PrefWidth, pad_l: f32, pad_r: f32) -> RawCe
         pad_t: 0.0,
         pad_b: 0.0,
         nowrap: false,
+        vertical: false,
         hide_mark: true,
         borders: Some(CellBorders::default()),
     }
@@ -10463,6 +10472,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
         pad_t: 0.0,
         pad_b: 0.0,
         nowrap: true,
+        vertical: false,
         hide_mark: false,
         borders: None,
     }
@@ -10475,6 +10485,14 @@ fn cell_valign_is(dom: &Dom, cell: NodeId, want: &str) -> bool {
     first_named(dom, pr, "vAlign")
         .and_then(|n| attr_any(dom, n, "val"))
         .is_some_and(|v| v.eq_ignore_ascii_case(want))
+}
+
+/// A cell whose text runs up or down it (`w:textDirection` btLr, tbRl).
+fn cell_vertical(dom: &Dom, cell: NodeId) -> bool {
+    first_named(dom, cell, "tcPr")
+        .and_then(|pr| direct_named(dom, pr, "textDirection"))
+        .and_then(|n| attr_any(dom, n, "val"))
+        .is_some_and(|v| matches!(v, "btLr" | "tbRl" | "tbRlV" | "tbLrV"))
 }
 
 fn cell_nowrap(dom: &Dom, cell: NodeId) -> bool {
@@ -10628,6 +10646,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
                 pad_t: raw.pad_t,
                 pad_b: raw.pad_b,
                 nowrap: raw.nowrap,
+                vertical: raw.vertical,
                 hide_mark: raw.hide_mark,
                 borders: raw.borders,
                 style_fill: false,
