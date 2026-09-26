@@ -2744,6 +2744,46 @@ fn a_page_anchored_body_frame_floats_out_of_the_flow() {
 }
 
 #[test]
+fn a_text_anchored_frame_floats_beside_the_next_paragraph() {
+    // Live Word: two paragraphs in a frame anchored to the text (y=75 twips)
+    // and to the page (x=3742) or the margin (x=2880) take no flow space.
+    // The frame sits 3.75pt under the next paragraph's top at x=187 / 216,
+    // and that paragraph starts right after "Before" (baseline 108.2 vs
+    // 83.3), wrapping beside it; 4ca9d50a's contact frame. We stacked
+    // the frame's lines in the flow and pushed the paragraph under them.
+    for (h_anchor, x, frame_x) in [("page", 3742, 187.0), ("margin", 2880, 216.0)] {
+        let frame = |text: &str| {
+            format!(
+                r#"<w:p><w:pPr><w:framePr w:w="5000" w:h="541" w:hSpace="180" w:wrap="around" w:vAnchor="text" w:hAnchor="{h_anchor}" w:x="{x}" w:y="75"/><w:pBdr><w:top w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:left w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:right w:val="single" w:sz="6" w:space="1" w:color="auto"/></w:pBdr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+            )
+        };
+        let body = format!(
+            "<w:p><w:r><w:t>Before line</w:t></w:r></w:p>{}{}\
+             <w:p><w:r><w:t>Contact for further information: after the frame text wraps here</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+            frame("FrameOne"),
+            frame("FrameTwo")
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("text frame");
+        let (_, before) = pdf_glyph_text_xy(&pdf, "Before").expect("before paints");
+        let (cx, contact) = pdf_glyph_text_xy(&pdf, "Contact").expect("contact paints");
+        let (fx, fy) = pdf_glyph_text_xy(&pdf, "FrameOne").expect("frame paints");
+        assert!(
+            before - contact < 30.0 && (cx - 72.0).abs() < 1.0,
+            "{h_anchor}: the next paragraph takes the frame's place; {} under Before",
+            before - contact
+        );
+        // Word's text sits on x with the border outside; our bordered box
+        // keeps a point of padding inside (188.2 vs 187).
+        assert!(
+            (fx - frame_x).abs() < 1.5 && (fy - contact).abs() < 10.0,
+            "{h_anchor}: the frame sits beside it at x={frame_x}; ({fx}, {fy}) vs {contact}"
+        );
+    }
+}
+
+#[test]
 fn a_word_font_with_an_abbreviated_file_name_is_found() {
     // fixtures_500 00dd36c7: Word's own Garamond ships as GARA.ttf /
     // GARAIT.ttf, which the file-name match never reached; we painted

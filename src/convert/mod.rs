@@ -6403,7 +6403,7 @@ fn walk_container(
         let child = (idx < count).then(|| dom.child_at(node, idx));
         let key = child
             .filter(|c| dom.name_is(*c, &W::p()))
-            .and_then(|c| page_frame_key(dom, c, ctx.sheet));
+            .and_then(|c| body_frame_key(dom, c, ctx.sheet));
         if let Some((k, _)) = frame.as_ref()
             && key.as_deref() != Some(k.as_str())
         {
@@ -6655,6 +6655,29 @@ fn page_frame_key(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<String>
     })
 }
 
+/// A body paragraph's floating frame: page-anchored, or anchored to the
+/// text with wrap="around" (4ca9d50a's contact frame: vAnchor="text",
+/// hAnchor="page"); the frame takes no flow space and the next paragraph
+/// wraps beside it (live Word).
+fn body_frame_key(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<String> {
+    page_frame_key(dom, para, sheet).or_else(|| {
+        let fp = para_frame_attrs(dom, para, sheet)?;
+        let attr = |n: &str| frame_attr(&fp, n).unwrap_or("").to_string();
+        (attr("vAnchor") == "text"
+            && matches!(attr("hAnchor").as_str(), "page" | "margin" | "text")
+            && attr("wrap") == "around"
+            && !attr("x").is_empty()
+            && !attr("y").is_empty())
+        .then(|| {
+            ["hAnchor", "x", "y", "w", "h", "hRule", "hSpace", "vSpace"]
+                .iter()
+                .map(|n| attr(n))
+                .collect::<Vec<_>>()
+                .join("|")
+        })
+    })
+}
+
 /// A header/footer paragraph's page-anchored text frame: it floats at its
 /// page position as a box, out of the band (e73ba1e0's Marginalie address
 /// frame). Frames holding pictures keep the chrome image path.
@@ -6749,17 +6772,22 @@ fn frame_box(
     let around = frame_attr(&fp, "wrap").is_none_or(|v| v == "around");
     let h_space = tw("hSpace").unwrap_or(0.0);
     let v_space = tw("vSpace").unwrap_or(0.0);
+    // A text-anchored frame sits y under the next paragraph's top; a
+    // margin / text one is x from the margin / column (live Word).
+    let h_anchor = frame_attr(&fp, "hAnchor").unwrap_or("page");
+    let on_text = frame_attr(&fp, "vAnchor") == Some("text");
+    let h_page = h_anchor == "page";
     Some(LaidTextBox {
         w,
         h,
         runs: Vec::new(),
         slot: ImageSlot::Float {
             align: Align::Left,
-            page_x: Some(x),
-            page_y: Some(y),
-            col_x: None,
-            col_in_column: false,
-            para_y: None,
+            page_x: h_page.then_some(x),
+            page_y: (!on_text).then_some(y),
+            col_x: (!h_page).then_some(x),
+            col_in_column: h_anchor == "text",
+            para_y: on_text.then_some(y),
             pct_x: None,
             pct_y: None,
             pct_w: None,
@@ -6772,8 +6800,16 @@ fn frame_box(
             dist_r: h_space,
             dist_t: v_space,
             dist_b: v_space,
-            h_rel: RelFrame::Page,
-            v_rel: RelFrame::Page,
+            h_rel: match h_anchor {
+                "margin" => RelFrame::Margin,
+                "text" => RelFrame::Column,
+                _ => RelFrame::Page,
+            },
+            v_rel: if on_text {
+                RelFrame::Paragraph
+            } else {
+                RelFrame::Page
+            },
             v_off: None,
         },
         chart: None,
