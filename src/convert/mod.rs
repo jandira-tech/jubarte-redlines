@@ -521,6 +521,10 @@ enum PageNumFmt {
     HindiVowels,
     HindiConsonants,
     HindiCounting,
+    KoreanCounting,
+    KoreanDigital,
+    KoreanDigital2,
+    KoreanLegal,
 }
 
 struct NamedStyle {
@@ -2790,6 +2794,10 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "hindiVowels" => PageNumFmt::HindiVowels,
             "hindiConsonants" => PageNumFmt::HindiConsonants,
             "hindiCounting" => PageNumFmt::HindiCounting,
+            "koreanCounting" => PageNumFmt::KoreanCounting,
+            "koreanDigital" => PageNumFmt::KoreanDigital,
+            "koreanDigital2" => PageNumFmt::KoreanDigital2,
+            "koreanLegal" => PageNumFmt::KoreanLegal,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -3020,6 +3028,10 @@ enum NumFmt {
     HindiVowels,
     HindiConsonants,
     HindiCounting,
+    KoreanCounting,
+    KoreanDigital,
+    KoreanDigital2,
+    KoreanLegal,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -3317,6 +3329,10 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "hindiVowels" => NumFmt::HindiVowels,
         "hindiConsonants" => NumFmt::HindiConsonants,
         "hindiCounting" => NumFmt::HindiCounting,
+        "koreanCounting" => NumFmt::KoreanCounting,
+        "koreanDigital" => NumFmt::KoreanDigital,
+        "koreanDigital2" => NumFmt::KoreanDigital2,
+        "koreanLegal" => NumFmt::KoreanLegal,
         _ => NumFmt::Decimal,
     }
 }
@@ -3358,6 +3374,10 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::HindiVowels => cycle_cjk(&HINDI_VOWELS, n),
         NumFmt::HindiConsonants => cycle_cjk(&HINDI_CONSONANTS, n),
         NumFmt::HindiCounting => hindi_counting_label(n),
+        NumFmt::KoreanCounting => korean_counting_label(n),
+        NumFmt::KoreanDigital => korean_digital_label(n),
+        NumFmt::KoreanDigital2 => korean_digital2_label(n),
+        NumFmt::KoreanLegal => korean_legal_label(n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -3800,6 +3820,69 @@ fn hindi_counting_label(n: u32) -> String {
         WORDS[n as usize].into()
     } else {
         n.to_string()
+    }
+}
+
+/// MS-DOCX koreanCounting: 일, 이, 삼, 십, 십일 (U+C77C). Not digit-wise 일영.
+fn korean_counting_label(n: u32) -> String {
+    const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
+    match n {
+        0 => "영".into(),
+        1..=9 => DIGITS[n as usize].into(),
+        10 => "십".into(),
+        11..=19 => format!("십{}", DIGITS[(n - 10) as usize]),
+        20..=99 => {
+            let tens = n / 10;
+            let ones = n % 10;
+            let mut s = format!("{}십", DIGITS[tens as usize]);
+            if ones > 0 {
+                s.push_str(DIGITS[ones as usize]);
+            }
+            s
+        }
+        n => n.to_string(),
+    }
+}
+
+/// MS-DOCX koreanDigital: 일, 일영, 일영영… Hangul digits with 영 for 0.
+fn korean_digital_label(n: u32) -> String {
+    const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
+    n.to_string()
+        .bytes()
+        .map(|b| DIGITS[usize::from(b - b'0')])
+        .collect()
+}
+
+/// MS-DOCX koreanDigital2: 一, 一零… (U+96F6), not ideographDigital 一〇 (U+3007).
+fn korean_digital2_label(n: u32) -> String {
+    const DIGITS: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+    n.to_string()
+        .bytes()
+        .map(|b| DIGITS[usize::from(b - b'0')])
+        .collect()
+}
+
+/// MS-DOCX koreanLegal: 하나, 둘, 셋… (U+D558 U+B098). Native Korean.
+fn korean_legal_label(n: u32) -> String {
+    const ONES: [&str; 10] = [
+        "", "하나", "둘", "셋", "넷", "다섯", "여섯", "일곱", "여덟", "아홉",
+    ];
+    const TENS: [&str; 10] = [
+        "", "열", "스물", "서른", "마흔", "쉰", "예순", "일흔", "여든", "아흔",
+    ];
+    match n {
+        0 => "영".into(),
+        1..=9 => ONES[n as usize].into(),
+        10..=99 => {
+            let tens = n / 10;
+            let ones = n % 10;
+            if ones == 0 {
+                TENS[tens as usize].into()
+            } else {
+                format!("{}{}", TENS[tens as usize], ONES[ones as usize])
+            }
+        }
+        n => n.to_string(),
     }
 }
 
@@ -14734,6 +14817,10 @@ impl<'a> Layout<'a> {
             PageNumFmt::HindiVowels => format_num(NumFmt::HindiVowels, self.section_page),
             PageNumFmt::HindiConsonants => format_num(NumFmt::HindiConsonants, self.section_page),
             PageNumFmt::HindiCounting => format_num(NumFmt::HindiCounting, self.section_page),
+            PageNumFmt::KoreanCounting => format_num(NumFmt::KoreanCounting, self.section_page),
+            PageNumFmt::KoreanDigital => format_num(NumFmt::KoreanDigital, self.section_page),
+            PageNumFmt::KoreanDigital2 => format_num(NumFmt::KoreanDigital2, self.section_page),
+            PageNumFmt::KoreanLegal => format_num(NumFmt::KoreanLegal, self.section_page),
         }
     }
 
@@ -17768,6 +17855,24 @@ mod page_num_fmt_labels {
         assert_eq!(format_num(NumFmt::HindiCounting, 2), "दो");
         assert_eq!(format_num(NumFmt::HindiCounting, 3), "तीन");
         assert_eq!(format_num(NumFmt::HindiCounting, 10), "दस");
+    }
+
+    #[test]
+    fn korean_counting_uses_sip_not_digital_zero() {
+        assert_eq!(format_num(NumFmt::KoreanCounting, 1), "일");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 10), "십");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 11), "십일");
+        assert_eq!(format_num(NumFmt::KoreanDigital, 10), "일영");
+        assert_eq!(ideograph_digital_label(10), "一〇");
+        assert_eq!(format_num(NumFmt::KoreanDigital2, 10), "一零");
+    }
+
+    #[test]
+    fn korean_legal_is_native_hangul() {
+        assert_eq!(format_num(NumFmt::KoreanLegal, 1), "하나");
+        assert_eq!(format_num(NumFmt::KoreanLegal, 2), "둘");
+        assert_eq!(format_num(NumFmt::KoreanLegal, 3), "셋");
+        assert_eq!(format_num(NumFmt::KoreanLegal, 10), "열");
     }
 }
 
