@@ -306,6 +306,10 @@ rule:
 - **An exact-height line holds an inline box without growing.**
   - Part a 8aea3634: an inline 0.5pt rule group in an exact 12pt paragraph
     leaves the next baseline where an empty paragraph would.
+- **`a:prstClr` and `a:sysClr` colour shape fills and outlines.** `sysClr`
+  paints its `lastClr`.
+  - Part b 212a1c9d: the School Name / LEA Name form boxes are outlined
+    0.5pt `prstClr` black.
 
 ## Open, measured but not yet reconstructed
 

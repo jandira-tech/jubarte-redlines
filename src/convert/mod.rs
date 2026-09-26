@@ -14180,11 +14180,21 @@ fn scheme_color(dom: &Dom, node: NodeId, theme: &ThemeFonts) -> Option<[f32; 3]>
         apply_lum(dom, srgb, &mut color);
         return Some(color);
     }
-    let scheme = descendants_local(dom, node, "schemeClr")
-        .into_iter()
-        .next()?;
-    let mut color = theme.slot_color(attr_any(dom, scheme, "val")?)?;
-    apply_lum(dom, scheme, &mut color);
+    if let Some(scheme) = descendants_local(dom, node, "schemeClr").into_iter().next() {
+        let mut color = theme.slot_color(attr_any(dom, scheme, "val")?)?;
+        apply_lum(dom, scheme, &mut color);
+        return Some(color);
+    }
+    // 212a1c9d's form boxes stroke `a:prstClr val="black"`; sysClr paints
+    // its lastClr.
+    if let Some(sys) = descendants_local(dom, node, "sysClr").into_iter().next() {
+        let mut color = parse_hex_color(attr_any(dom, sys, "lastClr")?)?;
+        apply_lum(dom, sys, &mut color);
+        return Some(color);
+    }
+    let preset = descendants_local(dom, node, "prstClr").into_iter().next()?;
+    let mut color = vml_color(attr_any(dom, preset, "val")?)?;
+    apply_lum(dom, preset, &mut color);
     Some(color)
 }
 

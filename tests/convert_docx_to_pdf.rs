@@ -5922,6 +5922,48 @@ fn wrap_square_below_the_float_uses_full_measure() {
     );
 }
 
+#[test]
+fn a_shape_outline_takes_preset_and_system_colours() {
+    // 212a1c9d: the School Name / LEA Name form boxes are outlined with
+    // `a:prstClr val="black"`; we only read srgbClr / schemeClr and drew
+    // no outline. sysClr strokes its lastClr.
+    let shape = |id: u32, x: u32, clr: &str| {
+        format!(
+            "<w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+              relativeHeight=\"{id}\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+              <wp:positionH relativeFrom=\"page\"><wp:posOffset>{x}</wp:posOffset></wp:positionH>\
+              <wp:positionV relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionV>\
+              <wp:extent cx=\"1270000\" cy=\"254000\"/><wp:wrapNone/><wp:docPr id=\"{id}\" name=\"S{id}\"/>\
+              <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                  <wps:spPr><a:xfrm><a:ext cx=\"1270000\" cy=\"254000\"/></a:xfrm>\
+                    <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/>\
+                    <a:ln w=\"6350\"><a:solidFill>{clr}</a:solidFill></a:ln></wps:spPr>\
+                  <wps:txbx><w:txbxContent><w:p><w:r><w:t>Box</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/>\
+                </wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"
+        )
+    };
+    let body = format!(
+        "<w:p>{}{}</w:p><w:sectPr/>",
+        shape(1, 1270000, "<a:prstClr val=\"black\"/>"),
+        shape(
+            2,
+            3810000,
+            "<a:sysClr val=\"windowText\" lastClr=\"0000FF\"/>"
+        )
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert outlined boxes");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("0.50 w 0.000 0.000 0.000 RG"),
+        "prstClr black strokes the first box"
+    );
+    assert!(
+        hay.contains("0.50 w 0.000 0.000 1.000 RG"),
+        "sysClr strokes its lastClr"
+    );
+}
+
 fn inline_green_group(cx: u32, cy: u32) -> String {
     format!(
         "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
