@@ -490,7 +490,6 @@ impl Dom {
         self.data(id).content.last().copied()
     }
 
-    /// `Elements()` / `Elements(name)` — child elements, optionally filtered.
     /// Number of direct children of `id` (all node kinds). Cheap O(1) index —
     /// paired with [`child_at`](Self::child_at) for non-allocating child
     /// iteration on hot paths where [`elements`](Self::elements)' per-call
@@ -506,7 +505,7 @@ impl Dom {
         self.data(id).content[i]
     }
 
-    /// `elements`.
+    /// `Elements()` / `Elements(name)` — child elements, optionally filtered.
     pub fn elements(&self, id: NodeId, filter: Option<&XName>) -> Vec<NodeId> {
         self.data(id)
             .content
