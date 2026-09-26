@@ -46,6 +46,32 @@ new semantics.
 - Fidelity gates precede speed claims: native/WASM `script_redlines` scores must
   agree for the same source commit before publishing performance results.
 
+## Microsoft Word automation (benchmarks)
+
+Word is the source of truth for every PDF and redline reference; soffice never
+is. Drive Word only through the neurotic_docx_bench scripts, run from that
+repository's root:
+
+- `scripts/word_pdf.py` converts docx to PDF, `scripts/word_redline.py`
+  compares pairs, and `scripts/check_redline_identity.py` rejects any redline
+  that is not the pair its filename names. Always use these scripts. Never
+  hand-roll osascript or a converter, not even to diagnose.
+- Run `word_redline.py` in its default one-redline batch mode first. For the
+  pairs the batch drops, run it again with `--no-one-redline-osascript`; it
+  skips outputs that already exist. Run `check_redline_identity.py` on every
+  set of redlines before scoring them.
+- Keep the watchdog (`jubarte-loop/word_watchdog.sh`) pointed at the paths the
+  current job actually grows. Batch mode reports progress only in its `--log`,
+  not in its output folder. A watchdog on the wrong folder kills a busy Word.
+  A Word freeze is normal; the watchdog clears it.
+- Closing every Word document, or quitting Word, between jobs is fine.
+- A file or pair that fails twice is skipped. Move on, and leave it out of the
+  scores; never score it as zero. If skips leave the sample small, add other
+  fixtures instead of retrying the failures.
+- `word_redline.py` builds its staging names from both stems, so long stems
+  fail with "File name too long". Stage long pairs under short ids and keep a
+  map back to the real names.
+
 ## Licensing and provenance
 
 The repository's only project license is AGPL-3.0-only (`LICENSE`), and
