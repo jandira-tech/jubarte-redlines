@@ -35169,3 +35169,33 @@ fn a_small_picture_ahead_of_the_text_opens_its_line() {
         "the title sits on the logo's bottom, got baseline {y}"
     );
 }
+
+#[test]
+fn text_after_a_tab_that_misses_the_right_stop_wraps() {
+    // English redline df4265bd: "Subsection" paragraphs hang 879 twips with
+    // a right stop at 595 and a left stop at 879, then tab, tab, text. The
+    // second tab lands on the left stop, so Word wraps the sentence at the
+    // margin. We took the paragraph for a TOC line (text after its last tab
+    // pinned to the right stop) and ran the sentence off the page.
+    let sentence = "This Act was repealed by the Buildings Societies Act 1976 s. 4(1) \
+                    (No. 47 of 1976) as at 4 Mar 1977 and again WrapTailQ.";
+    let body = format!(
+        "<w:p><w:pPr><w:tabs><w:tab w:val=\"right\" w:pos=\"595\"/><w:tab w:val=\"left\" w:pos=\"879\"/></w:tabs>\
+           <w:ind w:left=\"879\" w:hanging=\"879\"/></w:pPr>\
+         <w:r><w:tab/></w:r><w:r><w:tab/><w:t xml:space=\"preserve\">{sentence}</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("tabbed subsection");
+    let (x0, y0) = pdf_glyph_text_xy(&pdf, "This").expect("first word");
+    let (x1, y1) = pdf_glyph_text_xy(&pdf, "WrapTailQ.").expect("last word");
+    assert!(
+        (x0 - (72.0 + 43.95)).abs() < 1.0,
+        "the text starts at the left stop, got {x0}"
+    );
+    assert!(
+        y1 < y0 - 1.0,
+        "the sentence wraps to a second line: {y0} vs {y1}"
+    );
+    assert!(x1 < 540.0, "nothing runs past the right margin, got {x1}");
+}

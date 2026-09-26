@@ -18099,6 +18099,29 @@ impl<'a> Layout<'a> {
         if has_marker && prefix.iter().all(|r| r.text.trim().is_empty()) {
             return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
         }
+        // Nor is a last tab that lands on another stop. English redline
+        // df4265bd hangs 879 twips with a right stop at 595 and a left one
+        // at 879: its second tab reaches the left stop, and Word wraps the
+        // sentence after it at the margin. Pinned to the right stop, the
+        // sentence ran off the page. Only a head of bare tabs is judged: a
+        // TOC title before its leader (71df1fd9's "3.1.<tab>Engine Fuel.")
+        // keeps the TOC path, whose first tab we do not yet place as Word.
+        let first_x = self.flow_left() + indent + if has_marker { 0.0 } else { style.indent_first };
+        let head_end = first_x + self.tab_line_width(&prefix, first_x);
+        if prefix.iter().all(|r| r.text.trim().is_empty())
+            && head_end <= self.flow_left() + indent + width
+        {
+            let land = next_tab_stop(
+                head_end,
+                self.flow_left(),
+                &self.tab_stops,
+                self.page.default_tab,
+            );
+            if land.align != TabAlign::Right || (land.pos - self.flow_left() - stop.pos).abs() > 0.5
+            {
+                return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
+            }
+        }
         // Missing PAGEREF is Word's long Error! string, not a 9-1 page
         // number. Subtracting its width from the TOC column packed the
         // description into 40pt slices. Fold it into the wrap so
