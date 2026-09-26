@@ -36012,3 +36012,31 @@ fn link_styles_takes_the_template_normal() {
     );
 }
 
+#[test]
+fn field_data_is_never_text() {
+    // en a c690df8d: EndNote's ADDIN EN.CITE fields carry their citation
+    // record base64-encoded in `w:fldChar/w:fldData`. Word never shows it;
+    // we set it as body text and ran 11 pages to 132.
+    let field = "<w:r><w:fldChar w:fldCharType=\"begin\"><w:fldData xml:space=\"preserve\">\
+        UUJBU0U2NEJMT0JRUUJBU0U2NEJMT0JR\nUUJBU0U2NEJMT0JR</w:fldData></w:fldChar></w:r>\
+        <w:r><w:instrText xml:space=\"preserve\"> ADDIN EN.CITE </w:instrText></w:r>\
+        <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>[1]</w:t></w:r>\
+        <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>";
+    let body = format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">Cited </w:t></w:r>{field}</w:p>\
+         <w:p><w:del w:id=\"1\" w:author=\"A\"><w:r><w:fldChar w:fldCharType=\"begin\">\
+           <w:fldData xml:space=\"preserve\">UUJBU0U2NEJMT0JR</w:fldData></w:fldChar></w:r>\
+           <w:r><w:delInstrText xml:space=\"preserve\"> ADDIN EN.CITE </w:delInstrText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:delText>[2]</w:delText></w:r>\
+           <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:del></w:p>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("field data");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "[1]").is_some(),
+        "the field result shows"
+    );
+    assert!(
+        pdf_glyph_text_xy(&pdf, "UUJB").is_none(),
+        "fldData is binary field data, not text"
+    );
+}

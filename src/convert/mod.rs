@@ -10768,11 +10768,15 @@ fn skip_non_text(dom: &Dom, node: NodeId) -> bool {
     // DrawingML / VML / OLE carry wp:align, posOffset EMUs, and docPr names
     // as element text — those must not become visible runs.
     // Field instructions (`PAGE`, `NUMPAGES`) leak into footers if collected.
+    // A fldChar's `w:fldData` is binary field data (en a c690df8d's EndNote
+    // records, base64): as text it ran 11 pages to 132. The fldChar itself
+    // stays: it drives the field state.
     dom.name_is(node, &W::drawing())
         || dom.name_is(node, &W::pict())
         || dom.name_is(node, &W::object())
         || dom.name_is(node, &W::instr_text())
         || dom.name_is(node, &W::del_instr_text())
+        || local_name_is(dom, node, "fldData")
 }
 
 fn finish_field(ctx: &RunCollect<'_>, runs: &mut Vec<TextRun>) {

@@ -248,6 +248,30 @@ rule:
     10 rows 17.76pt apart instead of 12.
   - Part a 1f3856c4.
 
+## Rows, groups and templates
+
+- **A row holding a nested table taller than the page splits between the
+  nested table's rows.** It does not move whole to the next page. We split
+  only when the page stays at least three-quarters full.
+  - Part b c8d1d38a.
+- **An inline group's pictures hold its line.** The group's other shapes paint
+  over the paragraph's start. They don't reserve a second box below the
+  paragraph. If the line moves to a new page, the shapes move with it.
+  - Part a 5fb9cedf: the logo group's dot pushed the heading 64pt down.
+  - Redline 09d6d940.
+- **`w:linkStyles` pulls the styles from Normal.dotm.** Word refreshes the
+  styles from the attached template when it opens the file. The stock
+  Normal.dotm has an empty Normal over docDefaults of the theme minor font,
+  12pt, after=160, line=278. Only four styles are defined in it.
+  - Part a 9b100bdc: Word sets 12pt on 16pt lines (56 pages). The file's own
+    Normal is 11pt on 259 (we fitted 45 pages).
+  - This applies only when the file names no `w:attachedTemplate`. When it
+    names a .dotx this machine doesn't have, Word keeps the file's own styles
+    (a a7110391, a4168b8a, b 2c352c83).
+- **A `w:fldData` inside a `w:fldChar` is binary field data, never text.**
+  - Part a c690df8d: its base64 EndNote records ran 11 pages to 132.
+  - Part a a7444d0b: 18 pages to 153.
+
 ## Open, measured but not yet reconstructed
 
 - **Photo inside a deleted text box:** it does not paint yet (d20125ec).
