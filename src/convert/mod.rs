@@ -21515,7 +21515,28 @@ impl<'a> Layout<'a> {
                     .iter()
                     .any(|c| c.paras.iter().any(|p| p.style.keep_next));
             if keeps_next && !self.at_page_top {
-                let pair = work[ri].1 + work[ri + 1].1;
+                // A next row that may break across pages only needs its first
+                // paragraph here (a820a0da's "Main activities" label stays on
+                // page 1 above its 690pt duties row, which Word splits).
+                let next = &work[ri + 1];
+                let next_need = if next.2 {
+                    next.1
+                } else {
+                    next.0
+                        .cells()
+                        .iter()
+                        .map(|c| {
+                            cell_content_height(
+                                self.fonts,
+                                &c.split_at(1).0,
+                                &col_w,
+                                self.space_for_ul,
+                            )
+                        })
+                        .fold(0.0_f32, f32::max)
+                        .min(next.1)
+                };
+                let pair = work[ri].1 + next_need;
                 let page_room = self.page.height - self.body_top - self.body_floor;
                 if pair <= page_room && self.y - pair < self.body_floor {
                     self.ensure(pair);

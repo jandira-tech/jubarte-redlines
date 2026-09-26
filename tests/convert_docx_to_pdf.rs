@@ -35528,3 +35528,47 @@ fn change_bars_sit_on_the_outside_border_with_even_and_odd_headers() {
         "page 2's bar is on the left"
     );
 }
+
+#[test]
+fn a_keep_with_next_row_needs_only_the_start_of_a_row_that_splits() {
+    // English redline a820a0da: a "Main activities" label row (keepNext)
+    // above a 690pt duties row. Word keeps the label on page 1 and breaks
+    // the duties row across the pages; demanding room for the whole next
+    // row, we moved both to page 2 and left half of page 1 empty.
+    let filler: String = (0..15)
+        .map(|i| format!("<w:p><w:r><w:t>Filler line {i}</w:t></w:r></w:p>"))
+        .collect();
+    let duties: String = (0..20)
+        .map(|i| format!("<w:p><w:r><w:t>Duty item {i}</w:t></w:r></w:p>"))
+        .collect();
+    let body = format!(
+        "{filler}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:t>LabelQ</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc>{duties}</w:tc></w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("label row");
+    // A page's text: its Tj strings in order (glyphs are painted apart).
+    let page_text = |stream: &str| -> String {
+        stream
+            .lines()
+            .filter_map(|l| {
+                let open = l.find('(')?;
+                let close = l.rfind(") Tj")?;
+                Some(l[open + 1..close].to_string())
+            })
+            .collect()
+    };
+    let pages: Vec<String> = pdf_content_streams(&pdf)
+        .iter()
+        .map(|s| page_text(s))
+        .collect();
+    assert!(pages[0].contains("LabelQ"), "the label stays on page 1");
+    assert!(
+        pages[0].contains("Duty item 0"),
+        "the duties row starts on page 1: {}",
+        pages[0]
+    );
+}
