@@ -2263,10 +2263,7 @@ fn adopt_missing_theme_parts(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
                 .any(|i| i.rel_type.ends_with("/theme") || i.target.contains("theme"))
         });
         if !has_theme_rel {
-            let target = part
-                .strip_prefix("word/")
-                .unwrap_or(part.as_str())
-                .to_string();
+            let target = crate::opc::relative_rel_target(out_main, &part);
             out.add_document_relationship(
                 out_main,
                 "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme",
@@ -3710,14 +3707,9 @@ fn adopt_revised_header_footer(
         } else {
             "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
         };
-        // rels live in word/_rels/: word/-parts get the dir-relative form,
-        // anything else the absolute OPC form ("/customXml/…") so the target
-        // still resolves (review: strip_prefix fallback pointed at
-        // word/<other-dir>/…, which never exists)
-        let rel_target = match part.strip_prefix("word/") {
-            Some(rest) => rest.to_string(),
-            None => format!("/{part}"),
-        };
+        // word/-parts get the dir-relative form, anything else the absolute
+        // OPC form ("/customXml/…") so the target still resolves.
+        let rel_target = crate::opc::relative_rel_target(out_main, &part);
         let new_rid = out.add_document_relationship(out_main, rel_type, &rel_target);
         let refel = dom.new_element(if is_header {
             href.clone()
@@ -4046,13 +4038,13 @@ fn adopt_b_notes_when_a_lacks_separators(
                 .any(|i| i.rel_type.ends_with(&format!("/{rel_suffix}")))
         });
         if !has_rel {
-            let target = part.strip_prefix("word/").unwrap_or(part);
+            let target = crate::opc::relative_rel_target(out_main, part);
             out.add_document_relationship(
                 out_main,
                 &format!(
                     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{rel_suffix}"
                 ),
-                target,
+                &target,
             );
         }
         // Carry notes-part rels + media (separator drawings).
@@ -4277,13 +4269,13 @@ fn repair_missing_core_relationships(out: &mut PartFs, out_main: &str) {
                 .any(|i| i.rel_type.ends_with(&format!("/{rel_suffix}")))
         });
         if !has_rel {
-            let target = part.strip_prefix("word/").unwrap_or(part);
+            let target = crate::opc::relative_rel_target(out_main, part);
             out.add_document_relationship(
                 out_main,
                 &format!(
                     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{rel_suffix}"
                 ),
-                target,
+                &target,
             );
         }
     }
@@ -5583,6 +5575,13 @@ fn compare_documents_impl(
         }
     }
 
+    // Every other part resolves its own r:* references too (B's comments, notes,
+    // headers/footers and picture bullets arrive without B's per-part rels).
+    crate::comparer::parts::reconcile_part_relationships(&mut out, &main1, &pkg1, &pkg2);
+    // …and every copied part keeps the content type its source declared (a B
+    // header's `.wdp` HD Photo arrived without B's `wdp` Default).
+    out.adopt_missing_content_types(&[&pkg2, &pkg1]);
+
     // Strict/ISO OOXML: when the original is Strict, the output package would mix
     // a Transitional comparison-result document.xml with Strict styles/numbering/
     // rels (and copied-in Transitional styles) — an invalid mixed package. Make
@@ -5642,6 +5641,8 @@ fn compare_documents_impl(
                 crate::comparer::finalize::hoist_hyperlinks_out_of_revisions(&mut vd, vr);
                 crate::comparer::finalize::enforce_deleted_text_kinds(&mut vd, vr);
                 crate::comparer::finalize::remove_powertools_scratch_markup(&mut vd, vr);
+                // Last: every pass above may append properties out of order.
+                crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
                 out.set_part(&part, vd.serialize_element(vr).into_bytes());
             }
         }

@@ -379,3 +379,131 @@ fn t11_deleted_textbox_runs_wrapped_in_del() {
     }
     assert!(checked >= 1, "deleted text-box content produced delText");
 }
+
+/// The package validity sweep re-orders every part, not document.xml alone:
+/// styles merged from B appended `w:kern` after `w:sz`/`w:lang`
+/// (Sch_UnexpectedElementContentExpectingComplex on kern, 3 of the 2026-09-26
+/// English redlines), and `w:rPrChange` must close the rPr even after w14 props.
+#[test]
+fn t12_style_rpr_ordered_by_the_package_sweep() {
+    use jubarte::comparer::finalize::enforce_part_schema_order;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:styles xmlns:w=\"{w}\" xmlns:w14=\"{w14}\"><w:style w:styleId=\"S\"><w:rPr>\
+             <w:rFonts w:ascii=\"X\"/><w:sz w:val=\"24\"/><w:szCs w:val=\"24\"/><w:lang w:val=\"de-DE\"/>\
+             <w:rPrChange w:id=\"1\" w:author=\"a\"><w:rPr><w:sz w:val=\"20\"/><w:rFonts w:ascii=\"X\"/></w:rPr></w:rPrChange>\
+             <w:kern w:val=\"0\"/><w14:ligatures w14:val=\"none\"/>\
+             </w:rPr></w:style></w:styles>",
+            w = W::URI,
+            w14 = W14_URI
+        ),
+    );
+    enforce_part_schema_order(&mut dom, root);
+    let rpr = dom.descendants(root, Some(&W::r_pr()))[0];
+    assert_eq!(
+        child_locals(&dom, rpr),
+        vec![
+            "rFonts",
+            "kern",
+            "sz",
+            "szCs",
+            "lang",
+            "ligatures",
+            "rPrChange"
+        ],
+        "{}",
+        dom.serialize_element(root)
+    );
+    let old = dom.descendants(root, Some(&W::r_pr()))[1];
+    assert_eq!(child_locals(&dom, old), vec!["rFonts", "sz"]);
+}
+
+/// `pPrChange/pPr` is CT_PPrBase — no rPr, sectPr or nested pPrChange
+/// (Sch_InvalidElementContentExpectingComplex on rPr); and the live pPr's rPr
+/// sits after jc even when a late pass appended jc (2d7b8154, 9d38c2b8).
+#[test]
+fn t13_ppr_change_holds_only_base_properties() {
+    use jubarte::comparer::finalize::enforce_part_schema_order;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:document xmlns:w=\"{w}\"><w:body><w:p><w:pPr>\
+             <w:rPr><w:b/></w:rPr><w:jc w:val=\"center\"/>\
+             <w:pPrChange w:id=\"1\" w:author=\"a\"><w:pPr>\
+             <w:rPr><w:b/></w:rPr><w:jc w:val=\"left\"/><w:sectPr/>\
+             </w:pPr></w:pPrChange>\
+             </w:pPr><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>",
+            w = W::URI
+        ),
+    );
+    enforce_part_schema_order(&mut dom, root);
+    let ppr = dom.descendants(root, Some(&W::p_pr()))[0];
+    assert_eq!(child_locals(&dom, ppr), vec!["jc", "rPr", "pPrChange"]);
+    let old = dom.descendants(root, Some(&W::p_pr()))[1];
+    assert_eq!(
+        child_locals(&dom, old),
+        vec!["jc"],
+        "{}",
+        dom.serialize_element(root)
+    );
+}
+
+/// A source style's `<w:color w:themeColor=".."/>` without the required `val`
+/// rode into our rPrChange copy (Sch_MissRequiredAttribute). `auto` is the
+/// deterministic repair: themeColor overrides val, so nothing renders
+/// differently.
+#[test]
+fn t14_theme_color_without_val_gains_auto() {
+    use jubarte::comparer::finalize::repair_inherited_invalidity;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:styles xmlns:w=\"{w}\"><w:style w:styleId=\"Subtitle\"><w:rPr>\
+             <w:color w:themeColor=\"dark1\"/></w:rPr></w:style>\
+             <w:style w:styleId=\"Red\"><w:rPr><w:color w:val=\"FF0000\"/></w:rPr></w:style></w:styles>",
+            w = W::URI
+        ),
+    );
+    repair_inherited_invalidity(&mut dom, root);
+    let vals: Vec<Option<String>> = dom
+        .descendants(root, Some(&W::name("color")))
+        .into_iter()
+        .map(|c| dom.attribute(c, &W::val()).map(str::to_string))
+        .collect();
+    assert_eq!(vals, vec![Some("auto".into()), Some("FF0000".into())]);
+}
+
+/// `w:fldSimple` is no more legal inside `w:ins`/`w:del` than `w:hyperlink`: an
+/// inserted footer wrapped B's bare `PAGE`/`NUMPAGES` fields in the insertion
+/// (Sch_InvalidElementContentExpectingComplex at /w:ftr/w:p/w:ins, 9c337ad7).
+/// The field keeps its place and the revision moves inside it.
+#[test]
+fn t15_simple_fields_hoisted_out_of_revisions() {
+    use jubarte::comparer::finalize::hoist_hyperlinks_out_of_revisions;
+    let mut dom = Dom::new();
+    let root = parse(
+        &mut dom,
+        &format!(
+            "<w:ftr xmlns:w=\"{w}\"><w:p><w:ins w:id=\"1\" w:author=\"a\">\
+             <w:r><w:t>Page </w:t></w:r><w:fldSimple w:instr=\"PAGE\"/>\
+             <w:r><w:t> of </w:t></w:r><w:fldSimple w:instr=\"NUMPAGES\"><w:r><w:t>9</w:t></w:r></w:fldSimple>\
+             </w:ins></w:p></w:ftr>",
+            w = W::URI
+        ),
+    );
+    hoist_hyperlinks_out_of_revisions(&mut dom, root);
+    let p = dom.descendants(root, Some(&W::p()))[0];
+    assert_eq!(
+        child_locals(&dom, p),
+        vec!["ins", "fldSimple", "ins", "fldSimple"],
+        "{}",
+        dom.serialize_element(root)
+    );
+    let last = dom.elements(p, Some(&W::name("fldSimple")))[1];
+    assert_eq!(child_locals(&dom, last), vec!["ins"]);
+    assert_eq!(dom.value(root), "Page  of 9");
+}

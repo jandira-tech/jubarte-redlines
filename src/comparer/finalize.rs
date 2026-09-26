@@ -8064,6 +8064,9 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
                 ("eastAsianLayout", 440),
                 ("specVanish", 450),
                 ("oMath", 460),
+                // Not in the PowerTools table: the change record closes the rPr,
+                // after the w14 properties that rank 999 (Word's own order).
+                ("rPrChange", 1000),
             ],
             "tblPr" => &TBLPR_ORDER,
             "tcPr" => &[
@@ -8185,6 +8188,29 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
                 for c in front.into_iter().chain(back) {
                     dom.remove(c);
                     dom.add(el, c);
+                }
+            }
+        }
+    }
+}
+
+/// Schema order for a whole package part, run by the package validity sweep
+/// after every other pass has had its say — so a property appended late (a
+/// style merged from B, a `w:jc` added after the body's ordering pass) still
+/// lands where the schema wants it.
+///
+/// Also enforces what [`wml_order_elements_per_standard`] cannot express as an
+/// order: the `w:pPr` inside `w:pPrChange` is CT_PPrBase, which has no `w:rPr`,
+/// `w:sectPr` or nested `w:pPrChange` (Sch_InvalidElementContentExpectingComplex
+/// in 2 of the 2026-09-26 English redlines Word refused).
+pub fn enforce_part_schema_order(dom: &mut Dom, root: NodeId) {
+    wml_order_elements_per_standard(dom, root);
+    let not_base = [W::r_pr(), W::sect_pr(), W::p_pr_change()];
+    for chg in dom.descendants(root, Some(&W::p_pr_change())) {
+        for ppr in dom.elements(chg, Some(&W::p_pr())) {
+            for c in dom.elements(ppr, None) {
+                if dom.name(c).is_some_and(|n| not_base.contains(&n)) {
+                    dom.remove(c);
                 }
             }
         }
@@ -11206,6 +11232,10 @@ fn rewrite_rev_text(dom: &mut Dom, rev: NodeId, new_text: &str, is_del: bool) {
 /// content gained or lost. Each piece gets a fresh `w:id` so the split never mints
 /// duplicates.
 ///
+/// `w:fldSimple` gets the same treatment for the same reason: an inserted footer
+/// wrapped B's bare `PAGE`/`NUMPAGES` fields inside the `w:ins` (9c337ad7 in the
+/// 2026-09-26 English redlines).
+///
 /// Runs to fixpoint because a hoisted hyperlink can itself contain a nested
 /// revision that wraps another hyperlink.
 ///
@@ -11215,7 +11245,7 @@ fn rewrite_rev_text(dom: &mut Dom, rev: NodeId, new_text: &str, is_del: bool) {
 /// (headers, footers) that never reach that pass.
 pub fn hoist_hyperlinks_out_of_revisions(dom: &mut Dom, root: NodeId) {
     let rev_names = [W::name("ins"), W::name("del")];
-    let hyperlink = W::hyperlink();
+    let wrappers = [W::hyperlink(), W::name("fldSimple")];
     let mut next_id = dom
         .descendants_and_self(root, None)
         .into_iter()
@@ -11232,7 +11262,11 @@ pub fn hoist_hyperlinks_out_of_revisions(dom: &mut Dom, root: NodeId) {
         let targets: Vec<NodeId> = rev_names
             .iter()
             .flat_map(|n| dom.descendants(root, Some(n)))
-            .filter(|&rev| !dom.elements(rev, Some(&hyperlink)).is_empty())
+            .filter(|&rev| {
+                dom.elements(rev, None)
+                    .into_iter()
+                    .any(|c| dom.name(c).is_some_and(|n| wrappers.contains(&n)))
+            })
             .collect();
         if targets.is_empty() {
             return;
@@ -11249,7 +11283,7 @@ fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u3
     let Some(rev_name) = dom.name(rev) else {
         return;
     };
-    let hyperlink = W::hyperlink();
+    let wrappers = [W::hyperlink(), W::name("fldSimple")];
     let attrs = dom.attributes(rev);
     let children = dom.nodes(rev);
 
@@ -11268,7 +11302,7 @@ fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u3
     let mut pending: Option<NodeId> = None; // open revision collecting plain children
     for child in children {
         dom.remove(child);
-        if dom.name(child).as_ref() == Some(&hyperlink) {
+        if dom.name(child).is_some_and(|n| wrappers.contains(&n)) {
             pending = None;
             // The hyperlink keeps its place; the revision moves inside it, wrapping
             // whatever the hyperlink held.
@@ -11339,6 +11373,13 @@ pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
     for shd in dom.descendants_and_self(root, Some(&W::name("shd"))) {
         if dom.attribute(shd, &W::val()).is_none() {
             dom.set_attribute_value(shd, &W::val(), Some("clear"));
+        }
+    }
+    // A theme colour with no `val` (the schema requires one): `auto` changes
+    // nothing on screen, because the theme colour overrides `val`.
+    for color in dom.descendants_and_self(root, Some(&W::name("color"))) {
+        if dom.attribute(color, &W::val()).is_none() {
+            dom.set_attribute_value(color, &W::val(), Some("auto"));
         }
     }
     let lvl = W::name("lvl");

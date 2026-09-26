@@ -30,11 +30,61 @@ pub use rdocx_opc::{OpcError, Relationship, Relationships};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
+/// Exactly one leading slash: callers build `/{part}` from names that may
+/// already be absolute, and a `//word/…` part name is invalid OPC.
 fn norm(name: &str) -> String {
-    if name.starts_with('/') {
-        name.to_string()
-    } else {
-        format!("/{name}")
+    format!("/{}", name.trim_start_matches('/'))
+}
+
+/// The relationship `Target` that reaches `target_part` from `source_part`:
+/// relative to the source's folder when the target sits under it, absolute
+/// (`/media/image.bin`) otherwise. Stripping `word/` blindly pointed a
+/// root-level `media/image.bin` at the non-existent `word/media/image.bin`
+/// and Word refused the package.
+pub fn relative_rel_target(source_part: &str, target_part: &str) -> String {
+    let source = source_part.trim_start_matches('/');
+    let target = target_part.trim_start_matches('/');
+    let dir = source.rsplit_once('/').map_or("", |(d, _)| d);
+    match target.strip_prefix(dir).and_then(|t| t.strip_prefix('/')) {
+        Some(rel) if !dir.is_empty() => rel.to_string(),
+        _ => format!("/{target}"),
+    }
+}
+
+/// rdocx-opc 0.1.0 parses relationship attributes without decoding entities
+/// but escapes them when writing, so each open/write cycle added one `&amp;`
+/// to a target like `image11.jpg&ehk=…` until it named no part. Decode once on
+/// the way in; the writer's escape is then the only one.
+fn unescape_relationships(rels: &mut Relationships) {
+    let decode = |v: &mut String| {
+        if v.contains('&') {
+            *v = crate::xmllinq::parse::unescape_xml_text(v);
+        }
+    };
+    for r in &mut rels.items {
+        decode(&mut r.id);
+        decode(&mut r.rel_type);
+        decode(&mut r.target);
+        if let Some(m) = r.target_mode.as_mut() {
+            decode(m);
+        }
+    }
+}
+
+/// The same decode for `[Content_Types].xml`, which rdocx-opc parses the same
+/// way: a `Default Extension="jpg&amp;ehk=…"` otherwise grew one `&amp;` per
+/// cycle and stopped typing its part.
+fn unescape_content_types(map: &mut std::collections::HashMap<String, String>) {
+    if map.iter().any(|(k, v)| k.contains('&') || v.contains('&')) {
+        *map = map
+            .drain()
+            .map(|(k, v)| {
+                (
+                    crate::xmllinq::parse::unescape_xml_text(&k),
+                    crate::xmllinq::parse::unescape_xml_text(&v),
+                )
+            })
+            .collect();
     }
 }
 
@@ -56,6 +106,25 @@ fn part_name_to_rels_path(part_name: &str) -> String {
     }
 }
 
+/// The part a `.rels` path belongs to (`word/_rels/header1.xml.rels` →
+/// `word/header1.xml`; `_rels/.rels` → the package, as `""`), or None when
+/// `name` is not a relationships path. Inverse of `part_name_to_rels_path`.
+fn rels_path_to_part_name(name: &str) -> Option<String> {
+    let name = name.strip_prefix('/').unwrap_or(name);
+    let file = name.strip_suffix(".rels")?;
+    let (dir, base) = file.rsplit_once('/')?;
+    let owner_dir = if dir == "_rels" {
+        ""
+    } else {
+        dir.strip_suffix("/_rels")?
+    };
+    Some(if owner_dir.is_empty() {
+        base.to_string()
+    } else {
+        format!("{owner_dir}/{base}")
+    })
+}
+
 /// Thin adapter over `rdocx_opc::OpcPackage`. Port-equivalent of `PartFS`.
 pub struct PartFs {
     pkg: OpcPackage,
@@ -64,9 +133,12 @@ pub struct PartFs {
 impl PartFs {
     /// Open a `.docx`/OPC package from raw bytes.
     pub fn open(bytes: &[u8]) -> Result<Self, OpcError> {
-        Ok(PartFs {
-            pkg: OpcPackage::from_reader(Cursor::new(bytes.to_vec()))?,
-        })
+        let mut pkg = OpcPackage::from_reader(Cursor::new(bytes.to_vec()))?;
+        unescape_relationships(&mut pkg.package_rels);
+        pkg.part_rels.values_mut().for_each(unescape_relationships);
+        unescape_content_types(&mut pkg.content_types.defaults);
+        unescape_content_types(&mut pkg.content_types.overrides);
+        Ok(PartFs { pkg })
     }
 
     /// `PartFS.partBytes(name)` — raw bytes of a part.
@@ -81,7 +153,24 @@ impl PartFs {
     }
 
     /// `PartFS.setPart(name, data)` — replace or add a part.
+    ///
+    /// A `…/_rels/<part>.rels` name replaces that part's relationships: the
+    /// package keeps relationships parsed, and `to_zip` writes them next to the
+    /// raw parts, so a raw `.rels` copy would be a second zip entry of the same
+    /// name (the whole package fails) and invisible to `read_rels_for`.
+    /// Unparseable relationship XML is kept raw, as before.
     pub fn set_part(&mut self, name: &str, data: Vec<u8>) {
+        if let Some(owner) = rels_path_to_part_name(name)
+            && let Ok(mut rels) = Relationships::from_xml(&data)
+        {
+            unescape_relationships(&mut rels);
+            if owner.is_empty() {
+                self.pkg.package_rels = rels;
+            } else {
+                self.pkg.part_rels.insert(norm(&owner), rels);
+            }
+            return;
+        }
         self.pkg.set_part(&norm(name), data);
     }
 
@@ -137,13 +226,27 @@ impl PartFs {
 
     // ── gap helpers (the few bits opc-partfs adds on top of raw zip) ───────────
 
-    /// `resolveRelTarget(sourcePart, relTarget)` — resolve a rel target relative
-    /// to its source part. Style-preserving (input style is echoed back).
+    /// `resolveRelTarget(sourcePart, relTarget)` — the part a rel target names,
+    /// relative to its source part, as a canonical part name: no leading slash
+    /// (the form `parts()` returns) and `.`/`..` segments resolved. An echoed
+    /// absolute target ("/word/footer1.xml") was later re-prefixed into a
+    /// "//word/…" relationship, and "word/../customXml/item1.xml" named no part.
     pub fn resolve_rel_target(&self, source_part: &str, rel_target: &str) -> String {
         // The relationships reader keeps the Target attribute as written, so
         // "image1.jpg&amp;ehk=…" names the part "image1.jpg&ehk=…".
         let target = crate::xmllinq::parse::unescape_xml_text(rel_target);
-        OpcPackage::resolve_rel_target(source_part, &target)
+        let joined = OpcPackage::resolve_rel_target(&norm(source_part), &target);
+        let mut segments: Vec<&str> = Vec::new();
+        for seg in joined.split('/') {
+            match seg {
+                "" | "." => {}
+                ".." => {
+                    segments.pop();
+                }
+                s => segments.push(s),
+            }
+        }
+        segments.join("/")
     }
 
     /// `contentTypeFor(part)`.
@@ -164,6 +267,46 @@ impl PartFs {
     /// Add a Default extension mapping to [Content_Types].xml.
     pub fn add_content_type_default(&mut self, ext: &str, content_type: &str) {
         self.pkg.content_types.add_default(ext, content_type);
+    }
+
+    /// Give every part that has no content type the one its source declares:
+    /// the source's entry for the same part name, else the source's Default for
+    /// the extension (case-insensitive, as OPC matches extensions). A part no
+    /// source types is left alone rather than guessed.
+    pub fn adopt_missing_content_types(&mut self, sources: &[&PartFs]) {
+        for part in self.parts() {
+            if self.content_type_for(&part).is_some() {
+                continue;
+            }
+            let Some((_, ext)) = part.rsplit_once('.').filter(|(_, e)| !e.contains('/')) else {
+                continue;
+            };
+            let by_ext = |fs: &PartFs| {
+                fs.pkg
+                    .content_types
+                    .defaults
+                    .iter()
+                    .find(|(e, _)| e.eq_ignore_ascii_case(ext))
+                    .map(|(_, ct)| ct.clone())
+            };
+            // Our own Default under another case (`png` for `image3.PNG`)
+            // already types the part: a second Default for the same extension
+            // makes the package unopenable.
+            if by_ext(self).is_some() {
+                continue;
+            }
+            let key = norm(&part);
+            for src in sources {
+                if let Some(ct) = src.pkg.content_types.overrides.get(&key).cloned() {
+                    self.add_content_type_override(&part, &ct);
+                    break;
+                }
+                if let Some(ct) = by_ext(src) {
+                    self.add_content_type_default(ext, &ct);
+                    break;
+                }
+            }
+        }
     }
 
     /// Remove an Override entry from [Content_Types].xml (no-op when absent).
@@ -229,5 +372,239 @@ impl PartFs {
     /// The main document part name (docxodus style).
     pub fn main_document_part(&self) -> Option<String> {
         self.pkg.main_document_part().map(|s| denorm(&s))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RELS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+    const HYPERLINK: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+
+    fn package_with_header_rels() -> PartFs {
+        let mut buf = Vec::new();
+        {
+            let mut z = ZipWriter::new(Cursor::new(&mut buf));
+            let opt = SimpleFileOptions::default();
+            let parts: [(&str, String); 5] = [
+                ("[Content_Types].xml", r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/></Types>"#.to_string()),
+                ("_rels/.rels", format!(r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#)),
+                ("word/document.xml", "<w:document/>".to_string()),
+                ("word/header1.xml", "<w:hdr/>".to_string()),
+                ("word/_rels/header1.xml.rels", format!(r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="{HYPERLINK}" Target="https://a.example/" TargetMode="External"/></Relationships>"#)),
+            ];
+            for (name, xml) in parts {
+                z.start_file(name, opt).unwrap();
+                z.write_all(xml.as_bytes()).unwrap();
+            }
+            z.finish().unwrap();
+        }
+        PartFs::open(&buf).unwrap()
+    }
+
+    #[test]
+    fn part_names_carry_exactly_one_leading_slash() {
+        // `format!("/{part}")` on a part that already starts with '/' (an
+        // absolute rel target) wrote a `//word/footer1.xml` content-type override;
+        // OPC readers then refuse the whole package.
+        let mut fs = package_with_header_rels();
+        fs.add_content_type_override("//word/footer1.xml", "application/xml");
+        fs.set_part("//word/footer1.xml", b"<w:ftr/>".to_vec());
+        assert_eq!(
+            fs.content_type_for("word/footer1.xml").as_deref(),
+            Some("application/xml")
+        );
+        assert!(fs.parts().contains(&"word/footer1.xml".to_string()));
+        let zip = fs.to_zip().unwrap();
+        let ct = String::from_utf8(
+            PartFs::open(&zip)
+                .unwrap()
+                .pkg
+                .content_types
+                .to_xml()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(!ct.contains("//word"), "{ct}");
+    }
+
+    #[test]
+    fn parts_without_a_content_type_adopt_the_sources_default() {
+        // B's header pulls in `media/hdphoto1.wdp` (HD Photo); the copy kept the
+        // bytes but not B's `wdp` Default, and a part with no content type makes
+        // Word refuse the package.
+        let mut src = package_with_header_rels();
+        src.add_content_type_default("wdp", "image/vnd.ms-photo");
+        src.add_content_type_default("PNG", "image/png");
+        let mut out = package_with_header_rels();
+        out.set_part("word/media/hdphoto1.wdp", vec![1, 2, 3]);
+        out.set_part("word/media/pic.png", vec![4]);
+        out.set_part("word/media/unknown.zzz", vec![5]);
+        out.adopt_missing_content_types(&[&src]);
+        assert_eq!(
+            out.content_type_for("word/media/hdphoto1.wdp").as_deref(),
+            Some("image/vnd.ms-photo")
+        );
+        // Extension matching is case-insensitive in OPC.
+        assert_eq!(
+            out.content_type_for("word/media/pic.png").as_deref(),
+            Some("image/png")
+        );
+        // Nothing to adopt: left alone rather than guessed.
+        assert_eq!(out.content_type_for("word/media/unknown.zzz"), None);
+    }
+
+    #[test]
+    fn an_upper_case_extension_is_already_typed_by_the_lower_case_default() {
+        // `image3.PNG` under our own `png` Default is typed (OPC matches
+        // extensions case-insensitively). Adding a second `PNG` Default made the
+        // package unopenable (647bbcfb, 2026-09-26 English redlines).
+        let mut out = package_with_header_rels();
+        out.add_content_type_default("png", "image/png");
+        out.set_part("word/media/image3.PNG", vec![4]);
+        out.adopt_missing_content_types(&[]);
+        let pngs = out
+            .pkg
+            .content_types
+            .defaults
+            .iter()
+            .filter(|(e, _)| e.eq_ignore_ascii_case("png"))
+            .count();
+        assert_eq!(pngs, 1);
+    }
+
+    #[test]
+    fn rel_attributes_survive_round_trips_unescaped() {
+        // rdocx-opc 0.1.0 keeps `Target="a&amp;b"` escaped when parsing and
+        // escapes again when writing: every open/write added one `&amp;`, and
+        // `image11.jpg&ehk=…` ended up pointing at `image11.jpg&amp;amp;amp;…`,
+        // a part that does not exist (a2412654, 2026-09-26 English redlines).
+        let mut fs = package_with_header_rels();
+        fs.set_part(
+            "word/_rels/document.xml.rels",
+            format!(r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/p.jpg&amp;ehk=Q"/></Relationships>"#).into_bytes(),
+        );
+        let target = |fs: &PartFs| {
+            fs.read_rels_for("word/document.xml").unwrap().items[0]
+                .target
+                .clone()
+        };
+        assert_eq!(target(&fs), "media/p.jpg&ehk=Q");
+        let once = PartFs::open(&fs.to_zip().unwrap()).unwrap();
+        let twice = PartFs::open(&once.to_zip().unwrap()).unwrap();
+        assert_eq!(target(&twice), "media/p.jpg&ehk=Q");
+    }
+
+    #[test]
+    fn content_types_survive_round_trips_unescaped() {
+        // Same rdocx-opc escaping gap as the relationships: a2412654's
+        // `Default Extension="jpg&amp;ehk=…"` grew one `&amp;` per cycle and
+        // stopped typing its picture.
+        let mut fs = package_with_header_rels();
+        fs.add_content_type_default("jpg&ehk=Q", "image/jpeg");
+        fs.set_part("word/media/p.jpg&ehk=Q", vec![1]);
+        let once = PartFs::open(&fs.to_zip().unwrap()).unwrap();
+        let twice = PartFs::open(&once.to_zip().unwrap()).unwrap();
+        assert_eq!(
+            twice.content_type_for("word/media/p.jpg&ehk=Q").as_deref(),
+            Some("image/jpeg")
+        );
+    }
+
+    #[test]
+    fn rel_targets_resolve_to_canonical_part_names() {
+        let fs = package_with_header_rels();
+        // An absolute target once came back as "/word/footer1.xml" and was then
+        // re-prefixed into a "//word/footer1.xml" relationship (package refused).
+        assert_eq!(
+            fs.resolve_rel_target("word/document.xml", "/word/footer1.xml"),
+            "word/footer1.xml"
+        );
+        assert_eq!(
+            fs.resolve_rel_target("word/document.xml", "media/a.png"),
+            "word/media/a.png"
+        );
+        assert_eq!(
+            fs.resolve_rel_target("word/document.xml", "../customXml/item1.xml"),
+            "customXml/item1.xml"
+        );
+        assert_eq!(
+            fs.resolve_rel_target("word/header1.xml", "./media/a.png"),
+            "word/media/a.png"
+        );
+        assert_eq!(
+            fs.resolve_rel_target("/word/document.xml", "styles.xml"),
+            "word/styles.xml"
+        );
+    }
+
+    #[test]
+    fn rel_targets_are_relative_to_the_source_folder() {
+        assert_eq!(
+            relative_rel_target("word/header1.xml", "word/media/P1.png"),
+            "media/P1.png"
+        );
+        assert_eq!(
+            relative_rel_target("/word/document.xml", "/word/comments.xml"),
+            "comments.xml"
+        );
+        assert_eq!(
+            relative_rel_target("word/header1.xml", "customXml/item1.xml"),
+            "/customXml/item1.xml"
+        );
+        assert_eq!(
+            relative_rel_target("word/document.xml", "media/image.bin"),
+            "/media/image.bin"
+        );
+        // `word/document.xml` is not a folder prefix of `wordy/x.xml`.
+        assert_eq!(
+            relative_rel_target("word/document.xml", "wordy/x.xml"),
+            "/wordy/x.xml"
+        );
+    }
+
+    #[test]
+    fn rels_paths_name_their_owning_part() {
+        assert_eq!(
+            rels_path_to_part_name("word/_rels/header1.xml.rels").as_deref(),
+            Some("word/header1.xml")
+        );
+        assert_eq!(
+            rels_path_to_part_name("/word/_rels/document.xml.rels").as_deref(),
+            Some("word/document.xml")
+        );
+        assert_eq!(rels_path_to_part_name("_rels/.rels").as_deref(), Some(""));
+        assert_eq!(rels_path_to_part_name("word/header1.xml"), None);
+        assert_eq!(rels_path_to_part_name("word/media/odd.rels"), None);
+    }
+
+    #[test]
+    fn writing_a_rels_part_replaces_the_parts_relationships() {
+        let mut fs = package_with_header_rels();
+        fs.set_part(
+            "word/_rels/header1.xml.rels",
+            format!(r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId7" Type="{HYPERLINK}" Target="https://b.example/" TargetMode="External"/></Relationships>"#).into_bytes(),
+        );
+        let ids: Vec<String> = fs
+            .read_rels_for("word/header1.xml")
+            .unwrap()
+            .items
+            .iter()
+            .map(|r| r.id.clone())
+            .collect();
+        assert_eq!(ids, ["rId7"]);
+        // One .rels entry per part: a raw copy next to the parsed one is a
+        // duplicate zip name and fails the whole package.
+        let reopened = PartFs::open(&fs.to_zip().expect("no duplicate .rels")).unwrap();
+        assert_eq!(
+            reopened
+                .read_rels_for("word/header1.xml")
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
     }
 }

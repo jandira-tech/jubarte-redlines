@@ -328,10 +328,7 @@ pub fn reconcile_dangling_relationships(
                             dest.add_content_type_override(&new_uri, &ct);
                         }
                         dest.set_part(&new_uri, modf_bytes);
-                        let rel_target = new_uri
-                            .strip_prefix("word/")
-                            .unwrap_or(&new_uri)
-                            .to_string();
+                        let rel_target = crate::opc::relative_rel_target(&doc_part, &new_uri);
                         let new_rid =
                             dest.add_document_relationship(&doc_part, &row.rel_type, &rel_target);
                         dom.set_attribute_value(el, &an, Some(&new_rid));
@@ -373,10 +370,7 @@ pub fn reconcile_dangling_relationships(
                             }
                             dest.set_part(&new_uri, bytes);
                             // relationship target relative to the document part folder.
-                            let rel_target = new_uri
-                                .strip_prefix("word/")
-                                .unwrap_or(&new_uri)
-                                .to_string();
+                            let rel_target = crate::opc::relative_rel_target(&doc_part, &new_uri);
                             let new_rid = dest.add_document_relationship(
                                 &doc_part,
                                 &row.rel_type,
@@ -391,5 +385,199 @@ pub fn reconcile_dangling_relationships(
                 }
             }
         }
+    }
+}
+
+/// The package that supplied a part's content: `(source package, part name there)`.
+type PartSource<'a> = (&'a PartFs, String);
+
+/// Where the content of the output part `part` can have come from, in lookup
+/// order. The output package starts as the original (A), so A-origin parts
+/// already carry A's relationships; a reference left unresolved belongs to
+/// content grafted in from the revised document (B). `redlineB_*` parts are
+/// B's by construction and never resolve against A.
+fn part_sources<'a>(part: &str, a: &'a PartFs, b: &'a PartFs) -> Vec<PartSource<'a>> {
+    match revised_part_name(part) {
+        Some(orig) => vec![(b, orig)],
+        None => vec![(b, part.to_string()), (a, part.to_string())],
+    }
+}
+
+/// B's own name for a `redlineB_*` output part (`redlineB_{base}`, or
+/// `redlineB_{n}_{base}` for the n-th collision); None for any other part.
+fn revised_part_name(part: &str) -> Option<String> {
+    let (dir, base) = part.rsplit_once('/').unwrap_or(("", part));
+    let rest = base.strip_prefix("redlineB_")?;
+    let orig = rest
+        .split_once('_')
+        .filter(|(n, _)| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
+        .map_or(rest, |(_, tail)| tail);
+    Some(if dir.is_empty() {
+        orig.to_string()
+    } else {
+        format!("{dir}/{orig}")
+    })
+}
+
+/// Every non-main XML part must resolve its own `r:*` references in its own
+/// `.rels`: comments, notes, headers/footers and numbering picture bullets
+/// copied from the revised document otherwise keep B's ids without B's
+/// relationships, and Word refuses the whole package ("document loaded
+/// empty"). Per-part counterpart of [`reconcile_dangling_relationships`]
+/// (which covers the main document): missing relationships are carried from
+/// the part's source (external targets verbatim, internal parts copied), and
+/// references no source can resolve lose the attribute.
+pub fn reconcile_part_relationships(dest: &mut PartFs, main_part: &str, a: &PartFs, b: &PartFs) {
+    let mut parts: Vec<String> = dest
+        .parts()
+        .into_iter()
+        .filter(|p| p != main_part && p.starts_with("word/") && p.ends_with(".xml"))
+        .collect();
+    parts.sort();
+    for part in parts {
+        reconcile_one_part(dest, &part, a, b);
+    }
+}
+
+/// True when `xml` carries an attribute in the relationships namespace — the
+/// cheap gate that keeps parts without references from being parsed.
+fn has_relationship_attribute(xml: &str) -> bool {
+    let uri = format!("=\"{}\"", crate::namespaces::R::URI);
+    xml.match_indices(&uri).any(|(at, _)| {
+        let decl = &xml[..at];
+        decl.rfind("xmlns:").is_some_and(|x| {
+            let prefix = &decl[x + "xmlns:".len()..];
+            !prefix.is_empty()
+                && prefix
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+                && xml
+                    .match_indices(&format!("{prefix}:"))
+                    .any(|(i, _)| i > 0 && xml.as_bytes()[i - 1].is_ascii_whitespace())
+        })
+    })
+}
+
+fn reconcile_one_part(dest: &mut PartFs, part: &str, a: &PartFs, b: &PartFs) {
+    let Some(xml) = dest.part_string(part) else {
+        return;
+    };
+    if !has_relationship_attribute(&xml) {
+        return;
+    }
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return;
+    };
+    let dest_types: std::collections::HashMap<String, String> = dest
+        .read_rels_for(part)
+        .map(|rels| {
+            rels.items
+                .iter()
+                .map(|r| (r.id.clone(), r.rel_type.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let sources = part_sources(part, a, b);
+    // One new relationship per source id, however many elements share it.
+    let mut minted: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut changed = false;
+    for el in dom.descendants_and_self(root, None) {
+        for (an, rid) in dom.attributes(el) {
+            if !S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(&an) {
+                continue;
+            }
+            let suffix = dom
+                .name(el)
+                .and_then(|n| required_rel_type_suffix(n.local_name()));
+            let fits = |ty: &str| suffix.is_none_or(|s| ty.ends_with(s));
+            if dest_types.get(&rid).is_some_and(|t| fits(t)) {
+                continue;
+            }
+            let key = format!("{rid}\u{0}{}", suffix.unwrap_or(""));
+            let new_rid = match minted.get(&key) {
+                Some(id) => Some(id.clone()),
+                None => {
+                    let carried = sources.iter().find_map(|(src, src_part)| {
+                        let row = src
+                            .read_rels_for(src_part)?
+                            .items
+                            .iter()
+                            .find(|r| r.id == rid && fits(&r.rel_type))?
+                            .clone();
+                        let external = row.target_mode.as_deref() == Some("External")
+                            || is_external_relationship(&row.rel_type, &row.target);
+                        if external {
+                            return Some(dest.add_document_relationship_external(
+                                part,
+                                &row.rel_type,
+                                &row.target,
+                            ));
+                        }
+                        let target_part = src.resolve_rel_target(src_part, &row.target);
+                        let bytes = src.part_bytes(&target_part)?.to_vec();
+                        let new_uri = dest_uri_for_reconciled_part(dest, &target_part, &bytes);
+                        if let Some(ct) = src.content_type_for(&target_part) {
+                            dest.add_content_type_override(&new_uri, &ct);
+                        }
+                        dest.set_part(&new_uri, bytes);
+                        Some(dest.add_document_relationship(
+                            part,
+                            &row.rel_type,
+                            &crate::opc::relative_rel_target(part, &new_uri),
+                        ))
+                    });
+                    if let Some(id) = &carried {
+                        minted.insert(key, id.clone());
+                    }
+                    carried
+                }
+            };
+            dom.set_attribute_value(el, &an, new_rid.as_deref());
+            changed = true;
+        }
+    }
+    if changed {
+        dest.set_part(part, dom.serialize_element(root).into_bytes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn revised_part_name_undoes_both_collision_forms() {
+        assert_eq!(
+            revised_part_name("word/redlineB_header1.xml").as_deref(),
+            Some("word/header1.xml")
+        );
+        assert_eq!(
+            revised_part_name("word/redlineB_2_footer3.xml").as_deref(),
+            Some("word/footer3.xml")
+        );
+        // A base name that itself contains an underscore is not a collision index.
+        assert_eq!(
+            revised_part_name("word/redlineB_my_header.xml").as_deref(),
+            Some("word/my_header.xml")
+        );
+        assert_eq!(revised_part_name("word/header1.xml"), None);
+    }
+
+    #[test]
+    fn relationship_attribute_gate_sees_any_whitespace_before_the_prefix() {
+        // A false positive only costs a parse; a false negative ships a dangling id.
+        let ns = crate::namespaces::R::URI;
+        assert!(has_relationship_attribute(&format!(
+            r#"<w:hdr xmlns:r="{ns}"><w:hyperlink r:id="rId1"/></w:hdr>"#
+        )));
+        assert!(has_relationship_attribute(&format!(
+            "<w:hdr xmlns:rel=\"{ns}\"><a:blip\n\trel:embed=\"rId1\"/></w:hdr>"
+        )));
+        assert!(!has_relationship_attribute(&format!(
+            r#"<w:hdr xmlns:r="{ns}"><w:p><w:t>Number:1</w:t></w:p></w:hdr>"#
+        )));
+        assert!(!has_relationship_attribute("<w:hdr><w:p/></w:hdr>"));
     }
 }

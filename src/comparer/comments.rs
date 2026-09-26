@@ -583,8 +583,8 @@ fn install_parts_from(out: &mut PartFs, out_main: &str, src: &PartFs) {
                     .read_rels_for(out_main)
                     .is_some_and(|r| r.items.iter().any(|i| i.rel_type == rel_type));
                 if !has_rel {
-                    let target = part.strip_prefix("word/").unwrap_or(part);
-                    out.add_document_relationship(out_main, rel_type, target);
+                    let target = crate::opc::relative_rel_target(out_main, part);
+                    out.add_document_relationship(out_main, rel_type, &target);
                 }
             }
             None => remove_family_part(out, out_main, part, rel_type),
@@ -966,8 +966,8 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
                 .read_rels_for(out_main)
                 .is_some_and(|r| r.items.iter().any(|i| i.rel_type == *rel_type));
             if !has_rel {
-                let target = part.strip_prefix("word/").unwrap_or(part);
-                out.add_document_relationship(out_main, rel_type, target);
+                let target = crate::opc::relative_rel_target(out_main, part);
+                out.add_document_relationship(out_main, rel_type, &target);
             }
             continue; // fully seeded from A; nothing further to merge
         }
