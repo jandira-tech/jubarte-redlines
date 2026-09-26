@@ -890,4 +890,79 @@ mod tests {
             "report missing unknown family: {json}"
         );
     }
+
+    mod regression_tests {
+        use super::*;
+
+        #[test]
+        fn convert_without_revision_flags_uses_conventional_marks() {
+            let cli = Cli::try_parse_from(["jubarte", "convert", "in.docx"]).unwrap();
+            let Some(Command::Convert {
+                revisions,
+                revision_palette,
+                ..
+            }) = cli.command
+            else {
+                panic!("convert")
+            };
+            assert_eq!(revisions, Revisions::Conventional);
+            assert_eq!(revision_palette, None);
+            assert_eq!(
+                revision_style(revisions, None),
+                Ok(RevisionStyle::Conventional)
+            );
+        }
+
+        #[test]
+        fn custom_revision_flags_reach_the_palette_parser() {
+            let spec = "inserted=#aabbcc:plain";
+            let cli = Cli::try_parse_from([
+                "jubarte",
+                "convert",
+                "in.docx",
+                "--revisions",
+                "custom",
+                "--revision-palette",
+                spec,
+            ])
+            .unwrap();
+            let Some(Command::Convert {
+                revisions,
+                revision_palette,
+                ..
+            }) = cli.command
+            else {
+                panic!("convert")
+            };
+            assert_eq!(revisions, Revisions::Custom);
+            assert_eq!(revision_palette.as_deref(), Some(spec));
+            assert_eq!(
+                revision_style(revisions, revision_palette.as_deref()),
+                RevisionStyle::from_choice("custom", Some(spec))
+            );
+        }
+
+        #[test]
+        fn invalid_revision_flags_are_rejected_with_option_context() {
+            assert!(
+                Cli::try_parse_from(["jubarte", "convert", "in.docx", "--revisions", "unknown"])
+                    .is_err()
+            );
+            assert_eq!(
+                revision_style(Revisions::Custom, None).unwrap_err(),
+                "--revisions custom needs --revision-palette"
+            );
+            for mode in [Revisions::Conventional, Revisions::Word] {
+                assert_eq!(
+                    revision_style(mode, Some("deleted=#000000")).unwrap_err(),
+                    "--revision-palette needs --revisions custom"
+                );
+            }
+            assert!(
+                revision_style(Revisions::Custom, Some("deleted=red"))
+                    .unwrap_err()
+                    .starts_with("--revision-palette:")
+            );
+        }
+    }
 }

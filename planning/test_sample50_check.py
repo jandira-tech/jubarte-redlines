@@ -54,6 +54,31 @@ class LoadRowsTests(unittest.TestCase):
                     s50.load_rows(str(sample))
 
 
+class ConvertRevisionModeTests(unittest.TestCase):
+    def test_benchmark_conversion_explicitly_uses_word_revision_marks(self) -> None:
+        row = {"id": "sample", "docx": "source with spaces.docx", "ref": "word.pdf"}
+
+        def run(argv, **kwargs):
+            if argv[0] == "jubarte":
+                Path(argv[4]).write_bytes(b"%PDF-synthetic")
+            else:
+                self.assertEqual(argv[0], "scorer")
+                Path(argv[argv.index("--out") + 1]).write_text(
+                    json.dumps([{"stem": "sample", "jaccard": 0.75}])
+                )
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(s50.subprocess, "run", side_effect=run) as invoked:
+            scores, failed = s50.convert_and_score([row], "jubarte", "scorer", 1)
+        argv = invoked.call_args_list[0].args[0]
+        self.assertEqual(argv, ["jubarte", "convert", row["docx"], "-o", argv[4],
+                                "--force", "--revisions", "word"])
+        self.assertEqual(invoked.call_count, 2)
+        self.assertEqual(failed, [])
+        self.assertEqual(scores["sample"]["jaccard"], 0.75)
+        self.assertFalse(Path(argv[4]).parent.exists(), "temporary work is removed")
+
+
 class MainGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()

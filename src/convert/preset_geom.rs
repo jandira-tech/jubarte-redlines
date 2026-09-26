@@ -698,4 +698,32 @@ mod tests {
         assert_eq!(Fill::Lighten.shade(base), Some([0.7, 0.7, 0.7]));
         assert_eq!(Fill::None.shade(base), None);
     }
+
+    mod regression_tests {
+        use super::*;
+
+        #[test]
+        fn text_rectangle_uses_shape_dimensions_in_points() {
+            assert_eq!(
+                text_rect("flowChartInternalStorage", 160.0, 80.0, &[]),
+                Some([20.0, 10.0, 160.0, 80.0])
+            );
+            assert_eq!(
+                text_rect("flowChartInternalStorage", 80.0, 160.0, &[]),
+                Some([10.0, 20.0, 80.0, 160.0])
+            );
+            assert_eq!(text_rect("unknown-preset", 160.0, 80.0, &[]), None);
+            assert_eq!(text_rect("rect", 160.0, 80.0, &[]), None);
+        }
+
+        #[test]
+        fn adjusted_text_rectangle_clamps_to_the_shapes_limits() {
+            for (adjustment, bottom) in [(-1.0, 100.0), (25000.0, 75.0), (75000.0, 50.0)] {
+                assert_eq!(
+                    text_rect("foldedCorner", 200.0, 100.0, &[("adj".into(), adjustment)]),
+                    Some([0.0, 0.0, 200.0, bottom])
+                );
+            }
+        }
+    }
 }
