@@ -35285,3 +35285,35 @@ fn a_text_box_whose_text_is_deleted_is_no_picture() {
         "the photo is not stretched to the 200x300pt box"
     );
 }
+
+#[test]
+fn a_text_boxs_deleted_paragraphs_keep_their_lines() {
+    // English redline d20125ec: every paragraph of A's cover text box is
+    // deleted. Word's markup keeps each on its own centred line; judging
+    // the box by w:t alone we took it for text-less and ran the lines
+    // together ("ASSESSMENTFurnace Brook").
+    let del = |id: u32, text: &str| {
+        format!(
+            "<w:p><w:pPr><w:jc w:val=\"center\"/><w:rPr><w:del w:id=\"{id}0\" w:author=\"A\" \
+             w:date=\"2026-01-01T00:00:00Z\"/></w:rPr></w:pPr><w:del w:id=\"{id}\" w:author=\"A\" \
+             w:date=\"2026-01-01T00:00:00Z\"><w:r><w:delText>{text}</w:delText></w:r></w:del></w:p>"
+        )
+    };
+    let body = format!(
+        "<w:p><w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+         <wp:extent cx=\"3810000\" cy=\"2540000\"/><wp:docPr id=\"1\" name=\"Text Box 1\"/>\
+         <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+         <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"><wps:spPr>\
+         <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>{}{}\
+         </w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline>\
+         </w:drawing></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        del(1, "TopLineQ"),
+        del(2, "BottomLineQ")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("deleted box paragraphs");
+    let (_, top) = pdf_glyph_text_xy(&pdf, "TopLineQ").expect("top line");
+    let (_, bottom) = pdf_glyph_text_xy(&pdf, "BottomLineQ").expect("bottom line");
+    assert!(top > bottom + 5.0, "two lines, not one: {top} vs {bottom}");
+}
+

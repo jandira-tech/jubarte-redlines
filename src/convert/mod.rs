@@ -12343,11 +12343,13 @@ fn descendants_local(dom: &Dom, node: NodeId, local: &str) -> Vec<NodeId> {
 
 /// The `w:t` text under `node` (a paragraph's words; `element_text` reads
 /// only the node's own text children, so it is empty for a `w:p`).
+/// A node's words, deleted ones included: a redline shows them struck
+/// (d20125ec's cover text box, every paragraph deleted, still lays out
+/// line by line).
 fn w_text(dom: &Dom, node: NodeId) -> String {
-    dom.descendants(node, Some(&W::t()))
-        .into_iter()
-        .map(|t| element_text(dom, t))
-        .collect()
+    let mut words: Vec<NodeId> = dom.descendants(node, Some(&W::t()));
+    words.extend(dom.descendants(node, Some(&W::name("delText"))));
+    words.into_iter().map(|t| element_text(dom, t)).collect()
 }
 
 /// A paragraph's own words: `w_text` without the text of text boxes it
