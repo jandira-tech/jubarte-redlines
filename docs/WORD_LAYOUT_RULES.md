@@ -354,3 +354,11 @@ rule:
   sit within 0.2pt of Word (they had slid left). The empty space never
   decides a row split: 2c352c83's gridAfter rows still move whole at a page
   end, keeping their top rule.
+- A paragraph's `w:framePr` overlays its style chain's framePr attribute by
+  attribute: e73ba1e0's date frame sets only x=9100/y=3182 and takes
+  Marginalie's page anchors and width; its footer frame sets y=12182 and
+  takes the style's x=9016 (Word: 455.04pt and 450.72pt). An unbordered
+  frame's text starts on its x/y with no inset. A page-anchored text frame
+  in a header or footer floats at its page position and leaves the band:
+  e73ba1e0's 16-line address block no longer raises the footer, so page 1
+  holds Word's text and the file is 2 pages, not 3.

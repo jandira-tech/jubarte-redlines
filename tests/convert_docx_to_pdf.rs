@@ -36724,6 +36724,106 @@ fn a_revised_footer_page_field_paints_its_number_unmarked() {
 }
 
 #[test]
+fn a_frame_takes_its_styles_frame_attributes() {
+    // Word overlays a paragraph's own framePr on its style's attribute by
+    // attribute: e73ba1e0's date frame sets only x/y and floats at page
+    // x=9100tw through Marginalie's page anchors, beside the body text.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+        <w:style w:type=\"paragraph\" w:styleId=\"Marginalie\"><w:name w:val=\"Marginalie\"/>\
+          <w:basedOn w:val=\"Normal\"/><w:pPr><w:framePr w:w=\"2279\" w:hSpace=\"181\" w:wrap=\"around\" \
+          w:vAnchor=\"page\" w:hAnchor=\"page\" w:x=\"9016\" w:y=\"3176\"/></w:pPr></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"Marginalie\"/>\
+          <w:framePr w:wrap=\"around\" w:x=\"9100\" w:y=\"3182\"/></w:pPr>\
+          <w:r><w:t>Framed</w:t></w:r></w:p>\
+        <w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+          <w:pgMar w:top=\"1440\" w:right=\"3402\" w:bottom=\"817\" w:left=\"1361\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("convert styled frame");
+    let (fx, _) = pdf_literal_td_xy(&pdf, "Framed").expect("frame text painted");
+    let (bx, by) = pdf_literal_td_xy(&pdf, "Body").expect("body text painted");
+    assert!((fx - 455.0).abs() < 1.0, "frame at page x=9100tw, got {fx}");
+    assert!(
+        (bx - 68.05).abs() < 1.0,
+        "body stays at the margin, got {bx}"
+    );
+    assert!(
+        by > 841.9 - 72.0 - 20.0,
+        "body starts at the top margin, got {by}"
+    );
+}
+
+#[test]
+fn a_footer_frame_floats_at_its_page_position() {
+    // e73ba1e0's footer is a page-anchored Marginalie frame (x=9016tw,
+    // y=12182tw): Word paints it on the page's right, and the footer band
+    // it leaves behind stays one line, so the body keeps its lines.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+        <w:style w:type=\"paragraph\" w:styleId=\"Marginalie\"><w:name w:val=\"Marginalie\"/>\
+          <w:basedOn w:val=\"Normal\"/><w:pPr><w:framePr w:w=\"2279\" w:hSpace=\"181\" w:wrap=\"around\" \
+          w:vAnchor=\"page\" w:hAnchor=\"page\" w:x=\"9016\" w:y=\"3176\"/></w:pPr></w:style>\
+        </w:styles>";
+    let framed: String = (0..12)
+        .map(|i| {
+            format!(
+                "<w:p><w:pPr><w:pStyle w:val=\"Marginalie\"/>\
+                   <w:framePr w:w=\"2492\" w:h=\"4316\" w:hRule=\"exact\" w:wrap=\"around\" w:y=\"12182\"/>\
+                 </w:pPr><w:r><w:t>Addr{i}</w:t></w:r></w:p>"
+            )
+        })
+        .collect();
+    let footer = |inner: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             {inner}<w:p/></w:ftr>"
+        )
+    };
+    let lines: String = (0..70)
+        .map(|i| format!("<w:p><w:r><w:t>Line{i}</w:t></w:r></w:p>"))
+        .collect();
+    let body = format!(
+        "{lines}<w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"3402\" w:bottom=\"817\" w:left=\"1361\" \
+             w:header=\"1021\" w:footer=\"794\"/></w:sectPr>"
+    );
+    let convert = |inner: &str| {
+        docx_to_pdf(&hf_docx(
+            &body,
+            &[
+                ("rIdF1", "footer", "footer1.xml"),
+                ("rIdS1", "styles", "styles.xml"),
+            ],
+            &[
+                ("word/footer1.xml", footer(inner)),
+                ("word/styles.xml", styles.to_string()),
+            ],
+        ))
+        .expect("convert framed footer")
+    };
+    let (plain, pdf) = (convert(""), convert(&framed));
+    let (x, y) = pdf_literal_td_xy(&pdf, "Addr0").expect("the frame's text is painted");
+    assert!((x - 450.8).abs() < 1.0, "frame at page x=9016tw, got {x}");
+    assert!(
+        (841.9 - 609.1 - y).abs() < 12.0,
+        "frame text starts at page y=12182tw, got {y}"
+    );
+    for i in 0..70 {
+        let key = format!("Line{i}");
+        assert_eq!(
+            pdf_literal_td_y(&pdf, &key),
+            pdf_literal_td_y(&plain, &key),
+            "{key} keeps its place beside a floating footer frame"
+        );
+    }
+}
+
+#[test]
 fn a_grid_after_row_at_the_page_end_moves_whole() {
     // 2c352c83's gridAfter rows: the empty grid-skip cell "fits" at the
     // page end, but the row still moves whole to the next page, keeping

@@ -821,6 +821,10 @@ struct NamedStyle {
     /// `w:type="character"` (or numbering): named by a paragraph's pStyle,
     /// Word ignores it and keeps the default paragraph style.
     not_para: bool,
+    /// The chain's `w:framePr` attributes, a derived style's over its
+    /// base's; a paragraph's own framePr overlays them attribute by
+    /// attribute (e73ba1e0's footer frame takes Marginalie's x=9016).
+    frame: Vec<(String, String)>,
 }
 
 #[derive(Clone, Default)]
@@ -2787,6 +2791,24 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             chain_ind(&["left", "start"]),
             chain_ind(&["hanging", "firstLine"]),
         );
+        let mut chain = Vec::new();
+        let mut cur = Some(id.as_str());
+        for _ in 0..12 {
+            let Some(r) = cur.and_then(|c| raw.get(c)) else {
+                break;
+            };
+            chain.push(r.ppr);
+            cur = r.based.as_deref();
+        }
+        let mut frame: Vec<(String, String)> = Vec::new();
+        for fp in chain
+            .into_iter()
+            .rev()
+            .flatten()
+            .filter_map(|pr| first_named(&dom, pr, "framePr"))
+        {
+            merge_frame_attrs(&dom, fp, &mut frame);
+        }
         by_id.insert(
             id,
             NamedStyle {
@@ -2799,6 +2821,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
                 sets_ind,
                 sets_spacing,
                 not_para: style_not_para,
+                frame,
             },
         );
     }
@@ -6363,7 +6386,7 @@ fn walk_container(
         let child = (idx < count).then(|| dom.child_at(node, idx));
         let key = child
             .filter(|c| dom.name_is(*c, &W::p()))
-            .and_then(|c| page_frame_key(dom, c));
+            .and_then(|c| page_frame_key(dom, c, ctx.sheet));
         if let Some((k, _)) = frame.as_ref()
             && key.as_deref() != Some(k.as_str())
         {
@@ -6599,11 +6622,9 @@ fn walk_container(
 /// ink after it, or `page_br` for a paragraph without a marked break).
 /// A body paragraph's page-anchored frame (hAnchor/vAnchor="page" with an
 /// x and y), as a key its sibling frame paragraphs share.
-fn page_frame_key(dom: &Dom, para: NodeId) -> Option<String> {
-    let fp = dom
-        .element(para, &W::p_pr())
-        .and_then(|ppr| first_named(dom, ppr, "framePr"))?;
-    let attr = |n: &str| attr_any(dom, fp, n).unwrap_or("").to_string();
+fn page_frame_key(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<String> {
+    let fp = para_frame_attrs(dom, para, sheet)?;
+    let attr = |n: &str| frame_attr(&fp, n).unwrap_or("").to_string();
     (attr("hAnchor") == "page"
         && attr("vAnchor") == "page"
         && !attr("x").is_empty()
@@ -6617,6 +6638,55 @@ fn page_frame_key(dom: &Dom, para: NodeId) -> Option<String> {
     })
 }
 
+/// A header/footer paragraph's page-anchored text frame: it floats at its
+/// page position as a box, out of the band (e73ba1e0's Marginalie address
+/// frame). Frames holding pictures keep the chrome image path.
+fn hf_text_frame_key(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<String> {
+    page_frame_key(dom, para, sheet).filter(|_| {
+        dom.descendants(para, Some(&W::drawing())).is_empty()
+            && dom.descendants(para, Some(&W::pict())).is_empty()
+    })
+}
+
+/// Overlays `fp`'s attributes on `out`, keyed by local name.
+fn merge_frame_attrs(dom: &Dom, fp: NodeId, out: &mut Vec<(String, String)>) {
+    for (name, value) in dom.attributes(fp) {
+        let local = name.local_name().to_string();
+        match out.iter_mut().find(|(n, _)| *n == local) {
+            Some(slot) => slot.1 = value,
+            None => out.push((local, value)),
+        }
+    }
+}
+
+/// A paragraph's frame: its style chain's framePr overlaid by its own,
+/// attribute by attribute, or `None` when neither sets one.
+fn para_frame_attrs(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<Vec<(String, String)>> {
+    let ppr = dom.element(para, &W::p_pr());
+    let sid = ppr
+        .and_then(|ppr| first_named(dom, ppr, "pStyle"))
+        .and_then(|ps| attr_any(dom, ps, "val"))
+        .unwrap_or(sheet.defaults.para.style_id.as_str());
+    let mut attrs = sheet
+        .by_id
+        .get(sid)
+        .filter(|n| !n.not_para)
+        .map(|n| n.frame.clone())
+        .unwrap_or_default();
+    let own = ppr.and_then(|ppr| first_named(dom, ppr, "framePr"));
+    if let Some(fp) = own {
+        merge_frame_attrs(dom, fp, &mut attrs);
+    }
+    (own.is_some() || !attrs.is_empty()).then_some(attrs)
+}
+
+fn frame_attr<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    attrs
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, v)| v.as_str())
+}
+
 /// The frame's paragraphs laid out as a floating text box: the frame's size
 /// and page position, its paragraphs' shared border as the outline, text
 /// wrapping around it by hSpace when `wrap="around"`.
@@ -6627,11 +6697,9 @@ fn frame_box(
     numbering: &mut Numbering,
 ) -> Option<LaidTextBox> {
     let first = *paras.first()?;
-    let fp = dom
-        .element(first, &W::p_pr())
-        .and_then(|ppr| first_named(dom, ppr, "framePr"))?;
+    let fp = para_frame_attrs(dom, first, ctx.sheet)?;
     let tw = |n: &str| {
-        attr_any(dom, fp, n)
+        frame_attr(&fp, n)
             .and_then(|v| v.parse::<f32>().ok())
             .map(|v| v / 20.0)
     };
@@ -6661,7 +6729,7 @@ fn frame_box(
         .sum();
     let w = tw("w").unwrap_or(144.0);
     let h = tw("h").filter(|h| *h > 0.0).unwrap_or(line_guess);
-    let around = attr_any(dom, fp, "wrap").is_none_or(|v| v == "around");
+    let around = frame_attr(&fp, "wrap").is_none_or(|v| v == "around");
     let h_space = tw("hSpace").unwrap_or(0.0);
     let v_space = tw("vSpace").unwrap_or(0.0);
     Some(LaidTextBox {
@@ -6709,7 +6777,13 @@ fn frame_box(
         adj: Vec::new(),
         prst: String::new(),
         paras: laid,
-        insets: [1.0, 1.0, 1.0, 1.0],
+        // An unbordered frame's text starts on its x/y (e73ba1e0's date at
+        // 455.04pt = x 9100tw); a border keeps its point of padding.
+        insets: if outline.is_some() {
+            [1.0; 4]
+        } else {
+            [0.0; 4]
+        },
         custom: None,
         group: Vec::new(),
         chrome_para_top: 0.0,
@@ -15440,12 +15514,41 @@ fn chrome_part_xml(
     // line of its largest size (x1.15, its multiple) and max(after, before).
     let mut para_top = 0.0_f32;
     let mut last_after = 0.0_f32;
+    let frame_ctx = WalkCtx {
+        pkg,
+        main: path,
+        sheet,
+        sects: &[],
+        authors: RefCell::new(AuthorColors::default()),
+        comments: HashMap::new(),
+    };
+    let mut frame: Option<(String, Vec<NodeId>)> = None;
     for para in part_dom.descendants(root, Some(&W::p())) {
         if hf_para_is_shape_text(&part_dom, para) {
             continue;
         }
-        let (pstyle, prun) = para_base(&part_dom, para, sheet, None);
         let top_level = !hf_para_in_table(&part_dom, root, para);
+        // Consecutive paragraphs of one page-anchored text frame float as
+        // one box, like the body's (walk_container).
+        let key = top_level
+            .then(|| hf_text_frame_key(&part_dom, para, sheet))
+            .flatten();
+        if let Some((k, _)) = frame.as_ref()
+            && key.as_deref() != Some(k.as_str())
+        {
+            let (_, paras) = frame.take().expect("a frame");
+            boxes.extend(frame_box(
+                &frame_ctx,
+                &part_dom,
+                &paras,
+                &mut Numbering::default(),
+            ));
+        }
+        if let Some(k) = key {
+            frame.get_or_insert_with(|| (k, Vec::new())).1.push(para);
+            continue;
+        }
+        let (pstyle, prun) = para_base(&part_dom, para, sheet, None);
         // Anchored text boxes of a top-level paragraph float over the page
         // like the body's (a watermark keeps its own path).
         if watermark.is_none() && top_level {
@@ -15669,6 +15772,14 @@ fn chrome_part_xml(
                     img
                 }),
         );
+    }
+    if let Some((_, paras)) = frame.take() {
+        boxes.extend(frame_box(
+            &frame_ctx,
+            &part_dom,
+            &paras,
+            &mut Numbering::default(),
+        ));
     }
     let align = first_para_align(&part_dom, root);
     let edge = if local.starts_with("header") {
@@ -15956,7 +16067,10 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
     // A right-aligned frame's runs, waiting for the line they float on.
     let mut framed: Vec<TextRun> = Vec::new();
     for para in dom.descendants(node, Some(&W::p())) {
-        if hf_para_is_shape_text(dom, para) || hf_para_in_table(dom, node, para) {
+        if hf_para_is_shape_text(dom, para)
+            || hf_para_in_table(dom, node, para)
+            || hf_text_frame_key(dom, para, sheet).is_some()
+        {
             continue;
         }
         let (mut pstyle, prun) = para_base(dom, para, sheet, None);
