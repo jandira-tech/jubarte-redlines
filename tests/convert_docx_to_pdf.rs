@@ -37121,3 +37121,34 @@ fn nowrap_cell_with_a_pct_width_still_wraps() {
         "the 94pt cell wraps its text: Sourcez y {sy}, Yearz y {yy}"
     );
 }
+
+#[test]
+fn a_zero_dxa_table_width_is_auto_and_keeps_its_grid() {
+    // file_196: tblW w=0 type=dxa is Word's auto width; its 3116-twip grid
+    // columns hold "Lorem ipsum" on one line, not a 0pt table.
+    let cell = |text: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"3116\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"3116\"/><w:gridCol w:w=\"3116\"/></w:tblGrid>\
+           <w:tr>{}{}</w:tr></w:tbl><w:sectPr/>",
+        cell("Lorem ipsum"),
+        cell("Q")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("zero-width table");
+    let (_, y_lorem) = pdf_glyph_text_xy(&pdf, "Lorem").expect("Lorem painted");
+    let (_, y_ipsum) = pdf_glyph_text_xy(&pdf, "ipsum").expect("ipsum painted");
+    let (xq, _) = pdf_glyph_text_xy(&pdf, "Q").expect("Q painted");
+    assert!(
+        (y_lorem - y_ipsum).abs() < 1.0,
+        "a 155.8pt column keeps Lorem ipsum on one line: {y_lorem} vs {y_ipsum}"
+    );
+    assert!(
+        xq > 200.0,
+        "the second column starts one 155.8pt grid column in: {xq}"
+    );
+}

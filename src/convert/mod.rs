@@ -10007,7 +10007,12 @@ fn table_pref_width(dom: &Dom, table: NodeId) -> TblWidth {
                 .unwrap_or(5000.0);
             TblWidth::Pct(fiftieths / 5000.0)
         }
-        "dxa" => TblWidth::Dxa(attr_any(dom, tw, "w").and_then(parse_len).unwrap_or(0.0)),
+        // A zero width is no preference: Word lays file_196's tblW w=0
+        // tables out on their grid, as auto.
+        "dxa" => match attr_any(dom, tw, "w").and_then(parse_len) {
+            Some(w) if w > 0.0 => TblWidth::Dxa(w),
+            _ => TblWidth::Grid,
+        },
         _ => TblWidth::Grid,
     }
 }
