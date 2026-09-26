@@ -37107,3 +37107,17 @@ fn cell_floats_below_their_text_sit_side_by_side_and_keep_the_text() {
         "three pictures side by side: {ys:?}"
     );
 }
+
+#[test]
+fn nowrap_cell_with_a_pct_width_still_wraps() {
+    // 08c53c4f: every cell is noWrap with a pct tcW; Word wraps "New HIV
+    // infections" (and breaks "31271") inside the preferred width.
+    let body = r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr><w:tblGrid><w:gridCol w:w="1872"/><w:gridCol w:w="7488"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="pct"/><w:noWrap/></w:tcPr><w:p><w:r><w:t>Sourcez author and year of the Yearz</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="4000" w:type="pct"/></w:tcPr><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("nowrap pct");
+    let (_, sy) = pdf_glyph_text_xy(&pdf, "Sourcez").expect("Sourcez painted");
+    let (_, yy) = pdf_glyph_text_xy(&pdf, "Yearz").expect("Yearz painted");
+    assert!(
+        sy - yy > 8.0,
+        "the 94pt cell wraps its text: Sourcez y {sy}, Yearz y {yy}"
+    );
+}

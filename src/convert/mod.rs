@@ -10415,12 +10415,12 @@ fn cell_nowrap(dom: &Dom, cell: NodeId) -> bool {
     direct_named(dom, pr, "noWrap").is_some_and(|n| !val_is_false(dom, Some(n)))
 }
 
-/// A cell whose width is fixed — a dxa `tcW` or a fixed-layout table —
-/// wraps inside it even under `w:noWrap` (00aaa7af: Word wraps every
-/// noWrap cell of its dxa-width table).
+/// A cell whose width is fixed — a dxa or pct `tcW` or a fixed-layout
+/// table — wraps inside it even under `w:noWrap` (00aaa7af's dxa and
+/// 08c53c4f's pct tables: Word wraps every noWrap cell).
 fn fixed_width_cell(dom: &Dom, table: NodeId, cell: NodeId) -> bool {
     table_layout_fixed(dom, table)
-        || matches!(cell_pref_width(dom, cell), PrefWidth::Dxa(w) if w > 0.0)
+        || matches!(cell_pref_width(dom, cell), PrefWidth::Dxa(w) | PrefWidth::Pct(w) if w > 0.0)
 }
 
 /// A cell paragraph's (first line, other lines) wrap widths inside the
