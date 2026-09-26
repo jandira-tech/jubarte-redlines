@@ -142,6 +142,27 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 
 Parked in `macnames-parked.patch` until the Helvetica line rule has a test.
 
+## Redline chrome
+
+- **Change bars**, 5785e78. The bar stands 36pt out from the left margin, or
+  at half the margin when that is further out.
+  - Probe: margins of 30 / 60 / 90 / 120pt put the bar at 14.88 / 30 / 54 / 84.
+  - With `w:evenAndOddHeaders`, the bar sits on the outside border: odd pages
+    mirror it to the right, at page width − x.
+- **Balloon pane**, 80d6f94. Only comments bring Word's grey balloon
+  pasteboard, which also shrinks the page.
+  - Probe, with `w:trackRevisions` on: 120 tracked insertions and deletions,
+    with or without formatting changes, keep the full page. One comment brings
+    the pane.
+
+## Tables
+
+- **A keep-with-next row**, cb7cb61, needs only the start of the next row,
+  when that row may break across pages. A `cantSplit` next row still needs all
+  of its height.
+  - Example: redline a820a0da's label row stays on page 1 above a 690pt row
+    that Word splits.
+
 ## VML lines, e8b5bc6
 
 - **A standalone `v:line`** takes its `from`/`to` as lengths in its anchor
