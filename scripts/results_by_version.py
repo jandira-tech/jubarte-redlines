@@ -501,26 +501,48 @@ def docx_to_pdf_pooled() -> None:
     pooled(REDLINE_CORPORA, 'pool:redlines', 'docx→pdf — every redlined corpus pooled (redlines only)', 'redlines')
 
 
-# Word-truth redlines: each side's redline docx rendered by Word (word_pdf.py), no soffice.
-# <name>-<tag>_harness.json is `bench compare` ({stem: 0-100}); <name>-<tag>_docxide.json is
-# docxide-metrics rows. The oracle is Word's own redline (word_redline.py) of the same pair.
-WORDPDF_SETS = {
-    'harness_fresh_word': 'neurotic redline pools (803 pairs) vs fresh Word redlines',
-    'harness_corpus_word': 'neurotic redline pools (803 pairs) vs the corpus Word redlines',
-    'en_redlines': 'English redlines (451 pairs) vs Word redlines',
+# Word truth for redlines: Word's own redline of each pair (word_redline.py), converted to PDF
+# by Word (word_pdf.py). Files: results/redline_wordpdf/[en_]<row>[~<maker>]-<version>_<scorer>.json,
+# <scorer> = harness (`bench compare`, {stem: 0-100}) or docxide (docxide-metrics rows). Each row
+# swaps one side of the pipeline, so its score isolates what that side does.
+WORDPDF_SETS = {'': 'neurotic redline pools (803 pairs)', 'en_': 'English redlines (451 pairs)'}
+WORDPDF_ROWS = {
+    'A_redline': '{maker} redline (Word PDF)',
+    'B_convert': 'jubarte PDF (Word redline)',
+    'C_soffice': 'soffice PDF (Word redline)',
+    'D_e2e': 'jubarte redline + jubarte PDF',
+    'E_e2e_soffice': 'jubarte redline + soffice PDF',
 }
+
+
+def wordpdf_row(stem: str) -> tuple[str, str, str, str] | None:
+    """`[en_]<row>[~<maker>]-<version>_<scorer>` -> (set, tool, version, scorer)."""
+    name, _, rest = stem.partition('-')
+    version, _, scorer = rest.rpartition('_')
+    if scorer not in ('harness', 'docxide') or not version:
+        return None
+    corpus = 'en_' if name.startswith('en_') else ''
+    row, _, maker = name.removeprefix(corpus).partition('~')
+    label = WORDPDF_ROWS.get(row)
+    if label is None:
+        return None
+    maker = maker or 'jubarte'
+    tool = label.format(maker=maker)
+    if tool.startswith('jubarte'):
+        version = EN_TAGS.get(version, f'jubarte@{version}')
+    elif row == 'C_soffice':
+        version = EN_COMPETITORS['soffice']
+    else:
+        version = f'{maker} {version}'
+    return corpus, tool, version, scorer
 
 
 def redline_wordpdf() -> None:
     for path in sorted((RES / 'redline_wordpdf').glob('*.json')):
-        stem = path.stem
-        if stem.endswith('_jobs'):
+        parsed = wordpdf_row(path.stem)
+        if parsed is None:
             continue
-        name, _, rest = stem.partition('-')
-        tag, _, scorer = rest.rpartition('_')
-        label = WORDPDF_SETS.get(name)
-        if label is None or scorer not in ('harness', 'docxide'):
-            continue
+        corpus, tool, version, scorer = parsed
         doc = json.loads(path.read_text())
         if scorer == 'harness':
             scores = [float(v) for v in doc.values() if isinstance(v, (int, float))]
@@ -531,19 +553,18 @@ def redline_wordpdf() -> None:
         if not scores:
             continue
         key = metric(
-            f'wordpdf:{name}:{scorer}',
-            title=f'redline markup, Word-rendered — {label} ({unit.split(" ")[0]})',
+            f'wordpdf:{corpus}:{scorer}',
+            title=f'redlines vs Word truth — {WORDPDF_SETS[corpus]} ({unit.split(" ")[0]})',
             kind='redline markup',
-            reference='Word (redline by Word, both PDFs by Word)',
+            reference='Word (Word redline, Word PDF)',
             docs='redlines',
             unit=unit,
         )
-        tool = 'word (older corpus redline)' if tag.startswith('word') else 'jubarte'
         mean, median = stats(scores)
         add(
             metric=key,
             tool=tool,
-            version=EN_TAGS.get(tag, f'jubarte@{tag}') if tool == 'jubarte' else tag,
+            version=version,
             when=when_of(None, path),
             mean=mean,
             median=median,
@@ -626,8 +647,11 @@ def render() -> str:
         'per corpus; the Corpora column shows which corpora (and how many documents) each row covers,',
         'so a row missing a corpus is averaged over fewer documents.',
         '',
-        'The "Word-rendered" redline tables involve no soffice: Word redlines each pair itself',
-        "(word_redline.py), and Word converts both its redline and jubarte's to PDF (word_pdf.py).",
+        'The "redlines vs Word truth" tables score every row against Word\'s own redline of the pair',
+        '(word_redline.py), converted to PDF by Word (word_pdf.py). Each row swaps one side: a',
+        '"<tool> redline (Word PDF)" row measures redlining alone, a "<tool> PDF (Word redline)" row',
+        'measures conversion alone, and "jubarte redline + <converter> PDF" is end to end. A pair Word',
+        'could not redline is skipped; a tool that produced no PDF for a pair scores 0 on it.',
         '',
         '| Metric | Kind | Reference PDFs | Documents | Unit |',
         '| --- | --- | --- | --- | --- |',

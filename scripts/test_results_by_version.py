@@ -26,26 +26,46 @@ def _fresh(monkeypatch, tmp_path: Path) -> Path:
 
 def test_redline_wordpdf_reads_both_scorers_and_skips_jobs(monkeypatch, tmp_path):
     out = _fresh(monkeypatch, tmp_path)
-    (out / 'en_redlines-cb33ec3_harness.json').write_text(json.dumps({'a': 90.0, 'b': 80.0}))
-    (out / 'en_redlines-cb33ec3_docxide.json').write_text(json.dumps([{'jaccard': 0.5}, {'jaccard': None}]))
-    (out / 'en_redlines-cb33ec3_jobs.json').write_text('[]')
-    (out / 'unknown_set-cb33ec3_harness.json').write_text(json.dumps({'a': 1.0}))
+    (out / 'en_A_redline-cb33ec3_harness.json').write_text(json.dumps({'a': 90.0, 'b': 80.0}))
+    (out / 'en_A_redline-cb33ec3_docxide.json').write_text(json.dumps([{'jaccard': 0.5}, {'jaccard': None}]))
+    (out / 'en_A_redline-cb33ec3_jobs.json').write_text('[]')
+    (out / 'en_A_redline-cb33ec3_missing.json').write_text('[]')
+    (out / 'Z_unknown-cb33ec3_harness.json').write_text(json.dumps({'a': 1.0}))
     rv.redline_wordpdf()
     by_metric = {r.metric: r for r in rv.RUNS}
-    assert set(by_metric) == {'wordpdf:en_redlines:harness', 'wordpdf:en_redlines:docxide'}
-    harness = by_metric['wordpdf:en_redlines:harness']
-    assert (harness.tool, harness.version, harness.n, harness.mean) == ('jubarte', 'jubarte@cb33ec3', 2, 85.0)
-    docxide = by_metric['wordpdf:en_redlines:docxide']
+    assert set(by_metric) == {'wordpdf:en_:harness', 'wordpdf:en_:docxide'}
+    harness = by_metric['wordpdf:en_:harness']
+    assert (harness.tool, harness.version, harness.n, harness.mean) == (
+        'jubarte redline (Word PDF)',
+        'jubarte@cb33ec3',
+        2,
+        85.0,
+    )
+    docxide = by_metric['wordpdf:en_:docxide']
     assert (docxide.n, docxide.mean) == (2, 0.25)  # a missing Jaccard scores 0, it is not dropped
-    assert rv.METRICS['wordpdf:en_redlines:harness'].kind == 'redline markup'
+    assert rv.METRICS['wordpdf:en_:harness'].kind == 'redline markup'
 
 
-def test_word_control_tag_is_its_own_tool(monkeypatch, tmp_path):
-    out = _fresh(monkeypatch, tmp_path)
-    (out / 'harness_fresh_word-wordcorpus_harness.json').write_text(json.dumps({'a': 97.0}))
-    rv.redline_wordpdf()
-    (run,) = rv.RUNS
-    assert (run.tool, run.version) == ('word (older corpus redline)', 'wordcorpus')
+def test_wordpdf_rows_name_the_side_they_swap():
+    assert rv.wordpdf_row('A_redline~docxodus-12.6.2_harness') == (
+        '',
+        'docxodus redline (Word PDF)',
+        'docxodus 12.6.2',
+        'harness',
+    )
+    assert rv.wordpdf_row('C_soffice-cb33ec3_docxide') == (
+        '',
+        'soffice PDF (Word redline)',
+        rv.EN_COMPETITORS['soffice'],
+        'docxide',
+    )
+    assert rv.wordpdf_row('en_E_e2e_soffice-cb33ec3_harness') == (
+        'en_',
+        'jubarte redline + soffice PDF',
+        'jubarte@cb33ec3',
+        'harness',
+    )
+    assert rv.wordpdf_row('A_redline-cb33ec3_missing') is None
 
 
 def test_render_ranks_by_mean_and_drops_unranked_runs(monkeypatch, tmp_path):
