@@ -13136,6 +13136,44 @@ fn a_page_background_adds_an_empty_paragraph_to_the_header() {
 }
 
 #[test]
+fn a_page_background_lays_out_a_header_where_the_section_has_none() {
+    // Part b f7143477: no header reference, top margin = header distance
+    // = 36pt, and a `w:background`. Word still lays out a header there: an
+    // empty Header paragraph and the background's Normal paragraph, two
+    // 13.8pt Times lines that start the body at 63.6pt, not 36pt (live
+    // Word 2026-09-26).
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" \
+             w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"24\"/></w:rPr></w:rPrDefault>\
+             <w:pPrDefault/></w:docDefaults>\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+           <w:style w:type=\"paragraph\" w:styleId=\"Header\"><w:name w:val=\"header\"/>\
+             <w:basedOn w:val=\"Normal\"/><w:pPr><w:tabs><w:tab w:val=\"center\" w:pos=\"4513\"/>\
+             </w:tabs></w:pPr></w:style></w:styles>";
+    let title_y = |background: &str| {
+        let body = format!(
+            "{background}<w:p><w:r><w:t>TitleQ</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+               <w:pgMar w:top=\"720\" w:right=\"720\" w:bottom=\"720\" w:left=\"720\" \
+                 w:header=\"720\" w:footer=\"720\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&hf_docx(
+            &body,
+            &[("rIdS", "styles", "styles.xml")],
+            &[("word/styles.xml", styles.to_string())],
+        ))
+        .expect("background without header");
+        pdf_glyph_text_xy(&pdf, "TitleQ").expect("title").1
+    };
+    let (plain, backed) = (title_y(""), title_y("<w:background w:color=\"FFFFFF\"/>"));
+    assert!(
+        (plain - backed - 27.6).abs() < 1.0,
+        "the synthesized two-line header pushes the title 27.6pt down: {plain} vs {backed}"
+    );
+}
+
+#[test]
 fn a_header_tab_with_no_stop_left_on_the_line_starts_the_next_line() {
     // fixtures_500 00e23d67: the header's first tab right-aligns
     // "Program Studi … Surabaya" on the right tab at the margin; the second

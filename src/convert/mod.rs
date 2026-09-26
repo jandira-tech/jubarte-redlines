@@ -15174,12 +15174,27 @@ fn sect_ref_chrome_of(
             break;
         }
     }
-    let Some(rid) = rid else {
-        return empty_chrome();
-    };
     let page = apply_sect_pr(dom, sect, &sheet.defaults.page);
     let text_w = page.width - page.margin_l - page.margin_r;
     let background = local == "headerReference" && page_background(dom, sect);
+    let Some(rid) = rid else {
+        // Word still lays out a header under a page background: an empty
+        // Header paragraph and the background's Normal one (f7143477's
+        // body starts at 63.6pt, below its 36pt margin). Word's latent
+        // Header is single-spaced with nothing after.
+        if !(background && want == "default") {
+            return empty_chrome();
+        }
+        let header = if sheet.by_id.contains_key("Header") {
+            r#"<w:pStyle w:val="Header"/>"#
+        } else {
+            r#"<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#
+        };
+        let xml = format!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr>{header}</w:pPr></w:p><w:p/></w:hdr>"#
+        );
+        return chrome_part_xml(pkg, main, &xml, local, sheet, text_w);
+    };
     load_chrome_part(pkg, main, &rid, local, sheet, text_w, background)
 }
 
@@ -15213,8 +15228,21 @@ fn load_chrome_part(
     if background && let Some(end) = xml.rfind("</w:hdr>") {
         xml.insert_str(end, "<w:p/>");
     }
+    chrome_part_xml(pkg, &path, &xml, local, sheet, text_w)
+}
+
+/// A header or footer part laid out from its xml; `path` resolves its
+/// relationships (pictures, text boxes).
+fn chrome_part_xml(
+    pkg: &PartFs,
+    path: &str,
+    xml: &str,
+    local: &str,
+    sheet: &StyleSheet,
+    text_w: f32,
+) -> ChromePart {
     let mut part_dom = Dom::new();
-    let doc = part_dom.parse_xdocument(&xml);
+    let doc = part_dom.parse_xdocument(xml);
     let Some(root) = part_dom.root(doc) else {
         return empty_chrome();
     };
@@ -15249,7 +15277,7 @@ fn load_chrome_part(
         if watermark.is_none() && top_level {
             boxes.extend(
                 collect_textboxes_styled(
-                    Some((pkg, &path)),
+                    Some((pkg, path)),
                     &part_dom,
                     para,
                     &prun,
@@ -15392,7 +15420,7 @@ fn load_chrome_part(
         let (mut cursor, mut row_h, mut drop) = (0.0_f32, 0.0_f32, 0.0_f32);
         let mut tab_wrapped = false;
         images.extend(
-            collect_images(pkg, &path, &part_dom, para)
+            collect_images(pkg, path, &part_dom, para)
                 .into_iter()
                 .filter(|img| !(table_owned && cell_holds_image(img)))
                 .map(|mut img| {
@@ -15480,7 +15508,7 @@ fn load_chrome_part(
         align,
         watermark,
         images,
-        tables: collect_hf_tables(pkg, &path, &part_dom, root, sheet),
+        tables: collect_hf_tables(pkg, path, &part_dom, root, sheet),
         boxes: std::rc::Rc::new(boxes),
     }
 }

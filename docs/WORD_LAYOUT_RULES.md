@@ -321,6 +321,10 @@ rule:
   outgrows the top margin.
   - Part b af0035cc: a one-paragraph header (Normal, after=10 at 1.15)
     runs to 86.9pt and the title's baseline moves from 85.07 to 99.84.
+  - With no header part, Word still lays one out: an empty Header paragraph
+    (Word's latent Header is single-spaced with nothing after) and the
+    background's Normal one. Part b f7143477's body starts at 63.6pt, below
+    its 36pt top margin.
 
 ## Open, measured but not yet reconstructed
 
