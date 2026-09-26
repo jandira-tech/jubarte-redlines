@@ -3897,4 +3897,84 @@ mod tests {
             "leaving all conversion scopes must restore the default table"
         );
     }
+
+    mod regression_tests {
+        use super::*;
+
+        #[test]
+        fn shortened_font_filenames_still_use_the_internal_family_name() {
+            let dir = tempfile::tempdir().unwrap();
+            let bytes = include_bytes!("../../assets/fonts/LiberationSans-Regular.ttf");
+            fs::write(dir.path().join("Liberation.ttf"), bytes).unwrap();
+            // The name resembles several families; only the file's own family wins.
+            let dirs = [(dir.path().to_path_buf(), false)];
+            let found = family_faces_in("Liberation Sans", &dirs);
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].0, (false, false));
+            assert_eq!(found[0].1, bytes);
+            assert!(family_faces_in("Liberation Serif", &dirs).is_empty());
+        }
+
+        #[test]
+        fn dfonts_index_finds_abbreviated_names_and_ignores_corrupt_fonts() {
+            let root = tempfile::tempdir().unwrap();
+            let dir = root.path().join("DFonts");
+            fs::create_dir(&dir).unwrap();
+            let regular = include_bytes!("../../assets/fonts/LiberationSerif-Regular.ttf");
+            let italic = include_bytes!("../../assets/fonts/LiberationSerif-Italic.ttf");
+            fs::write(dir.join("LS.TTF"), regular).unwrap();
+            fs::write(dir.join("LSI.ttf"), italic).unwrap();
+            fs::write(dir.join("broken.ttf"), b"not a font").unwrap();
+            fs::write(dir.join("ignored.txt"), regular).unwrap();
+            let found = family_faces_in("Liberation Serif", &[(dir, false)]);
+            assert_eq!(found.len(), 2);
+            assert!(
+                found
+                    .iter()
+                    .any(|(style, bytes)| *style == (false, false) && bytes == regular)
+            );
+            assert!(
+                found
+                    .iter()
+                    .any(|(style, bytes)| *style == (false, true) && bytes == italic)
+            );
+        }
+
+        #[test]
+        fn absent_arabic_and_hebrew_fonts_keep_the_requested_style_in_arial() {
+            let fonts = Fonts::new();
+            for charset in ["B1", "B2", "b1", "b2"] {
+                let xml = format!(
+                    r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                <w:font w:name="PR168 Missing RTL"><w:charset w:val="{charset}"/></w:font></w:fonts>"#
+                );
+                let table = crate::convert::font_table::parse_font_table_xml(&xml);
+                for (bold, italic, expected) in [
+                    (false, false, FaceId::SansRegular),
+                    (true, false, FaceId::SansBold),
+                    (false, true, FaceId::SansItalic),
+                    (true, true, FaceId::SansBoldItalic),
+                ] {
+                    assert_eq!(
+                        fonts.resolve_in_step("PR168 Missing RTL", bold, italic, &table),
+                        (expected, FontStep::Generic),
+                        "charset {charset}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn a_missing_default_font_terminates_at_calibri_without_losing_style() {
+            let mut table = crate::convert::font_table::parse_font_table_xml(
+                r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:font w:name="PR168 Missing Face"/><w:font w:name="PR168 Missing Default"/></w:fonts>"#,
+            );
+            table.set_default_family("PR168 Missing Default");
+            assert_eq!(
+                Fonts::new().resolve_in("PR168 Missing Face", true, true, &table),
+                FaceId::CarlitoBoldItalic
+            );
+        }
+    }
 }

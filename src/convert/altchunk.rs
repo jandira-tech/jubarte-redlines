@@ -750,4 +750,203 @@ mod tests {
         let html = chunk_html(mht.as_bytes()).expect("html");
         assert!(html.contains("<p class=\"x\">Članak</p>"), "{html}");
     }
+
+    mod regression_tests {
+        use super::*;
+
+        #[test]
+        fn expansion_keeps_surrounding_content_and_chunk_order() {
+            let xml = "<w:body><w:p/><w:altChunk r:id='first'/><w:altChunk r:id='missing'/>\
+                   <w:altChunk r:id='last'><w:altChunkPr/></w:altChunk><w:sectPr/></w:body>";
+            let out = expand(xml, |id| match id {
+                "first" => Some(b"<p>First</p>".to_vec()),
+                "last" => Some(b"<p>Last</p>".to_vec()),
+                _ => None,
+            });
+            assert!(out.starts_with("<w:body><w:p/>"));
+            assert!(out.ends_with("<w:sectPr/></w:body>"));
+            assert!(!out.contains("altChunk"));
+            assert!(out.find(">First</w:t>").unwrap() < out.find(">Last</w:t>").unwrap());
+        }
+
+        #[test]
+        fn expansion_without_chunks_does_not_load_any_parts() {
+            let xml = "<w:body><w:p/><w:sectPr/></w:body>";
+            assert_eq!(expand(xml, |_| panic!("no relationship to load")), xml);
+        }
+
+        #[test]
+        fn missing_id_does_not_load_an_unrelated_part() {
+            assert_eq!(
+                expand("<w:body><w:altChunk/><w:p/></w:body>", |_| panic!(
+                    "missing id"
+                )),
+                "<w:body><w:p/></w:body>"
+            );
+        }
+
+        #[test]
+        fn mime_without_an_html_part_or_header_separator_is_not_imported() {
+            for input in [
+                "MIME-Version: 1.0\r\nContent-Type: image/png\r\n\r\nimage",
+                "Content-Type: text/html\r\n<p>Missing separator</p>",
+            ] {
+                assert!(chunk_html(input.as_bytes()).is_none(), "{input}");
+            }
+        }
+
+        #[test]
+        fn mime_part_encoding_does_not_leak_from_a_previous_attachment() {
+            let mht = "MIME-Version: 1.0\n\n------part\nContent-Type: text/plain\n\
+                   Content-Transfer-Encoding: quoted-printable\n\nattachment\n\
+                   ------part\nContent-Type: text/html\n\n<p>literal=41</p>\n\
+                   ------part\nContent-Type: image/png\n\nnot HTML";
+            let html = chunk_html(mht.as_bytes()).unwrap();
+            assert_eq!(html, "<p>literal=41</p>");
+        }
+
+        #[test]
+        fn quoted_printable_handles_soft_breaks_utf8_and_incomplete_escapes() {
+            assert_eq!(
+                quoted_printable("=C4=8Clanak=20one=\r\n=20two=\n!"),
+                "Članak one two!"
+            );
+            for literal in ["=", "=A", "=XZ", "x=y", "=\r"] {
+                assert_eq!(quoted_printable(literal), literal);
+            }
+        }
+
+        #[test]
+        fn entities_preserve_unknown_and_invalid_unicode_references() {
+            assert_eq!(
+                decode_entities("&amp;&lt;&gt;&quot;&apos;&nbsp;&#65;&#x1F600;&#X41;"),
+                "&<>\"'\u{a0}A😀A"
+            );
+            let invalid = "&unknown; &#xD800; &#1114112; &#xZZ; &unfinished";
+            assert_eq!(decode_entities(invalid), invalid);
+            let wml = html_to_wml("<p>&lt;tag&gt; &amp; &unknown;</p>");
+            assert!(
+                wml.contains(">&lt;tag&gt; &amp; &amp;unknown;</w:t>"),
+                "{wml}"
+            );
+        }
+
+        #[test]
+        fn css_lengths_convert_physical_units_and_decimal_commas() {
+            for (length, points) in [
+                ("12pt", 12.0),
+                ("16PX", 12.0),
+                ("1in", 72.0),
+                ("2.54cm", 72.0),
+                ("25.4mm", 72.0),
+                ("1.5em", 18.0),
+                ("14,4px", 10.8),
+            ] {
+                assert!((css_pt(length).unwrap() - points).abs() < 0.001, "{length}");
+            }
+            assert_eq!(css_pt("auto"), None);
+            assert_eq!(css_pt(""), None);
+        }
+
+        #[test]
+        fn nested_inline_formatting_is_restored_after_closing_tags() {
+            let wml = html_to_wml("<p><b>bold<i>both</i>bold again</b>plain</p>");
+            let runs: Vec<&str> = wml.split("<w:r>").skip(1).collect();
+            assert_eq!(runs.len(), 4, "{wml}");
+            for (run, bold, italic) in [
+                (runs[0], true, false),
+                (runs[1], true, true),
+                (runs[2], true, false),
+                (runs[3], false, false),
+            ] {
+                assert_eq!(run.contains("<w:b/>"), bold, "{run}");
+                assert_eq!(run.contains("<w:i/>"), italic, "{run}");
+            }
+        }
+
+        #[test]
+        fn inline_css_overrides_class_and_tag_rules() {
+            let wml = html_to_wml(
+                "<html><head><style>p {font-size:10pt} .large {font-size:14pt; font-weight:bold}\
+            p.large {font-size:18pt}</style></head><body><p class='large' style='font-size:20pt; font-weight:normal'>Text</p></body></html>",
+            );
+            assert!(wml.contains("<w:sz w:val=\"40\"/>"), "{wml}");
+            assert!(!wml.contains("<w:b/>"), "{wml}");
+            assert!(!wml.contains("<w:sz w:val=\"28\"/>"));
+        }
+
+        #[test]
+        fn paragraph_css_controls_spacing_alignment_and_indent() {
+            let wml = html_to_wml(
+                "<p style='margin-top:0; margin-bottom:6pt; margin-left:1in; line-height:150%; text-align:justify'>Text</p>",
+            );
+            assert!(
+                wml.contains(
+                    "<w:spacing w:before=\"0\" w:after=\"120\" w:line=\"360\" w:lineRule=\"auto\"/>"
+                ),
+                "{wml}"
+            );
+            assert!(wml.contains("<w:ind w:left=\"1440\"/>"));
+            assert!(wml.contains("<w:jc w:val=\"both\"/>"));
+            assert!(!wml.contains("Autospacing"));
+        }
+
+        #[test]
+        fn comments_scripts_and_styles_do_not_become_document_text() {
+            let wml = html_to_wml(
+                "<html><head><style>p {font-size:12pt}</style></head><body><!-- hidden -->\
+            <p>Before<script>secret()</script><br/>After</p></body></html>",
+            );
+            assert!(
+                wml.contains(">Before</w:t>") && wml.contains(">After</w:t>"),
+                "text on both sides of the script must survive: {wml}"
+            );
+            assert_eq!(wml.matches("<w:br/>").count(), 1);
+            for hidden in ["secret", "hidden", "font-size"] {
+                assert!(!wml.contains(hidden), "{wml}");
+            }
+        }
+
+        #[test]
+        fn style_in_an_html_fragment_preserves_following_content() {
+            let wml = html_to_wml("<style>p {font-size:12pt}</style><p>After</p>");
+            assert!(
+                wml.contains(">After</w:t>"),
+                "style content is skipped, but the following paragraph must survive: {wml}"
+            );
+        }
+
+        #[test]
+        fn html_tables_keep_spans_empty_cells_and_header_formatting() {
+            let wml = html_to_wml(
+                "<table border='1'><tr><th colspan='2'>Heading</th></tr>\
+            <tr><td>A</td><td></td></tr></table><p>After</p>",
+            );
+            assert_eq!(wml.matches("<w:gridCol ").count(), 2, "{wml}");
+            assert!(wml.contains("<w:tcW w:w=\"9360\" w:type=\"dxa\"/><w:gridSpan w:val=\"2\"/>"));
+            assert!(wml.contains("<w:tcW w:w=\"4680\" w:type=\"dxa\"/></w:tcPr><w:p/></w:tc>"));
+            assert!(wml.contains("<w:tblBorders>"));
+            let heading = wml
+                .split("<w:r>")
+                .nth(1)
+                .unwrap()
+                .split("</w:r>")
+                .next()
+                .unwrap();
+            assert!(heading.contains("<w:b/>") && heading.contains(">Heading</w:t>"));
+            assert!(wml.find("</w:tbl>").unwrap() < wml.find(">After</w:t>").unwrap());
+        }
+
+        #[test]
+        fn invalid_or_zero_colspan_falls_back_to_one_column() {
+            for span in ["0", "invalid", "-1"] {
+                let wml = html_to_wml(&format!(
+                    "<table border='0'><tr><td colspan='{span}'>A</td></tr></table>"
+                ));
+                assert_eq!(wml.matches("<w:gridCol ").count(), 1, "{span}: {wml}");
+                assert!(!wml.contains("<w:gridSpan"), "{wml}");
+                assert!(!wml.contains("<w:tblBorders>"));
+            }
+        }
+    }
 }

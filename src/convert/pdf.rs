@@ -1993,4 +1993,75 @@ mod tests {
         assert_eq!(uniquify("Sans-2", &mut taken), "Sans-2");
         assert_eq!(uniquify("Sans", &mut taken), "Sans-3");
     }
+
+    mod regression_tests {
+        use super::super::{ellipse_path, paint_image, stands_upright};
+
+        #[test]
+        fn negative_crop_insets_the_image_inside_its_clipping_box() {
+            let ops = paint_image(
+                10.0,
+                20.0,
+                100.0,
+                60.0,
+                Some([-0.5, 0.0, -0.5, 0.0]),
+                3,
+                0.0,
+            );
+            assert!(ops.contains("10.00 20.00 100.00 60.00 re W n"), "{ops}");
+            assert!(
+                ops.contains("50.00 0 0 60.00 35.00 20.00 cm /Im3 Do"),
+                "{ops}"
+            );
+        }
+
+        #[test]
+        fn opposing_crop_offsets_do_not_cancel_the_crop_transform() {
+            let ops = paint_image(
+                10.0,
+                20.0,
+                100.0,
+                60.0,
+                Some([0.25, 0.0, -0.25, 0.0]),
+                1,
+                0.0,
+            );
+            assert!(ops.contains("re W n"), "{ops}");
+            assert!(ops.contains("100.00 0 0 60.00 -15.00 20.00 cm"), "{ops}");
+        }
+
+        #[test]
+        fn ellipse_path_closes_at_the_four_box_extremes() {
+            let path = ellipse_path(10.0, 20.0, 80.0, 40.0);
+            assert!(path.starts_with("90.00 40.00 m "), "{path}");
+            assert!(path.ends_with("90.00 40.00 c h"), "{path}");
+            assert_eq!(path.split_whitespace().filter(|t| *t == "c").count(), 4);
+            for end in ["50.00 60.00 c", "10.00 40.00 c", "50.00 20.00 c"] {
+                assert!(path.contains(end), "{path}");
+            }
+        }
+
+        #[test]
+        fn vertical_text_keeps_ideographs_upright_but_turns_brackets_and_latin() {
+            for c in ['漢', 'あ', 'カ', 'Ａ', '１', '\u{20000}', '\u{2FA1F}'] {
+                assert!(stands_upright(c), "{c}");
+            }
+            for c in [
+                'A',
+                '1',
+                ' ',
+                '\u{3000}',
+                '「',
+                '」',
+                '（',
+                '）',
+                'ー',
+                '～',
+                '－',
+                '\u{2FA20}',
+            ] {
+                assert!(!stands_upright(c), "{c}");
+            }
+        }
+    }
 }
