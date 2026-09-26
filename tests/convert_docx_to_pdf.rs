@@ -35878,3 +35878,37 @@ fn a_half_point_rule_group_keeps_its_extent() {
         rules[0]
     );
 }
+
+#[test]
+fn a_row_holding_a_long_nested_table_splits_where_it_starts() {
+    // English part B c8d1d38a: the whole document is one outer row whose
+    // cell holds a title and a 26-row nested table, about 1.3 pages. Word
+    // starts it on page 1 and breaks it at the page end; we moved the row
+    // whole to page 2 because it fits within 1.05 pages, leaving page 1
+    // blank under the title.
+    let rows: String = (0..70)
+        .map(|i| format!("<w:tr><w:tc><w:p><w:r><w:t>Inner{i}</w:t></w:r></w:p></w:tc></w:tr>"))
+        .collect();
+    let lead: String = (0..10)
+        .map(|i| format!("<w:p><w:r><w:t>Lead{i}</w:t></w:r></w:p>"))
+        .collect();
+    let body = format!(
+        "{lead}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid><w:tr><w:tc>\
+         <w:p><w:r><w:t>Title</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"8800\"/></w:tblGrid>{rows}</w:tbl><w:p/></w:tc></w:tr></w:tbl>\
+         <w:p/><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("nested split");
+    let pages = pdf_content_streams(&pdf);
+    let on_first = pages[0].contains("Inner0") || {
+        let t: String = pages[0]
+            .lines()
+            .filter_map(|l| Some(l[l.find('(')? + 1..l.rfind(") Tj")?].to_string()))
+            .collect();
+        t.contains("Inner0")
+    };
+    assert!(on_first, "the nested table starts on page 1");
+}

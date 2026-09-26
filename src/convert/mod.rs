@@ -1276,6 +1276,7 @@ const FOOTNOTE_SEP_PT: f32 = 0.5;
 const FOOTNOTE_SEP_W: f32 = 144.0;
 const FOOTNOTE_SEP_GAP: f32 = 12.0;
 
+#[derive(Clone)]
 struct TableGeom {
     row_min: Vec<f32>,
     /// The widest bottom border a cell of the row above restates: Word
@@ -7401,6 +7402,57 @@ fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: b
     // No tail under it: the cell's next paragraph starts at its bottom
     // edge, as after a body table (1e9dea9; 0107980d's header in Word).
     rows_h + style.after
+}
+
+/// A nested table cut before row `m`: the rows that fit on this page and
+/// the rest, each with its own slice of the per-row geometry.
+fn split_nested_rows(block: &Block, m: usize) -> Option<(Block, Block)> {
+    let Block::Table {
+        cols,
+        rows,
+        style,
+        borders,
+        geom,
+    } = block
+    else {
+        return None;
+    };
+    if m == 0 || m >= rows.len() {
+        return None;
+    }
+    let part = |range: std::ops::Range<usize>, after: f32| {
+        let mut g = (**geom).clone();
+        let cut = |v: &Vec<f32>| {
+            v.get(range.clone())
+                .map(<[f32]>::to_vec)
+                .unwrap_or_default()
+        };
+        g.row_min = cut(&geom.row_min);
+        g.bottom_above = cut(&geom.bottom_above);
+        g.row_exact = geom
+            .row_exact
+            .get(range.clone())
+            .map(<[bool]>::to_vec)
+            .unwrap_or_default();
+        g.row_cant_split = geom
+            .row_cant_split
+            .get(range.clone())
+            .map(<[bool]>::to_vec)
+            .unwrap_or_default();
+        if range.start > 0 {
+            g.header_rows = 0;
+        }
+        let mut st = style.clone();
+        st.after = after;
+        Block::Table {
+            cols: cols.clone(),
+            rows: rows[range].to_vec(),
+            style: st,
+            borders: *borders,
+            geom: Box::new(g),
+        }
+    };
+    Some((part(0..m, 0.0), part(m..rows.len(), style.after)))
 }
 
 /// Every row's height: each row on its own cells, then a vertically
@@ -21989,12 +22041,12 @@ impl<'a> Layout<'a> {
         }
         // Our estimate of a row holding nested tables runs long (00f45b1b's
         // brochure row: 568.7pt against the 554.4pt page Word fits it on),
-        // so such a row splits only when it plainly outgrows a whole page
-        // (00297360's three-page letter row).
-        let page_room = self.page.height - self.body_top - self.body_floor;
-        if row.iter().any(|c| !c.nested.is_empty()) && rh <= page_room * 1.05 {
+        // so such a row stays whole when it nearly fits the room left.
+        let has_nested = row.iter().any(|c| !c.nested.is_empty());
+        if has_nested && rh <= room * 1.05 {
             return;
         }
+        let page_room = self.page.height - self.body_top - self.body_floor;
         // A keepLines paragraph keeps its row whole when a page can hold
         // it (000aba38's Heading 2 label row moves to page 2).
         let keeps = row
@@ -22007,6 +22059,7 @@ impl<'a> Layout<'a> {
             |cell: &TableCell| cell_content_height(self.fonts, cell, col_w, self.space_for_ul);
         let (mut head, mut tail) = (Vec::new(), Vec::new());
         let (mut any_head, mut any_tail) = (false, false);
+        let mut nested_broke = false;
         for cell in row {
             let mut k = 0;
             while k < cell.paras.len() && height(&cell.split_at(k + 1).0) <= room {
@@ -22030,12 +22083,62 @@ impl<'a> Layout<'a> {
                     broke = true;
                 }
             }
+            // A nested table that opens the rest breaks between its rows
+            // (English part b c8d1d38a's one-row form: its 26-row table
+            // starts on page 1 under the title, as in Word).
+            if !broke
+                && k < cell.paras.len()
+                && let Some(ti) = t.nested_at.iter().position(|&at| at == 0)
+            {
+                let cw: f32 = (0..cell.colspan)
+                    .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
+                    .sum();
+                let wrap_w = cell_wrap_width(cell, cw);
+                let left = room - height(&h);
+                if let Block::Table {
+                    cols,
+                    rows: inner,
+                    geom,
+                    ..
+                } = &*t.nested[ti]
+                {
+                    let inner_w = resolved_col_widths(self.fonts, cols, inner, geom, wrap_w);
+                    let heights =
+                        table_row_heights(self.fonts, inner, &inner_w, geom, self.space_for_ul);
+                    let mut used = 0.0;
+                    let mut m = 0;
+                    while m < heights.len() && used + heights[m] <= left {
+                        used += heights[m];
+                        m += 1;
+                    }
+                    // A cut that leaves most of the page empty sits above a
+                    // tall nested row Word breaks inside, which we cannot.
+                    let page_room = self.page.height - self.body_top - self.body_floor;
+                    let fills = left - used <= page_room * 0.25;
+                    if fills && let Some((head_tbl, tail_tbl)) = split_nested_rows(&t.nested[ti], m)
+                    {
+                        h.nested.push(std::rc::Rc::new(head_tbl));
+                        h.nested_at.push(h.paras.len());
+                        t.nested[ti] = std::rc::Rc::new(tail_tbl);
+                        broke = true;
+                        nested_broke = true;
+                    }
+                }
+            }
             any_head |= k > 0 || broke;
             any_tail |= k < cell.paras.len();
             head.push(h);
             tail.push(t);
         }
         if !any_head || !any_tail {
+            return;
+        }
+        // A nested table breaks between its rows (English part b c8d1d38a's
+        // one-row form starts its 26-row table on page 1, as in Word). One
+        // that cannot, such as a single tall nested row, keeps a row that a
+        // page can hold whole: splitting around it left only b fcb45876's
+        // logo on page 1.
+        if has_nested && !nested_broke && rh <= page_room * 1.05 {
             return;
         }
         let tail_h = tail.iter().map(height).fold(0.0_f32, f32::max);
