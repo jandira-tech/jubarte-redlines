@@ -35831,3 +35831,44 @@ fn a_table_styles_top_and_bottom_cell_margins_pad_each_row() {
         "rows step a line plus 2 x 2.85pt; step={step}"
     );
 }
+
+fn a_half_point_rule_group_keeps_its_extent() {
+    // English part A 8aea3634: section rules are an inline group (and an
+    // anchored rect) 456.55 x 0.5pt holding a black rectangle. Word draws
+    // 0.5pt rules; we floored the group at 16pt and painted a black bar
+    // over the heading, and the anchored rect at 1pt.
+    let group = "<w:r><mc:AlternateContent><mc:Choice Requires=\"wpg\"><w:drawing>\
+        <wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\"><wp:extent cx=\"5798185\" cy=\"6350\"/>\
+        <wp:docPr id=\"3\" name=\"Group 18\"/><a:graphic><a:graphicData \
+        uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\"><wpg:wgp><wpg:cNvGrpSpPr/>\
+        <wpg:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"5798185\" cy=\"6350\"/>\
+        <a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"9131\" cy=\"10\"/></a:xfrm></wpg:grpSpPr>\
+        <wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"9131\" cy=\"10\"/></a:xfrm>\
+        <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill>\
+        <a:ln><a:noFill/></a:ln></wps:spPr><wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic>\
+        </wp:inline></w:drawing></mc:Choice><mc:Fallback/></mc:AlternateContent></w:r>";
+    let body = format!(
+        "<w:p><w:r><w:t>Above</w:t></w:r></w:p><w:p>{group}</w:p><w:p><w:r><w:t>Below</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("rule group");
+    let hay = pdf_content_streams(&pdf).join("\n");
+    let rules: Vec<f32> = hay
+        .lines()
+        .filter(|l| l.starts_with("0.000 0.000 0.000 rg") && l.ends_with(" re f"))
+        .filter_map(|l| {
+            let v: Vec<f32> = l
+                .split_whitespace()
+                .filter_map(|t| t.parse().ok())
+                .collect();
+            (v.len() >= 7 && v[5] > 400.0).then(|| v[6])
+        })
+        .collect();
+    assert_eq!(rules.len(), 1, "one rule; {hay}");
+    assert!(
+        (rules[0] - 0.5).abs() < 0.05,
+        "the rule is 0.5pt tall; h={}",
+        rules[0]
+    );
+}

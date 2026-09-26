@@ -20636,16 +20636,12 @@ impl<'a> Layout<'a> {
             box_.w
         };
         self.page_has_body = true;
-        let min_dim = if box_.reserve_only || box_.fill.is_some() {
-            1.0
-        } else {
-            16.0
-        };
-        let min_w = if box_.reserve_only || box_.fill.is_some() {
-            1.0
-        } else {
-            24.0
-        };
+        // A filled box or a group keeps its extent: 8aea3634's section
+        // rules are 0.5pt groups and rects in Word. Only an empty box
+        // gets a visible minimum.
+        let sized = box_.reserve_only || box_.fill.is_some() || !box_.group.is_empty();
+        let min_dim = if sized { 0.1 } else { 16.0 };
+        let min_w = if sized { 0.1 } else { 24.0 };
         let (sized_w, sized_h) = self.sized_wh(box_.slot, box_w, box_.h, min_w, min_dim);
         let (x, y, dw, dh) = match box_.slot {
             ImageSlot::Flow => {
