@@ -23,8 +23,8 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-import convert_sweep as cs  # noqa: E402
-import page1_delta as p1  # noqa: E402
+import convert_sweep as cs
+import page1_delta as p1
 
 
 def _touch(path: Path, text: str = "x") -> None:

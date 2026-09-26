@@ -179,10 +179,10 @@ def discover_398_or_skip(corpus_root: Path) -> tuple[list[Job], str]:
 def write_tsv(rows: list[ScoreRow], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = ["stem\tjaccard\tssim\ttext_boundary"]
-    for row in rows:
-        lines.append(
-            f"{row.stem}\t{row.jaccard:.4f}\t{row.ssim:.4f}\t{row.text_boundary:.4f}"
-        )
+    lines.extend(
+        f"{row.stem}\t{row.jaccard:.4f}\t{row.ssim:.4f}\t{row.text_boundary:.4f}"
+        for row in rows
+    )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

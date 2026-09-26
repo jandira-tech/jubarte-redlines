@@ -13,7 +13,7 @@ Reads every results store we keep and lists, for each metric:
   mean is ranked by the average of its per-document scores.
 
 Sources (in neurotic_docx_bench, $NEUROTIC_DOCX_BENCH): results/bench.jsonl, results/speed.jsonl, results/redline_speed_bench,
-results/docx_to_pdf*.json, results/docxide_metrics*.json,
+results/docx_to_pdf*.json, results/docxide_metrics*.json, results/redline_wordpdf,
 results/soffice_vs_word_redlines_randomized, grok_run/docxide_metrics, and the
 jubarte loop's English-corpus, redlined-corpus and docxide-suite runs.
 
@@ -501,6 +501,57 @@ def docx_to_pdf_pooled() -> None:
     pooled(REDLINE_CORPORA, 'pool:redlines', 'docx→pdf — every redlined corpus pooled (redlines only)', 'redlines')
 
 
+# Word-truth redlines: each side's redline docx rendered by Word (word_pdf.py), no soffice.
+# <name>-<tag>_harness.json is `bench compare` ({stem: 0-100}); <name>-<tag>_docxide.json is
+# docxide-metrics rows. The oracle is Word's own redline (word_redline.py) of the same pair.
+WORDPDF_SETS = {
+    'harness_fresh_word': 'neurotic redline pools (803 pairs) vs fresh Word redlines',
+    'harness_corpus_word': 'neurotic redline pools (803 pairs) vs the corpus Word redlines',
+    'en_redlines': 'English redlines (451 pairs) vs Word redlines',
+}
+
+
+def redline_wordpdf() -> None:
+    for path in sorted((RES / 'redline_wordpdf').glob('*.json')):
+        stem = path.stem
+        if stem.endswith('_jobs'):
+            continue
+        name, _, rest = stem.partition('-')
+        tag, _, scorer = rest.rpartition('_')
+        label = WORDPDF_SETS.get(name)
+        if label is None or scorer not in ('harness', 'docxide'):
+            continue
+        doc = json.loads(path.read_text())
+        if scorer == 'harness':
+            scores = [float(v) for v in doc.values() if isinstance(v, (int, float))]
+            unit = 'harness score 0-100'
+        else:
+            scores = [float(r.get('jaccard') or 0.0) for r in doc]
+            unit = 'docxide-metrics Jaccard 0-1'
+        if not scores:
+            continue
+        key = metric(
+            f'wordpdf:{name}:{scorer}',
+            title=f'redline markup, Word-rendered — {label} ({unit.split(" ")[0]})',
+            kind='redline markup',
+            reference='Word (redline by Word, both PDFs by Word)',
+            docs='redlines',
+            unit=unit,
+        )
+        tool = 'word (older corpus redline)' if tag.startswith('word') else 'jubarte'
+        mean, median = stats(scores)
+        add(
+            metric=key,
+            tool=tool,
+            version=EN_TAGS.get(tag, f'jubarte@{tag}') if tool == 'jubarte' else tag,
+            when=when_of(None, path),
+            mean=mean,
+            median=median,
+            n=len(scores),
+            scores=scores,
+        )
+
+
 def pdf_to_docx() -> None:
     metric('pdf_to_docx', title='pdf→docx', kind='pdf->docx', reference='-', docs='-', unit='-')
 
@@ -575,6 +626,9 @@ def render() -> str:
         'per corpus; the Corpora column shows which corpora (and how many documents) each row covers,',
         'so a row missing a corpus is averaged over fewer documents.',
         '',
+        'The "Word-rendered" redline tables involve no soffice: Word redlines each pair itself',
+        "(word_redline.py), and Word converts both its redline and jubarte's to PDF (word_pdf.py).",
+        '',
         '| Metric | Kind | Reference PDFs | Documents | Unit |',
         '| --- | --- | --- | --- | --- |',
     ]
@@ -598,11 +652,12 @@ def render() -> str:
             runs = [r for r in RUNS if r.metric == m.key]
             if not m.key.startswith('pool:'):  # pooled runs are already one per week
                 runs = best_per_window(runs, m.lower_is_better)
-            runs = [r for r in runs if r.rank_value is not None]
-            if not runs:
+            ranked = [(v, r) for r in runs if (v := r.rank_value) is not None]
+            if not ranked:
                 lines += ['', '_No run measured yet._']
                 continue
-            runs.sort(key=lambda r: r.rank_value, reverse=not m.lower_is_better)
+            ranked.sort(key=lambda vr: vr[0], reverse=not m.lower_is_better)
+            runs = [r for _, r in ranked]
             pool = m.key.startswith('pool:')
             head = '| Rank | Tool | Version | Date | Docs | Mean | Median |' + (' Corpora |' if pool else '')
             lines += ['', head, '|' + ' --- |' * (8 if pool else 7)]
@@ -622,7 +677,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--out', default=str(REPO / 'RESULTS.md'))
     args = ap.parse_args()
-    for load in (bench_jsonl, speed, harness_docx_to_pdf, soffice_vs_word, docx_to_pdf_pooled, pdf_to_docx):
+    for load in (
+        bench_jsonl,
+        speed,
+        redline_wordpdf,
+        harness_docx_to_pdf,
+        soffice_vs_word,
+        docx_to_pdf_pooled,
+        pdf_to_docx,
+    ):
         load()
     Path(args.out).write_text(render())
     print(f'wrote {args.out}: {len(METRICS)} metrics, {len(RUNS)} runs')
