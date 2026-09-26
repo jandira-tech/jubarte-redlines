@@ -35603,3 +35603,40 @@ fn tracked_insertions_and_deletions_alone_bring_no_balloon_pane() {
         "no balloon pane without comments"
     );
 }
+
+#[test]
+fn even_and_odd_pages_keep_their_parity_across_a_numbering_restart() {
+    // English redline df4265bd (w:evenAndOddHeaders): its sections restart
+    // numbering at 1 after a page numbered 1, and Word prints a blank page
+    // before each so odd and even pages alternate (6 pages; we made 4).
+    // Live Word 2026-09-25: restart at 1 or 3 after page 1 inserts a blank
+    // page; at 2 after page 1, or at 1 after page 2, none; a continuous
+    // section never does.
+    let sect = |extra: &str| {
+        format!(
+            "<w:sectPr>{extra}<w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        )
+    };
+    let end = |t: &str, extra: &str| {
+        format!(
+            "<w:p><w:pPr>{}</w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>",
+            sect(extra)
+        )
+    };
+    let body = format!(
+        "{}{}<w:p><w:r><w:t>Three</w:t></w:r></w:p>{}",
+        end("One", ""),
+        end("Two", "<w:pgNumType w:fmt=\"lowerRoman\" w:start=\"1\"/>"),
+        sect("<w:pgNumType w:start=\"1\"/>")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "<w:evenAndOddHeaders/>"))
+        .expect("parity restart");
+    assert_eq!(pdf_page_count(&pdf), 5, "One, blank, Two, blank, Three");
+    let plain = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("no parity");
+    assert_eq!(
+        pdf_page_count(&plain),
+        3,
+        "without even/odd headers: no blank pages"
+    );
+}

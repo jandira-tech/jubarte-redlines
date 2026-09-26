@@ -16719,10 +16719,19 @@ impl<'a> Layout<'a> {
             }
             self.paint_page_footnotes();
             self.patch_chap_page();
+            let mut parity_blank = false;
             if let Some(sec) = next {
+                let last_number = self.section_page;
                 self.apply_section(sec);
                 if sec.page.page_num_start.is_none() {
                     self.section_page = self.section_page.saturating_add(1);
+                } else {
+                    // With odd and even headers Word keeps page numbers
+                    // alternating: a restart with the last page's parity
+                    // gets a blank page first (live Word 2026-09-25: 1 then
+                    // 1 or 3 inserts one, 1 then 2 or 2 then 1 does not;
+                    // df4265bd's two restarts at 1 make 6 pages, not 4).
+                    parity_blank = self.rev_bars_facing && last_number % 2 == self.section_page % 2;
                 }
             } else {
                 self.section_page = self.section_page.saturating_add(1);
@@ -16732,6 +16741,10 @@ impl<'a> Layout<'a> {
                 if self.page.ln_restart == 0 {
                     self.ln_i = self.page.ln_start.max(1);
                 }
+            }
+            if parity_blank {
+                // Word prints the inserted page empty, no header or footer.
+                self.pages.push(self.fresh_page());
             }
             self.select_parity_chrome();
             self.apply_mirror_margins();
