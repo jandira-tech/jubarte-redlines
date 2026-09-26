@@ -3142,12 +3142,13 @@ fn merged_body(dom: &mut Dom, root: NodeId) -> Option<NodeId> {
 /// FillInEmptyFootnotesEndnotes, DetachExternalData and
 /// AddUnidsToMarkupInContentParts in the C# order. Returns the names of the
 /// parts it rewrote or created (empty = pure no-op, bytes untouched). An
-/// orphaned footnote/endnote reference panics — C# throws DocxodusException
-/// when no ComparisonLog is wired (:1676), and the compare path wires none.
+/// orphaned footnote/endnote reference is an [`invalid_content`] error — C#
+/// throws DocxodusException when no ComparisonLog is wired (:1676), and the
+/// compare path wires none.
 pub fn pre_process_markup(
     pkg: &mut PartFs,
     starting_id_for_footnotes_endnotes: i32,
-) -> Vec<String> {
+) -> Result<Vec<String>, OpcError> {
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
@@ -3169,7 +3170,7 @@ pub fn pre_process_markup(
     }
 
     let Some(main_xml) = pkg.part_string(&main) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let fn_xml = fn_part.as_deref().and_then(|p| pkg.part_string(p));
     let en_xml = en_part.as_deref().and_then(|p| pkg.part_string(p));
@@ -3177,7 +3178,7 @@ pub fn pre_process_markup(
     let mut dom = Dom::new();
     let main_doc = dom.parse_xdocument(&main_xml);
     let Some(main_root) = dom.root(main_doc) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let fn_doc = fn_xml.as_deref().map(|x| dom.parse_xdocument(x));
     let fn_root = fn_doc.and_then(|d| dom.root(d));
@@ -3195,7 +3196,7 @@ pub fn pre_process_markup(
         .any(|d| dom.name(d).is_some_and(|n| n == fn_ref || n == en_ref));
     let mut changed = Vec::new();
     // C.1 — unique-range renumbering (only meaningful when notes-relevant; a
-    // doc WITH references but no notes part panics inside, like C# throws).
+    // doc WITH references but no notes part errs inside, where C# throws).
     if has_refs || fn_root.is_some() || en_root.is_some() {
         crate::comparer::footnotes::change_footnote_endnote_references_to_unique_range(
             &mut dom,
@@ -3205,7 +3206,7 @@ pub fn pre_process_markup(
             starting_id_for_footnotes_endnotes,
             false,
         )
-        .unwrap_or_else(|e| panic!("{e}"));
+        .map_err(invalid_content)?;
     }
 
     // C.5 — `AddUnidsToMarkupInContentParts` (:600): stamp `pt:Unid` on every
@@ -3246,7 +3247,7 @@ pub fn pre_process_markup(
     // namespace-decorated notes part (rels + content type) when one is
     // missing. No separator notes here — C# adds those only when Rectify
     // rebuilds the output part. Runs AFTER the renumbering, like C# (a doc
-    // with references but no part panics above, never reaches creation).
+    // with references but no part errs above, never reaches creation).
     let dir = main.rsplit_once('/').map(|(d, _)| d).unwrap_or("word");
     for (present, local) in [
         (fn_part.is_some(), "footnotes"),
@@ -3311,7 +3312,14 @@ pub fn pre_process_markup(
         pkg.set_part(&part, cdom.serialize_document(cdoc).into_bytes());
         changed.push(part);
     }
-    changed
+    Ok(changed)
+}
+
+/// Markup the engine refuses (C# throws DocxodusException): an `Err` the
+/// caller can handle, never a panic, which would abort a WASM instance.
+/// `InvalidData` is std's kind for well-formed-but-unacceptable input.
+fn invalid_content(msg: String) -> OpcError {
+    OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, msg))
 }
 
 /// The namespace declarations C# attaches to a freshly-created
@@ -4284,7 +4292,8 @@ fn repair_missing_core_relationships(out: &mut PartFs, out_main: &str) {
 /// D.6 — `WmlComparer.GetRevisions` (:3940) byte facade: list every tracked
 /// revision in a redline `.docx` — main-part groups, footnote/endnote
 /// definition groups, `w:rPrChange` format changes, then (settings-gated)
-/// move detection. `TestForInvalidContent` failures panic like the C# throw.
+/// move detection. `TestForInvalidContent` failures are an [`invalid_content`]
+/// error where C# throws.
 pub fn get_revisions(
     docx: &[u8],
     settings: &crate::comparer::WmlComparerSettings,
@@ -4295,14 +4304,18 @@ pub fn get_revisions(
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
-    let xml = pkg.part_string(&main).expect("main document missing");
+    let xml = pkg
+        .part_string(&main)
+        .ok_or_else(|| OpcError::PartNotFound(main.clone()))?;
     let mut dom = Dom::new();
     let d = dom.parse_xdocument(&xml);
-    let root = dom.root(d).expect("main document has no root");
+    let root = dom
+        .root(d)
+        .ok_or_else(|| OpcError::PartNotFound(format!("{main}: no root element")))?;
 
     // C# :3948–:3949 — TestForInvalidContent (throws) +
     // RemoveExistingPowerToolsMarkup on main and both notes parts.
-    preprocess::test_for_invalid_content(&dom, root).unwrap_or_else(|e| panic!("{e}"));
+    preprocess::test_for_invalid_content(&dom, root).map_err(invalid_content)?;
     preprocess::remove_existing_powertools_markup(&mut dom, root);
     let mut note_roots: Vec<(NodeId, &str, crate::xmllinq::XName)> = Vec::new();
     let (fn_part, en_part) = notes_part_names(&pkg);
@@ -4321,7 +4334,7 @@ pub fn get_revisions(
 
     let body = dom
         .element(root, &W::body())
-        .expect("main document has no body");
+        .ok_or_else(|| OpcError::PartNotFound(format!("{main}: no w:body")))?;
     let mut revs = revisions::get_revisions_from_body(&mut dom, body, &main, settings);
     for (r, part, def) in &note_roots {
         revs.extend(revisions::get_revisions_from_note_definitions(
@@ -4545,14 +4558,14 @@ fn compare_documents_impl(
         pre_process_markup(
             &mut pkg1,
             settings.starting_id_for_footnotes_endnotes + 1000,
-        )
+        )?
     } else {
         Vec::new()
     };
     pre_process_markup(
         &mut pkg2,
         settings.starting_id_for_footnotes_endnotes + 2000,
-    );
+    )?;
 
     let main1 = pkg1
         .main_document_part()
