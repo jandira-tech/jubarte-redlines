@@ -14060,7 +14060,10 @@ fn shape_line_width(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> f32 {
             continue;
         }
         if let Some(w) = attr_any(dom, ln, "w").and_then(|s| s.parse::<f64>().ok()) {
-            return ((w / 12700.0) as f32).clamp(0.4, 4.0);
+            // Word strokes the width as written (1f3856c4's 3175 EMU
+            // arrows are 0.25pt in its PDF); w=0 keeps a visible hairline.
+            let pt = (w / 12700.0) as f32;
+            return if pt > 0.0 { pt.min(4.0) } else { 0.4 };
         }
     }
     let idx = ln_ref_idx(dom, shape).unwrap_or(0);
@@ -19843,7 +19846,7 @@ impl<'a> Layout<'a> {
                         // the middle 50% of height; head width is min(w,h)/2.
                         // Word Quartz fills the 7-vertex chevron (Strict01).
                         self.current().ops.push(Op::FillPoly {
-                            points: right_arrow_points(x, y, dw, dh),
+                            points: block_arrow_points(&box_.prst, x, y, dw, dh),
                             color: fill,
                         });
                     }
@@ -20247,8 +20250,8 @@ impl<'a> Layout<'a> {
                     ShapeGeom::RightArrow => {
                         if let Some(color) = box_.line {
                             self.current().ops.push(Op::StrokePoly {
-                                points: right_arrow_points(x, y, dw, dh),
-                                width: 1.0,
+                                points: block_arrow_points(&box_.prst, x, y, dw, dh),
+                                width: box_.line_width,
                                 color,
                             });
                         }
@@ -26331,6 +26334,40 @@ fn quarter_arc(pts: &mut Vec<(f32, f32)>, cx: f32, cy: f32, r: f32, deg0: f32, d
         let t = i as f32 / STEPS as f32;
         let a = (deg0 + (deg1 - deg0) * t).to_radians();
         pts.push((cx + r * a.cos(), cy + r * a.sin()));
+    }
+}
+
+/// rightArrow, leftArrow, upArrow and downArrow at their default
+/// adjustments: the shaft is the middle half across the arrow, the head
+/// min(w, h)/2 long (English part a 1f3856c4's down arrows point down).
+fn block_arrow_points(prst: &str, x: f32, y: f32, dw: f32, dh: f32) -> Vec<(f32, f32)> {
+    let head = dw.min(dh) * 0.5;
+    let hc = x + dw * 0.5;
+    let (x1, x2) = (x + dw * 0.25, x + dw * 0.75);
+    match prst {
+        "leftArrow" => right_arrow_points(x, y, dw, dh)
+            .into_iter()
+            .map(|(px, py)| (2.0 * x + dw - px, py))
+            .collect(),
+        "downArrow" => vec![
+            (x1, y + dh),
+            (x2, y + dh),
+            (x2, y + head),
+            (x + dw, y + head),
+            (hc, y),
+            (x, y + head),
+            (x1, y + head),
+        ],
+        "upArrow" => vec![
+            (x1, y),
+            (x2, y),
+            (x2, y + dh - head),
+            (x + dw, y + dh - head),
+            (hc, y + dh),
+            (x, y + dh - head),
+            (x1, y + dh - head),
+        ],
+        _ => right_arrow_points(x, y, dw, dh),
     }
 }
 

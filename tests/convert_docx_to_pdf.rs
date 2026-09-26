@@ -35740,3 +35740,51 @@ fn an_outline_arrow_anchored_in_a_table_cell_paints() {
         &hay[hay.len().saturating_sub(600)..]
     );
 }
+
+fn a_down_arrow_points_down_with_its_own_line_width() {
+    // English part A 1f3856c4: downArrow presets with a 0.25pt (w=3175)
+    // outline. Word draws the tip at the bottom centre with a hairline; we
+    // drew every up/down/left arrow as a right arrow with a 1pt line.
+    let arrow = outline_arrow_anchor("downArrow");
+    let body = format!(
+        "<w:p>{arrow}</w:p><w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("down arrow");
+    let hay = pdf_content_streams(&pdf).join("\n");
+    let line = hay
+        .lines()
+        .find(|l| l.contains("0.439 0.753 RG") && l.ends_with("h S"))
+        .expect("stroked arrow");
+    assert!(line.starts_with("0.25 w"), "hairline outline: {line}");
+    let nums: Vec<f32> = line
+        .split_whitespace()
+        .filter_map(|t| t.parse().ok())
+        .collect::<Vec<f32>>();
+    let pts: Vec<(f32, f32)> = line
+        .split(" RG ")
+        .nth(1)
+        .expect("path")
+        .split(['m', 'l'])
+        .filter_map(|c| {
+            let v: Vec<f32> = c
+                .split_whitespace()
+                .filter_map(|t| t.parse().ok())
+                .collect();
+            (v.len() == 2).then(|| (v[0], v[1]))
+        })
+        .collect();
+    assert!(nums.len() > 4 && pts.len() == 7, "{line}");
+    let (min_x, max_x) = pts
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.0), b.max(p.0)));
+    let tip = pts
+        .iter()
+        .copied()
+        .fold((0.0, f32::MAX), |t, p| if p.1 < t.1 { p } else { t });
+    assert!(
+        (tip.0 - (min_x + max_x) / 2.0).abs() < 0.5,
+        "the tip is the bottom centre; tip={tip:?} pts={pts:?}"
+    );
+}
