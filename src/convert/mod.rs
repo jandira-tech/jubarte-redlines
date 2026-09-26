@@ -7139,7 +7139,50 @@ fn resolved_col_widths(
             return cols.to_vec();
         }
     }
+    if !geom.fixed && !geom.grid_padded && widths.len() == cols.len() {
+        return autofit_to_words(fonts, widths, rows, geom, avail);
+    }
     widths
+}
+
+/// Word's autofit widens a column narrower than its longest word to it,
+/// taking the room from columns wider than theirs (21349517's 29pt "ID"
+/// column holds "Sub001" whole). Only when the words together overrun
+/// the measure do the columns stay and the words break (08c53c4f).
+fn autofit_to_words(
+    fonts: &Fonts,
+    widths: Vec<f32>,
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    avail: f32,
+) -> Vec<f32> {
+    let mut mins = vec![0.0_f32; widths.len()];
+    for cell in rows.iter().flatten() {
+        if cell.colspan != 1 || cell.col >= widths.len() {
+            continue;
+        }
+        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
+        mins[cell.col] = mins[cell.col].max(cell_content_extent(fonts, cell).0 + pads);
+    }
+    let short: f32 = widths
+        .iter()
+        .zip(&mins)
+        .map(|(w, m)| (m - w).max(0.0))
+        .sum();
+    if short < 0.5 || mins.iter().sum::<f32>() > avail + geom.pct_margins + 0.5 {
+        return widths;
+    }
+    let spare: f32 = widths
+        .iter()
+        .zip(&mins)
+        .map(|(w, m)| (w - m).max(0.0))
+        .sum();
+    let give = (short / spare.max(0.01)).min(1.0);
+    widths
+        .iter()
+        .zip(&mins)
+        .map(|(w, m)| if w < m { *m } else { w - (w - m) * give })
+        .collect()
 }
 
 /// A cell's (longest word, widest unbroken paragraph) in points.

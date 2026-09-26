@@ -37269,3 +37269,34 @@ fn a_header_paragraph_anchoring_a_picture_text_box_is_still_a_line() {
         "the anchoring paragraph is a line like an empty one: empty {empty}, anchored {anchored}"
     );
 }
+
+#[test]
+fn an_autofit_column_widens_to_its_longest_word() {
+    // 21349517: an autofit table's 29pt tcW "ID" column holds "Sub001";
+    // Word widens the column to the word, taking the room from columns
+    // with some to spare, rather than breaking it by character.
+    let cell = |w: u32, text: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"600\"/><w:gridCol w:w=\"3400\"/></w:tblGrid>\
+           <w:tr>{}{}</w:tr></w:tbl><w:sectPr/>",
+        cell(600, "Sub001Wide"),
+        cell(3400, "Q")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("autofit table");
+    let (x_word, _) = pdf_glyph_text_xy(&pdf, "Sub001Wide").expect("the word stays whole");
+    let (x_q, _) = pdf_glyph_text_xy(&pdf, "Q").expect("Q painted");
+    assert!(
+        x_q - x_word > 55.0,
+        "the first column holds its ~52pt word plus margins: word x {x_word}, next cell x {x_q}"
+    );
+    assert!(
+        x_q < 200.0,
+        "the 200pt table keeps its width: next cell x {x_q}"
+    );
+}
