@@ -435,7 +435,13 @@ struct RunStyle {
     /// `w:dstrike` (and double-struck revision marks): two lines.
     strike_double: bool,
     color: [f32; 3],
+    /// No explicit colour (`w:color` absent or `auto`): Word paints the
+    /// text white on shading whose luma is under 75 (see `ink_on`).
+    color_auto: bool,
     highlight: Option<[f32; 3]>,
+    /// `highlight` came from `w:highlight`, not run shading: Word keeps
+    /// `auto` text black on it, even on black (live Word 2026-09-25).
+    highlight_marker: bool,
     /// Extra points after each glyph (`w:spacing` on `w:rPr`, twips).
     track: f32,
     /// Horizontal scale (`w:w` percent, 100 = 1.0).
@@ -1018,7 +1024,9 @@ impl Defaults {
                 underline_wave: false,
                 strike: false,
                 color: [0.0, 0.0, 0.0],
+                color_auto: true,
                 highlight: None,
+                highlight_marker: false,
                 track: 0.0,
                 scale: 1.0,
                 caps: false,
@@ -3498,6 +3506,7 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
             && let Some(rgb) = parse_hex_color(val)
         {
             style.color = rgb;
+            style.color_auto = false;
         } else if let Some(slot) = attr_any(dom, color, "themeColor")
             && let Some(mut rgb) = theme.slot_color(slot)
         {
@@ -3518,10 +3527,12 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
                 ];
             }
             style.color = rgb;
+            style.color_auto = false;
         } else if dom.attribute(color, &W::val()) == Some("auto") {
             // "auto" is Word's automatic colour: it overrides an inherited
             // one (004b3b3d's runs under a red paragraph style are black).
             style.color = [0.0, 0.0, 0.0];
+            style.color_auto = true;
         }
     } else {
         // Strict01 Online Video: w14:textFill accent5, no w:color.
@@ -3547,6 +3558,7 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     }
     if let Some(val) = first_named(dom, rpr, "highlight").and_then(|n| attr_any(dom, n, "val")) {
         style.highlight = highlight_color(val);
+        style.highlight_marker = style.highlight.is_some();
     }
     if let Some(sp) = first_named(dom, rpr, "spacing")
         && let Some(val) = attr_any(dom, sp, "val")
@@ -3593,6 +3605,7 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
         && let Some(paint) = shd_paint(dom, shd)
     {
         style.highlight = Some(paint);
+        style.highlight_marker = false;
     }
 }
 
@@ -3761,6 +3774,7 @@ fn apply_w14_text_fill(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &The
     };
     if let Some(rgb) = theme.slot_color(slot) {
         style.color = rgb;
+        style.color_auto = false;
     }
 }
 
@@ -7986,6 +8000,7 @@ fn paragraph_block(
             && let Some(color) = inherited
         {
             runs[0].style.color = color;
+            runs[0].style.color_auto = false;
             runs[0].rev = true;
         }
     }
@@ -9047,6 +9062,7 @@ fn apply_tbl_style(rows: &mut [Vec<TableCell>], tdef: &TblStyle, look: &TblLook)
                     for run in &mut para.runs {
                         if run.style.color == [0.0, 0.0, 0.0] {
                             run.style.color = color;
+                            run.style.color_auto = false;
                         }
                     }
                 }
@@ -10061,6 +10077,14 @@ fn cell_fill(dom: &Dom, cell: NodeId) -> Option<[f32; 3]> {
 /// solid CC99FF on fill auto paints CC99FF (redline 23ba7149's rate
 /// tables), pct50 red on blue paints (0.502, 0, 0.498). Other patterns
 /// (stripes, hatches) keep their fill.
+/// Word paints `auto` text white on shading whose Rec. 601 luma is under
+/// 75 of 255, black from 75 up (live Word 2026-09-25: grey 4A white, 4B
+/// black; 007C00 at 72.8 white, 008800 at 79.8 black; Rec. 709 would
+/// put 007C00 at 88.7).
+fn ink_is_dark(under: Option<[f32; 3]>) -> bool {
+    under.is_some_and(|[r, g, b]| (0.299 * r + 0.587 * g + 0.114 * b) * 255.0 < 75.0)
+}
+
 fn shd_paint(dom: &Dom, shd: NodeId) -> Option<[f32; 3]> {
     let hex = |name: &str| {
         attr_any(dom, shd, name)
@@ -10445,6 +10469,7 @@ fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
     }
     if run.color != [0.0, 0.0, 0.0] {
         style.color = run.color;
+        style.color_auto = false;
     }
     // A size or face the character style itself sets does apply
     // (004b3b3d's PageNumber is 8pt Arial; the old mini 336 lock
@@ -10544,6 +10569,7 @@ fn apply_rev(style: &mut RunStyle, mark: RevMark, color: [f32; 3]) {
             RevMark::MoveTo => palette.moved_to,
         };
         style.color = chosen.color.map(|c| f32::from(c) / 255.0);
+        style.color_auto = false;
         style.strike = chosen.strike != MarkLines::None;
         style.strike_double = chosen.strike == MarkLines::Double;
         style.underline = chosen.underline != MarkLines::None;
@@ -10566,10 +10592,12 @@ fn apply_rev(style: &mut RunStyle, mark: RevMark, color: [f32; 3]) {
             // there. Second/third-author del as ins palette (mini 239)
             // dropped no-redline median 53.4615→53.4464. Keep always-red.
             style.color = [209.0 / 255.0, 52.0 / 255.0, 56.0 / 255.0];
+            style.color_auto = false;
         }
         RevMark::Ins => {
             style.underline = true;
             style.color = color;
+            style.color_auto = false;
         }
     }
 }
@@ -15833,6 +15861,9 @@ struct Layout<'a> {
     /// How the last painted body line was set, so a picture that follows
     /// its text can join it (see `LastLine`).
     last_line: Option<LastLine>,
+    /// The fill under the text now being painted (a table cell's, a shaded
+    /// paragraph's): `auto` text on a dark one paints white (`ink_on`).
+    ink_under: Option<[f32; 3]>,
     /// The paragraph's first painted line: where its ops end, its
     /// baseline, and whether a tab opens it (see `FirstLine`).
     first_line: Option<FirstLine>,
@@ -16211,6 +16242,7 @@ impl<'a> Layout<'a> {
             last_line_end: None,
             last_line: None,
             first_line: None,
+            ink_under: None,
             section_first_page: true,
             front_border_ops: Vec::new(),
             para_top: y,
@@ -17377,6 +17409,20 @@ impl<'a> Layout<'a> {
     }
 
     fn emit_runs(&mut self, runs: &[TextRun], style: &ParaStyle, list: bool, wrap: FloatWrap) {
+        // A shaded paragraph is the fill under its text (else its cell's).
+        let outer_under = self.ink_under;
+        self.ink_under = style.fill.or(outer_under);
+        self.emit_paragraph_runs(runs, style, list, wrap);
+        self.ink_under = outer_under;
+    }
+
+    fn emit_paragraph_runs(
+        &mut self,
+        runs: &[TextRun],
+        style: &ParaStyle,
+        list: bool,
+        wrap: FloatWrap,
+    ) {
         let FloatWrap {
             left: wrap_left,
             right: wrap_right,
@@ -18519,6 +18565,19 @@ impl<'a> Layout<'a> {
                 x = self.paint_run(&run.with_text(*piece), x, y);
             }
             return x;
+        }
+        if run.style.color_auto
+            && ink_is_dark(
+                run.style
+                    .highlight
+                    .filter(|_| !run.style.highlight_marker)
+                    .or(self.ink_under),
+            )
+        {
+            let mut lit = run.clone();
+            lit.style.color = [1.0; 3];
+            lit.style.color_auto = false;
+            return self.paint_run(&lit, x, y);
         }
         if run.style.effect_skip {
             // Word Save-as-PDF omits reflection / shadow+outline as
@@ -21050,6 +21109,21 @@ impl<'a> Layout<'a> {
         borders: Option<TblBorders>,
         geom: &TableGeom,
     ) {
+        // Cells set the fill under their text; the table leaves it as found.
+        let outer_under = self.ink_under;
+        self.emit_table_cells(cols, rows, style, borders, geom, outer_under);
+        self.ink_under = outer_under;
+    }
+
+    fn emit_table_cells(
+        &mut self,
+        cols: &[f32],
+        rows: &[Vec<TableCell>],
+        style: &ParaStyle,
+        borders: Option<TblBorders>,
+        geom: &TableGeom,
+        outer_under: Option<[f32; 3]>,
+    ) {
         self.page_has_body = true;
         self.last_style_id.clear();
         let avail = self.content_width();
@@ -21249,6 +21323,7 @@ impl<'a> Layout<'a> {
                 self.y -= rh;
                 let y_top = self.y + rh;
                 for cell in row {
+                    self.ink_under = cell.fill.or(outer_under);
                     let x: f32 = table_left + col_w.iter().take(cell.col).copied().sum::<f32>();
                     let w: f32 = (0..cell.colspan)
                         .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
@@ -22679,7 +22754,9 @@ fn default_run_style() -> RunStyle {
         underline_wave: false,
         strike: false,
         color: [0.0, 0.0, 0.0],
+        color_auto: true,
         highlight: None,
+        highlight_marker: false,
         track: 0.0,
         scale: 1.0,
         caps: false,

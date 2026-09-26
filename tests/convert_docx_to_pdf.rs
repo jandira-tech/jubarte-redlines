@@ -35199,3 +35199,51 @@ fn text_after_a_tab_that_misses_the_right_stop_wraps() {
     );
     assert!(x1 < 540.0, "nothing runs past the right margin, got {x1}");
 }
+
+#[test]
+fn automatic_text_turns_white_on_dark_shading() {
+    // Live Word 2026-09-25: `auto` text paints white on shading whose Rec. 601
+    // luma is under 75 (grey 4A white, 4B black), in cells, shaded paragraphs
+    // and shaded runs; w:highlight leaves it black, even black highlight; an
+    // explicit colour never changes. We painted it black everywhere.
+    let white = "1.000 1.000 1.000 rg";
+    let paint = |body: &str| {
+        let body = format!("{body}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>");
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("shaded text");
+        pdf_content_streams(&pdf).concat()
+    };
+    let cell = |fill: &str, rpr: &str| {
+        format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid><w:tr><w:tc><w:tcPr>\
+             <w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{fill}\"/></w:tcPr>\
+             <w:p><w:r><w:rPr>{rpr}</w:rPr><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"
+        )
+    };
+    assert!(
+        paint(&cell("4A4A4A", "")).contains(white),
+        "luma 74 paints white"
+    );
+    assert!(
+        !paint(&cell("4B4B4B", "")).contains(white),
+        "luma 75 stays black"
+    );
+    assert!(
+        !paint(&cell("000000", "<w:color w:val=\"000000\"/>")).contains(white),
+        "an explicit black stays black"
+    );
+    assert!(
+        paint(
+            "<w:p><w:pPr><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"1F1F1F\"/></w:pPr>\
+               <w:r><w:t>Para</w:t></w:r></w:p>"
+        )
+        .contains(white),
+        "a dark shaded paragraph paints white"
+    );
+    assert!(
+        !paint(
+            "<w:p><w:r><w:rPr><w:highlight w:val=\"black\"/></w:rPr><w:t>Mark</w:t></w:r></w:p>"
+        )
+        .contains(white),
+        "highlight keeps automatic text black"
+    );
+}
