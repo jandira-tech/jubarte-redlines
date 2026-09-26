@@ -492,16 +492,11 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         // only moves the text matrix (a page was one `BT … ET` per glyph).
         // The pen is kept in hundredths as printed, so each next glyph moves
         // by an exact relative `Td` (lines are one glyph per op).
-        let mut open_text: Option<OpenText> = None;
-        let mut page_tc = "0".to_string();
+        let mut open_text: Option<(String, i64, i64)> = None;
         for (op_idx, op) in page.ops.iter().enumerate() {
             let plain_text = matches!(op, Op::Text { .. }) && !page.vertical;
             if !plain_text && open_text.take().is_some() {
                 stream.push_str("ET\n");
-            }
-            if !plain_text && page_tc != "0" {
-                stream.push_str("0 Tc\n");
-                page_tc = "0".to_string();
             }
             match op {
                 Op::Text {
@@ -568,80 +563,54 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     // A `w:w` scale squeezes the glyphs themselves about
                     // their origin; advances were scaled at layout.
                     let sx = *hscale;
-                    // Every glyph run sits in a text object keyed by its
-                    // state (font, size, colour, tracking): a run in the open
-                    // object's state only sets the text matrix. Word-device
-                    // and `w:w` runs carry their scale in that matrix (it was
-                    // a `q … cm BT … ET Q` per glyph; the product is the same).
-                    let (state, tc, matrix) = if let Some((ppem, tc)) = word_device_paint(*size) {
+                    if (word_device_paint(*size).is_some() || (sx - 1.0).abs() > 0.001)
+                        && open_text.take().is_some()
+                    {
+                        stream.push_str("ET\n");
+                    }
+                    if let Some((ppem, tc)) = word_device_paint(*size) {
                         // Word writes baselines in whole device units from
                         // the page top (0.24pt grid).
                         let down = page.height - *y;
-                        let y = page.height - ((down / 0.24) + 0.5).floor() * 0.24;
+                        let y = &(page.height - ((down / 0.24) + 0.5).floor() * 0.24);
                         let a = if (sx - 1.0).abs() > 0.001 {
                             format!("{:.4}", 0.24 * sx)
                         } else {
                             "0.24".into()
                         };
-                        (
-                            format!("/{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg "),
-                            format!("{tc:.4}"),
-                            Some(format!("{a} 0 0 0.24 {x:.2} {y:.2} Tm")),
-                        )
+                        let _ = writeln!(
+                            stream,
+                            "q {a} 0 0 0.24 {x:.2} {y:.2} cm BT /{name} {ppem:.0} Tf {r:.3} {g:.3} {b:.3} rg {tc:.4} Tc 0 0 Td {lit} Tj ET Q",
+                        );
                     } else if (sx - 1.0).abs() > 0.001 {
-                        (
-                            format!("/{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg "),
-                            "0".to_string(),
-                            Some(format!("{sx:.4} 0 0 1 {x:.2} {y:.2} Tm")),
-                        )
+                        let _ = writeln!(
+                            stream,
+                            "q {sx:.4} 0 0 1 {x:.2} {y:.2} cm BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg 0 0 Td {lit} Tj ET Q",
+                        );
                     } else {
                         let tc = word_device_track(*size);
-                        let tc = if tc.abs() > 0.00005 {
-                            format!("{tc:.5}")
+                        let tc_op = if tc.abs() > 0.00005 {
+                            format!("{tc:.5} Tc ")
                         } else {
-                            "0".to_string()
+                            String::new()
                         };
-                        (
-                            format!("/{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg "),
-                            tc,
-                            None,
-                        )
-                    };
-                    let pen = matrix.is_none().then(|| (hundredths(*x), hundredths(*y)));
-                    let state = (state, tc);
-                    let open_pen = match open_text.take() {
-                        Some((open, open_pen)) if open == state => Some(open_pen),
-                        Some(_) => {
-                            stream.push_str("ET\n");
-                            None
-                        }
-                        None => None,
-                    };
-                    if open_pen.is_none() {
-                        let _ = write!(stream, "BT {}", state.0);
-                        // `Tc` outlives `ET` (a device run's used to end at
-                        // its `Q`): it is set only when it changes.
-                        if state.1 != page_tc {
-                            let _ = write!(stream, "{} Tc ", state.1);
-                            page_tc.clone_from(&state.1);
+                        let state = format!("/{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {tc_op}");
+                        let (hx, hy) = (hundredths(*x), hundredths(*y));
+                        match open_text.as_mut() {
+                            Some((open, px, py)) if *open == state => {
+                                let (dx, dy) = (fmt_hundredths(hx - *px), fmt_hundredths(hy - *py));
+                                let _ = writeln!(stream, "{dx} {dy} Td {lit} Tj");
+                                (*px, *py) = (hx, hy);
+                            }
+                            _ => {
+                                if open_text.take().is_some() {
+                                    stream.push_str("ET\n");
+                                }
+                                let _ = writeln!(stream, "BT {state}{x:.2} {y:.2} Td {lit} Tj");
+                                open_text = Some((state, hx, hy));
+                            }
                         }
                     }
-                    match (&matrix, pen, open_pen) {
-                        (Some(m), _, _) => {
-                            let _ = writeln!(stream, "{m} {lit} Tj");
-                        }
-                        (None, Some((hx, hy)), Some(Some((px, py)))) => {
-                            let (dx, dy) = (fmt_hundredths(hx - px), fmt_hundredths(hy - py));
-                            let _ = writeln!(stream, "{dx} {dy} Td {lit} Tj");
-                        }
-                        (None, _, Some(_)) => {
-                            let _ = writeln!(stream, "1 0 0 1 {x:.2} {y:.2} Tm {lit} Tj");
-                        }
-                        (None, _, None) => {
-                            let _ = writeln!(stream, "{x:.2} {y:.2} Td {lit} Tj");
-                        }
-                    }
-                    open_text = Some((state, pen));
                 }
                 Op::Watermark {
                     face,
@@ -1142,10 +1111,6 @@ fn subset_keep_gids(ttf: &[u8], used: &BTreeSet<u16>) -> Option<Vec<u8>> {
     out_tables.sort_by_key(|a| a.0);
     Some(write_sfnt(u32_at(ttf, dir)?, &out_tables))
 }
-
-/// A page's open text object: its (font/size/colour, `Tc`) state and, for
-/// a plain run, the pen in hundredths the next relative `Td` starts from.
-type OpenText = ((String, String), Option<(i64, i64)>);
 
 /// `v` in hundredths exactly as `{v:.2}` prints it, so relative moves add
 /// back up to the printed absolute position.
