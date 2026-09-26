@@ -7375,6 +7375,34 @@ fn cell_para_line_box(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
 }
 
 fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: bool) -> f32 {
+    let text_h = cell_para_text_h(fonts, para, wrap_w, space_for_ul);
+    let lead = cell_lead_picture(para);
+    let mut images_h = 0.0_f32;
+    let mut below = 0.0_f32;
+    for img in para
+        .images
+        .iter()
+        .filter(|img| !lead.is_some_and(|l| std::ptr::eq(l, *img)))
+    {
+        let (_, _, drop, room) = cell_image_place(img, para.style.align);
+        if !room {
+            continue;
+        }
+        let h = cell_image_wh(img).1;
+        if cell_float_below(para, img, drop, text_h) {
+            below = below.max(drop + h);
+        } else {
+            images_h += h + drop;
+        }
+    }
+    para.style.before + (images_h + text_h).max(below) + para.style.after
+}
+
+/// A cell paragraph's text lines, without its pictures.
+fn cell_para_text_h(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: bool) -> f32 {
+    if cell_para_is_image_only(para) {
+        return picture_line_leading(fonts, para);
+    }
     let (size, line_box) = cell_para_line_box(fonts, para);
     let (first_w, rest_w) = cell_para_widths(fonts, para, wrap_w);
     let lines = wrap_runs(fonts, &para.runs, first_w, rest_w, false);
@@ -7382,26 +7410,17 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
         .iter()
         .map(|line| line_box + ul_line_extra(line, size, space_for_ul))
         .sum();
-    let lead = cell_lead_picture(para);
-    let images_h: f32 = para
-        .images
-        .iter()
-        .filter(|img| !lead.is_some_and(|l| std::ptr::eq(l, *img)))
-        .map(|img| {
-            let (_, _, drop, room) = cell_image_place(img, para.style.align);
-            if room {
-                cell_image_wh(img).1 + drop
-            } else {
-                0.0
-            }
-        })
-        .sum();
-    let text_h = if cell_para_is_image_only(para) {
-        picture_line_leading(fonts, para)
-    } else {
-        lines_h.max(line_box) + cell_lead_rise(fonts, para)
-    };
-    para.style.before + images_h + text_h + para.style.after
+    lines_h.max(line_box) + cell_lead_rise(fonts, para)
+}
+
+/// A floating cell picture that starts below its paragraph's text: Word
+/// sets it at its drop from the paragraph top without moving the text, and
+/// the cell grows to hold its bottom (72dcf4dc's three pictures side by
+/// side under the last bullet; stacking them lost the bullet's text).
+fn cell_float_below(para: &CellPara, img: &LaidImage, drop: f32, text_h: f32) -> bool {
+    matches!(img.slot, ImageSlot::Float { .. })
+        && !cell_para_is_image_only(para)
+        && drop >= text_h - 0.5
 }
 
 /// How far a leading inline picture stands above its line's ascent.
@@ -22580,6 +22599,9 @@ impl<'a> Layout<'a> {
                             self.emit_cell_box(box_, x + pad_l, inner, y_line, para.style.before);
                         }
                         let lead = cell_lead_picture(para);
+                        let para_top = y_line;
+                        let text_h = cell_para_text_h(self.fonts, para, wrap_w, self.space_for_ul);
+                        let mut float_bottom = 0.0_f32;
                         for img in para
                             .images
                             .iter()
@@ -22595,7 +22617,10 @@ impl<'a> Layout<'a> {
                                 Align::Left | Align::Justify => 0.0,
                             });
                             let ix = x + pad_l + extra;
-                            if room {
+                            if room && cell_float_below(para, img, drop, text_h) {
+                                self.push_image(img, ix, para_top - drop - dh, dw, dh);
+                                float_bottom = float_bottom.max(drop + dh);
+                            } else if room {
                                 y_line -= drop;
                                 self.push_image(img, ix, y_line - dh, dw, dh);
                                 y_line -= dh;
@@ -22777,6 +22802,7 @@ impl<'a> Layout<'a> {
                             self.clip_right = None;
                             y_line -= line_box;
                         }
+                        y_line = y_line.min(para_top - float_bottom);
                         y_line -= para.style.after;
                     }
                     for (nested, _) in cell

@@ -37059,3 +37059,51 @@ fn a_compat_14_header_tab_at_the_margin_stays_on_its_line() {
         "no wrapped tab line between: Logo y {ly}, Nextz y {ny}"
     );
 }
+
+#[test]
+fn cell_floats_below_their_text_sit_side_by_side_and_keep_the_text() {
+    // 72dcf4dc: the last bullet of a cell anchors three wrapSquare pictures
+    // 63-78pt below its top, side by side across the cell. Word keeps the
+    // bullet's text on its line and grows the cell to the lowest picture;
+    // we stacked them (424pt) and the text fell out of the row.
+    let float = |x: u32| {
+        blip(
+            "1500000",
+            "800000",
+            &format!(
+                "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+                   relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+                   <wp:simplePos x=\"0\" y=\"0\"/>\
+                   <wp:positionH relativeFrom=\"column\"><wp:posOffset>{x}</wp:posOffset></wp:positionH>\
+                   <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>762000</wp:posOffset></wp:positionV>"
+            ),
+            "<wp:wrapSquare wrapText=\"bothSides\"/></wp:anchor>",
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"9000\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"9000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>BulletText</w:t></w:r>\
+               <w:r>{}</w:r><w:r>{}</w:r><w:r>{}</w:r></w:p></w:tc></w:tr>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"9000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>AfterRow</w:t></w:r></w:p></w:tc></w:tr>\
+         </w:tbl><w:sectPr/>",
+        float(0),
+        float(2_000_000),
+        float(4_000_000)
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("cell floats");
+    let (_, ty) = pdf_glyph_text_xy(&pdf, "BulletText").expect("the bullet's text stays");
+    let (_, ay) = pdf_glyph_text_xy(&pdf, "AfterRow").expect("next row");
+    // Pictures end 60 + 63 = 123pt below the paragraph top.
+    assert!(
+        (115.0..150.0).contains(&(ty - ay)),
+        "the row ends below the lowest picture, not three stacked: text y {ty}, next row y {ay}"
+    );
+    let ys: Vec<f32> = pdf_image_boxes(&pdf).iter().map(|b| b.1).collect();
+    assert!(
+        ys.len() == 3 && ys.iter().all(|y| (y - ys[0]).abs() < 0.5),
+        "three pictures side by side: {ys:?}"
+    );
+}
