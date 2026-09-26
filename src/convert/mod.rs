@@ -12307,13 +12307,17 @@ fn drawing_is_chart_or_diagram(dom: &Dom, node: NodeId) -> bool {
 /// with a QR code). A text box holding only a picture still paints as it
 /// (0049484c).
 fn nested_in_text(dom: &Dom, node: NodeId, drawing: NodeId) -> bool {
+    // Deleted words are box text too: a redline shows them struck
+    // (d20125ec's cover box, all w:delText, is no picture).
     inside_text_box(dom, node, drawing)
         && descendants_local(dom, drawing, "txbxContent")
             .into_iter()
             .any(|tx| {
-                dom.descendants(tx, Some(&W::t()))
-                    .into_iter()
-                    .any(|t| !element_text(dom, t).trim().is_empty())
+                [W::t(), W::name("delText")].iter().any(|name| {
+                    dom.descendants(tx, Some(name))
+                        .into_iter()
+                        .any(|t| !element_text(dom, t).trim().is_empty())
+                })
             })
 }
 

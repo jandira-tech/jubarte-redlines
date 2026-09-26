@@ -35250,3 +35250,38 @@ fn revisions_take_words_author_palette_in_order_of_appearance() {
         assert!(content.contains(rgb), "{who}");
     }
 }
+
+#[test]
+fn a_text_box_whose_text_is_deleted_is_no_picture() {
+    // English redline d20125ec: A's cover page is an inline 468x648pt text
+    // box holding a photo; B dropped it, so every word in the box is
+    // w:delText. Word paints the box's struck text with the photo inside;
+    // counting only w:t, we took the box for the photo and stretched the
+    // photo over the whole page.
+    let body = "<w:p><w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+        <wp:extent cx=\"2540000\" cy=\"3810000\"/><wp:docPr id=\"1\" name=\"Text Box 1\"/>\
+        <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+        <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"><wps:spPr>\
+        <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>\
+        <w:p><w:del w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\"><w:r><w:delText>CoverGoneQ</w:delText></w:r></w:del></w:p>\
+        <w:p><w:del w:id=\"2\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\"><w:r><w:drawing><wp:inline>\
+          <wp:extent cx=\"635000\" cy=\"508000\"/><wp:docPr id=\"2\" name=\"Picture 2\"/>\
+          <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+          <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+          <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+          </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:del></w:p>\
+        </w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline>\
+        </w:drawing></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+          <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx_media(body, "dot.png", TINY_PNG)).expect("deleted box");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "CoverGoneQ").is_some(),
+        "the box's deleted text paints"
+    );
+    let content = pdf_content_streams(&pdf).concat();
+    assert!(
+        !content.contains("200.00 0 0 300.00"),
+        "the photo is not stretched to the 200x300pt box"
+    );
+}
