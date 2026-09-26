@@ -35788,3 +35788,46 @@ fn a_down_arrow_points_down_with_its_own_line_width() {
         "the tip is the bottom centre; tip={tip:?} pts={pts:?}"
     );
 }
+
+fn a_table_styles_top_and_bottom_cell_margins_pad_each_row() {
+    // English part A 1f3856c4: Table Grid's style tblCellMar sets top and
+    // bottom to 57 twips. Live Word 2026-09-26 (Arial 10 rows): rows step
+    // 17.76 / 17.52pt instead of 12, and the table's first row starts
+    // 2.88pt lower. We read top/bottom only from the table's own tblPr.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+          <w:sz w:val=\"20\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
+          <w:spacing w:after=\"120\"/></w:pPr></w:pPrDefault></w:docDefaults>\
+        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+        <w:style w:type=\"table\" w:default=\"1\" w:styleId=\"TableNormal\"><w:name w:val=\"Normal Table\"/>\
+          <w:tblPr><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:left w:w=\"108\" w:type=\"dxa\"/>\
+          <w:bottom w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr></w:style>\
+        <w:style w:type=\"table\" w:styleId=\"TableGrid\"><w:name w:val=\"Table Grid\"/>\
+          <w:basedOn w:val=\"TableNormal\"/><w:pPr><w:spacing w:after=\"0\"/></w:pPr>\
+          <w:tblPr><w:tblCellMar><w:top w:w=\"57\" w:type=\"dxa\"/><w:bottom w:w=\"57\" w:type=\"dxa\"/></w:tblCellMar>\
+          </w:tblPr></w:style></w:styles>";
+    let row = |t: &str| {
+        format!(
+            "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc></w:tr>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>{}{}{}</w:tbl>\
+         <w:p><w:r><w:t>Tail</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        row("RowA"),
+        row("RowB"),
+        row("RowC")
+    );
+    let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("style cell margins");
+    let y = |t: &str| pdf_glyph_text_xy(&pdf, t).expect(t).1;
+    let step = y("RowA") - y("RowB");
+    assert!(
+        (step - 17.7).abs() < 0.8,
+        "rows step a line plus 2 x 2.85pt; step={step}"
+    );
+}

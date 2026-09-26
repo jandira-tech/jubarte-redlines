@@ -926,6 +926,10 @@ struct TblStyle {
     /// table setting none of its own takes them (000876cd's custom
     /// "TableNormal" sets 0, not Word's 108-twip default).
     cell_mar_lr: (Option<f32>, Option<f32>),
+    /// The table style's `tblCellMar` top and bottom (pt): Word pads every
+    /// row with them (live Word: Table Grid's 57 twips step Arial 10 rows
+    /// 17.76pt, not 12; English part a 1f3856c4).
+    cell_mar_tb: (Option<f32>, Option<f32>),
     first_row_fill: Option<[f32; 3]>,
     band1_fill: Option<[f32; 3]>,
     band2_fill: Option<[f32; 3]>,
@@ -2912,6 +2916,17 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
                     .and_then(parse_len)
             };
             (edge("left"), edge("right"))
+        },
+        cell_mar_tb: {
+            let mar = dom
+                .element(style, &W::name("tblPr"))
+                .and_then(|pr| first_named(dom, pr, "tblCellMar"));
+            let edge = |name: &str| {
+                mar.and_then(|m| first_named(dom, m, name))
+                    .and_then(|n| attr_any(dom, n, "w"))
+                    .and_then(parse_len)
+            };
+            (edge("top"), edge("bottom"))
         },
         first_row_fill: None,
         band1_fill: None,
@@ -9116,7 +9131,23 @@ fn table_block(
         tbl_pad_l = t.cell_mar_lr.0.unwrap_or(tbl_pad_l);
         tbl_pad_r = t.cell_mar_lr.1.unwrap_or(tbl_pad_r);
     }
-    let (tbl_pad_t, tbl_pad_b) = table_pad_tb(dom, table);
+    let (mut tbl_pad_t, mut tbl_pad_b) = table_pad_tb(dom, table);
+    // Each edge the table's own tblCellMar leaves unnamed comes from its
+    // style.
+    let direct_edge = |name: &str| {
+        table_pr(dom, table)
+            .and_then(|pr| first_named(dom, pr, "tblCellMar"))
+            .and_then(|m| first_named(dom, m, name))
+            .is_some()
+    };
+    if let Some(t) = tdef.as_ref() {
+        if !direct_edge("top") {
+            tbl_pad_t = t.cell_mar_tb.0.unwrap_or(tbl_pad_t);
+        }
+        if !direct_edge("bottom") {
+            tbl_pad_b = t.cell_mar_tb.1.unwrap_or(tbl_pad_b);
+        }
+    }
     let tbl_spacing = table_pr(dom, table)
         .and_then(|pr| first_named(dom, pr, "tblCellSpacing"))
         .and_then(|n| attr_any(dom, n, "w"))
@@ -34891,6 +34922,7 @@ mod table_tests {
                 own_size: None,
                 run_family: None,
                 cell_mar_lr: (None, None),
+                cell_mar_tb: (None, None),
                 first_row_fill: None,
                 band1_fill: parse_hex_color("D3DFEE"),
                 band2_fill: None,
