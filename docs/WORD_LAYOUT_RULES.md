@@ -348,3 +348,9 @@ rule:
   that line instead of adding a line and then its own height: live Word
   2026-09-26 sets a 21x9pt box under a 12.7pt line on the line's bottom
   (069252c3's logo letters; its 12 pages became Word's 10).
+- A row's `w:gridBefore`/`w:gridAfter` leave that many grid columns empty
+  (width from `w:wBefore`/`w:wAfter`), borderless, before or after its
+  cells: 08648d2f's form rows open one 7tw column in, and their cells now
+  sit within 0.2pt of Word (they had slid left). The empty space never
+  decides a row split: 2c352c83's gridAfter rows still move whole at a page
+  end, keeping their top rule.

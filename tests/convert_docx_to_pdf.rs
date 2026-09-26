@@ -5227,6 +5227,59 @@ fn an_inline_vml_text_box_takes_its_styled_size() {
 }
 
 #[test]
+fn grid_before_skips_its_grid_columns() {
+    // 08648d2f's form is one fixed table on a 7/3780/6822 grid whose first
+    // rows open with gridBefore=1 (wBefore 7). We ignored gridBefore, so
+    // those rows' cells slid one grid column left and the whole table
+    // shifted: the label column ran 322pt, not Word's 189.35pt.
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"10609\" w:type=\"dxa\"/>\
+           <w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"7\"/><w:gridCol w:w=\"3780\"/><w:gridCol w:w=\"6822\"/></w:tblGrid>\
+           <w:tr><w:trPr><w:gridBefore w:val=\"1\"/><w:wBefore w:w=\"7\" w:type=\"dxa\"/></w:trPr>\
+             <w:tc><w:tcPr><w:tcW w:w=\"10602\" w:type=\"dxa\"/><w:gridSpan w:val=\"2\"/></w:tcPr>\
+               <w:p><w:r><w:t>Title</w:t></w:r></w:p></w:tc></w:tr>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"3787\" w:type=\"dxa\"/><w:gridSpan w:val=\"2\"/></w:tcPr>\
+               <w:p><w:r><w:t>LeftCell</w:t></w:r></w:p></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"6822\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:r><w:t>RightCell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"720\" w:right=\"720\" w:bottom=\"720\" w:left=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert gridBefore table");
+    let (title, _) = pdf_literal_td_xy(&pdf, "Title").expect("Title");
+    let (left, _) = pdf_literal_td_xy(&pdf, "LeftCell").expect("LeftCell");
+    let (right, _) = pdf_literal_td_xy(&pdf, "RightCell").expect("RightCell");
+    assert!(
+        (title - left - 0.35).abs() < 0.15,
+        "the gridBefore row starts 7tw (0.35pt, on the 0.24pt grid) right of a full row: {title} vs {left}"
+    );
+    assert!(
+        (right - left - 189.35).abs() < 0.5,
+        "RightCell starts past the 3787tw label span: {right} vs {left}"
+    );
+}
+
+#[test]
+fn a_keep_next_row_before_a_grid_before_row() {
+    // A keepNext row measures the next row's first paragraph in every cell;
+    // the gridBefore placeholder had none and panicked (b a6a90be3, 4887566b).
+    let body = "<w:p><w:r><w:t>Intro</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"9000\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"8000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr>\
+             <w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:t>Label</w:t></w:r></w:p></w:tc></w:tr>\
+           <w:tr><w:trPr><w:gridBefore w:val=\"1\"/><w:wBefore w:w=\"1000\" w:type=\"dxa\"/></w:trPr>\
+             <w:tc><w:tcPr><w:tcW w:w=\"8000\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:r><w:t>Body</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert keepNext before gridBefore row");
+    assert!(
+        pdf_literal_td_y(&pdf, "Body").is_some(),
+        "the gridBefore row is painted"
+    );
+}
+
+#[test]
 fn xfrm_rot_ninety_rotates_image_cm() {
     // xml leftover / media rotation: pic:spPr a:xfrm/@rot is 60000ths of a
     // degree (ECMA-376 20.1.7.6). 5400000 = 90°. Unrotated paint is
@@ -36668,4 +36721,48 @@ fn a_revised_footer_page_field_paints_its_number_unmarked() {
     let red = "0.820 0.204 0.220";
     assert_eq!(fills[at], red, "the inserted text is inked");
     assert_ne!(fills[at + 4], red, "its page number is not");
+}
+
+#[test]
+fn a_grid_after_row_at_the_page_end_moves_whole() {
+    // 2c352c83's gridAfter rows: the empty grid-skip cell "fits" at the
+    // page end, but the row still moves whole to the next page, keeping
+    // its top rule (split, the tail stood 0.5pt short).
+    let doc = |grid_after: bool| {
+        let tr_pr = if grid_after {
+            "<w:trPr><w:gridAfter w:val=\"1\"/><w:wAfter w:w=\"6\" w:type=\"dxa\"/></w:trPr>"
+        } else {
+            ""
+        };
+        let rows: String = (0..60)
+            .map(|i| {
+                format!(
+                    "<w:tr>{tr_pr}<w:tc><w:tcPr><w:tcW w:w=\"2376\" w:type=\"dxa\"/></w:tcPr>\
+                       <w:p><w:r><w:t>Row{i}z</w:t></w:r></w:p></w:tc>\
+                     <w:tc><w:tcPr><w:tcW w:w=\"6804\" w:type=\"dxa\"/></w:tcPr>\
+                       <w:p><w:r><w:t>Unit {i}</w:t></w:r></w:p></w:tc></w:tr>"
+                )
+            })
+            .collect();
+        let border = "w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"";
+        let body = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblLayout w:type=\"fixed\"/>\
+               <w:tblBorders><w:top {border}/><w:left {border}/><w:bottom {border}/>\
+                 <w:right {border}/><w:insideH {border}/><w:insideV {border}/></w:tblBorders></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"2376\"/><w:gridCol w:w=\"6804\"/><w:gridCol w:w=\"6\"/></w:tblGrid>\
+               {rows}</w:tbl><w:p/>\
+             <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        docx_to_pdf(&drawing_docx(&body)).expect("convert gridAfter table")
+    };
+    let (plain, skip) = (doc(false), doc(true));
+    for i in 0..60 {
+        let key = format!("Row{i}z");
+        let (a, b) = (
+            pdf_literal_td_y(&plain, &key).unwrap_or_else(|| panic!("plain {key}")),
+            pdf_literal_td_y(&skip, &key).expect("gridAfter row"),
+        );
+        assert!((a - b).abs() < 0.05, "{key}: {b} vs {a} without gridAfter");
+    }
 }

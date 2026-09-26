@@ -9358,6 +9358,14 @@ fn table_block(
         let mut grid_at = 0usize;
         let mut cells = Vec::new();
         let mut row_has_cell_del = false;
+        let (grid_before, grid_after) = (
+            row_grid_skip(dom, row, "Before"),
+            row_grid_skip(dom, row, "After"),
+        );
+        if let Some((span, pref)) = grid_before {
+            cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));
+            grid_at += span;
+        }
         for cell in wrapped_children(dom, row, "tc") {
             row_has_cell_del |= cell_is_deleted(dom, cell);
             let mut cell_paras = Vec::new();
@@ -9609,6 +9617,9 @@ fn table_block(
                     .is_some_and(|n| !val_is_false(dom, Some(n))),
                 borders,
             });
+        }
+        if let Some((span, pref)) = grid_after {
+            cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));
         }
         // Word All Markup appends a “Deleted Cells” column when the
         // row has live w:cellDel (addition_removal remnant). Do not
@@ -10153,6 +10164,61 @@ fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
     };
     // Direct child only. tcPrChange also stores cellDel.
     direct_named(dom, pr, "cellDel").is_some()
+}
+
+/// A row's `w:gridBefore`/`w:gridAfter` (`side` "Before"/"After"): the
+/// grid columns it leaves empty and their `w:wBefore`/`w:wAfter`.
+fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {
+    let pr = first_named(dom, row, "trPr")?;
+    let span = direct_named(dom, pr, &format!("grid{side}"))
+        .and_then(|n| attr_any(dom, n, "val"))
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)?;
+    let pref = direct_named(dom, pr, &format!("w{side}"))
+        .filter(|n| attr_any(dom, *n, "type").is_none_or(|t| t == "dxa"))
+        .and_then(|n| attr_any(dom, n, "w"))
+        .and_then(parse_len)
+        .filter(|w| *w > 0.0)
+        .map_or(PrefWidth::Auto, PrefWidth::Dxa);
+    Some((span, pref))
+}
+
+/// The empty, borderless space a row's gridBefore/gridAfter holds (08648d2f's
+/// form rows open one 7tw grid column in; ignoring it slid their cells left).
+fn grid_skip_cell(span: usize, pref: PrefWidth, pad_l: f32, pad_r: f32) -> RawCell {
+    // One empty, hidden-mark paragraph: a row that splits across pages
+    // splits every cell's paragraphs.
+    let mut style = Defaults::word().para;
+    style.before = 0.0;
+    style.after = 0.0;
+    RawCell {
+        paras: vec![CellPara {
+            runs: Vec::new(),
+            images: Vec::new(),
+            boxes: Vec::new(),
+            style,
+            bookmarks: Vec::new(),
+            blank_bookmarks: Vec::new(),
+            continued: false,
+        }],
+        nested: Vec::new(),
+        nested_at: Vec::new(),
+        pref,
+        colspan: span,
+        vmerge: VMerge::None,
+        fill: None,
+        fill_explicit: false,
+        valign_center: false,
+        valign_bottom: false,
+        align: Align::Left,
+        pad_l,
+        pad_r,
+        pad_t: 0.0,
+        pad_b: 0.0,
+        nowrap: false,
+        hide_mark: true,
+        borders: Some(CellBorders::default()),
+    }
 }
 
 fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
@@ -22675,8 +22741,19 @@ impl<'a> Layout<'a> {
                     }
                 }
             }
-            any_head |= k > 0 || broke;
-            any_tail |= k < cell.paras.len();
+            // An empty hidden-mark cell (a gridBefore/gridAfter skip)
+            // always fits and never decides a split (2c352c83's rows move
+            // whole, keeping their top rule).
+            let blank = cell.hide_mark
+                && cell.nested.is_empty()
+                && cell
+                    .paras
+                    .iter()
+                    .all(|p| p.runs.is_empty() && p.images.is_empty() && p.boxes.is_empty());
+            if !blank {
+                any_head |= k > 0 || broke;
+                any_tail |= k < cell.paras.len();
+            }
             head.push(h);
             tail.push(t);
         }
