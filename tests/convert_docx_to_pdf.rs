@@ -7811,6 +7811,24 @@ fn numbering_suff_nothing_omits_gutter_space() {
 }
 
 #[test]
+fn a_typed_opening_quote_does_not_hang_like_a_bullet() {
+    // fixtures_500 675bc160: a hanging paragraph opens with a run holding
+    // only "“", then "(aa) amounts…" with no tab. Word sets "“(aa)" together
+    // at the first-line indent; we took the lone quote for a bullet and
+    // sent "(aa)" to the hanging indent (122.4).
+    let body = "<w:p><w:pPr><w:ind w:left=\"1008\" w:hanging=\"610\"/></w:pPr>\
+         <w:r><w:t>\u{201C}</w:t></w:r><w:r><w:t>(aa) amounts</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("typed quote");
+    let (x, _) = pdf_glyph_text_xy(&pdf, "(aa)").expect("(aa) paints");
+    assert!(
+        x < 110.0,
+        "(aa) follows the quote at the first-line indent; x={x}"
+    );
+}
+
+#[test]
 fn en_dash_bullet_hangs_its_body_at_the_indent() {
     // file_146 ListBullet lvlText is U+2013 (–), hanging=320 / left=640.
     // Word p5: dash at 88, body at 104 — the dash hangs like any bullet

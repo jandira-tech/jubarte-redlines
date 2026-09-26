@@ -24687,13 +24687,16 @@ fn split_hanging_marker(runs: &[TextRun], hanging: bool) -> (Option<&TextRun>, &
     if !hanging || runs.is_empty() {
         return (None, runs);
     }
-    if !is_list_marker_text(&runs[0].text) {
+    if !is_list_marker_text(&runs[0].text, runs[0].list_marker) {
         return (None, runs);
     }
     (Some(&runs[0]), &runs[1..])
 }
 
-fn is_list_marker_text(text: &str) -> bool {
+/// `numbered`: the run is the paragraph's own numbering marker. A typed
+/// lone symbol hangs only as one (675bc160's typed "“" sets "“(aa)" at the
+/// first-line indent in Word).
+fn is_list_marker_text(text: &str, numbered: bool) -> bool {
     let t = text.trim();
     // Cap at 8 chars: `Section 1.01` is Word-hanging on sd_2517 Título2,
     // but treating it as a marker packed 107→106pp (mini sechang −0.10).
@@ -24706,7 +24709,7 @@ fn is_list_marker_text(text: &str) -> bool {
     if let (Some(c), None) = (chars.next(), chars.next())
         && (c == 'o' || !c.is_alphanumeric())
     {
-        return true;
+        return numbered;
     }
     if t.chars().any(|c| (c as u32) >= 0xF000) {
         return true;
@@ -36884,10 +36887,9 @@ mod comments_spacing_tests {
         style.indent_first = -18.0;
         style.after = 0.0;
         style.line_mult = 1.0;
-        let runs = vec![
-            TextRun::new("• ", default_run_style()),
-            TextRun::new("Parity word", default_run_style()),
-        ];
+        let mut bullet = TextRun::new("• ", default_run_style());
+        bullet.list_marker = true;
+        let runs = vec![bullet, TextRun::new("Parity word", default_run_style())];
         let pages = layout(
             fonts,
             &page,
