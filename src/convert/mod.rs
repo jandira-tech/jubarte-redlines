@@ -7552,7 +7552,13 @@ fn keep_next_follow_pt(
                 .map(|row| table_row_height_pt(fonts, row, &col_w, geom, 0, space_for_ul))
                 .unwrap_or(0.0)
         }
-        Block::Paragraph { runs, style, .. } => {
+        Block::Paragraph {
+            runs,
+            style,
+            images,
+            boxes,
+            ..
+        } => {
             // Widow/orphan control keeps a 2–3 line paragraph whole and
             // leaves at least 2 lines of a longer one (011c597c's AFG.316
             // moves with its 3-line body).
@@ -7568,13 +7574,27 @@ fn keep_next_follow_pt(
             // The last kept line fits on its single height, as in the
             // layout (an auto multiple's extra leading may hang into the
             // margin; 00e68cc4's Motivering keeps two 1.5 lines).
-            let line = para_first_line_pt(fonts, runs, style, grid_pitch);
+            // An inline picture or text box stands its first line as tall
+            // as itself (live Word: a keepNext heading moves with a 600pt
+            // inline picture; d20125ec's heading above its 648pt box).
+            let inline_h = images
+                .iter()
+                .filter(|img| matches!(img.slot, ImageSlot::Flow))
+                .map(|img| img.h)
+                .chain(
+                    boxes
+                        .iter()
+                        .filter(|b| matches!(b.slot, ImageSlot::Flow))
+                        .map(|b| b.h),
+                )
+                .fold(0.0_f32, f32::max);
+            let line = para_first_line_pt(fonts, runs, style, grid_pitch).max(inline_h);
             let size = runs_size(runs);
             let face = runs.first().map_or(FaceId::CarlitoRegular.into(), |r| {
                 fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
             });
             let face = fonts.get(face);
-            let last = line_fit_need(face.single_line_pt(size), 0.0, style, line);
+            let last = line_fit_need(face.single_line_pt(size), 0.0, style, line).max(inline_h);
             style.before + line * (lines - 1) as f32 + last
         }
         Block::PageBreak { .. } | Block::ColumnBreak | Block::SectionCols { .. } => 0.0,

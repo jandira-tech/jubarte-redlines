@@ -35640,3 +35640,40 @@ fn even_and_odd_pages_keep_their_parity_across_a_numbering_restart() {
         "without even/odd headers: no blank pages"
     );
 }
+
+fn a_keep_with_next_heading_moves_with_a_tall_inline_picture() {
+    // English redline d20125ec: a keepNext heading above a paragraph holding
+    // a 648pt inline text box. Live Word 2026-09-25 (a 600pt inline picture
+    // under ten lines): the heading moves to page 2 with the picture; we
+    // counted the picture's line as one text line and left the heading
+    // alone at the foot of page 1.
+    let pic = "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+        <wp:extent cx=\"3810000\" cy=\"7620000\"/><wp:docPr id=\"2\" name=\"p\"/>\
+        <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+        <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+        <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+        </a:graphicData></a:graphic></wp:inline></w:drawing></w:r>";
+    let filler: String = (0..10)
+        .map(|i| format!("<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Filler {i}</w:t></w:r></w:p>"))
+        .collect();
+    let body = format!(
+        "{filler}<w:p><w:pPr><w:keepNext/><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>HeadingQ</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr>{pic}</w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&drawing_docx_media(&body, "dot.png", TINY_PNG)).expect("tall picture");
+    let pages = pdf_content_streams(&pdf);
+    let on = |i: usize, t: &str| {
+        pages[i]
+            .lines()
+            .filter_map(|l| Some(l[l.find('(')? + 1..l.rfind(") Tj")?].to_string()))
+            .collect::<String>()
+            .contains(t)
+    };
+    assert!(!on(0, "HeadingQ"), "the heading leaves page 1");
+    assert!(
+        on(1, "HeadingQ"),
+        "the heading opens page 2 with its picture"
+    );
+}
