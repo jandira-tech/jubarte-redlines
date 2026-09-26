@@ -499,6 +499,12 @@ fn font_table_altname_unknown_family_embeds_cambria() {
 
 #[test]
 fn a_missing_arabic_charset_font_is_arial() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; a_missing_arabic_charset_font_is_arial measures Word's faces"
+        );
+        return;
+    }
     // Word draws an absent Arabic-charset face in Arial, its spaces too
     // (fixtures_500 00205272's "B Compset": 3.33pt spaces at 12pt, the
     // Arial space). The unknown-family row made it Cambria.
@@ -1064,6 +1070,12 @@ fn a_break_only_paragraphs_mark_keeps_its_space_before_in_the_next_column() {
 
 #[test]
 fn an_east_asian_hint_leaves_cyrillic_letters_in_the_ascii_face() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; an_east_asian_hint_leaves_cyrillic_letters_in_the_ascii_face measures Word's faces"
+        );
+        return;
+    }
     // fixtures_500 006ad742: w:hint="eastAsia" on Bulgarian text. Word
     // paints the Cyrillic in the ascii/hAnsi face; we switched it to the
     // East Asian one.
@@ -1080,6 +1092,12 @@ fn an_east_asian_hint_leaves_cyrillic_letters_in_the_ascii_face() {
 
 #[test]
 fn an_hansi_face_paints_only_the_characters_past_ascii() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; an_hansi_face_paints_only_the_characters_past_ascii measures Word's faces"
+        );
+        return;
+    }
     // fixtures_500 003329b5's footer: rFonts hAnsi="Calibri" with no ascii
     // face. Word paints the ASCII letters in the inherited Trebuchet and
     // only "é’€" in Calibri; we painted the whole run in Calibri.
@@ -1881,6 +1899,12 @@ fn a_continuous_section_switches_to_its_columns_mid_page() {
 
 #[test]
 fn a_mixed_face_line_is_the_tallest_ascent_over_the_deepest_descent() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; a_mixed_face_line_is_the_tallest_ascent_over_the_deepest_descent measures Word's faces"
+        );
+        return;
+    }
     // fixtures_500 001cc92b: Symbol bullets over Roboto 12 lines stack
     // 15.05pt apart in Word: Symbol's part above the baseline (12.12) over
     // Roboto's descent (2.93), not the taller single line (Symbol 14.71).
@@ -2092,6 +2116,12 @@ fn a_line_break_run_sizes_the_line_it_ends() {
 
 #[test]
 fn line_height_is_the_tallest_face_including_the_marker() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; line_height_is_the_tallest_face_including_the_marker measures Word's faces"
+        );
+        return;
+    }
     // fixtures_500 011c597c / 0103f846: Word sizes a line by its tallest
     // face. A Calibri-font marker over Arial 10 body (11.5pt) lifts the
     // item by Calibri's part above the baseline over Arial's below it:
@@ -2135,6 +2165,12 @@ fn line_height_is_the_tallest_face_including_the_marker() {
 
 #[test]
 fn a_list_marker_only_grows_the_line_above_the_baseline() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; a_list_marker_only_grows_the_line_above_the_baseline measures Word's faces"
+        );
+        return;
+    }
     // fixtures_500 00250a49: a 12pt Symbol bullet over Verdana 10. Word
     // (live, 2026-09-25) lifts the item's first baseline by the bullet's
     // taller ascent but keeps Verdana's part below it: the first line's
@@ -2171,6 +2207,12 @@ fn a_list_marker_only_grows_the_line_above_the_baseline() {
 
 #[test]
 fn an_inline_list_marker_still_lifts_its_line() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; an_inline_list_marker_still_lifts_its_line measures Word's faces"
+        );
+        return;
+    }
     // fixtures_500 0014add1: ind left=-142 firstLine=1353 puts a 12pt
     // Symbol bullet inside the first line over Times 12. Word lifts that
     // line to 14.66pt (Symbol's 12.06 above the baseline + Times' 2.6
@@ -2807,6 +2849,12 @@ fn an_inline_vml_header_picture_takes_its_line_and_after() {
 
 #[test]
 fn a_table_styles_font_beats_the_document_defaults_in_cells() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; a_table_styles_font_beats_the_document_defaults_in_cells measures Word's faces"
+        );
+        return;
+    }
     // Redlines vs 00134233: Table Grid sets the minor-theme font and Normal
     // sets none, so the cells paint in the table style's font over the
     // document's Arial default (live Word, compat modes 12 and 15). A font
@@ -3350,6 +3398,12 @@ fn a_column_break_paragraphs_mark_opens_the_next_column() {
 
 #[test]
 fn a_table_styles_cell_margins_apply() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; a_table_styles_cell_margins_apply measures Word's faces"
+        );
+        return;
+    }
     // fixtures_500 000876cd: the table's style (a custom "TableNormal")
     // sets tblCellMar 0; Word lays the text at the cell edge. We ignored
     // the style's margins and used Word's 108-twip default, wrapping the
@@ -13011,6 +13065,12 @@ fn blank_continuous_section_break_paragraph_takes_no_line() {
 
 #[test]
 fn list_marker_takes_the_paragraph_mark_run_properties() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; list_marker_takes_the_paragraph_mark_run_properties measures Word's faces"
+        );
+        return;
+    }
     // fixtures_500 019f3137: 10pt Verdana bullets whose mark rPr is sz=20
     // under an 11pt document default. Word sizes the bullet from the mark
     // (10pt), so list lines step like plain 10pt lines; an 11pt bullet
@@ -23672,6 +23732,12 @@ fn ul_trail_space_underlines_trailing_spaces_in_a_cell() {
 
 #[test]
 fn space_for_ul_adds_descent_under_east_asian_underline() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; space_for_ul_adds_descent_under_east_asian_underline measures Word's faces"
+        );
+        return;
+    }
     // xml leftover: w:compat/w:spaceForUL (ECMA-376 17.15.3.40).
     // Underlined East Asian runs get extra descent: max(3% of size,
     // 40 twips = 2pt). Omitted leaves the line box unchanged.
@@ -23760,6 +23826,12 @@ fn space_for_ul_adds_descent_under_underlined_cjk_footnote_lines() {
 
 #[test]
 fn space_for_ul_adds_descent_to_wrapped_lines_in_table_cells() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; space_for_ul_adds_descent_to_wrapped_lines_in_table_cells measures Word's faces"
+        );
+        return;
+    }
     // #144: cells measured and painted with the plain line box. A narrow
     // cell wraps one underlined CJK paragraph onto two lines (J then Q
     // start each line); the next paragraph K follows.
@@ -34843,6 +34915,12 @@ fn bmp_and_gif_pictures_are_painted() {
 
 #[test]
 fn a_cs_only_rfonts_keeps_the_paragraph_styles_latin_font() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; a_cs_only_rfonts_keeps_the_paragraph_styles_latin_font measures Word's faces"
+        );
+        return;
+    }
     // docxide-pdf czech_census_2021_instructions: body text in style
     // "Body Text" (rFonts ascii/hAnsi Arial) through character style A0
     // and direct rFonts that name only w:cs. Word sets Arial; we fell back
@@ -35562,6 +35640,12 @@ fn a_typed_label_tab_lands_on_the_hanging_indent_not_a_later_right_stop() {
 
 #[test]
 fn latin_inside_east_asian_text_takes_the_ascii_face_and_a_quarter_em_gap() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; latin_inside_east_asian_text_takes_the_ascii_face_and_a_quarter_em_gap measures Word's faces"
+        );
+        return;
+    }
     // Live Word: in "令和元年5月6日FM…" the Latin letters and digits paint
     // in the run's ascii face and sit a quarter em (3pt at 12pt) off the
     // ideographs on each side. We painted the whole run in the East Asian
@@ -35674,6 +35758,12 @@ fn a_table_cells_east_asian_line_is_sized_by_its_east_asian_face() {
 
 #[test]
 fn a_list_markers_lift_is_not_multiplied_by_the_line_spacing() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; a_list_markers_lift_is_not_multiplied_by_the_line_spacing measures Word's faces"
+        );
+        return;
+    }
     // fixtures_500 00019a41: 12pt Symbol bullets over Arial 12 at 1.5
     // lines step 21.5pt in Word: the text's 13.8pt line times 1.5 plus
     // the bullet's 0.8pt lift, once. We multiplied the lifted 14.6pt line
@@ -35982,6 +36072,12 @@ fn a_landscape_flag_does_not_swap_a_portrait_page_size() {
 
 #[test]
 fn a_vertical_section_runs_its_lines_down_the_page() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; a_vertical_section_runs_its_lines_down_the_page measures Word's faces"
+        );
+        return;
+    }
     // fixtures_500 00603679: every section is w:textDirection tbRl. Word
     // sets the Japanese text in columns running down the landscape page,
     // right to left, kanji upright. We set it in horizontal lines.
@@ -36037,6 +36133,12 @@ fn a_tall_row_under_a_repeating_header_splits_where_it_starts() {
 
 #[test]
 fn a_font_file_named_short_of_its_family_is_found() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; a_font_file_named_short_of_its_family_is_found measures Word's faces"
+        );
+        return;
+    }
     // docxide international_terrorism_thesis: Normal is "Arial Unicode MS",
     // installed as "Arial Unicode.ttf". Word draws it (a 16pt line in the
     // page-number header); we skipped the file for its short name and set
@@ -36190,6 +36292,12 @@ fn a_win_box_taller_than_the_line_keeps_the_hhea_ascent() {
 
 #[test]
 fn ideographs_in_a_latin_east_asian_font_break_as_words_before_mode_15() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; ideographs_in_a_latin_east_asian_font_break_as_words_before_mode_15 measures Word's faces"
+        );
+        return;
+    }
     // fixtures_500 005919f8: compatibility mode 12, eastAsia font Calibri.
     // Word's oracle keeps "报告讲座主题…" as one word: it moves whole under
     // "1." and splits by character only at that line's end. An East Asian
