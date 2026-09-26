@@ -35953,3 +35953,62 @@ fn an_inline_group_with_a_picture_takes_one_line() {
         "the dot must not add a line: heading at {with_dot} vs {without}"
     );
 }
+
+#[test]
+fn link_styles_takes_the_template_normal() {
+    // en a 9b100bdc: settings `w:linkStyles` makes Word refresh the styles
+    // from the attached Normal.dotm, whose Normal is empty over docDefaults
+    // of 12pt, after=160, line=278. Word set the body at 12pt on 16pt
+    // lines; we kept the file's Normal (11pt, 259) and fitted 45 pages
+    // where Word has 56.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+            <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+            <w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style></w:styles>";
+    let body = "<w:p><w:r><w:t>LineAq</w:t></w:r></w:p><w:p><w:r><w:t>LineBq</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let step = |link: &str| {
+        let settings = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">{link}</w:settings>"
+        );
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[
+                ("rIdSt", "styles", "styles.xml"),
+                ("rIdSet", "settings", "settings.xml"),
+            ],
+            &[
+                ("word/styles.xml", styles.to_string()),
+                ("word/settings.xml", settings),
+            ],
+        ))
+        .expect("linkStyles");
+        let a = pdf_glyph_text_xy(&pdf, "LineAq").expect("a").1;
+        let b = pdf_glyph_text_xy(&pdf, "LineBq").expect("b").1;
+        a - b
+    };
+    let own = step("");
+    let linked = step("<w:linkStyles/>");
+    // a7110391 / a4168b8a: an attached template on the author's disk is not
+    // there; Word keeps the file's own styles.
+    let elsewhere = step("<w:attachedTemplate r:id=\"rIdT\"/><w:linkStyles/>");
+    assert!(
+        (elsewhere - own).abs() < 0.01,
+        "a named template Word cannot load leaves the styles alone, got {elsewhere} vs {own}"
+    );
+    // Own Normal: 11pt single lines. Template: 12pt x 278/240 + 8pt after.
+    assert!(
+        own < 14.0,
+        "the file's own Normal is single-spaced 11pt, got {own}"
+    );
+    assert!(
+        linked > 23.0,
+        "linkStyles lays out with the template's 12pt / 278 / after 8, got {linked}"
+    );
+}
+

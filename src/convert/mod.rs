@@ -2578,6 +2578,11 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             bare_defaults: false,
         };
     };
+    let xml = if settings_link_styles(pkg) {
+        link_template_styles(&xml)
+    } else {
+        xml
+    };
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
     let Some(root) = dom.root(doc) else {
@@ -5544,6 +5549,78 @@ fn mark_ideograph_words(blocks: &mut [Block], fonts: &Fonts, compat_mode: u8) {
             _ => {}
         }
     }
+}
+
+/// `w:linkStyles` with no `w:attachedTemplate`: Word refreshes the styles
+/// from Normal.dotm when it opens the file. A named template lives on the
+/// author's machine (a7110391's `C:\Users\...\NESO ... .dotx`, a4168b8a's
+/// `D:\CASA ... .dotx`); Word cannot load it and keeps the file's styles.
+fn settings_link_styles(pkg: &PartFs) -> bool {
+    pkg.part_string(&settings_part(pkg)).is_some_and(|xml| {
+        settings_dom_xml(&xml).is_some_and(|(dom, root)| {
+            dom.descendants(root, Some(&W::name("attachedTemplate")))
+                .is_empty()
+                && dom
+                    .descendants(root, Some(&W::name("linkStyles")))
+                    .into_iter()
+                    .any(|n| !matches!(attr_any(&dom, n, "val"), Some("0" | "false" | "off")))
+        })
+    })
+}
+
+/// The stock Normal.dotm's docDefaults: theme minor font, 12pt, kern 1pt,
+/// after=160, line=278.
+const TEMPLATE_DOC_DEFAULTS: &str = "<w:docDefaults><w:rPrDefault><w:rPr>\
+    <w:rFonts w:asciiTheme=\"minorHAnsi\" w:eastAsiaTheme=\"minorHAnsi\" w:hAnsiTheme=\"minorHAnsi\" w:cstheme=\"minorBidi\"/>\
+    <w:kern w:val=\"2\"/><w:sz w:val=\"24\"/><w:szCs w:val=\"24\"/>\
+    <w:lang w:val=\"en-US\" w:eastAsia=\"en-US\" w:bidi=\"ar-SA\"/></w:rPr></w:rPrDefault>\
+    <w:pPrDefault><w:pPr><w:spacing w:after=\"160\" w:line=\"278\" w:lineRule=\"auto\"/></w:pPr>\
+    </w:pPrDefault></w:docDefaults>";
+
+/// styles.xml as Word sees it after `w:linkStyles` pulled in the stock
+/// Normal.dotm (en a 9b100bdc: 12pt on 16pt lines, not the file's 11pt on
+/// 259): its docDefaults, and an empty default paragraph style. The
+/// template's other styles (Default Paragraph Font, Normal Table, No List)
+/// are Word's built-in ones already.
+fn link_template_styles(xml: &str) -> String {
+    let mut out = xml.to_string();
+    if let Some(start) = out.find("<w:docDefaults") {
+        let end = if out[start..].starts_with("<w:docDefaults/>") {
+            Some(start + "<w:docDefaults/>".len())
+        } else {
+            out[start..]
+                .find("</w:docDefaults>")
+                .map(|e| start + e + "</w:docDefaults>".len())
+        };
+        if let Some(end) = end {
+            out.replace_range(start..end, TEMPLATE_DOC_DEFAULTS);
+        }
+    } else if let Some(open) = out.find("<w:styles")
+        && let Some(gt) = out[open..].find('>')
+    {
+        out.insert_str(open + gt + 1, TEMPLATE_DOC_DEFAULTS);
+    }
+    let mut from = 0;
+    while let Some(at) = out[from..].find("<w:style ").map(|i| from + i) {
+        let Some(tag_end) = out[at..].find('>').map(|i| at + i) else {
+            break;
+        };
+        let tag = &out[at..=tag_end];
+        let normal = tag.contains("w:type=\"paragraph\"") && tag.contains("w:default=\"1\"");
+        let Some(end) = out[at..]
+            .find("</w:style>")
+            .map(|i| at + i + "</w:style>".len())
+        else {
+            break;
+        };
+        if normal && !tag.ends_with("/>") {
+            let empty = format!("{tag}<w:name w:val=\"Normal\"/><w:qFormat/></w:style>");
+            out.replace_range(at..end, &empty);
+            break;
+        }
+        from = end;
+    }
+    out
 }
 
 fn settings_compat_mode(pkg: &PartFs) -> u8 {
