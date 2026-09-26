@@ -314,7 +314,9 @@ fi
 # =============================================================================
 
 say "5. Publish dry-runs"
-cargo publish --dry-run --locked
+# The bump and summaries are staged but not committed until step 6, so the
+# dry run packages the dirty tree; the real publish (step 8) stays clean.
+cargo publish --dry-run --locked --allow-dirty
 (cd jubarte-wasm/npm && npm publish --dry-run >/dev/null)
 uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out target/release-check >/dev/null
 # The pypi summary must survive into the sdist or we stop here.
