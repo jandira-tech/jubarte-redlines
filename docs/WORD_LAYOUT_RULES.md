@@ -125,6 +125,12 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 - **Space before a header's first paragraph:** an explicit `space-before` is
   kept, an automatic one is dropped (6742f5c).
 - **A `type="first"` header or footer** shows only with `w:titlePg` (6fd8f5e).
+- **A picture-only header paragraph** stacks its space before, the picture,
+  and its space after. The body starts below all three when they overflow the
+  top margin (b76f92a).
+  - Probe: the first body baseline for none / before / after / both is
+    67.92 / 73.2 / 73.2 / 79.2 in Word.
+  - A right-aligned logo lowered this way stays right-aligned.
 
 ## Fonts: Mac-only font metrics (measured, not yet implemented)
 
