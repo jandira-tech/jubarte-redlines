@@ -516,6 +516,13 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     {
                         let f = fonts.get(*face);
                         let (r, g, b) = (color[0], color[1], color[2]);
+                        // A `w:w` scale squeezes each glyph along the
+                        // column, as the scaled advances were at layout.
+                        let squeeze = if (*hscale - 1.0).abs() > 0.001 {
+                            format!("{:.4} 0 0 1 0 0 cm ", *hscale)
+                        } else {
+                            String::new()
+                        };
                         let mut gx = *x;
                         for (ch, gid) in text.chars().zip(glyphs.iter()) {
                             let adv = f.advance_pt(ch, *size) * *hscale;
@@ -531,15 +538,21 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                                 };
                                 let _ = writeln!(
                                     stream,
-                                    "q 1 0 0 1 {cx:.2} {cy:.2} cm 0 1 -1 0 0 0 cm BT /{name} {size:.2} Tf \
+                                    "q 1 0 0 1 {cx:.2} {cy:.2} cm {squeeze}0 1 -1 0 0 0 cm BT /{name} {size:.2} Tf \
                                      {r:.3} {g:.3} {b:.3} rg {ox:.2} {oy:.2} Td <{gid:04X}> Tj ET Q",
                                     ox = lift - adv / 2.0,
                                     oy = lift - 0.38 * size,
                                 );
-                            } else {
+                            } else if squeeze.is_empty() {
                                 let _ = writeln!(
                                     stream,
                                     "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {gx:.2} {y:.2} Td <{gid:04X}> Tj ET",
+                                );
+                            } else {
+                                let _ = writeln!(
+                                    stream,
+                                    "q 1 0 0 1 {gx:.2} {y:.2} cm {squeeze}BT /{name} {size:.2} Tf \
+                                     {r:.3} {g:.3} {b:.3} rg 0 0 Td <{gid:04X}> Tj ET Q",
                                 );
                             }
                             gx += adv;

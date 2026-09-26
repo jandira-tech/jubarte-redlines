@@ -1122,7 +1122,7 @@ fn a_horizontally_scaled_run_squeezes_its_glyphs() {
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("scaled");
     let content = pdf_content_streams(&pdf).join("\n");
     assert!(
-        content.contains("0.1200 0 0 0.24") || content.contains("q 0.5000 0 0 1 "),
+        content.contains("0.1200 0 0 0.24") || content.contains(" cm 0.5000 0 0 1 0 0 cm BT"),
         "the glyphs carry the 50% scale"
     );
 }
@@ -36389,6 +36389,32 @@ fn a_vertical_section_runs_its_lines_down_the_page() {
     assert!(
         content.contains(" cm 0 1 -1 0 0 0 cm BT"),
         "each kanji stands upright"
+    );
+}
+
+#[test]
+fn a_scaled_vertical_run_squeezes_its_glyphs_with_its_advances() {
+    if !word_dfonts_available() {
+        eprintln!("skip: Word DFonts absent; vertical glyphs need Word's CJK faces");
+        return;
+    }
+    // A w:w run in a tbRl section: the layout advances are scaled, so each
+    // glyph, upright or turned, is squeezed along the column the same way
+    // the horizontal path squeezes a scaled run.
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:eastAsia=\"MS Mincho\"/><w:w w:val=\"50\"/></w:rPr>\
+        <w:t>無「</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"16838\" w:h=\"11906\" w:orient=\"landscape\"/>\
+        <w:pgMar w:top=\"1701\" w:right=\"1985\" w:bottom=\"1701\" w:left=\"1701\" w:header=\"851\" w:footer=\"992\"/>\
+        <w:textDirection w:val=\"tbRl\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("vertical w:w");
+    let content = pdf_content_streams(&pdf).join("\n");
+    assert!(
+        content.contains(" cm 0.5000 0 0 1 0 0 cm 0 1 -1 0 0 0 cm BT"),
+        "the upright kanji is squeezed along the column; {content}"
+    );
+    assert!(
+        content.contains("q 0.1200 0 0 0.24 "),
+        "the turned bracket is squeezed along the column; {content}"
     );
 }
 
