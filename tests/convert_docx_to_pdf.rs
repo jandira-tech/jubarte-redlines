@@ -35443,3 +35443,55 @@ fn a_footer_text_boxs_page_field_shows_the_page() {
         "the box shows page 1"
     );
 }
+
+#[test]
+fn a_vml_line_strokes_where_word_draws_it() {
+    // English redline d45aa3d5 draws its rules as VML v:line, alone or in a
+    // v:group; we drew none. Live Word 2026-09-25: a page-relative line
+    // from="72pt,300pt" to="400pt,300pt" strokes exactly there, in its
+    // strokecolor and strokeweight.
+    let body = "<w:p><w:r><w:t>Text</w:t></w:r><w:r><w:pict xmlns:v=\"urn:schemas-microsoft-com:vml\">\
+        <v:line id=\"l1\" style=\"position:absolute;z-index:2;mso-position-horizontal-relative:page;\
+        mso-position-vertical-relative:page\" from=\"72pt,300pt\" to=\"400pt,300pt\" \
+        strokecolor=\"#ff0000\" strokeweight=\"2pt\"/></w:pict></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("vml line");
+    let content = pdf_content_streams(&pdf).concat();
+    assert!(
+        content.contains("1.000 0.000 0.000 RG"),
+        "the line strokes red"
+    );
+    // PDF y is from the bottom: 792 - 300 = 492.
+    assert!(
+        content.contains("72.00 492.00 m 400.00 492.00 l"),
+        "it runs 72..400 at y 300 from the top; {}",
+        &content[..content.len().min(600)]
+    );
+}
+
+#[test]
+fn a_vml_line_without_a_vertical_frame_hangs_from_its_paragraph() {
+    // English part a bc404781: form rules as v:line with only
+    // mso-position-horizontal-relative:page. Word hangs them from their
+    // paragraph (y 575.. on page 2); taken as page-relative they sat at the
+    // top of the page.
+    let body = "<w:p><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p>\
+        <w:p><w:r><w:t>Anchor</w:t></w:r><w:r><w:pict xmlns:v=\"urn:schemas-microsoft-com:vml\">\
+        <v:line id=\"l1\" style=\"position:absolute;z-index:-1;mso-position-horizontal-relative:page\" \
+        from=\"67.3pt,9.85pt\" to=\"575pt,9.85pt\" strokeweight=\"1pt\"/></w:pict></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+        <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("para line");
+    let (_, anchor) = pdf_glyph_text_xy(&pdf, "Anchor").expect("anchor");
+    let content = pdf_content_streams(&pdf).concat();
+    let y = content
+        .split("m 575.00 ")
+        .next()
+        .and_then(|head| head.rsplit(' ').nth(1))
+        .and_then(|v| v.parse::<f32>().ok())
+        .expect("the line's start y");
+    assert!(
+        (anchor - y).abs() < 12.0,
+        "the line hangs 9.85pt below its paragraph's top, by its text: line {y}, text {anchor}"
+    );
+}

@@ -2210,6 +2210,14 @@ enum ImageKind {
     /// Missing image relationship Target: Word's 1in placeholder box
     /// (plan.md Step 10 E), not the `wp:extent` reservation.
     Broken,
+    /// A VML `v:line`: its ends as fractions of the laid box (y from the
+    /// top), stroked in its colour and width.
+    VmlLine {
+        from: [f32; 2],
+        to: [f32; 2],
+        color: [f32; 3],
+        width: f32,
+    },
 }
 
 fn twip(v: f32) -> f32 {
@@ -13171,10 +13179,160 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     after_text: false,
                 });
             }
+            for line in descendants_local(dom, root, "line") {
+                if let Some(img) = vml_line_image(dom, line, root) {
+                    out.push(img);
+                }
+            }
         }
     }
     out.sort_by_key(|im| (!im.behind, im.z));
     out
+}
+
+/// A VML `v:line` as a laid picture (live Word 2026-09-25). Alone, its
+/// `from`/`to` are lengths in its anchor frame and its box is their span;
+/// inside a `v:group` they are group coordinates (`coordsize`,
+/// `coordorigin`) scaled onto the group's box, which the group anchors.
+fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
+    let from = attr_any(dom, line, "from")?;
+    if attr_any(dom, line, "stroked").is_some_and(|v| v.starts_with('f')) {
+        return None;
+    }
+    let to = attr_any(dom, line, "to").unwrap_or("10,10");
+    let color = attr_any(dom, line, "strokecolor")
+        .and_then(vml_color)
+        .unwrap_or([0.0; 3]);
+    let width = attr_any(dom, line, "strokeweight")
+        .and_then(vml_len_pt)
+        .unwrap_or(0.75);
+    let pair = |raw: &str, len: &dyn Fn(&str) -> Option<f32>| -> Option<[f32; 2]> {
+        let mut it = raw.split(',');
+        Some([
+            len(it.next()?.trim())?,
+            len(it.next().unwrap_or("0").trim())?,
+        ])
+    };
+    let group = dom
+        .ancestors(line, None)
+        .into_iter()
+        .take_while(|a| *a != root)
+        .find(|a| local_name_is(dom, *a, "group"));
+    let (slot, w, h, a, b) = if let Some(g) = group {
+        let style = attr_any(dom, g, "style")?;
+        let w = vml_style_pt(style, "width")?;
+        let h = vml_style_pt(style, "height").unwrap_or(0.0);
+        let num = |v: &str| v.parse::<f32>().ok();
+        let size = attr_any(dom, g, "coordsize")
+            .and_then(|c| pair(c, &num))
+            .unwrap_or([1000.0, 1000.0]);
+        let origin = attr_any(dom, g, "coordorigin")
+            .and_then(|c| pair(c, &num))
+            .unwrap_or([0.0, 0.0]);
+        let frac = |p: [f32; 2]| {
+            [
+                (p[0] - origin[0]) / size[0].max(1.0),
+                (p[1] - origin[1]) / size[1].max(1.0),
+            ]
+        };
+        let a = frac(pair(from, &num)?);
+        let b = frac(pair(to, &num)?);
+        (vml_shape_slot(dom, g)?, w, h, a, b)
+    } else {
+        // VML lengths without a unit are pixels.
+        let len = |v: &str| {
+            if v.chars().any(|c| c.is_ascii_alphabetic()) {
+                vml_len_pt(v)
+            } else {
+                v.parse::<f32>().ok().map(|px| px * 0.75)
+            }
+        };
+        let p = pair(from, &len)?;
+        let q = pair(to, &len)?;
+        let (x0, y0) = (p[0].min(q[0]), p[1].min(q[1]));
+        let (w, h) = ((p[0] - q[0]).abs(), (p[1] - q[1]).abs());
+        let frac = |v: f32, lo: f32, span: f32| if span > 0.0 { (v - lo) / span } else { 0.0 };
+        let a = [frac(p[0], x0, w), frac(p[1], y0, h)];
+        let b = [frac(q[0], x0, w), frac(q[1], y0, h)];
+        let mut slot = vml_shape_slot(dom, line)?;
+        if let ImageSlot::Float {
+            page_x,
+            page_y,
+            col_x,
+            para_y,
+            v_off,
+            ..
+        } = &mut slot
+        {
+            for x in [page_x, col_x].into_iter().flatten() {
+                *x += x0;
+            }
+            for y in [page_y, para_y, v_off].into_iter().flatten() {
+                *y += y0;
+            }
+        }
+        // A line with no frame named is placed in VML's default "text"
+        // frame: its paragraph and column, not the page (bc404781's form
+        // rules name only the horizontal frame and hang from their
+        // paragraph in Word).
+        let style = attr_any(dom, line, "style").unwrap_or("");
+        if let ImageSlot::Float {
+            page_x,
+            col_x,
+            page_y,
+            para_y,
+            v_rel,
+            h_rel,
+            ..
+        } = &mut slot
+        {
+            if vml_style_token(style, "mso-position-vertical-relative").is_empty()
+                && let Some(y) = page_y.take()
+            {
+                *para_y = Some(y);
+                *v_rel = RelFrame::Paragraph;
+            }
+            if vml_style_token(style, "mso-position-horizontal-relative").is_empty()
+                && let Some(x) = page_x.take()
+            {
+                *col_x = Some(x);
+                *h_rel = RelFrame::Column;
+            }
+        }
+        (slot, w, h, a, b)
+    };
+    Some(LaidImage {
+        w,
+        h,
+        kind: ImageKind::VmlLine {
+            from: a,
+            to: b,
+            color,
+            width,
+        },
+        slot,
+        behind: false,
+        z: 0,
+        crop: None,
+        rotate_deg: 0.0,
+        oval: false,
+        chrome_align: Align::Left,
+        chrome_lead: false,
+        chrome_flow: false,
+        chrome_under_table: false,
+        inset: [0.0; 4],
+        chrome_leading: None,
+        chrome_tab_line: None,
+        chrome_drop: 0.0,
+        chrome_drop_tab: None,
+        chrome_para: 0,
+        chrome_after: 0.0,
+        tail_anchor: false,
+        outline: None,
+        gap_before: 0.0,
+        lead_chars: 0,
+        after_text: false,
+    })
 }
 
 /// A picture's `pic:spPr/a:ln` outline: colour and width (Word's picture
@@ -19146,6 +19304,19 @@ impl<'a> Layout<'a> {
                 width: 0.75,
                 color: [0.6, 0.6, 0.6],
             }),
+            ImageKind::VmlLine {
+                from,
+                to,
+                color,
+                width,
+            } => self.current().ops.push(Op::Line {
+                x1: x + from[0] * dw,
+                y1: y + dh - from[1] * dh,
+                x2: x + to[0] * dw,
+                y2: y + dh - to[1] * dh,
+                width: *width,
+                color: *color,
+            }),
         }
         if let Some((color, width)) = img.outline {
             self.current().ops.push(Op::StrokeRect {
@@ -19542,6 +19713,19 @@ impl<'a> Layout<'a> {
                 h: dh,
                 width: 0.75,
                 color: [0.6, 0.6, 0.6],
+            }),
+            ImageKind::VmlLine {
+                from,
+                to,
+                color,
+                width,
+            } => self.current().ops.push(Op::Line {
+                x1: x + from[0] * dw,
+                y1: y + dh - from[1] * dh,
+                x2: x + to[0] * dw,
+                y2: y + dh - to[1] * dh,
+                width: *width,
+                color: *color,
             }),
         }
     }
