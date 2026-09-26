@@ -13,7 +13,7 @@ Reads every results store we keep and lists, for each metric:
   mean is ranked by the average of its per-document scores.
 
 Sources (in neurotic_docx_bench, $NEUROTIC_DOCX_BENCH): results/bench.jsonl, results/speed.jsonl, results/redline_speed_bench,
-results/docx_to_pdf*.json, results/docxide_metrics*.json,
+results/docx_to_pdf*.json, results/docxide_metrics*.json, results/redline_wordpdf,
 results/soffice_vs_word_redlines_randomized, grok_run/docxide_metrics, and the
 jubarte loop's English-corpus, redlined-corpus and docxide-suite runs.
 
@@ -501,6 +501,78 @@ def docx_to_pdf_pooled() -> None:
     pooled(REDLINE_CORPORA, 'pool:redlines', 'docx→pdf — every redlined corpus pooled (redlines only)', 'redlines')
 
 
+# Word truth for redlines: Word's own redline of each pair (word_redline.py), converted to PDF
+# by Word (word_pdf.py). Files: results/redline_wordpdf/[en_]<row>[~<maker>]-<version>_<scorer>.json,
+# <scorer> = harness (`bench compare`, {stem: 0-100}) or docxide (docxide-metrics rows). Each row
+# swaps one side of the pipeline, so its score isolates what that side does.
+WORDPDF_SETS = {'': 'neurotic redline pools (803 pairs)', 'en_': 'English redlines (451 pairs)'}
+WORDPDF_ROWS = {
+    'A_redline': '{maker} redline (Word PDF)',
+    'B_convert': 'jubarte PDF (Word redline)',
+    'C_soffice': 'soffice PDF (Word redline)',
+    'D_e2e': 'jubarte redline + jubarte PDF',
+    'E_e2e_soffice': 'jubarte redline + soffice PDF',
+}
+
+
+def wordpdf_row(stem: str) -> tuple[str, str, str, str] | None:
+    """`[en_]<row>[~<maker>]-<version>_<scorer>` -> (set, tool, version, scorer)."""
+    name, _, rest = stem.partition('-')
+    version, _, scorer = rest.rpartition('_')
+    if scorer not in ('harness', 'docxide') or not version:
+        return None
+    corpus = 'en_' if name.startswith('en_') else ''
+    row, _, maker = name.removeprefix(corpus).partition('~')
+    label = WORDPDF_ROWS.get(row)
+    if label is None:
+        return None
+    maker = maker or 'jubarte'
+    tool = label.format(maker=maker)
+    if tool.startswith('jubarte'):
+        version = EN_TAGS.get(version, f'jubarte@{version}')
+    elif row == 'C_soffice':
+        version = EN_COMPETITORS['soffice']
+    else:
+        version = f'{maker} {version}'
+    return corpus, tool, version, scorer
+
+
+def redline_wordpdf() -> None:
+    for path in sorted((RES / 'redline_wordpdf').glob('*.json')):
+        parsed = wordpdf_row(path.stem)
+        if parsed is None:
+            continue
+        corpus, tool, version, scorer = parsed
+        doc = json.loads(path.read_text())
+        if scorer == 'harness':
+            scores = [float(v) for v in doc.values() if isinstance(v, (int, float))]
+            unit = 'harness score 0-100'
+        else:
+            scores = [float(r.get('jaccard') or 0.0) for r in doc]
+            unit = 'docxide-metrics Jaccard 0-1'
+        if not scores:
+            continue
+        key = metric(
+            f'wordpdf:{corpus}:{scorer}',
+            title=f'redlines vs Word truth — {WORDPDF_SETS[corpus]} ({unit.split(" ")[0]})',
+            kind='redline markup',
+            reference='Word (Word redline, Word PDF)',
+            docs='redlines',
+            unit=unit,
+        )
+        mean, median = stats(scores)
+        add(
+            metric=key,
+            tool=tool,
+            version=version,
+            when=when_of(None, path),
+            mean=mean,
+            median=median,
+            n=len(scores),
+            scores=scores,
+        )
+
+
 def pdf_to_docx() -> None:
     metric('pdf_to_docx', title='pdf→docx', kind='pdf->docx', reference='-', docs='-', unit='-')
 
@@ -575,6 +647,12 @@ def render() -> str:
         'per corpus; the Corpora column shows which corpora (and how many documents) each row covers,',
         'so a row missing a corpus is averaged over fewer documents.',
         '',
+        'The "redlines vs Word truth" tables score every row against Word\'s own redline of the pair',
+        '(word_redline.py), converted to PDF by Word (word_pdf.py). Each row swaps one side: a',
+        '"<tool> redline (Word PDF)" row measures redlining alone, a "<tool> PDF (Word redline)" row',
+        'measures conversion alone, and "jubarte redline + <converter> PDF" is end to end. A pair Word',
+        'could not redline is skipped; a tool that produced no PDF for a pair scores 0 on it.',
+        '',
         '| Metric | Kind | Reference PDFs | Documents | Unit |',
         '| --- | --- | --- | --- | --- |',
     ]
@@ -598,11 +676,12 @@ def render() -> str:
             runs = [r for r in RUNS if r.metric == m.key]
             if not m.key.startswith('pool:'):  # pooled runs are already one per week
                 runs = best_per_window(runs, m.lower_is_better)
-            runs = [r for r in runs if r.rank_value is not None]
-            if not runs:
+            ranked = [(v, r) for r in runs if (v := r.rank_value) is not None]
+            if not ranked:
                 lines += ['', '_No run measured yet._']
                 continue
-            runs.sort(key=lambda r: r.rank_value, reverse=not m.lower_is_better)
+            ranked.sort(key=lambda vr: vr[0], reverse=not m.lower_is_better)
+            runs = [r for _, r in ranked]
             pool = m.key.startswith('pool:')
             head = '| Rank | Tool | Version | Date | Docs | Mean | Median |' + (' Corpora |' if pool else '')
             lines += ['', head, '|' + ' --- |' * (8 if pool else 7)]
@@ -622,7 +701,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--out', default=str(REPO / 'RESULTS.md'))
     args = ap.parse_args()
-    for load in (bench_jsonl, speed, harness_docx_to_pdf, soffice_vs_word, docx_to_pdf_pooled, pdf_to_docx):
+    for load in (
+        bench_jsonl,
+        speed,
+        redline_wordpdf,
+        harness_docx_to_pdf,
+        soffice_vs_word,
+        docx_to_pdf_pooled,
+        pdf_to_docx,
+    ):
         load()
     Path(args.out).write_text(render())
     print(f'wrote {args.out}: {len(METRICS)} metrics, {len(RUNS)} runs')
