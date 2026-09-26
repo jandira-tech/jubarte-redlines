@@ -5110,7 +5110,8 @@ fn vml_images_take_the_slot_of_their_own_shape() {
     // in-flow one. Each v:imagedata follows its owning shape; the flow
     // image must not borrow the absolute shape's page position.
     let body = "<w:p><w:r><w:pict>\
-           <v:shape style=\"position:absolute;margin-left:300pt;margin-top:100pt;width:100pt;height:50pt\">\
+           <v:shape style=\"position:absolute;margin-left:300pt;margin-top:100pt;width:100pt;height:50pt;\
+             mso-position-horizontal-relative:page;mso-position-vertical-relative:page\">\
              <v:imagedata r:id=\"rIdImg\"/></v:shape>\
            <v:shape style=\"width:60pt;height:30pt\"><v:imagedata r:id=\"rIdImg\"/></v:shape>\
          </w:pict></w:r></w:p>\
@@ -32147,7 +32148,8 @@ fn vml_absolute_imagedata_uses_margin_left_top() {
     // xml 3.4 ckpt 5: VML pictures with position:absolute are the same
     // Placement as text boxes, not in-flow at the left margin.
     let body = "<w:p><w:r><w:pict>\
-          <v:shape style=\"position:absolute;margin-left:187.95pt;margin-top:15.9pt;width:72pt;height:36pt\">\
+          <v:shape style=\"position:absolute;margin-left:187.95pt;margin-top:15.9pt;width:72pt;height:36pt;\
+            mso-position-horizontal-relative:page;mso-position-vertical-relative:page\">\
             <v:imagedata r:id=\"rIdImg\"/>\
           </v:shape></w:pict></w:r>\
           <w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>AfterVml</w:t></w:r></w:p>\
@@ -37328,6 +37330,32 @@ fn an_autofit_column_widens_to_its_longest_word() {
     assert!(
         x_q < 200.0,
         "the 200pt table keeps its width: next cell x {x_q}"
+    );
+}
+
+#[test]
+fn a_vml_shape_without_a_relative_sits_in_the_column() {
+    // VML's absent mso-position-*-relative is `text`: e73ba1e0's header
+    // logo group at margin-left 331.4pt, margin-top -12.5pt paints at
+    // 399.5pt, 38.6pt in Word (the margin plus its offset), not at the
+    // page origin.
+    let body = "<w:p><w:r><w:t>Lead</w:t></w:r></w:p>\
+        <w:p><w:r><w:pict><v:shape filled=\"f\" stroked=\"f\" \
+          style=\"position:absolute;margin-left:100pt;margin-top:20pt;width:120pt;height:30pt;z-index:1\">\
+          <v:textbox inset=\"0,0,0,0\"><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p>\
+          </w:txbxContent></v:textbox></v:shape></w:pict></w:r><w:r><w:t>Anchor</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+          <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert unanchored vml");
+    let (bx, by) = pdf_literal_td_xy(&pdf, "Boxed").expect("the box text is painted");
+    let (_, ay) = pdf_literal_td_xy(&pdf, "Anchor").expect("the anchor paragraph is painted");
+    assert!(
+        (bx - 172.0).abs() < 1.0,
+        "box at the margin + 100pt, got {bx}"
+    );
+    assert!(
+        (ay - by - 20.0).abs() < 2.0,
+        "box 20pt below its paragraph's top: box {by}, anchor {ay}"
     );
 }
 

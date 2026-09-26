@@ -14401,13 +14401,14 @@ fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
             "center" => Align::Center,
             _ => Align::Left,
         };
-        // Absent relativeFrom keeps page-origin margin-left/top (DeepL
-        // overlay). `text` is Word's paragraph/column.
+        // An absent relative is VML's `text`: the column and the anchor
+        // paragraph (e73ba1e0's header logo group at margin-left 331.4pt,
+        // margin-top -12.5pt paints at 399.5pt, 38.6pt in Word).
         let h_abs = h_pos.is_empty() || h_pos == "absolute";
         let v_abs = v_pos.is_empty() || v_pos == "absolute";
-        let h_page = h_rel.is_empty() || h_rel == "page";
-        let v_page = v_rel.is_empty() || v_rel == "page";
-        let v_para = matches!(v_rel.as_str(), "text" | "paragraph" | "line");
+        let h_page = h_rel == "page";
+        let v_page = v_rel == "page";
+        let v_para = matches!(v_rel.as_str(), "" | "text" | "paragraph" | "line");
         // `<w10:wrap type=…>` inside the shape names the wrap when the
         // style doesn't (069252c3's topAndBottom org-chart group). Word
         // ignores it on a `v:line`: bc404781's wrapped form rules move no
@@ -14423,7 +14424,7 @@ fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
             wrap = ty.to_ascii_lowercase();
         }
         let v_frame = match v_rel.as_str() {
-            "" | "page" => RelFrame::Page,
+            "page" => RelFrame::Page,
             "margin" => RelFrame::Margin,
             "line" => RelFrame::Line,
             "top-margin-area" => RelFrame::TopMargin,
@@ -14437,7 +14438,7 @@ fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
             page_x: (h_page && h_abs).then_some(mx),
             page_y: (v_page && v_abs).then_some(my),
             col_x: (!h_page && h_abs).then_some(mx),
-            col_in_column: h_rel == "text",
+            col_in_column: h_rel.is_empty() || h_rel == "text",
             para_y: (v_para && v_abs).then_some(my),
             pct_x: None,
             pct_y: None,
@@ -14451,7 +14452,7 @@ fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
             dist_t: vml_style_pt(style, "mso-wrap-distance-top").unwrap_or(0.0),
             dist_b: vml_style_pt(style, "mso-wrap-distance-bottom").unwrap_or(0.0),
             h_rel: match h_rel.as_str() {
-                "" | "page" => RelFrame::Page,
+                "page" => RelFrame::Page,
                 "margin" => RelFrame::Margin,
                 "char" => RelFrame::Character,
                 "left-margin-area" => RelFrame::LeftMargin,
@@ -29915,7 +29916,7 @@ mod drawing_tests {
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
  xmlns:v="urn:schemas-microsoft-com:vml" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 <w:body><w:p><w:r><w:pict>
-  <v:shape style="position:absolute;margin-left:187.95pt;margin-top:15.9pt;width:72pt;height:36pt">
+  <v:shape style="position:absolute;margin-left:187.95pt;margin-top:15.9pt;width:72pt;height:36pt;mso-position-horizontal-relative:page;mso-position-vertical-relative:page">
     <v:imagedata r:id="rIdImg"/>
   </v:shape>
 </w:pict></w:r></w:p></w:body></w:document>"#;
@@ -29942,7 +29943,8 @@ mod drawing_tests {
 
     /// image_out_of_folder: DeepL parks the banner PNG in `wp:wrapSquare`
     /// and the same words in a sibling VML `w:pict`. Word prints the PNG
-    /// only; the pict is editor chrome.
+    /// only; the pict is editor chrome. The file's pict is page-relative
+    /// in both axes (an absent relative is VML's `text`).
     const DEEPL_SIBLING_XML: &str = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
@@ -29963,7 +29965,7 @@ mod drawing_tests {
   </wp:anchor>
 </w:drawing>
 <w:pict>
-  <v:shape style="position:absolute;margin-left:187.95pt;margin-top:15.9pt;width:477.9pt;height:42.8pt" filled="f" stroked="f">
+  <v:shape style="position:absolute;margin-left:187.95pt;margin-top:15.9pt;width:477.9pt;height:42.8pt;mso-position-horizontal-relative:page;mso-position-vertical-relative:page" filled="f" stroked="f">
   <v:textbox>
     <w:txbxContent><w:p><w:r><w:t>Subscribe to DeepL Pro</w:t></w:r></w:p></w:txbxContent>
   </v:textbox>
