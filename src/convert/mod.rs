@@ -14501,6 +14501,9 @@ struct HfChrome {
     header_tables: Vec<ChromeTable>,
     footer_tables: Vec<ChromeTable>,
     mirror_margins: bool,
+    /// `w:evenAndOddHeaders`: change bars sit on the outside border,
+    /// right on odd pages (live Word 2026-09-25).
+    rev_bars_facing: bool,
     character_spacing: CharacterSpacing,
     page_background: Option<[f32; 3]>,
     /// `w:compat/w:ulTrailSpace` (xml leftover).
@@ -14557,6 +14560,7 @@ fn first_section_hf(
         header_tables: header.start.tables,
         footer_tables: footer.start.tables,
         mirror_margins: settings_mirror_margins(pkg),
+        rev_bars_facing: settings_even_and_odd_headers(pkg),
         character_spacing: settings_character_spacing(pkg),
         page_background,
         ul_trail_space: settings_ul_trail_space(pkg),
@@ -15988,6 +15992,9 @@ struct Layout<'a> {
     header_tables: Vec<ChromeTable>,
     footer_tables: Vec<ChromeTable>,
     mirror_margins: bool,
+    /// `w:evenAndOddHeaders`: change bars sit on the outside border,
+    /// right on odd pages (live Word 2026-09-25).
+    rev_bars_facing: bool,
     character_spacing: CharacterSpacing,
     page_background: Option<[f32; 3]>,
     /// `w:compat/w:ulTrailSpace`: underline trailing spaces even in cells.
@@ -16388,6 +16395,7 @@ impl<'a> Layout<'a> {
             header_tables: hf.header_tables,
             footer_tables: hf.footer_tables,
             mirror_margins: hf.mirror_margins,
+            rev_bars_facing: hf.rev_bars_facing,
             character_spacing: hf.character_spacing,
             page_background: hf.page_background,
             ul_trail_space: hf.ul_trail_space,
@@ -18093,10 +18101,19 @@ impl<'a> Layout<'a> {
     }
 
     fn rev_bar_x(&self) -> f32 {
-        // Word file_146 / eigenpal (left=72) is x=36 = margin_l/2.
-        // CiceroDo Word is margin_l-36=54, but shipping that (mini revx)
-        // dropped comments-lots family −0.36 to −0.49 and mean −0.044.
-        (self.page.margin_l * 0.5).max(8.0)
+        // Live Word 2026-09-25: the bar stands 36pt left of the margin, or
+        // half the margin when that is narrower (left margins 30 / 60 / 90 /
+        // 120 put it at 14.88 / 30 / 54 / 84; file_146's 72 at 36). With
+        // w:evenAndOddHeaders it is on the outside border: odd pages mirror
+        // it to the right (528 at 120 on a 612pt page; d0a7c31f's 511).
+        let left = (self.page.margin_l - 36.0)
+            .max(self.page.margin_l * 0.5)
+            .max(8.0);
+        if self.rev_bars_facing && self.pages.len() % 2 == 1 {
+            self.page.width - left
+        } else {
+            left
+        }
     }
 
     fn paint_rev_bar(&mut self, x: f32, y_bot: f32, y_top: f32) {

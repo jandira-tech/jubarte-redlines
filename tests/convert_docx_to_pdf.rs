@@ -25932,10 +25932,11 @@ fn rev_bar_sits_half_an_inch_from_the_page_edge() {
 }
 
 #[test]
-fn rev_bar_stays_half_margin_after_mini_revx() {
-    // CiceroDo Word is margin_l-36=54 at left=90pt, but shipping that
-    // (mini revx) dropped comments-lots family −0.36 to −0.49 and
-    // no-redline mean −0.044. Keep margin_l/2 (x=45).
+fn rev_bar_stands_36pt_out_from_a_wide_margin() {
+    // Live Word 2026-09-25 (and CiceroDo): at left=90pt the change bar is at
+    // margin_l-36 = 54, not margin_l/2 = 45; half the margin only when that
+    // is further out (30 -> 14.88, 60 -> 30). The old x=45 lock was tuned to
+    // a benchmark score, not to Word.
     let pdf = docx_to_pdf(&minimal_docx_body(
         "<w:p><w:ins w:id=\"1\" w:author=\"a\"><w:r>\
            <w:t>fresh insert that must carry a change bar</w:t>\
@@ -25946,8 +25947,8 @@ fn rev_bar_stays_half_margin_after_mini_revx() {
     .expect("convert 90pt-margin ins rev bar");
     let xs = pdf_vertical_rule_xs(&pdf);
     assert!(
-        xs.iter().any(|x| (43.0..47.0).contains(x)),
-        "mini revx margin_l-36 was ITT-wrong; keep x=45; xs={xs:?}"
+        xs.iter().any(|x| (53.5..54.5).contains(x)),
+        "Word's bar is 36pt out from the 90pt margin, x=54; xs={xs:?}"
     );
 }
 
@@ -35493,5 +35494,37 @@ fn a_vml_line_without_a_vertical_frame_hangs_from_its_paragraph() {
     assert!(
         (anchor - y).abs() < 12.0,
         "the line hangs 9.85pt below its paragraph's top, by its text: line {y}, text {anchor}"
+    );
+}
+
+#[test]
+fn change_bars_sit_on_the_outside_border_with_even_and_odd_headers() {
+    // English redlines d0a7c31f / df4265bd (w:evenAndOddHeaders): Word's
+    // change bars stand right of odd pages and left of even ones. Live Word
+    // 2026-09-25, 120pt margins on a 612pt page: 528 on page 1, 84 on page 2
+    // (36pt out from the margin; half the margin when that is narrower).
+    let ins = |i: u32| {
+        format!(
+            "<w:p><w:ins w:id=\"{i}\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">\
+             <w:r><w:t>Inserted line {i}</w:t></w:r></w:ins></w:p>"
+        )
+    };
+    let body = format!(
+        "{}<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"2400\" w:bottom=\"1440\" w:left=\"2400\"/></w:sectPr>",
+        ins(1),
+        ins(2)
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "<w:evenAndOddHeaders/>"))
+        .expect("facing bars");
+    let pages = pdf_content_streams(&pdf);
+    assert!(pages.len() >= 2, "two pages");
+    assert!(
+        pages[0].contains("rg 528.00 "),
+        "page 1's bar is on the right"
+    );
+    assert!(
+        pages[1].contains("rg 84.00 "),
+        "page 2's bar is on the left"
     );
 }
