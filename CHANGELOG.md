@@ -17,6 +17,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [0.9.2] - 2026-09-26
 
+> **Summary.** A Word-fidelity pass on jubarte convert: layout rules reconstructed from live-Word probes, painted revision marks (--revisions conventional|word|custom), Word's comment balloons and change bars, East Asian layout, and smaller PDFs (--compress averages 0.70x Word's size on 2,102 documents). The redline engine is unchanged from 0.9.0.
+
 A Word-fidelity pass on `jubarte convert`, driven by a 500 + 500-file corpus
 of Word-exported PDFs (HF `superdoc-dev/docx-corpus`, plus 451 Word redlines
 of them). Every rule was reconstructed from a live-Word probe — synthetic

@@ -42,6 +42,10 @@ include = [
 
 # Rust import path stays `jubarte::…` (historical library name). The crates.io
 # package / GitHub repo are `jubarte-redlines`.
+
+[package.metadata.release-notes]
+"0.9.2" = "DOCX to PDF closer to Microsoft Word: Word-probed layout rules, painted revision marks (PdfOptions::revisions), comment balloons, East Asian layout, smaller PDFs. compare_documents output unchanged."
+
 [lib]
 name = "jubarte"
 path = "src/lib.rs"
