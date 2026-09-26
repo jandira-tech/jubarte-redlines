@@ -2769,6 +2769,11 @@ fn a_text_anchored_frame_floats_beside_the_next_paragraph() {
         let (_, before) = pdf_glyph_text_xy(&pdf, "Before").expect("before paints");
         let (cx, contact) = pdf_glyph_text_xy(&pdf, "Contact").expect("contact paints");
         let (fx, fy) = pdf_glyph_text_xy(&pdf, "FrameOne").expect("frame paints");
+        // The 27pt frame (no hRule) grows to its two lines (Word: 53pt).
+        assert!(
+            pdf_glyph_text_xy(&pdf, "FrameTwo").is_some(),
+            "{h_anchor}: the frame grows to hold its second paragraph"
+        );
         assert!(
             before - contact < 30.0 && (cx - 72.0).abs() < 1.0,
             "{h_anchor}: the next paragraph takes the frame's place; {} under Before",

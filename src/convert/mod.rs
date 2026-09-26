@@ -6768,7 +6768,23 @@ fn frame_box(
         .map(|(runs, style)| runs_size(runs).max(10.0) * 1.2 * style.line_mult.max(1.0))
         .sum();
     let w = tw("w").unwrap_or(144.0);
-    let h = tw("h").filter(|h| *h > 0.0).unwrap_or(line_guess);
+    // An auto / at-least frame grows to its paragraphs (live Word: a 27pt
+    // frame holding two lines spans 53pt); only hRule="exact" clips.
+    let content: f32 = laid
+        .iter()
+        .map(|(runs, style)| {
+            let line = style
+                .line_exact
+                .unwrap_or(runs_size(runs).max(10.0) * 1.15 * style.line_mult.max(1.0))
+                .max(style.line_at_least.unwrap_or(0.0));
+            line + style.before + style.after
+        })
+        .sum();
+    let h = match tw("h").filter(|h| *h > 0.0) {
+        Some(h) if frame_attr(&fp, "hRule") == Some("exact") => h,
+        Some(h) => h.max(content),
+        None => line_guess,
+    };
     let around = frame_attr(&fp, "wrap").is_none_or(|v| v == "around");
     let h_space = tw("hSpace").unwrap_or(0.0);
     let v_space = tw("vSpace").unwrap_or(0.0);
