@@ -8,7 +8,9 @@
 //
 //   bun scripts/bump-version.mjs 0.2.0
 //
-// Touches: Cargo.toml ([package] version), CHANGELOG.md is NOT auto-written —
+// Touches: Cargo.toml ([package] version) and the README's version pins,
+// including the Socket badge (badge.socket.dev/cargo/package/jubarte-redlines/<version>).
+// CHANGELOG.md is NOT auto-written —
 // add the Keep-a-Changelog section yourself, then commit + tag.
 // See VERSIONING.md.
 
@@ -54,6 +56,12 @@ try {
     .replace(
       new RegExp(`jubarte@${prev.replace(/\./g, "\\.")}`, "g"),
       `jubarte@${next}`,
+    )
+    // Socket badge: image and link both pin the version; a stale pin
+    // (a skipped bump) is corrected too, not only the previous version.
+    .replace(
+      /(badge\.socket\.dev\/cargo\/package\/jubarte-redlines\/)\d+\.\d+\.\d+/g,
+      `$1${next}`,
     );
   if (readmeNext !== readme) writeFileSync(readmePath, readmeNext);
 } catch {

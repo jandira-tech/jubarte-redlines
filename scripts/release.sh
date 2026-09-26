@@ -31,7 +31,8 @@
 #
 # What it does, in order:
 #   1. preflight — tools, registry credentials, main branch, clean tree
-#   2. version sync — Cargo.toml (bump-version.mjs), jubarte-python/Cargo.toml,
+#   2. version sync — Cargo.toml and the README's Socket badge version
+#      (bump-version.mjs), jubarte-python/Cargo.toml,
 #      jubarte-wasm/npm/package.json, and all four Cargo.lock files
 #   3. changelog check — dated `## [x.y.z]` section + release-link footer,
 #      then the five summaries are written into their channels
@@ -164,6 +165,8 @@ else
   node scripts/bump-version.mjs "$VER"
 fi
 
+# bump-version.mjs also moved the README's Socket badge
+# (badge.socket.dev/cargo/package/jubarte-redlines/<version>) to $VER.
 # Manifests bump-version.mjs does not own.
 sed -i.bak "s/^version = \"$CUR\"$/version = \"$VER\"/" jubarte-python/Cargo.toml \
   && rm jubarte-python/Cargo.toml.bak
