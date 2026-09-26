@@ -342,7 +342,8 @@ fi
 say "6. Release commit → wasm artifacts → annotated tag"
 # =============================================================================
 
-if ! git log -1 --format=%s | grep -qx "chore(release): v$VER"; then
+# A resumed run finds the release commit under the wasm-artifact commit.
+if ! git log -3 --format=%s | grep -qx "chore(release): v$VER"; then
   git add Cargo.toml Cargo.lock CHANGELOG.md README.md VERSIONING.md \
     jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
     jubarte-python/pyproject.toml \
