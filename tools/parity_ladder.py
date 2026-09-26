@@ -45,6 +45,7 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 from collections import Counter
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -74,16 +75,16 @@ REVISION_ELEMENTS = {
 }
 
 
-def read_document_xml(path):
+def read_document_xml(path: str) -> ET.Element:
     with zipfile.ZipFile(path) as z:
         return ET.fromstring(z.read("word/document.xml"))
 
 
-def norm(s):
+def norm(s: str) -> str:
     return re.sub(r"\s+", "", s)
 
 
-def mc_children(el):
+def mc_children(el: ET.Element) -> list[ET.Element]:
     """Children with mc:AlternateContent resolved to its first mc:Choice
     (Fallback duplicates the same content and must not be double-counted)."""
     if el.tag == f"{{{MC}}}AlternateContent":
@@ -94,10 +95,10 @@ def mc_children(el):
     return list(el)
 
 
-def source_text(root):
-    parts = []
+def source_text(root: ET.Element) -> str:
+    parts: list[str] = []
 
-    def rec(el):
+    def rec(el: ET.Element) -> None:
         if el.tag == f"{{{W}}}t":
             parts.append(el.text or "")
         for c in mc_children(el):
@@ -107,11 +108,11 @@ def source_text(root):
     return norm("".join(parts))
 
 
-def redline_walk(root):
+def redline_walk(root: ET.Element) -> list[tuple[str, str]]:
     """Return op list [(op, text)] with op in eq/ins/del, doc order, coalesced."""
-    ops = []
+    ops: list[list[str]] = []
 
-    def emit(op, text):
+    def emit(op: str, text: str) -> None:
         if not text:
             return
         if ops and ops[-1][0] == op:
@@ -119,7 +120,7 @@ def redline_walk(root):
         else:
             ops.append([op, text])
 
-    def rec(el, in_ins, in_del):
+    def rec(el: ET.Element, in_ins: bool, in_del: bool) -> None:
         tag = el.tag
         if tag == f"{{{W}}}ins" or tag == f"{{{W}}}moveTo":
             in_ins = True
@@ -141,19 +142,19 @@ def redline_walk(root):
     return [(op, t) for op, t in ops]
 
 
-def recon(ops):
+def recon(ops: list[tuple[str, str]]) -> tuple[str, str]:
     """(original_text, modified_text) from an op list."""
     orig = "".join(t for op, t in ops if op in ("eq", "del"))
     mod = "".join(t for op, t in ops if op in ("eq", "ins"))
     return orig, mod
 
 
-def local(tag):
+def local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def rev_inventory(root):
-    c = Counter()
+def rev_inventory(root: ET.Element) -> Counter[str]:
+    c: Counter[str] = Counter()
     for el in root.iter():
         name = local(el.tag)
         if name in REVISION_ELEMENTS:
@@ -161,19 +162,19 @@ def rev_inventory(root):
     return c
 
 
-def qname_histogram(root):
+def qname_histogram(root: ET.Element) -> Counter[str]:
     return Counter(el.tag for el in root.iter())
 
 
 # ---------- signatures (each: fn(root) -> list of detail strings) ----------
 
-def sig_bare_wps_drawing(root):
+def sig_bare_wps_drawing(root: ET.Element) -> list[str]:
     """w:drawing containing wps shapes but no mc:AlternateContent ancestor —
     Word wraps these in AlternateContent(Choice wps / Fallback pict); bare
     emission is the strict01 repair-dialog trigger."""
-    out = []
+    out: list[str] = []
 
-    def rec(el, in_ac):
+    def rec(el: ET.Element, in_ac: bool) -> None:
         if el.tag == f"{{{MC}}}AlternateContent":
             in_ac = True
         if el.tag == f"{{{W}}}drawing" and not in_ac:
@@ -186,11 +187,11 @@ def sig_bare_wps_drawing(root):
     return out[:1]  # one finding per file is enough
 
 
-def sig_instrtext_in_del(root):
+def sig_instrtext_in_del(root: ET.Element) -> list[str]:
     """w:instrText inside w:del must be w:delInstrText (Word: always)."""
     n = 0
 
-    def rec(el, in_del):
+    def rec(el: ET.Element, in_del: bool) -> None:
         nonlocal n
         if el.tag == f"{{{W}}}del":
             in_del = True
@@ -203,12 +204,12 @@ def sig_instrtext_in_del(root):
     return [f"{n}x instrText inside w:del (want delInstrText)"] if n else []
 
 
-def sig_rsid_leftover(root):
+def sig_rsid_leftover(root: ET.Element) -> list[str]:
     n = sum(1 for el in root.iter() for a in el.attrib if "rsid" in local(a).lower())
     return [f"{n}x rsid attributes remain"] if n else []
 
 
-def sig_empty_revision_wrappers(root):
+def sig_empty_revision_wrappers(root: ET.Element) -> list[str]:
     """Empty w:ins/w:del in CONTENT position. Empty ones inside w:rPr /
     w:trPr are legal paragraph-mark / row revision markers — excluded."""
     n = 0
@@ -219,13 +220,13 @@ def sig_empty_revision_wrappers(root):
     return [f"{n}x empty w:ins/w:del wrappers"] if n else []
 
 
-def sig_duplicate_docpr_ids(root):
+def sig_duplicate_docpr_ids(root: ET.Element) -> list[str]:
     ids = [el.get("id") for el in root.iter() if local(el.tag) == "docPr"]
     dupes = [i for i, c in Counter(ids).items() if i is not None and c > 1]
     return [f"duplicate docPr ids: {sorted(dupes)[:5]}"] if dupes else []
 
 
-SIGNATURES = {
+SIGNATURES: dict[str, Callable[[ET.Element], list[str]]] = {
     "S-bare-wps-drawing": sig_bare_wps_drawing,
     "S-instrtext-in-del": sig_instrtext_in_del,
     "S-rsid-leftover": sig_rsid_leftover,
@@ -236,7 +237,7 @@ SIGNATURES = {
 # ---------------------------------------------------------------------------
 
 
-def load_pairs(corpus):
+def load_pairs(corpus: str) -> Iterator[tuple[str, str, str, str | None]]:
     """Yield (stem, pathA, pathB, path_word_redline_or_None)."""
     src = os.path.join(corpus, "docx_source")
     gt_dir = os.path.join(corpus, "docx_redlines_word")
@@ -245,23 +246,24 @@ def load_pairs(corpus):
             a = os.path.join(src, row["docx_source_base"])
             b = os.path.join(src, row["docx_source_next"])
             gt_name = row.get("redline_docx_word") or row.get("redline_docx") or ""
-            gt = os.path.join(gt_dir, gt_name) if gt_name else None
+            gt: str | None = os.path.join(gt_dir, gt_name) if gt_name else None
             if gt and not os.path.isfile(gt):
                 gt = None
             if os.path.isfile(a) and os.path.isfile(b):
                 yield row["pair_stem"], a, b, gt
 
 
-def run_ours(binary, a, b, stem):
+def run_ours(binary: str, a: str, b: str, stem: str) -> tuple[str | None, str]:
+    """(output path, "") on success; (None, reason) when the CLI fails."""
     os.makedirs(OUT_DIR, exist_ok=True)
     out = os.path.join(OUT_DIR, stem + ".ours.docx")
     r = subprocess.run([binary, a, b, "-o", out, "--force"], capture_output=True, text=True, timeout=300)
     if r.returncode != 0:
         return None, f"exit {r.returncode}: {(r.stderr or r.stdout)[:200].strip()}"
-    return out, None
+    return out, ""
 
 
-def opseq_delta(ours, word):
+def opseq_delta(ours: list[tuple[str, str]], word: list[tuple[str, str]]) -> str | None:
     """First diverging op index + short context, or None."""
     for i, (x, y) in enumerate(zip(ours, word)):
         if x != y:
@@ -271,9 +273,11 @@ def opseq_delta(ours, word):
     return None
 
 
-def ladder(stem, a, b, gt, binary):
+def ladder(
+    stem: str, a: str, b: str, gt: str | None, binary: str
+) -> list[tuple[str, str]]:
     """Return list of (finding_key, detail). finding_key is stable for ratchet."""
-    findings = []
+    findings: list[tuple[str, str]] = []
     out, err = run_ours(binary, a, b, stem)
     if out is None:
         return [("CRASH", err)]
@@ -291,8 +295,7 @@ def ladder(stem, a, b, gt, binary):
         findings.append(("L0-modified", f"recon len {len(rm)} vs src {len(tb)}"))
 
     for key, fn in SIGNATURES.items():
-        for detail in fn(ours_root):
-            findings.append((key, detail))
+        findings.extend((key, detail) for detail in fn(ours_root))
 
     if findings and any(k.startswith("L0") for k, _ in findings):
         return findings  # content broken; parity levels meaningless
@@ -324,8 +327,8 @@ def ladder(stem, a, b, gt, binary):
     return findings
 
 
-def cmd_sweep(args, bless=False):
-    rows = set()
+def cmd_sweep(args: argparse.Namespace, bless: bool = False) -> int:
+    rows: set[str] = set()
     pairs = list(load_pairs(args.corpus))
     if args.only:
         pairs = [p for p in pairs if args.only in p[0]]
@@ -336,28 +339,30 @@ def cmd_sweep(args, bless=False):
             rows.add(f"{stem}\t{key}\t{detail}")
         if (i + 1) % 20 == 0:
             print(f"  …{i + 1}/{len(pairs)}", file=sys.stderr)
-    rows = sorted(rows)
+    sorted_rows: list[str] = sorted(rows)
     swept = {p[0] for p in pairs}
     scoped = bool(args.only or args.limit)
-    base = set()
+    base: set[str] = set()
     if os.path.isfile(BASELINE):
         base = {l.rstrip("\n") for l in open(BASELINE) if l.strip()}
     if bless:
         if scoped:  # merge: replace only swept pairs' rows, keep the rest
-            rows = sorted({r for r in base if r.split("\t")[0] not in swept} | set(rows))
+            sorted_rows = sorted({r for r in base if r.split("\t")[0] not in swept} | set(sorted_rows))
         with open(BASELINE, "w") as f:
-            f.write("\n".join(rows) + ("\n" if rows else ""))
-        print(f"blessed {len(rows)} findings -> {BASELINE}")
+            f.write("\n".join(sorted_rows) + ("\n" if sorted_rows else ""))
+        print(f"blessed {len(sorted_rows)} findings -> {BASELINE}")
         return 0
     if scoped:  # only judge swept pairs
         base = {r for r in base if r.split("\t")[0] in swept}
     # ratchet keys ignore the volatile detail column
-    strip = lambda s: "\t".join(s.split("\t")[:2])
-    cur_keys, base_keys = {strip(r) for r in rows}, {strip(r) for r in base}
+    def strip(s: str) -> str:
+        return "\t".join(s.split("\t")[:2])
+
+    cur_keys, base_keys = {strip(r) for r in sorted_rows}, {strip(r) for r in base}
     new = sorted(cur_keys - base_keys)
     fixed = sorted(base_keys - cur_keys)
-    detail_of = {strip(r): r for r in rows}
-    print(f"{len(pairs)} pairs, {len(rows)} findings ({len(new)} NEW, {len(fixed)} fixed)")
+    detail_of = {strip(r): r for r in sorted_rows}
+    print(f"{len(pairs)} pairs, {len(sorted_rows)} findings ({len(new)} NEW, {len(fixed)} fixed)")
     for k in new:
         print(f"NEW   {detail_of.get(k, k)}")
     for k in fixed:
@@ -365,12 +370,14 @@ def cmd_sweep(args, bless=False):
     return 1 if new else 0
 
 
-def cmd_mine(args):
-    ours_h, word_h, n = Counter(), Counter(), 0
+def cmd_mine(args: argparse.Namespace) -> int:
+    ours_h: Counter[str] = Counter()
+    word_h: Counter[str] = Counter()
+    n = 0
     for stem, a, b, gt in load_pairs(args.corpus):
         if gt is None:
             continue
-        out, err = run_ours(args.bin, a, b, stem)
+        out, _ = run_ours(args.bin, a, b, stem)
         if out is None:
             continue
         ours_h += Counter(set(qname_histogram(read_document_xml(out))))
@@ -386,7 +393,7 @@ def cmd_mine(args):
     return 0
 
 
-def main():
+def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("mode", choices=["sweep", "bless", "mine"])
     p.add_argument("--corpus", default=DEFAULT_CORPUS)
