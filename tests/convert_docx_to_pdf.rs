@@ -37181,3 +37181,91 @@ fn a_zero_dxa_table_width_is_auto_and_keeps_its_grid() {
         "the second column starts one 155.8pt grid column in: {xq}"
     );
 }
+
+#[test]
+fn a_picture_alone_in_a_text_box_keeps_its_own_extent() {
+    // 6b022d77's header logo: a 203.5pt text box holding only a 134pt
+    // inline picture. Word paints the picture at its own extent from the
+    // box's lIns/tIns (7.2/3.6pt by default); we stretched it to the box.
+    let pic = blip("1270000", "508000", "<wp:inline>", "</wp:inline>");
+    let body = format!(
+        "<w:p><w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>914400</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"2540000\" cy=\"762000\"/><wp:wrapNone/><wp:docPr id=\"3\" name=\"Box\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:cNvSpPr txBox=\"1\"/>\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:p><w:r>{pic}</w:r></w:p></w:txbxContent></wps:txbx>\
+               <wps:bodyPr wrap=\"none\"><a:spAutoFit/></wps:bodyPr>\
+             </wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("picture in a text box");
+    let boxes = pdf_image_boxes(&pdf);
+    let (x, y, w, h) = *boxes.first().expect("the picture paints");
+    assert!(
+        (w - 100.0).abs() < 0.5 && (h - 40.0).abs() < 0.5,
+        "the picture keeps its 100x40pt extent, not the 200x60pt box: {boxes:?}"
+    );
+    assert!(
+        (x - 151.2).abs() < 0.5,
+        "x = 72 margin + 72 offset + 7.2 lIns: {x}"
+    );
+    assert!(
+        (y - 676.4).abs() < 0.5,
+        "top = 72 + 3.6 tIns, 40pt tall: {y}"
+    );
+}
+
+#[test]
+fn a_header_paragraph_anchoring_a_picture_text_box_is_still_a_line() {
+    // 6b022d77: the header's first paragraph holds only an anchored text
+    // box whose content is an inline logo. Word gives that paragraph its
+    // line ("Internal Grant Agency" sits 14pt under the header distance);
+    // the box's inline picture made it a picture paragraph with no line.
+    let header = |first: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+               xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+               xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+               xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+               xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\" \
+               xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr>{first}</w:p>\
+               <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>HdrText</w:t></w:r></w:p></w:hdr>"
+        )
+    };
+    let boxed = "<w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"2540000\" cy=\"762000\"/><wp:wrapNone/><wp:docPr id=\"3\" name=\"Box\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp><wps:cNvSpPr txBox=\"1\"/>\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:p><w:r><w:drawing><wp:inline>\
+                 <wp:extent cx=\"1270000\" cy=\"508000\"/><wp:docPr id=\"4\" name=\"Logo\"/>\
+                 <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+                   <pic:pic><pic:blipFill><a:blip r:embed=\"rIdNone\"/></pic:blipFill></pic:pic>\
+                 </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:txbxContent></wps:txbx>\
+               <wps:bodyPr wrap=\"none\"><a:spAutoFit/></wps:bodyPr>\
+             </wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>";
+    let y = |first: &str| {
+        let docx = hf_docx(
+            "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/></w:sectPr>",
+            &[("rIdH1", "header", "header1.xml")],
+            &[("word/header1.xml", header(first))],
+        );
+        let pdf = docx_to_pdf(&docx).expect("header with a boxed logo");
+        pdf_glyph_text_xy(&pdf, "HdrText").expect("header text").1
+    };
+    let (empty, anchored) = (y(""), y(boxed));
+    assert!(
+        (empty - anchored).abs() < 0.5,
+        "the anchoring paragraph is a line like an empty one: empty {empty}, anchored {anchored}"
+    );
+}

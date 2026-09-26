@@ -13224,6 +13224,19 @@ fn alternate_choice(dom: &Dom, node: NodeId) -> Option<NodeId> {
 
 /// `node` sits inside a text box's content below `top`: the text box lays
 /// those pictures out itself.
+/// The `wp:extent` (points) of a picture inside `drawing`'s text box.
+fn boxed_picture_extent(dom: &Dom, blip: NodeId, drawing: NodeId) -> Option<(f32, f32)> {
+    if !inside_text_box(dom, blip, drawing) {
+        return None;
+    }
+    let own = dom
+        .ancestors(blip, None)
+        .into_iter()
+        .find(|&n| local_name_is(dom, n, "inline") || local_name_is(dom, n, "anchor"))?;
+    let ext = first_named_any(dom, own, "extent")?;
+    Some((emu_attr(dom, ext, "cx"), emu_attr(dom, ext, "cy")))
+}
+
 fn inside_text_box(dom: &Dom, node: NodeId, top: NodeId) -> bool {
     let mut cur = dom.parent(node);
     while let Some(n) = cur {
@@ -13493,6 +13506,17 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         inline_effect_pt(dom, drawing)
                     } else {
                         [0.0; 4]
+                    };
+                    // A picture alone in a text box keeps its own extent
+                    // from the box's insets (6b022d77's header logo is
+                    // 134pt in a 203.5pt box, not stretched to it).
+                    let (w, h, inset) = match boxed_picture_extent(dom, blip, drawing) {
+                        Some((cx, cy)) => {
+                            let [l, t, _, _] = textbox_insets(dom, drawing);
+                            let (bw, bh) = (w.max(l + cx), h.max(t + cy));
+                            (cx, cy, [l, t, bw - l - cx, bh - t - cy])
+                        }
+                        None => (w, h, inset),
                     };
                     out.push(LaidImage {
                         w: w + inset[0] + inset[2],
@@ -16343,15 +16367,18 @@ fn hf_para_is_bare_line(dom: &Dom, root: NodeId, para: NodeId) -> bool {
             // mc:Fallback only mirrors the Choice Word renders (000f3a4e's
             // anchored text box carries a w:pict fallback).
             // A VML horizontal line is its paragraph's line too (isla's
-            // header rule under the District/Title row).
+            // header rule under the District/Title row). So is an anchor
+            // whose text box holds an inline logo (6b022d77).
             return !dom.descendants(para, None).into_iter().any(|d| {
                 (dom.name_is(d, &W::pict()) && para_hrule(dom, d).is_none()
                     || (dom.name_is(d, &W::drawing())
-                        && !dom.descendants(d, Some(&WP::name("inline"))).is_empty()))
-                    && !dom
-                        .ancestors(d, None)
-                        .iter()
-                        .any(|a| local_name_is(dom, *a, "Fallback"))
+                        && dom
+                            .descendants(d, Some(&WP::name("inline")))
+                            .into_iter()
+                            .any(|i| !inside_text_box(dom, i, d))))
+                    && !dom.ancestors(d, None).iter().any(|a| {
+                        local_name_is(dom, *a, "Fallback") || local_name_is(dom, *a, "txbxContent")
+                    })
             });
         }
         if !(dom.name_is(id, &W::sdt()) || dom.name_is(id, &W::sdt_content())) {
