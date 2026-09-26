@@ -328,7 +328,6 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
     }
     let fonts = Fonts::for_document(&embedded);
     font::with_font_table(table, || {
-        let markup = settings_track_revisions(&pkg);
         let core = load_core_dates(&pkg);
         with_core_dates(core, || {
             let mut sheet = load_stylesheet(&pkg);
@@ -336,11 +335,12 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
                 sheet.defaults.page.default_tab = tab;
             }
             sheet.defaults.page.gutter_at_top = settings_flag(&pkg, "gutterAtTop");
-            // Word Save-as-PDF All Markup (file_27): gray balloon pasteboard + scale.
-            // Ins-only trackRevisions (file_6) stays full-page / 0.24 cm.
-            if (markup && document_wants_markup_pane(&pkg, &main))
-                || document_has_comments(&pkg, &main)
-            {
+            // Word Save-as-PDF draws the grey balloon pasteboard (and shrinks
+            // the page) for comments only. Live Word 2026-09-25: 120 tracked
+            // insertions and deletions with w:trackRevisions, with or without
+            // formatting changes, keep the full page (English redline
+            // e1de10f3 was shrunk on a 100/100 count).
+            if document_has_comments(&pkg, &main) {
                 sheet.defaults.page.balloon_gutter = 144.0;
             }
             let page = load_page_setup(&dom, body, &sheet.defaults.page);
@@ -5477,10 +5477,6 @@ fn settings_flag(pkg: &PartFs, local: &str) -> bool {
         .is_some_and(|xml| settings_flag_xml(&xml, local))
 }
 
-fn settings_track_revisions(pkg: &PartFs) -> bool {
-    settings_flag(pkg, "trackRevisions")
-}
-
 /// `w:compatSetting name="compatibilityMode"`. Absent → 12 (Word 2007),
 /// which uses the pre-2013 table-edge rule (plan xml 3.3).
 /// From compatibility mode 15 an atLeast line keeps its own height on a
@@ -5797,19 +5793,6 @@ fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
     attr_any(&dom, stop, "val")
         .and_then(parse_len)
         .filter(|pt| *pt > 0.5)
-}
-
-/// Word Save-as-PDF All Markup pasteboard only on file_27-class docs
-/// (~160 ins + ~103 del). Randomized redlines have 500+ dels but Word
-/// still exports 0.24 cm / no pane (file_9_file_10_redline).
-const MARKUP_PANE_MIN_DEL: usize = 100;
-const MARKUP_PANE_MIN_INS: usize = 100;
-
-fn document_wants_markup_pane(pkg: &PartFs, main: &str) -> bool {
-    pkg.part_string(main).is_some_and(|xml| {
-        w_revision_count(&xml, "<w:del") >= MARKUP_PANE_MIN_DEL
-            && w_revision_count(&xml, "<w:ins") >= MARKUP_PANE_MIN_INS
-    })
 }
 
 /// Word's PDF export draws the comment pane on every page of a document

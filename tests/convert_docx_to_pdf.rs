@@ -35572,3 +35572,34 @@ fn a_keep_with_next_row_needs_only_the_start_of_a_row_that_splits() {
         pages[0]
     );
 }
+
+#[test]
+fn tracked_insertions_and_deletions_alone_bring_no_balloon_pane() {
+    // English redline e1de10f3: w:trackRevisions on, 105 deletions and 114
+    // insertions, no comments. We drew the grey balloon pane and shrank the
+    // page. Live Word 2026-09-25: 120 insertions and deletions (with
+    // trackRevisions, with or without formatting changes) keep the full
+    // page; only comments bring the pane.
+    let d = "w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\"";
+    let body: String = (0..120)
+        .map(|i| {
+            format!(
+                "<w:p><w:r><w:t xml:space=\"preserve\">Keep{i} </w:t></w:r>\
+                 <w:ins w:id=\"{}\" {d}><w:r><w:t>new{i}</w:t></w:r></w:ins>\
+                 <w:del w:id=\"{}\" {d}><w:r><w:delText>old{i}</w:delText></w:r></w:del></w:p>",
+                2 * i,
+                2 * i + 1
+            )
+        })
+        .collect::<String>()
+        + "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "<w:trackRevisions/>"))
+        .expect("tracked redline");
+    // The pane is Word's grey 0.949 pasteboard beside the shrunk page.
+    let content = pdf_content_streams(&pdf).concat();
+    assert!(
+        !content.contains("0.949 0.949 0.949 rg"),
+        "no balloon pane without comments"
+    );
+}
