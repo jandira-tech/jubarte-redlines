@@ -2501,6 +2501,50 @@ fn a_framed_header_picture_sits_at_its_frame_out_of_the_band() {
 }
 
 #[test]
+fn a_header_float_wraps_the_body_text() {
+    // Live Word: a header picture anchored at page (40,40), 160pt tall,
+    // wraps the body like a body float. Square with no room or top and
+    // bottom starts the body under it (baseline 211.2); square beside a
+    // 150pt one at the margin starts the lines at x=222. d54e7e99's
+    // header letterhead pushes its body to 185.
+    let hdr = |wrap: &str, x: i64, w: i64| {
+        let img = blip(
+            &(w * 12700).to_string(),
+            "2032000",
+            &format!(
+                "<wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+                   relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+                   <wp:simplePos x=\"0\" y=\"0\"/>\
+                   <wp:positionH relativeFrom=\"page\"><wp:posOffset>{}</wp:posOffset></wp:positionH>\
+                   <wp:positionV relativeFrom=\"page\"><wp:posOffset>508000</wp:posOffset></wp:positionV>",
+                x * 12700
+            ),
+            &format!("{wrap}</wp:anchor>"),
+        );
+        format!("<w:p><w:r>{img}</w:r><w:r><w:t>Head</w:t></w:r></w:p>")
+    };
+    let body_xy = |h: String| {
+        let pdf = docx_to_pdf(&header_part_docx_at(&h, 720)).expect("header float");
+        let (x, y) = pdf_glyph_text_xy(&pdf, "HdrImgBodyX").expect("body paints");
+        (x, 792.0 - y)
+    };
+    let (_, top) = body_xy(hdr("<wp:wrapSquare wrapText=\"bothSides\"/>", 40, 532));
+    assert!(
+        top > 200.0,
+        "square with no room: body under it, baseline {top}"
+    );
+    let (_, top) = body_xy(hdr("<wp:wrapTopAndBottom/>", 72, 150));
+    assert!(top > 200.0, "top and bottom: body under it, baseline {top}");
+    let (x, top) = body_xy(hdr("<wp:wrapSquare wrapText=\"bothSides\"/>", 72, 150));
+    assert!(
+        (x - 222.0).abs() < 1.0 && top < 100.0,
+        "square with room: beside it at x=222, got {x} at {top}"
+    );
+    let (x, top) = body_xy(hdr("<wp:wrapNone/>", 72, 150));
+    assert!((x - 72.0).abs() < 1.0 && top < 100.0, "wrapNone: untouched");
+}
+
+#[test]
 fn a_float_anchored_after_a_page_spanning_paragraph_lands_on_its_last_page() {
     // Redlines vs 017447de: B's deleted pictures are anchored after all of
     // a four-page paragraph, positioned from the paragraph with tight wrap.

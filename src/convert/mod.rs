@@ -20606,6 +20606,43 @@ impl<'a> Layout<'a> {
         });
     }
 
+    /// A header float wraps the body like a body float (live Word: a
+    /// 160pt picture at page y 40 starts the body under it when square
+    /// has no room or wrap is top and bottom, beside it when square has;
+    /// d54e7e99's letterhead pushes its body to 185).
+    fn hold_header_float(&mut self, slot: ImageSlot, x: f32, y: f32, dw: f32, dh: f32) {
+        let ImageSlot::Float {
+            wrap_square,
+            wrap_top_bottom,
+            dist_l,
+            dist_r,
+            dist_t,
+            dist_b,
+            ..
+        } = slot
+        else {
+            return;
+        };
+        let bottom = y - dist_b;
+        if !(wrap_square || wrap_top_bottom) || bottom >= self.y {
+            return;
+        }
+        if wrap_square {
+            let left_edge = self.flow_left();
+            let right_edge = left_edge + self.content_width();
+            let room = (x - dist_l - left_edge).max(right_edge - (x + dw + dist_r));
+            if room >= MIN_SIDE_FLOAT_ROOM_PT {
+                self.hold_square_float(slot, x, y, dw, dh);
+                return;
+            }
+        }
+        let top = y + dh + dist_t;
+        self.tb_band = Some(
+            self.tb_band
+                .map_or((top, bottom), |(t, b)| (t.max(top), b.min(bottom))),
+        );
+    }
+
     /// Paint one header/footer inline image `dx` after the previous ones
     /// (inline images flow left to right; they no longer stack on one
     /// spot). Returns the width it used.
@@ -20776,6 +20813,9 @@ impl<'a> Layout<'a> {
             }
         }
         let (x, y, dw, dh) = inset_box(img, x, y, dw, dh);
+        if in_header {
+            self.hold_header_float(img.slot, x, y, dw, dh);
+        }
         match &img.kind {
             ImageKind::Jpeg {
                 width,
