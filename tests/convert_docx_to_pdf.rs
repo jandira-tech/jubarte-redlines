@@ -5923,6 +5923,40 @@ fn wrap_square_below_the_float_uses_full_measure() {
 }
 
 #[test]
+fn a_top_and_bottom_float_below_its_paragraph_pushes_the_next_one_under_it() {
+    // 8aea3634: a rule hangs 11.7pt under its empty anchor paragraph and
+    // Word starts the heading after it under the rule, not across it.
+    let img = blip(
+        "1828800",
+        "127000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"margin\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>254000</wp:posOffset></wp:positionV>\
+           <wp:wrapTopAndBottom/>",
+        "</wp:anchor>",
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r>{img}</w:r></w:p>\
+         <w:p><w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("convert hanging wrapTopAndBottom");
+    let hay = String::from_utf8_lossy(&pdf);
+    let after = pdf_device_xy(hay.as_ref(), "67 Tf")
+        .into_iter()
+        .next()
+        .expect("After 16pt");
+    // The float's foot is 72 + 20 + 10 = 102pt down (y 690): the 16pt
+    // line's baseline sits under it, not at the empty paragraph's foot.
+    assert!(
+        after.1 < 690.0 - 10.0 && after.1 > 660.0,
+        "the next paragraph starts under the hanging float; after={after:?}"
+    );
+}
+
+#[test]
 fn wrap_top_and_bottom_jumps_below_a_right_float() {
     // xml 3.4 ckpt 4: wrapTopAndBottom is not in-flow on the left. The
     // picture sits on the right and body starts below its band.

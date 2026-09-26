@@ -291,6 +291,12 @@ rule:
   This holds when the paragraph's `numPr` is direct and it carries no direct
   `jc`.
   - Part a 8aea3634: its numbered Titre1 (heading 1, centred) items sit left.
+- **A topAndBottom float can hang below its anchor paragraph.** Any later
+  line that meets its band starts under it, not only the anchor paragraph's
+  own lines.
+  - Part a 8aea3634: the rule 11.7pt under an empty paragraph sits above its
+    heading. With the rule 0.5pt or 5pt tall, the gap from the rule's foot to
+    the next rule stays 12.30pt.
 
 ## Open, measured but not yet reconstructed
 

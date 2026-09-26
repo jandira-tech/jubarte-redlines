@@ -16369,6 +16369,10 @@ struct Layout<'a> {
     nested_depth: u8,
     /// Active wrapSquare-style float from a `tblpPr` table.
     side_float: Option<SideFloat>,
+    /// A topAndBottom float's band (top, bottom) hanging below its anchor
+    /// paragraph: later lines that meet it start under it (8aea3634's
+    /// rule under an empty paragraph sits above its heading).
+    tb_band: Option<(f32, f32)>,
     line_probe: LineProbe,
     /// Pen end and baseline of the last painted body line: where an
     /// inline picture that fits in that line sits.
@@ -16753,6 +16757,7 @@ impl<'a> Layout<'a> {
             last_style_id: String::new(),
             nested_depth: 0,
             side_float: None,
+            tb_band: None,
             line_probe: LineProbe::default(),
             last_line_end: None,
             last_line: None,
@@ -16974,6 +16979,7 @@ impl<'a> Layout<'a> {
         self.pages.push(self.fresh_page());
         // A floating table belongs to the page it was painted on.
         self.side_float = None;
+        self.tb_band = None;
         self.section_first_page = false;
         self.col_i = 0;
         self.col_top = None;
@@ -17111,6 +17117,7 @@ impl<'a> Layout<'a> {
             self.pages.push(self.fresh_page());
             // A floating table belongs to the page it was painted on.
             self.side_float = None;
+            self.tb_band = None;
             self.col_i = 0;
             self.col_top = None;
             self.col_floor = None;
@@ -17394,6 +17401,7 @@ impl<'a> Layout<'a> {
             // the next column's (003329b5's table sent column two's lines
             // under it and onto a third page).
             self.side_float = None;
+            self.tb_band = None;
             self.col_i += 1;
             self.y = self.col_top.unwrap_or(self.page.height - self.body_top);
             if self.col_top.is_some() && first_line {
@@ -17810,6 +17818,19 @@ impl<'a> Layout<'a> {
     fn apply_top_bottom_wrap(&mut self, images: &[LaidImage], boxes: &[LaidTextBox]) {
         let mut jump = self.y;
         let mut hit = false;
+        // An earlier paragraph's band: a line meeting it starts under it;
+        // a line wholly under it retires it.
+        if let Some((top, bottom)) = self.tb_band {
+            let line_top = self.line_probe.top;
+            if line_top <= bottom + 0.01 {
+                self.tb_band = None;
+            } else if line_top - self.line_probe.h < top {
+                hit = true;
+                jump = jump.min(bottom);
+                self.tb_band = None;
+            }
+        }
+        let mut hangs: Option<(f32, f32)> = None;
         let left_edge = self.flow_left();
         let right_edge = left_edge + self.content_width();
         let mut consider = |slot: ImageSlot, w: f32, h: f32| {
@@ -17818,6 +17839,7 @@ impl<'a> Layout<'a> {
                 wrap_square,
                 dist_l,
                 dist_r,
+                dist_t,
                 dist_b,
                 ..
             } = slot
@@ -17838,11 +17860,16 @@ impl<'a> Layout<'a> {
             if !wrap_top_bottom && !no_side_room {
                 return;
             }
-            if !self.wrap_band_hits_line(slot, w, h) {
-                return;
-            }
             let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
             let (_, fy) = self.float_xy(dw, dh.max(1.0), slot);
+            if !self.wrap_band_hits_line(slot, w, h) {
+                // Wholly under this line: it waits for a later one.
+                if wrap_top_bottom && fy + dh + dist_t < self.line_probe.top - self.line_probe.h {
+                    let band = (fy + dh + dist_t, fy - dist_b);
+                    hangs = Some(hangs.map_or(band, |(t, b)| (t.max(band.0), b.min(band.1))));
+                }
+                return;
+            }
             hit = true;
             jump = jump.min(fy - dist_b);
         };
@@ -17851,6 +17878,9 @@ impl<'a> Layout<'a> {
         }
         for box_ in boxes {
             consider(box_.slot, box_.w, box_.h);
+        }
+        if hangs.is_some() {
+            self.tb_band = hangs;
         }
         if hit {
             // emit_runs applies the full space-before next (at_page_top is
