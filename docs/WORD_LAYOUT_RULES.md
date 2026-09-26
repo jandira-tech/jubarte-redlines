@@ -315,6 +315,12 @@ rule:
   on the page; `behindDoc` floats stay under the text.
   - Part b e83fa17a page 4: the photos paint over the later, lower frame
     boxes (0.782 -> 0.846).
+- **A page background adds an empty Normal paragraph to the header.** With
+  `w:background`, Word's header story ends with one more empty paragraph
+  (the background shape's anchor) that pushes the body when the header
+  outgrows the top margin.
+  - Part b af0035cc: a one-paragraph header (Normal, after=10 at 1.15)
+    runs to 86.9pt and the title's baseline moves from 85.07 to 99.84.
 
 ## Open, measured but not yet reconstructed
 

@@ -15179,7 +15179,16 @@ fn sect_ref_chrome_of(
     };
     let page = apply_sect_pr(dom, sect, &sheet.defaults.page);
     let text_w = page.width - page.margin_l - page.margin_r;
-    load_chrome_part(pkg, main, &rid, local, sheet, text_w)
+    let background = local == "headerReference" && page_background(dom, sect);
+    load_chrome_part(pkg, main, &rid, local, sheet, text_w, background)
+}
+
+/// `w:document/w:background`: Word anchors the page colour's shape in the
+/// header story, which then ends with one more empty Normal paragraph.
+fn page_background(dom: &Dom, node: NodeId) -> bool {
+    dom.ancestors(node, Some(&W::name("document")))
+        .first()
+        .is_some_and(|doc| dom.element(*doc, &W::name("background")).is_some())
 }
 
 fn load_chrome_part(
@@ -15189,6 +15198,7 @@ fn load_chrome_part(
     local: &str,
     sheet: &StyleSheet,
     text_w: f32,
+    background: bool,
 ) -> ChromePart {
     let Some(path) = rel_target_path(pkg, main, rid) else {
         return empty_chrome();
@@ -15196,7 +15206,13 @@ fn load_chrome_part(
     let Some(bytes) = pkg.part_bytes(&path) else {
         return empty_chrome();
     };
-    let xml = String::from_utf8_lossy(bytes);
+    let mut xml = String::from_utf8_lossy(bytes).into_owned();
+    // The page background's anchor paragraph: af0035cc's one-paragraph
+    // header (Normal, after=10 at 1.15) runs two lines deep in Word and
+    // pushes the body 14.8pt below its 72pt margin.
+    if background && let Some(end) = xml.rfind("</w:hdr>") {
+        xml.insert_str(end, "<w:p/>");
+    }
     let mut part_dom = Dom::new();
     let doc = part_dom.parse_xdocument(&xml);
     let Some(root) = part_dom.root(doc) else {

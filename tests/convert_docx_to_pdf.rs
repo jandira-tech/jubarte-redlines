@@ -13091,6 +13091,51 @@ fn a_centred_auto_fit_text_box_without_wrapping_centres_its_text() {
 }
 
 #[test]
+fn a_page_background_adds_an_empty_paragraph_to_the_header() {
+    // Part b af0035cc: with `w:background`, Word's header story ends with
+    // one more empty Normal paragraph (the background's anchor). Its header
+    // (an empty paragraph, Normal after=10 at 1.15) then runs to 86.9pt
+    // and pushes the body 14.8pt below the 72pt margin; without the
+    // background the title stays at the margin (live Word 2026-09-26).
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+             <w:pPr><w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/><w:contextualSpacing/></w:pPr>\
+             <w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/></w:rPr></w:style></w:styles>";
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:pPr><w:contextualSpacing w:val=\"0\"/></w:pPr></w:p></w:hdr>";
+    let title_y = |background: &str| {
+        let body = format!(
+            "{background}<w:p><w:r><w:t>TitleQ</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+               <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&hf_docx(
+            &body,
+            &[
+                ("rIdH1", "header", "header1.xml"),
+                ("rIdS", "styles", "styles.xml"),
+            ],
+            &[
+                ("word/header1.xml", header.to_string()),
+                ("word/styles.xml", styles.to_string()),
+            ],
+        ))
+        .expect("background header");
+        pdf_glyph_text_xy(&pdf, "TitleQ").expect("title").1
+    };
+    let (plain, backed) = (title_y(""), title_y("<w:background w:color=\"FFFFFF\"/>"));
+    assert!(
+        (plain - backed - 14.9).abs() < 1.0,
+        "the background's header paragraph pushes the title 14.9pt down: {plain} vs {backed}"
+    );
+}
+
+#[test]
 fn a_header_tab_with_no_stop_left_on_the_line_starts_the_next_line() {
     // fixtures_500 00e23d67: the header's first tab right-aligns
     // "Program Studi … Surabaya" on the right tab at the margin; the second
@@ -20218,11 +20263,16 @@ fn hf_part(tag: &str, half_points: u32, text: &str) -> String {
 }
 
 fn hf_docx(body: &str, rels: &[(&str, &str, &str)], parts: &[(&str, String)]) -> Vec<u8> {
+    // A leading `<w:background .../>` is the document's, before the body.
+    let (background, body) = match body.find("/>") {
+        Some(end) if body.starts_with("<w:background") => body.split_at(end + 2),
+        _ => ("", body),
+    };
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
            xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
-         <w:body>{body}</w:body></w:document>"
+         {background}<w:body>{body}</w:body></w:document>"
     );
     let mut types = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
