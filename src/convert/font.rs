@@ -726,6 +726,15 @@ impl<'a> Face<'a> {
             line_height = height;
             line_descent += half;
         }
+        // macOS Helvetica: Word's single line is 1.2 em, not its 1.0 em
+        // hhea body, with the win descent below the baseline (English part
+        // a 18f71536: 14.40pt lines at 12pt). Futura and Palatino follow
+        // their hhea lines, so the rule is Helvetica's own.
+        let helvetica = pdf_name == "Helvetica" || pdf_name.starts_with("Helvetica-");
+        if helvetica && let Some(os2) = face.tables().os2 {
+            line_height = upem * 1.2;
+            line_descent = f32::from(os2.windows_descender()).abs();
+        }
         // GDI puts the external leading (hhea total − win total) above the
         // text: Word's first TNR 12 baseline is winAscent + 0.51pt down.
         // A win box taller than the line (macOS Palatino: 3396 units over a
@@ -2232,7 +2241,7 @@ fn face_family_names(face: &ttf_parser::Face<'_>, id: u16) -> Vec<String> {
     face.names()
         .into_iter()
         .filter(|n| n.name_id == id)
-        .filter_map(|n| n.to_string())
+        .filter_map(|n| name_text(&n))
         .map(|n| fold_family(&n))
         .collect()
 }
@@ -2506,7 +2515,8 @@ fn pick_ranked_faces(mut found: Vec<(u8, (bool, bool), Vec<u8>)>) -> Vec<((bool,
 }
 
 /// (pass, (bold, italic)) when the font's own family name is `family`:
-/// pass 0 for name ID 1, 1 for the typographic ID 16 only. A face without
+/// pass 0 for name ID 1, 4 for the typographic ID 16 only, plus 2 for a
+/// face that is not normal width and 1 for one off its style's weight. A face without
 /// TrueType outlines is skipped: PDF FontFile2 cannot carry CFF.
 /// OS/2 `ulCodePageRange1` names a Japanese, Chinese or Korean code page
 /// (bits 17-21).
@@ -2518,29 +2528,47 @@ fn cjk_code_pages(face: &ttf_parser::Face) -> bool {
         .is_some_and(|range| range & (0b1_1111 << 17) != 0)
 }
 
+/// A name record's text: Unicode records as ttf-parser decodes them, and
+/// Macintosh Roman ones when plain ASCII. Apple's Futura.ttc names its
+/// family only in a Mac Roman record, which `to_string` leaves undecoded.
+fn name_text(n: &ttf_parser::name::Name) -> Option<String> {
+    n.to_string().or_else(|| {
+        (n.platform_id == ttf_parser::PlatformId::Macintosh
+            && n.encoding_id == 0
+            && n.name.is_ascii())
+        .then(|| n.name.iter().map(|&b| char::from(b)).collect())
+    })
+}
+
 fn face_family_style(bytes: &[u8], family: &str) -> Option<(u8, (bool, bool))> {
     let face = ttf_parser::Face::parse(bytes, 0).ok()?;
     face.tables().glyf?;
     let has = |id: u16| {
         face.names().into_iter().any(|n| {
-            n.name_id == id
-                && n.to_string()
-                    .is_some_and(|f| f.eq_ignore_ascii_case(family))
+            n.name_id == id && name_text(&n).is_some_and(|f| f.eq_ignore_ascii_case(family))
         })
     };
-    let pass = if has(ttf_parser::name_id::FAMILY) {
+    let named = if has(ttf_parser::name_id::FAMILY) {
         0
     } else if has(ttf_parser::name_id::TYPOGRAPHIC_FAMILY) {
-        1
+        4
     } else {
         return None;
     };
+    // A normal-width face ranks before a condensed or expanded one of the
+    // same style (Papyrus.ttc holds Condensed ahead of Regular; Word draws
+    // the Regular, English corpus 469e5710), and a face at its style's
+    // weight before a SemiBold or Light one (20c18b4b's Open Sans).
+    let target = if face.is_bold() { 700 } else { 400 };
+    let pass = named
+        + 2 * u8::from(face.width() != ttf_parser::Width::Normal)
+        + u8::from(face.weight().to_number().abs_diff(target) > 50);
     // A slant alone is not italic: MV Boli leans -16 degrees but is the
     // Regular face. Apple's Avenir Next Bold Italic sets no italic bit,
     // so a slanted face whose subfamily says so still counts.
     let slanted_name = face.names().into_iter().any(|n| {
         matches!(n.name_id, 2 | 17)
-            && n.to_string().is_some_and(|f| {
+            && name_text(&n).is_some_and(|f| {
                 let f = f.to_ascii_lowercase();
                 f.contains("italic") || f.contains("oblique")
             })
@@ -3100,6 +3128,68 @@ mod tests {
             faces.iter().any(|(style, _)| *style == (false, false)),
             "a regular Avenir Book face from the system collection"
         );
+    }
+
+    #[test]
+    fn macos_helvetica_takes_word_s_one_point_two_em_line() {
+        // English part a 18f71536 (12pt, line=248 auto): Word's lines step
+        // 14.88, a 14.40pt single line, 1.2 em, where Helvetica's hhea body
+        // is 1.0 em; the first baseline sits 0.975 em down (win ascent 0.95
+        // plus the 0.025 em the win box leaves of that line).
+        if !Path::new("/System/Library/Fonts/Helvetica.ttc").is_file() {
+            return;
+        }
+        let faces = installed_family_faces("Helvetica");
+        let (_, bytes) = faces
+            .into_iter()
+            .find(|(style, _)| *style == (false, false))
+            .expect("regular Helvetica");
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        let ps = ttf_postscript_name(bytes).expect("postscript name");
+        let face = Face::from_bytes(FaceId::SansRegular, bytes, sanitize_pdf_name(&ps))
+            .expect("Helvetica");
+        assert!(
+            (face.single_line_pt(12.0) - 14.4).abs() < 0.02,
+            "{}",
+            face.single_line_pt(12.0)
+        );
+        assert!(
+            (face.ascent_pt(12.0) - 11.7).abs() < 0.02,
+            "{}",
+            face.ascent_pt(12.0)
+        );
+    }
+
+    #[test]
+    fn a_collection_whose_upright_face_is_medium_is_the_regular() {
+        // English corpus 87098dc3: Word draws "Futura" from macOS's
+        // Futura.ttc, whose upright face is "Futura Medium" (weight 500,
+        // no Regular). The text fell to Arial.
+        if !Path::new("/System/Library/Fonts/Supplemental/Futura.ttc").is_file() {
+            return;
+        }
+        let faces = installed_family_faces("Futura");
+        assert!(
+            faces.iter().any(|(style, _)| *style == (false, false)),
+            "a regular Futura face from the system collection"
+        );
+    }
+
+    #[test]
+    fn a_collection_prefers_its_normal_width_face() {
+        // English corpus 469e5710: macOS's Papyrus.ttc holds "Papyrus
+        // Condensed" before "Papyrus Regular", both family "Papyrus". Word
+        // draws the regular; we took the condensed face.
+        if !Path::new("/System/Library/Fonts/Supplemental/Papyrus.ttc").is_file() {
+            return;
+        }
+        let faces = installed_family_faces("Papyrus");
+        let regular = faces
+            .iter()
+            .find(|(style, _)| *style == (false, false))
+            .expect("a regular Papyrus face");
+        let face = ttf_parser::Face::parse(&regular.1, 0).expect("face");
+        assert_eq!(face.width(), ttf_parser::Width::Normal);
     }
 
     #[test]
