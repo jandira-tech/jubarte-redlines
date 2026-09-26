@@ -1122,7 +1122,7 @@ fn a_horizontally_scaled_run_squeezes_its_glyphs() {
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("scaled");
     let content = pdf_content_streams(&pdf).join("\n");
     assert!(
-        content.contains("0.1200 0 0 0.24") || content.contains("q 0.5000 0 0 1 "),
+        content.contains("0.1200 0 0 0.24") || content.contains(" cm 0.5000 0 0 1 0 0 cm BT"),
         "the glyphs carry the 50% scale"
     );
 }
@@ -6905,6 +6905,232 @@ fn a_front_picture_over_a_later_lower_box_paints_above_it() {
         image > fill,
         "the higher picture paints after the lower box; fill at {fill}, image at {image}"
     );
+}
+
+mod front_float_stacking {
+    use super::{blip, docx_to_pdf, drawing_docx, pdf_content_streams, pdf_page_count};
+
+    const RED: &str = "1.000 0.000 0.000 rg";
+    const GREEN: &str = "0.000 1.000 0.000 rg";
+    const BLUE: &str = "0.000 0.000 1.000 rg";
+    const PICTURE: &str = "72.00 0 0 72.00";
+    const SMALL_PICTURE: &str = "36.00 0 0 36.00";
+
+    fn anchor(z: u32, behind: bool) -> String {
+        format!(
+            r#"<wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0"
+                relativeHeight="{z}" behindDoc="{}" locked="0" layoutInCell="1" allowOverlap="1">
+                <wp:positionH relativeFrom="page"><wp:posOffset>1270000</wp:posOffset></wp:positionH>
+                <wp:positionV relativeFrom="page"><wp:posOffset>1270000</wp:posOffset></wp:positionV>
+                <wp:wrapNone/>"#,
+            u8::from(behind)
+        )
+    }
+
+    fn picture(id: u32, z: u32, behind: bool, extent: &str) -> String {
+        blip(extent, extent, &anchor(z, behind), "</wp:anchor>")
+            .replace("id=\"1\"", &format!("id=\"{id}\""))
+    }
+
+    fn shape(id: u32, z: u32, behind: bool, color: &str) -> String {
+        format!(
+            r#"<w:drawing>{}
+                <wp:extent cx="914400" cy="914400"/><wp:docPr id="{id}" name="Box {id}"/>
+                <a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                  <wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">
+                    <wps:spPr><a:xfrm><a:ext cx="914400" cy="914400"/></a:xfrm>
+                      <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                      <a:solidFill><a:srgbClr val="{color}"/></a:solidFill><a:ln><a:noFill/></a:ln>
+                    </wps:spPr><wps:bodyPr/>
+                  </wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>"#,
+            anchor(z, behind)
+        )
+    }
+
+    fn paragraph(drawing: &str) -> String {
+        // The shared PDF stream reader identifies page content by text ops.
+        format!("<w:p><w:r>{drawing}</w:r><w:r><w:t>Anchor</w:t></w:r></w:p>")
+    }
+
+    fn pages(body: &str, expected_pages: usize) -> Vec<String> {
+        let pdf = docx_to_pdf(&drawing_docx(&format!("{body}<w:sectPr/>")))
+            .expect("convert front-float fixture");
+        assert_eq!(pdf_page_count(&pdf), expected_pages);
+        let streams = pdf_content_streams(&pdf);
+        assert_eq!(streams.len(), expected_pages);
+        streams
+    }
+
+    fn paint_order(content: &str, markers: &[&str]) {
+        let positions: Vec<_> = markers
+            .iter()
+            .map(|marker| {
+                let positions: Vec<_> = content.match_indices(marker).map(|(i, _)| i).collect();
+                assert_eq!(positions.len(), 1, "paint {marker:?} exactly once");
+                positions[0]
+            })
+            .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "expected paint order {markers:?}; positions={positions:?}"
+        );
+    }
+
+    // Separate paragraphs ensure these exercise layout's cross-anchor tracking,
+    // rather than only the parser's sorting within a single paragraph.
+    #[test]
+    fn pictures_and_boxes_sort_in_both_anchor_orders_at_z_boundaries() {
+        for (first_z, second_z) in [(0, u32::MAX), (u32::MAX, 0), (5, 5)] {
+            for first_is_picture in [false, true] {
+                for second_is_picture in [false, true] {
+                    let (first, first_marker) = if first_is_picture {
+                        (picture(1, first_z, false, "914400"), PICTURE)
+                    } else {
+                        (shape(1, first_z, false, "FF0000"), RED)
+                    };
+                    let (second, second_marker) = if second_is_picture {
+                        (picture(2, second_z, false, "457200"), SMALL_PICTURE)
+                    } else {
+                        (shape(2, second_z, false, "00FF00"), GREEN)
+                    };
+                    let content = pages(&(paragraph(&first) + &paragraph(&second)), 1);
+                    let expected = if first_z > second_z {
+                        [second_marker, first_marker]
+                    } else {
+                        [first_marker, second_marker]
+                    };
+                    paint_order(&content[0], &expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_insertions_keep_all_previously_moved_ranges_valid() {
+        // The third float retains the red box while lifting the picture;
+        // the fourth must lift all three, including the already moved picture.
+        let body = paragraph(&picture(1, u32::MAX, false, "914400"))
+            + &paragraph(&shape(2, 2, false, "FF0000"))
+            + "<w:p><w:r><w:t>Body</w:t></w:r></w:p>"
+            + &paragraph(&shape(3, 4, false, "0000FF"))
+            + &paragraph(&shape(4, 0, false, "00FF00"));
+        paint_order(&pages(&body, 1)[0], &["(B", GREEN, RED, BLUE, PICTURE]);
+    }
+
+    #[test]
+    fn moving_a_picture_preserves_its_outline_after_the_image() {
+        let outlined = picture(1, 5, false, "914400").replace(
+            "</pic:pic>",
+            r#"<pic:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:ln w="12700"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:ln></pic:spPr></pic:pic>"#,
+        );
+        let body = paragraph(&outlined) + &paragraph(&shape(2, 0, false, "00FF00"));
+        paint_order(
+            &pages(&body, 1)[0],
+            &[GREEN, PICTURE, "0.000 0.000 1.000 RG"],
+        );
+    }
+
+    #[test]
+    fn moving_a_box_keeps_fill_outline_and_text_together() {
+        let labelled = shape(1, 5, false, "FF0000")
+            .replace(
+                "<a:ln><a:noFill/></a:ln>",
+                r#"<a:ln w="12700"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:ln>"#,
+            )
+            .replace(
+                "<wps:bodyPr/>",
+                "<wps:txbx><w:txbxContent><w:p><w:r><w:t>Label</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/>",
+            );
+        let body = paragraph(&labelled)
+            + &paragraph(&picture(2, 2, false, "914400"))
+            + &paragraph(&shape(3, 0, false, "00FF00"));
+        let content = pages(&body, 1);
+        paint_order(&content[0], &[GREEN, PICTURE, RED, "(L"]);
+        let fill = content[0].find(RED).unwrap();
+        let label = content[0].find("(L").unwrap();
+        // A box outline is emitted as four separate edge strokes.
+        let edges: Vec<_> = content[0]
+            .match_indices("0.000 0.000 1.000 RG")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(edges.len(), 4, "each edge must paint exactly once");
+        assert!(
+            edges.iter().all(|&i| fill < i && i < label),
+            "all edges must stay between the moved box's fill and text"
+        );
+    }
+
+    #[test]
+    fn inserting_behind_boxes_updates_ranges_before_later_front_reordering() {
+        let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>".to_owned()
+            + &paragraph(&picture(1, 5, false, "914400"))
+            + &paragraph(&shape(2, u32::MAX, true, "FF0000"))
+            + &paragraph(&shape(3, u32::MAX, true, "0000FF"))
+            + &paragraph(&shape(4, 0, false, "00FF00"));
+        paint_order(&pages(&body, 1)[0], &[RED, BLUE, "(B", GREEN, PICTURE]);
+    }
+
+    #[test]
+    fn behind_pictures_do_not_join_the_front_stack() {
+        let body = paragraph(&picture(1, u32::MAX, true, "914400"))
+            + "<w:p><w:r><w:t>Body</w:t></w:r></w:p>"
+            + &paragraph(&shape(2, 5, false, "FF0000"))
+            + &paragraph(&shape(3, 0, false, "00FF00"));
+        paint_order(&pages(&body, 1)[0], &[PICTURE, "(B", GREEN, RED]);
+    }
+
+    #[test]
+    fn inline_pictures_do_not_reorder_earlier_front_floats() {
+        let inline =
+            blip("914400", "914400", "<wp:inline>", "</wp:inline>").replace("id=\"1\"", "id=\"2\"");
+        let body = paragraph(&shape(1, 5, false, "FF0000")) + &paragraph(&inline);
+        paint_order(&pages(&body, 1)[0], &[RED, PICTURE]);
+    }
+
+    #[test]
+    fn inline_boxes_do_not_reorder_earlier_front_floats() {
+        let inline = shape(2, 0, false, "00FF00")
+            .replace(&anchor(0, false), "<wp:inline>")
+            .replace("</wp:anchor>", "</wp:inline>");
+        let body = paragraph(&picture(1, 5, false, "914400")) + &paragraph(&inline);
+        paint_order(&pages(&body, 1)[0], &[PICTURE, GREEN]);
+    }
+
+    #[test]
+    fn invisible_float_does_not_capture_surrounding_paint_operations() {
+        let invisible = shape(2, 0, false, "FF0000").replace(
+            r#"<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>"#,
+            "<a:noFill/>",
+        );
+        let body = paragraph(&picture(1, 5, false, "914400"))
+            + &paragraph(&invisible)
+            + &paragraph(&shape(3, 2, false, "00FF00"));
+        let content = pages(&body, 1);
+        assert!(!content[0].contains(RED));
+        paint_order(&content[0], &[GREEN, PICTURE]);
+    }
+
+    #[test]
+    fn stacking_is_page_local_even_after_behind_box_insertion() {
+        let body = paragraph(&picture(1, u32::MAX, false, "914400"))
+            + "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>"
+            + &paragraph(&shape(2, 5, false, "FF0000"))
+            + &paragraph(&shape(3, u32::MAX, true, "0000FF"))
+            + &paragraph(&shape(4, 0, false, "00FF00"));
+        let content = pages(&body, 2);
+        paint_order(&content[0], &[PICTURE]);
+        for marker in [RED, GREEN, BLUE] {
+            assert!(
+                !content[0].contains(marker),
+                "page two's box stayed on page two"
+            );
+        }
+        assert!(
+            !content[1].contains(" Do"),
+            "page one's picture stayed on page one"
+        );
+        paint_order(&content[1], &[BLUE, GREEN, RED]);
+    }
 }
 
 fn inline_green_group(cx: u32, cy: u32) -> String {
@@ -15927,6 +16153,66 @@ fn page_field_uses_sectpr_hindi_counting() {
             .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
         "hindiCounting दस is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
+}
+
+#[test]
+fn page_field_uses_sectpr_korean_counting() {
+    // MS-DOCX: koreanCounting is 일 이 삼… (U+C77C). start=10 is 십, not ASCII "10".
+    let pdf = page_num_fmt_pdf("koreanCounting", 10, "PgKcX");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "koreanCounting PAGE start=10 must not stay ASCII 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "koreanCounting 십 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_korean_digital() {
+    // MS-DOCX: koreanDigital is 일, 일영, 일영영… start=10 is 일영, not 십.
+    let pdf = page_num_fmt_pdf("koreanDigital", 10, "PgKdX");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "koreanDigital PAGE start=10 must not stay ASCII 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "koreanDigital 일영 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_korean_digital2() {
+    // MS-DOCX: koreanDigital2 is 一, 一零… (U+96F6 zero), not ideographDigital 一〇.
+    let pdf = page_num_fmt_pdf("koreanDigital2", 10, "PgK2X");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "koreanDigital2 PAGE start=10 must not stay ASCII 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "koreanDigital2 一零 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_korean_legal() {
+    // MS-DOCX: koreanLegal is 하나 둘 셋… (U+D558 U+B098). start=1 is 하나.
+    assert_ideograph_page_is_cid_not_decimal("koreanLegal", "PgKlX");
 }
 
 #[test]
@@ -36104,6 +36390,52 @@ fn a_vertical_section_runs_its_lines_down_the_page() {
         content.contains(" cm 0 1 -1 0 0 0 cm BT"),
         "each kanji stands upright"
     );
+}
+
+#[test]
+fn a_scaled_vertical_run_squeezes_its_glyphs_with_its_advances() {
+    if !word_dfonts_available() {
+        eprintln!("skip: Word DFonts absent; vertical glyphs need Word's CJK faces");
+        return;
+    }
+    // A w:w run in a tbRl section: the layout advances are scaled, so each
+    // glyph, upright or turned, is squeezed along the column the same way
+    // the horizontal path squeezes a scaled run.
+    let body = "<w:p><w:r><w:rPr><w:rFonts w:eastAsia=\"MS Mincho\"/><w:w w:val=\"50\"/></w:rPr>\
+        <w:t>無「</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"16838\" w:h=\"11906\" w:orient=\"landscape\"/>\
+        <w:pgMar w:top=\"1701\" w:right=\"1985\" w:bottom=\"1701\" w:left=\"1701\" w:header=\"851\" w:footer=\"992\"/>\
+        <w:textDirection w:val=\"tbRl\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("vertical w:w");
+    let content = pdf_content_streams(&pdf).join("\n");
+    assert!(
+        content.contains(" cm 0.5000 0 0 1 0 0 cm 0 1 -1 0 0 0 cm BT"),
+        "the upright kanji is squeezed along the column; {content}"
+    );
+    assert!(
+        content.contains("q 0.1200 0 0 0.24 "),
+        "the turned bracket is squeezed along the column; {content}"
+    );
+}
+
+#[test]
+fn a_keep_next_row_before_a_cell_holding_only_a_table_does_not_panic() {
+    // A w:tc must end in a w:p, but a writer that leaves only a nested
+    // table in it must not abort the conversion: the keepNext row's look at
+    // the next row's first paragraph found none (CodeRabbit on #173).
+    let filler: String = (0..44)
+        .map(|i| format!("<w:p><w:r><w:t>Filler{i}</w:t></w:r></w:p>"))
+        .collect();
+    let body = format!(
+        "{filler}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:t>Label</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc><w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:tc></w:tr>\
+         </w:tbl><w:p/><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("no panic");
+    assert!(pdf_glyph_text_xy(&pdf, "Inner").is_some());
 }
 
 #[test]

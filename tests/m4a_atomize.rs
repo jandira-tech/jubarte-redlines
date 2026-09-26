@@ -305,7 +305,7 @@ fn m4_a8_group_tree() {
         ComparisonUnit::Group(g) => {
             assert_eq!(g.group_type, ComparisonUnitGroupType::Paragraph);
             assert_eq!(g.level, 0);
-            assert_eq!(g.sha1_hash, "PARAHASH");
+            assert_eq!(g.sha1.hash(), "PARAHASH");
         }
         _ => panic!("expected a Paragraph group"),
     }

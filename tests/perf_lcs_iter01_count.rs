@@ -13,7 +13,6 @@ use jubarte::comparer::atoms::{
     ComparisonUnit, ComparisonUnitAtom, ComparisonUnitGroup, ComparisonUnitWord,
 };
 use jubarte::comparer::{ComparisonUnitGroupType, CorrelationStatus};
-use jubarte::util::sha1::sha1_fingerprint;
 use jubarte::xmllinq::NodeId;
 
 fn atom(tag: &str) -> ComparisonUnitAtom {
@@ -26,9 +25,7 @@ fn group(gt: ComparisonUnitGroupType, contents: Vec<ComparisonUnit>) -> Comparis
         group_type: gt,
         contents,
         level: 0,
-        sha1_key: sha1_fingerprint(""),
-        sha1_key128: jubarte::util::sha1::sha1_fingerprint128(""),
-        sha1_hash: String::new(),
+        sha1: jubarte::comparer::atoms::Sha1Keyed::new(String::new()),
         correlated_sha1_hash: None,
         structure_sha1_hash: None,
         atom_count_memo: std::cell::Cell::new(usize::MAX),

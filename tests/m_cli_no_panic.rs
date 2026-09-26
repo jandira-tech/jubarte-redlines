@@ -139,3 +139,53 @@ fn cli_compare_empty_package_exits_nonzero() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// A real package whose main document part is replaced by `document_xml`.
+fn package_with_main(document_xml: &str) -> Vec<u8> {
+    let original = std::fs::read("tests/fixtures/f4/original.docx").unwrap();
+    let mut pkg = PartFs::open(&original).unwrap();
+    pkg.set_part("word/document.xml", document_xml.as_bytes().to_vec());
+    pkg.to_zip().unwrap()
+}
+
+const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+#[test]
+fn get_revisions_missing_main_returns_err() {
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let err = get_revisions(&empty_package_bytes(), &settings).expect_err("missing main → Err");
+    assert!(format!("{err}").contains("not found"), "{err}");
+}
+
+#[test]
+fn get_revisions_main_without_body_returns_err() {
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let doc = package_with_main(&format!(r#"<w:document xmlns:w="{W_NS}"/>"#));
+    let err = get_revisions(&doc, &settings).expect_err("no w:body → Err");
+    assert!(format!("{err}").contains("body"), "{err}");
+}
+
+/// `w:altChunk` is ordinary Word content that the revision walk cannot read
+/// (C# TestForInvalidContent throws); Python/WASM callers need an Err, not a
+/// panic that aborts the WASM instance.
+#[test]
+fn get_revisions_alt_chunk_document_returns_err() {
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let doc = package_with_main(&format!(
+        r#"<w:document xmlns:w="{W_NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:altChunk r:id="rIdX"/></w:body></w:document>"#
+    ));
+    let err = get_revisions(&doc, &settings).expect_err("altChunk → Err");
+    assert!(format!("{err}").contains("altChunk"), "{err}");
+}
+
+/// A footnote reference with no definition fails the compare (C# throws
+/// without a ComparisonLog) as an Err the caller can handle.
+#[test]
+fn compare_with_an_orphan_footnote_reference_returns_err() {
+    let doc = package_with_main(&format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body><w:p><w:r><w:t>x</w:t></w:r><w:r><w:footnoteReference w:id="77"/></w:r></w:p></w:body></w:document>"#
+    ));
+    let modified = std::fs::read("tests/fixtures/redline/modified.docx").unwrap();
+    let err = compare_documents(&doc, &modified, "Author").expect_err("orphan ref → Err");
+    assert!(format!("{err}").contains("77"), "{err}");
+}

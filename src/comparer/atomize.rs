@@ -239,6 +239,27 @@ fn chain_with(path: &[NodeId], element: NodeId) -> Arc<[NodeId]> {
     Arc::from(c)
 }
 
+/// Recurses into each named child of `element` except one named `exclude`.
+/// Non-allocating (see `Dom::child_at`): `recurse` never adds or removes
+/// children of `element`, so the index walk equals `elements(element, None)`
+/// without the Vec.
+fn recurse_children(
+    dom: &mut Dom,
+    element: NodeId,
+    exclude: Option<&XName>,
+    list: &mut Vec<ComparisonUnitAtom>,
+    settings: &WmlComparerSettings,
+    path: &mut Vec<NodeId>,
+) {
+    for i in 0..dom.child_count(element) {
+        let item = dom.child_at(element, i);
+        match dom.name(item) {
+            Some(n) if exclude != Some(&n) => recurse(dom, item, list, settings, path),
+            _ => {}
+        }
+    }
+}
+
 fn recurse(
     dom: &mut Dom,
     element: NodeId,
@@ -261,56 +282,27 @@ fn recurse(
     // note wrapper (parity CRASH regression when path stayed empty here).
     if name == W::body() || name == W::name("hdr") || name == W::name("ftr") {
         // True path-stop containers: path stays empty underneath.
-        let mut i = 0;
-        while i < dom.child_count(element) {
-            let item = dom.child_at(element, i);
-            i += 1;
-            if dom.name(item).is_some() {
-                recurse(dom, item, list, settings, path);
-            }
-        }
+        recurse_children(dom, element, None, list, settings, path);
         return;
     }
     if name == W::footnote() || name == W::endnote() {
         // Walk children only (no atom for the note itself), but push onto path.
         path.push(element);
-        let mut i = 0;
-        while i < dom.child_count(element) {
-            let item = dom.child_at(element, i);
-            i += 1;
-            if dom.name(item).is_some() {
-                recurse(dom, item, list, settings, path);
-            }
-        }
+        recurse_children(dom, element, None, list, settings, path);
         path.pop();
         return;
     }
     // w:footnotes / w:endnotes parts: if ever used as content_parent, mirror
     // the old stop set (exclude the part from descendant paths).
     if name == W::name("footnotes") || name == W::name("endnotes") {
-        let mut i = 0;
-        while i < dom.child_count(element) {
-            let item = dom.child_at(element, i);
-            i += 1;
-            if dom.name(item).is_some() {
-                recurse(dom, item, list, settings, path);
-            }
-        }
+        recurse_children(dom, element, None, list, settings, path);
         return;
     }
 
     if name == W::p() {
-        // children except pPr (non-allocating; see the body branch above)
+        // children except pPr
         path.push(element);
-        let mut i = 0;
-        while i < dom.child_count(element) {
-            let item = dom.child_at(element, i);
-            i += 1;
-            match dom.name(item) {
-                Some(n) if n != W::p_pr() => recurse(dom, item, list, settings, path),
-                _ => {}
-            }
-        }
+        recurse_children(dom, element, Some(&W::p_pr()), list, settings, path);
         path.pop();
         // the paragraph mark atom (pPr, or a fresh empty pPr). Faithful to
         // WmlComparer.ts: the atom's ancestor chain is the PARAGRAPH's
@@ -328,17 +320,9 @@ fn recurse(
     }
 
     if name == W::r() {
-        // children except rPr (non-allocating; see the body branch above)
+        // children except rPr
         path.push(element);
-        let mut i = 0;
-        while i < dom.child_count(element) {
-            let item = dom.child_at(element, i);
-            i += 1;
-            match dom.name(item) {
-                Some(n) if n != W::r_pr() => recurse(dom, item, list, settings, path),
-                _ => {}
-            }
-        }
+        recurse_children(dom, element, Some(&W::r_pr()), list, settings, path);
         path.pop();
         return;
     }

@@ -97,7 +97,7 @@ fn c1_pre_process_markup_renumbers_to_unique_range() {
         &[("2", "alpha"), ("5", "beta")],
     );
     let mut pkg = PartFs::open(&doc).unwrap();
-    let changed = pre_process_markup(&mut pkg, 1001);
+    let changed = pre_process_markup(&mut pkg, 1001).unwrap();
     assert!(
         changed.iter().any(|p| p == "word/document.xml")
             && changed.iter().any(|p| p == "word/footnotes.xml"),
@@ -129,7 +129,7 @@ fn c1_pre_process_markup_renumbers_to_unique_range() {
 fn c2_missing_notes_parts_created_empty() {
     let original = std::fs::read("tests/fixtures/redline/original.docx").unwrap();
     let mut pkg = PartFs::open(&original).unwrap();
-    let changed = pre_process_markup(&mut pkg, 1001);
+    let changed = pre_process_markup(&mut pkg, 1001).unwrap();
     assert!(
         changed.iter().any(|p| p == "word/footnotes.xml")
             && changed.iter().any(|p| p == "word/endnotes.xml"),
@@ -175,7 +175,7 @@ fn c2_existing_notes_parts_untouched() {
     let original = std::fs::read("tests/fixtures/f4/original.docx").unwrap();
     let mut pkg = PartFs::open(&original).unwrap();
     let parts_before = pkg.parts().len();
-    pre_process_markup(&mut pkg, 1001);
+    pre_process_markup(&mut pkg, 1001).unwrap();
     assert_eq!(pkg.parts().len(), parts_before, "no parts added");
     let fx = pkg.part_string("word/footnotes.xml").unwrap();
     let defs = def_ids(&fx);
@@ -226,16 +226,15 @@ fn c2_inserted_note_resolves_when_a_had_no_part() {
     assert!(fx.contains("beta"), "inserted note content carried");
 }
 
-/// C.1 — an orphaned reference (no matching definition) panics: C# throws
-/// DocxodusException when no ComparisonLog is wired (:1676).
+/// C.1 — an orphaned reference (no matching definition) fails: C# throws
+/// DocxodusException when no ComparisonLog is wired (:1676); here that throw
+/// is an Err the caller can handle, not a panic.
 #[test]
-fn c1_orphan_reference_without_log_panics() {
+fn c1_orphan_reference_without_log_errs() {
     let doc = note_doc(&[("hello", Some("77"))], &[("2", "alpha")]);
     let mut pkg = PartFs::open(&doc).unwrap();
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pre_process_markup(&mut pkg, 1001)
-    }));
-    assert!(r.is_err(), "orphan reference must panic");
+    let err = pre_process_markup(&mut pkg, 1001).expect_err("orphan reference must fail");
+    assert!(err.to_string().contains("'77'"), "{err}");
 }
 
 /// C.1 e2e — both inputs use footnote id=2. The disjoint pre-compare ranges
@@ -284,7 +283,7 @@ fn c3_empty_footnote_filled_pre_compare() {
     let doc = pkg.to_zip().unwrap();
 
     let mut pkg = PartFs::open(&doc).unwrap();
-    pre_process_markup(&mut pkg, 1001);
+    pre_process_markup(&mut pkg, 1001).unwrap();
 
     let fx = pkg.part_string("word/footnotes.xml").unwrap();
     let mut dom = Dom::new();
@@ -340,7 +339,7 @@ fn c4_chart_external_data_detached() {
     let doc = pkg.to_zip().unwrap();
 
     let mut pkg = PartFs::open(&doc).unwrap();
-    let changed = pre_process_markup(&mut pkg, 1001);
+    let changed = pre_process_markup(&mut pkg, 1001).unwrap();
     assert!(
         changed.iter().any(|p| p == "word/charts/chart1.xml"),
         "chart part rewritten, got {changed:?}"
@@ -368,7 +367,7 @@ fn c5_unids_assigned_across_content_parts() {
 
     let doc = note_doc(&[("hello", Some("2"))], &[("2", "alpha")]);
     let mut pkg = PartFs::open(&doc).unwrap();
-    pre_process_markup(&mut pkg, 1001);
+    pre_process_markup(&mut pkg, 1001).unwrap();
 
     // main part: block elements carry pt:Unid; root declares pt14 ignorable
     let dx = pkg.part_string("word/document.xml").unwrap();

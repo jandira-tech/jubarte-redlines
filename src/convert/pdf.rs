@@ -516,6 +516,13 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     {
                         let f = fonts.get(*face);
                         let (r, g, b) = (color[0], color[1], color[2]);
+                        // A `w:w` scale squeezes each glyph along the
+                        // column, as the scaled advances were at layout.
+                        let squeeze = if (*hscale - 1.0).abs() > 0.001 {
+                            format!("{:.4} 0 0 1 0 0 cm ", *hscale)
+                        } else {
+                            String::new()
+                        };
                         let mut gx = *x;
                         for (ch, gid) in text.chars().zip(glyphs.iter()) {
                             let adv = f.advance_pt(ch, *size) * *hscale;
@@ -531,15 +538,21 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                                 };
                                 let _ = writeln!(
                                     stream,
-                                    "q 1 0 0 1 {cx:.2} {cy:.2} cm 0 1 -1 0 0 0 cm BT /{name} {size:.2} Tf \
+                                    "q 1 0 0 1 {cx:.2} {cy:.2} cm {squeeze}0 1 -1 0 0 0 cm BT /{name} {size:.2} Tf \
                                      {r:.3} {g:.3} {b:.3} rg {ox:.2} {oy:.2} Td <{gid:04X}> Tj ET Q",
                                     ox = lift - adv / 2.0,
                                     oy = lift - 0.38 * size,
                                 );
-                            } else {
+                            } else if squeeze.is_empty() {
                                 let _ = writeln!(
                                     stream,
                                     "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {gx:.2} {y:.2} Td <{gid:04X}> Tj ET",
+                                );
+                            } else {
+                                let _ = writeln!(
+                                    stream,
+                                    "q 1 0 0 1 {gx:.2} {y:.2} cm {squeeze}BT /{name} {size:.2} Tf \
+                                     {r:.3} {g:.3} {b:.3} rg 0 0 Td <{gid:04X}> Tj ET Q",
                                 );
                             }
                             gx += adv;
@@ -823,13 +836,13 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     ..
                 } => {
                     img_counter += 1;
-                    let drawn = paint_image(*x, *y, *dw, *dh, *crop, img_counter, *rotate_deg);
-                    if *oval {
-                        let _ =
-                            writeln!(stream, "q {} W n {drawn}Q", ellipse_path(*x, *y, *dw, *dh));
-                    } else {
-                        stream.push_str(&drawn);
-                    }
+                    stream.push_str(&paint_picture(
+                        [*x, *y, *dw, *dh],
+                        *crop,
+                        img_counter,
+                        *rotate_deg,
+                        *oval,
+                    ));
                 }
             }
         }
@@ -855,7 +868,18 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                 contents: note.contents.clone(),
                 author: note.author.clone(),
             });
-            objs.push(text_annot_obj(scaled.as_ref().unwrap_or(note)));
+            let note = scaled.as_ref().unwrap_or(note);
+            // The content stream turns a vertical page back with
+            // X = y, Y = width − x; the rectangle turns the same way.
+            let turned = page.vertical.then(|| PdfComment {
+                x: note.y,
+                y: page.width - note.x - note.w,
+                w: note.h,
+                h: note.w,
+                contents: note.contents.clone(),
+                author: note.author.clone(),
+            });
+            objs.push(text_annot_obj(turned.as_ref().unwrap_or(note)));
             let _ = write!(annot_refs, "{id} 0 R ");
         }
         let annots = if annot_refs.is_empty() {
@@ -1550,8 +1574,33 @@ fn paint_image(
         }
         _ => format!("q {dw:.2} 0 0 {dh:.2} {x:.2} {y:.2} cm /Im{n} Do Q\n"),
     };
+    rotate_about_centre(x, y, dw, dh, rotate_deg, &inner)
+}
+
+/// A picture op: [`paint_image`], shown through an oval when `oval`. The
+/// oval is the shape's geometry, so it turns with the picture.
+fn paint_picture(
+    [x, y, dw, dh]: [f32; 4],
+    crop: Option<[f32; 4]>,
+    n: usize,
+    rotate_deg: f32,
+    oval: bool,
+) -> String {
+    if !oval {
+        return paint_image(x, y, dw, dh, crop, n, rotate_deg);
+    }
+    let clipped = format!(
+        "q {} W n {}Q\n",
+        ellipse_path(x, y, dw, dh),
+        paint_image(x, y, dw, dh, crop, n, 0.0)
+    );
+    rotate_about_centre(x, y, dw, dh, rotate_deg, &clipped)
+}
+
+/// `inner` turned `rotate_deg` about the centre of its box.
+fn rotate_about_centre(x: f32, y: f32, dw: f32, dh: f32, rotate_deg: f32, inner: &str) -> String {
     if rotate_deg.abs() < 0.05 {
-        return inner;
+        return inner.to_string();
     }
     let cx = x + dw * 0.5;
     let cy = y + dh * 0.5;
@@ -1799,6 +1848,33 @@ fn stands_upright(c: char) -> bool {
 mod tests {
     use super::uniquify;
 
+    /// A tbRl page is laid out turned a quarter and turned back by the
+    /// content stream's `cm`; its comment rectangles must turn with it.
+    #[test]
+    fn a_comment_on_a_vertical_page_turns_with_its_text() {
+        let fonts = super::Fonts::new();
+        let mut page = super::Page::new(595.2, 841.92);
+        page.vertical = true;
+        page.comments.push(super::PdfComment {
+            x: 100.0,
+            y: 700.0,
+            w: 20.0,
+            h: 14.0,
+            contents: "note".into(),
+            author: "A".into(),
+        });
+        let pdf = super::emit(&fonts, &[page], crate::convert::PdfOptions::default());
+        let hay = String::from_utf8_lossy(&pdf);
+        // X = y, Y = width − x: [700, 595.2 − 120] to [714, 595.2 − 100].
+        assert!(
+            hay.contains("/Rect [700.00 475.20 714.00 495.20]"),
+            "{}",
+            hay.lines()
+                .find(|l| l.contains("/Rect"))
+                .unwrap_or_default()
+        );
+    }
+
     /// Faces were embedded whole (a one-line PDF was 1.3 MB). The subset
     /// keeps every glyph id, the outlines of the used ones and the
     /// components of a used composite, and empties the rest.
@@ -1992,5 +2068,93 @@ mod tests {
         assert_eq!(uniquify("Sans", &mut taken), "Sans");
         assert_eq!(uniquify("Sans-2", &mut taken), "Sans-2");
         assert_eq!(uniquify("Sans", &mut taken), "Sans-3");
+    }
+
+    mod regression_tests {
+        use super::super::{ellipse_path, paint_image, paint_picture, stands_upright};
+
+        #[test]
+        fn negative_crop_insets_the_image_inside_its_clipping_box() {
+            let ops = paint_image(
+                10.0,
+                20.0,
+                100.0,
+                60.0,
+                Some([-0.5, 0.0, -0.5, 0.0]),
+                3,
+                0.0,
+            );
+            assert!(ops.contains("10.00 20.00 100.00 60.00 re W n"), "{ops}");
+            assert!(
+                ops.contains("50.00 0 0 60.00 35.00 20.00 cm /Im3 Do"),
+                "{ops}"
+            );
+        }
+
+        #[test]
+        fn opposing_crop_offsets_do_not_cancel_the_crop_transform() {
+            let ops = paint_image(
+                10.0,
+                20.0,
+                100.0,
+                60.0,
+                Some([0.25, 0.0, -0.25, 0.0]),
+                1,
+                0.0,
+            );
+            assert!(ops.contains("re W n"), "{ops}");
+            assert!(ops.contains("100.00 0 0 60.00 -15.00 20.00 cm"), "{ops}");
+        }
+
+        #[test]
+        fn a_rotated_oval_picture_turns_its_clip_with_the_image() {
+            let drawn = paint_picture([10.0, 20.0, 80.0, 40.0], None, 1, 90.0, true);
+            let turn = drawn.find(" 0 0 cm 1 0 0 1 ").expect("rotation");
+            let clip = drawn.find(" W n ").expect("oval clip");
+            assert!(turn < clip, "the clip sits inside the rotation: {drawn}");
+            assert_eq!(
+                paint_picture([10.0, 20.0, 80.0, 40.0], None, 1, 0.0, true),
+                format!(
+                    "q {} W n {}Q\n",
+                    ellipse_path(10.0, 20.0, 80.0, 40.0),
+                    paint_image(10.0, 20.0, 80.0, 40.0, None, 1, 0.0)
+                ),
+                "an unrotated oval keeps its output"
+            );
+        }
+
+        #[test]
+        fn ellipse_path_closes_at_the_four_box_extremes() {
+            let path = ellipse_path(10.0, 20.0, 80.0, 40.0);
+            assert!(path.starts_with("90.00 40.00 m "), "{path}");
+            assert!(path.ends_with("90.00 40.00 c h"), "{path}");
+            assert_eq!(path.split_whitespace().filter(|t| *t == "c").count(), 4);
+            for end in ["50.00 60.00 c", "10.00 40.00 c", "50.00 20.00 c"] {
+                assert!(path.contains(end), "{path}");
+            }
+        }
+
+        #[test]
+        fn vertical_text_keeps_ideographs_upright_but_turns_brackets_and_latin() {
+            for c in ['漢', 'あ', 'カ', 'Ａ', '１', '\u{20000}', '\u{2FA1F}'] {
+                assert!(stands_upright(c), "{c}");
+            }
+            for c in [
+                'A',
+                '1',
+                ' ',
+                '\u{3000}',
+                '「',
+                '」',
+                '（',
+                '）',
+                'ー',
+                '～',
+                '－',
+                '\u{2FA20}',
+            ] {
+                assert!(!stands_upright(c), "{c}");
+            }
+        }
     }
 }

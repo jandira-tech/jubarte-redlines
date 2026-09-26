@@ -800,6 +800,10 @@ enum PageNumFmt {
     HindiVowels,
     HindiConsonants,
     HindiCounting,
+    KoreanCounting,
+    KoreanDigital,
+    KoreanDigital2,
+    KoreanLegal,
 }
 
 struct NamedStyle {
@@ -1492,6 +1496,8 @@ impl TableCell {
     /// nested tables anchored among them (00297360's letter row splits
     /// around its small nested table).
     fn split_at(&self, k: usize) -> (TableCell, TableCell) {
+        // A cell holding only a nested table has no paragraphs to split.
+        let k = k.min(self.paras.len());
         let mut head = self.with_paras(self.paras[..k].to_vec());
         let mut tail = self.with_paras(self.paras[k..].to_vec());
         for (table, &at) in self.nested.iter().zip(&self.nested_at) {
@@ -4035,6 +4041,10 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "hindiVowels" => PageNumFmt::HindiVowels,
             "hindiConsonants" => PageNumFmt::HindiConsonants,
             "hindiCounting" => PageNumFmt::HindiCounting,
+            "koreanCounting" => PageNumFmt::KoreanCounting,
+            "koreanDigital" => PageNumFmt::KoreanDigital,
+            "koreanDigital2" => PageNumFmt::KoreanDigital2,
+            "koreanLegal" => PageNumFmt::KoreanLegal,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -4333,6 +4343,10 @@ enum NumFmt {
     HindiVowels,
     HindiConsonants,
     HindiCounting,
+    KoreanCounting,
+    KoreanDigital,
+    KoreanDigital2,
+    KoreanLegal,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -4646,6 +4660,10 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "hindiVowels" => NumFmt::HindiVowels,
         "hindiConsonants" => NumFmt::HindiConsonants,
         "hindiCounting" => NumFmt::HindiCounting,
+        "koreanCounting" => NumFmt::KoreanCounting,
+        "koreanDigital" => NumFmt::KoreanDigital,
+        "koreanDigital2" => NumFmt::KoreanDigital2,
+        "koreanLegal" => NumFmt::KoreanLegal,
         _ => NumFmt::Decimal,
     }
 }
@@ -4690,6 +4708,10 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::HindiVowels => cycle_cjk(&HINDI_VOWELS, n),
         NumFmt::HindiConsonants => cycle_cjk(&HINDI_CONSONANTS, n),
         NumFmt::HindiCounting => hindi_counting_label(n),
+        NumFmt::KoreanCounting => korean_counting_label(n),
+        NumFmt::KoreanDigital => korean_digital_label(n),
+        NumFmt::KoreanDigital2 => korean_digital2_label(n),
+        NumFmt::KoreanLegal => korean_legal_label(n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -5213,6 +5235,74 @@ fn hindi_counting_label(n: u32) -> String {
         WORDS[n as usize].into()
     } else {
         n.to_string()
+    }
+}
+
+/// MS-DOCX koreanCounting: 일, 이, 삼, 십, 십일, 백 (U+C77C). Not digit-wise 일영.
+/// A unit multiplier of one is dropped (십, 백, 천, never 일십).
+fn korean_counting_label(n: u32) -> String {
+    const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
+    const UNITS: [(u32, &str); 3] = [(1000, "천"), (100, "백"), (10, "십")];
+    if n == 0 || n > 9999 {
+        return if n == 0 { "영".into() } else { n.to_string() };
+    }
+    let mut s = String::new();
+    let mut rest = n;
+    for (unit, name) in UNITS {
+        let d = rest / unit;
+        rest %= unit;
+        if d > 1 {
+            s.push_str(DIGITS[d as usize]);
+        }
+        if d > 0 {
+            s.push_str(name);
+        }
+    }
+    if rest > 0 {
+        s.push_str(DIGITS[rest as usize]);
+    }
+    s
+}
+
+/// MS-DOCX koreanDigital: 일, 일영, 일영영… Hangul digits with 영 for 0.
+fn korean_digital_label(n: u32) -> String {
+    const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
+    n.to_string()
+        .bytes()
+        .map(|b| DIGITS[usize::from(b - b'0')])
+        .collect()
+}
+
+/// MS-DOCX koreanDigital2: 一, 一零… (U+96F6), not ideographDigital 一〇 (U+3007).
+fn korean_digital2_label(n: u32) -> String {
+    const DIGITS: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+    n.to_string()
+        .bytes()
+        .map(|b| DIGITS[usize::from(b - b'0')])
+        .collect()
+}
+
+/// MS-DOCX koreanLegal: 하나, 둘, 셋… (U+D558 U+B098). Native Korean.
+fn korean_legal_label(n: u32) -> String {
+    const ONES: [&str; 10] = [
+        "", "하나", "둘", "셋", "넷", "다섯", "여섯", "일곱", "여덟", "아홉",
+    ];
+    const TENS: [&str; 10] = [
+        "", "열", "스물", "서른", "마흔", "쉰", "예순", "일흔", "여든", "아흔",
+    ];
+    match n {
+        0 => "영".into(),
+        1..=9 => ONES[n as usize].into(),
+        10..=99 => {
+            let tens = n / 10;
+            let ones = n % 10;
+            if ones == 0 {
+                TENS[tens as usize].into()
+            } else {
+                format!("{}{}", TENS[tens as usize], ONES[ones as usize])
+            }
+        }
+        n => n.to_string(),
     }
 }
 
@@ -24795,6 +24885,10 @@ impl<'a> Layout<'a> {
             PageNumFmt::HindiVowels => format_num(NumFmt::HindiVowels, self.section_page),
             PageNumFmt::HindiConsonants => format_num(NumFmt::HindiConsonants, self.section_page),
             PageNumFmt::HindiCounting => format_num(NumFmt::HindiCounting, self.section_page),
+            PageNumFmt::KoreanCounting => format_num(NumFmt::KoreanCounting, self.section_page),
+            PageNumFmt::KoreanDigital => format_num(NumFmt::KoreanDigital, self.section_page),
+            PageNumFmt::KoreanDigital2 => format_num(NumFmt::KoreanDigital2, self.section_page),
+            PageNumFmt::KoreanLegal => format_num(NumFmt::KoreanLegal, self.section_page),
         }
     }
 
@@ -28909,6 +29003,28 @@ mod page_num_fmt_labels {
         assert_eq!(format_num(NumFmt::HindiCounting, 2), "दो");
         assert_eq!(format_num(NumFmt::HindiCounting, 3), "तीन");
         assert_eq!(format_num(NumFmt::HindiCounting, 10), "दस");
+    }
+
+    #[test]
+    fn korean_counting_uses_sip_not_digital_zero() {
+        assert_eq!(format_num(NumFmt::KoreanCounting, 1), "일");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 10), "십");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 11), "십일");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 20), "이십");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 100), "백");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 305), "삼백오");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 1010), "천십");
+        assert_eq!(format_num(NumFmt::KoreanDigital, 10), "일영");
+        assert_eq!(ideograph_digital_label(10), "一〇");
+        assert_eq!(format_num(NumFmt::KoreanDigital2, 10), "一零");
+    }
+
+    #[test]
+    fn korean_legal_is_native_hangul() {
+        assert_eq!(format_num(NumFmt::KoreanLegal, 1), "하나");
+        assert_eq!(format_num(NumFmt::KoreanLegal, 2), "둘");
+        assert_eq!(format_num(NumFmt::KoreanLegal, 3), "셋");
+        assert_eq!(format_num(NumFmt::KoreanLegal, 10), "열");
     }
 }
 
@@ -37837,5 +37953,404 @@ mod comments_spacing_tests {
         let big = face.single_line_pt(40.0);
         assert!(big > 30.0, "precondition natural={big}");
         assert!((super::para_line_box(face, 40.0, &style) - big).abs() < 0.01);
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+
+    #[test]
+    fn raster_formats_preserve_dimensions_and_rgb_samples() {
+        let pixels = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+        for format in [
+            image::ImageFormat::Bmp,
+            image::ImageFormat::Gif,
+            image::ImageFormat::Tiff,
+        ] {
+            let img = image::RgbImage::from_raw(2, 2, pixels.clone()).unwrap();
+            let mut encoded = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgb8(img)
+                .write_to(&mut encoded, format)
+                .unwrap();
+            let Some(ImageKind::Rgb {
+                width,
+                height,
+                bytes,
+                alpha,
+            }) = decode_image(encoded.into_inner())
+            else {
+                panic!("{format:?} must decode as RGB");
+            };
+            assert_eq!((width, height), (2, 2), "{format:?}");
+            assert_eq!(bytes, pixels, "{format:?}");
+            assert!(alpha.is_none_or(|a| a == [255; 4]), "{format:?}");
+        }
+    }
+
+    #[test]
+    fn transparent_gif_preserves_the_alpha_mask() {
+        let img = image::RgbaImage::from_raw(2, 1, vec![255, 0, 0, 255, 0, 0, 0, 0]).unwrap();
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut encoded, image::ImageFormat::Gif)
+            .unwrap();
+        let Some(ImageKind::Rgb {
+            width,
+            height,
+            bytes,
+            alpha,
+        }) = decode_image(encoded.into_inner())
+        else {
+            panic!("GIF must decode as RGB with alpha");
+        };
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(&bytes[..3], &[255, 0, 0]);
+        assert_eq!(alpha, Some(vec![255, 0]));
+    }
+
+    #[test]
+    fn truncated_raster_headers_do_not_decode_as_images() {
+        for bytes in [b"".as_slice(), b"BM", b"GIF89a", b"II*\0", b"not an image"] {
+            assert!(decode_image(bytes.to_vec()).is_none(), "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn washout_clamps_highlights_and_preserves_transparency() {
+        let image = ImageKind::Rgb {
+            width: 2,
+            height: 1,
+            bytes: vec![0, 100, 255, 50, 200, 128],
+            alpha: Some(vec![0, 128]),
+        };
+        let ImageKind::Rgb {
+            width,
+            height,
+            bytes,
+            alpha,
+        } = washed_out(image)
+        else {
+            panic!("washed image remains RGB");
+        };
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(bytes, [207, 236, 255, 221, 255, 244]);
+        assert_eq!(alpha, Some(vec![0, 128]));
+    }
+
+    #[test]
+    fn soft_edges_multiply_existing_alpha_without_changing_color() {
+        let image = ImageKind::Rgb {
+            width: 5,
+            height: 5,
+            bytes: vec![42; 75],
+            alpha: Some(vec![128; 25]),
+        };
+        let ImageKind::Rgb {
+            width,
+            height,
+            bytes,
+            alpha,
+        } = soften_edges(image, 0.4, 0.4)
+        else {
+            panic!("softened image remains RGB");
+        };
+        assert_eq!((width, height), (5, 5));
+        assert_eq!(bytes, vec![42; 75]);
+        let alpha = alpha.unwrap();
+        assert_eq!(
+            alpha,
+            vec![
+                32, 32, 32, 32, 32, 32, 96, 96, 96, 32, 32, 96, 128, 96, 32, 32, 96, 96, 96, 32,
+                32, 32, 32, 32, 32
+            ]
+        );
+    }
+
+    #[test]
+    fn soft_edges_create_a_mask_for_an_opaque_single_pixel() {
+        let image = ImageKind::Rgb {
+            width: 1,
+            height: 1,
+            bytes: vec![1, 2, 3],
+            alpha: None,
+        };
+        let ImageKind::Rgb { bytes, alpha, .. } = soften_edges(image, 0.1, 0.1) else {
+            panic!("softened image remains RGB");
+        };
+        assert_eq!(bytes, [1, 2, 3]);
+        assert_eq!(alpha, Some(vec![128]));
+    }
+
+    #[test]
+    fn image_effects_keep_placeholder_kinds() {
+        assert!(matches!(washed_out(ImageKind::Reserve), ImageKind::Reserve));
+        assert!(matches!(washed_out(ImageKind::Broken), ImageKind::Broken));
+        assert!(matches!(
+            soften_edges(ImageKind::Reserve, 0.1, 0.1),
+            ImageKind::Reserve
+        ));
+        assert!(matches!(
+            soften_edges(ImageKind::Broken, 0.1, 0.1),
+            ImageKind::Broken
+        ));
+    }
+
+    fn paragraph_with_breaks(text: &str) -> Block {
+        let defaults = Defaults::word();
+        let mut style = defaults.para.clone();
+        style.before = 12.0;
+        style.after = 18.0;
+        style.before_auto = true;
+        style.after_auto = true;
+        Block::Paragraph {
+            runs: vec![TextRun::new(text, defaults.run)],
+            style,
+            list: true,
+            images: Vec::new(),
+            boxes: Vec::new(),
+            bookmarks: vec!["bookmark".into()],
+        }
+    }
+
+    #[test]
+    fn page_and_column_breaks_split_unicode_text_and_keep_paragraph_metadata() {
+        let text = format!("Č前{PAGE_BREAK_MARK}中{COLUMN_BREAK_MARK}後");
+        let (pieces, separators, trailing) =
+            split_page_breaks(paragraph_with_breaks(&text), true, true, false);
+        assert_eq!(separators, [false, true]);
+        assert_eq!(trailing, None);
+        assert_eq!(pieces.len(), 3);
+        for (i, (piece, expected)) in pieces.iter().zip(["Č前", "中", "後"]).enumerate() {
+            let Block::Paragraph {
+                runs,
+                style,
+                list,
+                bookmarks,
+                ..
+            } = piece
+            else {
+                panic!("paragraph piece");
+            };
+            assert_eq!(
+                runs.iter().map(|r| r.text.as_str()).collect::<String>(),
+                expected
+            );
+            assert_eq!(*list, i == 0);
+            assert_eq!(bookmarks.len(), usize::from(i == 0));
+            assert_eq!(style.before, if i == 0 { 12.0 } else { 0.0 });
+            assert_eq!(style.after, if i == 2 { 18.0 } else { 0.0 });
+            assert_eq!(style.before_auto, i == 0);
+            assert_eq!(style.after_auto, i == 2);
+        }
+    }
+
+    #[test]
+    fn trailing_breaks_do_not_create_empty_paragraphs() {
+        for (mark, column) in [(PAGE_BREAK_MARK, false), (COLUMN_BREAK_MARK, true)] {
+            let text = format!("Text{mark}   ");
+            let (pieces, separators, trailing) =
+                split_page_breaks(paragraph_with_breaks(&text), !column, column, false);
+            assert_eq!(pieces.len(), 1);
+            assert!(separators.is_empty());
+            assert_eq!(trailing, Some(column));
+        }
+    }
+
+    #[test]
+    fn a_leading_page_break_keeps_the_following_text() {
+        let text = format!("{PAGE_BREAK_MARK}Next page");
+        let (pieces, separators, trailing) =
+            split_page_breaks(paragraph_with_breaks(&text), true, false, false);
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(separators, [false]);
+        assert_eq!(trailing, None);
+        let Block::Paragraph { runs, .. } = &pieces[1] else {
+            panic!("paragraph")
+        };
+        assert_eq!(runs[0].text, "Next page");
+    }
+
+    #[test]
+    fn failed_conversion_restores_the_previous_revision_style() {
+        let previous = REVISIONS.with(|r| r.get());
+        let result = docx_to_pdf_with(
+            b"not a docx",
+            PdfOptions {
+                revisions: RevisionStyle::Word,
+                ..PdfOptions::default()
+            },
+        );
+        assert!(matches!(result, Err(ConvertError::OpenPackage(_))));
+        assert_eq!(REVISIONS.with(|r| r.get()), previous);
+    }
+
+    fn percent_table(pref: Vec<PrefWidth>) -> TableGeom {
+        TableGeom {
+            row_min: Vec::new(),
+            bottom_above: Vec::new(),
+            row_exact: Vec::new(),
+            row_cant_split: Vec::new(),
+            pad_v: 0.0,
+            width: TblWidth::Pct(1.0),
+            unstyled: true,
+            header_rows: 0,
+            table_grid: false,
+            tbl_ind: 0.0,
+            mar_l: 0.0,
+            pref,
+            rules: [0.0; 3],
+            grid_padded: false,
+            fixed: true,
+            float: None,
+            keep_at_margin: false,
+            rtl: false,
+            pct_margins: 0.0,
+            content_autofit: false,
+            cell_spacing: 0.0,
+        }
+    }
+
+    #[test]
+    fn legacy_percent_tables_include_cell_margins_in_the_target_width() {
+        let mut geom = percent_table(vec![PrefWidth::Pct(0.5), PrefWidth::Pct(0.5)]);
+        assert_eq!(
+            table_col_widths(&[50.0, 50.0], &geom, 200.0),
+            [100.0, 100.0]
+        );
+        geom.pct_margins = 12.0;
+        assert_eq!(
+            table_col_widths(&[50.0, 50.0], &geom, 200.0),
+            [106.0, 106.0]
+        );
+        geom.width = TblWidth::Pct(0.5);
+        assert_eq!(table_col_widths(&[50.0, 50.0], &geom, 200.0), [53.0, 53.0]);
+    }
+
+    #[test]
+    fn percent_overflow_is_removed_from_the_last_columns_first() {
+        let geom = percent_table(vec![PrefWidth::Pct(0.6), PrefWidth::Pct(0.6)]);
+        let widths = table_col_widths(&[50.0, 50.0], &geom, 100.0);
+        assert!((widths[0] - 60.0).abs() < 0.001);
+        assert!((widths[1] - 40.0).abs() < 0.001);
+        let geom = percent_table(vec![
+            PrefWidth::Pct(0.99),
+            PrefWidth::Pct(0.5),
+            PrefWidth::Pct(0.5),
+        ]);
+        let widths = table_col_widths(&[33.0; 3], &geom, 100.0);
+        for (actual, expected) in widths.iter().zip([98.0, 1.0, 1.0]) {
+            assert!((actual - expected).abs() < 0.001, "{widths:?}");
+        }
+    }
+
+    #[test]
+    fn an_autofit_percent_table_keeps_its_already_resolved_grid() {
+        let mut geom = percent_table(vec![PrefWidth::Pct(0.48), PrefWidth::Pct(0.52)]);
+        geom.fixed = false;
+        assert_eq!(table_col_widths(&[50.0, 50.0], &geom, 100.0), [50.0, 50.0]);
+        geom.pref = vec![PrefWidth::Pct(0.4), PrefWidth::Pct(0.6)];
+        let widths = table_col_widths(&[50.0, 50.0], &geom, 100.0);
+        assert!((widths[0] - 40.0).abs() < 0.001);
+        assert!((widths[1] - 60.0).abs() < 0.001);
+    }
+
+    fn with_revision_style(style: RevisionStyle, test: impl FnOnce()) {
+        struct Restore(RevisionStyle);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                REVISIONS.with(|r| r.set(self.0));
+            }
+        }
+        let _restore = Restore(REVISIONS.with(|r| r.replace(style)));
+        test();
+    }
+
+    #[test]
+    fn custom_marks_replace_existing_run_decorations_for_each_revision_kind() {
+        let palette = RevisionPalette::parse("deleted=#102030:plain,inserted=#405060:strike,moved-from=#708090:double-strike:underline,moved-to=#a0b0c0:double-underline").unwrap();
+        with_revision_style(RevisionStyle::Custom(palette), || {
+            for (kind, color, lines) in [
+                (
+                    RevMark::Del,
+                    [0x10_u8, 0x20, 0x30],
+                    [false, false, false, false],
+                ),
+                (
+                    RevMark::Ins,
+                    [0x40, 0x50, 0x60],
+                    [true, false, false, false],
+                ),
+                (
+                    RevMark::MoveFrom,
+                    [0x70, 0x80, 0x90],
+                    [true, true, true, false],
+                ),
+                (
+                    RevMark::MoveTo,
+                    [0xa0, 0xb0, 0xc0],
+                    [false, false, true, true],
+                ),
+            ] {
+                let mut style = Defaults::word().run;
+                style.strike = true;
+                style.strike_double = true;
+                style.underline = true;
+                style.underline_double = true;
+                style.underline_wave = true;
+                apply_rev(&mut style, kind, [1.0, 0.0, 0.0]);
+                assert_eq!(style.color, color.map(|c| f32::from(c) / 255.0));
+                assert_eq!(
+                    [
+                        style.strike,
+                        style.strike_double,
+                        style.underline,
+                        style.underline_double
+                    ],
+                    lines
+                );
+                assert!(!style.underline_wave);
+            }
+        });
+    }
+
+    #[test]
+    fn word_marks_use_author_ink_for_insertions_and_deletions() {
+        with_revision_style(RevisionStyle::Word, || {
+            for kind in [RevMark::Ins, RevMark::MoveTo] {
+                let mut style = Defaults::word().run;
+                apply_rev(&mut style, kind, [0.1, 0.2, 0.3]);
+                assert_eq!(style.color, [0.1, 0.2, 0.3]);
+                assert!(style.underline && !style.underline_double && !style.strike);
+            }
+            // Live Word: a second author's deletion is 0078D4 beside the
+            // first author's D13438, so a deletion takes its author's ink.
+            for kind in [RevMark::Del, RevMark::MoveFrom] {
+                let mut style = Defaults::word().run;
+                apply_rev(&mut style, kind, [0.1, 0.2, 0.3]);
+                assert_eq!(style.color, [0.1, 0.2, 0.3]);
+                assert!(style.strike && !style.strike_double && !style.underline);
+            }
+        });
+    }
+
+    #[test]
+    fn unmarked_text_keeps_its_own_decorations_in_every_revision_mode() {
+        for mode in [
+            RevisionStyle::Conventional,
+            RevisionStyle::Word,
+            RevisionStyle::Custom(RevisionPalette::CONVENTIONAL),
+        ] {
+            with_revision_style(mode, || {
+                let mut style = Defaults::word().run;
+                style.color = [0.2, 0.4, 0.6];
+                style.underline_wave = true;
+                style.strike_double = true;
+                apply_rev(&mut style, RevMark::None, [1.0, 0.0, 0.0]);
+                assert_eq!(style.color, [0.2, 0.4, 0.6]);
+                assert!(style.underline_wave && style.strike_double);
+                assert!(!style.underline && !style.strike);
+            });
+        }
     }
 }

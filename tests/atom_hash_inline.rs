@@ -85,7 +85,8 @@ fn word_hash_byte_identical_to_hex_concat_path() {
     let word = ComparisonUnitWord::new(atoms);
     let expected = sha1_hex_parts([a1.to_hex_string().as_str(), a2.to_hex_string().as_str()]);
     assert_eq!(
-        word.sha1_hash, expected,
+        word.sha1.hash(),
+        expected,
         "word hash must be byte-identical to the hex-concatenation path"
     );
 }

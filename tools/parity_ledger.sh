@@ -41,6 +41,7 @@ rm -rf "$WORK"; mkdir -p "$DOCX"
 
 [ -x "$BIN" ] || { echo "no binary at $BIN (build --release first)"; exit 2; }
 command -v soffice >/dev/null || { echo "soffice (LibreOffice) not found"; exit 2; }
+[ -f "$MAP" ] || { echo "mapping CSV not found at $MAP"; exit 2; }
 
 # 1. generate candidate redlines with OUR binary over the mapping pairs
 gen=0; fail=0
@@ -53,11 +54,21 @@ while IFS=, read -r pair_stem base next _rest; do
   [ "$N" != "full" ] && [ "$gen" -ge "$N" ] && break
 done < "$MAP"
 echo "generated $gen redlines ($fail failed)"
+# A failed pair must fail the ledger: skipping it would score an easier set
+# and let a crash raise the mean.
+if [ "$fail" -gt 0 ]; then
+  echo "Error: $fail pair(s) failed to generate" >&2
+  exit 3
+fi
 
 # 2. render candidates -> PDF (LibreOffice, via the bench's tested renderer)
 ( cd "$BENCH" && uv run bench render "$DOCX" "$PDF" --backend soffice --jobs 6 --force >/dev/null 2>&1 )
-rendered=$(ls "$PDF/pdf"/*.pdf 2>/dev/null | wc -l | tr -d ' ')
+rendered=$({ find "$PDF/pdf" -name '*.pdf' 2>/dev/null || true; } | wc -l | tr -d ' ')
 echo "rendered $rendered PDFs"
+if [ "$rendered" -lt "$gen" ]; then
+  echo "Error: render incomplete (generated=$gen rendered=$rendered)" >&2
+  exit 3
+fi
 
 # 3. score vs the Word oracle
 ( cd "$BENCH" && uv run bench compare "$PDF/pdf" "$ORACLE" --tool jubarte-rust --json "$WORK/scores.json" 2>&1 ) | tail -20

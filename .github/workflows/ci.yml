@@ -81,6 +81,12 @@ jobs:
           fail_ci_if_error: true
           verbose: true
 
+      - name: Line coverage floor (80%)
+        # Codecov reads ~88% lines; the floor turns a silent collapse into a red
+        # build. `report` reuses the profiles above, and running after the
+        # upload keeps a failing floor's report on Codecov.
+        run: cargo llvm-cov report --summary-only --fail-under-lines 80
+
   msrv:
     name: MSRV (1.88)
     runs-on: ubuntu-latest

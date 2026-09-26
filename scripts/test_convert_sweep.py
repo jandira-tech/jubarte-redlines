@@ -12,6 +12,7 @@ a fake T/ tree and assert the contract the real sweep will use.
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -29,6 +30,33 @@ import page1_delta as p1  # noqa: E402
 def _touch(path: Path, text: str = "x") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
+
+
+class ConvertRevisionModeTests(unittest.TestCase):
+    def test_benchmark_conversion_explicitly_uses_word_revision_marks(self) -> None:
+        job = cs.Job("sample", Path("source with spaces.docx"), Path("word.pdf"))
+
+        def run(argv, **kwargs):
+            if argv[0] == "jubarte":
+                Path(argv[4]).write_bytes(b"%PDF-synthetic")
+            else:
+                self.assertEqual(argv[0], "scorer")
+                Path(argv[argv.index("--out") + 1]).write_text(
+                    json.dumps([{"stem": "sample", "jaccard": 0.75}])
+                )
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(cs.subprocess, "run", side_effect=run) as invoked:
+            scores, failed = cs.convert_and_score(
+                [job], jubarte=Path("jubarte"), scorer=Path("scorer"), workers=1
+            )
+        argv = invoked.call_args_list[0].args[0]
+        self.assertEqual(argv, ["jubarte", "convert", str(job.docx), "-o", argv[4],
+                                "--force", "--revisions", "word"])
+        self.assertEqual(invoked.call_count, 2)
+        self.assertEqual(failed, [])
+        self.assertEqual(scores[0].jaccard, 75.0)
+        self.assertFalse(Path(argv[4]).parent.exists(), "temporary work is removed")
 
 
 class Discover76Tests(unittest.TestCase):
