@@ -35912,3 +35912,44 @@ fn a_row_holding_a_long_nested_table_splits_where_it_starts() {
     };
     assert!(on_first, "the nested table starts on page 1");
 }
+
+#[test]
+fn an_inline_group_with_a_picture_takes_one_line() {
+    // en a 5fb9cedf: the Kansas logo is an inline wpg group of a picture
+    // and a 0.7pt dot shape, 60pt tall. The picture sets the line; the
+    // dot's group also reserved a second 60pt box after the paragraph and
+    // pushed the heading below 64pt down.
+    let group = |shape: &str| {
+        format!(
+            "<w:p><w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+           <wp:extent cx=\"1223874\" cy=\"762000\"/><wp:docPr id=\"5\" name=\"Group 5\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">\
+           <wpg:wgp xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">\
+           <wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"1223874\" cy=\"762000\"/>\
+           <a:chOff x=\"0\" y=\"0\"/><a:chExt cx=\"1223874\" cy=\"762000\"/></a:xfrm></wpg:grpSpPr>{shape}\
+           <pic:pic><pic:nvPicPr><pic:cNvPr id=\"7\" name=\"p\"/><pic:cNvPicPr/></pic:nvPicPr>\
+           <pic:blipFill><a:blip r:embed=\"rIdImg\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+           <pic:spPr><a:xfrm><a:off x=\"86982\" y=\"0\"/><a:ext cx=\"1136891\" cy=\"762000\"/></a:xfrm>\
+           <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></wpg:wgp>\
+           </a:graphicData></a:graphic></wp:inline></w:drawing></w:r><w:r><w:t>Title</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>HeadingQ</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        )
+    };
+    let dot = "<wps:wsp><wps:cNvPr id=\"6\" name=\"Shape 6\"/><wps:cNvSpPr/><wps:spPr>\
+           <a:xfrm><a:off x=\"0\" y=\"431305\"/><a:ext cx=\"9144\" cy=\"9144\"/></a:xfrm>\
+           <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill>\
+           </wps:spPr><wps:bodyPr/></wps:wsp>";
+    let heading_y = |shape: &str| {
+        let pdf = docx_to_pdf(&drawing_docx_media(&group(shape), "dot.png", TINY_PNG))
+            .expect("inline group");
+        pdf_glyph_text_xy(&pdf, "HeadingQ").expect("heading").1
+    };
+    let with_dot = heading_y(dot);
+    let without = heading_y("");
+    assert!(
+        (with_dot - without).abs() < 0.5,
+        "the dot must not add a line: heading at {with_dot} vs {without}"
+    );
+}

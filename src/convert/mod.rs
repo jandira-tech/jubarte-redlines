@@ -11445,6 +11445,36 @@ fn collect_textboxes_styled(
         }
         let line = if group.is_empty() { line } else { None };
         if chart.is_none() && !group.is_empty() {
+            // An inline group's pictures already hold its line (the image
+            // path); its shapes paint over the paragraph's start instead of
+            // taking a second box below it (en a 5fb9cedf's logo dot).
+            let slot = if matches!(slot, ImageSlot::Flow) && !group_pictures(dom, shape).is_empty()
+            {
+                ImageSlot::Float {
+                    align: Align::Left,
+                    page_x: None,
+                    page_y: None,
+                    col_x: Some(0.0),
+                    col_in_column: false,
+                    para_y: Some(0.0),
+                    pct_x: None,
+                    pct_y: None,
+                    pct_w: None,
+                    pct_h: None,
+                    v_align: Align::Left,
+                    wrap_square: false,
+                    wrap_top_bottom: false,
+                    dist_l: 0.0,
+                    dist_r: 0.0,
+                    dist_t: 0.0,
+                    dist_b: 0.0,
+                    h_rel: RelFrame::Column,
+                    v_rel: RelFrame::Paragraph,
+                    v_off: None,
+                }
+            } else {
+                slot
+            };
             let mut boxed = group_box(w, h, slot, geom, behind, z, group);
             // A canvas paints its own background and outline under its
             // shapes (00019a41's pool, isla's Venn frame).
@@ -24459,6 +24489,13 @@ fn layout(
                     }
                     lay.para_top = saved;
                 }
+                // A paragraph whose lines moved to a new page anchors its
+                // boxes there (r 09d6d940's inline group went to the next
+                // page and its shapes stayed at the old paragraph top).
+                let saved_top = lay.para_top;
+                if lay.pages.len() > pages_before {
+                    lay.para_top = lay.page.height - lay.body_top;
+                }
                 for box_ in boxes {
                     // A behindDoc box goes under the page's body text, not
                     // over the lines already painted (003329b5's green
@@ -24474,6 +24511,7 @@ fn layout(
                         lay.behind_end = at + n;
                     }
                 }
+                lay.para_top = saved_top;
                 if skip_empty_line {
                     // Mini 623–626: skipping Normal after=8 under a
                     // chart-only Flow para is Word-faithful (Strict01 1)
