@@ -13788,7 +13788,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     slot: vml_owner_slot(dom, im, root).unwrap_or(ImageSlot::Flow),
                     behind: false,
                     z: 0,
-                    crop: None,
+                    crop: vml_crop(dom, im),
                     rotate_deg: 0.0,
                     oval: false,
                     chrome_align: Align::Left,
@@ -14008,6 +14008,28 @@ fn src_rect_frac(dom: &Dom, drawing: NodeId) -> Option<[f32; 4]> {
     } else {
         Some([l, t, r, b])
     }
+}
+
+/// `v:imagedata` cropleft/croptop/cropright/cropbottom as the srcRect
+/// l/t/r/b fractions: `Nf` is N/65536, a bare number the fraction itself.
+/// d54e7e99's header cropbottom="-16693f" leaves the box's bottom quarter
+/// blank in Word.
+fn vml_crop(dom: &Dom, imagedata: NodeId) -> Option<[f32; 4]> {
+    let p = |k: &str| {
+        let v = attr_any(dom, imagedata, k)?.trim();
+        let frac = match v.strip_suffix('f') {
+            Some(n) => n.trim().parse::<f32>().ok()? / 65_536.0,
+            None => v.parse::<f32>().ok()?,
+        };
+        frac.is_finite().then(|| frac.clamp(-1.0, 1.0))
+    };
+    let crop = [
+        p("cropleft").unwrap_or(0.0),
+        p("croptop").unwrap_or(0.0),
+        p("cropright").unwrap_or(0.0),
+        p("cropbottom").unwrap_or(0.0),
+    ];
+    (crop.iter().map(|c| c.abs()).sum::<f32>() >= 0.001).then_some(crop)
 }
 
 /// `a:xfrm/@rot` is 60000ths of a degree (ECMA-376 20.1.7.6).

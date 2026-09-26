@@ -5131,6 +5131,26 @@ fn vml_images_take_the_slot_of_their_own_shape() {
 }
 
 #[test]
+fn a_vml_picture_with_a_negative_crop_leaves_its_box_blank() {
+    // d54e7e99's header picture: cropbottom="-16693f" (-0.2547) draws the
+    // image in the top 1/1.2547 of its 133pt box (Word: 106pt tall at the
+    // box's top); we stretched it over the whole box.
+    let body = "<w:p><w:r><w:pict>\
+           <v:shape style=\"position:absolute;margin-left:100pt;margin-top:100pt;width:100pt;height:125pt;\
+             mso-position-horizontal-relative:page;mso-position-vertical-relative:page\">\
+             <v:imagedata r:id=\"rIdImg\" cropbottom=\"-16384f\"/></v:shape>\
+         </w:pict></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert cropped VML picture");
+    let (x, y) = image_cm_xy(&pdf, "100.00", "100.00");
+    assert!(
+        (x - 100.0).abs() < 0.5 && (y - (792.0 - 100.0 - 100.0)).abs() < 0.5,
+        "image 100pt tall at the box top (page 100,100): {x},{y}"
+    );
+}
+
+#[test]
 fn a_vml_group_places_its_pictures_in_group_coordinates() {
     // 069252c3's org chart is a picture inside a `v:group`: the child's
     // left/top/width/height are in the group's coordorigin/coordsize
