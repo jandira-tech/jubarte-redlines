@@ -13794,6 +13794,13 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         };
         let p = pair(from, &len)?;
         let q = pair(to, &len)?;
+        // Word boxes the line from `from` and collapses a negative extent:
+        // 069252c3's upward page-edge rule draws nothing, and a left-down
+        // line is vertical at its from x.
+        let q = [p[0] + (q[0] - p[0]).max(0.0), p[1] + (q[1] - p[1]).max(0.0)];
+        if q == p {
+            return None;
+        }
         let (x0, y0) = (p[0].min(q[0]), p[1].min(q[1]));
         let (w, h) = ((p[0] - q[0]).abs(), (p[1] - q[1]).abs());
         let frac = |v: f32, lo: f32, span: f32| if span > 0.0 { (v - lo) / span } else { 0.0 };

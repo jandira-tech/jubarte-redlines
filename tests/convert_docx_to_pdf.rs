@@ -37300,3 +37300,40 @@ fn an_autofit_column_widens_to_its_longest_word() {
         "the 200pt table keeps its width: next cell x {x_q}"
     );
 }
+
+#[test]
+fn a_vml_line_box_runs_from_its_from_point_and_collapses_backwards() {
+    // 069252c3's page-edge rule runs from="26.1pt,597.6pt" up to
+    // "26.1pt,27.36pt"; Word paints nothing. Live Word 2026-09-26: the
+    // line's box starts at `from` and a negative extent collapses to 0,
+    // so an upward or leftward line vanishes, and (400,300)->(100,600)
+    // is a vertical line at x=400.
+    let line = |from: &str, to: &str| {
+        let body = format!(
+            "<w:p><w:r><w:t>Text</w:t></w:r><w:r><w:pict xmlns:v=\"urn:schemas-microsoft-com:vml\">\
+             <v:line style=\"position:absolute;mso-position-horizontal-relative:page;\
+             mso-position-vertical-relative:page\" from=\"{from}\" to=\"{to}\" \
+             strokecolor=\"#ff0000\" strokeweight=\"2pt\"/></w:pict></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("vml line");
+        pdf_content_streams(&pdf).concat()
+    };
+    for (from, to) in [
+        ("100pt,700pt", "100pt,100pt"),
+        ("500pt,200pt", "100pt,200pt"),
+    ] {
+        let content = line(from, to);
+        assert!(
+            !content.contains("1.000 0.000 0.000 RG"),
+            "{from} -> {to} paints nothing in Word"
+        );
+    }
+    // PDF y from the bottom: 792 - 300 = 492, 792 - 600 = 192.
+    let content = line("400pt,300pt", "100pt,600pt");
+    assert!(
+        content.contains("400.00 492.00 m 400.00 192.00 l"),
+        "a left-down line is vertical at its from x; {}",
+        &content[..content.len().min(600)]
+    );
+}
