@@ -5126,6 +5126,74 @@ fn a_vml_group_places_its_pictures_in_group_coordinates() {
 }
 
 #[test]
+fn a_vml_group_wrapped_top_and_bottom_clears_its_band() {
+    // 069252c3: the org-chart group carries `<w10:wrap type="topAndBottom"/>`
+    // (no mso-wrap-style). Live Word 2026-09-26: the next paragraph starts
+    // at the band's bottom, anchor top + margin-top + height (103.05 +
+    // 18.49 + 145.8 -> 267.45); we laid it straight under the anchor.
+    let body = "<w:p><w:r><w:t>Anchor</w:t></w:r><w:r><w:pict>\
+           <v:group style=\"position:absolute;margin-left:100pt;margin-top:20pt;width:200pt;height:100pt;\
+             mso-position-horizontal-relative:page;mso-position-vertical-relative:paragraph\" \
+             coordorigin=\"0,0\" coordsize=\"2000,1000\">\
+             <v:shape style=\"position:absolute;left:0;top:0;width:2000;height:1000\">\
+               <v:imagedata r:id=\"rIdImg\"/></v:shape>\
+             <w10:wrap xmlns:w10=\"urn:schemas-microsoft-com:office:word\" type=\"topAndBottom\"/>\
+           </v:group>\
+         </w:pict></w:r></w:p>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert wrapped VML group");
+    let gap = pdf_literal_td_y(&pdf, "Anchor").expect("Anchor")
+        - pdf_literal_td_y(&pdf, "After").expect("After");
+    assert!(
+        (gap - 120.0).abs() < 1.0,
+        "After starts at the band's bottom (120pt below Anchor), gap {gap}"
+    );
+}
+
+#[test]
+fn a_vml_line_wrapped_top_and_bottom_does_not_push_text() {
+    // bc404781's form rules are `v:line`s with `<w10:wrap
+    // type="topAndBottom"/>`; Word leaves the text where it was (its PDF
+    // matches the unwrapped layout), unlike 069252c3's wrapped group.
+    let line = |from: &str| {
+        format!(
+            "<w:r><w:pict><v:line style=\"position:absolute;z-index:-1;\
+               mso-position-horizontal-relative:page\" from=\"72pt,{from}\" to=\"500pt,{from}\" \
+               strokeweight=\".25mm\">\
+             <w10:wrap xmlns:w10=\"urn:schemas-microsoft-com:office:word\" type=\"topAndBottom\" \
+               anchorx=\"page\"/></v:line></w:pict></w:r>"
+        )
+    };
+    // An empty 5.5pt paragraph whose rules hang below its own line.
+    let body = format!(
+        "<w:p><w:r><w:t>Anchor</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:rPr><w:sz w:val=\"11\"/></w:rPr></w:pPr>{}{}{}{}</w:p>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        line("8.9pt"),
+        line("19.7pt"),
+        line("30.5pt"),
+        line("41.55pt")
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert wrapped VML lines");
+    let unwrapped = docx_to_pdf(&drawing_docx(&body.replace("topAndBottom", "none")))
+        .expect("convert unwrapped VML lines");
+    let gap = |pdf: &[u8]| {
+        pdf_literal_td_y(pdf, "Anchor").expect("Anchor")
+            - pdf_literal_td_y(pdf, "After").expect("After")
+    };
+    assert!(
+        (gap(&pdf) - gap(&unwrapped)).abs() < 0.1,
+        "wrapped lines keep the unwrapped gap: {} vs {}",
+        gap(&pdf),
+        gap(&unwrapped)
+    );
+}
+
+#[test]
 fn xfrm_rot_ninety_rotates_image_cm() {
     // xml leftover / media rotation: pic:spPr a:xfrm/@rot is 60000ths of a
     // degree (ECMA-376 20.1.7.6). 5400000 = 90°. Unrotated paint is

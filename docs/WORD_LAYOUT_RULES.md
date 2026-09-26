@@ -338,3 +338,8 @@ rule:
   the outermost group's margin and relative frame place the result.
   b 069252c3's org chart was painted at page (0,0) from the child's own
   unitless box; Word paints it at (128.5, 284.9).
+- A VML shape's `<w10:wrap type=…>` child names its wrap when the style has
+  no `mso-wrap-style`: 069252c3's topAndBottom group pushes the next
+  paragraph to its band's bottom (Anchor 103.05 -> After 267.45, also with a
+  negative z-index). Word ignores it on a `v:line`: bc404781's wrapped form
+  rules move no text.

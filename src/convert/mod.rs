@@ -14048,7 +14048,20 @@ fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
         let h_page = h_rel.is_empty() || h_rel == "page";
         let v_page = v_rel.is_empty() || v_rel == "page";
         let v_para = matches!(v_rel.as_str(), "text" | "paragraph" | "line");
-        let wrap = vml_style_token(style, "mso-wrap-style").to_ascii_lowercase();
+        // `<w10:wrap type=…>` inside the shape names the wrap when the
+        // style doesn't (069252c3's topAndBottom org-chart group). Word
+        // ignores it on a `v:line`: bc404781's wrapped form rules move no
+        // text.
+        let mut wrap = vml_style_token(style, "mso-wrap-style").to_ascii_lowercase();
+        if wrap.is_empty()
+            && !local_name_is(dom, shape, "line")
+            && let Some(ty) = (0..dom.child_count(shape))
+                .map(|i| dom.child_at(shape, i))
+                .find(|c| local_name_is(dom, *c, "wrap"))
+                .and_then(|w| attr_any(dom, w, "type"))
+        {
+            wrap = ty.to_ascii_lowercase();
+        }
         let v_frame = match v_rel.as_str() {
             "" | "page" => RelFrame::Page,
             "margin" => RelFrame::Margin,
