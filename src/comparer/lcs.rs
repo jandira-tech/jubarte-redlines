@@ -1954,7 +1954,7 @@ fn token_jaccard(
 /// case-insensitively is sound only once the emitted run keeps each side's
 /// original text.
 fn rehash_words_by_text_content(dom: &Dom, units: &mut [ComparisonUnit]) {
-    use crate::util::sha1::{sha1_fingerprint, sha1_hex};
+    use crate::util::sha1::sha1_hex;
     for u in units.iter_mut() {
         if let ComparisonUnit::Word(w) = u {
             let mut text = String::new();
@@ -1964,10 +1964,8 @@ fn rehash_words_by_text_content(dom: &Dom, units: &mut [ComparisonUnit]) {
                 }
             }
             if !text.is_empty() {
-                w.sha1_hash = sha1_hex(&text);
-                // keep the cached fingerprints in sync with the mutated hash
-                w.sha1_key = sha1_fingerprint(&w.sha1_hash);
-                w.sha1_key128 = crate::util::sha1::sha1_fingerprint128(&w.sha1_hash);
+                // one call, so neither cached key can outlive the old hash
+                w.sha1.set_hash(sha1_hex(&text));
             }
         }
     }
@@ -8113,8 +8111,7 @@ pub fn lcs(
 #[cfg(test)]
 mod correlated_hash_owned_tests {
     use super::*;
-    use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord};
-    use crate::util::sha1::sha1_fingerprint;
+    use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
     use crate::xmllinq::NodeId;
 
     fn group(hash: &str, correlated: &str) -> ComparisonUnit {
@@ -8124,9 +8121,7 @@ mod correlated_hash_owned_tests {
             group_type: ComparisonUnitGroupType::Paragraph,
             contents: vec![ComparisonUnit::Word(ComparisonUnitWord::new(vec![atom]))],
             level: 0,
-            sha1_key: sha1_fingerprint(hash),
-            sha1_key128: crate::util::sha1::sha1_fingerprint128(hash),
-            sha1_hash: hash.to_string(),
+            sha1: Sha1Keyed::new(hash.to_string()),
             correlated_sha1_hash: Some(correlated.to_string()),
             structure_sha1_hash: None,
             atom_count_memo: std::cell::Cell::new(usize::MAX),
@@ -8220,8 +8215,7 @@ mod correlated_hash_owned_tests {
 #[cfg(test)]
 mod correlated_hash_idx_tests {
     use super::*;
-    use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord};
-    use crate::util::sha1::sha1_fingerprint;
+    use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
     use crate::xmllinq::NodeId;
 
     fn group_atoms(
@@ -8246,9 +8240,7 @@ mod correlated_hash_idx_tests {
             group_type,
             contents: vec![word],
             level: 0,
-            sha1_key: sha1_fingerprint(hash),
-            sha1_key128: crate::util::sha1::sha1_fingerprint128(hash),
-            sha1_hash: hash.to_string(),
+            sha1: Sha1Keyed::new(hash.to_string()),
             correlated_sha1_hash: correlated.map(|s| s.to_string()),
             structure_sha1_hash: None,
             atom_count_memo: std::cell::Cell::new(usize::MAX),
@@ -8454,8 +8446,7 @@ mod correlated_hash_idx_tests {
 #[cfg(test)]
 mod indexed_lcr_tests {
     use super::*;
-    use crate::comparer::atoms::ComparisonUnitWord;
-    use crate::util::sha1::sha1_fingerprint;
+    use crate::comparer::atoms::{ComparisonUnitWord, Sha1Keyed};
 
     /// A bare word unit carrying a chosen content hash (key = fingerprint(hash),
     /// the production invariant).
@@ -8463,9 +8454,7 @@ mod indexed_lcr_tests {
         ComparisonUnit::Word(ComparisonUnitWord {
             correlation_status: CorrelationStatus::Nil,
             contents: Vec::new(),
-            sha1_key: sha1_fingerprint(hash),
-            sha1_key128: crate::util::sha1::sha1_fingerprint128(hash),
-            sha1_hash: hash.to_string(),
+            sha1: Sha1Keyed::new(hash.to_string()),
         })
     }
 
@@ -8477,9 +8466,7 @@ mod indexed_lcr_tests {
         ComparisonUnit::Word(ComparisonUnitWord {
             correlation_status: CorrelationStatus::Nil,
             contents: Vec::new(),
-            sha1_key: key,
-            sha1_key128: crate::util::sha1::sha1_fingerprint128(hash),
-            sha1_hash: hash.to_string(),
+            sha1: Sha1Keyed::with_colliding_key(hash.to_string(), key),
         })
     }
 

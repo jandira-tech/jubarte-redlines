@@ -7,7 +7,8 @@
 use std::sync::Arc;
 
 use crate::util::sha1::{
-    hex_decode_20, hex_encode_20, sha1_digest, sha1_fingerprint, sha1_hex_of_digest_hexes,
+    hex_decode_20, hex_encode_20, sha1_digest, sha1_fingerprint, sha1_fingerprint128,
+    sha1_hex_of_digest_hexes,
 };
 use crate::xmllinq::NodeId;
 
@@ -179,6 +180,63 @@ impl ComparisonUnitAtom {
     }
 }
 
+/// A unit's content hash with its two cached LCS fingerprints.
+///
+/// Both keys are pure functions of the hash, and the LCS hot path trusts them
+/// ahead of the string (`sha1_key128` alone decides common-run equality), so a
+/// key left behind after the hash changes makes units that should correlate
+/// silently miss: wrong output, no panic. The fields stay private and the keys
+/// are only derived in [`Sha1Keyed::new`] / [`Sha1Keyed::set_hash`], so that
+/// desync cannot be written.
+#[derive(Clone, Debug)]
+pub struct Sha1Keyed {
+    hash: String,
+    key: u64,
+    key128: u128,
+}
+
+impl Sha1Keyed {
+    /// Wraps `hash`, deriving both keys from it.
+    pub fn new(hash: String) -> Self {
+        Self {
+            key: sha1_fingerprint(&hash),
+            key128: sha1_fingerprint128(&hash),
+            hash,
+        }
+    }
+
+    /// Replaces the hash and rederives both keys in the same step.
+    pub fn set_hash(&mut self, hash: String) {
+        *self = Self::new(hash);
+    }
+
+    /// The hex content hash.
+    pub fn hash(&self) -> &str {
+        &self.hash
+    }
+
+    /// `u64` prefilter key of [`Self::hash`].
+    pub fn key(&self) -> u64 {
+        self.key
+    }
+
+    /// 128-bit fingerprint of [`Self::hash`].
+    pub fn key128(&self) -> u128 {
+        self.key128
+    }
+
+    /// A deliberately inconsistent `u64` key, standing in for a fingerprint
+    /// collision (distinct hashes sharing a key) that the string check must
+    /// still reject. Test builds only, so no caller can mint a stale key.
+    #[cfg(test)]
+    pub(crate) fn with_colliding_key(hash: String, key: u64) -> Self {
+        Self {
+            key,
+            ..Self::new(hash)
+        }
+    }
+}
+
 /// Port of `ComparisonUnitWord` — a word is a run of atoms; its hash is the
 /// SHA-1 of the concatenation of its atoms' hashes.
 #[derive(Clone, Debug)]
@@ -187,15 +245,10 @@ pub struct ComparisonUnitWord {
     pub correlation_status: CorrelationStatus,
     /// `contents`.
     pub contents: Vec<ComparisonUnitAtom>,
-    /// `sha1_hash`.
-    pub sha1_hash: String,
-    /// Cached `u64` fingerprint of `sha1_hash` — a cheap pre-filter for the LCS
-    /// hot path. MUST be kept in sync with `sha1_hash` (recompute on mutation).
-    pub sha1_key: u64,
-    /// Cached 128-bit fingerprint of `sha1_hash` — lets `extend_common_run`
-    /// test equality with one integer compare instead of a 40-byte hex memcmp.
-    /// MUST be kept in sync with `sha1_hash` (recompute on mutation).
-    pub sha1_key128: u128,
+    /// Content hash and its cached LCS keys; see [`Sha1Keyed`]. The 128-bit
+    /// key lets `extend_common_run` test equality with one integer compare
+    /// instead of a 40-byte hex memcmp.
+    pub sha1: Sha1Keyed,
 }
 
 impl ComparisonUnitWord {
@@ -208,9 +261,7 @@ impl ComparisonUnitWord {
         let sha1_hash = sha1_hex_of_digest_hexes(contents.iter().map(|a| a.sha1_hash.as_bytes()));
         ComparisonUnitWord {
             correlation_status: CorrelationStatus::Nil,
-            sha1_key: sha1_fingerprint(&sha1_hash),
-            sha1_key128: crate::util::sha1::sha1_fingerprint128(&sha1_hash),
-            sha1_hash,
+            sha1: Sha1Keyed::new(sha1_hash),
             contents,
         }
     }
@@ -231,12 +282,8 @@ pub struct ComparisonUnitGroup {
     pub contents: Vec<ComparisonUnit>,
     /// `level`.
     pub level: usize,
-    /// `sha1_hash`.
-    pub sha1_hash: String,
-    /// Cached `u64` fingerprint of `sha1_hash` — see [`ComparisonUnitWord`].
-    pub sha1_key: u64,
-    /// Cached 128-bit fingerprint of `sha1_hash` — see [`ComparisonUnitWord::sha1_key128`].
-    pub sha1_key128: u128,
+    /// Stamped `pt:SHA1Hash` and its cached LCS keys; see [`Sha1Keyed`].
+    pub sha1: Sha1Keyed,
     /// `correlated_sha1_hash`.
     pub correlated_sha1_hash: Option<String>,
     /// `pt:StructureSHA1Hash` — only stamped on `w:tbl`/`w:tr` (M4.0/M4.D).
@@ -261,8 +308,8 @@ impl ComparisonUnit {
     /// `sha1`.
     pub fn sha1(&self) -> &str {
         match self {
-            ComparisonUnit::Word(w) => &w.sha1_hash,
-            ComparisonUnit::Group(g) => &g.sha1_hash,
+            ComparisonUnit::Word(w) => w.sha1.hash(),
+            ComparisonUnit::Group(g) => g.sha1.hash(),
         }
     }
     /// Cached `u64` fingerprint of [`Self::sha1`] — a cheap pre-filter for the
@@ -272,8 +319,8 @@ impl ComparisonUnit {
     /// `a.sha1() == b.sha1()` while skipping the string compare when keys differ.
     pub fn sha1_key(&self) -> u64 {
         match self {
-            ComparisonUnit::Word(w) => w.sha1_key,
-            ComparisonUnit::Group(g) => g.sha1_key,
+            ComparisonUnit::Word(w) => w.sha1.key(),
+            ComparisonUnit::Group(g) => g.sha1.key(),
         }
     }
     /// Cached 128-bit fingerprint of [`Self::sha1`]. Equal to `sha1()` equality
@@ -282,8 +329,8 @@ impl ComparisonUnit {
     /// hot path without the per-step hex-string memcmp.
     pub fn sha1_key128(&self) -> u128 {
         match self {
-            ComparisonUnit::Word(w) => w.sha1_key128,
-            ComparisonUnit::Group(g) => g.sha1_key128,
+            ComparisonUnit::Word(w) => w.sha1.key128(),
+            ComparisonUnit::Group(g) => g.sha1.key128(),
         }
     }
     /// `correlated_sha1`.
@@ -457,4 +504,35 @@ pub struct WmlComparerRevision {
     pub is_move_source: Option<bool>,
     /// `format_change`.
     pub format_change: Option<FormatChangeInfo>,
+}
+
+#[cfg(test)]
+mod sha1_keyed_tests {
+    use super::Sha1Keyed;
+    use crate::util::sha1::{sha1_fingerprint, sha1_fingerprint128};
+
+    #[test]
+    fn new_derives_both_keys_from_the_hash() {
+        let k = Sha1Keyed::new("deadbeef".into());
+        assert_eq!(k.hash(), "deadbeef");
+        assert_eq!(k.key(), sha1_fingerprint("deadbeef"));
+        assert_eq!(k.key128(), sha1_fingerprint128("deadbeef"));
+    }
+
+    #[test]
+    fn set_hash_leaves_no_key_behind() {
+        let mut k = Sha1Keyed::new("deadbeef".into());
+        k.set_hash("cafebabe".into());
+        assert_eq!(k.hash(), "cafebabe");
+        assert_eq!(k.key(), sha1_fingerprint("cafebabe"));
+        assert_eq!(k.key128(), sha1_fingerprint128("cafebabe"));
+    }
+
+    #[test]
+    fn a_colliding_key_changes_only_the_u64_key() {
+        let wrong = sha1_fingerprint("deadbeef").wrapping_add(1);
+        let k = Sha1Keyed::with_colliding_key("deadbeef".into(), wrong);
+        assert_eq!(k.key(), wrong);
+        assert_eq!(k.key128(), sha1_fingerprint128("deadbeef"));
+    }
 }
