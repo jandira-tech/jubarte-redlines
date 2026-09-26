@@ -528,6 +528,14 @@ def best_per_window(runs: list[Run], lower: bool) -> list[Run]:
     return out
 
 
+VERSION_WIDTH = 20
+
+
+def short_version(v: str) -> str:
+    """A Version cell of at most VERSION_WIDTH chars; a cut ends in an ellipsis."""
+    return v if len(v) <= VERSION_WIDTH else v[: VERSION_WIDTH - 1] + '…'
+
+
 def fmt(v: float | None) -> str:
     if v is None:
         return '—'
@@ -600,7 +608,7 @@ def render() -> str:
             lines += ['', head, '|' + ' --- |' * (8 if pool else 7)]
             for i, r in enumerate(runs, 1):
                 mean = fmt(r.mean) if r.mean is not None else f'{fmt(r.rank_value)} (avg)'
-                row = f'| {i} | {r.tool} | {r.version} | {r.when.strftime("%Y-%m-%d")} | {r.n} | {mean} | {fmt(r.median)} |'
+                row = f'| {i} | {r.tool} | {short_version(r.version)} | {r.when.strftime("%Y-%m-%d")} | {r.n} | {mean} | {fmt(r.median)} |'
                 lines.append(row + (f' {r.corpora} |' if pool else ''))
     return '\n'.join(lines) + '\n'
 
