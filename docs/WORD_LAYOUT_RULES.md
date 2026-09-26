@@ -132,15 +132,20 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     67.92 / 73.2 / 73.2 / 79.2 in Word.
   - A right-aligned logo lowered this way stays right-aligned.
 
-## Fonts: Mac-only font metrics (measured, not yet implemented)
+## Fonts: macOS system fonts
 
 | Font | Word line pitch | First baseline | Notes |
 |---|---|---|---|
-| Helvetica | exactly 1.2 em | 0.975 em | hhea gives 1.0 em. Word's line is 1.2 em, and the ascent is the win ascent (0.95) plus the leftover leading. |
+| Helvetica | exactly 1.2 em | 0.975 em | hhea gives 1.0 em. Word's line is 1.2 em, and the ascent is the win ascent (0.95) plus the leftover leading. Implemented; part a 18f71536. |
 | Futura | 1.32 em | 1.06 em | follows hhea |
 | Palatino | 1.10 em | 0.82 em | follows hhea |
 
-Parked in `macnames-parked.patch` until the Helvetica line rule has a test.
+- **Mac Roman names count.** Apple's Futura.ttc names its family only in a
+  Mac Roman name record, so it has to be decoded to find "Futura" at all.
+  Part a 87098dc3 used to fall back to Arial and lose Word's second page.
+- **Within a collection, the face at its style's normal width and weight
+  wins.** Futura's upright face is Medium (weight 500). Papyrus.ttc lists
+  Condensed before Regular. For Helvetica Neue, the Regular beats the Thin.
 
 ## Redline chrome
 
@@ -190,11 +195,61 @@ rule:
   - jubarte puts the picture first (redline 7429fdae's "RA ID" above its
     journal banner).
 
+## Pages and keep-with-next
+
+- **Parity blank page (fb241e2).** With `w:evenAndOddHeaders`, a section that
+  restarts page numbering on the same parity as the previous page's number
+  gets a blank page first, without headers or footers, so odd numbers stay on
+  right-hand pages.
+- **keepNext with an inline picture or box.** A `keepNext` paragraph moves to
+  the next page with the following paragraph when that paragraph's first line
+  holds an inline picture or text box that doesn't fit. The line counts at the
+  object's full height.
+  - Live Word probe: a heading over a 600pt inline picture opens page 2.
+  - Redline d20125ec: 11 pages, as in Word.
+
+## Page colour
+
+- **`w:background` is not in Word's PDF.** Word leaves the page colour out even
+  with `w:displayBackgroundShape` on. It prints page colour only when "Print
+  background colors and images" is on, and that option is off by default.
+  - Part a c301012f: ACB9CA page, white in Word's PDF.
+
+## Floating tables
+
+- **A full-width floating table keeps the text above its offset.** A
+  `tblpPr` table anchored to the text (`vertAnchor="text"`) with a positive
+  `tblpY` sits that far below its anchor paragraph's top. If the table leaves
+  no room beside it, lines that end above the table keep their place. Only
+  lines that reach the table's band go under it.
+  - Part a 09d6d940: the anchor paragraph and a heading both sit in the 51pt
+    above the table.
+  - A table with room beside it still wraps from the anchor paragraph's first
+    line (case45).
+
+## Shapes in table cells
+
+- **A shape anchored in a cell paints in the cell.** With `layoutInCell`, the
+  shape's column is the cell's text area and its paragraph is the cell
+  paragraph. A `wrapNone` shape overlays the cell without growing it.
+  - Part a 1f3856c4: the flowchart's eight arrows sit in the empty gap cells.
+    We used to drop every shape and text box anchored in a cell.
+- **Block arrows point where their preset says.** `downArrow`, `upArrow` and
+  `leftArrow` are not rotated `rightArrow`s. The shaft is the middle half
+  across the arrow and the head is min(w, h)/2 long.
+- **Outline width is `a:ln/@w` as written.** Word strokes 3175 EMU as 0.25pt.
+  We used to clamp outlines to at least 0.4pt.
+
+## Table cell margins
+
+- **A table style's `tblCellMar` top and bottom pad every row.** Each edge the
+  table's own `tblCellMar` doesn't name comes from its style.
+  - Live Word probe: Table Grid with 57-twip top and bottom margins steps Arial
+    10 rows 17.76pt apart instead of 12.
+  - Part a 1f3856c4.
+
 ## Open, measured but not yet reconstructed
 
-- **Heading before a full-page box.** A `keepNext` heading followed by an inline
-  box taller than the rest of the page moves to the next page, and the box
-  follows on the page after (redline d20125ec).
 - **Photo inside a deleted text box:** it does not paint yet (d20125ec).
 - **Batch compares.** In `word_redline.py`'s default batch mode, "open produced
   2 new documents" happens about every other pair after a compare. Notes are in
