@@ -35406,3 +35406,40 @@ fn a_right_aligned_header_logo_below_its_space_before_stays_right() {
         &content[..content.len().min(400)]
     );
 }
+
+#[test]
+fn a_footer_text_boxs_page_field_shows_the_page() {
+    // English redline d45aa3d5: the footer's page number sits in a VML text
+    // box, "Page" + PAGE field whose cached result is 3. Word prints the
+    // page (1); we printed the stale cache on every page.
+    let footer = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+          xmlns:v=\"urn:schemas-microsoft-com:vml\"><w:p><w:r><w:pict>\
+        <v:shape id=\"b1\" style=\"position:absolute;margin-left:500pt;margin-top:740pt;width:60pt;height:18pt;\
+          mso-position-horizontal-relative:page;mso-position-vertical-relative:page\" filled=\"f\" stroked=\"f\">\
+        <v:textbox inset=\"0,0,0,0\"><w:txbxContent><w:p>\
+          <w:r><w:t>PageNo</w:t></w:r><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+          <w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r>\
+          <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>9</w:t></w:r>\
+          <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p></w:txbxContent></v:textbox>\
+        </v:shape></w:pict></w:r></w:p></w:ftr>"
+        .to_string();
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr>\
+        <w:footerReference w:type=\"default\" r:id=\"rIdF\"/><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+        <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\"/>\
+        </w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer)],
+    ))
+    .expect("footer box page");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "9").is_none(),
+        "the stale cached 9 is gone"
+    );
+    assert!(
+        pdf_glyph_text_xy(&pdf, "1").is_some(),
+        "the box shows page 1"
+    );
+}

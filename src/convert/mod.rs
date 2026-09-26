@@ -8380,6 +8380,12 @@ fn is_numwords_field(instr: &str) -> bool {
     field_first_token(instr).eq_ignore_ascii_case("NUMWORDS")
 }
 
+/// A `PAGE` field: its result is the page it lands on, resolved when a
+/// header/footer box is painted (d45aa3d5's footer text box).
+fn is_page_field(instr: &str) -> bool {
+    field_first_token(instr).eq_ignore_ascii_case("PAGE")
+}
+
 fn ref_copies_bookmark_text(instr: &str) -> bool {
     !instr.split_whitespace().any(|p| {
         let Some(sw) = p.strip_prefix('\\') else {
@@ -10869,6 +10875,7 @@ fn collect_runs_rec(
             }
             let rev = mark != RevMark::None;
             let numwords = is_numwords_field(&ctx.field_instr);
+            let page_field = ctx.field_result && is_page_field(&ctx.field_instr);
             if style.small_caps {
                 let mut first = true;
                 for (piece, st) in small_caps_pieces(&text, &style) {
@@ -10879,6 +10886,8 @@ fn collect_runs_rec(
                     run.ref_copy_text = ref_copy_text;
                     if numwords {
                         run.field = FieldKind::NumWords;
+                    } else if page_field {
+                        run.field = FieldKind::Page;
                     }
                     if first {
                         run.comments.clone_from(&pending);
@@ -10894,6 +10903,8 @@ fn collect_runs_rec(
                 run.ref_copy_text = ref_copy_text;
                 if numwords {
                     run.field = FieldKind::NumWords;
+                } else if page_field {
+                    run.field = FieldKind::Page;
                 }
                 run.comments = pending;
                 runs.push(run);
@@ -18562,6 +18573,17 @@ impl<'a> Layout<'a> {
             }
             return x;
         }
+        // A PAGE field shows the page it lands on, in a header/footer text
+        // box too (d45aa3d5's footer box cached "3" on page 1).
+        if run.field == FieldKind::Page {
+            let label = self.page_field_label();
+            if run.text != label {
+                let mut shown = run.clone();
+                shown.text = label;
+                shown.field = FieldKind::None;
+                return self.paint_run(&shown, x, y);
+            }
+        }
         if run.style.color_auto
             && ink_is_dark(
                 run.style
@@ -20450,20 +20472,26 @@ impl<'a> Layout<'a> {
                 if run.text.is_empty() {
                     continue;
                 }
+                // A PAGE field shows this page (d45aa3d5's footer box).
+                let text = if run.field == FieldKind::Page {
+                    self.page_field_label()
+                } else {
+                    run.text.clone()
+                };
                 let rid = self
                     .fonts
                     .resolve(&run.style.family, run.style.bold, run.style.italic);
                 let face = self.fonts.get(rid);
                 let size = run.style.paint_size();
-                let w = face.width_pt(&run.text, run.style.layout_size());
+                let w = face.width_pt(&text, run.style.layout_size());
                 self.current().ops.push(Op::text(
                     rid,
                     size,
                     tx,
                     run.style.paint_y(ty),
-                    face.glyphs(&run.text),
+                    face.glyphs(&text),
                     run.style.color,
-                    run.text.clone(),
+                    text,
                 ));
                 // Revision underline / strike, as on body lines.
                 self.decorate_run(tx, run.style.paint_y(ty), w, &run.style);
@@ -22683,6 +22711,15 @@ impl<'a> Layout<'a> {
         self.patch_chap_page();
     }
 
+    /// The label a PAGE field shows on this page.
+    fn page_field_label(&self) -> String {
+        if self.page.chap_style.is_some() {
+            CHAP_PAGE_MARK.to_string()
+        } else {
+            self.section_page_label()
+        }
+    }
+
     fn resolve_fields(&self, runs: &[TextRun], _page_no: usize) -> Vec<TextRun> {
         // PAGE follows the section's w:pgNumType (sd_2517 TOC is
         // lowerRoman start=1 → "i"), not the document page index.
@@ -23567,6 +23604,7 @@ fn wrap_runs_segment(
                     x += cw;
                     if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
                         && style_eq(&last.style, &run.style)
+                        && last.field == run.field
                         && last.pageref.is_none()
                         && last.ref_name.is_none()
                         && last.footnote_id.is_none()
@@ -23589,6 +23627,9 @@ fn wrap_runs_segment(
         for (run, tok, _) in unit {
             if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
                 && style_eq(&last.style, &run.style)
+                // A field result stays its own run: a PAGE field's is
+                // repainted per page (d45aa3d5's "Page" + PAGE footer box).
+                && last.field == run.field
                 && last.pageref.is_none()
                 && run.pageref.is_none()
                 && last.ref_name.is_none()
