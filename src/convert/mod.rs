@@ -7171,6 +7171,21 @@ fn autofit_to_words(
         let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
         mins[cell.col] = mins[cell.col].max(cell_content_extent(fonts, cell).0 + pads);
     }
+    // A spanning cell's word that overruns the columns it covers widens the
+    // last of them (9f41b69c's "Controls" over a 0.65pt grid column).
+    for cell in rows.iter().flatten() {
+        let end = cell.col + cell.colspan;
+        if cell.colspan < 2 || end > widths.len() || cell.vertical {
+            continue;
+        }
+        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
+        let need = cell_content_extent(fonts, cell).0 + pads;
+        let cover: f32 = (cell.col..end).map(|c| widths[c].max(mins[c])).sum();
+        if need > cover {
+            let last = end - 1;
+            mins[last] = mins[last].max(widths[last].max(mins[last]) + need - cover);
+        }
+    }
     let short: f32 = widths
         .iter()
         .zip(&mins)

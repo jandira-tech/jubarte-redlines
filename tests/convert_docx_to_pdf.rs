@@ -37423,3 +37423,23 @@ fn an_autofit_column_measures_a_url_by_its_break_pieces() {
         "the first column keeps its 150pt: url starts at x {x_url}"
     );
 }
+
+#[test]
+fn an_autofit_spanning_cell_widens_its_columns_to_its_longest_word() {
+    // 9f41b69c: "Controls" sits in a cell spanning a 0.65pt grid column
+    // and the next; Word widens the pair to hold the word whole.
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+        <w:tblGrid><w:gridCol w:w=\"13\"/><w:gridCol w:w=\"587\"/><w:gridCol w:w=\"3400\"/></w:tblGrid><w:tr>\
+        <w:tc><w:tcPr><w:tcW w:w=\"600\" w:type=\"dxa\"/><w:gridSpan w:val=\"2\"/></w:tcPr>\
+        <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Sub001Wide</w:t></w:r></w:p></w:tc>\
+        <w:tc><w:tcPr><w:tcW w:w=\"3400\" w:type=\"dxa\"/></w:tcPr>\
+        <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Q</w:t></w:r></w:p></w:tc>\
+        </w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("spanning autofit");
+    let (x_word, _) = pdf_glyph_text_xy(&pdf, "Sub001Wide").expect("the word stays whole");
+    let (x_q, _) = pdf_glyph_text_xy(&pdf, "Q").expect("Q painted");
+    assert!(
+        x_q - x_word > 55.0,
+        "the spanned pair holds its ~52pt word plus margins: word x {x_word}, next cell x {x_q}"
+    );
+}
