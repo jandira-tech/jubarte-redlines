@@ -7209,8 +7209,19 @@ fn cell_content_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
                     line = 0.0;
                 }
                 line += width(piece);
+                // The longest unit the line may not break inside: a URL
+                // wraps after its hyphens (6ac97492's calor.co.uk link),
+                // a word after a hyphen, as `wrap_runs_segment` does.
                 for word in piece.split_whitespace() {
-                    min = min.max(width(word) + indent);
+                    let url = url_wrap_pieces(word);
+                    let units = if url.len() > 1 {
+                        url
+                    } else {
+                        hyphen_wrap_pieces(word, !run.style.ideograph_words)
+                    };
+                    for unit in units {
+                        min = min.max(width(unit) + indent);
+                    }
                 }
             }
         }

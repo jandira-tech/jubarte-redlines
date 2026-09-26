@@ -37393,3 +37393,33 @@ fn an_autofit_column_of_vertical_text_keeps_its_width() {
         "the vertical column stays 25pt wide: next cell text at x {x_body}"
     );
 }
+
+#[test]
+fn an_autofit_column_measures_a_url_by_its_break_pieces() {
+    // 6ac97492: a column holds "http://www.calor.co.uk/gas-bottles/gas-
+    // cylinder-safety"; Word wraps the URL after its hyphens, so the
+    // column keeps its grid width rather than widening to the whole URL.
+    let cell = |w: u32, text: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid>\
+           <w:tr>{}{}</w:tr></w:tbl><w:sectPr/>",
+        cell(3000, "Left"),
+        cell(
+            2000,
+            "http://ex.co/gas-bottles/gas-cylinder-safety-advice-leaflet"
+        )
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("url table");
+    let (x_url, _) = pdf_glyph_text_xy(&pdf, "http").expect("url painted");
+    // The table edge at 72 - 5.4, a 150pt first column, a 5.4pt margin.
+    assert!(
+        (x_url - 222.0).abs() < 3.0,
+        "the first column keeps its 150pt: url starts at x {x_url}"
+    );
+}
