@@ -13731,6 +13731,61 @@ fn a_right_framed_header_page_number_shares_the_next_line() {
 }
 
 #[test]
+fn a_header_line_inside_a_top_and_bottom_header_float_drops_under_it() {
+    // English b/d3a0981e: header distance 0, empty header paragraphs, and
+    // a wrapTopAndBottom text box at page 31.2-65.2pt. Live Word
+    // 2026-09-26: the paragraph whose line top falls inside the box
+    // starts under it and the body follows (91.2, not the 72pt margin);
+    // a line that only overlaps the box's top edge stays put.
+    let header = |anchor: bool| {
+        let shape = if anchor {
+            "<w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" \
+               simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"0\">\
+               <wp:simplePos x=\"0\" y=\"0\"/>\
+               <wp:positionH relativeFrom=\"margin\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+               <wp:positionV relativeFrom=\"page\"><wp:posOffset>396240</wp:posOffset></wp:positionV>\
+               <wp:extent cx=\"3648075\" cy=\"424815\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>\
+               <wp:wrapTopAndBottom/><wp:docPr id=\"6\" name=\"Text Box 6\"/>\
+               <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:wsp><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"3648075\" cy=\"424815\"/></a:xfrm>\
+               <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:p><w:r><w:t>Address</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"
+        } else {
+            ""
+        };
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+               xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+               xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+               xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <w:p>{shape}</w:p><w:p/><w:p/><w:p/></w:hdr>"
+        )
+    };
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"0\" w:footer=\"720\"/></w:sectPr>";
+    let body_y = |anchor: bool| {
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[("rIdH1", "header", "header1.xml")],
+            &[("word/header1.xml", header(anchor))],
+        ))
+        .expect("top-and-bottom header box");
+        pdf_glyph_text_xy(&pdf, "Body").expect("body paints").1
+    };
+    let plain = body_y(false);
+    let boxed = body_y(true);
+    assert!(
+        plain - boxed > 4.0,
+        "the fourth header line drops under the box, and the body with it; {plain} vs {boxed}"
+    );
+}
+
+#[test]
 fn a_title_page_documents_later_header_pushes_the_body_down() {
     // fixtures_500 0014add1: titlePg with no first-page header; pages 2+
     // take a four-line default header taller than the top margin. Word

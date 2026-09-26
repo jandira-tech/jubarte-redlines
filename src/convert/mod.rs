@@ -17589,6 +17589,37 @@ fn chrome_empty_pads(fonts: &Fonts, runs: &[TextRun]) -> (f32, f32) {
     (lead, trail)
 }
 
+/// The part's text as stacked line boxes from the header distance down,
+/// each with the spacing that follows it: `chrome_line_pt` line by line.
+fn chrome_line_units(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<f32> {
+    let empty = |r: &TextRun| hf_break_box(fonts, r) + r.para_gap;
+    if runs.iter().all(|r| r.text == HF_LINE_BREAK) {
+        return runs.iter().map(empty).collect();
+    }
+    let lead = runs.iter().take_while(|r| r.text == HF_LINE_BREAK).count();
+    let trail = runs
+        .iter()
+        .rev()
+        .take_while(|r| r.text == HF_LINE_BREAK)
+        .count();
+    let mut units: Vec<f32> = runs[..lead].iter().map(empty).collect();
+    let lines = hf_styled_lines(fonts, runs, width);
+    let first_text = units.len();
+    if lines.is_empty() {
+        units.push(chrome_one_line_pt(fonts, runs));
+    }
+    for (i, (line, gap)) in lines.iter().enumerate() {
+        let tail = if i + 1 < lines.len() { *gap } else { 0.0 };
+        units.push(chrome_line_metrics(fonts, line).1 + tail);
+    }
+    units[first_text] += hf_opening_pad(runs);
+    units.extend(runs[runs.len() - trail..].iter().map(empty));
+    if let Some(last) = units.last_mut() {
+        *last += hf_closing_after(runs);
+    }
+    units
+}
+
 impl<'a> Layout<'a> {
     fn new(fonts: &'a Fonts<'a>, page: PageSetup, hf: HfChrome, compat_mode: u8) -> Self {
         let header = hf.header;
@@ -17702,6 +17733,9 @@ impl<'a> Layout<'a> {
             page_fn_ids: Vec::new(),
             ln_i: page.ln_start.max(1),
         };
+        lay.push_body_top_under_header_floats();
+        lay.y = lay.page.height - lay.body_top;
+        lay.para_top = lay.y;
         // Page 1's parity is its section's starting page number
         // (pgNumType/@start): an even start opens on the even chrome.
         if lay.even_and_odd {
@@ -17783,6 +17817,66 @@ impl<'a> Layout<'a> {
         self.refresh_body_floor();
     }
 
+    /// A header line whose top falls inside a top-and-bottom header float
+    /// starts under it, and the body under that line (live Word
+    /// 2026-09-26: English b/d3a0981e's third empty header paragraph drops
+    /// below its 31.2-65.2pt address box, starting the body at 91.2; the
+    /// paragraph above, overlapping the box top by 0.35pt, stays).
+    fn push_body_top_under_header_floats(&mut self) {
+        if self.page.top_exact || self.header.is_empty() {
+            return;
+        }
+        let height = self.page.height;
+        let mut spans: Vec<(f32, f32)> = Vec::new();
+        let mut consider = |lay: &Self, slot: ImageSlot, w: f32, h: f32| {
+            let ImageSlot::Float {
+                wrap_top_bottom: true,
+                para_y: None,
+                dist_t,
+                dist_b,
+                ..
+            } = slot
+            else {
+                return;
+            };
+            let (_, fy) = lay.float_xy(w, h.max(1.0), slot);
+            spans.push((height - (fy + h + dist_t), height - (fy - dist_b)));
+        };
+        for img in self.header_images.iter().filter(|i| !i.chrome_flow) {
+            consider(self, img.slot, img.w, img.h);
+        }
+        for box_ in self.header_boxes.iter() {
+            consider(self, box_.slot, box_.w, box_.h);
+        }
+        if spans.is_empty() {
+            return;
+        }
+        let width = self.content_width();
+        let units = chrome_line_units(self.fonts, &self.header, width);
+        let mut y = self.page.header.max(0.0);
+        let mut pushed = false;
+        for unit in units {
+            for &(top, bottom) in &spans {
+                if y >= top && y < bottom {
+                    y = bottom;
+                    pushed = true;
+                }
+            }
+            y += unit;
+        }
+        if !pushed {
+            return;
+        }
+        let rest = chrome_tables_h(
+            self.fonts,
+            &self.header_tables,
+            width,
+            self.space_for_ul,
+            None,
+        ) + chrome_images_h(self.fonts, &self.header_images);
+        self.body_top = self.body_top.max(y + rest);
+    }
+
     /// Body top from the header now in force (its line band below
     /// `pgMar/@w:header`, never above the top margin).
     fn refresh_body_top(&mut self) {
@@ -17798,6 +17892,7 @@ impl<'a> Layout<'a> {
         } else {
             self.page.margin_t.max(self.page.header + header_band)
         };
+        self.push_body_top_under_header_floats();
     }
 
     fn promote_rest_chrome(&mut self) {
