@@ -35355,3 +35355,54 @@ fn a_floating_picture_does_not_keep_a_trailing_picture_off_the_text_line() {
         "the anchored crest leaves the text on the picture's line: {plain} vs {anchored}"
     );
 }
+
+#[test]
+fn a_header_picture_paragraphs_space_before_pushes_the_body() {
+    // English redline 52a8b97a: the header is one Caption paragraph (6pt
+    // before and after) holding only a logo. Live Word stacks space before,
+    // picture and space after (probe: 67.92 / 73.2 / 73.2 / 79.2 for none,
+    // before, after, both); we dropped the space before and set every body
+    // line 6pt high.
+    let pic = "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+        <wp:extent cx=\"1270000\" cy=\"508000\"/><wp:docPr id=\"2\" name=\"logo\"/>\
+        <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+        <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+        <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+        </a:graphicData></a:graphic></wp:inline></w:drawing></w:r>";
+    let body_y = |before: u32| {
+        let hdr = format!(
+            "<w:p><w:pPr><w:spacing w:before=\"{before}\" w:after=\"0\"/></w:pPr>{pic}</w:p>"
+        );
+        let pdf = docx_to_pdf(&header_part_docx_at(&hdr, 720)).expect("header logo");
+        pdf_glyph_text_xy(&pdf, "HdrImgBodyX").expect("body").1
+    };
+    let (flat, spaced) = (body_y(0), body_y(240));
+    assert!(
+        (flat - spaced - 12.0).abs() < 0.5,
+        "12pt before the logo pushes the body 12pt: {flat} vs {spaced}"
+    );
+}
+
+#[test]
+fn a_right_aligned_header_logo_below_its_space_before_stays_right() {
+    // Part b c5ddb65c: a right-aligned NDIS logo in the header's first
+    // paragraph, 6pt before. Lowering it by that space made us take it for
+    // a wrapped second row and set it at the left margin.
+    let pic = "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+        <wp:extent cx=\"1825625\" cy=\"953770\"/><wp:docPr id=\"5\" name=\"logo\"/>\
+        <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+        <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+        <pic:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+        </a:graphicData></a:graphic></wp:inline></w:drawing></w:r>";
+    let hdr = format!(
+        "<w:p><w:pPr><w:spacing w:before=\"120\"/><w:jc w:val=\"right\"/></w:pPr>{pic}</w:p>"
+    );
+    let pdf = docx_to_pdf(&header_part_docx_at(&hdr, 708)).expect("right logo");
+    let content = pdf_content_streams(&pdf).concat();
+    // 143.75pt wide against a 540pt right margin: its matrix sits at x 396.25.
+    assert!(
+        content.contains("143.75 0 0 75.10 396.25"),
+        "the logo stays at the right margin; {}",
+        &content[..content.len().min(400)]
+    );
+}

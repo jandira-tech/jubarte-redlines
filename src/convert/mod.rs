@@ -14893,6 +14893,12 @@ fn load_chrome_part(
                         if drop > 0.0 {
                             img.chrome_drop_tab = Some((mark_style(), tab_wrapped));
                         }
+                        // The part's first paragraph keeps its explicit space
+                        // before above its pictures, as it does above text
+                        // (52a8b97a's Caption logo: live Word 6pt lower).
+                        if para_no == 1 && lead && !pstyle.before_auto {
+                            img.chrome_drop += pstyle.before;
+                        }
                         if first_row && drop <= 0.0 && tab_after && img.w >= text_w - 0.5 {
                             img.chrome_tab_line = Some(mark_style());
                             tab_wrapped = true;
@@ -19369,7 +19375,14 @@ impl<'a> Layout<'a> {
         } else {
             0.0
         };
-        let mut last_drop = 0.0_f32;
+        // The first row starts at its own drop (a paragraph's space before
+        // lowers it, c5ddb65c's right-aligned logo): only a deeper row wraps.
+        let mut last_drop = images
+            .iter()
+            .filter(|img| img.chrome_flow)
+            .map(|img| img.chrome_drop)
+            .reduce(f32::min)
+            .unwrap_or(0.0);
         for img in &images {
             if img.chrome_flow && img.chrome_drop > last_drop {
                 dx = 0.0;
