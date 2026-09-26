@@ -980,6 +980,13 @@ pub fn coalesce_recurse(
                                     dom.set_attribute_value(dup, &an, Some(&av));
                                 }
                             }
+                            // The leaf's content rides along: an inserted or
+                            // deleted w:instrText without its text is a field
+                            // with no code (blank page numbers, citations).
+                            for n in dom.nodes(gcc.content_element) {
+                                let c = dom.clone_subtree(n);
+                                dom.add(dup, c);
+                            }
                             tag_status(dom, dup, gcc.correlation_status, gcc);
                             out.push(dup);
                         }

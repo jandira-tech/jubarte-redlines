@@ -134,3 +134,41 @@ fn f3_footer_part_diff_keeps_fldsimple() {
         "PAGE field survives the footer part diff: {x}"
     );
 }
+
+fn complex_field(prefix: &str, instr: &str, result: &str) -> String {
+    format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">{prefix}</w:t></w:r>\
+         <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+         <w:r><w:instrText xml:space=\"preserve\">{instr}</w:instrText></w:r>\
+         <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+         <w:r><w:t>{result}</w:t></w:r>\
+         <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>"
+    )
+}
+
+/// Field codes of complex fields survive deletion AND insertion: 1 in 5
+/// English redlines shipped `<w:instrText/>` with the code gone (0 of 1000
+/// sources had one), so Word showed blank page numbers and citations.
+#[test]
+fn f4_complex_field_codes_survive_insert_and_delete() {
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(&mut dom, &complex_field("Page ", " PAGE ", "2"));
+    let (r2, b2) = doc_body(
+        &mut dom,
+        &complex_field("2320-", " PAGE   \\* MERGEFORMAT ", "2"),
+    );
+    let s = WmlComparerSettings::default();
+    let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
+    let x = dom.serialize_element(out);
+    let codes: Vec<String> = dom
+        .descendants(out, None)
+        .into_iter()
+        .filter(|&e| {
+            dom.name(e)
+                .is_some_and(|n| n == W::name("instrText") || n == W::name("delInstrText"))
+        })
+        .map(|e| dom.value(e))
+        .collect();
+    assert!(!codes.is_empty(), "{x}");
+    assert!(codes.iter().all(|c| c.contains("PAGE")), "{codes:?}\n{x}");
+}
