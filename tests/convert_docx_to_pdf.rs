@@ -37443,3 +37443,24 @@ fn an_autofit_spanning_cell_widens_its_columns_to_its_longest_word() {
         "the spanned pair holds its ~52pt word plus margins: word x {x_word}, next cell x {x_q}"
     );
 }
+
+#[test]
+fn a_vertical_cell_word_is_not_broken_by_character() {
+    // 1c99b5cd: btLr "Theory Topics" in a 13pt column. Word runs it up
+    // the cell; painted across, breaking it letter by letter stacked
+    // rows of single characters and pushed the table a page further.
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr>\
+        <w:tblGrid><w:gridCol w:w=\"300\"/><w:gridCol w:w=\"5700\"/></w:tblGrid><w:tr>\
+        <w:tc><w:tcPr><w:tcW w:w=\"300\" w:type=\"dxa\"/><w:textDirection w:val=\"btLr\"/></w:tcPr>\
+        <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Theory</w:t></w:r></w:p></w:tc>\
+        <w:tc><w:tcPr><w:tcW w:w=\"5700\" w:type=\"dxa\"/></w:tcPr>\
+        <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Body</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+        <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("vertical cell");
+    let (_, y_body) = pdf_glyph_text_xy(&pdf, "Body").expect("Body painted");
+    let (_, y_after) = pdf_glyph_text_xy(&pdf, "After").expect("After painted");
+    assert!(
+        y_body - y_after < 30.0,
+        "the row stays one line tall: Body y {y_body}, After y {y_after}"
+    );
+}

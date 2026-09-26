@@ -1435,6 +1435,9 @@ struct CellPara {
     /// The page-end part of a paragraph a split row carries on: its last
     /// line is not the paragraph's last and still justifies.
     continued: bool,
+    /// In a btLr/tbRl cell: painted across, a word never breaks by
+    /// character (1c99b5cd's "Theory Topics" column).
+    vertical: bool,
 }
 
 #[derive(Clone)]
@@ -7500,7 +7503,7 @@ fn cell_para_text_h(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
     }
     let line_box = cell_para_line_box(fonts, para).1;
     let (first_w, rest_w) = cell_para_widths(fonts, para, wrap_w);
-    let (lines, _) = wrap_cell_runs(fonts, &para.runs, first_w, rest_w);
+    let (lines, _) = wrap_cell_runs(fonts, para, first_w, rest_w);
     let lines_h: f32 = lines
         .iter()
         .map(|line| {
@@ -7669,6 +7672,7 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
                 bookmarks: Vec::new(),
                 blank_bookmarks: Vec::new(),
                 continued: false,
+                vertical: false,
             },
             wrap_w,
             space_for_ul,
@@ -9735,6 +9739,7 @@ fn table_block(
                     bookmarks,
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
                     continued: false,
+                    vertical: false,
                 });
             }
             if cell_paras.is_empty() && nested.is_empty() {
@@ -9759,10 +9764,14 @@ fn table_block(
                     bookmarks: Vec::new(),
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
                     continued: false,
+                    vertical: false,
                 });
             } else if let Some(last) = cell_paras.last_mut() {
                 // Trailing empty paragraphs: their bookmarks still exist.
                 last.blank_bookmarks.append(&mut blank_bookmarks);
+            }
+            if cell_vertical(dom, cell) {
+                cell_paras.iter_mut().for_each(|p| p.vertical = true);
             }
             // HTML auto spacing does not reach a cell's edges: Word drops
             // the first paragraph's auto before and the last one's after.
@@ -10426,6 +10435,7 @@ fn grid_skip_cell(span: usize, pref: PrefWidth, pad_l: f32, pad_r: f32) -> RawCe
             bookmarks: Vec::new(),
             blank_bookmarks: Vec::new(),
             continued: false,
+            vertical: false,
         }],
         nested: Vec::new(),
         nested_at: Vec::new(),
@@ -10485,6 +10495,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
             bookmarks: Vec::new(),
             blank_bookmarks: Vec::new(),
             continued: false,
+            vertical: false,
         }],
         colspan: 1,
         vmerge: VMerge::None,
@@ -22685,8 +22696,7 @@ impl<'a> Layout<'a> {
                     let mut nlines = 0usize;
                     for para in &cell.paras {
                         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
-                        let (lines, breaks) =
-                            wrap_cell_runs(self.fonts, &para.runs, first_w, rest_w);
+                        let (lines, breaks) = wrap_cell_runs(self.fonts, para, first_w, rest_w);
                         nlines += lines.len().max(1);
                         para_lines.push((lines, breaks));
                     }
@@ -23127,7 +23137,7 @@ impl<'a> Layout<'a> {
         wrap_w: f32,
     ) -> Option<(CellPara, CellPara)> {
         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
-        let lines = wrap_cell_runs(self.fonts, &para.runs, first_w, rest_w).0;
+        let lines = wrap_cell_runs(self.fonts, para, first_w, rest_w).0;
         let mut used = para.style.before;
         let mut n = 0;
         while n < lines.len() {
@@ -24695,11 +24705,19 @@ fn wrap_runs_marked(
 /// column the 100% table cannot widen), as body lines do.
 fn wrap_cell_runs(
     fonts: &Fonts,
-    runs: &[TextRun],
+    para: &CellPara,
     first_width: f32,
     width: f32,
 ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
-    wrap_runs_split(fonts, runs, first_width, width, false, None, true)
+    wrap_runs_split(
+        fonts,
+        &para.runs,
+        first_width,
+        width,
+        false,
+        None,
+        !para.vertical,
+    )
 }
 
 /// Where a paragraph's lines start relative to the tab origin (the flow
