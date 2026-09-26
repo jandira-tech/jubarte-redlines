@@ -5,7 +5,8 @@
 //! PDF 1.4 writer: embedded TTF (Identity-H), stroked rules, JPEG/RGB images.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::hash::{Hash, Hasher};
 use std::fmt::Write as _;
 use std::io::Write;
 
@@ -382,6 +383,21 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         }
     }
 
+    // Image objects by content: a logo or scan repeated on every page is
+    // one XObject every page paints (246f5a1d's six copies of one scan
+    // were 4.2 MB).
+    let mut image_objs: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut intern = |objs: &mut Vec<Vec<u8>>, obj: Vec<u8>| -> usize {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        obj.hash(&mut h);
+        let ids = image_objs.entry(h.finish()).or_default();
+        if let Some(&id) = ids.iter().find(|&&id| objs[id - 1] == obj) {
+            return id;
+        }
+        objs.push(obj);
+        ids.push(objs.len());
+        objs.len()
+    };
     let mut page_ids = Vec::new();
     for (page_idx, page) in pages.iter().enumerate() {
         let page_enc = &encodings[page_idx];
@@ -398,8 +414,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     ..
                 } => {
                     img_n += 1;
-                    let id = objs.len() + 1;
-                    objs.push(jpeg_xobject(*width, *height, bytes, *components));
+                    let id = intern(&mut objs, jpeg_xobject(*width, *height, bytes, *components));
                     let _ = write!(xobjects, "/Im{img_n} {id} 0 R ");
                 }
                 Op::Rgb {
@@ -411,12 +426,9 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                 } => {
                     img_n += 1;
                     let smask = alpha.as_ref().map(|plane| {
-                        let sid = objs.len() + 1;
-                        objs.push(gray_xobject(*width, *height, plane, true));
-                        sid
+                        intern(&mut objs, gray_xobject(*width, *height, plane, true))
                     });
-                    let id = objs.len() + 1;
-                    objs.push(rgb_xobject(*width, *height, bytes, true, smask));
+                    let id = intern(&mut objs, rgb_xobject(*width, *height, bytes, true, smask));
                     let _ = write!(xobjects, "/Im{img_n} {id} 0 R ");
                 }
                 Op::Watermark { .. } => has_watermark = true,
@@ -475,7 +487,15 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
             let _ = write!(font_res, "/{name} {obj_id} 0 R ");
         }
         let mut img_counter = 0usize;
+        // The text object left open by the last plain glyph run: its font,
+        // size, colour and tracking, so the next run in the same state
+        // only moves the text matrix (a page was one `BT … ET` per glyph).
+        let mut open_text: Option<String> = None;
         for (op_idx, op) in page.ops.iter().enumerate() {
+            let plain_text = matches!(op, Op::Text { .. }) && !page.vertical;
+            if !plain_text && open_text.take().is_some() {
+                stream.push_str("ET\n");
+            }
             match op {
                 Op::Text {
                     face,
@@ -541,6 +561,11 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     // A `w:w` scale squeezes the glyphs themselves about
                     // their origin; advances were scaled at layout.
                     let sx = *hscale;
+                    if (word_device_paint(*size).is_some() || (sx - 1.0).abs() > 0.001)
+                        && open_text.take().is_some()
+                    {
+                        stream.push_str("ET\n");
+                    }
                     if let Some((ppem, tc)) = word_device_paint(*size) {
                         // Word writes baselines in whole device units from
                         // the page top (0.24pt grid).
@@ -567,10 +592,16 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         } else {
                             String::new()
                         };
-                        let _ = writeln!(
-                            stream,
-                            "BT /{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {tc_op}{x:.2} {y:.2} Td {lit} Tj ET",
-                        );
+                        let state = format!("/{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {tc_op}");
+                        if open_text.as_deref() == Some(state.as_str()) {
+                            let _ = writeln!(stream, "1 0 0 1 {x:.2} {y:.2} Tm {lit} Tj");
+                        } else {
+                            if open_text.take().is_some() {
+                                stream.push_str("ET\n");
+                            }
+                            let _ = writeln!(stream, "BT {state}{x:.2} {y:.2} Td {lit} Tj");
+                            open_text = Some(state);
+                        }
                     }
                 }
                 Op::Watermark {
@@ -794,6 +825,9 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                 }
             }
         }
+        if open_text.take().is_some() {
+            stream.push_str("ET\n");
+        }
         if markup.is_some() {
             stream.push_str("Q\n");
         }
@@ -948,10 +982,18 @@ fn subset_keep_gids(ttf: &[u8], used: &BTreeSet<u16>) -> Option<Vec<u8>> {
         b.get(at..at + 4)
             .map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]))
     };
-    let num_tables = usize::from(u16_at(ttf, 4)?);
+    // A collection (Cambria.ttc) is read as its first face, as everywhere
+    // else: that face's directory sits where the header points, and its
+    // table offsets count from the file start.
+    let dir = if ttf.get(..4)? == b"ttcf" {
+        usize::try_from(u32_at(ttf, 12)?).ok()?
+    } else {
+        0
+    };
+    let num_tables = usize::from(u16_at(ttf, dir + 4)?);
     let mut tables: Vec<([u8; 4], &[u8])> = Vec::with_capacity(num_tables);
     for t in 0..num_tables {
-        let rec = 12 + 16 * t;
+        let rec = dir + 12 + 16 * t;
         let tag: [u8; 4] = ttf.get(rec..rec + 4)?.try_into().ok()?;
         let offset = usize::try_from(u32_at(ttf, rec + 8)?).ok()?;
         let length = usize::try_from(u32_at(ttf, rec + 12)?).ok()?;
@@ -1018,6 +1060,29 @@ fn subset_keep_gids(ttf: &[u8], used: &BTreeSet<u16>) -> Option<Vec<u8>> {
     new_head
         .get_mut(50..52)?
         .copy_from_slice(&1u16.to_be_bytes());
+    // Readers take advances from `/W` and map through `cmap`: a glyph the
+    // PDF never paints needs no metrics, and no glyph needs its name
+    // (Times' `post` names were a third of its subset).
+    let mut new_hmtx = table(b"hmtx")?.to_vec();
+    let long_metrics = usize::from(u16_at(table(b"hhea")?, 34)?);
+    for g in (0..num_glyphs).filter(|g| !keep.contains(g)) {
+        let (at, len) = if g < long_metrics {
+            (4 * g, 4)
+        } else {
+            (4 * long_metrics + 2 * (g - long_metrics), 2)
+        };
+        if let Some(entry) = new_hmtx.get_mut(at..at + len) {
+            entry.fill(0);
+        }
+    }
+    let parsed = ttf_parser::Face::parse(ttf, 0).ok();
+    let mut new_cmap = parsed.as_ref().and_then(|f| subset_cmap(f, &keep));
+    let mut new_name = parsed.as_ref().and_then(postscript_name_table);
+    let mut new_post = table(b"post").and_then(|p| p.get(..32)).map(|p| {
+        let mut p = p.to_vec();
+        p[..4].copy_from_slice(&0x0003_0000u32.to_be_bytes());
+        p
+    });
     let mut out_tables: Vec<([u8; 4], Cow<'_, [u8]>)> = Vec::new();
     for (tag, data) in &tables {
         if !SUBSET_TABLES.contains(&tag) {
@@ -1027,12 +1092,87 @@ fn subset_keep_gids(ttf: &[u8], used: &BTreeSet<u16>) -> Option<Vec<u8>> {
             b"glyf" => Cow::Owned(std::mem::take(&mut new_glyf)),
             b"loca" => Cow::Owned(std::mem::take(&mut new_loca)),
             b"head" => Cow::Owned(std::mem::take(&mut new_head)),
+            b"hmtx" => Cow::Owned(std::mem::take(&mut new_hmtx)),
+            b"post" => new_post.take().map_or(Cow::Borrowed(*data), Cow::Owned),
+            b"cmap" => new_cmap.take().map_or(Cow::Borrowed(*data), Cow::Owned),
+            b"name" => new_name.take().map_or(Cow::Borrowed(*data), Cow::Owned),
             _ => Cow::Borrowed(*data),
         };
         out_tables.push((*tag, data));
     }
     out_tables.sort_by_key(|a| a.0);
-    Some(write_sfnt(u32_at(ttf, 0)?, &out_tables))
+    Some(write_sfnt(u32_at(ttf, dir)?, &out_tables))
+}
+
+/// A `cmap` of one format 4 subtable mapping only the characters whose
+/// glyphs the subset keeps (Word's subsets carry ~150 bytes; the face's own
+/// was 8.5 KB). `None` keeps the face's cmap: a symbol face (Symbol,
+/// Wingdings) has no Unicode subtable and readers look its codes up raw.
+fn subset_cmap(face: &ttf_parser::Face<'_>, keep: &BTreeSet<usize>) -> Option<Vec<u8>> {
+    let mut map: BTreeMap<u16, u16> = BTreeMap::new();
+    let mut unicode = false;
+    for sub in face.tables().cmap?.subtables {
+        if !sub.is_unicode() {
+            continue;
+        }
+        unicode = true;
+        sub.codepoints(|cp| {
+            if let (Ok(cp), Some(g)) = (u16::try_from(cp), sub.glyph_index(cp))
+                && cp != 0xFFFF
+                && keep.contains(&usize::from(g.0))
+            {
+                map.entry(cp).or_insert(g.0);
+            }
+        });
+    }
+    if !unicode {
+        return None;
+    }
+    // One segment per run of characters whose glyph ids step with them,
+    // then the 0xFFFF terminator.
+    let mut segs: Vec<(u16, u16, u16)> = Vec::new();
+    for (&cp, &g) in &map {
+        let delta = g.wrapping_sub(cp);
+        match segs.last_mut() {
+            Some((_, end, d)) if *end + 1 == cp && *d == delta => *end = cp,
+            _ => segs.push((cp, cp, delta)),
+        }
+    }
+    segs.push((0xFFFF, 0xFFFF, 1));
+    let n = u16::try_from(segs.len()).ok()?;
+    let pow = 1u16 << (15 - n.leading_zeros());
+    let mut sub: Vec<u8> = Vec::new();
+    for v in [4, 16 + 8 * n, 0, 2 * n, 2 * pow, pow.trailing_zeros() as u16, 2 * (n - pow)] {
+        sub.extend_from_slice(&v.to_be_bytes());
+    }
+    segs.iter().for_each(|s| sub.extend_from_slice(&s.1.to_be_bytes()));
+    sub.extend_from_slice(&[0, 0]);
+    segs.iter().for_each(|s| sub.extend_from_slice(&s.0.to_be_bytes()));
+    segs.iter().for_each(|s| sub.extend_from_slice(&s.2.to_be_bytes()));
+    segs.iter().for_each(|_| sub.extend_from_slice(&[0, 0]));
+    // Windows Unicode BMP (3,1), the table readers consult for a
+    // nonsymbolic TrueType font.
+    let mut out = vec![0, 0, 0, 1, 0, 3, 0, 1, 0, 0, 0, 12];
+    out.extend_from_slice(&sub);
+    Some(out)
+}
+
+/// A `name` table holding only the face's PostScript name (Windows,
+/// en-US): readers need no family strings, copyright or license text.
+fn postscript_name_table(face: &ttf_parser::Face<'_>) -> Option<Vec<u8>> {
+    let ps = face
+        .names()
+        .into_iter()
+        .filter(|n| n.name_id == ttf_parser::name_id::POST_SCRIPT_NAME)
+        .find_map(|n| n.to_string())?;
+    let utf16: Vec<u8> = ps.encode_utf16().flat_map(u16::to_be_bytes).collect();
+    let len = u16::try_from(utf16.len()).ok()?;
+    let mut out = Vec::with_capacity(18 + utf16.len());
+    for v in [0u16, 1, 18, 3, 1, 0x0409, ttf_parser::name_id::POST_SCRIPT_NAME, len, 0] {
+        out.extend_from_slice(&v.to_be_bytes());
+    }
+    out.extend_from_slice(&utf16);
+    Some(out)
 }
 
 /// An sfnt from `tables` (sorted by tag), with checksums and 4-byte padding.
@@ -1633,6 +1773,85 @@ mod tests {
             bbox(&full, e),
             "a composite keeps its components"
         );
+    }
+
+    /// A subset of Times was half glyph names (`post` format 2, 35 KB) and
+    /// metrics of glyphs it never paints. Readers map through `cmap` and
+    /// take advances from `/W`: `post` becomes format 3 and an unused
+    /// glyph's metrics are zero, while a used one keeps its own.
+    #[test]
+    fn subset_drops_glyph_names_and_unused_metrics() {
+        let bytes = super::FaceId::CarlitoRegular.bytes();
+        let full = ttf_parser::Face::parse(bytes, 0).expect("Carlito");
+        let a = full.glyph_index('A').expect("A").0;
+        let b = full.glyph_index('B').expect("B").0;
+        let used = std::collections::BTreeSet::from([0u16, a]);
+        let program = super::subset_keep_gids(bytes, &used).expect("glyf face subsets");
+        let sub = ttf_parser::Face::parse(&program, 0).expect("subset parses");
+        let raw = sub
+            .raw_face()
+            .table(ttf_parser::Tag::from_bytes(b"post"))
+            .expect("post");
+        assert_eq!(raw.len(), 32, "post format 3 header only");
+        assert_eq!(&raw[..4], &[0, 3, 0, 0]);
+        let adv = |f: &ttf_parser::Face<'_>, g: u16| f.glyph_hor_advance(ttf_parser::GlyphId(g));
+        assert_eq!(adv(&sub, a), adv(&full, a), "used metrics kept");
+        assert_eq!(adv(&sub, b), Some(0), "unused metrics zeroed");
+        assert_eq!(sub.number_of_glyphs(), full.number_of_glyphs());
+    }
+
+    /// Cambria loads from Cambria.ttc: the collection was embedded whole
+    /// (1.3 MB, and a collection is not a `FontFile2` program). Its first
+    /// face subsets like a lone font and comes out a plain sfnt.
+    #[test]
+    fn a_collections_first_face_subsets_to_a_plain_font() {
+        let single = super::FaceId::CarlitoRegular.bytes();
+        let num_tables = usize::from(u16::from_be_bytes([single[4], single[5]]));
+        let mut shifted = single.to_vec();
+        for t in 0..num_tables {
+            let at = 12 + 16 * t + 8;
+            let off = u32::from_be_bytes(shifted[at..at + 4].try_into().expect("offset"));
+            shifted[at..at + 4].copy_from_slice(&(off + 16).to_be_bytes());
+        }
+        let mut ttc = b"ttcf\x00\x01\x00\x00\x00\x00\x00\x01\x00\x00\x00\x10".to_vec();
+        ttc.extend_from_slice(&shifted);
+        let full = ttf_parser::Face::parse(&ttc, 0).expect("collection parses");
+        let a = full.glyph_index('A').expect("A").0;
+        let used = std::collections::BTreeSet::from([0u16, a]);
+        let program = super::subset_keep_gids(&ttc, &used).expect("collection face subsets");
+        assert_ne!(&program[..4], b"ttcf", "a plain sfnt");
+        assert!(program.len() < single.len() / 3);
+        let sub = ttf_parser::Face::parse(&program, 0).expect("subset parses");
+        assert_eq!(sub.glyph_index('A').map(|g| g.0), Some(a));
+    }
+
+    /// Word's subsets carry a 150-byte `cmap` and a 40-byte `name`; ours
+    /// kept the face's whole 8.5 KB cmap and 3-5 KB of names. The cmap
+    /// maps just the used characters and `name` keeps the PostScript name.
+    #[test]
+    fn subset_cmap_and_name_keep_only_what_the_pdf_uses() {
+        let bytes = super::FaceId::CarlitoRegular.bytes();
+        let full = ttf_parser::Face::parse(bytes, 0).expect("Carlito");
+        let a = full.glyph_index('A').expect("A").0;
+        let used = std::collections::BTreeSet::from([0u16, a]);
+        let program = super::subset_keep_gids(bytes, &used).expect("glyf face subsets");
+        let sub = ttf_parser::Face::parse(&program, 0).expect("subset parses");
+        let len = |tag: &[u8; 4]| {
+            sub.raw_face()
+                .table(ttf_parser::Tag::from_bytes(tag))
+                .map_or(0, <[u8]>::len)
+        };
+        assert!(len(b"cmap") < 200, "cmap {}", len(b"cmap"));
+        assert!(len(b"name") < 200, "name {}", len(b"name"));
+        assert_eq!(sub.glyph_index('A').map(|g| g.0), Some(a));
+        assert_eq!(sub.glyph_index('B'), None, "unused characters unmapped");
+        let ps = |f: &ttf_parser::Face<'_>| {
+            f.names()
+                .into_iter()
+                .filter(|n| n.name_id == ttf_parser::name_id::POST_SCRIPT_NAME)
+                .find_map(|n| n.to_string())
+        };
+        assert_eq!(ps(&sub), ps(&full));
     }
 
     /// CodeRabbit PR#4: two override faces whose PostScript names differ only

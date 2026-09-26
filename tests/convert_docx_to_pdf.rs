@@ -644,6 +644,31 @@ fn numbered_list_revision_keeps_single_counter_after_mini_310() {
 }
 
 #[test]
+fn a_levels_hansi_only_font_leaves_its_ascii_number_in_the_text_face() {
+    // English part b 2386218b: an imported list level sets only
+    // hAnsi="Arial Unicode MS". Word paints "1." (ASCII) in the ascii
+    // face the paragraph gives it; we took hAnsi, and the taller face
+    // pushed the page's last heading onto page 2.
+    let numbering = "<w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/>\
+            <w:numFmt w:val=\"decimal\"/><w:lvlText w:val=\"%1.\"/>\
+            <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\
+            <w:rPr><w:rFonts w:hAnsi=\"Courier New\"/></w:rPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+           <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/></w:rPr>\
+           <w:t>Alpha</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("hAnsi-only level");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        !hay.contains("Courier") && pdf_winansi_text(&pdf).contains("1."),
+        "the ASCII number keeps the text's ascii face"
+    );
+}
+
+#[test]
 fn numid_zero_over_a_numbered_style_drops_its_list_indent() {
     // fixtures_500 000ebd12 (+3 Riksdag motions): style Förslagstext has
     // numbering and ind left=397 hanging=397; the paragraph sets numId=0.
@@ -38396,4 +38421,18 @@ fn a_row_sets_every_cell_at_its_largest_top_margin() {
         (y_one - y_two).abs() < 0.5,
         "both cells start 10pt down: One y {y_one}, Two y {y_two}"
     );
+}
+
+#[test]
+fn a_picture_repeated_on_every_page_is_embedded_once() {
+    // English sample 246f5a1d: one scan on each of six pages was six
+    // 730 KB image objects (4.2 MB); Word embeds it once and every page
+    // paints the same XObject.
+    let pic = r#"<w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+    let body = format!(r#"<w:p>{pic}</w:p>{page_break}<w:p>{pic}</w:p>{page_break}<w:p>{pic}</w:p><w:sectPr/>"#);
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("three pages of one picture");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert_eq!(hay.matches("/Type /Page ").count(), 3, "three pages");
+    assert_eq!(hay.matches("/Subtype /Image").count(), 1, "one image object");
 }

@@ -51,9 +51,9 @@ EN_TAGS = {
     '7c8d376_now': 'jubarte@7c8d376',
     'macfix': 'jubarte@macfix',
     # Clean rebuild of 23abeb2 (older binaries deleted first), 2026-09-26.
-    'fresh0926f': 'jubarte@23abeb2 (fresh build)',
-    'fresh0926g': 'jubarte@23abeb2 (fresh build)',
-    'compressed0926': 'jubarte@23abeb2 --compress',
+    'fresh0926f': 'jubarte 0.9.2',
+    'fresh0926g': 'jubarte 0.9.2',
+    'compressed0926': 'jubarte 0.9.2 --compress',
 }
 # Competitor versions of the English corpus (installed latest, 2026-09-25).
 EN_COMPETITORS = {
