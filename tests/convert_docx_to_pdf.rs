@@ -18,6 +18,110 @@ fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, jubarte::convert::ConvertError> {
             ..PdfOptions::default()
         },
     )
+    .map(|pdf| one_text_object_per_glyph_run(&pdf))
+}
+
+/// The page streams with every glyph run in its own text object, as the
+/// helpers here read them: `BT <font> <colour> x y Td (..) Tj ET`, and
+/// `q a 0 0 d x y cm BT .. 0 0 Td (..) Tj ET Q` for a device-scale or `w:w`
+/// run. The writer shares one text object between runs in the same state
+/// (relative `Td`, or a `Tm` carrying the scale); positions are unchanged.
+fn one_text_object_per_glyph_run(pdf: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(pdf.len());
+    let mut rest = pdf;
+    while let Some(i) = rest.windows(7).position(|w| w == b"stream\n") {
+        out.extend_from_slice(&rest[..i + 7]);
+        let after = &rest[i + 7..];
+        let end = after
+            .windows(10)
+            .position(|w| w == b"\nendstream")
+            .unwrap_or(after.len());
+        match std::str::from_utf8(&after[..end]) {
+            Ok(body) if body.contains(" Tf") => {
+                out.extend_from_slice(expand_text_objects(body).as_bytes());
+            }
+            _ => out.extend_from_slice(&after[..end]),
+        }
+        let skip = (end + 10).min(after.len());
+        out.extend_from_slice(&after[end..skip]);
+        rest = &after[skip..];
+    }
+    out.extend_from_slice(rest);
+    out
+}
+
+fn expand_text_objects(body: &str) -> String {
+    let hundredths = |v: &str| (v.parse::<f64>().unwrap_or(0.0) * 100.0).round() as i64;
+    let shown = |h: i64| {
+        format!(
+            "{}{}.{:02}",
+            if h < 0 { "-" } else { "" },
+            h.abs() / 100,
+            h.abs() % 100
+        )
+    };
+    let (mut state, mut tc, mut pen) = (String::new(), "0".to_string(), (0i64, 0i64));
+    let mut out = String::with_capacity(body.len() * 2);
+    for line in body.split_inclusive('\n') {
+        let text = line.trim_end_matches('\n');
+        if text == "ET" {
+            continue;
+        }
+        if let Some(v) = text.strip_suffix(" Tc").filter(|v| !v.contains(' ')) {
+            tc = v.to_string();
+            continue;
+        }
+        let opens = text.starts_with("BT /") && !text.ends_with(" ET");
+        let continues = !state.is_empty()
+            && !text.starts_with("BT")
+            && !text.starts_with('q')
+            && text.ends_with(" Tj");
+        let lit_at = text.find(['(', '<']);
+        let (true, Some(lit_at)) = (opens || continues, lit_at) else {
+            if text.starts_with("BT") || text.starts_with('q') {
+                state.clear();
+            }
+            out.push_str(line);
+            continue;
+        };
+        let (head, lit) = text.split_at(lit_at);
+        let mut toks: Vec<&str> = head.split_whitespace().collect();
+        if opens {
+            let rg = toks.iter().position(|t| *t == "rg").unwrap_or(0);
+            state = toks[1..=rg].join(" ") + " ";
+            toks.drain(..=rg);
+            if toks.get(1) == Some(&"Tc") {
+                tc = toks[0].to_string();
+                toks.drain(..2);
+            }
+        }
+        match toks.as_slice() {
+            [x, y, "Td"] if opens => pen = (hundredths(x), hundredths(y)),
+            [dx, dy, "Td"] => pen = (pen.0 + hundredths(dx), pen.1 + hundredths(dy)),
+            ["1", "0", "0", "1", x, y, "Tm"] => pen = (hundredths(x), hundredths(y)),
+            [a, "0", "0", d, x, y, "Tm"] => {
+                let tc_op = if *d == "1" {
+                    String::new()
+                } else {
+                    format!("{tc} Tc ")
+                };
+                out.push_str(&format!(
+                    "q {a} 0 0 {d} {x} {y} cm BT {state}{tc_op}0 0 Td {lit} ET Q\n"
+                ));
+                continue;
+            }
+            _ => {
+                out.push_str(line);
+                continue;
+            }
+        }
+        out.push_str(&format!(
+            "BT {state}{} {} Td {lit} ET\n",
+            shown(pen.0),
+            shown(pen.1)
+        ));
+    }
+    out
 }
 use zip::ZipArchive;
 use zip::ZipWriter;
@@ -1914,7 +2018,10 @@ fn an_abstract_nums_style_link_takes_the_linked_abstracts_levels() {
         (x - 108.0).abs() < 1.0,
         "text sits past the [1] marker at the level's 720tw indent; x={x}"
     );
-    assert!(pdf_glyph_text_xy(&pdf, "[1]").is_some(), "the [1] marker paints");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "[1]").is_some(),
+        "the [1] marker paints"
+    );
 }
 
 #[test]
@@ -2217,7 +2324,9 @@ fn a_form_dropdown_paints_its_chosen_entry_in_the_instruction_runs_format() {
         let sep = if result.is_empty() {
             String::new()
         } else {
-            format!(r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{result}</w:t></w:r>"#)
+            format!(
+                r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{result}</w:t></w:r>"#
+            )
         };
         format!(
             r#"<w:p><w:r><w:t xml:space="preserve">x </w:t></w:r><w:r>{begin}<w:fldChar w:fldCharType="begin"><w:ffData><w:name w:val="D"/><w:enabled/><w:ddList>{list}<w:listEntry w:val="ALPHA"/><w:listEntry w:val="BETA"/><w:listEntry w:val="GAMMA"/></w:ddList></w:ffData></w:fldChar></w:r><w:r>{instr}<w:instrText xml:space="preserve"> FORMDROPDOWN </w:instrText></w:r>{sep}<w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> {tail}</w:t></w:r></w:p>"#
@@ -2237,7 +2346,10 @@ fn a_form_dropdown_paints_its_chosen_entry_in_the_instruction_runs_format() {
         pdf_glyph_text_xy(&pdf, "GAMMA").is_some() && pdf_glyph_text_xy(&pdf, "BETA").is_some(),
         "the chosen entries paint"
     );
-    assert!(pdf_glyph_text_xy(&pdf, "BOGUS").is_none(), "result runs are ignored");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "BOGUS").is_none(),
+        "result runs are ignored"
+    );
     let (plain, _) = pdf_glyph_text_xy(&pdf, "Plain").expect("tail after a big begin run");
     let (large, _) = pdf_glyph_text_xy(&pdf, "Large").expect("tail after a big instruction run");
     assert!(
@@ -38430,9 +38542,15 @@ fn a_picture_repeated_on_every_page_is_embedded_once() {
     // paints the same XObject.
     let pic = r#"<w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
     let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
-    let body = format!(r#"<w:p>{pic}</w:p>{page_break}<w:p>{pic}</w:p>{page_break}<w:p>{pic}</w:p><w:sectPr/>"#);
+    let body = format!(
+        r#"<w:p>{pic}</w:p>{page_break}<w:p>{pic}</w:p>{page_break}<w:p>{pic}</w:p><w:sectPr/>"#
+    );
     let pdf = docx_to_pdf(&drawing_docx(&body)).expect("three pages of one picture");
     let hay = String::from_utf8_lossy(&pdf);
     assert_eq!(hay.matches("/Type /Page ").count(), 3, "three pages");
-    assert_eq!(hay.matches("/Subtype /Image").count(), 1, "one image object");
+    assert_eq!(
+        hay.matches("/Subtype /Image").count(),
+        1,
+        "one image object"
+    );
 }

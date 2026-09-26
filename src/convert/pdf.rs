@@ -6,8 +6,8 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::hash::{Hash, Hasher};
 use std::fmt::Write as _;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 
 use flate2::Compression;
@@ -425,9 +425,9 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     ..
                 } => {
                     img_n += 1;
-                    let smask = alpha.as_ref().map(|plane| {
-                        intern(&mut objs, gray_xobject(*width, *height, plane, true))
-                    });
+                    let smask = alpha
+                        .as_ref()
+                        .map(|plane| intern(&mut objs, gray_xobject(*width, *height, plane, true)));
                     let id = intern(&mut objs, rgb_xobject(*width, *height, bytes, true, smask));
                     let _ = write!(xobjects, "/Im{img_n} {id} 0 R ");
                 }
@@ -492,7 +492,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         // only moves the text matrix (a page was one `BT … ET` per glyph).
         // The pen is kept in hundredths as printed, so each next glyph moves
         // by an exact relative `Td` (lines are one glyph per op).
-        let mut open_text: Option<((String, String), Option<(i64, i64)>)> = None;
+        let mut open_text: Option<OpenText> = None;
         let mut page_tc = "0".to_string();
         for (op_idx, op) in page.ops.iter().enumerate() {
             let plain_text = matches!(op, Op::Text { .. }) && !page.vertical;
@@ -601,7 +601,11 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         } else {
                             "0".to_string()
                         };
-                        (format!("/{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg "), tc, None)
+                        (
+                            format!("/{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg "),
+                            tc,
+                            None,
+                        )
                     };
                     let pen = matrix.is_none().then(|| (hundredths(*x), hundredths(*y)));
                     let state = (state, tc);
@@ -1139,6 +1143,10 @@ fn subset_keep_gids(ttf: &[u8], used: &BTreeSet<u16>) -> Option<Vec<u8>> {
     Some(write_sfnt(u32_at(ttf, dir)?, &out_tables))
 }
 
+/// A page's open text object: its (font/size/colour, `Tc`) state and, for
+/// a plain run, the pen in hundredths the next relative `Td` starts from.
+type OpenText = ((String, String), Option<(i64, i64)>);
+
 /// `v` in hundredths exactly as `{v:.2}` prints it, so relative moves add
 /// back up to the printed absolute position.
 fn hundredths(v: f32) -> i64 {
@@ -1199,13 +1207,24 @@ fn subset_cmap(face: &ttf_parser::Face<'_>, keep: &BTreeSet<usize>) -> Option<Ve
     let n = u16::try_from(segs.len()).ok()?;
     let pow = 1u16 << (15 - n.leading_zeros());
     let mut sub: Vec<u8> = Vec::new();
-    for v in [4, 16 + 8 * n, 0, 2 * n, 2 * pow, pow.trailing_zeros() as u16, 2 * (n - pow)] {
+    for v in [
+        4,
+        16 + 8 * n,
+        0,
+        2 * n,
+        2 * pow,
+        pow.trailing_zeros() as u16,
+        2 * (n - pow),
+    ] {
         sub.extend_from_slice(&v.to_be_bytes());
     }
-    segs.iter().for_each(|s| sub.extend_from_slice(&s.1.to_be_bytes()));
+    segs.iter()
+        .for_each(|s| sub.extend_from_slice(&s.1.to_be_bytes()));
     sub.extend_from_slice(&[0, 0]);
-    segs.iter().for_each(|s| sub.extend_from_slice(&s.0.to_be_bytes()));
-    segs.iter().for_each(|s| sub.extend_from_slice(&s.2.to_be_bytes()));
+    segs.iter()
+        .for_each(|s| sub.extend_from_slice(&s.0.to_be_bytes()));
+    segs.iter()
+        .for_each(|s| sub.extend_from_slice(&s.2.to_be_bytes()));
     segs.iter().for_each(|_| sub.extend_from_slice(&[0, 0]));
     // Windows Unicode BMP (3,1), the table readers consult for a
     // nonsymbolic TrueType font.
@@ -1225,7 +1244,17 @@ fn postscript_name_table(face: &ttf_parser::Face<'_>) -> Option<Vec<u8>> {
     let utf16: Vec<u8> = ps.encode_utf16().flat_map(u16::to_be_bytes).collect();
     let len = u16::try_from(utf16.len()).ok()?;
     let mut out = Vec::with_capacity(18 + utf16.len());
-    for v in [0u16, 1, 18, 3, 1, 0x0409, ttf_parser::name_id::POST_SCRIPT_NAME, len, 0] {
+    for v in [
+        0u16,
+        1,
+        18,
+        3,
+        1,
+        0x0409,
+        ttf_parser::name_id::POST_SCRIPT_NAME,
+        len,
+        0,
+    ] {
         out.extend_from_slice(&v.to_be_bytes());
     }
     out.extend_from_slice(&utf16);
@@ -1876,14 +1905,23 @@ mod tests {
     fn cid_widths_list_only_the_used_glyph_runs() {
         let widths: Vec<i32> = (0..40_000).map(|g| 500 + g % 7).collect();
         let used = std::collections::BTreeSet::from([0u16, 3, 4, 5, 30_000]);
-        assert_eq!(super::cid_widths(&widths, &used), "0 [500] 3 [503 504 505] 30000 [505]");
+        assert_eq!(
+            super::cid_widths(&widths, &used),
+            "0 [500] 3 [503 504 505] 30000 [505]"
+        );
     }
 
     /// Glyph moves inside one text object are relative: they must add back
     /// up to the absolute position the page printed before (`{:.2}`).
     #[test]
     fn relative_moves_round_trip_the_printed_hundredths() {
-        for (v, h, shown) in [(730.4, 73040, "730.4"), (-0.05, -5, "-0.05"), (6.0, 600, "6"), (-12.5, -1250, "-12.5"), (0.07, 7, "0.07")] {
+        for (v, h, shown) in [
+            (730.4, 73040, "730.4"),
+            (-0.05, -5, "-0.05"),
+            (6.0, 600, "6"),
+            (-12.5, -1250, "-12.5"),
+            (0.07, 7, "0.07"),
+        ] {
             assert_eq!(super::hundredths(v), h, "{v}");
             assert_eq!(super::fmt_hundredths(h), shown);
         }
