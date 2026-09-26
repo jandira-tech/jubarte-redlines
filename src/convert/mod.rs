@@ -2939,12 +2939,7 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
 }
 
 fn style_pr_fill(dom: &Dom, pr: NodeId) -> Option<[f32; 3]> {
-    let shd = first_named(dom, pr, "shd")?;
-    let fill = attr_any(dom, shd, "fill")?;
-    if fill.eq_ignore_ascii_case("auto") {
-        return None;
-    }
-    parse_hex_color(fill)
+    shd_paint(dom, first_named(dom, pr, "shd")?)
 }
 
 fn style_pr_color(dom: &Dom, pr: NodeId) -> Option<[f32; 3]> {
@@ -3595,10 +3590,9 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     }
     if style.highlight.is_none()
         && let Some(shd) = first_named(dom, rpr, "shd")
-        && let Some(fill) = attr_any(dom, shd, "fill")
-        && !fill.eq_ignore_ascii_case("auto")
+        && let Some(paint) = shd_paint(dom, shd)
     {
-        style.highlight = parse_hex_color(fill);
+        style.highlight = Some(paint);
     }
 }
 
@@ -3736,10 +3730,7 @@ fn ppr_shd_fill(dom: &Dom, ppr: NodeId) -> Option<[f32; 3]> {
     // Direct w:pPr/w:shd only. first_named would steal pPr/rPr/shd
     // (file_71 paragraph-mark green) and paint a content-wide band.
     let shd = direct_named(dom, ppr, "shd")?;
-    if let Some(fill) = attr_any(dom, shd, "fill")
-        && !fill.eq_ignore_ascii_case("auto")
-        && let Some(rgb) = parse_hex_color(fill)
-    {
+    if let Some(rgb) = shd_paint(dom, shd) {
         // White-on-white (image_out_of_folder / sd_2517) is a no-op.
         if rgb.iter().all(|c| *c > 0.98) {
             return None;
@@ -10061,12 +10052,38 @@ fn cell_wrap_width(cell: &TableCell, avail: f32) -> f32 {
 
 fn cell_fill(dom: &Dom, cell: NodeId) -> Option<[f32; 3]> {
     let pr = first_named(dom, cell, "tcPr")?;
-    let shd = first_named(dom, pr, "shd")?;
-    let fill = attr_any(dom, shd, "fill")?;
-    if fill.eq_ignore_ascii_case("auto") {
+    shd_paint(dom, first_named(dom, pr, "shd")?)
+}
+
+/// The colour Word paints for a `w:shd`. `clear` shows `w:fill`; `solid`
+/// shows the pattern colour `w:color`; `pctN` lays N% of `w:color` over
+/// `w:fill` (an auto colour is black, an auto fill white). Live Word:
+/// solid CC99FF on fill auto paints CC99FF (redline 23ba7149's rate
+/// tables), pct50 red on blue paints (0.502, 0, 0.498). Other patterns
+/// (stripes, hatches) keep their fill.
+fn shd_paint(dom: &Dom, shd: NodeId) -> Option<[f32; 3]> {
+    let hex = |name: &str| {
+        attr_any(dom, shd, name)
+            .filter(|v| !v.eq_ignore_ascii_case("auto"))
+            .and_then(parse_hex_color)
+    };
+    let fill = hex("fill");
+    let val = attr_any(dom, shd, "val").unwrap_or("clear");
+    if val == "nil" {
         return None;
     }
-    parse_hex_color(fill)
+    if val == "solid" {
+        return Some(hex("color").unwrap_or([0.0; 3]));
+    }
+    let Some(pct) = val.strip_prefix("pct").and_then(|n| n.parse::<f32>().ok()) else {
+        return fill;
+    };
+    let share = (pct / 100.0).clamp(0.0, 1.0);
+    let front = hex("color").unwrap_or([0.0; 3]);
+    let back = fill.unwrap_or([1.0; 3]);
+    Some(std::array::from_fn(|i| {
+        front[i] * share + back[i] * (1.0 - share)
+    }))
 }
 
 /// `parent`'s `w:<local>` children, also those a content control or a
@@ -34304,6 +34321,58 @@ mod table_tests {
                 panic!("expected table")
             }
         }
+    }
+
+    #[test]
+    fn a_shading_pattern_paints_its_colour_over_the_fill() {
+        // Live Word 2026-09-25: solid paints w:color (auto: black); pctN paints
+        // N% of w:color over w:fill (auto fill: white); clear paints w:fill.
+        // Redline 23ba7149's rate tables are solid CC99FF on fill auto.
+        let paint = |shd: &str| {
+            let xml = format!(
+                r#"<w:tc xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:tcPr>{shd}</w:tcPr></w:tc>"#
+            );
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let cell = dom.root(doc).expect("root");
+            cell_fill(&dom, cell).map(|c| c.map(|v| (v * 1000.0).round() / 1000.0))
+        };
+        let close = |got: Option<[f32; 3]>, want: [f32; 3]| {
+            let got = got.expect("painted");
+            assert!(
+                got.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.005),
+                "{got:?} vs {want:?}"
+            );
+        };
+        close(
+            paint(r#"<w:shd w:val="solid" w:color="CC99FF" w:fill="auto"/>"#),
+            [0.8, 0.6, 1.0],
+        );
+        close(
+            paint(r#"<w:shd w:val="solid" w:color="auto" w:fill="auto"/>"#),
+            [0.0, 0.0, 0.0],
+        );
+        close(
+            paint(r#"<w:shd w:val="solid" w:color="00FF00" w:fill="0000FF"/>"#),
+            [0.0, 1.0, 0.0],
+        );
+        close(
+            paint(r#"<w:shd w:val="pct50" w:color="FF0000" w:fill="0000FF"/>"#),
+            [0.502, 0.0, 0.498],
+        );
+        close(
+            paint(r#"<w:shd w:val="pct25" w:color="FF0000" w:fill="FFFFFF"/>"#),
+            [1.0, 0.749, 0.749],
+        );
+        close(
+            paint(r#"<w:shd w:val="clear" w:color="FF0000" w:fill="00FF00"/>"#),
+            [0.0, 1.0, 0.0],
+        );
+        assert_eq!(
+            paint(r#"<w:shd w:val="clear" w:color="auto" w:fill="auto"/>"#),
+            None
+        );
+        assert_eq!(paint(r#"<w:shd w:val="nil"/>"#), None);
     }
 
     #[test]
