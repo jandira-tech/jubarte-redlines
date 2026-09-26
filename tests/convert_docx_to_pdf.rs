@@ -34513,6 +34513,42 @@ fn a_soft_edged_picture_fades_to_nothing_at_its_border() {
 }
 
 #[test]
+fn a_duotone_picture_maps_its_luminance_between_the_two_colours() {
+    // English corpus c301012f: form boxes are green PNGs under
+    // `a:duotone` accent5 (shade 45%, satMod 135%) → white. Word paints
+    // each pixel at c1 + (c2 - c1) * Rec.709 luma: green 70AD47 comes out
+    // A4B6D6 light blue. We painted the native green.
+    let paint = |duotone: &str| {
+        let pic = blip("457200", "457200", "<wp:inline>", "</wp:inline>").replace(
+            "<a:blip r:embed=\"rIdImg\"/>",
+            &format!("<a:blip r:embed=\"rIdImg\">{duotone}</a:blip>"),
+        );
+        let docx = drawing_docx(&format!("<w:p><w:r>{pic}</w:r></w:p><w:sectPr/>"));
+        let pdf = docx_to_pdf(&docx).expect("duotone");
+        pdf_image_samples(&pdf)
+            .into_iter()
+            .find(|s| s.len() == 3)
+            .expect("the 1x1 picture")
+    };
+    assert_eq!(paint(""), vec![255, 0, 0], "no duotone keeps the pixel");
+    assert_eq!(
+        paint("<a:duotone><a:srgbClr val=\"000000\"/><a:prstClr val=\"white\"/></a:duotone>"),
+        vec![54, 54, 54],
+        "red's luma 0.2126 between black and white"
+    );
+    let tinted = paint(
+        "<a:duotone><a:srgbClr val=\"4472C4\"><a:shade val=\"45000\"/><a:satMod val=\"135000\"/>\
+         </a:srgbClr><a:prstClr val=\"white\"/></a:duotone>",
+    );
+    for (got, want) in tinted.iter().zip([77u8, 112, 175]) {
+        assert!(
+            got.abs_diff(want) <= 3,
+            "shaded, saturated accent5 to white; got={tinted:?}"
+        );
+    }
+}
+
+#[test]
 fn a_landscape_flag_does_not_swap_a_portrait_page_size() {
     // docxide handels_messiah_biblical_analysis, and live Word: pgSz
     // w=7920 h=12240 orient=landscape is a 396 x 612pt page. We swapped

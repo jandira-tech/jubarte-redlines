@@ -13232,6 +13232,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
             if let Some(rid) = attr_any(dom, blip, "embed") {
                 if let Some(bytes) = resolve_media(pkg, main, rid) {
                     let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);
+                    let kind = duotone_image(kind, dom, blip, pkg);
                     let kind = match soft_edge_pt(dom, drawing) {
                         Some(rad) if w > 0.0 && h > 0.0 => soften_edges(kind, rad / w, rad / h),
                         _ => kind,
@@ -14606,6 +14607,89 @@ fn soften_edges(kind: ImageKind, fx: f32, fy: f32) -> ImageKind {
         height,
         bytes,
         alpha: Some(alpha),
+    }
+}
+
+/// One `a:duotone` colour child with its lum/shade and `satMod`
+/// transforms; `None` for a colour we cannot resolve.
+fn duotone_color(dom: &Dom, node: NodeId, pkg: &PartFs) -> Option<[f32; 3]> {
+    let mut color = if local_name_is(dom, node, "srgbClr") {
+        parse_hex_color(attr_any(dom, node, "val")?)?
+    } else if local_name_is(dom, node, "schemeClr") {
+        load_theme(pkg).slot_color(attr_any(dom, node, "val")?)?
+    } else if local_name_is(dom, node, "sysClr") {
+        parse_hex_color(attr_any(dom, node, "lastClr")?)?
+    } else if local_name_is(dom, node, "prstClr") {
+        match attr_any(dom, node, "val")? {
+            "white" => [1.0; 3],
+            "black" => [0.0; 3],
+            _ => return None,
+        }
+    } else {
+        return None;
+    };
+    apply_lum(dom, node, &mut color);
+    if let Some(sat) = descendants_local(dom, node, "satMod")
+        .into_iter()
+        .find_map(|n| attr_any(dom, n, "val").and_then(|s| s.parse::<f32>().ok()))
+    {
+        let (h, s, l) = rgb_to_hsl(color[0], color[1], color[2]);
+        let rgb = hsl_to_rgb(h, (s * sat / 100_000.0).clamp(0.0, 1.0), l);
+        for (dst, src) in color.iter_mut().zip(rgb) {
+            *dst = ((src * 255.0).round() / 255.0).clamp(0.0, 1.0);
+        }
+    }
+    Some(color)
+}
+
+/// `a:blip/a:duotone`: Word recolours each pixel between the two colours
+/// by its Rec.709 luma (English corpus c301012f: green 70AD47 under
+/// accent5 shade 45% satMod 135% → white paints A4B6D6).
+fn duotone_image(kind: ImageKind, dom: &Dom, blip: NodeId, pkg: &PartFs) -> ImageKind {
+    let Some(duotone) = (0..dom.child_count(blip))
+        .map(|i| dom.child_at(blip, i))
+        .find(|&c| local_name_is(dom, c, "duotone"))
+    else {
+        return kind;
+    };
+    let colors: Vec<[f32; 3]> = (0..dom.child_count(duotone))
+        .map(|i| dom.child_at(duotone, i))
+        .filter_map(|c| duotone_color(dom, c, pkg))
+        .collect();
+    let [c1, c2] = colors[..] else {
+        return kind;
+    };
+    let (width, height, mut bytes, alpha) = match kind {
+        ImageKind::Jpeg { bytes, .. } => {
+            let Ok(img) = image::load_from_memory(&bytes) else {
+                return ImageKind::Reserve;
+            };
+            let rgb = img.to_rgb8();
+            (rgb.width(), rgb.height(), rgb.into_raw(), None)
+        }
+        ImageKind::Rgb {
+            width,
+            height,
+            bytes,
+            alpha,
+        } => (width, height, bytes, alpha),
+        other => return other,
+    };
+    for px in bytes.chunks_exact_mut(3) {
+        let luma =
+            (0.2126 * f32::from(px[0]) + 0.7152 * f32::from(px[1]) + 0.0722 * f32::from(px[2]))
+                / 255.0;
+        for (i, v) in px.iter_mut().enumerate() {
+            *v = ((c1[i] + (c2[i] - c1[i]) * luma) * 255.0)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+        }
+    }
+    ImageKind::Rgb {
+        width,
+        height,
+        bytes,
+        alpha,
     }
 }
 

@@ -271,6 +271,17 @@ rule:
 - **A `w:fldData` inside a `w:fldChar` is binary field data, never text.**
   - Part a c690df8d: its base64 EndNote records ran 11 pages to 132.
   - Part a a7444d0b: 18 pages to 153.
+- **A deleted PAGE field is recomputed.** Its code sits in `w:delInstrText`.
+  Word paints the current page, not the stale cached number.
+  - Redline d45aa3d5.
+  - Word mode only: the revised number is painted in the run's own colour
+    with no insertion underline. That is a Word mistake, so our default
+    revision style keeps the mark.
+- **`a:blip/a:duotone` recolours a picture by luminance.** Each pixel becomes
+  c1 + (c2 − c1) × Rec.709 luma. Rec.601 misses by 8 levels.
+  - c1 takes its shade (linear sRGB) and satMod (HSL) transforms.
+  - Part a c301012f: green 70AD47 under accent5, shade 45%, satMod 135%, to
+    white paints A4B6D6.
 
 ## Open, measured but not yet reconstructed
 
