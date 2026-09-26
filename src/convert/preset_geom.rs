@@ -717,6 +717,26 @@ mod tests {
         }
 
         #[test]
+        fn pie_and_gear_text_rectangles_match_word() {
+            // Live Word, 216pt square, zero insets: a pie sets its text in the
+            // ellipse's inset rectangle (text at x = 32pt into the box),
+            // though presetShapeDefinitions.xml lists `t="ir" r="it"`.
+            let pie = text_rect("pie", 216.0, 216.0, &[]).expect("pie");
+            assert_eq!(
+                pie,
+                text_rect("ellipse", 216.0, 216.0, &[]).expect("ellipse")
+            );
+            assert!((pie[0] - 31.63).abs() < 0.1, "{pie:?}");
+            // gear6 / gear9 read adj1 (and gear9 adj2) through guides that
+            // the table's defaults left out; Word starts their text at 55pt
+            // and 44pt into the box.
+            let g6 = text_rect("gear6", 216.0, 216.0, &[]).expect("gear6");
+            assert!((g6[0] - 55.0).abs() < 1.0, "{g6:?}");
+            let g9 = text_rect("gear9", 216.0, 216.0, &[]).expect("gear9");
+            assert!((g9[0] - 44.0).abs() < 1.0, "{g9:?}");
+        }
+
+        #[test]
         fn adjusted_text_rectangle_clamps_to_the_shapes_limits() {
             for (adjustment, bottom) in [(-1.0, 100.0), (25000.0, 75.0), (75000.0, 50.0)] {
                 assert_eq!(
