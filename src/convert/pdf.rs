@@ -868,7 +868,18 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                 contents: note.contents.clone(),
                 author: note.author.clone(),
             });
-            objs.push(text_annot_obj(scaled.as_ref().unwrap_or(note)));
+            let note = scaled.as_ref().unwrap_or(note);
+            // The content stream turns a vertical page back with
+            // X = y, Y = width − x; the rectangle turns the same way.
+            let turned = page.vertical.then(|| PdfComment {
+                x: note.y,
+                y: page.width - note.x - note.w,
+                w: note.h,
+                h: note.w,
+                contents: note.contents.clone(),
+                author: note.author.clone(),
+            });
+            objs.push(text_annot_obj(turned.as_ref().unwrap_or(note)));
             let _ = write!(annot_refs, "{id} 0 R ");
         }
         let annots = if annot_refs.is_empty() {
@@ -1811,6 +1822,33 @@ fn stands_upright(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::uniquify;
+
+    /// A tbRl page is laid out turned a quarter and turned back by the
+    /// content stream's `cm`; its comment rectangles must turn with it.
+    #[test]
+    fn a_comment_on_a_vertical_page_turns_with_its_text() {
+        let fonts = super::Fonts::new();
+        let mut page = super::Page::new(595.2, 841.92);
+        page.vertical = true;
+        page.comments.push(super::PdfComment {
+            x: 100.0,
+            y: 700.0,
+            w: 20.0,
+            h: 14.0,
+            contents: "note".into(),
+            author: "A".into(),
+        });
+        let pdf = super::emit(&fonts, &[page], crate::convert::PdfOptions::default());
+        let hay = String::from_utf8_lossy(&pdf);
+        // X = y, Y = width − x: [700, 595.2 − 120] to [714, 595.2 − 100].
+        assert!(
+            hay.contains("/Rect [700.00 475.20 714.00 495.20]"),
+            "{}",
+            hay.lines()
+                .find(|l| l.contains("/Rect"))
+                .unwrap_or_default()
+        );
+    }
 
     /// Faces were embedded whole (a one-line PDF was 1.3 MB). The subset
     /// keeps every glyph id, the outlines of the used ones and the
