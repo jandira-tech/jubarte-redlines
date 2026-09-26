@@ -836,13 +836,13 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     ..
                 } => {
                     img_counter += 1;
-                    let drawn = paint_image(*x, *y, *dw, *dh, *crop, img_counter, *rotate_deg);
-                    if *oval {
-                        let _ =
-                            writeln!(stream, "q {} W n {drawn}Q", ellipse_path(*x, *y, *dw, *dh));
-                    } else {
-                        stream.push_str(&drawn);
-                    }
+                    stream.push_str(&paint_picture(
+                        [*x, *y, *dw, *dh],
+                        *crop,
+                        img_counter,
+                        *rotate_deg,
+                        *oval,
+                    ));
                 }
             }
         }
@@ -1574,8 +1574,33 @@ fn paint_image(
         }
         _ => format!("q {dw:.2} 0 0 {dh:.2} {x:.2} {y:.2} cm /Im{n} Do Q\n"),
     };
+    rotate_about_centre(x, y, dw, dh, rotate_deg, &inner)
+}
+
+/// A picture op: [`paint_image`], shown through an oval when `oval`. The
+/// oval is the shape's geometry, so it turns with the picture.
+fn paint_picture(
+    [x, y, dw, dh]: [f32; 4],
+    crop: Option<[f32; 4]>,
+    n: usize,
+    rotate_deg: f32,
+    oval: bool,
+) -> String {
+    if !oval {
+        return paint_image(x, y, dw, dh, crop, n, rotate_deg);
+    }
+    let clipped = format!(
+        "q {} W n {}Q\n",
+        ellipse_path(x, y, dw, dh),
+        paint_image(x, y, dw, dh, crop, n, 0.0)
+    );
+    rotate_about_centre(x, y, dw, dh, rotate_deg, &clipped)
+}
+
+/// `inner` turned `rotate_deg` about the centre of its box.
+fn rotate_about_centre(x: f32, y: f32, dw: f32, dh: f32, rotate_deg: f32, inner: &str) -> String {
     if rotate_deg.abs() < 0.05 {
-        return inner;
+        return inner.to_string();
     }
     let cx = x + dw * 0.5;
     let cy = y + dh * 0.5;
@@ -2046,7 +2071,7 @@ mod tests {
     }
 
     mod regression_tests {
-        use super::super::{ellipse_path, paint_image, stands_upright};
+        use super::super::{ellipse_path, paint_image, paint_picture, stands_upright};
 
         #[test]
         fn negative_crop_insets_the_image_inside_its_clipping_box() {
@@ -2079,6 +2104,23 @@ mod tests {
             );
             assert!(ops.contains("re W n"), "{ops}");
             assert!(ops.contains("100.00 0 0 60.00 -15.00 20.00 cm"), "{ops}");
+        }
+
+        #[test]
+        fn a_rotated_oval_picture_turns_its_clip_with_the_image() {
+            let drawn = paint_picture([10.0, 20.0, 80.0, 40.0], None, 1, 90.0, true);
+            let turn = drawn.find(" 0 0 cm 1 0 0 1 ").expect("rotation");
+            let clip = drawn.find(" W n ").expect("oval clip");
+            assert!(turn < clip, "the clip sits inside the rotation: {drawn}");
+            assert_eq!(
+                paint_picture([10.0, 20.0, 80.0, 40.0], None, 1, 0.0, true),
+                format!(
+                    "q {} W n {}Q\n",
+                    ellipse_path(10.0, 20.0, 80.0, 40.0),
+                    paint_image(10.0, 20.0, 80.0, 40.0, None, 1, 0.0)
+                ),
+                "an unrotated oval keeps its output"
+            );
         }
 
         #[test]
