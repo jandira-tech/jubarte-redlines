@@ -65,9 +65,11 @@ repository's root:
   not in its output folder. A watchdog on the wrong folder kills a busy Word.
   A Word freeze is normal; the watchdog clears it.
 - Closing every Word document, or quitting Word, between jobs is fine.
-- A file or pair that fails twice is skipped. Move on, and leave it out of the
-  scores; never score it as zero. If skips leave the sample small, add other
-  fixtures instead of retrying the failures.
+- When Word fails twice on a reference file or pair, skip it and move on:
+  without a reference there is nothing to score. If skips leave the sample
+  small, add other fixtures instead of retrying the failures.
+- A jubarte failure scores zero, never a skip. That covers no output, and
+  output that Word cannot open or convert.
 - `word_redline.py` builds its staging names from both stems, so long stems
   fail with "File name too long". Stage long pairs under short ids and keep a
   map back to the real names.
