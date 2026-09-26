@@ -2926,6 +2926,36 @@ fn a_text_anchored_frame_floats_beside_the_next_paragraph() {
 }
 
 #[test]
+fn a_tall_frame_narrows_every_paragraph_beside_it() {
+    // 46b5cb36 (Word): a 118pt exact frame at page x=180, then an empty
+    // paragraph, then "Abbreviated Question (as it will appear on search
+    // results page)": Word wraps the label in the column left of the frame
+    // ("Abbreviated / Question (as it will / ..."). We narrowed only the
+    // paragraph right after the frame and ran the label across it.
+    let frame = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:framePr w:w="5000" w:h="2371" w:hRule="exact" w:hSpace="187" w:vSpace="43" w:wrap="around" w:vAnchor="text" w:hAnchor="page" w:x="3742" w:y="7"/><w:pBdr><w:top w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:left w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:right w:val="single" w:sz="6" w:space="1" w:color="auto"/></w:pBdr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let body = format!(
+        "<w:p><w:r><w:t>Before line</w:t></w:r></w:p>{}<w:p/>\
+         <w:p><w:r><w:t>Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        frame("FrameBody")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("tall frame");
+    let (_, frame_y) = pdf_glyph_text_xy(&pdf, "FrameBody").expect("frame paints");
+    for word in ["Alpha", "Delta", "Hotel", "India"] {
+        let (x, y) = pdf_glyph_text_xy(&pdf, word).expect("label paints");
+        assert!(
+            x < 178.0 && frame_y - y < 118.0,
+            "{word} sits left of the frame, beside it; ({x}, {y}) frame top {frame_y}"
+        );
+    }
+}
+
+#[test]
 fn a_frame_needs_more_than_an_inch_beside_it() {
     // Live Word: a text-anchored frame leaving 72pt of the column beside
     // it sends the next paragraph under it (baseline 83 -> 165); 76pt

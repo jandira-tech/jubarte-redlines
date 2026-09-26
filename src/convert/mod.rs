@@ -22159,6 +22159,14 @@ impl<'a> Layout<'a> {
             return;
         }
         self.paint_box_at(box_, x, y, dw, dh);
+        // Like a square picture, a frame narrows every paragraph beside
+        // it, not just its anchor's (46b5cb36's 118pt question frame
+        // wraps its label two paragraphs on). Drawn text boxes keep
+        // their anchor-only band: holding theirs squeezed b/79275339's
+        // body between two side boxes.
+        if box_.frame && matches!(box_.slot, ImageSlot::Float { .. }) {
+            self.hold_square_float(box_.slot, x, y, dw, dh, MIN_SIDE_FRAME_ROOM_PT);
+        }
     }
 
     /// Paints a placed box: its geometry, its group's shapes (each with
