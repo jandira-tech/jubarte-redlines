@@ -86,6 +86,13 @@ fn hyperlink(id: &str, text: &str) -> String {
     format!(r#"<w:hyperlink r:id="{id}"><w:r><w:t>{text}</w:t></w:r></w:hyperlink>"#)
 }
 
+/// An inline picture run whose blip embeds relationship `rid`.
+fn picture(rid: &str) -> String {
+    format!(
+        r#"<w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="100" cy="100"/><wp:docPr id="1" name="P"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="P"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="{rid}"/></pic:blipFill><pic:spPr/></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+    )
+}
+
 /// Every `r:*` relationship attribute in every XML part of `docx`, with the ids
 /// that part's `.rels` defines: returns `part: [missing ids]` for each part whose
 /// references do not all resolve.
@@ -279,9 +286,11 @@ fn pictures_stored_outside_the_word_folder_keep_resolvable_targets() {
         &[],
         &[],
     );
-    let picture = r#"<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="100" cy="100"/><wp:docPr id="1" name="P"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="P"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId5"/></pic:blipFill><pic:spPr/></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
     let b = build_docx(
-        &format!(r#"<w:p><w:r><w:t>Shared text.</w:t></w:r></w:p>{picture}"#),
+        &format!(
+            r#"<w:p><w:r><w:t>Shared text.</w:t></w:r></w:p><w:p>{}</w:p>"#,
+            picture("rId5")
+        ),
         &[("rId5", "image", "/media/image.bin")],
         &[("media/image.bin", "PNGDATA")],
         &[("media/image.bin", "image/png")],
@@ -292,4 +301,65 @@ fn pictures_stored_outside_the_word_folder_keep_resolvable_targets() {
     assert!(doc.contains("r:embed="), "{doc}");
     assert_eq!(unresolved_targets(&out), Vec::<String>::new());
     assert_eq!(dangling_refs(&out), Vec::<String>::new());
+}
+
+#[test]
+fn footnote_pictures_from_the_revised_document_carry_one_image_part() {
+    // Internal targets are copied along with the relationship; two pictures
+    // sharing one id get one relationship and one image part, not two.
+    let a = build_docx(
+        r#"<w:p><w:r><w:t>Body text.</w:t></w:r></w:p>"#,
+        &[],
+        &[],
+        &[],
+    );
+    let footnotes = format!(
+        r#"<w:footnotes xmlns:w="{W_NS}" xmlns:r="{REL_NS}"><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote><w:footnote w:id="1"><w:p>{}{}</w:p></w:footnote></w:footnotes>"#,
+        picture("rId3"),
+        picture("rId3"),
+    );
+    let fn_rels = format!(
+        r#"<?xml version="1.0"?><Relationships xmlns="{PKG_REL_NS}"><Relationship Id="rId3" Type="{REL_NS}/image" Target="media/fn.png"/></Relationships>"#
+    );
+    let b = build_docx(
+        r#"<w:p><w:r><w:t>Body text.</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+        &[("rId8", "footnotes", "footnotes.xml")],
+        &[
+            ("word/footnotes.xml", &footnotes),
+            ("word/_rels/footnotes.xml.rels", &fn_rels),
+            ("word/media/fn.png", "PNGDATA"),
+        ],
+        &[
+            (
+                "word/footnotes.xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            ),
+            ("word/media/fn.png", "image/png"),
+        ],
+    );
+
+    let out = compare_documents(&a, &b, "Test").expect("compare ok");
+    let notes = read_part(&out, "word/footnotes.xml").expect("footnotes carried");
+    assert_eq!(notes.matches("r:embed=").count(), 2, "{notes}");
+    assert_eq!(dangling_refs(&out), Vec::<String>::new());
+    assert_eq!(unresolved_targets(&out), Vec::<String>::new());
+    let rels = read_part(&out, "word/_rels/footnotes.xml.rels").expect("footnotes rels");
+    assert_eq!(rels.matches("/image\"").count(), 1, "{rels}");
+    // Copied media get a fresh name; follow the relationship to it.
+    let target = rels
+        .split("Target=\"")
+        .nth(1)
+        .and_then(|t| t.split('"').next())
+        .expect("image target");
+    let image = format!("word/{target}");
+    assert_eq!(
+        read_part(&out, &image).as_deref(),
+        Some("PNGDATA"),
+        "{rels}"
+    );
+    let types = read_part(&out, "[Content_Types].xml").unwrap();
+    assert!(
+        types.contains(&format!("/{image}\" ContentType=\"image/png\"")),
+        "{types}"
+    );
 }
