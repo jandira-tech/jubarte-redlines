@@ -36040,3 +36040,119 @@ fn field_data_is_never_text() {
         "fldData is binary field data, not text"
     );
 }
+
+/// The `r g b rg` fill in effect for each literal `Tj` character, in stream order.
+fn pdf_glyph_fills(pdf: &[u8]) -> (String, Vec<String>) {
+    let mut text = String::new();
+    let mut fills = Vec::new();
+    for stream in pdf_content_streams(pdf) {
+        let mut fill = String::from("0 0 0");
+        for line in stream.lines() {
+            if let Some(at) = line.rfind(" rg") {
+                let head: Vec<&str> = line[..at].split_whitespace().collect();
+                if head.len() >= 3 {
+                    fill = head[head.len() - 3..].join(" ");
+                }
+            }
+            let (Some(open), Some(close)) = (line.find('('), line.rfind(") Tj")) else {
+                continue;
+            };
+            for ch in line[open + 1..close].chars() {
+                text.push(ch);
+                fills.push(fill.clone());
+            }
+        }
+    }
+    (text, fills)
+}
+
+#[test]
+fn a_revised_page_field_paints_its_number_unmarked() {
+    // Word paints a PAGE field's number without the revision ink: en r
+    // d45aa3d5's inserted "Page" is inked and underlined, its "1" black;
+    // 06063858's deleted "Page 2 of 12" strikes black digits. A deleted
+    // field still counts the page: d45aa3d5's cached "3" shows as "1".
+    let field = |del: bool, cached: &str| {
+        let (instr, t) = if del {
+            ("delInstrText", "delText")
+        } else {
+            ("instrText", "t")
+        };
+        format!(
+            "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:{instr} xml:space=\"preserve\"> PAGE </w:{instr}></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:{t}>{cached}</w:{t}></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        )
+    };
+    let body = format!(
+        "<w:p><w:ins w:id=\"1\" w:author=\"A\"><w:r><w:t>Page</w:t></w:r>{}</w:ins></w:p>\
+         <w:p><w:del w:id=\"2\" w:author=\"A\"><w:r><w:delText>Gone</w:delText></w:r>{}</w:del></w:p>\
+         <w:sectPr/>",
+        field(false, "7"),
+        field(true, "3")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("revised page field");
+    let (text, fills) = pdf_glyph_fills(&pdf);
+    assert!(
+        text.contains("Gone1"),
+        "a deleted PAGE field counts the page: {text}"
+    );
+    let at = |needle: &str, off: usize| {
+        let byte = text
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle} in {text}"));
+        fills[text[..byte].chars().count() + off].clone()
+    };
+    let red = "0.820 0.204 0.220";
+    assert_eq!(at("Page1", 0), red, "the inserted text is inked");
+    assert_ne!(at("Page1", 4), red, "the inserted field's number is not");
+    assert_ne!(at("Gone1", 4), red, "nor the deleted field's");
+    // Arthur: that is a Word mistake; our default marks keep the number marked.
+    let ours = docx_to_pdf_with(&minimal_docx_body(&body), PdfOptions::default()).expect("default");
+    let (text, fills) = pdf_glyph_fills(&ours);
+    let at = |needle: &str, off: usize| {
+        let byte = text
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle} in {text}"));
+        fills[text[..byte].chars().count() + off].clone()
+    };
+    assert_eq!(
+        at("Page1", 4),
+        at("Page1", 0),
+        "default marks ink the number"
+    );
+    assert_eq!(at("Gone1", 4), at("Gone1", 0), "and the deleted one");
+}
+
+#[test]
+fn a_revised_footer_page_field_paints_its_number_unmarked() {
+    // en r 04245397 / 044f05e4: Word inks the footer's inserted text but
+    // paints its PAGE number black, without the underline.
+    let footer = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:ins w:id=\"1\" w:author=\"A\"><w:r><w:t>Page</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>7</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:ins></w:p></w:ftr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdF1", "footer", "footer1.xml")],
+        &[("word/footer1.xml", footer.to_string())],
+    ))
+    .expect("convert revised footer");
+    let (text, fills) = pdf_glyph_fills(&pdf);
+    let byte = text
+        .find("Page1")
+        .unwrap_or_else(|| panic!("Page1 in {text}"));
+    let at = text[..byte].chars().count();
+    let red = "0.820 0.204 0.220";
+    assert_eq!(fills[at], red, "the inserted text is inked");
+    assert_ne!(fills[at + 4], red, "its page number is not");
+}

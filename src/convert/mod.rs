@@ -10718,6 +10718,26 @@ fn rev_mark_of(dom: &Dom, node: NodeId) -> Option<RevMark> {
     }
 }
 
+/// Word paints a computed field's number (PAGE, NUMPAGES) in the run's own
+/// colour, never the revision ink or insertion underline; a deleted one is
+/// still struck (en r d45aa3d5's black "1" after the inked "Page", 06063858's
+/// struck black "2 of 12").
+///
+/// Arthur calls that a Word mistake: only `RevisionStyle::Word` copies it;
+/// our own revision styles keep marking the number.
+fn unmark_field_number(style: &mut RunStyle, plain: &RunStyle, mark: RevMark) {
+    if !matches!(REVISIONS.with(std::cell::Cell::get), RevisionStyle::Word) {
+        return;
+    }
+    style.color = plain.color;
+    style.color_auto = plain.color_auto;
+    style.underline = plain.underline;
+    style.underline_double = plain.underline_double;
+    style.underline_wave = plain.underline_wave;
+    style.strike = plain.strike || matches!(mark, RevMark::Del | RevMark::MoveFrom);
+    style.strike_double = plain.strike_double;
+}
+
 fn apply_rev(style: &mut RunStyle, mark: RevMark, color: [f32; 3]) {
     let palette = match REVISIONS.with(std::cell::Cell::get) {
         RevisionStyle::Word => None,
@@ -10895,7 +10915,9 @@ fn collect_runs_rec(
         }
         return;
     }
-    if ctx.dom.name_is(node, &W::instr_text()) {
+    // A deleted field keeps its code in `w:delInstrText` (en r d45aa3d5's
+    // deleted footer PAGE still counts the page).
+    if ctx.dom.name_is(node, &W::instr_text()) || ctx.dom.name_is(node, &W::del_instr_text()) {
         let raw = element_text(ctx.dom, node);
         ctx.field_instr.push_str(&raw);
         if let Some(name) = pageref_bookmark(&ctx.field_instr) {
@@ -10936,6 +10958,7 @@ fn collect_runs_rec(
                 || ctx.dom.name_is(child, &W::name("commentReference"))
                 || ctx.dom.name_is(child, &W::fld_char())
                 || ctx.dom.name_is(child, &W::instr_text())
+                || ctx.dom.name_is(child, &W::del_instr_text())
             {
                 collect_runs_rec(ctx, child, mark, author, runs);
             }
@@ -10965,6 +10988,7 @@ fn collect_runs_rec(
             }
             apply_rpr(ctx.dom, rpr, &mut style, ctx.theme);
         }
+        let unmarked = style.clone();
         if mark != RevMark::None {
             apply_rev(&mut style, mark, ctx.authors.color(author));
         }
@@ -11052,6 +11076,9 @@ fn collect_runs_rec(
             let rev = mark != RevMark::None;
             let numwords = is_numwords_field(&ctx.field_instr);
             let page_field = ctx.field_result && is_page_field(&ctx.field_instr);
+            if rev && (page_field || numwords) {
+                unmark_field_number(&mut style, &unmarked, mark);
+            }
             if style.small_caps {
                 let mut first = true;
                 for (piece, st) in small_caps_pieces(&text, &style) {
@@ -16064,11 +16091,22 @@ fn collect_hf_rev(
             }
             apply_rpr(dom, rpr, &mut style, theme);
         }
+        let unmarked = style.clone();
         apply_rev(&mut style, mark, HF_REV_COLOR);
+        let mut number = style.clone();
+        if mark != RevMark::None {
+            unmark_field_number(&mut number, &unmarked, mark);
+        }
         if fieldish {
             // An uncached field's run takes the style of the run holding it.
+            let before = runs.len();
             for i in 0..dom.child_count(node) {
                 collect_hf_rev(dom, dom.child_at(node, i), &style, sheet, scan, runs, mark);
+            }
+            for run in &mut runs[before..] {
+                if run.field != FieldKind::None {
+                    run.style = number.clone();
+                }
             }
             return;
         }
@@ -16077,7 +16115,7 @@ fn collect_hf_rev(
         {
             let text = visible_text(dom, node, mark, false);
             if !text.is_empty() {
-                let mut run = field_run(text, &style);
+                let mut run = field_run(text, &number);
                 run.field = kind;
                 runs.push(run);
                 scan.emitted = true;
