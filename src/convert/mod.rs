@@ -21482,11 +21482,6 @@ impl<'a> Layout<'a> {
             // table's band starts at the cursor so the following paragraph
             // wraps from its first line (Word keeps that one line full when
             // tblpY pushes the table below it; case45).
-            let band_top = if float_is_text_anchored(slot) {
-                saved_y
-            } else {
-                top
-            };
             // A left float's text starts its distance past the drawn right
             // edge: the mode<15 pull moves the table left of fx (case46:
             // 246.6 + 7.2 = 253.8, as Word's 254.1).
@@ -21494,6 +21489,16 @@ impl<'a> Layout<'a> {
                 (fx - pull + used + dist - saved_ml).max(0.0)
             } else {
                 used + dist
+            };
+            // With no room beside the table, lines above its tblpY top keep
+            // their place (09d6d940's anchor paragraph and heading sit in
+            // the 51pt over the table in Word).
+            let no_room = matches!(align, Align::Center)
+                || self.content_width() - inset < MIN_SIDE_FLOAT_ROOM_PT;
+            let band_top = if float_is_text_anchored(slot) && !no_room {
+                saved_y
+            } else {
+                top
             };
             self.side_float = Some(SideFloat {
                 align,

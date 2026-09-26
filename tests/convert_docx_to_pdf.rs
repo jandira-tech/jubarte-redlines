@@ -35677,3 +35677,43 @@ fn a_keep_with_next_heading_moves_with_a_tall_inline_picture() {
         "the heading opens page 2 with its picture"
     );
 }
+
+fn text_above_a_full_width_floating_tables_offset_stays_above_it() {
+    // English part A 09d6d940: a full-width tblpPr table (vertAnchor=text,
+    // tblpY=1018, 51pt) anchors to a two-line paragraph and a heading that
+    // both fit in those 51pt. Word keeps them above the table (359 and
+    // 392pt, table at 410); we started the no-room band at the cursor and
+    // pushed both under the last row, moving the heading a page on.
+    let row = |t: &str| format!("<w:tr><w:tc><w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc></w:tr>");
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblpPr w:vertAnchor=\"text\" w:tblpX=\"-179\" w:tblpY=\"1018\"/>\
+           <w:tblOverlap w:val=\"never\"/><w:tblW w:w=\"9360\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>{}{}</w:tbl>\
+         <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Leadline</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Headline</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Underline</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Tailline</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Lastline</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        row("RowOne"),
+        row("RowTwo")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("offset float table");
+    let y = |t: &str| pdf_glyph_text_xy(&pdf, t).expect(t).1;
+    let row_one = y("RowOne");
+    assert!(
+        (y("Leadline") - 720.0 + 11.0).abs() < 4.0,
+        "the anchor paragraph keeps the body top; lead={} row={row_one}",
+        y("Leadline")
+    );
+    assert!(
+        y("Headline") > row_one,
+        "the heading fits above the table; head={} row={row_one}",
+        y("Headline")
+    );
+    assert!(
+        y("Lastline") < y("RowTwo"),
+        "lines reaching the table go under it"
+    );
+}
