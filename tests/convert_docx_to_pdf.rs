@@ -980,6 +980,104 @@ fn a_horizontally_scaled_run_squeezes_its_glyphs() {
     );
 }
 
+/// A full-width 612pt x 80pt picture at the page's top left, behind the
+/// text, wrapped `wrap` (1f3856c4's SACE banner).
+fn page_banner(wrap: &str) -> String {
+    blip(
+        "7772400",
+        "1016000",
+        &format!(
+            "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+               relativeHeight=\"1\" behindDoc=\"1\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+               <wp:simplePos x=\"0\" y=\"0\"/>\
+               <wp:positionH relativeFrom=\"page\"><wp:align>left</wp:align></wp:positionH>\
+               <wp:positionV relativeFrom=\"page\"><wp:align>top</wp:align></wp:positionV>{wrap}"
+        ),
+        "</wp:anchor>",
+    )
+}
+
+const TIGHT_FULL: &str = "<wp:wrapTight wrapText=\"bothSides\"><wp:wrapPolygon edited=\"0\">\
+    <wp:start x=\"0\" y=\"0\"/><wp:lineTo x=\"0\" y=\"21600\"/><wp:lineTo x=\"21600\" y=\"21600\"/>\
+    <wp:lineTo x=\"21600\" y=\"0\"/><wp:lineTo x=\"0\" y=\"0\"/></wp:wrapPolygon></wp:wrapTight>";
+const SQUARE_BOTH: &str = "<wp:wrapSquare wrapText=\"bothSides\"/>";
+
+/// The page-top distance of `word`'s baseline in `body` on a Letter page,
+/// every paragraph in Word's styleless default (Aptos 12, line 278, after
+/// 160) spelled out.
+fn banner_case_top(body: &str, word: &str) -> f32 {
+    let rpr = "<w:rPr><w:rFonts w:ascii=\"Aptos\" w:hAnsi=\"Aptos\"/><w:sz w:val=\"24\"/></w:rPr>";
+    let ppr = format!(
+        "<w:pPr><w:spacing w:after=\"160\" w:line=\"278\" w:lineRule=\"auto\"/>{rpr}</w:pPr>"
+    );
+    let body = body
+        .replace("<w:p>", &format!("<w:p>{ppr}"))
+        .replace("<w:p/>", &format!("<w:p>{ppr}</w:p>"))
+        .replace("<w:r><w:t>", &format!("<w:r>{rpr}<w:t>"));
+    let docx = drawing_docx(&format!(
+        "{body}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("banner");
+    let (_, y) = pdf_glyph_text_xy(&pdf, word).expect("paints");
+    792.0 - y
+}
+
+#[test]
+fn a_tight_banner_steps_the_blocked_line_down_by_whole_lines() {
+    // Live Word (Aptos 12): a tight banner reaching 80pt with no room
+    // beside it sends the first line from the 72pt margin a whole
+    // single-spaced line down, to 86.72; a square one sends it to the
+    // banner's bottom, 80. We sent both to 80.
+    let square = banner_case_top(
+        &format!(
+            "<w:p><w:r>{}</w:r><w:r><w:t>StepLine</w:t></w:r></w:p>",
+            page_banner(SQUARE_BOTH)
+        ),
+        "StepLine",
+    );
+    let tight = banner_case_top(
+        &format!(
+            "<w:p><w:r>{}</w:r><w:r><w:t>StepLine</w:t></w:r></w:p>",
+            page_banner(TIGHT_FULL)
+        ),
+        "StepLine",
+    );
+    assert!(
+        (tight - square - 6.72).abs() < 0.3,
+        "the tight line sits 6.72 under the square one; square={square} tight={tight}"
+    );
+}
+
+#[test]
+fn a_page_banner_anchored_below_also_pushes_the_paragraph_above() {
+    // Live Word: an empty paragraph, then the banner's anchor paragraph.
+    // The banner also moves the empty line above its anchor: square puts
+    // it at 80 and the anchor text a line plus 8pt after lower (+24.96
+    // from the square anchor-first case), tight at 86.72 (+31.68). We
+    // left the empty line at the margin.
+    let first = banner_case_top(
+        &format!(
+            "<w:p><w:r>{}</w:r><w:r><w:t>StepLine</w:t></w:r></w:p>",
+            page_banner(SQUARE_BOTH)
+        ),
+        "StepLine",
+    );
+    for (wrap, want) in [(SQUARE_BOTH, 24.96), (TIGHT_FULL, 31.68)] {
+        let after = banner_case_top(
+            &format!(
+                "<w:p/><w:p><w:r>{}</w:r><w:r><w:t>AfterEmpty</w:t></w:r></w:p>",
+                page_banner(wrap)
+            ),
+            "AfterEmpty",
+        );
+        assert!(
+            (after - first - want).abs() < 0.3,
+            "the anchor text sits {want} under the anchor-first line; first={first} after={after}"
+        );
+    }
+}
+
 #[test]
 fn a_float_in_the_margin_does_not_indent_the_text() {
     // fixtures_500 00af3bb0: a 30pt QR code at column offset -42.7pt

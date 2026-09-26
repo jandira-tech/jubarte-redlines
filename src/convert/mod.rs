@@ -7962,6 +7962,14 @@ fn runs_size(runs: &[TextRun]) -> f32 {
     if size > 0.0 { size } else { 11.0 }
 }
 
+/// The first line's font height at single spacing.
+fn para_single_line_pt(fonts: &Fonts, runs: &[TextRun]) -> f32 {
+    let face = runs.first().map_or(FaceId::CarlitoRegular.into(), |r| {
+        fonts.resolve(&r.style.family, r.style.bold, r.style.italic)
+    });
+    fonts.get(face).single_line_pt(runs_size(runs))
+}
+
 fn para_first_line_pt(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle, grid_pitch: f32) -> f32 {
     let size = runs_size(runs);
     let face = runs.first().map_or(FaceId::CarlitoRegular.into(), |r| {
@@ -17082,11 +17090,14 @@ struct FloatWrap {
 
 /// `top` after its effective space-before, `h` its real line box, and the
 /// full `before` a jump below a float would otherwise apply twice.
+/// `single` is the first line's single-spaced height: the step a line
+/// blocked by a tight float takes.
 #[derive(Clone, Copy, Default)]
 struct LineProbe {
     top: f32,
     h: f32,
     before: f32,
+    single: f32,
 }
 
 struct Layout<'a> {
@@ -17184,6 +17195,9 @@ struct Layout<'a> {
     /// paragraph: later lines that meet it start under it (8aea3634's
     /// rule under an empty paragraph sits above its heading).
     tb_band: Option<(f32, f32)>,
+    /// `tb_band` comes from tight/through floats only: a line meeting it
+    /// steps down whole single lines instead of starting at its bottom.
+    tb_step: bool,
     /// The last row of inline pictures: (page, pen x after it, its bottom,
     /// its height). An inline box in the same textless paragraph joins it.
     pic_row: Option<(usize, f32, f32, f32)>,
@@ -17575,6 +17589,7 @@ impl<'a> Layout<'a> {
             nested_depth: 0,
             side_float: None,
             tb_band: None,
+            tb_step: false,
             pic_row: None,
             front_floats: Vec::new(),
             line_probe: LineProbe::default(),
@@ -18549,6 +18564,7 @@ impl<'a> Layout<'a> {
             top: self.y - before,
             h: para_first_line_pt(self.fonts, runs, style, self.page.grid_pitch),
             before: style.before,
+            single: para_single_line_pt(self.fonts, runs),
         };
     }
 
@@ -18699,7 +18715,11 @@ impl<'a> Layout<'a> {
                 self.tb_band = None;
             } else if line_top - self.line_probe.h < top {
                 hit = true;
-                jump = jump.min(bottom);
+                jump = jump.min(if self.tb_step {
+                    self.step_under(bottom)
+                } else {
+                    bottom
+                });
                 self.tb_band = None;
             }
         }
@@ -18710,6 +18730,7 @@ impl<'a> Layout<'a> {
             let ImageSlot::Float {
                 wrap_top_bottom,
                 wrap_square,
+                wrap_polygon,
                 dist_l,
                 dist_r,
                 dist_t,
@@ -18744,7 +18765,14 @@ impl<'a> Layout<'a> {
                 return;
             }
             hit = true;
-            jump = jump.min(fy - dist_b);
+            // A tight/through one steps the line down whole single lines
+            // (live Word: a 612pt banner to 80pt moves Aptos 12 from the
+            // 72pt margin to 86.72, one to 87pt to 101.36).
+            jump = jump.min(if wrap_polygon && !wrap_top_bottom {
+                self.step_under(fy - dist_b)
+            } else {
+                fy - dist_b
+            });
         };
         for img in images {
             consider(img.slot, img.w, img.h, MIN_SIDE_FLOAT_ROOM_PT);
@@ -18759,6 +18787,7 @@ impl<'a> Layout<'a> {
         }
         if hangs.is_some() {
             self.tb_band = hangs;
+            self.tb_step = false;
         }
         if hit {
             // emit_runs applies the full space-before next (at_page_top is
@@ -18769,6 +18798,73 @@ impl<'a> Layout<'a> {
             self.suppress_space_before = false;
             self.line_probe.top = jump;
         }
+    }
+
+    /// A page-placed float with no room beside it that the next paragraph
+    /// anchors meets this paragraph's lines too (live Word: an empty
+    /// paragraph above a 612pt banner's anchor starts at the banner's
+    /// bottom when square, a whole line under it when tight).
+    fn hold_next_page_float(&mut self, images: &[LaidImage], boxes: &[LaidTextBox]) {
+        let left_edge = self.flow_left();
+        let right_edge = left_edge + self.content_width();
+        let mut band: Option<(f32, f32, bool)> = None;
+        let mut consider = |slot: ImageSlot, w: f32, h: f32| {
+            let ImageSlot::Float {
+                wrap_square: true,
+                wrap_polygon,
+                dist_l,
+                dist_r,
+                dist_t,
+                dist_b,
+                v_rel,
+                ..
+            } = slot
+            else {
+                return;
+            };
+            if !matches!(
+                v_rel,
+                RelFrame::Page | RelFrame::Margin | RelFrame::TopMargin | RelFrame::BottomMargin
+            ) {
+                return;
+            }
+            let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
+            let (fx, fy) = self.float_xy(dw, dh.max(1.0), slot);
+            if fx - dist_l - left_edge >= MIN_SIDE_FLOAT_ROOM_PT
+                || right_edge - (fx + dw + dist_r) >= MIN_SIDE_FLOAT_ROOM_PT
+            {
+                return;
+            }
+            let (top, bottom) = (fy + dh + dist_t, fy - dist_b);
+            if bottom >= self.y {
+                return;
+            }
+            band = Some(band.map_or((top, bottom, wrap_polygon), |(t, b, step)| {
+                (t.max(top), b.min(bottom), step && wrap_polygon)
+            }));
+        };
+        for img in images {
+            consider(img.slot, img.w, img.h);
+        }
+        for box_ in boxes.iter().filter(|b| !b.frame) {
+            consider(box_.slot, box_.w, self.box_h(box_));
+        }
+        if let Some((top, bottom, step)) = band {
+            self.tb_step = step && self.tb_band.is_none_or(|_| self.tb_step);
+            self.tb_band = Some(
+                self.tb_band
+                    .map_or((top, bottom), |(t, b)| (t.max(top), b.min(bottom))),
+            );
+        }
+    }
+
+    /// The probed line's top stepped down whole single-spaced lines until
+    /// it is no higher than `bottom`.
+    fn step_under(&self, bottom: f32) -> f32 {
+        let top = self.line_probe.top;
+        let step = self.line_probe.single.max(1.0);
+        let n = ((top - bottom) / step - 0.01).ceil().max(1.0);
+        top - n * step
     }
 
     fn wrap_band_remaining(&self, images: &[LaidImage], boxes: &[LaidTextBox]) -> f32 {
@@ -20899,6 +20995,7 @@ impl<'a> Layout<'a> {
             self.tb_band
                 .map_or((top, bottom), |(t, b)| (t.max(top), b.min(bottom))),
         );
+        self.tb_step = false;
     }
 
     /// Paint one header/footer inline image `dx` after the previous ones
@@ -25441,6 +25538,14 @@ fn layout(
             } => {
                 lay.para_top = lay.y;
                 lay.para_space_above = 0.0;
+                if let Some(Block::Paragraph {
+                    images: next_images,
+                    boxes: next_boxes,
+                    ..
+                }) = blocks.get(i + 1)
+                {
+                    lay.hold_next_page_float(next_images, next_boxes);
+                }
                 let mut style = style.clone();
                 if let Some(next) = blocks.get(i + 1).and_then(block_para_style) {
                     if same_contextual_pair(&style, next) {
