@@ -713,6 +713,120 @@ pub fn ignore_pt14_namespace(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// Word's ignorable extension namespaces, with the prefix Word writes for
+/// each, in the order Word lists them in `mc:Ignorable`.
+const WORD_IGNORABLE_NAMESPACES: [(&str, &str); 10] = [
+    (
+        "w14",
+        "http://schemas.microsoft.com/office/word/2010/wordml",
+    ),
+    (
+        "w15",
+        "http://schemas.microsoft.com/office/word/2012/wordml",
+    ),
+    (
+        "w16se",
+        "http://schemas.microsoft.com/office/word/2015/wordml/symex",
+    ),
+    (
+        "w16cid",
+        "http://schemas.microsoft.com/office/word/2016/wordml/cid",
+    ),
+    (
+        "w16",
+        "http://schemas.microsoft.com/office/word/2018/wordml",
+    ),
+    (
+        "w16cex",
+        "http://schemas.microsoft.com/office/word/2018/wordml/cex",
+    ),
+    (
+        "w16sdtdh",
+        "http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash",
+    ),
+    (
+        "w16sdtfl",
+        "http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock",
+    ),
+    (
+        "w16du",
+        "http://schemas.microsoft.com/office/word/2023/wordml/word16du",
+    ),
+    (
+        "wp14",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing",
+    ),
+];
+
+/// Elements merged in from the other document (B's numbering definitions,
+/// styles, notes) keep their Word 2010+ extension attributes but not the
+/// source root's `mc:Ignorable` contract, so the part claims markup it never
+/// declared ignorable (`w15:restartNumberingAfterBreak`, `w16cid:durableId`
+/// under a Mac-era numbering root). Every Word extension namespace used in the
+/// part gets its prefix bound on the root and listed in `mc:Ignorable`, the
+/// way Word writes its own parts. Only Word's own list qualifies: namespaces
+/// such as `wps` live inside `mc:Choice` and must never be ignorable.
+pub fn declare_extension_namespaces_ignorable(dom: &mut Dom, root: NodeId) {
+    let xmlns = XNamespace::xmlns();
+    let mut used = [false; WORD_IGNORABLE_NAMESPACES.len()];
+    for el in dom.descendants_and_self(root, None) {
+        let mark = |used: &mut [bool], uri: &str| {
+            if let Some(i) = WORD_IGNORABLE_NAMESPACES
+                .iter()
+                .position(|(_, u)| *u == uri)
+            {
+                used[i] = true;
+            }
+        };
+        if let Some(n) = dom.name(el) {
+            mark(&mut used, n.namespace_name());
+        }
+        for (a, _) in dom.attributes(el) {
+            if !dom.is_namespace_declaration(&a) {
+                mark(&mut used, a.namespace_name());
+            }
+        }
+    }
+    if !used.contains(&true) {
+        return;
+    }
+    let ignorable = MC::name("Ignorable");
+    let mut tokens: Vec<String> = dom
+        .attribute(root, &ignorable)
+        .unwrap_or("")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    let before = tokens.len();
+    for (i, (prefix, uri)) in WORD_IGNORABLE_NAMESPACES.iter().enumerate() {
+        if !used[i] {
+            continue;
+        }
+        let bound = dom.attribute(root, &xmlns.name(prefix)).map(str::to_string);
+        match bound.as_deref() {
+            Some(u) if u == *uri => {}
+            // The prefix means something else in this part: leave it alone.
+            Some(_) => continue,
+            None => dom.set_attribute_value(root, &xmlns.name(prefix), Some(uri)),
+        }
+        if !tokens.iter().any(|t| t == prefix) {
+            tokens.push((*prefix).to_string());
+        }
+    }
+    if tokens.len() != before {
+        let mc = xmlns.name("mc");
+        if dom.attribute(root, &mc).is_none()
+            && !dom
+                .attributes(root)
+                .iter()
+                .any(|(a, v)| dom.is_namespace_declaration(a) && v == MC::URI)
+        {
+            dom.set_attribute_value(root, &mc, Some(MC::URI));
+        }
+        dom.set_attribute_value(root, &ignorable, Some(&tokens.join(" ")));
+    }
+}
+
 /// M4.F.7 — `RemovePowerToolsScratchMarkup` (CleanPartTransform, WmlComparer.cs:1165):
 /// strip every `pt:*` attribute across `root` and descendants.
 pub fn remove_powertools_scratch_markup(dom: &mut Dom, root: NodeId) {
@@ -8064,6 +8178,9 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
                 ("eastAsianLayout", 440),
                 ("specVanish", 450),
                 ("oMath", 460),
+                // Not in the PowerTools table: the change record closes the rPr,
+                // after the w14 properties that rank 999 (Word's own order).
+                ("rPrChange", 1000),
             ],
             "tblPr" => &TBLPR_ORDER,
             "tcPr" => &[
@@ -8185,6 +8302,29 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
                 for c in front.into_iter().chain(back) {
                     dom.remove(c);
                     dom.add(el, c);
+                }
+            }
+        }
+    }
+}
+
+/// Schema order for a whole package part, run by the package validity sweep
+/// after every other pass has had its say — so a property appended late (a
+/// style merged from B, a `w:jc` added after the body's ordering pass) still
+/// lands where the schema wants it.
+///
+/// Also enforces what [`wml_order_elements_per_standard`] cannot express as an
+/// order: the `w:pPr` inside `w:pPrChange` is CT_PPrBase, which has no `w:rPr`,
+/// `w:sectPr` or nested `w:pPrChange` (Sch_InvalidElementContentExpectingComplex
+/// in 2 of the 2026-09-26 English redlines Word refused).
+pub fn enforce_part_schema_order(dom: &mut Dom, root: NodeId) {
+    wml_order_elements_per_standard(dom, root);
+    let not_base = [W::r_pr(), W::sect_pr(), W::p_pr_change()];
+    for chg in dom.descendants(root, Some(&W::p_pr_change())) {
+        for ppr in dom.elements(chg, Some(&W::p_pr())) {
+            for c in dom.elements(ppr, None) {
+                if dom.name(c).is_some_and(|n| not_base.contains(&n)) {
+                    dom.remove(c);
                 }
             }
         }
@@ -11206,6 +11346,10 @@ fn rewrite_rev_text(dom: &mut Dom, rev: NodeId, new_text: &str, is_del: bool) {
 /// content gained or lost. Each piece gets a fresh `w:id` so the split never mints
 /// duplicates.
 ///
+/// `w:fldSimple` gets the same treatment for the same reason: an inserted footer
+/// wrapped B's bare `PAGE`/`NUMPAGES` fields inside the `w:ins` (9c337ad7 in the
+/// 2026-09-26 English redlines).
+///
 /// Runs to fixpoint because a hoisted hyperlink can itself contain a nested
 /// revision that wraps another hyperlink.
 ///
@@ -11215,7 +11359,7 @@ fn rewrite_rev_text(dom: &mut Dom, rev: NodeId, new_text: &str, is_del: bool) {
 /// (headers, footers) that never reach that pass.
 pub fn hoist_hyperlinks_out_of_revisions(dom: &mut Dom, root: NodeId) {
     let rev_names = [W::name("ins"), W::name("del")];
-    let hyperlink = W::hyperlink();
+    let wrappers = [W::hyperlink(), W::name("fldSimple")];
     let mut next_id = dom
         .descendants_and_self(root, None)
         .into_iter()
@@ -11232,7 +11376,11 @@ pub fn hoist_hyperlinks_out_of_revisions(dom: &mut Dom, root: NodeId) {
         let targets: Vec<NodeId> = rev_names
             .iter()
             .flat_map(|n| dom.descendants(root, Some(n)))
-            .filter(|&rev| !dom.elements(rev, Some(&hyperlink)).is_empty())
+            .filter(|&rev| {
+                dom.elements(rev, None)
+                    .into_iter()
+                    .any(|c| dom.name(c).is_some_and(|n| wrappers.contains(&n)))
+            })
             .collect();
         if targets.is_empty() {
             return;
@@ -11249,7 +11397,7 @@ fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u3
     let Some(rev_name) = dom.name(rev) else {
         return;
     };
-    let hyperlink = W::hyperlink();
+    let wrappers = [W::hyperlink(), W::name("fldSimple")];
     let attrs = dom.attributes(rev);
     let children = dom.nodes(rev);
 
@@ -11268,7 +11416,7 @@ fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u3
     let mut pending: Option<NodeId> = None; // open revision collecting plain children
     for child in children {
         dom.remove(child);
-        if dom.name(child).as_ref() == Some(&hyperlink) {
+        if dom.name(child).is_some_and(|n| wrappers.contains(&n)) {
             pending = None;
             // The hyperlink keeps its place; the revision moves inside it, wrapping
             // whatever the hyperlink held.
@@ -11339,6 +11487,13 @@ pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
     for shd in dom.descendants_and_self(root, Some(&W::name("shd"))) {
         if dom.attribute(shd, &W::val()).is_none() {
             dom.set_attribute_value(shd, &W::val(), Some("clear"));
+        }
+    }
+    // A theme colour with no `val` (the schema requires one): `auto` changes
+    // nothing on screen, because the theme colour overrides `val`.
+    for color in dom.descendants_and_self(root, Some(&W::name("color"))) {
+        if dom.attribute(color, &W::val()).is_none() {
+            dom.set_attribute_value(color, &W::val(), Some("auto"));
         }
     }
     let lvl = W::name("lvl");
