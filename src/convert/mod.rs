@@ -6449,6 +6449,26 @@ fn walk_container(
             });
             endnotes.observe_para(dom, child);
             let mut block = paragraph_block(ctx, dom, child, false, numbering);
+            // An empty paragraph whose mark is hidden takes no line (live
+            // Word: two of them between paragraphs or next to a table add
+            // nothing; 9617d33f parks one between every pair of tables).
+            if let Block::Paragraph {
+                runs,
+                images,
+                boxes,
+                ..
+            } = &block
+                && frame_boxes.is_empty()
+                && images.is_empty()
+                && boxes.is_empty()
+                && runs.iter().all(|r| r.text.trim().is_empty())
+                && sect_here.is_none()
+                && !page_br
+                && !column_br
+                && para_mark_hidden(dom, child)
+            {
+                continue;
+            }
             if let Block::Paragraph { boxes, .. } = &mut block {
                 boxes.append(&mut frame_boxes);
             }
@@ -10298,6 +10318,14 @@ fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
         edge("left").unwrap_or(default),
         edge("right").unwrap_or(default),
     )
+}
+
+/// The paragraph mark carries a direct `w:vanish`.
+fn para_mark_hidden(dom: &Dom, para: NodeId) -> bool {
+    dom.element(para, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .and_then(|rpr| first_named(dom, rpr, "vanish"))
+        .is_some_and(|n| !val_is_false(dom, Some(n)))
 }
 
 /// A row Word does not lay out: marked `trPr/hidden` with nothing but

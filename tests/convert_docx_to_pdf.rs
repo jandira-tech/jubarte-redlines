@@ -7811,6 +7811,33 @@ fn numbering_suff_nothing_omits_gutter_space() {
 }
 
 #[test]
+fn an_empty_paragraph_with_a_hidden_mark_takes_no_line() {
+    // Live Word: empty paragraphs whose mark is vanished take no height,
+    // between paragraphs or next to a table ("After" 86.7 with or without
+    // two of them). We gave each a line; fixtures_500 9617d33f puts one
+    // between every pair of its newsletter tables.
+    let para = |t: &str| {
+        format!("<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>")
+    };
+    let hidden = "<w:p><w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:vanish/></w:rPr></w:pPr></w:p>";
+    let with = docx_to_pdf(&minimal_docx_body(&format!(
+        "{}{hidden}{hidden}{}<w:sectPr/>",
+        para("Before"),
+        para("After")
+    )))
+    .expect("hidden marks");
+    let without = docx_to_pdf(&minimal_docx_body(&format!(
+        "{}{}<w:sectPr/>",
+        para("Before"),
+        para("After")
+    )))
+    .expect("plain");
+    let (_, a) = pdf_glyph_text_xy(&with, "After").expect("after paints");
+    let (_, b) = pdf_glyph_text_xy(&without, "After").expect("after paints");
+    assert!((a - b).abs() < 0.5, "hidden marks add no lines; {a} vs {b}");
+}
+
+#[test]
 fn a_hidden_row_of_hidden_text_takes_its_borders_with_it() {
     // Live Word: a row marked trPr/hidden whose only paragraph is vanished
     // is gone, its top border too ("After" right under "Before"); without
