@@ -30,7 +30,7 @@ jobs:
     outputs:
       version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - id: check
@@ -70,7 +70,7 @@ jobs:
             artifact: windows-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
@@ -128,7 +128,7 @@ jobs:
           "@ | Set-Content "$stage/fonts/NOTICE.txt"
           Compress-Archive -Path $stage -DestinationPath "dist/$stage.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: jubarte-${{ needs.version.outputs.version }}-${{ matrix.artifact }}
           path: dist/
@@ -160,7 +160,7 @@ jobs:
             artifact: macos-aarch64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: PyO3/maturin-action@v1
@@ -169,7 +169,7 @@ jobs:
           args: --release --out dist
           working-directory: jubarte-python
           sccache: "true"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ needs.version.outputs.version }}-${{ matrix.artifact }}
           path: jubarte-python/dist/
@@ -182,16 +182,16 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0 # previous tag → "Full Changelog" compare link
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: jubarte-*
           path: dist
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: wheel-*
           path: dist
