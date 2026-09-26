@@ -36983,6 +36983,29 @@ fn a_header_line_wrapped_past_a_logo_keeps_its_own_height() {
     );
 }
 
+#[test]
+fn an_autofit_column_too_narrow_for_its_word_takes_the_saved_grid() {
+    // 72dcf4dc: an autofit tblW 15701 table whose first tcW (1530) cannot
+    // hold "complementary"; Word lays the saved grid (1762) out, not the
+    // tcW that would cut the word.
+    let body = "<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/>\
+           <w:tblW w:w=\"8000\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+           <w:tr>\
+             <w:tc><w:tcPr><w:tcW w:w=\"1200\" w:type=\"dxa\"/>\
+               <w:shd w:val=\"clear\" w:fill=\"FF0000\"/></w:tcPr>\
+               <w:p><w:r><w:t>complementary</w:t></w:r></w:p></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"6800\" w:type=\"dxa\"/>\
+               <w:shd w:val=\"clear\" w:fill=\"00FF00\"/></w:tcPr>\
+               <w:p><w:r><w:t>R</w:t></w:r></w:p></w:tc>\
+           </w:tr></w:tbl><w:sectPr/>";
+    let (_, rw, gw) = two_col_fill_ratio(body);
+    assert!(
+        (rw - 100.0).abs() < 1.5 && (gw - 300.0).abs() < 1.5,
+        "grid 2000/6000 = 100/300pt, got red {rw} green {gw}"
+    );
+}
+
 fn compat_mode_settings(mode: u8) -> String {
     format!(
         "<?xml version=\"1.0\"?>\

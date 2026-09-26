@@ -7113,10 +7113,33 @@ fn resolved_col_widths(
     avail: f32,
 ) -> Vec<f32> {
     if geom.content_autofit {
-        content_autofit_widths(fonts, cols.len(), rows, geom, avail)
-    } else {
-        table_col_widths(cols, geom, avail)
+        return content_autofit_widths(fonts, cols.len(), rows, geom, avail);
     }
+    let widths = table_col_widths(cols, geom, avail);
+    // An autofit column is at least its longest word: Word widens a tcW
+    // too narrow for one, and the grid it saved over the same table width
+    // is that result (72dcf4dc: tcW 1530 under "complementary", grid 1762
+    // in Word).
+    let total = |v: &[f32]| v.iter().sum::<f32>();
+    if !geom.fixed
+        && !geom.grid_padded
+        && widths.len() == cols.len()
+        && (total(cols) - total(&widths)).abs() < 1.0
+    {
+        let mut mins = vec![0.0_f32; cols.len()];
+        for cell in rows.iter().flatten() {
+            if cell.colspan != 1 || cell.col >= cols.len() {
+                continue;
+            }
+            let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
+            mins[cell.col] = mins[cell.col].max(cell_content_extent(fonts, cell).0 + pads);
+        }
+        let grid_fits = cols.iter().zip(&mins).all(|(g, m)| g + 0.5 >= *m);
+        if grid_fits && widths.iter().zip(&mins).any(|(w, m)| w + 0.5 < *m) {
+            return cols.to_vec();
+        }
+    }
+    widths
 }
 
 /// A cell's (longest word, widest unbroken paragraph) in points.
