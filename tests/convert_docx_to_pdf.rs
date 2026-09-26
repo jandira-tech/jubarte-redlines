@@ -35622,6 +35622,7 @@ fn even_and_odd_pages_keep_their_parity_across_a_numbering_restart() {
     );
 }
 
+#[test]
 fn a_keep_with_next_heading_moves_with_a_tall_inline_picture() {
     // English redline d20125ec: a keepNext heading above a paragraph holding
     // a 648pt inline text box. Live Word 2026-09-25 (a 600pt inline picture
@@ -35659,6 +35660,7 @@ fn a_keep_with_next_heading_moves_with_a_tall_inline_picture() {
     );
 }
 
+#[test]
 fn text_above_a_full_width_floating_tables_offset_stays_above_it() {
     // English part A 09d6d940: a full-width tblpPr table (vertAnchor=text,
     // tblpY=1018, 51pt) anchors to a two-line paragraph and a heading that
@@ -35717,6 +35719,7 @@ fn outline_arrow_anchor(prst: &str) -> String {
     )
 }
 
+#[test]
 fn an_outline_arrow_anchored_in_a_table_cell_paints() {
     // English part A 1f3856c4: a flowchart table whose empty gap cells
     // anchor unfilled leftRightArrow / downArrow shapes (0.25pt 0070C0
@@ -35741,6 +35744,7 @@ fn an_outline_arrow_anchored_in_a_table_cell_paints() {
     );
 }
 
+#[test]
 fn a_down_arrow_points_down_with_its_own_line_width() {
     // English part A 1f3856c4: downArrow presets with a 0.25pt (w=3175)
     // outline. Word draws the tip at the bottom centre with a hairline; we
@@ -35789,6 +35793,7 @@ fn a_down_arrow_points_down_with_its_own_line_width() {
     );
 }
 
+#[test]
 fn a_table_styles_top_and_bottom_cell_margins_pad_each_row() {
     // English part A 1f3856c4: Table Grid's style tblCellMar sets top and
     // bottom to 57 twips. Live Word 2026-09-26 (Arial 10 rows): rows step
@@ -35832,6 +35837,7 @@ fn a_table_styles_top_and_bottom_cell_margins_pad_each_row() {
     );
 }
 
+#[test]
 fn a_half_point_rule_group_keeps_its_extent() {
     // English part A 8aea3634: section rules are an inline group (and an
     // anchored rect) 456.55 x 0.5pt holding a black rectangle. Word draws
