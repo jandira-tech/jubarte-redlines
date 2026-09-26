@@ -1736,6 +1736,9 @@ struct LaidTextBox {
     /// `bodyPr wrap="none"` with `a:spAutoFit`: Word shrinks the box to its
     /// widest line before aligning it (00243d36's centred page number).
     fit_width: bool,
+    /// `a:spAutoFit`: Word sizes a floating box to its text's height
+    /// (live Word: 32.8pt for one line whatever its extent or pctHeight).
+    fit_height: bool,
     /// The owning run's `w:position` (pt, up): an inline box's bottom sits
     /// this far over the baseline (212a1c9d's title bar beside its logo).
     raise: f32,
@@ -1826,14 +1829,12 @@ enum ImageSlot {
         pct_x: Option<f32>,
         /// `wp14:pctPosVOffset` as 0..1 of page height.
         pct_y: Option<f32>,
-        /// `wp14:sizeRelH/pctWidth` as 0..1 of page width.
-        /// Mini 639–642: relativeFrom=margin (Text Box 2 40% of content
-        /// 648=259.2) is Word-faithful but ITT-neg NR mean −0.0001 /
-        /// RL mean −0.0014 (ole_object −0.0229). KEEP-only forbids.
-        /// Do not retry. Page-relative 40% of 792=316.8 stands.
-        pct_w: Option<f32>,
-        /// `wp14:sizeRelV/pctHeight` as 0..1 of page height.
-        pct_h: Option<f32>,
+        /// `wp14:sizeRelH/pctWidth` as 0..1 of its `relativeFrom` frame
+        /// (live Word: margin 40% of 468 = 187.2, not of the page).
+        pct_w: Option<SizePct>,
+        /// `wp14:sizeRelV/pctHeight` as 0..1 of its `relativeFrom` frame;
+        /// none on a shape that fits its text (`a:spAutoFit`).
+        pct_h: Option<SizePct>,
         /// `wp:positionV/align` when there is no posOffset/pct (page center).
         v_align: Align,
         /// `wp:wrapSquare` / wrapTight / wrapThrough — body wraps beside.
@@ -6865,6 +6866,7 @@ fn frame_box(
         group: Vec::new(),
         chrome_para_top: 0.0,
         fit_width: false,
+        fit_height: false,
         raise: 0.0,
         frame: true,
     })
@@ -12070,6 +12072,7 @@ fn collect_textboxes_styled(
                     group: Vec::new(),
                     chrome_para_top: 0.0,
                     fit_width: false,
+                    fit_height: false,
                     raise: run_raise_pt(dom, shape),
                     frame: false,
                 });
@@ -12114,6 +12117,7 @@ fn collect_textboxes_styled(
                     group: Vec::new(),
                     chrome_para_top: 0.0,
                     fit_width: false,
+                    fit_height: false,
                     raise: run_raise_pt(dom, shape),
                     frame: false,
                 });
@@ -12184,6 +12188,9 @@ fn collect_textboxes_styled(
             group,
             chrome_para_top: 0.0,
             fit_width: bodypr_fits_width(dom, shape),
+            fit_height: descendants_local(dom, shape, "bodyPr")
+                .first()
+                .is_some_and(|&body| !descendants_local(dom, body, "spAutoFit").is_empty()),
             raise: run_raise_pt(dom, shape),
             frame: false,
         });
@@ -12243,6 +12250,7 @@ fn group_box(
         group,
         chrome_para_top: 0.0,
         fit_width: false,
+        fit_height: false,
         raise: 0.0,
         frame: false,
     }
@@ -14274,16 +14282,46 @@ fn parse_pct_offset(dom: &Dom, parent: NodeId, local: &str) -> Option<f32> {
     parse_pct_value(&local_text(dom, el))
 }
 
-fn size_rel_pct(dom: &Dom, shape: NodeId) -> (Option<f32>, Option<f32>) {
-    let w = descendants_local(dom, shape, "pctWidth")
-        .into_iter()
-        .find_map(|n| parse_pct_value(&local_text(dom, n)))
-        .filter(|p| *p > 0.001);
-    let h = descendants_local(dom, shape, "pctHeight")
-        .into_iter()
-        .find_map(|n| parse_pct_value(&local_text(dom, n)))
-        .filter(|p| *p > 0.001);
-    (w, h)
+/// The frame a `wp14:sizeRelH/V` percentage is taken of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SizeFrom {
+    Page,
+    Margin,
+    LeftMargin,
+    RightMargin,
+    TopMargin,
+    BottomMargin,
+}
+
+/// A `wp14` size percentage (0..1) and the frame it is taken of.
+type SizePct = (f32, SizeFrom);
+
+fn size_rel_pct(dom: &Dom, shape: NodeId) -> (Option<SizePct>, Option<SizePct>) {
+    let pct = |local: &str| {
+        descendants_local(dom, shape, local)
+            .into_iter()
+            .find_map(|n| {
+                let p = parse_pct_value(&local_text(dom, n)).filter(|p| *p > 0.001)?;
+                let from = match dom
+                    .parent(n)
+                    .and_then(|rel| attr_any(dom, rel, "relativeFrom"))
+                {
+                    Some("margin") => SizeFrom::Margin,
+                    Some("leftMargin" | "insideMargin") => SizeFrom::LeftMargin,
+                    Some("rightMargin" | "outsideMargin") => SizeFrom::RightMargin,
+                    Some("topMargin") => SizeFrom::TopMargin,
+                    Some("bottomMargin") => SizeFrom::BottomMargin,
+                    _ => SizeFrom::Page,
+                };
+                Some((p, from))
+            })
+    };
+    // Live Word: a shape that fits its text (`a:spAutoFit`) keeps its
+    // text's height whatever its pctHeight says (32.8pt, not 20% = 129.6).
+    let fits_text = descendants_local(dom, shape, "bodyPr")
+        .first()
+        .is_some_and(|&body| !descendants_local(dom, body, "spAutoFit").is_empty());
+    (pct("pctWidth"), pct("pctHeight").filter(|_| !fits_text))
 }
 
 fn drawing_z(dom: &Dom, shape: NodeId) -> (bool, u32) {
@@ -18544,7 +18582,7 @@ impl<'a> Layout<'a> {
             consider(img.slot, img.w, img.h, false);
         }
         for box_ in boxes {
-            consider(box_.slot, box_.w, box_.h, box_.frame);
+            consider(box_.slot, box_.w, self.box_h(box_), box_.frame);
         }
         if let Some(sf) = self.side_float_holds_line() {
             first_hit = true;
@@ -18650,7 +18688,7 @@ impl<'a> Layout<'a> {
             } else {
                 MIN_SIDE_FLOAT_ROOM_PT
             };
-            consider(box_.slot, box_.w, box_.h, min_room);
+            consider(box_.slot, box_.w, self.box_h(box_), min_room);
         }
         if hangs.is_some() {
             self.tb_band = hangs;
@@ -18684,7 +18722,7 @@ impl<'a> Layout<'a> {
             consider(img.slot, img.w, img.h);
         }
         for box_ in boxes {
-            consider(box_.slot, box_.w, box_.h);
+            consider(box_.slot, box_.w, self.box_h(box_));
         }
         // A floating table narrows only the lines beside it: lines past
         // its bottom return to the full measure (reflow_past_float).
@@ -20388,24 +20426,78 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// A `wp14:pctWidth` in points of its frame.
+    fn pct_w_pt(&self, (pct, from): SizePct) -> f32 {
+        let page = &self.page;
+        let frame = match from {
+            SizeFrom::Margin => page.width - page.margin_l - page.margin_r,
+            SizeFrom::LeftMargin => page.margin_l,
+            SizeFrom::RightMargin => page.margin_r,
+            _ => page.width,
+        };
+        (pct * frame).max(1.0)
+    }
+
+    /// A `wp14:pctHeight` in points of its frame.
+    fn pct_h_pt(&self, (pct, from): SizePct) -> f32 {
+        let page = &self.page;
+        let frame = match from {
+            SizeFrom::Margin => page.height - page.margin_t - page.margin_b,
+            SizeFrom::TopMargin => page.margin_t,
+            SizeFrom::BottomMargin => page.margin_b,
+            _ => page.height,
+        };
+        (pct * frame).max(1.0)
+    }
+
+    /// A box's height: its extent, or for a floating `a:spAutoFit` box its
+    /// paragraphs' height inside its insets at its laid width.
+    fn box_h(&self, box_: &LaidTextBox) -> f32 {
+        if !box_.fit_height || box_.paras.is_empty() || matches!(box_.slot, ImageSlot::Flow) {
+            return box_.h;
+        }
+        let [li, ti, ri, bi] = box_.insets;
+        let (dw, _) = self.sized_wh(box_.slot, box_.w, box_.h, 1.0, 1.0);
+        let mut h = ti + bi;
+        for (runs, style) in &box_.paras {
+            let measure = (dw - li - ri - style.indent_left - style.indent_right).max(8.0);
+            let lines = wrap_runs(self.fonts, runs, measure, measure, false);
+            let mark = style.mark_run.as_deref();
+            let line_h = |line: &[TextRun]| {
+                let first = line.first().map(|r| &r.style).or(mark);
+                let size = line
+                    .iter()
+                    .map(|r| r.style.size)
+                    .fold(first.map_or(11.0, |st| st.size), f32::max);
+                let fid = first.map_or(FaceId::CarlitoRegular.into(), |st| {
+                    self.fonts.resolve(&st.family, st.bold, st.italic)
+                });
+                para_line_box(self.fonts.get(fid), size, style)
+            };
+            h += style.before + style.after;
+            h += if lines.is_empty() {
+                line_h(&[])
+            } else {
+                lines.iter().map(|line| line_h(line)).sum()
+            };
+        }
+        h
+    }
+
     fn sized_wh(&self, slot: ImageSlot, w: f32, h: f32, min_w: f32, min_h: f32) -> (f32, f32) {
         match slot {
             ImageSlot::Float { pct_w, pct_h, .. } => {
                 let max_w = self.page.width;
                 let dw = pct_w
-                    .filter(|p| *p > 0.001)
-                    .map(|p| (p * self.page.width).max(1.0))
+                    .map(|p| self.pct_w_pt(p))
                     .unwrap_or_else(|| w.min(max_w).max(min_w));
-                let dh = pct_h
-                    .filter(|p| *p > 0.001)
-                    .map(|p| (p * self.page.height).max(1.0))
-                    .unwrap_or_else(|| {
-                        let mut dh = h.max(min_h);
-                        if pct_w.is_none() && w > max_w && w > 0.0 {
-                            dh *= max_w / w;
-                        }
-                        dh
-                    });
+                let dh = pct_h.map(|p| self.pct_h_pt(p)).unwrap_or_else(|| {
+                    let mut dh = h.max(min_h);
+                    if pct_w.is_none() && w > max_w && w > 0.0 {
+                        dh *= max_w / w;
+                    }
+                    dh
+                });
                 (dw, dh)
             }
             ImageSlot::Flow => {
@@ -20434,12 +20526,10 @@ impl<'a> Layout<'a> {
             }
             ImageSlot::Float { pct_w, pct_h, .. } => {
                 let dw = pct_w
-                    .filter(|p| *p > 0.001)
-                    .map(|p| (p * self.page.width).max(1.0))
+                    .map(|p| self.pct_w_pt(p))
                     .unwrap_or_else(|| img.w.max(1.0));
                 let dh = pct_h
-                    .filter(|p| *p > 0.001)
-                    .map(|p| (p * self.page.height).max(1.0))
+                    .map(|p| self.pct_h_pt(p))
                     .unwrap_or_else(|| img.h.max(1.0));
                 (dw, dh)
             }
@@ -21829,7 +21919,7 @@ impl<'a> Layout<'a> {
         let sized = box_.reserve_only || box_.fill.is_some() || !box_.group.is_empty();
         let min_dim = if sized { 0.1 } else { 16.0 };
         let min_w = if sized { 0.1 } else { 24.0 };
-        let (sized_w, sized_h) = self.sized_wh(box_.slot, box_w, box_.h, min_w, min_dim);
+        let (sized_w, sized_h) = self.sized_wh(box_.slot, box_w, self.box_h(box_), min_w, min_dim);
         let (x, y, dw, dh) = match box_.slot {
             ImageSlot::Flow => {
                 self.ensure(sized_h + 4.0);

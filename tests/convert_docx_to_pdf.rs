@@ -29679,11 +29679,10 @@ fn size_rel_page_percent_overrides_extent() {
 }
 
 #[test]
-fn size_rel_margin_percent_stays_page_after_mini_639() {
-    // Mini 639–642: sizeRel relativeFrom=margin (40% of content 468=187.2)
-    // is Word-faithful but ITT-neg NR mean −0.0001 / RL mean −0.0014
-    // (ole_object −0.0229). KEEP-only forbids. Do not retry. Page %
-    // 244.8×158.4 stands. KEEP sizeRel-page cover wash.
+fn size_rel_margin_percent_takes_the_margin_box() {
+    // Live Word (2026-09-26 probe): sizeRel relativeFrom=margin takes the
+    // margin box, 40% of 468 = 187.2 wide and 20% of 648 = 129.6 high.
+    // The retired mini bench (639–642) locked page-relative 244.8×158.4.
     let body = "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
           behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
           <wp:positionH relativeFrom=\"column\"><wp:align>center</wp:align></wp:positionH>\
@@ -29710,16 +29709,46 @@ fn size_rel_margin_percent_stays_page_after_mini_639() {
     let p1 = &pages[0];
     let boxes = pdf_fill_boxes_in(p1, 1.0, 0.0, 0.0);
     assert!(
-        boxes.iter().any(|(_, _, w, _)| (*w - 244.8).abs() < 4.0),
-        "mini 639 lock: 40% of page 612=244.8; boxes={boxes:?}"
+        boxes
+            .iter()
+            .any(|(_, _, w, h)| (*w - 187.2).abs() < 1.0 && (*h - 129.6).abs() < 1.0),
+        "40%×20% of the 468×648 margin box; boxes={boxes:?}"
     );
+}
+
+#[test]
+fn a_shape_that_fits_its_text_ignores_its_percentage_height() {
+    // Live Word: a wrapSquare text box with a:spAutoFit and pctHeight 20%
+    // paints 32.8pt high (its text), not 20% of the margin box (129.6);
+    // 4ca9d50a's white "Date of Summary" box covered the questions below.
+    let body = "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+          behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:positionH relativeFrom=\"column\"><wp:posOffset>1421130</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"3273425\" cy=\"276225\"/>\
+          <wp:wrapSquare wrapText=\"bothSides\"/>\
+          <wp:docPr id=\"1\" name=\"Text Box 2\"/>\
+          <a:graphic><a:graphicData \
+            uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+            <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+              <wps:spPr><a:prstGeom prst=\"rect\"/>\
+                <a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill>\
+                <a:ln><a:noFill/></a:ln></wps:spPr>\
+              <wps:bodyPr><a:spAutoFit/></wps:bodyPr>\
+            </wps:wsp>\
+          </a:graphicData></a:graphic>\
+          <wp14:sizeRelH xmlns:wp14=\"http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing\" \
+            relativeFrom=\"margin\"><wp14:pctWidth>40%</wp14:pctWidth></wp14:sizeRelH>\
+          <wp14:sizeRelV xmlns:wp14=\"http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing\" \
+            relativeFrom=\"margin\"><wp14:pctHeight>20%</wp14:pctHeight></wp14:sizeRelV>\
+        </wp:anchor></w:drawing></w:r>\
+        <w:r><w:t>Date of Summary:</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert autofit box");
+    let pages = pdf_content_streams(&pdf);
+    let boxes = pdf_fill_boxes_in(&pages[0], 1.0, 0.0, 0.0);
     assert!(
-        boxes.iter().all(|(_, _, w, _)| *w > 220.0),
-        "must not honor sizeRel-margin content box; boxes={boxes:?}"
-    );
-    assert!(
-        boxes.iter().any(|(_, _, _, h)| (*h - 158.4).abs() < 4.0),
-        "mini 639 lock: 20% of page 792=158.4; boxes={boxes:?}"
+        !boxes.is_empty() && boxes.iter().all(|(_, _, _, h)| *h < 40.0),
+        "the box keeps its text's height, not 20% of the margin; boxes={boxes:?}"
     );
 }
 
@@ -30663,36 +30692,11 @@ fn official_strict01_wrapnone_rect_shade_stays_four_edge_after_mini_635() {
 }
 
 #[test]
-fn official_strict01_textbox2_sizerel_stays_page_after_mini_639() {
-    // Mini 639–642: Word Text Box 2 is 40% of landscape margin 648=259.2
-    // (fitz 257.4×30.4 with spAutoFit). Convert page % 316.8×122.4 is
-    // ITT-neg NR −0.0001 / RL −0.0014 (ole_object −0.0229). KEEP-only
-    // forbids. Do not retry. Mini 511 locked 0.75 stroke.
-    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
-    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
-    assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
-    let pages = pdf_content_streams(&pdf);
-    let p7 = &pages[6];
-    let whites: Vec<_> = pdf_fill_boxes_in(p7, 1.0, 1.0, 1.0)
-        .into_iter()
-        .filter(|(_, _, w, h)| *w > 150.0 && *h > 8.0)
-        .collect();
-    assert!(
-        whites.iter().any(|(_, _, w, _)| (*w - 316.8).abs() < 6.0),
-        "mini 639 lock: 40% of landscape page 792=316.8; whites={whites:?}"
-    );
-    assert!(
-        whites.iter().all(|(_, _, w, _)| *w > 300.0),
-        "must not honor sizeRel-margin 259.2; whites={whites:?}"
-    );
-}
-
-#[test]
-fn official_strict01_textbox2_autofit_stays_page_height_after_mini_647() {
-    // Mini 647–650: Word a:spAutoFit ~30pt (fitz 257.4×30.4) is
-    // Word-faithful but ITT-neg RL mean −0.0002 (ole_object −0.019).
-    // KEEP-only forbids. Do not retry. Mini 639 width page % 316.8
-    // and sizeRelV 122.4 stand. Mini 511/414/510 stay.
+fn official_strict01_textbox2_takes_the_margin_width_and_its_text_height() {
+    // Word paints Strict01's Text Box 2 at 257.4×30.4: 40% of the 648pt
+    // landscape margin box and its spAutoFit text height. The retired mini
+    // bench (639–650) locked page % 316.8×122.4; a live Word probe
+    // (2026-09-26) confirmed margin-relative sizeRel and spAutoFit.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
@@ -30705,15 +30709,8 @@ fn official_strict01_textbox2_autofit_stays_page_height_after_mini_647() {
     assert!(
         whites
             .iter()
-            .any(|(_, _, w, h)| (*w - 316.8).abs() < 6.0 && (*h - 122.4).abs() < 6.0),
-        "mini 647 lock: sizeRelV 20% of page 122.4; whites={whites:?}"
-    );
-    assert!(
-        whites
-            .iter()
-            .filter(|(_, _, w, _)| (*w - 316.8).abs() < 6.0)
-            .all(|(_, _, _, h)| *h > 100.0),
-        "spAutoFit ~30pt was mini 647 ITT-neg; whites={whites:?}"
+            .any(|(_, _, w, h)| (*w - 259.2).abs() < 3.0 && *h < 60.0),
+        "40% of the 648pt margin, text height; whites={whites:?}"
     );
 }
 
