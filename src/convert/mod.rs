@@ -7353,15 +7353,14 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
 /// (003dd497's Calibri spaces before an Arial 25pt title made a Calibri
 /// 25pt line, 1.8pt taller than Word's).
 fn cell_para_face(fonts: &Fonts, para: &CellPara) -> (f32, FaceRef) {
-    let size = para
-        .runs
-        .iter()
-        .map(|r| r.style.size)
-        .fold(0.0_f32, f32::max);
+    cell_runs_face(fonts, &para.runs)
+}
+
+fn cell_runs_face(fonts: &Fonts, runs: &[TextRun]) -> (f32, FaceRef) {
+    let size = runs.iter().map(|r| r.style.size).fold(0.0_f32, f32::max);
     let size = if size > 0.0 { size } else { 11.0 };
     let largest = |inked: bool| {
-        para.runs
-            .iter()
+        runs.iter()
             .filter(|r| {
                 if inked {
                     !r.text.trim().is_empty()
@@ -7388,13 +7387,33 @@ fn cell_para_face(fonts: &Fonts, para: &CellPara) -> (f32, FaceRef) {
 
 /// A cell paragraph's (size, line box) in `cell_para_face`.
 fn cell_para_line_box(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
-    let (size, face_id) = cell_para_face(fonts, para);
+    cell_runs_line_box(fonts, &para.runs, &para.style)
+}
+
+/// A wrapped cell line's (size, face, line box): Word sizes each line by
+/// its own runs, so 11pt text wrapped under 03db4d3e's 72pt "call" steps
+/// at 11pt. A line with no ink keeps its paragraph's box.
+fn cell_line_metrics(fonts: &Fonts, para: &CellPara, line: &[TextRun]) -> (f32, FaceRef, f32) {
+    let runs = if line.iter().any(|r| !r.text.trim().is_empty()) {
+        line
+    } else {
+        &para.runs
+    };
+    let (size, face_id) = cell_runs_face(fonts, runs);
+    (
+        size,
+        face_id,
+        cell_runs_line_box(fonts, runs, &para.style).1,
+    )
+}
+
+fn cell_runs_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f32, f32) {
+    let (size, face_id) = cell_runs_face(fonts, runs);
     // A list marker only lifts the line, as in the body: the text keeps
     // its own part below the baseline (003416d6's TNR 12 numbers beside
     // Verdana 8 items step 12.9pt in Word, not TNR's 13.8).
-    let marker = para.runs.first().filter(|r| r.list_marker);
-    let text = para
-        .runs
+    let marker = runs.first().filter(|r| r.list_marker);
+    let text = runs
         .iter()
         .filter(|r| !r.list_marker && !r.text.trim().is_empty())
         .reduce(|a, b| if b.style.size > a.style.size { b } else { a });
@@ -7408,13 +7427,13 @@ fn cell_para_line_box(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
         let natural = own.max(up + tf.line_descent_pt(ts));
         // A multiple spaces the text's own line; the marker's lift is
         // added once (as in the body's `lifted_line_box`).
-        let st = &para.style;
+        let st = style;
         if st.line_exact.is_none() && st.line_at_least.is_none() && st.line_mult > 1.0 {
             return (size, line_box_from_natural(own, st) + (natural - own));
         }
         return (size, line_box_from_natural(natural, st));
     }
-    (size, para_line_box(fonts.get(face_id), size, &para.style))
+    (size, para_line_box(fonts.get(face_id), size, style))
 }
 
 fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: bool) -> f32 {
@@ -7446,12 +7465,15 @@ fn cell_para_text_h(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
     if cell_para_is_image_only(para) {
         return picture_line_leading(fonts, para);
     }
-    let (size, line_box) = cell_para_line_box(fonts, para);
+    let line_box = cell_para_line_box(fonts, para).1;
     let (first_w, rest_w) = cell_para_widths(fonts, para, wrap_w);
     let (lines, _) = wrap_cell_runs(fonts, &para.runs, first_w, rest_w);
     let lines_h: f32 = lines
         .iter()
-        .map(|line| line_box + ul_line_extra(line, size, space_for_ul))
+        .map(|line| {
+            let (size, _, line_box) = cell_line_metrics(fonts, para, line);
+            line_box + ul_line_extra(line, size, space_for_ul)
+        })
         .sum();
     lines_h.max(line_box) + cell_lead_rise(fonts, para)
 }
@@ -22617,13 +22639,11 @@ impl<'a> Layout<'a> {
                     let mut para_lines: Vec<LaidCellPara> = Vec::new();
                     let mut nlines = 0usize;
                     for para in &cell.paras {
-                        let (size, face_id) = cell_para_face(self.fonts, para);
-                        let line_box = cell_para_line_box(self.fonts, para).1;
                         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
                         let (lines, breaks) =
                             wrap_cell_runs(self.fonts, &para.runs, first_w, rest_w);
                         nlines += lines.len().max(1);
-                        para_lines.push((size, line_box, face_id, lines, breaks));
+                        para_lines.push((lines, breaks));
                     }
                     let one_line = nlines == 1;
                     let inset = cell.pad_t;
@@ -22663,7 +22683,7 @@ impl<'a> Layout<'a> {
                             slack / 2.0
                         };
                     }
-                    for (pi, (para, (size, line_box, face_id, lines, breaks))) in
+                    for (pi, (para, (lines, breaks))) in
                         cell.paras.iter().zip(para_lines).enumerate()
                     {
                         for (nested, _) in cell
@@ -22714,8 +22734,6 @@ impl<'a> Layout<'a> {
                         for name in para.bookmarks.iter().chain(&para.blank_bookmarks) {
                             self.bookmark_pages.insert(name.clone(), label.clone());
                         }
-                        let face = self.fonts.get(face_id);
-                        let ascent = face.ascent_pt(size);
                         let lines = if cell_para_is_image_only(para) {
                             Vec::new()
                         } else if lines.is_empty() {
@@ -22728,6 +22746,9 @@ impl<'a> Layout<'a> {
                             if li == 0 {
                                 y_line -= cell_lead_rise(self.fonts, para);
                             }
+                            let (size, face_id, line_box) =
+                                cell_line_metrics(self.fonts, para, &line);
+                            let ascent = self.fonts.get(face_id).ascent_pt(size);
                             let ty = y_line - ascent;
                             if ty < bottom {
                                 break;
@@ -23062,10 +23083,10 @@ impl<'a> Layout<'a> {
     ) -> Option<(CellPara, CellPara)> {
         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
         let lines = wrap_cell_runs(self.fonts, &para.runs, first_w, rest_w).0;
-        let (size, line_box) = cell_para_line_box(self.fonts, para);
         let mut used = para.style.before;
         let mut n = 0;
         while n < lines.len() {
+            let (size, _, line_box) = cell_line_metrics(self.fonts, para, &lines[n]);
             let h = line_box + ul_line_extra(&lines[n], size, self.space_for_ul);
             if used + h > left {
                 break;
@@ -24190,9 +24211,9 @@ fn url_wrap_pieces(tok: &str) -> Vec<&str> {
     if out.is_empty() { vec![tok] } else { out }
 }
 
-/// A cell paragraph ready to paint: size, line box, face, wrapped lines and
-/// which of them end in a `w:br`.
-type LaidCellPara = (f32, f32, FaceRef, Vec<Vec<TextRun>>, Vec<bool>);
+/// A cell paragraph ready to paint: its wrapped lines (each sized by its
+/// own runs, `cell_line_metrics`) and which of them end in a `w:br`.
+type LaidCellPara = (Vec<Vec<TextRun>>, Vec<bool>);
 
 /// One measured piece of a run inside a wrap unit: source run, text, width.
 type WrapPiece<'r> = (&'r TextRun, &'r str, f32);

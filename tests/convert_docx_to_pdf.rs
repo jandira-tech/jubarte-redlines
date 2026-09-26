@@ -15134,7 +15134,7 @@ fn heading_after_callout_table_keeps_word_before_gap() {
            <w:p><w:r><w:rPr><w:b/><w:sz w:val=\"22\"/></w:rPr>\
              <w:t>DemoLine</w:t></w:r>\
              <w:r><w:br/></w:r>\
-             <w:r><w:t>Open this section in Word, turn on Track Changes, add a comment with an @mention, then export to PDF to show the complete workflow.</w:t></w:r></w:p>\
+             <w:r><w:rPr><w:sz w:val=\"22\"/></w:rPr><w:t>Open this section in Word, turn on Track Changes, add a comment with an @mention, then export to PDF to show the complete workflow.</w:t></w:r></w:p>\
          </w:tc></w:tr></w:tbl>\
          <w:p><w:pPr><w:pStyle w:val=\"Heading1\"/></w:pPr>\
            <w:r><w:rPr><w:sz w:val=\"28\"/></w:rPr><w:t>AfterTable</w:t></w:r></w:p>\
@@ -15176,7 +15176,7 @@ fn unstyled_filled_cell_without_valign_stays_compact() {
            <w:p><w:r><w:rPr><w:sz w:val=\"22\"/></w:rPr>\
              <w:t>DemoLine</w:t></w:r>\
              <w:r><w:br/></w:r>\
-             <w:r><w:t>Open this section in Word, turn on Track Changes, add a comment with an @mention, then export to PDF to show the complete workflow.</w:t></w:r></w:p>\
+             <w:r><w:rPr><w:sz w:val=\"22\"/></w:rPr><w:t>Open this section in Word, turn on Track Changes, add a comment with an @mention, then export to PDF to show the complete workflow.</w:t></w:r></w:p>\
          </w:tc></w:tr></w:tbl>\
          <w:p><w:r><w:rPr><w:sz w:val=\"22\"/></w:rPr><w:t>AfterBody</w:t></w:r></w:p>\
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
@@ -37336,4 +37336,40 @@ fn a_vml_line_box_runs_from_its_from_point_and_collapses_backwards() {
         "a left-down line is vertical at its from x; {}",
         &content[..content.len().min(600)]
     );
+}
+
+#[test]
+fn a_cell_line_takes_the_height_of_its_own_runs() {
+    // 03db4d3e (Word's PDF): a centred cell paragraph opens with a 72pt
+    // "call" and wraps 11pt deleted text under it; the small lines step
+    // at their own 11pt height, not at the big word's.
+    let body = "<w:tbl><w:tblPr><w:tblW w:w=\"2400\" w:type=\"dxa\"/>\
+        <w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+        <w:tblGrid><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc>\
+        <w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr>\
+        <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+        <w:r><w:rPr><w:sz w:val=\"72\"/></w:rPr><w:t>Big</w:t></w:r>\
+        <w:r><w:t xml:space=\"preserve\"> Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet</w:t></w:r>\
+        </w:p></w:tc></w:tr></w:tbl><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("mixed-size cell");
+    let mut ys: Vec<f32> = [
+        "Big", "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India",
+        "Juliet",
+    ]
+    .iter()
+    .filter_map(|w| pdf_glyph_text_xy(&pdf, w).map(|(_, y)| y))
+    .collect();
+    ys.sort_by(|a, b| b.total_cmp(a));
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    assert!(
+        ys.len() >= 4,
+        "the small text wraps over several lines: {ys:?}"
+    );
+    for pair in ys[1..].windows(2) {
+        let step = pair[0] - pair[1];
+        assert!(
+            step < 16.0,
+            "an 11pt line under the 36pt word steps about 13.4pt, not the big line's: {ys:?}"
+        );
+    }
 }
