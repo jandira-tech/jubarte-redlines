@@ -21645,10 +21645,11 @@ fn page_fill_of(pdf: &[u8], r: f32, g: f32, b: f32) -> bool {
 }
 
 #[test]
-fn display_background_shape_paints_document_background() {
-    // xml leftover: w:displayBackgroundShape (ECMA-376 17.15.1.26).
-    // Omitted / val=false keep print-layout pages unfilled; when present,
-    // w:background/@w:color fills the page behind body ink.
+fn word_pdf_leaves_the_page_colour_out_even_with_display_background_shape() {
+    // English part A c301012f: w:background ACB9CA with
+    // w:displayBackgroundShape on. Word's PDF (word_pdf.py) leaves the page
+    // white: Word prints page colour only with "Print background colors and
+    // images", off by default. We filled every page (Jaccard 0.031).
     let on = docx_to_pdf(&background_shape_docx(
         Some("FF0000"),
         "<w:displayBackgroundShape/>",
@@ -21656,39 +21657,19 @@ fn display_background_shape_paints_document_background() {
     .expect("convert displayBackgroundShape on");
     let omitted = docx_to_pdf(&background_shape_docx(Some("FF0000"), ""))
         .expect("convert background without display flag");
-    let off = docx_to_pdf(&background_shape_docx(
-        Some("FF0000"),
-        "<w:displayBackgroundShape w:val=\"false\"/>",
-    ))
-    .expect("convert displayBackgroundShape false");
     assert!(
         pdf_winansi_text(&on).contains("BgShapeX"),
         "body must still paint; text={}",
         pdf_winansi_text(&on)
     );
     assert!(
-        page_fill_of(&on, 1.0, 0.0, 0.0),
-        "displayBackgroundShape + w:background FF0000 must fill the page; rects={:?}",
+        !page_fill_of(&on, 1.0, 0.0, 0.0),
+        "Word's PDF leaves the page colour out; rects={:?}",
         pdf_fill_rects(&on, 1.0, 0.0, 0.0)
     );
     assert!(
         !page_fill_of(&omitted, 1.0, 0.0, 0.0),
-        "omitted displayBackgroundShape must not paint the background in print layout"
-    );
-    assert!(
-        !page_fill_of(&off, 1.0, 0.0, 0.0),
-        "displayBackgroundShape val=false must not paint the background"
-    );
-    // #131: a single-quoted, whitespace-split disabled value is the same
-    // CT_OnOff false; substring matching read it as enabled.
-    let off_quoted = docx_to_pdf(&background_shape_docx(
-        Some("FF0000"),
-        "<w:displayBackgroundShape\n   w:val='false' />",
-    ))
-    .expect("convert displayBackgroundShape single-quoted false");
-    assert!(
-        !page_fill_of(&off_quoted, 1.0, 0.0, 0.0),
-        "single-quoted val='false' must not paint the background"
+        "omitted displayBackgroundShape leaves the page unfilled"
     );
 }
 

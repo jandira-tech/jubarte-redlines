@@ -5767,25 +5767,6 @@ fn character_spacing_scale(mode: CharacterSpacing, ch: char) -> f32 {
     }
 }
 
-/// `w:displayBackgroundShape`: paint `w:background` in print layout / PDF.
-/// Omitted → off (ECMA-376 17.15.1.26).
-fn settings_display_background_shape(pkg: &PartFs) -> bool {
-    settings_flag(pkg, "displayBackgroundShape")
-}
-
-fn document_background_color(dom: &Dom, body: NodeId) -> Option<[f32; 3]> {
-    let root = dom.parent(body)?;
-    let bg = first_named(dom, root, "background")?;
-    attr_any(dom, bg, "color").and_then(parse_hex_color)
-}
-
-fn page_background_fill(pkg: &PartFs, dom: &Dom, body: NodeId) -> Option<[f32; 3]> {
-    if !settings_display_background_shape(pkg) {
-        return None;
-    }
-    document_background_color(dom, body)
-}
-
 /// Word factory is 720 twips (0.5in). Strict01 writes `36pt`; mcdoc `420`.
 fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
     let (dom, root) = settings_dom(pkg)?;
@@ -14508,7 +14489,6 @@ struct HfChrome {
     /// right on odd pages (live Word 2026-09-25).
     rev_bars_facing: bool,
     character_spacing: CharacterSpacing,
-    page_background: Option<[f32; 3]>,
     /// `w:compat/w:ulTrailSpace` (xml leftover).
     ul_trail_space: bool,
     /// `w:compat/w:spaceForUL` (xml leftover).
@@ -14524,10 +14504,8 @@ fn first_section_hf(
     body: NodeId,
     sheet: &StyleSheet,
 ) -> HfChrome {
-    let page_background = page_background_fill(pkg, dom, body);
     let Some(sect) = live_sect_prs(dom, body).into_iter().next() else {
         return HfChrome {
-            page_background,
             ul_trail_space: settings_ul_trail_space(pkg),
             space_for_ul: settings_space_for_ul(pkg),
             do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
@@ -14565,7 +14543,6 @@ fn first_section_hf(
         mirror_margins: settings_mirror_margins(pkg),
         rev_bars_facing: settings_even_and_odd_headers(pkg),
         character_spacing: settings_character_spacing(pkg),
-        page_background,
         ul_trail_space: settings_ul_trail_space(pkg),
         space_for_ul: settings_space_for_ul(pkg),
         do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
@@ -15999,7 +15976,6 @@ struct Layout<'a> {
     /// right on odd pages (live Word 2026-09-25).
     rev_bars_facing: bool,
     character_spacing: CharacterSpacing,
-    page_background: Option<[f32; 3]>,
     /// `w:compat/w:ulTrailSpace`: underline trailing spaces even in cells.
     ul_trail_space: bool,
     /// `w:compat/w:spaceForUL`: extra descent under underlined CJK.
@@ -16400,7 +16376,6 @@ impl<'a> Layout<'a> {
             mirror_margins: hf.mirror_margins,
             rev_bars_facing: hf.rev_bars_facing,
             character_spacing: hf.character_spacing,
-            page_background: hf.page_background,
             ul_trail_space: hf.ul_trail_space,
             space_for_ul: hf.space_for_ul,
             do_not_expand_shift_return: hf.do_not_expand_shift_return,
@@ -22354,16 +22329,6 @@ impl<'a> Layout<'a> {
     }
 
     fn chrome(&mut self) {
-        if let Some(color) = self.page_background {
-            let (w, h) = (self.page.width, self.page.height);
-            self.current().ops.push(Op::FillRect {
-                x: 0.0,
-                y: 0.0,
-                w,
-                h,
-                color,
-            });
-        }
         let page_no = self.pages.len();
         if let Some(mark) = self.watermark.clone() {
             let fid = self.fonts.resolve("Calibri", true, false);
