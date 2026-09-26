@@ -1,0 +1,180 @@
+diff --git a/examples/playground/package.json b/examples/playground/package.json
+new file mode 100644
+--- /dev/null
++++ b/examples/playground/package.json
+@@ -0,0 +1,17 @@
++{
++  "name": "jubarte-local-playground",
++  "private": true,
++  "type": "module",
++  "scripts": {
++    "dev": "vite --host 127.0.0.1",
++    "build": "vite build",
++    "preview": "vite preview --host 127.0.0.1"
++  },
++  "dependencies": {
++    "jubarte-wasm": "0.9.2"
++  },
++  "devDependencies": {
++    "vite": "^7.0.0",
++    "vite-plugin-console-pipe": "2.1.0"
++  }
++}
+diff --git a/examples/playground/index.html b/examples/playground/index.html
+new file mode 100644
+--- /dev/null
++++ b/examples/playground/index.html
+@@ -0,0 +1,20 @@
++<!doctype html>
++<!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
++<!-- SPDX-License-Identifier: AGPL-3.0-only -->
++<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Jubarte — local document preview</title></head>
++<body><main>
++<h1>Your Word document. A reviewable result.</h1>
++<p>Render a DOCX or compare two versions. Document contents stay in your browser.</p>
++<p>This preview uses Jubarte 0.9.2. Start with documents under 16 MiB; large or complex documents can take longer.</p>
++<form id="task">
++<label>Original DOCX <input id="original" type="file" accept=".docx" required></label>
++<label>Modified DOCX, for comparison <input id="modified" type="file" accept=".docx"></label>
++<label>Revision author <input id="author" value="Reviewer" maxlength="128"></label>
++<div><button id="render" type="submit" value="render">Render a PDF</button><button id="compare" type="submit" value="compare">Compare versions</button><button id="cancel" type="button" disabled>Cancel</button></div>
++</form>
++<p id="status" role="status" aria-live="polite">Ready. Choose a document to begin.</p>
++<div id="downloads"></div>
++<iframe id="preview" title="Generated PDF preview" hidden></iframe>
++<section><h2>Use it in your project</h2><p>Install: <code>pip install jubarte-redlines</code> or <code>npm install jubarte-wasm</code></p><pre id="recipe">Choose a task to see its code.</pre></section>
++<p>No analytics or document upload are included. The static application and its WASM module are downloaded from this host.</p>
++</main><script type="module" src="/src/main.js"></script></body></html>
+diff --git a/examples/playground/src/main.js b/examples/playground/src/main.js
+new file mode 100644
+--- /dev/null
++++ b/examples/playground/src/main.js
+@@ -0,0 +1,55 @@
++// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++// SPDX-License-Identifier: AGPL-3.0-only
++import "./style.css";
++const form=document.querySelector("#task");
++const status=document.querySelector("#status");
++const downloads=document.querySelector("#downloads");
++const preview=document.querySelector("#preview");
++const cancel=document.querySelector("#cancel");
++let worker=null, busy=false, generation=0;
++const urls=[];
++function clearOutputs() {
++  for(const url of urls) URL.revokeObjectURL(url);
++  urls.length=0; downloads.replaceChildren(); preview.removeAttribute("src");preview.hidden=true;
++}
++function setBusy(value) {
++  busy=value;cancel.disabled=!value;
++  for(const button of form.querySelectorAll("button[type=submit]")) button.disabled=value;
++}
++function finish(message) { setBusy(false);status.textContent=message;worker?.terminate();worker=null; }
++function addDownload(data,name,type) {
++  const blob=new Blob([new Uint8Array(data)],{type});const url=URL.createObjectURL(blob);urls.push(url);
++  const link=document.createElement("a");link.href=url;link.download=name;link.textContent=`Download ${name}`;downloads.append(link);
++  return url;
++}
++form.addEventListener("submit",async event=>{
++  event.preventDefault();if(busy)return;
++  const task=event.submitter?.value;
++  const original=document.querySelector("#original").files[0];
++  const modified=document.querySelector("#modified").files[0];
++  const author=document.querySelector("#author").value.trim();
++  if(!original||(task==="compare"&&!modified)){status.textContent="Choose both documents for comparison.";return;}
++  if(task==="compare"&&!author){status.textContent="Enter a revision author.";return;}
++  if([original,modified].filter(Boolean).some(file=>file.size>16*1024*1024)){status.textContent="This demo accepts documents up to 16 MiB each.";return;}
++  clearOutputs();setBusy(true);status.textContent="Processing locally…";
++  const token=++generation;
++  try {
++    const a=await original.arrayBuffer();const b=task==="compare"?await modified.arrayBuffer():null;
++    if(token!==generation)return;
++    worker=new Worker(new URL("./worker.js",import.meta.url),{type:"module"});
++    worker.onmessage=({data})=>{
++      if(token!==generation)return;
++      if(!data.ok){finish(data.error);return;}
++      if(data.redline)addDownload(data.redline,"redline.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document");
++      preview.src=addDownload(data.pdf,task==="compare"?"redline.pdf":"document.pdf","application/pdf");preview.hidden=false;
++      document.querySelector("#recipe").textContent=task==="compare"
++        ?'from jubarte_redlines import compare_documents, docx_to_pdf\nredline = compare_documents(original_bytes, modified_bytes, author="Reviewer")\npdf = docx_to_pdf(redline, revisions="word")'
++        :'from jubarte_redlines import docx_to_pdf\npdf = docx_to_pdf(docx_bytes)';
++      finish("Complete. Review the preview and download the generated files.");
++    };
++    worker.onerror=()=>{if(token===generation)finish("The worker stopped. Try a smaller or different document.");};
++    worker.postMessage({task,a,b,author},b?[a,b]:[a]);
++  } catch(error) {if(token===generation)finish(`Could not process the document: ${error instanceof Error?error.message:String(error)}`);}
++});
++cancel.addEventListener("click",()=>{generation++;finish("Cancelled. No input file was changed.");});
++window.addEventListener("pagehide",()=>{generation++;worker?.terminate();clearOutputs();});
+diff --git a/examples/playground/src/worker.js b/examples/playground/src/worker.js
+new file mode 100644
+--- /dev/null
++++ b/examples/playground/src/worker.js
+@@ -0,0 +1,19 @@
++// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++// SPDX-License-Identifier: AGPL-3.0-only
++import init,{compareDocuments,docxToPdf} from "jubarte-wasm/web";
++import wasmUrl from "jubarte-wasm/web/jubarte_wasm_bg.wasm?url";
++self.onmessage=async ({data})=>{
++  try {
++    await init({module_or_path:wasmUrl});
++    if(!(data.a instanceof ArrayBuffer)||!["render","compare"].includes(data.task)) throw new Error("Invalid worker request");
++    let redline;
++    if(data.task==="compare") {
++      if(!(data.b instanceof ArrayBuffer)||typeof data.author!=="string"||!data.author.trim())throw new Error("Invalid comparison inputs");
++      redline=compareDocuments(new Uint8Array(data.a),new Uint8Array(data.b),data.author);
++    }
++    const pdf=docxToPdf(redline??new Uint8Array(data.a),false,data.task==="compare"?"word":"conventional");
++    self.postMessage({ok:true,pdf,redline});
++  } catch(error) {
++    self.postMessage({ok:false,error:`Jubarte could not process this document: ${error instanceof Error?error.message:String(error)}`});
++  }
++};
+diff --git a/examples/playground/src/style.css b/examples/playground/src/style.css
+new file mode 100644
+--- /dev/null
++++ b/examples/playground/src/style.css
+@@ -0,0 +1,3 @@
++/* SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC */
++/* SPDX-License-Identifier: AGPL-3.0-only */
++:root{font-family:system-ui,sans-serif;color:#183137;background:#f1f5f2;line-height:1.55}body{margin:0}main{max-width:900px;margin:0 auto;padding:3rem 1.5rem}h1{font-size:clamp(2rem,5vw,3.4rem);line-height:1.1;max-width:700px}form{display:grid;gap:1.25rem;background:white;padding:1.5rem;border:1px solid #c8d5d0;border-radius:.6rem}label{display:grid;gap:.3rem}input{font:inherit}button,a{font:inherit}button{padding:.65rem 1rem;margin:.25rem .3rem .25rem 0;border:1px solid #174a49;border-radius:.3rem;background:#174a49;color:white;cursor:pointer}button:disabled{opacity:.45;cursor:default}#cancel{background:white;color:#174a49}#downloads{display:flex;gap:1rem;margin:1rem 0}iframe{width:100%;height:70vh;border:1px solid #b6c8c0;background:white}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#183137;color:#e2f3e9;padding:1.2rem;border-radius:.4rem}a{color:#165f60}:focus-visible{outline:3px solid #c98318;outline-offset:3px}
+diff --git a/examples/playground/README.md b/examples/playground/README.md
+new file mode 100644
+--- /dev/null
++++ b/examples/playground/README.md
+@@ -0,0 +1,26 @@
++<!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
++<!-- SPDX-License-Identifier: AGPL-3.0-only -->
++# Local browser prototype
++
++This is an unpublished acquisition prototype using the existing 0.9.2 package.
++Files are read with File.arrayBuffer and processed in a disposable Worker;
++there is no upload/analytics code. PDF preview availability depends on the
++browser's PDF viewer. Inputs have a compressed-size cap; ZIP inflation and XML
++resource admission still depend on the engine and must be hardened before an
++untrusted-input production launch. Process cancellation terminates the worker.
++
++The Vite console-pipe plugin is configured for terminal-visible development
++console logs. Pin the resolved dependencies in the lockfile when implementing.
++The plugin is disabled by its own production-build behavior.
++
++```sh
++npm --prefix examples/playground install
++npm --prefix examples/playground run build
++npm --prefix examples/playground run dev
++```
++
++The implementation milestone must add sample inputs, a sample-first path,
++copy-snippet controls, terminal-captured browser smoke, request-body inspection,
++keyboard/accessibility checks and Chromium/Firefox integration. This prototype
++is complete for local file selection/render/compare/cancel/download, but does
++not claim those product/verification tasks are already done.
+diff --git a/examples/playground/vite.config.js b/examples/playground/vite.config.js
+new file mode 100644
+--- /dev/null
++++ b/examples/playground/vite.config.js
+@@ -0,0 +1,5 @@
++// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++// SPDX-License-Identifier: AGPL-3.0-only
++import { defineConfig } from "vite";
++import consolePipe from "vite-plugin-console-pipe";
++export default defineConfig({ plugins: [consolePipe()], worker: { format: "es" } });

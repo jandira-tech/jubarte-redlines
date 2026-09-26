@@ -1,0 +1,40 @@
+{
+  "head": "fee94110a956aafeaf835c81ca592cffb4a2eb53",
+  "results": [
+    {
+      "patch": "0001-checked-inspection.patch",
+      "applicable": true,
+      "stderr": ""
+    },
+    {
+      "patch": "0002-python-document-api.patch",
+      "applicable": true,
+      "stderr": ""
+    },
+    {
+      "patch": "0003-javascript-api.patch",
+      "applicable": true,
+      "stderr": ""
+    },
+    {
+      "patch": "0004-adoption-recipes.patch",
+      "applicable": true,
+      "stderr": ""
+    },
+    {
+      "patch": "0005-guarded-text-edit.patch",
+      "applicable": true,
+      "stderr": ""
+    },
+    {
+      "patch": "0006-agent-skill.patch",
+      "applicable": true,
+      "stderr": ""
+    },
+    {
+      "patch": "0007-local-playground.patch",
+      "applicable": true,
+      "stderr": ""
+    }
+  ]
+}

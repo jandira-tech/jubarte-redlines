@@ -1,0 +1,570 @@
+diff --git a/jubarte-python/python/jubarte_redlines/models.py b/jubarte-python/python/jubarte_redlines/models.py
+new file mode 100644
+--- /dev/null
++++ b/jubarte-python/python/jubarte_redlines/models.py
+@@ -0,0 +1,137 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++"""Immutable options and revision records for the Python document facade."""
++
++from __future__ import annotations
++
++import json
++from dataclasses import dataclass
++from datetime import datetime, timezone
++from typing import Literal, TypedDict
++
++RevisionKind = Literal["Inserted", "Deleted", "Moved", "FormatChanged"]
++RevisionStyle = Literal["conventional", "word", "custom"]
++
++
++@dataclass(frozen=True, slots=True)
++class CompareOptions:
++    """Comparison metadata; ``None`` preserves the engine's fixed timestamp.
++
++    Explicit timestamps must include an offset. They are normalized to UTC.
++    Low-level ``compare_documents`` retains its existing permissive signature.
++    """
++
++    date: str | datetime | None = None
++
++    def __post_init__(self) -> None:
++        if self.date is None:
++            return
++        if isinstance(self.date, datetime):
++            value = self.date
++        elif isinstance(self.date, str):
++            try:
++                value = datetime.fromisoformat(self.date.replace("Z", "+00:00"))
++            except ValueError as exc:
++                raise ValueError("date must be an ISO-8601 timestamp with an offset") from exc
++        else:
++            raise TypeError("date must be a datetime, an ISO-8601 string, or None")
++        if value.utcoffset() is None:
++            raise ValueError("date must include a UTC offset")
++        normalized = value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
++        object.__setattr__(self, "date", normalized)
++
++    def native_date(self) -> str | None:
++        """Return the timestamp accepted by the existing native function."""
++        # __post_init__ turns every datetime into str.
++        assert self.date is None or isinstance(self.date, str)
++        return self.date
++
++
++@dataclass(frozen=True, slots=True)
++class PdfOptions:
++    """PDF options with the same defaults as the current byte API."""
++
++    compress: bool = False
++    revisions: RevisionStyle = "conventional"
++    revision_palette: str | None = None
++
++    def __post_init__(self) -> None:
++        if not isinstance(self.compress, bool):
++            raise TypeError("compress must be a bool")
++        if self.revisions not in ("conventional", "word", "custom"):
++            raise ValueError("revisions must be conventional, word, or custom")
++        if self.revision_palette is not None and not isinstance(self.revision_palette, str):
++            raise TypeError("revision_palette must be a string or None")
++        if self.revisions == "custom" and self.revision_palette is None:
++            raise ValueError("custom revisions require revision_palette")
++        if self.revisions != "custom" and self.revision_palette is not None:
++            raise ValueError("revision_palette requires custom revisions")
++
++
++@dataclass(frozen=True, slots=True)
++class FormatChange:
++    """Names of run or paragraph properties changed by a revision."""
++
++    changed_properties: tuple[str, ...]
++
++
++@dataclass(frozen=True, slots=True)
++class Revision:
++    """A read-only revision record; no implied stable edit identifier.
++
++    ``date`` is preserved as document text instead of rejecting old documents
++    whose producers emitted a nonstandard timestamp. Missing author/date/text
++    remain empty strings, matching the existing JSON API.
++    """
++
++    kind: RevisionKind
++    author: str
++    date: str
++    part: str
++    text: str
++    move_group_id: int | None
++    is_move_source: bool | None
++    format_change: FormatChange | None
++
++
++class _FormatChangeRecord(TypedDict):
++    changedProperties: list[str]
++
++
++class _RevisionRecord(TypedDict):
++    type: RevisionKind
++    author: str
++    date: str
++    part: str
++    text: str
++    moveGroupId: int | None
++    isMoveSource: bool | None
++    formatChange: _FormatChangeRecord | None
++
++
++def _decode_revisions(payload: str) -> tuple[Revision, ...]:
++    """Project this version's native JSON records into immutable objects.
++
++    This is an internal same-version adapter, not a parser for external JSON.
++    Unexpected native schemas propagate an error instead of hiding it.
++    """
++    records: list[_RevisionRecord] = json.loads(payload)
++    return tuple(
++        Revision(
++            kind=row["type"],
++            author=row["author"],
++            date=row["date"],
++            part=row["part"],
++            text=row["text"],
++            move_group_id=row["moveGroupId"],
++            is_move_source=row["isMoveSource"],
++            format_change=(
++                FormatChange(tuple(row["formatChange"]["changedProperties"]))
++                if row["formatChange"] is not None
++                else None
++            ),
++        )
++        for row in records
++    )
+diff --git a/jubarte-python/python/jubarte_redlines/document.py b/jubarte-python/python/jubarte_redlines/document.py
+new file mode 100644
+--- /dev/null
++++ b/jubarte-python/python/jubarte_redlines/document.py
+@@ -0,0 +1,108 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++"""Bytes-first document operations with explicit path I/O at ``read``."""
++
++from __future__ import annotations
++
++import os
++from dataclasses import dataclass, field
++from pathlib import Path
++
++from . import _native
++from .models import CompareOptions, PdfOptions, Revision, _decode_revisions
++
++
++@dataclass(frozen=True, slots=True)
++class Document:
++    """An immutable DOCX byte snapshot.
++
++    Loading is cheap and does not parse or validate the package. Operations
++    validate it through the native engine and preserve ``JubarteError``.
++    No operation modifies an input document or writes output files.
++    """
++
++    _data: bytes = field(repr=False)
++
++    def __post_init__(self) -> None:
++        if not isinstance(self._data, bytes):
++            raise TypeError("Document requires bytes; use Document.read(path) for files")
++
++    def __repr__(self) -> str:
++        return f"Document(size={len(self._data)})"
++
++    @classmethod
++    def from_bytes(cls, data: bytes) -> Document:
++        """Hold immutable package bytes; paths and mutable buffers are rejected."""
++        return cls(data)
++
++    @classmethod
++    def read(cls, path: str | os.PathLike[str]) -> Document:
++        """Read a local file; normal FileNotFoundError/PermissionError propagate."""
++        return cls.from_bytes(Path(path).read_bytes())
++
++    def to_bytes(self) -> bytes:
++        """Return the immutable DOCX snapshot."""
++        return self._data
++
++    def compare(
++        self,
++        modified: Document,
++        *,
++        author: str,
++        options: CompareOptions | None = None,
++    ) -> Document:
++        """Compare this original with ``modified``, producing tracked changes.
++
++        Existing comparison semantics, including handling of pre-existing
++        revisions, are unchanged. This is not the semantic edit transaction.
++        """
++        if not isinstance(modified, Document):
++            raise TypeError("modified must be a Document")
++        if not isinstance(author, str):
++            raise TypeError("author must be a string")
++        if not author.strip():
++            raise ValueError("author must not be empty")
++        if options is None:
++            options = CompareOptions()
++        elif not isinstance(options, CompareOptions):
++            raise TypeError("options must be CompareOptions or None")
++        return Document.from_bytes(
++            _native.compare_documents(
++                self._data,
++                modified._data,
++                author=author,
++                date=options.native_date(),
++            )
++        )
++
++    def accept(self) -> Document:
++        """Return a new document accepting all tracked revisions."""
++        return Document.from_bytes(_native.accept_revisions(self._data))
++
++    def reject(self) -> Document:
++        """Return a new document rejecting all tracked revisions."""
++        return Document.from_bytes(_native.reject_revisions(self._data))
++
++    def revisions(self) -> tuple[Revision, ...]:
++        """Return immutable metadata for the revisions listed by the engine."""
++        return _decode_revisions(_native.get_revisions_json(self._data))
++
++    def to_pdf(self, *, options: PdfOptions | None = None) -> bytes:
++        """Render a PDF in memory, preserving the current renderer defaults."""
++        if options is None:
++            options = PdfOptions()
++        elif not isinstance(options, PdfOptions):
++            raise TypeError("options must be PdfOptions or None")
++        return _native.docx_to_pdf(
++            self._data,
++            compress=options.compress,
++            revisions=options.revisions,
++            revision_palette=options.revision_palette,
++        )
++
++
++def read(path: str | os.PathLike[str]) -> Document:
++    """Load a local DOCX snapshot; equivalent to ``Document.read(path)``."""
++    return Document.read(path)
+diff --git a/jubarte-python/python/jubarte_redlines/__init__.py b/jubarte-python/python/jubarte_redlines/__init__.py
+--- a/jubarte-python/python/jubarte_redlines/__init__.py
++++ b/jubarte-python/python/jubarte_redlines/__init__.py
+@@ -53,3 +53,10 @@
+     ``formatChange``/``text``).
+     """
+     return json.loads(get_revisions_json(docx))
++
++
++# Additive ergonomic surface; low-level functions above keep their contracts.
++from .document import Document, read
++from .models import CompareOptions, FormatChange, PdfOptions, Revision
++
++__all__ += ["Document", "read", "CompareOptions", "FormatChange", "PdfOptions", "Revision"]
+diff --git a/jubarte-python/tests/test_models.py b/jubarte-python/tests/test_models.py
+new file mode 100644
+--- /dev/null
++++ b/jubarte-python/tests/test_models.py
+@@ -0,0 +1,130 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++import json
++from dataclasses import FrozenInstanceError
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from jubarte_redlines import CompareOptions, FormatChange, PdfOptions, Revision
++from jubarte_redlines.models import _decode_revisions
++
++
++def test_compare_defaults_keep_engine_timestamp():
++    assert CompareOptions().native_date() is None
++
++
++@pytest.mark.parametrize(
++    "value",
++    [
++        "2026-09-26T10:30:00-04:00",
++        "2026-09-26T14:30:00Z",
++        datetime(2026, 9, 26, 10, 30, tzinfo=timezone(timedelta(hours=-4))),
++    ],
++)
++def test_explicit_dates_are_normalized_without_reading_the_clock(value):
++    options = CompareOptions(date=value)
++    assert options.native_date() == "2026-09-26T14:30:00Z"
++
++
++def test_timestamp_preserves_fractional_seconds():
++    assert CompareOptions(date="2026-09-26T14:30:00.123456Z").native_date() == (
++        "2026-09-26T14:30:00.123456Z"
++    )
++
++
++@pytest.mark.parametrize("value", ["yesterday", "2026-02-30T12:00:00Z"])
++def test_bad_timestamp_is_value_error(value):
++    with pytest.raises(ValueError, match="ISO-8601"):
++        CompareOptions(date=value)
++
++
++@pytest.mark.parametrize("value", ["2026-09-26", datetime(2026, 9, 26)])
++def test_naive_timestamp_is_rejected(value):
++    with pytest.raises(ValueError, match="offset"):
++        CompareOptions(date=value)
++
++
++def test_non_timestamp_is_type_error():
++    with pytest.raises(TypeError, match="date"):
++        CompareOptions(date=123)
++
++
++def test_options_are_frozen():
++    options = CompareOptions()
++    with pytest.raises(FrozenInstanceError):
++        options.date = "2026-09-26T14:30:00Z"
++    pdf = PdfOptions()
++    with pytest.raises(FrozenInstanceError):
++        pdf.compress = True
++
++
++def test_pdf_defaults_preserve_current_behavior():
++    assert PdfOptions() == PdfOptions(compress=False, revisions="conventional")
++    assert PdfOptions(revisions="word").revision_palette is None
++    assert PdfOptions(revisions="custom", revision_palette="deleted=#AA0000:strike").revisions == "custom"
++
++
++@pytest.mark.parametrize(
++    ("options", "error", "message"),
++    [
++        ({"compress": 1}, TypeError, "compress"),
++        ({"revisions": "hidden"}, ValueError, "revisions"),
++        ({"revision_palette": 1}, TypeError, "revision_palette"),
++        ({"revisions": "custom"}, ValueError, "require"),
++        ({"revision_palette": "deleted=#AA0000:strike"}, ValueError, "requires"),
++    ],
++)
++def test_pdf_options_fail_before_native_work(options, error, message):
++    with pytest.raises(error, match=message):
++        PdfOptions(**options)
++
++
++def test_revision_decoding_preserves_metadata_and_freezes_nested_properties():
++    payload = json.dumps([
++        {
++            "type": "FormatChanged",
++            "author": "Reviewer",
++            "date": "producer-specific-date",
++            "part": "word/document.xml",
++            "text": "changed\ttext\n\"quoted\"",
++            "moveGroupId": None,
++            "isMoveSource": None,
++            "formatChange": {"changedProperties": ["bold", "spacing"]},
++        },
++        {
++            "type": "Moved",
++            "author": "",
++            "date": "",
++            "part": "word/footnotes.xml",
++            "text": "moved",
++            "moveGroupId": 7,
++            "isMoveSource": False,
++            "formatChange": None,
++        },
++    ])
++    records = _decode_revisions(payload)
++    assert records == (
++        Revision(
++            kind="FormatChanged", author="Reviewer", date="producer-specific-date",
++            part="word/document.xml", text="changed\ttext\n\"quoted\"",
++            move_group_id=None, is_move_source=None,
++            format_change=FormatChange(("bold", "spacing")),
++        ),
++        Revision(
++            kind="Moved", author="", date="", part="word/footnotes.xml", text="moved",
++            move_group_id=7, is_move_source=False, format_change=None,
++        ),
++    )
++    with pytest.raises(FrozenInstanceError):
++        records[0].author = "Other"
++    with pytest.raises(FrozenInstanceError):
++        records[0].format_change.changed_properties = ()
++    assert _decode_revisions("[]") == ()
++
++
++def test_native_schema_mismatch_is_not_silently_dropped():
++    with pytest.raises(KeyError):
++        _decode_revisions('[{"type":"Inserted"}]')
+diff --git a/jubarte-python/tests/test_document.py b/jubarte-python/tests/test_document.py
+new file mode 100644
+--- /dev/null
++++ b/jubarte-python/tests/test_document.py
+@@ -0,0 +1,151 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++"""All unit fixtures stay in memory; filesystem reads are integration tests."""
++
++from dataclasses import FrozenInstanceError
++from io import BytesIO
++from xml.etree import ElementTree
++from xml.sax.saxutils import escape
++from zipfile import ZipFile, ZipInfo
++
++import pytest
++
++import jubarte_redlines as jubarte
++
++W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
++
++
++def make_document(text: str) -> bytes:
++    parts = {
++        "[Content_Types].xml": (
++            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
++            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
++            '<Default Extension="xml" ContentType="application/xml"/>'
++            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
++            '</Types>'
++        ),
++        "_rels/.rels": (
++            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
++            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
++            '</Relationships>'
++        ),
++        "word/document.xml": (
++            f'<w:document xmlns:w="{W}"><w:body><w:p><w:r><w:t>'
++            f'{escape(text)}</w:t></w:r></w:p><w:sectPr/></w:body></w:document>'
++        ),
++    }
++    data = BytesIO()
++    with ZipFile(data, "w") as package:
++        for path, content in parts.items():
++            # ZipInfo's fixed DOS epoch avoids the wall clock in unit fixtures.
++            package.writestr(ZipInfo(path), content)
++    return data.getvalue()
++
++
++def visible_text(data: bytes) -> str:
++    with ZipFile(BytesIO(data)) as package:
++        root = ElementTree.fromstring(package.read("word/document.xml"))
++    return "".join(node.text or "" for node in root.iter(f"{{{W}}}t"))
++
++
++def test_document_is_an_immutable_snapshot_with_safe_repr():
++    data = make_document("private contract")
++    document = jubarte.Document.from_bytes(data)
++    assert document.to_bytes() is data
++    assert repr(document) == f"Document(size={len(data)})"
++    assert "private contract" not in repr(document)
++    with pytest.raises(FrozenInstanceError):
++        document._data = b"different"
++
++
++@pytest.mark.parametrize("value", ["contract.docx", bytearray(b"zip"), memoryview(b"zip")])
++def test_document_rejects_paths_and_mutable_buffers_as_bytes(value):
++    with pytest.raises(TypeError, match="requires bytes"):
++        jubarte.Document.from_bytes(value)
++
++
++def test_compare_round_trip_preserves_both_inputs_and_revision_metadata():
++    old = jubarte.Document.from_bytes(make_document("The price is ten dollars."))
++    new = jubarte.Document.from_bytes(make_document("The price is twenty dollars."))
++    old_bytes, new_bytes = old.to_bytes(), new.to_bytes()
++    redline = old.compare(
++        new, author="Reviewer", options=jubarte.CompareOptions(date="2026-09-26T14:30:00Z")
++    )
++    assert visible_text(redline.accept().to_bytes()) == "The price is twenty dollars."
++    assert visible_text(redline.reject().to_bytes()) == "The price is ten dollars."
++    revisions = redline.revisions()
++    assert {row.kind for row in revisions} >= {"Inserted", "Deleted"}
++    assert {row.author for row in revisions} == {"Reviewer"}
++    assert {row.date for row in revisions} == {"2026-09-26T14:30:00Z"}
++    assert old.to_bytes() == old_bytes
++    assert new.to_bytes() == new_bytes
++
++
++def test_compare_default_is_repeatable_and_keeps_legacy_fixed_date():
++    old = jubarte.Document.from_bytes(make_document("The payment is due today."))
++    new = jubarte.Document.from_bytes(make_document("The payment is due tomorrow."))
++    first = old.compare(new, author="Reviewer")
++    second = old.compare(new, author="Reviewer")
++    with ZipFile(BytesIO(first.to_bytes())) as left, ZipFile(BytesIO(second.to_bytes())) as right:
++        assert {name: left.read(name) for name in left.namelist()} == {
++            name: right.read(name) for name in right.namelist()
++        }
++    assert first.revisions() == second.revisions()
++    assert {row.date for row in first.revisions()} == {"1970-01-01T00:00:00Z"}
++
++
++@pytest.mark.parametrize(
++    ("kwargs", "error", "message"),
++    [
++        ({"modified": b"not a Document", "author": "A"}, TypeError, "Document"),
++        ({"author": None}, TypeError, "author"),
++        ({"author": "  "}, ValueError, "author"),
++        ({"author": "A", "options": {}}, TypeError, "CompareOptions"),
++    ],
++)
++def test_compare_rejects_bad_arguments_before_computing(kwargs, error, message):
++    document = jubarte.Document.from_bytes(make_document("unchanged"))
++    args = {"modified": document, **kwargs}
++    with pytest.raises(error, match=message):
++        document.compare(**args)
++
++
++@pytest.mark.integration
++def test_pdf_uses_native_renderer_without_writing_a_file():
++    document = jubarte.Document.from_bytes(make_document("A PDF rendered in memory."))
++    assert document.to_pdf().startswith(b"%PDF-")
++    assert document.to_pdf(options=jubarte.PdfOptions(compress=True, revisions="word")).startswith(b"%PDF-")
++    with pytest.raises(TypeError, match="PdfOptions"):
++        document.to_pdf(options={})
++
++
++def test_native_document_errors_keep_the_public_exception():
++    document = jubarte.Document.from_bytes(b"not an OPC package")
++    with pytest.raises(jubarte.JubarteError):
++        document.accept()
++    with pytest.raises(jubarte.JubarteError):
++        document.to_pdf()
++
++
++@pytest.mark.integration
++def test_legacy_byte_and_dictionary_api_remains_available():
++    data = make_document("unchanged")
++    assert isinstance(jubarte.accept_revisions(data), bytes)
++    assert isinstance(jubarte.reject_revisions(data), bytes)
++    assert jubarte.get_revisions(data) == []
++    assert jubarte.get_revisions_json(data) == "[]"
++    assert isinstance(jubarte.compare_documents(data, data), bytes)
++    assert jubarte.docx_to_pdf(data).startswith(b"%PDF-")
++
++
++@pytest.mark.integration
++def test_read_path_and_top_level_read(tmp_path):
++    data = make_document("Read me.")
++    source = tmp_path / "input.docx"
++    source.write_bytes(data)
++    assert jubarte.Document.read(source).to_bytes() == data
++    assert jubarte.read(str(source)).to_bytes() == data
++    with pytest.raises(FileNotFoundError):
++        jubarte.read(tmp_path / "missing.docx")
+diff --git a/jubarte-python/pytest.ini b/jubarte-python/pytest.ini
+new file mode 100644
+--- /dev/null
++++ b/jubarte-python/pytest.ini
+@@ -0,0 +1,5 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++# SPDX-License-Identifier: AGPL-3.0-only
++[pytest]
++markers =
++    integration: installed native library, filesystem or environment integration
