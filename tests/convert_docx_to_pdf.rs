@@ -36673,6 +36673,53 @@ fn tracked_insertions_and_deletions_alone_bring_no_balloon_pane() {
 }
 
 #[test]
+fn an_inserted_or_deleted_table_cell_brings_the_balloon_pane() {
+    // English b/57439183: 7 w:cellIns and 1 w:cellDel, no comments. Word's
+    // PDF shrinks every page beside the grey pane and hangs "Inserted
+    // Cells" / "Deleted Cells" balloons there. Live Word 2026-09-26: one
+    // cellIns or cellDel in a two-cell table brings the pane; a w:ins run
+    // inside a cell does not.
+    let d = "w:author=\"A\" w:date=\"2020-01-01T00:00:00Z\"";
+    let cell = |txt: &str, tc_pr: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/>{tc_pr}</w:tcPr>\
+             <w:p><w:r><w:t>{txt}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = |mark: &str| {
+        format!(
+            "<w:p><w:r><w:t>Body line for the probe.</w:t></w:r></w:p>\
+             <w:tbl><w:tblPr><w:tblW w:w=\"8000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4000\"/><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+             <w:tr>{}{}</w:tr></w:tbl><w:p/>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+            cell("LeftCell", ""),
+            cell("RightCell", mark)
+        )
+    };
+    for mark in ["cellIns", "cellDel"] {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(
+            &body(&format!("<w:{mark} w:id=\"1\" {d}/>")),
+            "",
+        ))
+        .expect("cell revision");
+        let content = pdf_content_streams(&pdf).concat();
+        assert!(
+            content.contains("0.949 0.949 0.949 rg"),
+            "a w:{mark} brings Word's balloon pane"
+        );
+    }
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body(""), "")).expect("plain table");
+    assert!(
+        !pdf_content_streams(&pdf)
+            .concat()
+            .contains("0.949 0.949 0.949 rg"),
+        "a plain table brings no pane"
+    );
+}
+
+#[test]
 fn even_and_odd_pages_keep_their_parity_across_a_numbering_restart() {
     // English redline df4265bd (w:evenAndOddHeaders): its sections restart
     // numbering at 1 after a page numbered 1, and Word prints a blank page

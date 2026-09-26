@@ -336,11 +336,12 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
             }
             sheet.defaults.page.gutter_at_top = settings_flag(&pkg, "gutterAtTop");
             // Word Save-as-PDF draws the grey balloon pasteboard (and shrinks
-            // the page) for comments only. Live Word 2026-09-25: 120 tracked
-            // insertions and deletions with w:trackRevisions, with or without
-            // formatting changes, keep the full page (English redline
-            // e1de10f3 was shrunk on a 100/100 count).
-            if document_has_comments(&pkg, &main) {
+            // the page) for comments and inserted or deleted table cells
+            // only. Live Word 2026-09-25: 120 tracked insertions and
+            // deletions with w:trackRevisions, with or without formatting
+            // changes, keep the full page (English redline e1de10f3 was
+            // shrunk on a 100/100 count).
+            if document_has_balloons(&pkg, &main) {
                 sheet.defaults.page.balloon_gutter = 144.0;
             }
             let page = load_page_setup(&dom, body, &sheet.defaults.page);
@@ -5939,12 +5940,18 @@ fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
         .filter(|pt| *pt > 0.5)
 }
 
-/// Word's PDF export draws the comment pane on every page of a document
+/// Word's PDF export draws the balloon pane on every page of a document
 /// with comments, tracked or not (docxide case63/case64, fixtures_500
-/// 00b0c1ee).
-fn document_has_comments(pkg: &PartFs, main: &str) -> bool {
-    pkg.part_string(main)
-        .is_some_and(|xml| w_revision_count(&xml, "<w:commentReference") > 0)
+/// 00b0c1ee), or with an inserted or deleted table cell, whose "Inserted
+/// Cells" / "Deleted Cells" mark only a balloon can carry (English
+/// b/57439183; live Word 2026-09-26: one w:cellIns or w:cellDel suffices,
+/// a w:ins run inside a cell does not).
+fn document_has_balloons(pkg: &PartFs, main: &str) -> bool {
+    pkg.part_string(main).is_some_and(|xml| {
+        ["<w:commentReference", "<w:cellIns", "<w:cellDel"]
+            .iter()
+            .any(|tag| w_revision_count(&xml, tag) > 0)
+    })
 }
 
 fn w_revision_count(xml: &str, tag: &str) -> usize {
