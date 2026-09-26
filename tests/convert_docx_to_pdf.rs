@@ -36419,6 +36419,26 @@ fn a_scaled_vertical_run_squeezes_its_glyphs_with_its_advances() {
 }
 
 #[test]
+fn a_keep_next_row_before_a_cell_holding_only_a_table_does_not_panic() {
+    // A w:tc must end in a w:p, but a writer that leaves only a nested
+    // table in it must not abort the conversion: the keepNext row's look at
+    // the next row's first paragraph found none (CodeRabbit on #173).
+    let filler: String = (0..44)
+        .map(|i| format!("<w:p><w:r><w:t>Filler{i}</w:t></w:r></w:p>"))
+        .collect();
+    let body = format!(
+        "{filler}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:t>Label</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc><w:tbl><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:tc></w:tr>\
+         </w:tbl><w:p/><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("no panic");
+    assert!(pdf_glyph_text_xy(&pdf, "Inner").is_some());
+}
+
+#[test]
 fn a_tall_row_under_a_repeating_header_splits_where_it_starts() {
     // fixtures_500 015e4665 (live Word): a table with a tblHeader row; a
     // tall row that starts near a page's end splits there, the header

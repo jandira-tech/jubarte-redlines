@@ -1496,6 +1496,8 @@ impl TableCell {
     /// nested tables anchored among them (00297360's letter row splits
     /// around its small nested table).
     fn split_at(&self, k: usize) -> (TableCell, TableCell) {
+        // A cell holding only a nested table has no paragraphs to split.
+        let k = k.min(self.paras.len());
         let mut head = self.with_paras(self.paras[..k].to_vec());
         let mut tail = self.with_paras(self.paras[k..].to_vec());
         for (table, &at) in self.nested.iter().zip(&self.nested_at) {
