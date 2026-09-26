@@ -755,6 +755,18 @@ impl<'a> Face<'a> {
                 }
             })
             .unwrap_or(ascent);
+        // A USE_TYPO_METRICS face sets its typo lineGap above the text:
+        // live Word puts 16pt Gabriola's baseline 22.08 under the margin
+        // (ascent 10.94 + lineGap 11.20), Poppins 12's at 13.92.
+        let typo_line = face
+            .tables()
+            .os2
+            .is_some_and(|os2| os2.use_typographic_metrics());
+        let paint_ascent = if typo_line {
+            line_height - line_descent
+        } else {
+            paint_ascent
+        };
         let paint_ascent = match east_asian_line {
             Some((_, half)) => f32::from(face.ascender()) + half,
             None => paint_ascent,
@@ -2691,6 +2703,27 @@ mod tests {
             (face.ascent_pt(12.0) - 12.11).abs() < 0.1,
             "{}",
             face.ascent_pt(12.0)
+        );
+    }
+
+    #[test]
+    fn a_typo_metrics_face_sets_its_line_gap_above_the_text() {
+        // Live Word, 16pt Gabriola (USE_TYPO_METRICS, typo lineGap 2867 of
+        // 4096) under a 72pt margin: baseline 94.08, the typo ascent plus
+        // the whole lineGap (22.13), not the ascent alone (10.94). Poppins
+        // 12 follows too (13.92 = 1.05 + 0.10 em); Candara (no flag) not.
+        let path =
+            Path::new("/Applications/Microsoft Word.app/Contents/Resources/DFonts/Gabriola.ttf");
+        let Ok(bytes) = fs::read(path) else {
+            return;
+        };
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        let face =
+            Face::from_bytes(FaceId::SansRegular, bytes, "Gabriola".into()).expect("Gabriola");
+        assert!(
+            (face.ascent_pt(16.0) - 22.13).abs() < 0.1,
+            "{}",
+            face.ascent_pt(16.0)
         );
     }
 
