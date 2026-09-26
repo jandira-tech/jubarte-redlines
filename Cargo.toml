@@ -76,7 +76,9 @@ default = ["cli", "fast-alloc"]
 cli = ["dep:clap"]
 # CLI global allocator (mimalloc). Default-on; disable with
 # `--no-default-features --features cli` to fall back to the system allocator
-# (used for allocator A/B measurement). Library-only builds never pull it in.
+# (used for allocator A/B measurement). Only the binary installs it, but a
+# library dependency on the default features still compiles mimalloc; use
+# `default-features = false` (as the in-repo python/wasm/app crates do).
 fast-alloc = ["cli", "dep:mimalloc"]
 # P0-LAB-01: compiled-out stage counters / coarse timers (src/perf.rs).
 # Diagnostic only — never use a profiled build for final wall-time claims.
