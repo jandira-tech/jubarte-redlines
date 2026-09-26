@@ -71,16 +71,25 @@ export function compareDocuments(original, modified, author) {
  * never layout metrics.
  * `compress` (optional, default `false`) deflates the PDF's streams
  * (`/FlateDecode`): much smaller output, no longer plain text.
+ * `revisions` (optional, default `"conventional"`) paints tracked changes:
+ * `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
+ * `revisionPalette` (`"deleted=#AA0000:strike,..."`).
  * @param {Uint8Array} docx
  * @param {boolean | null} [compress]
+ * @param {string | null} [revisions]
+ * @param {string | null} [revision_palette]
  * @returns {Uint8Array}
  */
-export function docxToPdf(docx, compress) {
+export function docxToPdf(docx, compress, revisions, revision_palette) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        wasm.docxToPdf(retptr, ptr0, len0, isLikeNone(compress) ? 0xFFFFFF : compress ? 1 : 0);
+        var ptr1 = isLikeNone(revisions) ? 0 : passStringToWasm0(revisions, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(revision_palette) ? 0 : passStringToWasm0(revision_palette, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        var len2 = WASM_VECTOR_LEN;
+        wasm.docxToPdf(retptr, ptr0, len0, isLikeNone(compress) ? 0xFFFFFF : compress ? 1 : 0, ptr1, len1, ptr2, len2);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -88,9 +97,9 @@ export function docxToPdf(docx, compress) {
         if (r3) {
             throw takeObject(r2);
         }
-        var v2 = getArrayU8FromWasm0(r0, r1).slice();
+        var v4 = getArrayU8FromWasm0(r0, r1).slice();
         wasm.__wbindgen_export(r0, r1 * 1, 1);
-        return v2;
+        return v4;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }

@@ -24,8 +24,11 @@ export function compareDocuments(original: Uint8Array, modified: Uint8Array, aut
  * never layout metrics.
  * `compress` (optional, default `false`) deflates the PDF's streams
  * (`/FlateDecode`): much smaller output, no longer plain text.
+ * `revisions` (optional, default `"conventional"`) paints tracked changes:
+ * `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
+ * `revisionPalette` (`"deleted=#AA0000:strike,..."`).
  */
-export function docxToPdf(docx: Uint8Array, compress?: boolean | null): Uint8Array;
+export function docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null): Uint8Array;
 
 /**
  * List the tracked revisions in a DOCX as a JSON array string — the same
@@ -63,7 +66,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly acceptRevisions: (a: number, b: number, c: number) => void;
     readonly compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly docxToPdf: (a: number, b: number, c: number, d: number) => void;
+    readonly docxToPdf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly getRevisions: (a: number, b: number, c: number) => void;
     readonly pdfPageCount: (a: number, b: number) => number;
     readonly rejectRevisions: (a: number, b: number, c: number) => void;
