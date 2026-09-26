@@ -7811,6 +7811,46 @@ fn numbering_suff_nothing_omits_gutter_space() {
 }
 
 #[test]
+fn a_hidden_row_of_hidden_text_takes_its_borders_with_it() {
+    // Live Word: a row marked trPr/hidden whose only paragraph is vanished
+    // is gone, its top border too ("After" right under "Before"); without
+    // the marker the row keeps a line. fixtures_500 9617d33f's newsletter
+    // separators are such rows: we painted two green rules Word hides.
+    let table = |hidden: &str| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/><w:tblBorders>\
+               <w:top w:val=\"single\" w:sz=\"12\" w:space=\"0\" w:color=\"106B62\"/></w:tblBorders></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"8460\"/></w:tblGrid><w:tr>{hidden}<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>\
+             <w:p><w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:vanish/></w:rPr></w:pPr></w:p></w:tc></w:tr></w:tbl>"
+        )
+    };
+    let doc = |hidden: &str| {
+        minimal_docx_body(&format!(
+            "<w:p><w:r><w:t>Before</w:t></w:r></w:p>{}<w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>",
+            table(hidden)
+        ))
+    };
+    let green = "0.063 0.420 0.384 rg";
+    let plain = docx_to_pdf(&doc("")).expect("plain row");
+    assert!(
+        String::from_utf8_lossy(&plain).contains(green),
+        "the unmarked row paints its green border"
+    );
+    let pdf = docx_to_pdf(&doc("<w:trPr><w:hidden/></w:trPr>")).expect("hidden row");
+    assert!(
+        !String::from_utf8_lossy(&pdf).contains(green),
+        "the hidden row's green border is not painted"
+    );
+    let (_, before) = pdf_glyph_text_xy(&pdf, "Before").expect("before paints");
+    let (_, after) = pdf_glyph_text_xy(&pdf, "After").expect("after paints");
+    let (_, plain_after) = pdf_glyph_text_xy(&plain, "After").expect("after paints");
+    assert!(
+        after > plain_after + 5.0 && before - after < 30.0,
+        "the hidden row takes no height; before={before} after={after} plain={plain_after}"
+    );
+}
+
+#[test]
 fn a_typed_opening_quote_does_not_hang_like_a_bullet() {
     // fixtures_500 675bc160: a hanging paragraph opens with a run holding
     // only "“", then "(aa) amounts…" with no tab. Word sets "“(aa)" together

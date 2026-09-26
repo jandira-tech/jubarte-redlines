@@ -9632,6 +9632,7 @@ fn table_block(
                 Vec::new()
             }
         })
+        .filter(|&row| !row_is_hidden(dom, row))
         .collect();
     let row_count = all_rows.len();
     // The rules an edge a cell's tcBorders leaves unnamed falls back to.
@@ -10297,6 +10298,44 @@ fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
         edge("left").unwrap_or(default),
         edge("right").unwrap_or(default),
     )
+}
+
+/// A row Word does not lay out: marked `trPr/hidden` with nothing but
+/// hidden content (live Word: its borders and height go with it; without
+/// the marker a vanished row keeps a line). The empty cell-end paragraph
+/// after a nested table goes with the table (9617d33f's separators).
+fn row_is_hidden(dom: &Dom, row: NodeId) -> bool {
+    let vanish = |rpr: Option<NodeId>| {
+        rpr.and_then(|rpr| first_named(dom, rpr, "vanish"))
+            .is_some_and(|n| !val_is_false(dom, Some(n)))
+    };
+    let marked = direct_named(dom, row, "trPr")
+        .and_then(|pr| direct_named(dom, pr, "hidden"))
+        .is_some_and(|n| !val_is_false(dom, Some(n)));
+    marked
+        && dom.descendants(row, Some(&W::p())).into_iter().all(|p| {
+            let runs_hidden = dom.descendants(p, Some(&W::r())).into_iter().all(|r| {
+                vanish(dom.element(r, &W::r_pr()))
+                    || (0..dom.child_count(r))
+                        .map(|i| dom.child_at(r, i))
+                        .all(|c| dom.name_is(c, &W::r_pr()) || !dom.is_element(c))
+            });
+            let mark_hidden = vanish(
+                dom.element(p, &W::p_pr())
+                    .and_then(|ppr| dom.element(ppr, &W::r_pr())),
+            );
+            let after_table = dom.parent(p).is_some_and(|parent| {
+                let kids: Vec<NodeId> = (0..dom.child_count(parent))
+                    .map(|i| dom.child_at(parent, i))
+                    .filter(|&c| dom.is_element(c))
+                    .collect();
+                kids.iter()
+                    .position(|&c| c == p)
+                    .and_then(|i| i.checked_sub(1))
+                    .is_some_and(|i| dom.name_is(kids[i], &W::tbl()))
+            });
+            runs_hidden && (mark_hidden || after_table)
+        })
 }
 
 /// A row's `w:tblPrEx/w:tblCellMar` replaces the table margins it lists
