@@ -5194,6 +5194,39 @@ fn a_vml_line_wrapped_top_and_bottom_does_not_push_text() {
 }
 
 #[test]
+fn an_inline_vml_text_box_takes_its_styled_size() {
+    // 069252c3's logo letters are inline `v:shape` text boxes (21.25x8.9pt,
+    // no position). We laid each as a default 200x120 box; live Word
+    // 2026-09-26 fits it in its line (Before -> After 25.44pt, two lines).
+    let pict = "<w:r><w:pict><v:shape style=\"width:21.25pt;height:8.9pt;\
+           mso-position-horizontal-relative:char;mso-position-vertical-relative:line\" \
+           type=\"#_x0000_t202\" filled=\"false\" stroked=\"false\">\
+           <v:textbox inset=\"0,0,0,0\"><w:txbxContent><w:p><w:pPr>\
+             <w:spacing w:line=\"177\" w:lineRule=\"exact\" w:before=\"0\"/></w:pPr>\
+             <w:r><w:t>abc</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r>";
+    let doc = |middle: &str| {
+        drawing_docx(&format!(
+            "<w:p><w:r><w:t>Before</w:t></w:r></w:p>\
+             <w:p><w:pPr><w:ind w:left=\"1564\"/></w:pPr>{middle}</w:p>\
+             <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        ))
+    };
+    let gap = |pdf: &[u8]| {
+        pdf_literal_td_y(pdf, "Before").expect("Before")
+            - pdf_literal_td_y(pdf, "After").expect("After")
+    };
+    let boxed = gap(&docx_to_pdf(&doc(pict)).expect("convert inline VML text box"));
+    let plain =
+        gap(&docx_to_pdf(&doc("<w:r><w:t>x</w:t></w:r>")).expect("convert plain paragraph"));
+    assert!(
+        (boxed - plain).abs() < 0.5,
+        "an 8.9pt inline text box fits its line: gap {boxed} vs plain {plain}"
+    );
+}
+
+#[test]
 fn xfrm_rot_ninety_rotates_image_cm() {
     // xml leftover / media rotation: pic:spPr a:xfrm/@rot is 60000ths of a
     // degree (ECMA-376 20.1.7.6). 5400000 = 90°. Unrotated paint is

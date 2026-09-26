@@ -11534,7 +11534,15 @@ fn collect_textboxes_styled(
         }
         let empty = runs.iter().all(|r| r.text.trim().is_empty());
         let vml_slot = vml_absolute_slot(dom, shape);
-        let (w, h) = if vml_slot.is_some() {
+        // An inline VML shape is sized by its style, not the DrawingML
+        // default box (069252c3's 21x9pt logo letters ran 200x120).
+        let vml_sized = dom.name_is(shape, &W::pict())
+            && descendants_local(dom, shape, "shape").into_iter().any(|v| {
+                attr_any(dom, v, "style").is_some_and(|st| {
+                    vml_style_pt(st, "width").is_some() && vml_style_pt(st, "height").is_some()
+                })
+            });
+        let (w, h) = if vml_slot.is_some() || vml_sized {
             vml_extent_pt(dom, shape)
         } else {
             drawing_extent_pt(dom, shape)
@@ -25012,6 +25020,8 @@ fn layout(
                     .pic_row
                     .take()
                     .filter(|r| !has_ink && r.0 == lay.pages.len());
+                let line_box = para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
+                let mut box_x: Option<f32> = None;
                 for box_ in boxes {
                     if !has_ink && matches!(box_.slot, ImageSlot::Flow) && !box_.reserve_only {
                         // An inline box after the paragraph's pictures shares
@@ -25046,6 +25056,31 @@ fn layout(
                             let top = lay.y + style.after + e;
                             let x = lay.page.margin_l + style.indent_left;
                             lay.paint_box_at(box_, x, top - 0.8 * e, box_.w, box_.h);
+                            continue;
+                        }
+                        // So does any line at least as tall as the box, past
+                        // a tab to its stop. Live Word 2026-09-26: a 21x9pt
+                        // text box under a 12.7pt line ends on the line's
+                        // bottom (069252c3's logo letters; we laid a line,
+                        // then each box under it).
+                        if images.is_empty()
+                            && style.line_exact.is_none()
+                            && box_.h <= line_box + 0.01
+                        {
+                            let tab = runs.iter().any(|r| r.text.contains('\t'));
+                            let x = match box_x {
+                                Some(prev) if tab => next_tab_x(
+                                    prev,
+                                    lay.flow_left(),
+                                    &style.tab_stops,
+                                    lay.page.default_tab,
+                                ),
+                                Some(prev) => prev,
+                                None => lay.page.margin_l + style.indent_left,
+                            };
+                            let top = lay.y + style.after + line_box;
+                            lay.paint_box_at(box_, x, top - line_box, box_.w, box_.h);
+                            box_x = Some(x + box_.w);
                             continue;
                         }
                     }

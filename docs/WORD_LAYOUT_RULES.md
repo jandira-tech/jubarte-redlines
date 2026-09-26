@@ -343,3 +343,8 @@ rule:
   paragraph to its band's bottom (Anchor 103.05 -> After 267.45, also with a
   negative z-index). Word ignores it on a `v:line`: bc404781's wrapped form
   rules move no text.
+- An inline VML shape (`w:pict` with no position) is sized by its style's
+  width/height, and a text box no taller than its paragraph's line sits in
+  that line instead of adding a line and then its own height: live Word
+  2026-09-26 sets a 21x9pt box under a 12.7pt line on the line's bottom
+  (069252c3's logo letters; its 12 pages became Word's 10).
