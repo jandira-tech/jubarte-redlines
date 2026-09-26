@@ -251,10 +251,8 @@ fn recurse_children(
     settings: &WmlComparerSettings,
     path: &mut Vec<NodeId>,
 ) {
-    let mut i = 0;
-    while i < dom.child_count(element) {
+    for i in 0..dom.child_count(element) {
         let item = dom.child_at(element, i);
-        i += 1;
         match dom.name(item) {
             Some(n) if exclude != Some(&n) => recurse(dom, item, list, settings, path),
             _ => {}
