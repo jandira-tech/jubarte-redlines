@@ -16156,6 +16156,66 @@ fn page_field_uses_sectpr_hindi_counting() {
 }
 
 #[test]
+fn page_field_uses_sectpr_korean_counting() {
+    // MS-DOCX: koreanCounting is 일 이 삼… (U+C77C). start=10 is 십, not ASCII "10".
+    let pdf = page_num_fmt_pdf("koreanCounting", 10, "PgKcX");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "koreanCounting PAGE start=10 must not stay ASCII 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "koreanCounting 십 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_korean_digital() {
+    // MS-DOCX: koreanDigital is 일, 일영, 일영영… start=10 is 일영, not 십.
+    let pdf = page_num_fmt_pdf("koreanDigital", 10, "PgKdX");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "koreanDigital PAGE start=10 must not stay ASCII 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "koreanDigital 일영 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_korean_digital2() {
+    // MS-DOCX: koreanDigital2 is 一, 一零… (U+96F6 zero), not ideographDigital 一〇.
+    let pdf = page_num_fmt_pdf("koreanDigital2", 10, "PgK2X");
+    let lits = pdf_winansi_literals(&pdf);
+    assert!(
+        !lits.iter().any(|s| s == "10"),
+        "koreanDigital2 PAGE start=10 must not stay ASCII 10; lits={lits:?}"
+    );
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+        "koreanDigital2 一零 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
+    );
+}
+
+#[test]
+fn page_field_uses_sectpr_korean_legal() {
+    // MS-DOCX: koreanLegal is 하나 둘 셋… (U+D558 U+B098). start=1 is 하나.
+    assert_ideograph_page_is_cid_not_decimal("koreanLegal", "PgKlX");
+}
+
+#[test]
 fn page_field_continues_across_section_without_start() {
     // comments-lots / I_am_sharing: three sectPr (portrait, landscape,
     // portrait) and no w:pgNumType start. Word continues PAGE (6/7/8/9).
