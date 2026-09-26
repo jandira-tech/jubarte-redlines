@@ -1408,6 +1408,9 @@ struct CellPara {
     runs: Vec<TextRun>,
     /// Inline pictures (fixtures_500 000ae863 map photos in cells).
     images: Vec<LaidImage>,
+    /// Floating shapes and text boxes anchored in the cell (English part a
+    /// 1f3856c4's flowchart arrows). They overlay the cell; no room taken.
+    boxes: Vec<std::rc::Rc<LaidTextBox>>,
     style: ParaStyle,
     /// `w:bookmarkStart` names inside this paragraph (REF text source).
     bookmarks: Vec<String>,
@@ -7331,6 +7334,7 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
             &CellPara {
                 runs: Vec::new(),
                 images: Vec::new(),
+                boxes: Vec::new(),
                 style,
                 bookmarks: Vec::new(),
                 blank_bookmarks: Vec::new(),
@@ -9267,6 +9271,19 @@ fn table_block(
                     .into_iter()
                     .filter(cell_holds_image)
                     .collect();
+                let boxes: Vec<std::rc::Rc<LaidTextBox>> = collect_textboxes_styled(
+                    media,
+                    dom,
+                    child,
+                    &r,
+                    &sheet.theme,
+                    Some(sheet),
+                    Some(numbering),
+                )
+                .into_iter()
+                .filter(|b| !matches!(b.slot, ImageSlot::Flow) && !b.reserve_only)
+                .map(std::rc::Rc::new)
+                .collect();
                 let empty_ink =
                     mark.is_empty() && runs.iter().all(|run| run.text.trim().is_empty());
                 let cell_rule = pstyle.border_bottom.map(|(c, w, _)| (c, w));
@@ -9296,6 +9313,7 @@ fn table_block(
                 cell_paras.push(CellPara {
                     runs,
                     images,
+                    boxes,
                     style: pstyle,
                     bookmarks,
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
@@ -9319,6 +9337,7 @@ fn table_block(
                 cell_paras.push(CellPara {
                     runs,
                     images: Vec::new(),
+                    boxes: Vec::new(),
                     style: table_para.clone(),
                     bookmarks: Vec::new(),
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
@@ -9973,6 +9992,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
         paras: vec![CellPara {
             runs: vec![TextRun::new("Deleted Cells", style)],
             images: Vec::new(),
+            boxes: Vec::new(),
             style: {
                 let mut p = Defaults::word().para;
                 p.before = 0.0;
@@ -20539,6 +20559,36 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// A shape or text box anchored in a table cell: its column is the
+    /// cell's text area and its paragraph the cell paragraph (Word's
+    /// layoutInCell), so the body placement runs with the frame pointed
+    /// at the cell.
+    fn emit_cell_box(&mut self, box_: &LaidTextBox, left: f32, inner: f32, top: f32, before: f32) {
+        let saved = (
+            self.page.margin_l,
+            self.page.margin_r,
+            self.page.col_count,
+            self.para_top,
+            self.para_space_above,
+            self.y,
+        );
+        self.page.margin_l = left;
+        self.page.margin_r = (self.page.width - left - inner).max(0.0);
+        self.page.col_count = 1;
+        self.para_top = top;
+        self.para_space_above = before;
+        self.y = top;
+        self.emit_textbox(box_, 0.0);
+        (
+            self.page.margin_l,
+            self.page.margin_r,
+            self.page.col_count,
+            self.para_top,
+            self.para_space_above,
+            self.y,
+        ) = saved;
+    }
+
     fn emit_textbox(&mut self, box_: &LaidTextBox, indent_left: f32) {
         // A fitted box is its widest line wide, plus its insets.
         let box_w = if box_.fit_width && !box_.paras.is_empty() {
@@ -21658,6 +21708,10 @@ impl<'a> Layout<'a> {
                             y_line -= used;
                         }
                         y_line -= para.style.before;
+                        for box_ in &para.boxes {
+                            let inner = (w - pad_l - pad_r).max(0.0);
+                            self.emit_cell_box(box_, x + pad_l, inner, y_line, para.style.before);
+                        }
                         let lead = cell_lead_picture(para);
                         for img in para
                             .images
@@ -21992,6 +22046,7 @@ impl<'a> Layout<'a> {
         let mut tail = para.clone();
         tail.runs = lines[n..].concat();
         tail.images = Vec::new();
+        tail.boxes = Vec::new();
         tail.bookmarks = Vec::new();
         tail.blank_bookmarks = Vec::new();
         tail.style.before = 0.0;

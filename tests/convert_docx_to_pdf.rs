@@ -35698,3 +35698,45 @@ fn text_above_a_full_width_floating_tables_offset_stays_above_it() {
         "lines reaching the table go under it"
     );
 }
+
+fn outline_arrow_anchor(prst: &str) -> String {
+    format!(
+        "<w:r><mc:AlternateContent><mc:Choice Requires=\"wps\"><w:drawing>\
+         <wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" relativeHeight=\"2\" \
+           behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/>\
+         <wp:positionH relativeFrom=\"column\"><wp:posOffset>-79522</wp:posOffset></wp:positionH>\
+         <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>292735</wp:posOffset></wp:positionV>\
+         <wp:extent cx=\"611505\" cy=\"400050\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"17145\" b=\"19050\"/>\
+         <wp:wrapNone/><wp:docPr id=\"1\" name=\"Arrow 1\"/><wp:cNvGraphicFramePr/>\
+         <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+         <wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"611505\" cy=\"400050\"/></a:xfrm>\
+         <a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom><a:noFill/>\
+         <a:ln w=\"3175\"><a:solidFill><a:srgbClr val=\"0070C0\"/></a:solidFill></a:ln></wps:spPr>\
+         <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice>\
+         <mc:Fallback/></mc:AlternateContent></w:r>"
+    )
+}
+
+fn an_outline_arrow_anchored_in_a_table_cell_paints() {
+    // English part A 1f3856c4: a flowchart table whose empty gap cells
+    // anchor unfilled leftRightArrow / downArrow shapes (0.25pt 0070C0
+    // outline). Word draws all eight arrows; we drew none.
+    let arrow = outline_arrow_anchor("downArrow");
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"9000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4000\"/><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:p><w:r><w:t>Left</w:t></w:r></w:p></w:tc>\
+         <w:tc><w:p>{arrow}</w:p></w:tc>\
+         <w:tc><w:p><w:r><w:t>Right</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("cell arrow");
+    let hay = pdf_content_streams(&pdf).join("\n");
+    assert!(
+        hay.contains("0 0.439 0.753 RG") || hay.contains("0 0.44 0.75 RG"),
+        "the arrow's 0070C0 outline is stroked; tail {}",
+        &hay[hay.len().saturating_sub(600)..]
+    );
+}
