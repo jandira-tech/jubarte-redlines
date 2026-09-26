@@ -5964,6 +5964,46 @@ fn a_shape_outline_takes_preset_and_system_colours() {
     );
 }
 
+#[test]
+fn a_front_picture_over_a_later_lower_box_paints_above_it() {
+    // e83fa17a: each photo is a wrapSquare float at relativeHeight above
+    // the white rectangle framing it, anchored in an earlier paragraph.
+    // Word paints the photo over the box; we painted boxes after pictures
+    // whatever their z, and the white fill hid the photos.
+    let pic = blip(
+        "914400",
+        "914400",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"5\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"page\"><wp:posOffset>1270000</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let rect = "<w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"2\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"page\"><wp:posOffset>1143000</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"page\"><wp:posOffset>1143000</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"1168400\" cy=\"1168400\"/><wp:wrapNone/><wp:docPr id=\"7\" name=\"Rectangle 7\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:xfrm><a:ext cx=\"1168400\" cy=\"1168400\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>\
+                 <a:solidFill><a:srgbClr val=\"00FF00\"/></a:solidFill><a:ln><a:noFill/></a:ln></wps:spPr><wps:bodyPr/>\
+             </wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>";
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r>{pic}</w:r><w:r><w:t>One</w:t></w:r></w:p>\
+         <w:p>{rect}<w:r><w:t>Two</w:t></w:r></w:p><w:sectPr/>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("convert picture over box");
+    let hay = String::from_utf8_lossy(&pdf);
+    let fill = hay.find("0.000 1.000 0.000 rg").expect("green box fill");
+    let image = hay.find(" Do").expect("picture");
+    assert!(
+        image > fill,
+        "the higher picture paints after the lower box; fill at {fill}, image at {image}"
+    );
+}
+
 fn inline_green_group(cx: u32, cy: u32) -> String {
     format!(
         "<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\

@@ -310,6 +310,11 @@ rule:
   paints its `lastClr`.
   - Part b 212a1c9d: the School Name / LEA Name form boxes are outlined
     0.5pt `prstClr` black.
+- **Front floats stack by `relativeHeight`, pictures and boxes alike.** A
+  lower front float anchored later paints under the higher ones already
+  on the page; `behindDoc` floats stay under the text.
+  - Part b e83fa17a page 4: the photos paint over the later, lower frame
+    boxes (0.782 -> 0.846).
 
 ## Open, measured but not yet reconstructed
 

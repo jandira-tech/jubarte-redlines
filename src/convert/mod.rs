@@ -16412,6 +16412,9 @@ struct Layout<'a> {
     /// The last row of inline pictures: (page, pen x after it, its bottom,
     /// its height). An inline box in the same textless paragraph joins it.
     pic_row: Option<(usize, f32, f32, f32)>,
+    /// Front (not behindDoc) floats painted so far: (page, op start, op
+    /// end, relativeHeight). A lower one painted later slides under them.
+    front_floats: Vec<(usize, usize, usize, u32)>,
     line_probe: LineProbe,
     /// Pen end and baseline of the last painted body line: where an
     /// inline picture that fits in that line sits.
@@ -16798,6 +16801,7 @@ impl<'a> Layout<'a> {
             side_float: None,
             tb_band: None,
             pic_row: None,
+            front_floats: Vec::new(),
             line_probe: LineProbe::default(),
             last_line_end: None,
             last_line: None,
@@ -16999,6 +17003,46 @@ impl<'a> Layout<'a> {
     fn current(&mut self) -> &mut Page {
         let idx = self.pages.len() - 1;
         &mut self.pages[idx]
+    }
+
+    /// Word stacks front floats by relativeHeight, not anchor order: the
+    /// float just painted from `start` goes under any earlier one on its
+    /// page with a higher z, which move to paint after it (e83fa17a's
+    /// photos over the white boxes anchored after them).
+    fn stack_front_float(&mut self, page: usize, start: usize, z: u32) {
+        if self.pages.len() != page || self.current().ops.len() <= start {
+            return;
+        }
+        let over = |f: &(usize, usize, usize, u32)| f.0 == page && f.3 > z && f.2 <= start;
+        let mut movers: Vec<(usize, usize, usize, u32)> =
+            self.front_floats.iter().copied().filter(over).collect();
+        self.front_floats.retain(|f| !over(f));
+        // Lift the higher floats out, last first so earlier ranges hold.
+        movers.sort_by_key(|f| std::cmp::Reverse(f.1));
+        let mut removed = 0;
+        let mut lifted: Vec<(u32, Vec<Op>)> = Vec::new();
+        for &(_, s, e, fz) in &movers {
+            let ops: Vec<Op> = self.current().ops.drain(s..e).collect();
+            for f in self
+                .front_floats
+                .iter_mut()
+                .filter(|f| f.0 == page && f.1 >= e)
+            {
+                f.1 -= e - s;
+                f.2 -= e - s;
+            }
+            removed += e - s;
+            lifted.push((fz, ops));
+        }
+        let end = self.current().ops.len();
+        self.front_floats.push((page, start - removed, end, z));
+        lifted.sort_by_key(|l| l.0);
+        for (fz, ops) in lifted {
+            let s = self.current().ops.len();
+            self.current().ops.extend(ops);
+            let e = self.current().ops.len();
+            self.front_floats.push((page, s, e, fz));
+        }
     }
 
     fn fresh_page(&self) -> Page {
@@ -19918,7 +19962,11 @@ impl<'a> Layout<'a> {
             }
             slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
         };
+        let (page, start) = (self.pages.len(), self.current().ops.len());
         self.push_image(img, x, y, dw, dh);
+        if !img.behind && matches!(img.slot, ImageSlot::Float { .. }) {
+            self.stack_front_float(page, start, img.z);
+        }
         self.hold_square_float(img.slot, x, y, dw, dh);
     }
 
@@ -24869,6 +24917,16 @@ fn layout(
                         let n = ops.len();
                         lay.current().ops.splice(at..at, ops);
                         lay.behind_end = at + n;
+                        for f in lay
+                            .front_floats
+                            .iter_mut()
+                            .filter(|f| f.0 == page && f.1 >= at)
+                        {
+                            f.1 += n;
+                            f.2 += n;
+                        }
+                    } else if !box_.behind && matches!(box_.slot, ImageSlot::Float { .. }) {
+                        lay.stack_front_float(page, start, box_.z);
                     }
                 }
                 lay.para_top = saved_top;
