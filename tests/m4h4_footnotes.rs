@@ -333,6 +333,52 @@ fn m4_h6_rectify_ids_separator_ref_collision() {
     assert_eq!(ids, vec!["-1", "0", "1", "2"]);
 }
 
+/// When the original has no notes part, the revised document's structural
+/// notes are grafted in after rectify. Their ids (continuationNotice is
+/// usually 1) must stay free, or the renumbered content footnote lands on the
+/// same id: Word and the validator reject the duplicate (en 5cbfcd93).
+#[test]
+fn m4_h6_rectify_ids_keep_the_revised_structural_ids_free() {
+    let mut d = Dom::new();
+    let main = el(&mut d, "body", None);
+    let r = el(&mut d, "footnoteReference", Some("2"));
+    d.add(main, r);
+    let after = el(&mut d, "footnotes", None);
+    for (id, ty) in [
+        ("-1", Some("separator")),
+        ("0", Some("continuationSeparator")),
+        ("1", Some("continuationNotice")),
+        ("2", None),
+    ] {
+        let n = el(&mut d, "footnote", Some(id));
+        if let Some(ty) = ty {
+            d.set_attribute_value(n, &W::name("type"), Some(ty));
+        }
+        d.add(after, n);
+    }
+    // The original had no footnotes: the withRevisions part is an empty shell.
+    let wr = el(&mut d, "footnotes", None);
+    let footnotes = NotesSet {
+        before: None,
+        after: Some(after),
+        with_revisions: Some(wr),
+    };
+    rectify_footnote_endnote_ids(
+        &mut d,
+        main,
+        footnotes,
+        NotesSet::default(),
+        &Default::default(),
+        &mut 1,
+    )
+    .unwrap();
+    assert_eq!(
+        d.attribute(r, &W::id()).unwrap(),
+        "2",
+        "id 1 belongs to the revised continuationNotice"
+    );
+}
+
 #[test]
 fn m4_h6_rectify_ids_missing_def_is_typed_error() {
     // No def exists in either before or after — must surface as typed

@@ -697,15 +697,22 @@ fn apply_rectify(dom: &mut Dom, def_name: &XName, notes: &NotesSet, plan: &Recti
     // Renumber content notes avoiding ids still held by structural notes
     // (e.g. continuationNotice at id=1). Fall back to the planned 1..n
     // sequence when nothing is reserved.
-    let reserved: std::collections::HashSet<String> = notes
-        .with_revisions
-        .map(|wr| {
-            dom.elements(wr, Some(def_name))
+    let structural_ids = |root: Option<NodeId>| -> std::collections::HashSet<String> {
+        root.map(|r| {
+            dom.elements(r, Some(def_name))
                 .into_iter()
+                .filter(|&n| is_structural_note(dom, n))
                 .filter_map(|n| dom.attribute(n, &W::id()).map(str::to_string))
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+    };
+    let mut reserved = structural_ids(notes.with_revisions);
+    // An original without separators later adopts the revised document's
+    // structural notes wholesale; their ids must stay free too.
+    if reserved.is_empty() {
+        reserved = structural_ids(notes.after);
+    }
     let mut next = 1u32;
     let mut assigned: Vec<String> = Vec::with_capacity(plan.refs.len());
     for _ in 0..plan.refs.len() {
