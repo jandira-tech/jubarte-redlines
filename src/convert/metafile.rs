@@ -703,9 +703,9 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                 let mut line = vec![start];
                 if bezier {
                     let mut p0 = start;
-                    for trio in rest.chunks_exact(3) {
-                        line.extend(flatten_bezier(p0, trio[0], trio[1], trio[2]));
-                        p0 = trio[2];
+                    for &[c1, c2, end] in rest.as_chunks::<3>().0 {
+                        line.extend(flatten_bezier(p0, c1, c2, end));
+                        p0 = end;
                     }
                 } else {
                     line.extend_from_slice(rest);

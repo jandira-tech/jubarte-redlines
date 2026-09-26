@@ -346,9 +346,8 @@ fn cargo_lock_is_consistent_with_the_new_dependencies() {
 // Version / changelog consistency across the crate and the desktop app
 // ---------------------------------------------------------------------------
 
-/// Desktop app version. The engine crate may move first (0.9.0); the app
-/// package is still on its last published line.
-const EXPECTED_VERSION: &str = "0.7.1";
+/// Desktop app version: since 0.9.2 the app ships at the engine's version.
+const EXPECTED_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[test]
 fn root_changelog_has_a_dated_entry_and_release_link_for_the_version() {

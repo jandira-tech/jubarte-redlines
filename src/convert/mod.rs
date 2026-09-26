@@ -15602,7 +15602,7 @@ fn duotone_image(kind: ImageKind, dom: &Dom, blip: NodeId, pkg: &PartFs) -> Imag
         } => (width, height, bytes, alpha),
         other => return other,
     };
-    for px in bytes.chunks_exact_mut(3) {
+    for px in bytes.as_chunks_mut::<3>().0 {
         let luma =
             (0.2126 * f32::from(px[0]) + 0.7152 * f32::from(px[1]) + 0.0722 * f32::from(px[2]))
                 / 255.0;

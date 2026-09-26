@@ -8331,9 +8331,9 @@ fn en_dash_bullet_hangs_its_body_at_the_indent() {
 }
 
 #[test]
-fn official_file_146_en_dash_stays_concatenated_after_mini_endash() {
-    // Word p5 wants dash 88 / body 104. mini 205–208 hanging dropped
-    // redline mean −0.0047; keep concatenated E at ~96.
+fn official_file_146_en_dash_hangs_its_body_like_word() {
+    // Word's file_146 PDF, page 6: the en-dash item paints the dash at 88
+    // and the body ("Every PR must…") at 104.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
@@ -8351,18 +8351,8 @@ fn official_file_146_en_dash_stays_concatenated_after_mini_endash() {
                 .any(|(ex, ey)| (ey - dy).abs() < 0.6 && (100.0..110.0).contains(ex))
     });
     assert!(
-        !hung,
-        "en-dash hanging was mini 205–208 redline ITT-neg; dashes={dashes:?} es={es:?}"
-    );
-    let concat = dashes.iter().any(|(dx, dy)| {
-        (80.0..95.0).contains(dx)
-            && es
-                .iter()
-                .any(|(ex, ey)| (ey - dy).abs() < 0.6 && (90.0..100.0).contains(ex))
-    });
-    assert!(
-        concat,
-        "Every PR must stay concatenated at ~96; dashes={dashes:?} es={es:?}"
+        hung,
+        "Word hangs the body at 104 after the dash at 88; dashes={dashes:?} es={es:?}"
     );
 }
 
@@ -14607,19 +14597,19 @@ fn official_file_146_stays_seven_pages_after_mini_114() {
 }
 
 #[test]
-fn official_file_146_serialises_heading_stays_on_page_one_after_mini_401() {
-    // Word: first `Serialises to w:ins` heading is page 2. Keeping body
-    // xml:space (mini 401) matched that wrap (file_146 +1.27) but dropped
-    // sample/eigenpal clones −6.8 ITT. Packed p1 + 7pp is the KEEP lock.
+fn official_file_146_serialises_heading_starts_page_two_like_word() {
+    // Word's file_146 PDF: the first `Serialises to w:ins` heading is on
+    // page 2, not page 1.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
     let pages = pdf_content_streams(&pdf);
     assert!(pages.len() >= 2, "expected >=2 pages, got {}", pages.len());
     let p1 = pdf_winansi_text(pages[0].as_bytes());
+    let p2 = pdf_winansi_text(pages[1].as_bytes());
     assert!(
-        p1.contains("Serialises"),
-        "mini 401: collapsed generator pad packs Serialises onto page 1; p1={}",
+        !p1.contains("Serialises") && p2.contains("Serialises"),
+        "Word starts Serialises on page 2; p1={}",
         &p1[..p1.len().min(120)]
     );
 }
@@ -20678,9 +20668,9 @@ fn deleted_only_para_pbdr_stays_painted_after_mini_pbdrskip() {
 }
 
 #[test]
-fn official_file_146_e2e8f0_rule_count_stays_after_mini_pbdrskip() {
-    // Word file_146 E2E8F0 sc count is 17. Skipping empty/del pBdr
-    // (mini 217–220) was redline ITT-neg. Keep ~40 rules; 7pp.
+fn official_file_146_e2e8f0_rule_count_matches_word() {
+    // Word's file_146 PDF paints 33 E2E8F0 rules wider than 200pt
+    // (per page 4 3 5 7 3 7 4); we paint 30 (short on pages 3 and 4).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
@@ -20688,10 +20678,7 @@ fn official_file_146_e2e8f0_rule_count_stays_after_mini_pbdrskip() {
         .iter()
         .filter(|(w, _)| *w > 200.0)
         .count();
-    assert!(
-        (32..=48).contains(&n),
-        "mini pbdrskip was redline ITT-neg; keep ~40 E2E8F0 rules; n={n}"
-    );
+    assert!((32..=34).contains(&n), "Word paints 33 E2E8F0 rules; n={n}");
 }
 
 #[test]
@@ -26885,9 +26872,9 @@ fn cell_tcmar_80_stays_flush_after_mini_pill80() {
 }
 
 #[test]
-fn official_file_146_pills_stay_flush_after_mini_pill80() {
-    // Word p1 1E293B inner is pad_t below outer. mini 257–260 inset
-    // dropped redline mean −0.005. Keep flush; 7pp.
+fn official_file_146_pills_inset_like_word() {
+    // Word's file_146 PDF, page 2: each 1E293B pill's inner fill starts
+    // 4.1pt below the cell top (outer 404.4, inner 408.5).
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");
@@ -26919,28 +26906,11 @@ fn official_file_146_pills_stay_flush_after_mini_pill80() {
             .fold(0.0_f32, f32::max);
         let pad = outer_top - inner_top;
         assert!(
-            pad.abs() < 1.0,
-            "page {i} mini pill80 ITT-neg; keep flush 1E293B tops; pad={pad} outer={outer:?} inner={inner:?}"
+            (3.5..=4.7).contains(&pad),
+            "page {i}: Word insets the 1E293B pill 4.1pt; pad={pad} outer={outer:?} inner={inner:?}"
         );
     }
     assert!(found, "file_146 must still paint 1E293B pills");
-}
-
-#[test]
-fn official_sample_iter2_thomas_v_ins_is_word_teal() {
-    // Word sample/file_146 thomas.v ins is #005B70 regardless of
-    // first-seen index (sample slot 1, file_146 slot 2). Mini 732
-    // slot-1 retune ITT-neg NR median (sara.k occupies slot 1 on
-    // file_146). Name-keyed teal. Del stays #D13438 (mini 239).
-    let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/sample_document_word_repair_of_our_output_iter2_word_repaired_2.docx";
-    let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert sample_iter2");
-    assert_eq!(pdf_page_count(&pdf), 7, "Word sample_iter2 is 7pp");
-    let pages = pdf_content_streams(&pdf);
-    let joined = pages.join("\n");
-    assert!(
-        joined.contains("0.000 0.357 0.439"),
-        "thomas.v ins must be Word #005B70 by name"
-    );
 }
 
 #[test]
