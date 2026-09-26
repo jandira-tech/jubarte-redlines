@@ -18507,7 +18507,13 @@ impl<'a> Layout<'a> {
             }
             let text_left = match align {
                 Align::Right => Some(dw + dist_l),
-                Align::Left if placed && text_room > right_room => {
+                // Word fills a frame's left gap first (a 101pt gap takes the
+                // label even with 149pt on the right).
+                Align::Left
+                    if placed
+                        && (text_room > right_room
+                            || (frame && text_room >= MIN_SIDE_FRAME_ROOM_PT)) =>
+                {
                     Some((self.content_width() - text_room).max(0.0))
                 }
                 Align::Left => None,

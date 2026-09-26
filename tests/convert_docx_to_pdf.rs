@@ -2858,6 +2858,33 @@ fn a_wide_square_float_with_room_beside_it_wraps_the_text() {
 }
 
 #[test]
+fn a_frame_with_room_on_both_sides_takes_its_label_on_the_left() {
+    // Live Word: a text-anchored frame at 110pt into the column (left gap
+    // 101pt, right gap 149pt) fills the left gap first: "Date of Summary:"
+    // starts at 72 beside it. We put the label in the roomier right gap
+    // (x=391); 46b5cb36's and 4ca9d50a's date frames.
+    let frame = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:framePr w:w="4000" w:h="541" w:hSpace="180" w:wrap="around" w:vAnchor="text" w:hAnchor="margin" w:x="2200" w:y="75"/><w:pBdr><w:top w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:left w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:right w:val="single" w:sz="6" w:space="1" w:color="auto"/></w:pBdr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let body = format!(
+        "<w:p><w:r><w:t>Before line</w:t></w:r></w:p>{}{}\
+         <w:p><w:r><w:t>Date of Summary:</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        frame("FrameOne"),
+        frame("FrameTwo")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("date frame");
+    let (x, _) = pdf_glyph_text_xy(&pdf, "Date").expect("label paints");
+    assert!(
+        (x - 72.0).abs() < 1.0,
+        "the label fills the left gap; x={x}"
+    );
+}
+
+#[test]
 fn a_word_font_with_an_abbreviated_file_name_is_found() {
     // fixtures_500 00dd36c7: Word's own Garamond ships as GARA.ttf /
     // GARAIT.ttf, which the file-name match never reached; we painted
