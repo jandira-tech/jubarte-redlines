@@ -5236,25 +5236,30 @@ fn hindi_counting_label(n: u32) -> String {
     }
 }
 
-/// MS-DOCX koreanCounting: 일, 이, 삼, 십, 십일 (U+C77C). Not digit-wise 일영.
+/// MS-DOCX koreanCounting: 일, 이, 삼, 십, 십일, 백 (U+C77C). Not digit-wise 일영.
+/// A unit multiplier of one is dropped (십, 백, 천, never 일십).
 fn korean_counting_label(n: u32) -> String {
     const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
-    match n {
-        0 => "영".into(),
-        1..=9 => DIGITS[n as usize].into(),
-        10 => "십".into(),
-        11..=19 => format!("십{}", DIGITS[(n - 10) as usize]),
-        20..=99 => {
-            let tens = n / 10;
-            let ones = n % 10;
-            let mut s = format!("{}십", DIGITS[tens as usize]);
-            if ones > 0 {
-                s.push_str(DIGITS[ones as usize]);
-            }
-            s
-        }
-        n => n.to_string(),
+    const UNITS: [(u32, &str); 3] = [(1000, "천"), (100, "백"), (10, "십")];
+    if n == 0 || n > 9999 {
+        return if n == 0 { "영".into() } else { n.to_string() };
     }
+    let mut s = String::new();
+    let mut rest = n;
+    for (unit, name) in UNITS {
+        let d = rest / unit;
+        rest %= unit;
+        if d > 1 {
+            s.push_str(DIGITS[d as usize]);
+        }
+        if d > 0 {
+            s.push_str(name);
+        }
+    }
+    if rest > 0 {
+        s.push_str(DIGITS[rest as usize]);
+    }
+    s
 }
 
 /// MS-DOCX koreanDigital: 일, 일영, 일영영… Hangul digits with 영 for 0.
@@ -29003,6 +29008,10 @@ mod page_num_fmt_labels {
         assert_eq!(format_num(NumFmt::KoreanCounting, 1), "일");
         assert_eq!(format_num(NumFmt::KoreanCounting, 10), "십");
         assert_eq!(format_num(NumFmt::KoreanCounting, 11), "십일");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 20), "이십");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 100), "백");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 305), "삼백오");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 1010), "천십");
         assert_eq!(format_num(NumFmt::KoreanDigital, 10), "일영");
         assert_eq!(ideograph_digital_label(10), "一〇");
         assert_eq!(format_num(NumFmt::KoreanDigital2, 10), "一零");

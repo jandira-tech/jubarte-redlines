@@ -77,14 +77,42 @@ fn chunk_html(bytes: &[u8]) -> Option<String> {
         .or_else(|| text[html_at..].find("\n\n").map(|i| html_at + i + 2))?;
     let headers = &lower[..head_end];
     let part_start = headers.rfind("------").unwrap_or(0);
-    let qp = headers[part_start..].contains("quoted-printable");
+    let part_headers = &headers[part_start..];
     let body = &text[head_end..];
     let body = body.find("\n------").map_or(body, |end| &body[..end]);
-    Some(if qp {
+    Some(if part_headers.contains("quoted-printable") {
         quoted_printable(body)
+    } else if part_headers.contains("base64") {
+        String::from_utf8_lossy(&base64_decode(body)).into_owned()
     } else {
         body.to_string()
     })
+}
+
+/// RFC 2045 base64: line breaks and other non-alphabet bytes are skipped,
+/// and decoding stops at the first `=` pad.
+fn base64_decode(s: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for b in s.bytes() {
+        let v = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => break,
+            _ => continue,
+        };
+        acc = (acc << 6) | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    out
 }
 
 fn quoted_printable(s: &str) -> String {
@@ -233,6 +261,8 @@ struct Cell {
 struct Table {
     border: bool,
     rows: Vec<Vec<Cell>>,
+    /// `sinks.len()` when the table opened; a deeper sink is an open cell.
+    depth: usize,
 }
 
 struct Builder {
@@ -405,7 +435,26 @@ impl Builder {
         }
     }
 
+    /// Whether the innermost table has a cell open.
+    fn in_open_cell(&self) -> bool {
+        self.tables
+            .last()
+            .is_some_and(|t| self.sinks.len() > t.depth)
+    }
+
+    /// Ends the innermost table's open cell, whose end tag HTML lets a
+    /// document leave out: a new cell, a new row or the table's end does.
+    fn close_open_cell(&mut self) {
+        if self.in_open_cell() {
+            if let Some(i) = self.fmts.iter().rposition(|(t, _)| t == "td" || t == "th") {
+                self.fmts.truncate(i);
+            }
+            self.end_cell();
+        }
+    }
+
     fn end_table(&mut self) {
+        self.close_open_cell();
         self.flush();
         let Some(table) = self.tables.pop() else {
             return;
@@ -490,14 +539,17 @@ impl Builder {
                 self.tables.push(Table {
                     border,
                     rows: Vec::new(),
+                    depth: self.sinks.len(),
                 });
             }
             "tr" => {
+                self.close_open_cell();
                 if let Some(t) = self.tables.last_mut() {
                     t.rows.push(Vec::new());
                 }
             }
             "td" | "th" => {
+                self.close_open_cell();
                 self.flush();
                 self.sinks.push(String::new());
                 self.cell_spans.push(
@@ -533,7 +585,11 @@ impl Builder {
         }
         match tag {
             t if BLOCKS.contains(&t) => self.flush(),
-            "td" | "th" => self.end_cell(),
+            "td" | "th" => {
+                if self.in_open_cell() {
+                    self.end_cell();
+                }
+            }
             "table" => self.end_table(),
             _ => {}
         }
@@ -811,6 +867,39 @@ mod tests {
         }
 
         #[test]
+        fn omitted_cell_and_row_end_tags_keep_the_table() {
+            // HTML lets </td>, </th> and </tr> go unwritten.
+            let wml = html_to_wml("<table><tr><th>H1<th>H2<tr><td>A<td>B</table><p>After</p>");
+            assert_eq!(wml.matches("<w:tbl>").count(), 1, "{wml}");
+            assert_eq!(wml.matches("<w:tr>").count(), 2, "{wml}");
+            assert_eq!(wml.matches("<w:tc>").count(), 4, "{wml}");
+            for t in ["H1", "H2", "A", "B", "After"] {
+                assert!(wml.contains(&format!(">{t}</w:t>")), "{t}: {wml}");
+            }
+            let after = &wml[wml.find(">After<").unwrap() - 400..];
+            assert!(!after.contains("<w:b/>"), "th bold must not leak: {wml}");
+            assert!(wml.find("</w:tbl>").unwrap() < wml.find(">After<").unwrap());
+            // A nested table with implicit ends stays inside its outer cell.
+            let wml = html_to_wml(
+                "<table><tr><td>Out<table><tr><td>In1<td>In2</table></td><td>Next</table>",
+            );
+            assert_eq!(wml.matches("<w:tbl>").count(), 2, "{wml}");
+            for t in ["Out", "In1", "In2", "Next"] {
+                assert!(wml.contains(&format!(">{t}</w:t>")), "{t}: {wml}");
+            }
+        }
+
+        #[test]
+        fn a_base64_html_part_is_decoded() {
+            // "<p>Olá</p>" in UTF-8, wrapped the way MIME writers wrap it.
+            let mht = "MIME-Version: 1.0\r\n\r\n------=_NextPart\r\n\
+                   Content-Type: text/html; charset=\"utf-8\"\r\n\
+                   Content-Transfer-Encoding: base64\r\n\r\n\
+                   PHA+T2zDoTwv\r\ncD4=\r\n------=_NextPart--";
+            assert_eq!(chunk_html(mht.as_bytes()).unwrap(), "<p>Olá</p>");
+        }
+
+        #[test]
         fn quoted_printable_handles_soft_breaks_utf8_and_incomplete_escapes() {
             assert_eq!(
                 quoted_printable("=C4=8Clanak=20one=\r\n=20two=\n!"),
@@ -921,7 +1010,10 @@ mod tests {
             );
             // A self-closed or stray closing tag has no body to swallow.
             let wml = html_to_wml("<p>A<script/>B</script>C</p><p>D</p>");
-            assert!(wml.contains(">A</w:t>") && wml.contains(">D</w:t>"), "{wml}");
+            assert!(
+                wml.contains(">A</w:t>") && wml.contains(">D</w:t>"),
+                "{wml}"
+            );
             assert!(wml.contains("B") && wml.contains("C"), "{wml}");
         }
 
