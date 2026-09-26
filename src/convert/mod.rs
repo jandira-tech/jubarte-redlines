@@ -7741,6 +7741,23 @@ fn ul_line_extra(line: &[TextRun], size: f32, space_for_ul: bool) -> f32 {
     }
 }
 
+/// Removes the break that ends a paragraph's text, with the paragraph's
+/// spacing after: the empty line it leaves holds only the end mark.
+fn drop_trailing_break(para: &mut CellPara) {
+    let Some(ri) = para.runs.iter().rposition(|r| !r.text.is_empty()) else {
+        return;
+    };
+    let run = &mut para.runs[ri];
+    if !run.text.ends_with('\n') {
+        return;
+    }
+    run.text.pop();
+    if run.text.is_empty() {
+        para.runs.remove(ri);
+    }
+    para.style.after = 0.0;
+}
+
 fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for_ul: bool) -> f32 {
     // An empty w:hideMark cell's end-of-cell mark does not size the row.
     let empty = cell.nested.is_empty()
@@ -9928,6 +9945,21 @@ fn table_block(
             // 5pt + its 4pt margin in from the table edge.
             let (pad_t, pad_b) = (pad_t + tbl_spacing, pad_b + tbl_spacing);
             let pad_l = pad_l + 2.0 * tbl_spacing;
+            let hide_mark = first_named(dom, cell, "tcPr")
+                .and_then(|pr| direct_named(dom, pr, "hideMark"))
+                .is_some_and(|n| !val_is_false(dom, Some(n)));
+            // Below a table's first row, a hideMark cell whose text ends in
+            // a break drops the empty end-of-cell line that break leaves,
+            // and its spacing after (English b/35e46f6e's HTML rows 16.8pt
+            // apart; live Word 2026-09-26: rows two and three of a
+            // three-row probe 15.6pt apart, the first row 42pt).
+            if hide_mark
+                && ri > 0
+                && nested.is_empty()
+                && let Some(last) = cell_paras.last_mut()
+            {
+                drop_trailing_break(last);
+            }
             cells.push(RawCell {
                 paras: cell_paras,
                 nested,
@@ -9948,9 +9980,7 @@ fn table_block(
                 pad_b,
                 nowrap: cell_nowrap(dom, cell) && !fixed_width_cell(dom, table, cell),
                 vertical: cell_vertical(dom, cell),
-                hide_mark: first_named(dom, cell, "tcPr")
-                    .and_then(|pr| direct_named(dom, pr, "hideMark"))
-                    .is_some_and(|n| !val_is_false(dom, Some(n))),
+                hide_mark,
                 borders,
             });
         }

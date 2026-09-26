@@ -12856,6 +12856,45 @@ fn hidemark_empty_cells_do_not_size_their_row() {
 }
 
 #[test]
+fn a_hidemark_cell_below_the_first_row_drops_its_trailing_break_line() {
+    // English b/35e46f6e: HTML-born rows whose w:hideMark cell text ends in
+    // a w:br, with 12pt after. Word advances 16.8pt from one such row to
+    // the next, not 42.6: the empty line the break leaves (the end-of-cell
+    // mark's) and its spacing after are ignored. Live Word 2026-09-26: the
+    // table's first row keeps both (RowOne to RowTwo 42.0), rows below
+    // drop them (RowTwo to RowEnd 15.6); without hideMark 42.2.
+    let rows = |hide: bool| {
+        let hm = if hide { "<w:hideMark/>" } else { "" };
+        let cell = |txt: &str, br: bool| {
+            let br = if br { "<w:r><w:br/></w:r>" } else { "" };
+            format!(
+                r#"<w:tc><w:tcPr><w:tcW w:w="5000" w:type="pct"/>{hm}</w:tcPr><w:p><w:pPr><w:spacing w:after="240" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:t>{txt}</w:t></w:r>{br}</w:p></w:tc>"#
+            )
+        };
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr><w:tblGrid><w:gridCol w:w="9360"/></w:tblGrid><w:tr>{}</w:tr><w:tr>{}</w:tr><w:tr>{}</w:tr></w:tbl><w:p/><w:sectPr/>"#,
+            cell("RowOne", true),
+            cell("RowTwo", true),
+            cell("RowEnd", false)
+        )
+    };
+    let gaps = |hide: bool| {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&rows(hide), "")).expect("hideMark rows");
+        let y = |w: &str| pdf_glyph_text_xy(&pdf, w).expect("row paints").1;
+        (y("RowOne") - y("RowTwo"), y("RowTwo") - y("RowEnd"))
+    };
+    let ((first, second), (shown_first, shown_second)) = (gaps(true), gaps(false));
+    assert!(
+        (first - shown_first).abs() < 0.5,
+        "the first row keeps its break line; {first} vs {shown_first}"
+    );
+    assert!(
+        shown_second - second > 20.0,
+        "a lower hideMark row drops its break line and after; {second} vs {shown_second}"
+    );
+}
+
+#[test]
 fn autospacing_is_dropped_at_a_cells_edges() {
     // fixtures_500 0129b302: cell paragraphs with before/afterAutospacing
     // (no table style). Word drops the auto space before a cell's first
