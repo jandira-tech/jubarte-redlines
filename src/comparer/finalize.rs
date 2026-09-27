@@ -7384,8 +7384,11 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 {
                     let t0 = para_revision_body_text(dom, d);
                     let n0 = body_token_set(&t0).len();
-                    let first_is_cell = para_body_is_digits_only(dom, d)
-                        || ((1..=2).contains(&n0) && para_body_alnum_len(dom, d) <= 12);
+                    // A styled Title/Heading is a heading, not a cell: Word
+                    // mixes it (file_134 × file_135 "Table Widths").
+                    let first_is_cell = !para_has_heading_or_title_style(dom, d)
+                        && (para_body_is_digits_only(dom, d)
+                            || ((1..=2).contains(&n0) && para_body_alnum_len(dom, d) <= 12));
                     if first_is_cell {
                         continue;
                     }
@@ -7577,7 +7580,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 let adopt_del_ppr = !m360_fld_x_heading
                     && ((del_structural && !ins_structural && !(ins_long_prose && del_list_multi))
                         || (ins_jc_only && del_has_spacing)
-                        || (del_heading && ins_list_style)
+                        || (del_heading && (ins_list_style || dels.len() >= 2))
                         || short_list_x_listparagraph);
                 // M218: mark-only empty pure-D fold — Word parks the deleted
                 // pilcrow on the pure-I carrier (contract_review MIX + mark_del).

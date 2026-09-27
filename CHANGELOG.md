@@ -186,6 +186,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   keeps that spacing live, unrevised, as Word does. It used to be moved into
   a `w:pPrChange` over an empty paragraph, which also drew a change bar Word
   does not show (super_editor complex2×complexexport1, +0.009).
+- A deleted Title or Heading that opens a run of deleted paragraphs is no
+  longer mistaken for a checklist cell ("Table Widths" has only two short
+  words). Word mixes it with the last inserted paragraph, and the mixed
+  paragraph keeps the deleted heading's properties and deleted mark. It used
+  to stay a separate paragraph and push every line below it down
+  (file_134×file_135 0.12 → 0.41). +0.37 Jaccard summed over 14 changed
+  redlines, 3 better, 2 worse. The larger loss comes from an inserted
+  text-box paragraph that we already mixed wrongly, where Word keeps it
+  inserted.
 
 ### Added
 
