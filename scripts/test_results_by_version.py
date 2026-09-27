@@ -107,3 +107,16 @@ def test_render_ranks_by_mean_and_drops_unranked_runs(monkeypatch, tmp_path):
     rv.add(metric=key, tool='none', version='3', when=when, mean=None, median=None, n=0)
     rows = [line for line in rv.render().splitlines() if line.startswith('| 1 |') or line.startswith('| 2 |')]
     assert [r.split(' | ')[1] for r in rows] == ['high', 'low']
+
+
+def test_jsonl_readers_skip_lines_that_are_not_objects(monkeypatch, tmp_path):
+    _fresh(monkeypatch, tmp_path)
+    junk = 'null\n[1]\n"x"\n7\n{"corpus": null}\n'
+    (tmp_path / 'docx_to_pdf_speed').mkdir()
+    (tmp_path / 'docx_to_pdf_speed' / 'speed.jsonl').write_text(junk)
+    (tmp_path / 'speed.jsonl').write_text(junk)
+    (tmp_path / 'bench.jsonl').write_text(junk)
+    rv.docx_to_pdf_speed()
+    rv.speed_rows(tmp_path / 'speed.jsonl')
+    rv.bench_jsonl()
+    assert rv.RUNS == []

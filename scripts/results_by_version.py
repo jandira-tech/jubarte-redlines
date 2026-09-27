@@ -27,6 +27,7 @@ import glob
 import json
 import os
 import statistics
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -138,6 +139,17 @@ def add(**kw) -> None:
     RUNS.append(Run(**kw))
 
 
+def jsonl_objects(lines) -> Iterator[dict]:
+    """The JSON objects of a JSONL stream; torn lines and non-object values are skipped."""
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            yield row
+
+
 # --- redline markup benches (results/bench.jsonl) ------------------------------------------
 
 
@@ -146,11 +158,7 @@ def bench_jsonl() -> None:
     if not path.exists():
         return
     with path.open() as fh:
-        for line in fh:
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        for row in jsonl_objects(fh):
             bench = row.get('benchmark')
             if not bench:
                 continue
@@ -193,11 +201,7 @@ def bench_jsonl() -> None:
 def speed_rows(path: Path) -> None:
     if not path.exists():
         return
-    for line in path.read_text().splitlines():
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for row in jsonl_objects(path.read_text().splitlines()):
         if row.get('unit') != 'ms_per_redline':
             continue
         key = metric(
@@ -243,12 +247,10 @@ def docx_to_pdf_speed() -> None:
     path = RES / 'docx_to_pdf_speed' / 'speed.jsonl'
     if not path.exists():
         return
-    for line in path.read_text().splitlines():
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
+    for row in jsonl_objects(path.read_text().splitlines()):
+        corpus = row.get('corpus')
+        if not isinstance(corpus, str):
             continue
-        corpus = row['corpus']
         label, docs = D2P_SPEED_CORPORA.get(corpus, (corpus, 'clean'))
         warm = row.get('mode') == 'warm'
         key = metric(
