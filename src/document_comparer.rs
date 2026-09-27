@@ -5297,13 +5297,16 @@ fn compare_documents_impl(
                             if let Some(droot) = pd.root(dd) {
                                 let mut changed = false;
                                 // Comment anchors keep their source ids; stay clear
-                                // of them as fix_up_revision_ids does.
-                                let mut next_id = pd
-                                    .descendants(droot, Some(&W::name("commentRangeStart")))
-                                    .into_iter()
-                                    .filter_map(|c| pd.attribute(c, &W::id())?.parse::<u32>().ok())
-                                    .map(|n| n + 1)
-                                    .fold(next_free_revision_id(&pd, droot), u32::max);
+                                // of all three kinds, as fix_up_revision_ids does.
+                                let mut next_id =
+                                    ["commentRangeStart", "commentRangeEnd", "commentReference"]
+                                        .into_iter()
+                                        .flat_map(|n| pd.descendants(droot, Some(&W::name(n))))
+                                        .filter_map(|c| {
+                                            pd.attribute(c, &W::id())?.parse::<u32>().ok()
+                                        })
+                                        .map(|n| n + 1)
+                                        .fold(next_free_revision_id(&pd, droot), u32::max);
                                 for p in pd.descendants(droot, Some(&W::name("p"))) {
                                     let Some(ppr) = pd.element(p, &W::p_pr()) else {
                                         continue;
