@@ -338,6 +338,29 @@ fn m4_f5_fix_up_ids() {
     );
 }
 
+/// Table-cell insertions and deletions are revision records too: renumbering
+/// must hand them their own ids, never leave a source id another record reuses.
+#[test]
+fn m4_f5_fix_up_ids_renumbers_cell_revisions() {
+    let mut d = Dom::new();
+    let body = d.new_element(W::body());
+    let mk = |d: &mut Dom, name, id: &str| {
+        let e = d.new_element(name);
+        d.set_attribute_value(e, &W::id(), Some(id));
+        d.add(body, e);
+        e
+    };
+    let cell_ins = mk(&mut d, W::name("cellIns"), "1");
+    let ins = mk(&mut d, W::ins(), "50");
+    let cell_del = mk(&mut d, W::name("cellDel"), "2");
+    fix_up_revision_ids(&mut d, &[body]);
+    let ids: Vec<&str> = [cell_ins, ins, cell_del]
+        .iter()
+        .map(|&e| d.attribute(e, &W::id()).unwrap())
+        .collect();
+    assert_eq!(ids, ["1", "2", "3"]);
+}
+
 /// M4.F.7 — ignore_pt14 + remove scratch markup.
 #[test]
 fn m4_f7_pt14_and_scratch() {

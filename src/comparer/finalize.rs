@@ -660,6 +660,8 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
         W::name("tcPrChange"),
         W::name("sectPrChange"),
         W::name("numberingChange"),
+        W::cell_ins(),
+        W::cell_del(),
         W::name("cellMerge"),
     ];
     // Comment anchors keep their own ids (must stay aligned with comments.xml).

@@ -180,7 +180,7 @@ fn effective_para_spacing(
 }
 
 /// Revision record element local names that carry a `w:id` identifying the
-/// change. Word treats a colliding id on any of these as the same revision
+/// change, including list, move-range and table-cell records. Word treats a colliding id on any of these as the same revision
 /// record and drops the later one, so a newly synthesized `w:*Change` must not
 /// reuse an id already present in the stylesheet.
 const REVISION_CHANGE_ELEMENTS: &[&str] = &[
@@ -195,10 +195,18 @@ const REVISION_CHANGE_ELEMENTS: &[&str] = &[
     "del",
     "moveFrom",
     "moveTo",
+    "moveFromRangeStart",
+    "moveFromRangeEnd",
+    "moveToRangeStart",
+    "moveToRangeEnd",
+    "numberingChange",
+    "cellIns",
+    "cellDel",
+    "cellMerge",
 ];
 
 /// The next free revision id under `styles_root`: one greater than the maximum
-/// numeric `w:id` on any `w:*Change` revision element present (0 when none).
+/// numeric `w:id` on any revision record present (0 when none).
 /// `merge_normal_style_spacing`/`merge_normal_style_rpr` synthesize at most one
 /// `w:pPrChange` and one `w:rPrChange` per compare, so a single starting id is
 /// reserved here; the rPr pass bumps by one when it fires after the pPr pass.
@@ -6282,6 +6290,30 @@ mod tests {
             148,
             "next free id must exceed the highest existing *Change id (147), not be 1"
         );
+    }
+
+    /// Every `w:id` revision carrier raises the floor, not only the `*Change`
+    /// records: a list, move-range or table-cell revision holding the next id
+    /// would collide with a synthesized `w:pPrChange`.
+    #[test]
+    fn next_free_revision_id_counts_list_move_range_and_cell_carriers() {
+        for (carrier, id) in [
+            ("numberingChange", 40),
+            ("moveFromRangeStart", 41),
+            ("moveToRangeEnd", 42),
+            ("cellIns", 43),
+            ("cellDel", 44),
+            ("cellMerge", 45),
+        ] {
+            let mut dom = Dom::new();
+            let xml = format!(
+                "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>\
+                 <w:ins w:id=\"7\" w:author=\"x\" w:date=\"d\"/><w:{carrier} w:id=\"{id}\" w:author=\"x\" w:date=\"d\"/>\
+                 </w:body></w:document>"
+            );
+            let (_root, doc) = parse(&mut dom, &xml);
+            assert_eq!(next_free_revision_id(&dom, doc), id + 1, "{carrier}");
+        }
     }
 
     /// sz must be inserted after position/kern, NOT immediately after rFonts —
