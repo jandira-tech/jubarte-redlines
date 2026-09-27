@@ -145,7 +145,7 @@ fn do_lcs(cul1: &[ComparisonUnitAtom], cul2: &[ComparisonUnitAtom], out: &mut Ve
 
 use super::atoms::{ComparisonUnit, CorrelatedSequence};
 use super::{ComparisonUnitGroupType, WmlComparerSettings};
-use crate::namespaces::{PT, W};
+use crate::namespaces::{M, PT, W};
 use crate::xmllinq::Dom;
 
 // ── para-mark predicates (M4.C.4) ────────────────────────────────────────────
@@ -5194,6 +5194,14 @@ fn group_has_drawing_or_pict(dom: &Dom, u: &ComparisonUnit) -> bool {
     })
 }
 
+/// An equation is content even though it carries no `w:t`.
+fn group_has_math(dom: &Dom, u: &ComparisonUnit) -> bool {
+    u.descendant_atoms().iter().any(|a| {
+        dom.name(a.content_element)
+            .is_some_and(|n| n == M::name("oMath") || n == M::name("oMathPara"))
+    })
+}
+
 /// Group sha1s that carry real `w:t` text **or** a drawing/pict. Empty
 /// paragraphs (identical structure on both sides) share a group hash and
 /// would otherwise defeat the unrelated-sources predicate even when every
@@ -5210,7 +5218,7 @@ fn contentful_group_sha1s<'a>(dom: &Dom, cu: &'a [ComparisonUnit]) -> Vec<&'a st
         .filter_map(|u| {
             as_group(u)?;
             let has_text = run_real_text_len(dom, std::slice::from_ref(u)) > 0;
-            if !has_text && !group_has_drawing_or_pict(dom, u) {
+            if !has_text && !group_has_drawing_or_pict(dom, u) && !group_has_math(dom, u) {
                 return None;
             }
             Some(u.sha1())

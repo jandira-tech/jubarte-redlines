@@ -349,3 +349,48 @@ fn empty_mark_only_del_participates_in_ins_before_del() {
         );
     }
 }
+
+/// Equation-only base (behavior__math_eqarr_tests × super_editor__sdts_basic):
+/// an OMML paragraph carries no `w:t` yet is real content. Counted as empty,
+/// the base had no contentful groups, the unrelated shortcut never fired, and
+/// the first deleted equation landed inside the first inserted paragraph.
+/// Word leads with the inserted text and trails the deleted equations.
+#[test]
+fn equation_only_base_counts_as_content_for_unrelated_order() {
+    let mut dom = Dom::new();
+    let eq = |t: &str| {
+        format!(
+            "<w:p><m:oMathPara xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
+             <m:oMath><m:r><m:t>{t}</m:t></m:r></m:oMath></m:oMathPara></w:p>"
+        )
+    };
+    let base = ["x=1", "a+b=c", "x-1=a", "yy=22", "x=1"].map(eq).concat();
+    let next = [
+        para("Before block-level SDT"),
+        format!(
+            "<w:sdt><w:sdtPr/><w:sdtContent><w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"2500\"/><w:gridCol w:w=\"2500\"/></w:tblGrid>\
+             <w:tr><w:tc>{}</w:tc><w:tc>{}</w:tc></w:tr></w:tbl></w:sdtContent></w:sdt>",
+            para("A1"),
+            para("B1")
+        ),
+        para("Between SDTs"),
+        String::from(
+            "<w:p><w:r><w:t xml:space=\"preserve\">Inline before </w:t></w:r><w:sdt><w:sdtPr/>\
+             <w:sdtContent><w:r><w:t>controlled text</w:t></w:r></w:sdtContent></w:sdt>\
+             <w:r><w:t xml:space=\"preserve\"> inline after.</w:t></w:r></w:p>",
+        ),
+        para("After inline-level SDT"),
+    ]
+    .concat();
+    let (r1, b1) = doc_body(&mut dom, &base);
+    let (r2, b2) = doc_body(&mut dom, &next);
+    let s = WmlComparerSettings::default();
+    let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
+    let body = dom.element(out, &W::body()).unwrap();
+    let first = dom.serialize_element(dom.elements(body, Some(&W::p()))[0]);
+    assert!(
+        first.contains("Before block-level SDT") && !first.contains("oMath"),
+        "inserted text must lead without a deleted equation, got: {first}"
+    );
+}
