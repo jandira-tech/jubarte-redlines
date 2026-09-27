@@ -8530,9 +8530,10 @@ fn o_attr<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
 /// paragraph even when no text was inserted or deleted (pool p0016, p0033,
 /// p0111, p0225).
 fn para_formatting_changed(dom: &Dom, para: NodeId) -> bool {
-    [W::p_pr_change(), W::name("rPrChange")]
-        .iter()
-        .any(|n| !dom.descendants(para, Some(n)).is_empty())
+    [W::p_pr_change(), W::name("rPrChange")].iter().any(|n| {
+        dom.find_descendant_element(para, Some(n), |_| true)
+            .is_some()
+    })
 }
 
 fn para_hrule(dom: &Dom, para: NodeId) -> Option<HRule> {
