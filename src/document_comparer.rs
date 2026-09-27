@@ -5453,6 +5453,17 @@ fn compare_documents_impl(
     // wrap) and before serialize.
     crate::comparer::produce::convert_outer_math_wraps_to_internal(&mut dom, result_root, settings);
 
+    // Word keeps both documents' body bookmarks (union by name); without
+    // them every updated TOC/REF field prints "Error! Bookmark not defined."
+    // Runs on the finished body so no later pass moves the markers.
+    crate::comparer::bookmarks::carry_bookmarks(
+        &mut dom,
+        result_root,
+        (&pkg1, &main1),
+        (&pkg2, &main2),
+        &settings.author_for_revisions,
+    );
+
     // Final drawing/shape id renumber immediately before serialize — package
     // post-steps (reconcile, header/footer adopt, comments) can clone/graft
     // drawings after the mid-produce FixUpDocPrIds pass (S-dup-docpr-id).
@@ -5538,17 +5549,20 @@ fn compare_documents_impl(
                             let dd = pd.parse_xdocument(&doc_xml);
                             if let Some(droot) = pd.root(dd) {
                                 let mut changed = false;
-                                // Comment anchors keep their source ids; stay clear
-                                // of all three kinds, as fix_up_revision_ids does.
-                                let mut next_id =
-                                    ["commentRangeStart", "commentRangeEnd", "commentReference"]
-                                        .into_iter()
-                                        .flat_map(|n| pd.descendants(droot, Some(&W::name(n))))
-                                        .filter_map(|c| {
-                                            pd.attribute(c, &W::id())?.parse::<u32>().ok()
-                                        })
-                                        .map(|n| n + 1)
-                                        .fold(next_free_revision_id(&pd, droot), u32::max);
+                                // Comment anchors and carried bookmarks keep their
+                                // ids; stay clear of both (Word never shares one).
+                                let mut next_id = [
+                                    "commentRangeStart",
+                                    "commentRangeEnd",
+                                    "commentReference",
+                                    "bookmarkStart",
+                                    "bookmarkEnd",
+                                ]
+                                .into_iter()
+                                .flat_map(|n| pd.descendants(droot, Some(&W::name(n))))
+                                .filter_map(|c| pd.attribute(c, &W::id())?.parse::<u32>().ok())
+                                .map(|n| n + 1)
+                                .fold(next_free_revision_id(&pd, droot), u32::max);
                                 for p in pd.descendants(droot, Some(&W::name("p"))) {
                                     let Some(ppr) = pd.element(p, &W::p_pr()) else {
                                         continue;

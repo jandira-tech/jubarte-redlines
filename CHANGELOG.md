@@ -19,6 +19,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Redlines keep the bookmarks of both documents, as Word's Compare does. The WmlComparer port dropped every bookmark, so each updated TOC line, `PAGEREF` and `REF` printed "Error! Bookmark not defined." (file_21 × file_22 lost all 582). A bookmark in both documents appears once, at its place in the revised text. A bookmark only in the original stays beside its deleted text. Ids never collide with revision ids, and Word's hidden `_GoBack` is dropped, as Word does. Pool pairs with more broken references than Word's own redline went from 29 to 0. Comment anchors gain two fixes from the same pass: moved text now counts once on each side, and a second anchor inside a run that holds several text pieces no longer reorders that text.
+
 - The redline's Normal style now follows Word's rules for merging the two
   documents' defaults. Word writes B's docDefaults indents, justification,
   line-unit spacing and borders into Normal (and neutralizes the ones only A

@@ -6,6 +6,7 @@
 
 pub mod atomize;
 pub mod atoms;
+pub mod bookmarks;
 pub mod comments;
 pub mod cross_para;
 pub mod finalize;

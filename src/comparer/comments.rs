@@ -338,7 +338,7 @@ fn find_chars(haystack: &[char], needle: &[char]) -> Option<usize> {
 
 /// A counted text leaf in the merged body: the `w:t`/`w:delText` element, its
 /// run, and its [start, start+len) character interval in the projection.
-struct Seg {
+pub(super) struct Seg {
     leaf: NodeId,
     run: NodeId,
     start: usize,
@@ -349,7 +349,7 @@ struct Seg {
 /// B side: every `w:t` not inside any `w:del` (= B's visible text).
 /// A side: `w:t` not inside any `w:ins` + `w:delText` inside a `w:del`
 /// authored by the comparer (foreign carried revisions are B's, not A's).
-fn collect_segments(
+pub(super) fn collect_segments(
     dom: &Dom,
     result_root: NodeId,
     b_side: bool,
@@ -359,6 +359,7 @@ fn collect_segments(
         return (String::new(), Vec::new());
     };
     let del_text = W::name("delText");
+    let (move_from, move_to) = (W::name("moveFrom"), W::name("moveTo"));
     let mut text = String::new();
     let mut segs = Vec::new();
     let mut offset = 0usize;
@@ -370,12 +371,17 @@ fn collect_segments(
         let Some(leaf_name) = dom.name(leaf) else {
             continue;
         };
+        // moved text is A's at its source (moveFrom), B's at its destination
         let counted = if b_side {
-            leaf_name == W::t() && !has_ancestor(dom, leaf, &W::del(), None)
+            leaf_name == W::t()
+                && !has_ancestor(dom, leaf, &W::del(), None)
+                && !has_ancestor(dom, leaf, &move_from, None)
         } else if leaf_name == W::t() {
-            !has_ancestor(dom, leaf, &W::ins(), None)
+            !has_ancestor(dom, leaf, &W::ins(), None) && !has_ancestor(dom, leaf, &move_to, None)
         } else {
-            leaf_name == del_text && has_ancestor(dom, leaf, &W::del(), Some(author))
+            leaf_name == del_text
+                && (has_ancestor(dom, leaf, &W::del(), Some(author))
+                    || has_ancestor(dom, leaf, &move_from, Some(author)))
         };
         if !counted {
             continue;
@@ -448,6 +454,12 @@ fn split_seg(dom: &mut Dom, segs: &mut Vec<Seg>, i: usize, k: usize) {
         }
     }
     dom.add_after_self(run, new_run);
+    // later leaves of the old run moved with the suffix
+    for later in &mut segs[i + 1..] {
+        if later.run == run {
+            later.run = new_run;
+        }
+    }
 
     let old_len = segs[i].len;
     segs[i].len = k;
@@ -460,6 +472,44 @@ fn split_seg(dom: &mut Dom, segs: &mut Vec<Seg>, i: usize, k: usize) {
             len: old_len - k,
         },
     );
+}
+
+/// Put `node` just before the character at merged offset `o`, splitting the
+/// run that holds it; past the last character, after the last run.
+pub(super) fn place_before_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, node: NodeId) {
+    // segments are contiguous in projection order: both keys are monotonic
+    let i = segs.partition_point(|s| s.start + s.len <= o);
+    match (i < segs.len()).then_some(i) {
+        None => {
+            if let Some(last) = segs.last() {
+                dom.add_after_self(last.run, node);
+            }
+        }
+        Some(i) if segs[i].start >= o => dom.add_before_self(segs[i].run, node),
+        Some(i) => {
+            let k = o - segs[i].start;
+            split_seg(dom, segs, i, k);
+            dom.add_before_self(segs[i + 1].run, node);
+        }
+    }
+}
+
+/// Put `node` just after the character ending at merged offset `o`, splitting
+/// the run that holds it; before any character, before the first run.
+pub(super) fn place_after_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, node: NodeId) {
+    match segs.partition_point(|s| s.start < o).checked_sub(1) {
+        None => {
+            if let Some(first) = segs.first() {
+                dom.add_before_self(first.run, node);
+            }
+        }
+        Some(i) if segs[i].start + segs[i].len <= o => dom.add_after_self(segs[i].run, node),
+        Some(i) => {
+            let k = o - segs[i].start;
+            split_seg(dom, segs, i, k);
+            dom.add_after_self(segs[i].run, node);
+        }
+    }
 }
 
 fn new_anchor(dom: &mut Dom, start: bool, id: &str) -> NodeId {
@@ -559,39 +609,11 @@ fn inject_side(
         match ev.kind {
             Kind::Start => {
                 let anchor = new_anchor(dom, true, &out_id);
-                match segs.iter().position(|s| s.start + s.len > o) {
-                    None => {
-                        if let Some(last) = segs.last() {
-                            dom.add_after_self(last.run, anchor);
-                        }
-                    }
-                    Some(i) if segs[i].start >= o => {
-                        dom.add_before_self(segs[i].run, anchor);
-                    }
-                    Some(i) => {
-                        let k = o - segs[i].start;
-                        split_seg(dom, &mut segs, i, k);
-                        dom.add_before_self(segs[i + 1].run, anchor);
-                    }
-                }
+                place_before_offset(dom, &mut segs, o, anchor);
             }
             Kind::End | Kind::Point => {
                 let anchor = new_anchor(dom, false, &out_id);
-                match segs.iter().rposition(|s| s.start < o) {
-                    None => {
-                        if let Some(first) = segs.first() {
-                            dom.add_before_self(first.run, anchor);
-                        }
-                    }
-                    Some(i) if segs[i].start + segs[i].len <= o => {
-                        dom.add_after_self(segs[i].run, anchor);
-                    }
-                    Some(i) => {
-                        let k = o - segs[i].start;
-                        split_seg(dom, &mut segs, i, k);
-                        dom.add_after_self(segs[i].run, anchor);
-                    }
-                }
+                place_after_offset(dom, &mut segs, o, anchor);
                 if ev.kind == Kind::Point {
                     let start = new_anchor(dom, true, &out_id);
                     dom.add_before_self(anchor, start);
@@ -1299,5 +1321,69 @@ fn strip_unanchored_comment_markers(dom: &mut Dom, result_root: NodeId, keep: &H
     }
     for e in dead {
         dom.remove(e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn texts_and_markers(dom: &Dom, root: NodeId) -> Vec<String> {
+        dom.descendants(root, None)
+            .into_iter()
+            .filter_map(|e| {
+                let name = dom.name(e)?;
+                if name == W::t() {
+                    Some(dom.value(e))
+                } else if name == W::name("commentRangeStart") {
+                    Some(format!("[{}", dom.attribute(e, &W::name("id"))?))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Splitting a run moves its trailing leaves into the new run; a later
+    /// split of one of those leaves must happen in the run that now holds it,
+    /// or the suffix lands before the moved text.
+    /// Moved text belongs to A at its source and to B at its destination.
+    #[test]
+    fn each_side_counts_moved_text_once_at_its_own_location() {
+        let mut dom = Dom::new();
+        let d = dom.parse_xdocument(concat!(
+            "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+            "<w:body><w:p><w:moveFrom w:id=\"1\" w:author=\"Redline\"><w:r><w:t>Moved</w:t></w:r></w:moveFrom>",
+            "<w:r><w:t>Kept</w:t></w:r>",
+            "<w:moveTo w:id=\"2\" w:author=\"Redline\"><w:r><w:t>Moved</w:t></w:r></w:moveTo></w:p>",
+            "</w:body></w:document>"
+        ));
+        let root = dom.root(d).unwrap();
+        assert_eq!(collect_segments(&dom, root, true, "Redline").0, "KeptMoved");
+        assert_eq!(
+            collect_segments(&dom, root, false, "Redline").0,
+            "MovedKept"
+        );
+    }
+
+    #[test]
+    fn a_second_split_follows_a_leaf_moved_by_the_first() {
+        let mut dom = Dom::new();
+        let d = dom.parse_xdocument(concat!(
+            "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+            "<w:body><w:p><w:r><w:t>Alpha beta</w:t><w:br/><w:t>Gamma delta</w:t></w:r></w:p>",
+            "</w:body></w:document>"
+        ));
+        let root = dom.root(d).unwrap();
+        let (text, mut segs) = collect_segments(&dom, root, true, "Redline");
+        assert_eq!(text, "Alpha betaGamma delta");
+        let first = new_anchor(&mut dom, true, "1");
+        place_before_offset(&mut dom, &mut segs, 6, first);
+        let second = new_anchor(&mut dom, true, "2");
+        place_before_offset(&mut dom, &mut segs, 16, second);
+        assert_eq!(
+            texts_and_markers(&dom, root),
+            ["Alpha ", "[1", "beta", "Gamma ", "[2", "delta"]
+        );
     }
 }

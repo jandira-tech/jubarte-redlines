@@ -15,6 +15,22 @@ use std::path::PathBuf;
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::compare_documents_with_settings;
 
+/// A paragraph's text with its markup stripped (carried bookmarks split the
+/// runs they wrap).
+fn text(p: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in p.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
 #[test]
 fn bookmark_x_broken_list_short_a_stays_pure_i() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -63,12 +79,12 @@ fn bookmark_x_broken_list_short_a_stays_pure_i() {
             && p.contains("<w:ins")
             && !p.contains("<w:del")
             && (p.contains(">a</w:t>") || p.contains(">a</"))
-            && !p.contains("bookmark")
-            && !p.contains("This is a paragraph")
+            && !text(p).contains("bookmark")
+            && !text(p).contains("This is a paragraph")
         {
             found_short_a = true;
         }
-        if p.contains("This is a paragraph with a simple bookmark") {
+        if text(p).contains("This is a paragraph with a simple bookmark") {
             found_bookmark_pure_d = true;
             assert!(
                 p.contains("<w:del") && !p.contains("<w:ins"),
