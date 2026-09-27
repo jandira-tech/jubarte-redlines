@@ -19,6 +19,17 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- The redline's Normal style now follows Word's rules for merging the two
+  documents' defaults. Word writes B's docDefaults indents, justification,
+  line-unit spacing and borders into Normal (and neutralizes the ones only A
+  sets), writes B's run defaults whenever either Normal stores paragraph or
+  run properties, writes only the language attributes that change, writes the
+  implicit 10pt complex-script size, reads a document with no docDefaults at
+  Word's factory values (after 160, line 278, kern 2), and finds a
+  LibreOffice Normal (`style0`) by its name. Across 738 corpus pairs, Normal
+  run properties that differ from Word's drop from 79 to 38 and paragraph
+  properties from 54 to 46.
+
 - Point comments (a comment reference with no range markers) survive the
   redline. The carryover only mapped ranges, so a point comment was dropped,
   and with it the whole comments part when it was the only one. It is now

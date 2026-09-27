@@ -84,8 +84,18 @@ fn find_normal_style(dom: &Dom, styles_root: NodeId) -> Option<NodeId> {
         .find(|&s| dom.attribute(s, &W::name("styleId")) == Some("Normal"))
         .or_else(|| {
             styles
-                .into_iter()
+                .iter()
+                .copied()
                 .find(|&s| dom.attribute(s, &W::name("default")) == Some("1"))
+        })
+        // LibreOffice writes `style0` named "Normal" and no default flag;
+        // Word still treats it as Normal.
+        .or_else(|| {
+            styles.into_iter().find(|&s| {
+                dom.element(s, &W::name("name"))
+                    .and_then(|n| dom.attribute(n, &W::val()))
+                    .is_some_and(|v| v.eq_ignore_ascii_case("Normal"))
+            })
         })
 }
 
@@ -105,6 +115,22 @@ fn normal_spacing(dom: &Dom, style: NodeId) -> Option<(String, String, String)> 
 fn spacing_before_attr(dom: &Dom, sp_holder: Option<NodeId>) -> Option<String> {
     let sp = sp_holder?;
     dom.attribute(sp, &W::name("before")).map(str::to_string)
+}
+
+/// Word's own paragraph spacing, which it applies to a document with no
+/// `w:docDefaults` at all (a LibreOffice export): after 160, line 278
+/// (multi_section_nested_table_rowspan, table_bookmark_end ×
+/// table_vmerge_colspan — both Word redlines write it into Normal).
+const WORD_FACTORY_SPACING: (&str, &str, &str) = ("160", "278", "auto");
+
+/// B's `docdefaults_ppr_spacing`, with Word's factory spacing standing in
+/// when B has no `w:docDefaults` at all.
+fn b_docdefaults_ppr_spacing(dom: &Dom, b_root: NodeId) -> Option<(String, String, String)> {
+    if dom.element(b_root, &W::name("docDefaults")).is_none() {
+        let (a, l, r) = WORD_FACTORY_SPACING;
+        return Some((a.to_string(), l.to_string(), r.to_string()));
+    }
+    docdefaults_ppr_spacing(dom, b_root)
 }
 
 /// The stylesheet's `docDefaults/pPrDefault/pPr/spacing` as
@@ -224,6 +250,149 @@ fn next_free_revision_id(dom: &Dom, styles_root: NodeId) -> u32 {
     max.saturating_add(1)
 }
 
+/// `w:pPr` on/off children whose absence reads as off, so "0" neutralizes them.
+const PPR_ON_OFF: &[&str] = &[
+    "keepNext",
+    "keepLines",
+    "pageBreakBefore",
+    "widowControl",
+    "suppressLineNumbers",
+    "suppressAutoHyphens",
+    "kinsoku",
+    "wordWrap",
+    "overflowPunct",
+    "topLinePunct",
+    "autoSpaceDE",
+    "autoSpaceDN",
+    "bidi",
+    "adjustRightInd",
+    "snapToGrid",
+    "contextualSpacing",
+    "mirrorIndents",
+    "suppressOverlap",
+];
+
+/// What [`doc_default_ppr_delta`] writes into the live Normal pPr.
+struct DocDefaultPprDelta {
+    /// Whole pPr children, by local name.
+    elements: Vec<(String, NodeId)>,
+    /// Extra `w:spacing` attributes (`beforeLines`/`afterLines`).
+    spacing: Vec<(String, String)>,
+}
+
+/// The docDefaults paragraph properties the after/before/line rule of
+/// [`merge_normal_style_spacing`] does not cover, as Word writes them into the
+/// live Normal. The redline keeps A's docDefaults, so B's own paragraph
+/// defaults would be lost; Word stores B's effective value (B Normal, else
+/// B docDefaults) wherever it differs from A's docDefaults, and neutralizes
+/// what only A declares (file_103 × file_104 and the reverse file_104 ×
+/// file_105: `ind`, `jc`, `beforeLines`/`afterLines`; sd_1494 ×
+/// sdpr_titleonly: a `nil` edge per A border).
+///
+/// A property with no known neutral value is left alone.
+fn doc_default_ppr_delta(
+    dom: &mut Dom,
+    out_root: NodeId,
+    b_root: NodeId,
+    b_style: Option<NodeId>,
+) -> DocDefaultPprDelta {
+    let dd_ppr = |dom: &Dom, root: NodeId| -> Option<NodeId> {
+        let dd = dom.element(root, &W::name("docDefaults"))?;
+        let pd = dom.element(dd, &W::name("pPrDefault"))?;
+        dom.element(pd, &W::p_pr())
+    };
+    let a_dd = dd_ppr(dom, out_root);
+    let b_dd = dd_ppr(dom, b_root);
+    let b_own = b_style.and_then(|s| dom.element(s, &W::p_pr()));
+    let child = |dom: &Dom, ppr: Option<NodeId>, local: &str| {
+        ppr.and_then(|p| dom.element(p, &W::name(local)))
+    };
+    let mut names: Vec<String> = Vec::new();
+    for ppr in [a_dd, b_dd].into_iter().flatten() {
+        for c in dom.elements(ppr, None) {
+            let Some(n) = dom.name(c) else { continue };
+            let local = n.local_name().to_string();
+            if n.namespace_name() == W::URI
+                && !matches!(local.as_str(), "spacing" | "rPr" | "pPrChange" | "sectPr")
+                && !names.contains(&local)
+            {
+                names.push(local);
+            }
+        }
+    }
+    let mut elements = Vec::new();
+    for local in names {
+        let a = child(dom, a_dd, &local);
+        let b = child(dom, b_own, &local).or_else(|| child(dom, b_dd, &local));
+        if a.map(|n| style_prop_signature(dom, n)) == b.map(|n| style_prop_signature(dom, n)) {
+            continue;
+        }
+        let el = match (b, a) {
+            (Some(b), _) => dom.clone_subtree(b),
+            (None, Some(a)) => {
+                let el = dom.new_element(W::name(&local));
+                match local.as_str() {
+                    "ind" => {
+                        for (n, _) in dom.attributes(a) {
+                            if n.namespace_name() == W::URI {
+                                dom.set_attribute_value(el, &n, Some("0"));
+                            }
+                        }
+                    }
+                    "jc" => {
+                        dom.set_attribute_value(el, &W::val(), Some("left"));
+                    }
+                    "pBdr" => {
+                        for edge in dom.elements(a, None) {
+                            let Some(n) = dom.name(edge) else { continue };
+                            let e = dom.new_element(n);
+                            dom.set_attribute_value(e, &W::val(), Some("nil"));
+                            dom.add(el, e);
+                        }
+                    }
+                    l if PPR_ON_OFF.contains(&l) => {
+                        dom.set_attribute_value(el, &W::val(), Some("0"));
+                    }
+                    _ => continue,
+                }
+                el
+            }
+            (None, None) => continue,
+        };
+        elements.push((local, el));
+    }
+    let sp = |dom: &Dom, ppr: Option<NodeId>| child(dom, ppr, "spacing");
+    let (a_sp, b_sp, b_own_sp) = (sp(dom, a_dd), sp(dom, b_dd), sp(dom, b_own));
+    let mut attrs: Vec<(String, String)> = Vec::new();
+    for s in [a_sp, b_sp].into_iter().flatten() {
+        for (n, _) in dom.attributes(s) {
+            let local = n.local_name();
+            if n.namespace_name() == W::URI
+                && matches!(local, "beforeLines" | "afterLines")
+                && !attrs.iter().any(|(k, _)| k == local)
+            {
+                attrs.push((local.to_string(), String::new()));
+            }
+        }
+    }
+    let get = |dom: &Dom, s: Option<NodeId>, n: &str| {
+        s.and_then(|s| dom.attribute(s, &W::name(n)))
+            .map(str::to_string)
+    };
+    attrs.retain_mut(|(name, v)| {
+        let b = get(dom, b_own_sp, name).or_else(|| get(dom, b_sp, name));
+        if b == get(dom, a_sp, name) {
+            return false;
+        }
+        *v = b.unwrap_or_else(|| "0".to_string());
+        true
+    });
+    DocDefaultPprDelta {
+        elements,
+        spacing: attrs,
+    }
+}
+
 /// M-PAG mechanism 2: rewrite the output stylesheet's Normal to B's target
 /// spacing with a `w:pPrChange` holding A's old pPr. Returns true when the
 /// stylesheet was modified.
@@ -270,7 +439,8 @@ fn merge_normal_style_spacing(
     let b_style = find_normal_style(dom, b_root);
     let b_stored = stored(dom, b_style);
     let a_dd = dd_val(dom, out_root);
-    let b_dd = dd_val(dom, b_root);
+    let b_dd =
+        b_docdefaults_ppr_spacing(dom, b_root).filter(|(a, l, _)| !a.is_empty() || !l.is_empty());
     let a_normal_has_rpr = dom.element(a_style, &W::name("rPr")).is_some();
     let a_normal_has_ppr = dom.element(a_style, &W::name("pPr")).is_some();
     let b_normal_has_rpr = b_style
@@ -325,7 +495,7 @@ fn merge_normal_style_spacing(
     // fall out: 0/240 is just b_eff = app defaults under a non-default A dd,
     // and 160/278 was B's own dd all along on the pairs that motivated it.
     let raw_a_dd = docdefaults_ppr_spacing(dom, out_root);
-    let raw_b_dd = docdefaults_ppr_spacing(dom, b_root);
+    let raw_b_dd = b_docdefaults_ppr_spacing(dom, b_root);
     let raw_b_sp = b_style.and_then(|s| normal_spacing(dom, s));
     // M479 — `before` rides the same per-attribute cascade (the truth table
     // was derived over {after, line}; A-dd before=240 leaked live).
@@ -392,8 +562,14 @@ fn merge_normal_style_spacing(
                 Some((after, line, rule))
             }
         };
+    let DocDefaultPprDelta {
+        elements: dd_elements,
+        spacing: dd_spacing,
+    } = doc_default_ppr_delta(dom, out_root, b_root, b_style);
+    let dd_delta = !dd_elements.is_empty() || !dd_spacing.is_empty();
     // Identity: A already has the same explicit spacing we would write.
     if target_before.is_empty()
+        && !dd_delta
         && let (Some(a), Some(b)) = (&a_stored, &b_target)
         && a == b
     {
@@ -403,7 +579,12 @@ fn merge_normal_style_spacing(
     // where Word still tracks dd spacing in pPrChange next to rPrChange —
     // and except a live `before` delta (M479), which must be written even
     // when after/line need nothing.
-    if b_target.is_none() && a_stored.is_none() && !m106_same_dd_clear && target_before.is_empty() {
+    if b_target.is_none()
+        && a_stored.is_none()
+        && !m106_same_dd_clear
+        && target_before.is_empty()
+        && !dd_delta
+    {
         return false;
     }
     // Old value = A's stored pPr (empty w:pPr when absent), captured before
@@ -567,6 +748,25 @@ fn merge_normal_style_spacing(
     } else if let Some(sp) = dom.element(ppr, &W::name("spacing")) {
         // Clear explicit spacing — Word leaves empty pPr (file_22).
         dom.remove(sp);
+    }
+    if !dd_spacing.is_empty() {
+        let spacing = match dom.element(ppr, &W::name("spacing")) {
+            Some(s) => s,
+            None => {
+                let s = dom.new_element(W::name("spacing"));
+                insert_child_by_rank(dom, ppr, s, "spacing", &ppr_child_rank);
+                s
+            }
+        };
+        for (name, v) in &dd_spacing {
+            dom.set_attribute_value(spacing, &W::name(name), Some(v));
+        }
+    }
+    for (local, el) in dd_elements {
+        if let Some(old) = dom.element(ppr, &W::name(&local)) {
+            dom.remove(old);
+        }
+        insert_child_by_rank(dom, ppr, el, &local, &ppr_child_rank);
     }
     let chg = dom.new_element(W::name("pPrChange"));
     // Word treats a colliding w:id on two w:*Change records as the same
@@ -3386,11 +3586,14 @@ fn merge_normal_style_rpr(
     // A bare + B bare + differing dd fonts → empty Normal, not Calibri+rPrChange).
     // Only materialize B's effective run metrics when a side already stores rPr
     // on Normal (footer knife-edge cases with explicit Normal rPr).
-    let a_has_rpr = dom.element(a_style, &W::name("rPr")).is_some();
-    let b_has_rpr = b_style
-        .map(|s| dom.element(s, &W::name("rPr")).is_some())
-        .unwrap_or(false);
-    if !a_has_rpr && !b_has_rpr {
+    // file_103 × file_104 refines the gate: a stored pPr counts too (A bare,
+    // B pPr only → Word writes B's run defaults). 227 corpus Word redlines
+    // agree: with either side structured and differing run defaults, Word
+    // always writes Normal rPr.
+    let structured = |s: NodeId| {
+        dom.element(s, &W::name("rPr")).is_some() || dom.element(s, &W::p_pr()).is_some()
+    };
+    if !structured(a_style) && !b_style.is_some_and(structured) {
         return false;
     }
     let b_effective = effective_normal_rpr_metrics(dom, b_root, b_style);
@@ -3451,7 +3654,13 @@ fn merge_normal_style_rpr(
         // not "no size", but XML Word refuses to open (Sch_MissRequiredAttribute
         // at styles.xml w:style[1]/w:rPr/w:szCs). ECMA-376 spells "no value"
         // here as the element's absence, so that is what we write.
-        let Some(val) = v.as_deref() else {
+        // B silent while A's docDefaults set a size: removing ours would
+        // inherit A's, so Word writes the implicit 20 half-points (17 of 17
+        // corpus Word redlines).
+        let a_dd_size = rpr_default(dom, out_root)
+            .and_then(|r| dom.element(r, &W::name(name)))
+            .is_some();
+        let Some(val) = v.as_deref().or(a_dd_size.then_some("20")) else {
             if let Some(e) = existing {
                 dom.remove(e);
             }
@@ -3478,7 +3687,7 @@ fn merge_normal_style_rpr(
         let b_kids: Vec<NodeId> = dom.elements(b_rpr, None);
         for bc in b_kids {
             let Some(n) = dom.name(bc) else { continue };
-            if ["rFonts", "sz", "szCs", "rPrChange"]
+            if ["rFonts", "sz", "szCs", "lang", "rPrChange"]
                 .iter()
                 .any(|s| n == W::name(s))
             {
@@ -3504,44 +3713,77 @@ fn merge_normal_style_rpr(
         let dd_elem = |dom: &Dom, root: NodeId, name: &crate::xmllinq::XName| -> Option<NodeId> {
             rpr_default(dom, root).and_then(|r| dom.element(r, name))
         };
+        // A B with no docDefaults at all reads with Word's factory run
+        // defaults: kern 2 and standard contextual ligatures.
+        let b_factory = dom.element(b_root, &W::name("docDefaults")).is_none();
         let kern_name = W::name("kern");
         let a_kern = dd_elem(dom, out_root, &kern_name)
             .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string));
-        let b_kern = dd_elem(dom, b_root, &kern_name)
-            .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string));
+        let b_kern = if b_factory {
+            Some("2".to_string())
+        } else {
+            dd_elem(dom, b_root, &kern_name)
+                .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string))
+        };
+        // B-dd lacks kern (implicit 0) while A-dd kerns: Word materializes
+        // the neutralizer — kern 2 left live wraps every long line
+        // differently (list_numbering × list_spacer1 oracle: effective kern 0
+        // on all 14 Normal-based styles).
         if a_kern != b_kern && dom.element(rpr, &kern_name).is_none() {
-            match dd_elem(dom, b_root, &kern_name) {
-                Some(bk) => {
-                    let clone = dom.clone_subtree(bk);
-                    add_rpr_child_in_order(dom, rpr, clone, "kern");
-                }
-                // B-dd lacks kern (implicit 0) while A-dd kerns: Word
-                // materializes the neutralizer — kern 2 left live wraps
-                // every long line differently (list_numbering × list_spacer1
-                // oracle: effective kern 0 on all 14 Normal-based styles).
-                None => {
-                    let e = dom.new_element(W::name("kern"));
-                    dom.set_attribute_value(e, &W::val(), Some("0"));
-                    add_rpr_child_in_order(dom, rpr, e, "kern");
-                }
-            }
+            let e = dom.new_element(kern_name);
+            dom.set_attribute_value(e, &W::val(), Some(b_kern.as_deref().unwrap_or("0")));
+            add_rpr_child_in_order(dom, rpr, e, "kern");
         }
         let a_lig = dd_elem(dom, out_root, &lig_name)
             .and_then(|e| dom.attribute(e, &W14::name("val")).map(str::to_string));
-        let b_lig = dd_elem(dom, b_root, &lig_name)
-            .and_then(|e| dom.attribute(e, &W14::name("val")).map(str::to_string));
+        let b_lig = if b_factory {
+            Some("standardContextual".to_string())
+        } else {
+            dd_elem(dom, b_root, &lig_name)
+                .and_then(|e| dom.attribute(e, &W14::name("val")).map(str::to_string))
+        };
         if a_lig != b_lig && dom.element(rpr, &lig_name).is_none() {
-            match dd_elem(dom, b_root, &lig_name) {
-                Some(bl) => {
-                    let clone = dom.clone_subtree(bl);
-                    dom.add(rpr, clone);
-                }
-                None => {
-                    let e = dom.new_element(lig_name.clone());
-                    dom.set_attribute_value(e, &W14::name("val"), Some("none"));
-                    dom.add(rpr, e);
-                }
+            let e = dom.new_element(lig_name.clone());
+            dom.set_attribute_value(
+                e,
+                &W14::name("val"),
+                Some(b_lig.as_deref().unwrap_or("none")),
+            );
+            dom.add(rpr, e);
+        }
+        // Language: only the attributes B's effective value changes against
+        // A's docDefaults, a missing one read as Word's en-US / en-US / ar-SA
+        // (159 of 161 corpus Word redlines).
+        const IMPLICIT_LANG: [(&str, &str); 3] =
+            [("val", "en-US"), ("eastAsia", "en-US"), ("bidi", "ar-SA")];
+        let lang_name = W::name("lang");
+        let lang_attr = |dom: &Dom, lang: Option<NodeId>, attr: &str| {
+            lang.and_then(|l| dom.attribute(l, &W::name(attr)).map(str::to_string))
+        };
+        let a_lang = dd_elem(dom, out_root, &lang_name);
+        let b_lang = b_style
+            .and_then(|s| dom.element(s, &W::name("rPr")))
+            .and_then(|r| dom.element(r, &lang_name));
+        let b_dd_lang = dd_elem(dom, b_root, &lang_name);
+        let delta: Vec<(&str, String)> = IMPLICIT_LANG
+            .iter()
+            .filter_map(|&(attr, implicit)| {
+                let b = lang_attr(dom, b_lang, attr)
+                    .or_else(|| lang_attr(dom, b_dd_lang, attr))
+                    .unwrap_or_else(|| implicit.to_string());
+                let a = lang_attr(dom, a_lang, attr).unwrap_or_else(|| implicit.to_string());
+                (a != b).then_some((attr, b))
+            })
+            .collect();
+        if let Some(old) = dom.element(rpr, &lang_name) {
+            dom.remove(old);
+        }
+        if !delta.is_empty() {
+            let e = dom.new_element(lang_name);
+            for (attr, v) in &delta {
+                dom.set_attribute_value(e, &W::name(attr), Some(v));
             }
+            add_rpr_child_in_order(dom, rpr, e, "lang");
         }
     }
     let chg = dom.new_element(W::name("rPrChange"));
@@ -6546,5 +6788,388 @@ mod tests {
         // No explicit face left behind to contradict the theme on the page.
         assert_eq!(attr("ascii"), None);
         assert_eq!(attr("hAnsi"), None);
+    }
+
+    /// LibreOffice names its Normal `style0` and marks no paragraph style as
+    /// the default; Word still finds it by its name (multi_section_nested_
+    /// table_rowspan: the Word redline carries B's whole Normal, ours left it
+    /// bare because B "had no Normal").
+    #[test]
+    fn normal_is_found_by_name_when_no_style_is_the_default() {
+        let ns = format!("xmlns:w=\"{}\"", W::URI);
+        let s = format!(
+            "<w:styles {ns}><w:style w:styleId=\"style15\" w:type=\"paragraph\">\
+             <w:name w:val=\"Heading\"/></w:style>\
+             <w:style w:styleId=\"style0\" w:type=\"paragraph\"><w:name w:val=\"Normal\"/>\
+             </w:style></w:styles>"
+        );
+        let mut dom = Dom::new();
+        let (root, _) = parse(&mut dom, &s);
+        let normal = find_normal_style(&dom, root).expect("Normal found by name");
+        assert_eq!(dom.attribute(normal, &W::name("styleId")), Some("style0"));
+    }
+
+    /// A stylesheet with a Normal; `dd` = (rPrDefault, pPrDefault) contents,
+    /// `None` for no docDefaults at all.
+    fn stylesheet(dd: Option<(&str, &str)>, normal: &str) -> String {
+        let ns = format!("xmlns:w=\"{}\"", W::URI);
+        let dd = dd
+            .map(|(r, p)| {
+                format!(
+                    "<w:docDefaults><w:rPrDefault><w:rPr>{r}</w:rPr></w:rPrDefault>\
+                     <w:pPrDefault><w:pPr>{p}</w:pPr></w:pPrDefault></w:docDefaults>"
+                )
+            })
+            .unwrap_or_default();
+        format!(
+            "<w:styles {ns}>{dd}<w:style w:type=\"paragraph\" w:default=\"1\" \
+             w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>{normal}</w:style></w:styles>"
+        )
+    }
+
+    fn normal_pair(
+        a_dd_ppr: &str,
+        a_normal: &str,
+        b_dd_ppr: &str,
+        b_normal: &str,
+    ) -> (String, String) {
+        (
+            stylesheet(Some(("<w:sz w:val=\"22\"/>", a_dd_ppr)), a_normal),
+            stylesheet(
+                Some(("<w:kern w:val=\"2\"/><w:sz w:val=\"21\"/>", b_dd_ppr)),
+                b_normal,
+            ),
+        )
+    }
+
+    /// Run `merge_normal_style_spacing` then `merge_normal_style_rpr` over
+    /// A's and B's stylesheets; returns the dom and the output root.
+    fn merge_normals(a: &str, b: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let (out_root, _) = parse(&mut dom, a);
+        let (b_root, _) = parse(&mut dom, b);
+        let settings = WmlComparerSettings::default();
+        merge_normal_style_spacing(&mut dom, out_root, b_root, &settings);
+        merge_normal_style_rpr(&mut dom, out_root, b_root, &settings);
+        (dom, out_root)
+    }
+
+    /// `(attribute, value)` pairs of the live Normal's `container/local`.
+    fn live_normal_attrs(
+        dom: &Dom,
+        root: NodeId,
+        container: &str,
+        local: &str,
+    ) -> Option<Vec<(String, String)>> {
+        let normal = find_normal_style(dom, root)?;
+        let c = dom.element(normal, &W::name(container))?;
+        let e = dom.element(c, &W::name(local))?;
+        let mut v: Vec<(String, String)> = dom
+            .attributes(e)
+            .into_iter()
+            .map(|(n, v)| (n.local_name().to_string(), v))
+            .collect();
+        v.sort();
+        Some(v)
+    }
+
+    fn attrs(pairs: &[(&str, &str)]) -> Option<Vec<(String, String)>> {
+        let mut v: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        v.sort();
+        Some(v)
+    }
+
+    /// A LibreOffice B with no docDefaults at all: Word reads it with its own
+    /// factory defaults (after 160, line 278, kern 2, standard contextual
+    /// ligatures) and writes them into the live Normal
+    /// (multi_section_nested_table_rowspan, table_bookmark_end ×
+    /// table_vmerge_colspan).
+    #[test]
+    fn normal_uses_word_factory_defaults_when_b_has_no_doc_defaults() {
+        let a = stylesheet(
+            Some((
+                "<w:sz w:val=\"22\"/>",
+                "<w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>",
+            )),
+            "",
+        );
+        let b = stylesheet(
+            None,
+            "<w:pPr><w:widowControl w:val=\"false\"/></w:pPr><w:rPr><w:sz w:val=\"24\"/></w:rPr>",
+        );
+        let (dom, root) = merge_normals(&a, &b);
+        assert_eq!(
+            live_normal_attrs(&dom, root, "pPr", "spacing"),
+            attrs(&[("after", "160"), ("line", "278"), ("lineRule", "auto")])
+        );
+        assert_eq!(
+            live_normal_attrs(&dom, root, "rPr", "kern"),
+            attrs(&[("val", "2")])
+        );
+        let normal = find_normal_style(&dom, root).unwrap();
+        let rpr = dom.element(normal, &W::name("rPr")).unwrap();
+        let lig = dom
+            .element(rpr, &W14::name("ligatures"))
+            .expect("ligatures");
+        assert_eq!(
+            dom.attribute(lig, &W14::name("val")),
+            Some("standardContextual")
+        );
+    }
+
+    /// B declares no complex-script size while A's docDefaults do: Word
+    /// writes the implicit 20 half-points (17 of 17 corpus Word redlines).
+    #[test]
+    fn normal_writes_the_implicit_complex_script_size() {
+        let a = stylesheet(
+            Some(("<w:sz w:val=\"21\"/><w:szCs w:val=\"22\"/>", "")),
+            "<w:pPr><w:widowControl w:val=\"0\"/></w:pPr>",
+        );
+        let b = stylesheet(Some(("<w:sz w:val=\"22\"/>", "")), "");
+        let (dom, root) = merge_normals(&a, &b);
+        assert_eq!(
+            live_normal_attrs(&dom, root, "rPr", "sz"),
+            attrs(&[("val", "22")])
+        );
+        assert_eq!(
+            live_normal_attrs(&dom, root, "rPr", "szCs"),
+            attrs(&[("val", "20")])
+        );
+    }
+
+    /// Word writes only the language attributes B changes against A's
+    /// docDefaults, reading a missing attribute as en-US / en-US / ar-SA
+    /// (file_103 × file_104: eastAsia zh-CN alone; mcdoc_meeting_agenda:
+    /// B silent, A zh-CN → eastAsia en-US).
+    #[test]
+    fn normal_writes_only_the_language_attributes_that_change() {
+        let lang = |v: &str, ea: &str, bidi: &str| {
+            format!("<w:lang w:val=\"{v}\" w:eastAsia=\"{ea}\" w:bidi=\"{bidi}\"/>")
+        };
+        let a = stylesheet(
+            Some((
+                &format!("<w:sz w:val=\"22\"/>{}", lang("en-US", "en-US", "ar-SA")),
+                "",
+            )),
+            "",
+        );
+        let b = stylesheet(
+            Some((
+                &format!("<w:sz w:val=\"21\"/>{}", lang("en-US", "zh-CN", "ar-SA")),
+                "",
+            )),
+            &format!("<w:rPr>{}</w:rPr>", lang("en-US", "zh-CN", "ar-SA")),
+        );
+        let (dom, root) = merge_normals(&a, &b);
+        assert_eq!(
+            live_normal_attrs(&dom, root, "rPr", "lang"),
+            attrs(&[("eastAsia", "zh-CN")])
+        );
+
+        let a = stylesheet(
+            Some((
+                &format!("<w:sz w:val=\"22\"/>{}", lang("en-US", "zh-CN", "ar-SA")),
+                "",
+            )),
+            "<w:pPr><w:widowControl w:val=\"0\"/></w:pPr>",
+        );
+        let b = stylesheet(Some(("<w:sz w:val=\"21\"/>", "")), "");
+        let (dom, root) = merge_normals(&a, &b);
+        assert_eq!(
+            live_normal_attrs(&dom, root, "rPr", "lang"),
+            attrs(&[("eastAsia", "en-US")])
+        );
+    }
+
+    /// file_103 × file_104: A's Normal is bare, B's carries only a pPr. Word
+    /// still writes B's run defaults into the live Normal (sz 21, kern 2);
+    /// the structure gate is either side's pPr or rPr, not rPr alone.
+    #[test]
+    fn normal_takes_b_run_defaults_when_only_b_paragraph_props_are_stored() {
+        let (a, b) = normal_pair(
+            "<w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>",
+            "",
+            "",
+            "<w:pPr><w:widowControl w:val=\"0\"/></w:pPr>",
+        );
+        let mut dom = Dom::new();
+        let (out_root, _) = parse(&mut dom, &a);
+        let (b_root, _) = parse(&mut dom, &b);
+        let settings = WmlComparerSettings::default();
+        assert!(merge_normal_style_rpr(
+            &mut dom, out_root, b_root, &settings
+        ));
+        let normal = find_normal_style(&dom, out_root).expect("Normal");
+        let rpr = dom.element(normal, &W::name("rPr")).expect("live rPr");
+        let val = |n: &str| {
+            dom.element(rpr, &W::name(n))
+                .and_then(|e| dom.attribute(e, &W::val()))
+                .map(str::to_string)
+        };
+        assert_eq!(val("sz").as_deref(), Some("21"));
+        assert_eq!(val("kern").as_deref(), Some("2"));
+    }
+
+    /// Live Normal pPr, children in order, pPrChange left out.
+    fn live_normal_ppr(dom: &Dom, root: NodeId) -> Vec<(String, Vec<(String, String)>)> {
+        let normal = find_normal_style(dom, root).expect("Normal");
+        let Some(ppr) = dom.element(normal, &W::p_pr()) else {
+            return Vec::new();
+        };
+        dom.elements(ppr, None)
+            .into_iter()
+            .filter(|&c| dom.name(c).is_some_and(|n| n != W::name("pPrChange")))
+            .map(|c| {
+                let name = dom.name(c).unwrap().local_name().to_string();
+                let attrs = dom
+                    .attributes(c)
+                    .into_iter()
+                    .map(|(n, v)| (n.local_name().to_string(), v))
+                    .collect();
+                (name, attrs)
+            })
+            .collect()
+    }
+
+    /// file_103 × file_104: B keeps indents, justification and line-unit
+    /// spacing in its docDefaults, which the redline (A's docDefaults) loses.
+    /// Word writes them into the live Normal.
+    #[test]
+    fn normal_takes_b_doc_default_indent_and_justification() {
+        let (a, b) = normal_pair(
+            "<w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>",
+            "",
+            "<w:spacing w:beforeLines=\"50\" w:afterLines=\"50\"/>\
+             <w:ind w:leftChars=\"50\" w:left=\"50\" w:firstLine=\"200\"/><w:jc w:val=\"both\"/>",
+            "<w:pPr><w:widowControl w:val=\"0\"/></w:pPr>",
+        );
+        let mut dom = Dom::new();
+        let (out_root, _) = parse(&mut dom, &a);
+        let (b_root, _) = parse(&mut dom, &b);
+        let settings = WmlComparerSettings::default();
+        assert!(merge_normal_style_spacing(
+            &mut dom, out_root, b_root, &settings
+        ));
+        let live = live_normal_ppr(&dom, out_root);
+        let get = |n: &str| live.iter().find(|(k, _)| k == n).map(|(_, a)| a.clone());
+        let attr = |n: &str, a: &str| {
+            get(n).and_then(|v| v.into_iter().find(|(k, _)| k == a).map(|(_, v)| v))
+        };
+        assert_eq!(
+            attr("spacing", "beforeLines").as_deref(),
+            Some("50"),
+            "{live:?}"
+        );
+        assert_eq!(
+            attr("spacing", "afterLines").as_deref(),
+            Some("50"),
+            "{live:?}"
+        );
+        assert_eq!(attr("spacing", "after").as_deref(), Some("0"), "{live:?}");
+        assert_eq!(attr("ind", "firstLine").as_deref(), Some("200"), "{live:?}");
+        assert_eq!(attr("jc", "val").as_deref(), Some("both"), "{live:?}");
+        assert!(get("widowControl").is_some(), "{live:?}");
+        let order: Vec<&str> = live.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(order, ["widowControl", "spacing", "ind", "jc"]);
+    }
+
+    /// file_104 × file_105, the reverse: A's docDefaults indent and justify,
+    /// B's do not. Word neutralizes each A value in the live Normal (every
+    /// indent attribute 0, jc left, line-unit spacing 0).
+    #[test]
+    fn normal_neutralizes_a_doc_default_indent_and_justification() {
+        let (a, b) = normal_pair(
+            "<w:spacing w:beforeLines=\"50\" w:afterLines=\"50\"/>\
+             <w:ind w:leftChars=\"50\" w:left=\"50\" w:firstLine=\"200\"/><w:jc w:val=\"both\"/>",
+            "<w:pPr><w:widowControl w:val=\"0\"/></w:pPr>",
+            "<w:spacing w:after=\"200\" w:line=\"276\" w:lineRule=\"auto\"/>",
+            "",
+        );
+        let mut dom = Dom::new();
+        let (out_root, _) = parse(&mut dom, &a);
+        let (b_root, _) = parse(&mut dom, &b);
+        let settings = WmlComparerSettings::default();
+        assert!(merge_normal_style_spacing(
+            &mut dom, out_root, b_root, &settings
+        ));
+        let mut live = live_normal_ppr(&dom, out_root);
+        for (_, attrs) in &mut live {
+            attrs.sort();
+        }
+        let s = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            let mut v: Vec<(String, String)> = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            live,
+            vec![
+                (
+                    "spacing".to_string(),
+                    s(&[
+                        ("beforeLines", "0"),
+                        ("afterLines", "0"),
+                        ("after", "200"),
+                        ("line", "276"),
+                        ("lineRule", "auto")
+                    ])
+                ),
+                (
+                    "ind".to_string(),
+                    s(&[("leftChars", "0"), ("left", "0"), ("firstLine", "0")])
+                ),
+                ("jc".to_string(), s(&[("val", "left")])),
+            ]
+        );
+    }
+
+    /// A's docDefaults draw paragraph borders, B's do not: Word writes a
+    /// `nil` border on every edge A draws, even when no spacing changes
+    /// (sd_1494_table_left_indent × sdpr_titleonly).
+    #[test]
+    fn normal_clears_a_doc_default_borders() {
+        let (a, b) = normal_pair(
+            "<w:pBdr><w:top w:val=\"single\" w:sz=\"4\" w:space=\"1\" w:color=\"auto\"/>\
+             <w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"1\" w:color=\"auto\"/></w:pBdr>",
+            "<w:rPr><w:b/></w:rPr>",
+            "",
+            "",
+        );
+        let mut dom = Dom::new();
+        let (out_root, _) = parse(&mut dom, &a);
+        let (b_root, _) = parse(&mut dom, &b);
+        let settings = WmlComparerSettings::default();
+        assert!(merge_normal_style_spacing(
+            &mut dom, out_root, b_root, &settings
+        ));
+        let normal = find_normal_style(&dom, out_root).expect("Normal");
+        let bdr = dom
+            .element(normal, &W::p_pr())
+            .and_then(|p| dom.element(p, &W::name("pBdr")))
+            .expect("live pBdr");
+        let edges: Vec<(String, Option<String>, usize)> = dom
+            .elements(bdr, None)
+            .into_iter()
+            .map(|e| {
+                (
+                    dom.name(e).unwrap().local_name().to_string(),
+                    dom.attribute(e, &W::val()).map(str::to_string),
+                    dom.attributes(e).len(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            edges,
+            vec![
+                ("top".to_string(), Some("nil".to_string()), 1),
+                ("bottom".to_string(), Some("nil".to_string()), 1)
+            ]
+        );
     }
 }
