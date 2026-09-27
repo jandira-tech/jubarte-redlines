@@ -1,0 +1,402 @@
+diff --git a/src/edit.rs b/src/edit.rs
+new file mode 100644
+--- /dev/null
++++ b/src/edit.rs
+@@ -0,0 +1,384 @@
++// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++// SPDX-License-Identifier: AGPL-3.0-only
++
++//! Restricted exact-text edits. Complex paragraph structures are refused.
++//! This module does not write tracked markup; compare original and edited bytes
++//! with the existing comparer after a successful transaction.
++
++use crate::namespaces::W;
++use crate::opc::PartFs;
++use crate::xmllinq::{Dom, NodeId, XNamespace};
++use sha2::{Digest, Sha256};
++use std::fmt;
++
++/// Source-guarded edit transaction, resolved entirely before changing the DOM.
++#[derive(Clone, Debug)]
++pub struct TextEditPlan {
++    /// Lowercase SHA-256 of the complete input package.
++    pub source_sha256: String,
++    /// Exact edits; order does not change source-relative matching.
++    pub edits: Vec<TextEdit>,
++}
++
++/// Replace one unique substring in a simple paragraph.
++#[derive(Clone, Debug)]
++pub struct TextEdit {
++    /// Snapshot index returned by `inspect::paragraphs`.
++    pub paragraph_index: usize,
++    /// Exact full paragraph text, before any operation in this plan.
++    pub expected_text: String,
++    /// A nonempty substring that must occur exactly once, including overlaps.
++    pub find: String,
++    /// Replacement text. Empty means delete the matched text, not its paragraph.
++    pub replacement: String,
++}
++
++/// Recoverable refusal of an unsupported or conflicting edit.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct EditError {
++    /// Stable machine-readable category.
++    pub code: &'static str,
++    /// Zero-based plan operation when applicable.
++    pub operation: Option<usize>,
++    /// Human-readable context; callers must not parse this to determine code.
++    pub message: String,
++}
++impl fmt::Display for EditError {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        write!(f, "{}: {}", self.code, self.message)
++    }
++}
++impl std::error::Error for EditError {}
++fn error(code: &'static str, operation: Option<usize>, message: impl Into<String>) -> EditError {
++    EditError {
++        code,
++        operation,
++        message: message.into(),
++    }
++}
++
++/// SHA-256 used to bind an edit plan to one exact input snapshot.
++pub fn source_sha256(bytes: &[u8]) -> String {
++    format!("{:x}", Sha256::digest(bytes))
++}
++
++struct Resolved {
++    operation: usize,
++    paragraph: usize,
++    start: usize,
++    end: usize,
++    replacement: String,
++}
++
++/// Apply a plan atomically in memory. Inputs are never changed.
++///
++/// Only Transitional Word paragraphs consisting of `pPr`, direct `r` children,
++/// optional `rPr`, and text-only `t` children are editable. A section-bearing
++/// paragraph, field, bookmark, hyperlink, tab, break, text box or tracked revision
++/// is refused. Strict input remains readable through inspect, but editing it is
++/// refused here to avoid rewriting every package part under a preservation API.
++/// XML/package validation here is not a ZIP decompression/resource budget.
++pub fn apply_text_edits(source: &[u8], plan: &TextEditPlan) -> Result<Vec<u8>, EditError> {
++    if plan.source_sha256 != source_sha256(source) {
++        return Err(error(
++            "STALE_SOURCE",
++            None,
++            "source bytes do not match this plan",
++        ));
++    }
++    let facts = crate::inspect::summary(source)
++        .map_err(|e| error("INVALID_DOCUMENT", None, e.to_string()))?;
++    if facts.revisions != 0 {
++        return Err(error(
++            "EXISTING_REVISIONS",
++            None,
++            "accept or reject revisions explicitly before editing",
++        ));
++    }
++    let mut pkg =
++        PartFs::open(source).map_err(|e| error("INVALID_DOCUMENT", None, e.to_string()))?;
++    if pkg
++        .parts()
++        .iter()
++        .any(|name| name.starts_with("_xmlsignatures/") || name.ends_with("vbaProject.bin"))
++    {
++        return Err(error(
++            "UNSUPPORTED_PACKAGE",
++            None,
++            "signed or macro-bearing package",
++        ));
++    }
++    let main = pkg
++        .main_document_part()
++        .unwrap_or_else(|| "word/document.xml".to_string());
++    let raw = pkg
++        .part_bytes(&main)
++        .ok_or_else(|| error("INVALID_DOCUMENT", None, "missing main part"))?;
++    let xml =
++        std::str::from_utf8(raw).map_err(|e| error("INVALID_DOCUMENT", None, e.to_string()))?;
++    crate::xmllinq::parse::validate_xml(xml).map_err(|e| error("INVALID_DOCUMENT", None, e))?;
++    let mut dom = Dom::new();
++    let document = dom.parse_xdocument(xml);
++    let root = dom
++        .root(document)
++        .ok_or_else(|| error("INVALID_DOCUMENT", None, "missing XML root"))?;
++    let body = dom
++        .element(root, &W::body())
++        .ok_or_else(|| error("UNSUPPORTED_PACKAGE", None, "Transitional body required"))?;
++    let paragraphs: Vec<NodeId> = dom
++        .descendants(body, Some(&W::p()))
++        .into_iter()
++        .filter(|&p| dom.ancestors(p, Some(&W::name("txbxContent"))).is_empty())
++        .collect();
++    let mut resolved = Vec::new();
++    for (operation, edit) in plan.edits.iter().enumerate() {
++        let paragraph = *paragraphs.get(edit.paragraph_index).ok_or_else(|| {
++            error(
++                "ANCHOR_NOT_FOUND",
++                Some(operation),
++                "paragraph index does not exist",
++            )
++        })?;
++        let text_nodes = simple_text_nodes(&dom, paragraph, operation)?;
++        let text: String = text_nodes.iter().map(|&node| dom.value(node)).collect();
++        if text != edit.expected_text {
++            return Err(error(
++                "STALE_ANCHOR",
++                Some(operation),
++                "paragraph text changed",
++            ));
++        }
++        if edit.find.is_empty() {
++            return Err(error(
++                "INVALID_EDIT",
++                Some(operation),
++                "find must be nonempty",
++            ));
++        }
++        if edit
++            .replacement
++            .chars()
++            .any(|c| c.is_control() || matches!(c, '\u{fffe}' | '\u{ffff}'))
++        {
++            return Err(error(
++                "INVALID_EDIT",
++                Some(operation),
++                "replacement must be plain XML-safe text without controls",
++            ));
++        }
++        let matches: Vec<usize> = text
++            .char_indices()
++            .map(|(offset, _)| offset)
++            .filter(|&offset| text[offset..].starts_with(&edit.find))
++            .collect();
++        let start = match matches.as_slice() {
++            [start] => *start,
++            [] => {
++                return Err(error(
++                    "ANCHOR_NOT_FOUND",
++                    Some(operation),
++                    "find text does not occur",
++                ));
++            }
++            _ => {
++                return Err(error(
++                    "AMBIGUOUS_ANCHOR",
++                    Some(operation),
++                    "find text occurs more than once",
++                ));
++            }
++        };
++        resolved.push(Resolved {
++            operation,
++            paragraph: edit.paragraph_index,
++            start,
++            end: start + edit.find.len(),
++            replacement: edit.replacement.clone(),
++        });
++    }
++    resolved.sort_by_key(|edit| (edit.paragraph, edit.start));
++    for pair in resolved.windows(2) {
++        if pair[0].paragraph == pair[1].paragraph && pair[0].end > pair[1].start {
++            return Err(error(
++                "OVERLAPPING_EDITS",
++                Some(pair[1].operation),
++                "source ranges overlap",
++            ));
++        }
++    }
++    if resolved.is_empty() {
++        return Ok(source.to_vec());
++    }
++    // Reverse application preserves every earlier source-relative byte offset.
++    for edit in resolved.into_iter().rev() {
++        let nodes = simple_text_nodes(&dom, paragraphs[edit.paragraph], edit.operation)?;
++        let mut offset = 0;
++        let mut inserted = false;
++        for node in nodes {
++            let original = dom.value(node);
++            let next = offset + original.len();
++            if offset < edit.end && next > edit.start {
++                let from = edit.start.saturating_sub(offset).min(original.len());
++                let to = edit.end.saturating_sub(offset).min(original.len());
++                let replacement = if inserted {
++                    ""
++                } else {
++                    inserted = true;
++                    edit.replacement.as_str()
++                };
++                let updated = format!("{}{}{}", &original[..from], replacement, &original[to..]);
++                dom.set_value(node, &updated);
++                dom.set_attribute_value(node, &XNamespace::xml().name("space"), Some("preserve"));
++            }
++            offset = next;
++        }
++    }
++    pkg.set_part(&main, dom.serialize_document(document).into_bytes());
++    pkg.to_zip()
++        .map_err(|e| error("PACKAGE_WRITE", None, e.to_string()))
++}
++
++fn simple_text_nodes(
++    dom: &Dom,
++    paragraph: NodeId,
++    operation: usize,
++) -> Result<Vec<NodeId>, EditError> {
++    let unsupported = || {
++        error(
++            "UNSUPPORTED_STRUCTURE",
++            Some(operation),
++            "edit requires plain direct text runs without section properties",
++        )
++    };
++    if !dom
++        .descendants(paragraph, Some(&W::name("sectPr")))
++        .is_empty()
++    {
++        return Err(unsupported());
++    }
++    if !dom.ancestors(paragraph, Some(&W::name("sdt"))).is_empty() {
++        return Err(unsupported());
++    }
++    let mut result = Vec::new();
++    for child in dom.nodes(paragraph) {
++        if dom.is_text(child) && dom.value(child).trim().is_empty() {
++            continue;
++        }
++        if dom.name_is(child, &W::p_pr()) {
++            continue;
++        }
++        if !dom.name_is(child, &W::r()) {
++            return Err(unsupported());
++        }
++        for node in dom.nodes(child) {
++            if dom.is_text(node) && dom.value(node).trim().is_empty() {
++                continue;
++            }
++            if dom.name_is(node, &W::r_pr()) {
++                continue;
++            }
++            if !dom.name_is(node, &W::t()) || dom.nodes(node).iter().any(|&n| !dom.is_text(n)) {
++                return Err(unsupported());
++            }
++            result.push(node);
++        }
++    }
++    Ok(result)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::io::{Cursor, Write};
++    fn package(body: &str) -> Vec<u8> {
++        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
++        let document = format!(
++            "<w:document xmlns:w='{}'><w:body>{body}</w:body></w:document>",
++            W::URI
++        );
++        for (name, text) in [
++            (
++                "[Content_Types].xml",
++                "<Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'><Default Extension='xml' ContentType='application/xml'/><Default Extension='rels' ContentType='application/vnd.openxmlformats-package.relationships+xml'/></Types>",
++            ),
++            (
++                "_rels/.rels",
++                "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'><Relationship Id='r1' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument' Target='word/document.xml'/></Relationships>",
++            ),
++            ("word/document.xml", document.as_str()),
++            ("custom/preserved.bin", "untouched payload"),
++        ] {
++            zip.start_file(name, zip::write::SimpleFileOptions::default())
++                .unwrap();
++            zip.write_all(text.as_bytes()).unwrap();
++        }
++        zip.finish().unwrap().into_inner()
++    }
++    fn edit(source: &[u8], find: &str, replacement: &str) -> TextEditPlan {
++        TextEditPlan {
++            source_sha256: source_sha256(source),
++            edits: vec![TextEdit {
++                paragraph_index: 0,
++                expected_text: "The price is ten.".into(),
++                find: find.into(),
++                replacement: replacement.into(),
++            }],
++        }
++    }
++    #[test]
++    fn split_runs_are_preserved_and_other_payloads_unchanged() {
++        let source = package(
++            "<w:p><w:r><w:t>The price is </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>te</w:t></w:r><w:r><w:t>n.</w:t></w:r></w:p>",
++        );
++        let original = source.clone();
++        let output = apply_text_edits(&source, &edit(&source, "ten", "twenty")).unwrap();
++        assert_eq!(
++            crate::inspect::paragraphs(&output).unwrap()[0].text,
++            "The price is twenty."
++        );
++        let pkg = PartFs::open(&output).unwrap();
++        assert_eq!(
++            pkg.part_bytes("custom/preserved.bin"),
++            Some("untouched payload".as_bytes())
++        );
++        assert!(
++            pkg.part_string("word/document.xml")
++                .unwrap()
++                .contains("<w:b")
++        );
++        assert_eq!(source, original);
++    }
++    #[test]
++    fn stale_missing_and_overlap_are_errors_before_output() {
++        let source = package("<w:p><w:r><w:t>The price is ten.</w:t></w:r></w:p>");
++        let mut plan = edit(&source, "ten", "twenty");
++        plan.source_sha256 = "wrong".into();
++        assert_eq!(
++            apply_text_edits(&source, &plan).unwrap_err().code,
++            "STALE_SOURCE"
++        );
++        assert_eq!(
++            apply_text_edits(&source, &edit(&source, "missing", "x"))
++                .unwrap_err()
++                .code,
++            "ANCHOR_NOT_FOUND"
++        );
++        plan = edit(&source, "ten", "twenty");
++        plan.edits.push(plan.edits[0].clone());
++        assert_eq!(
++            apply_text_edits(&source, &plan).unwrap_err().code,
++            "OVERLAPPING_EDITS"
++        );
++    }
++    #[test]
++    fn complex_and_revised_paragraphs_are_refused() {
++        for body in [
++            "<w:p><w:hyperlink><w:r><w:t>The price is ten.</w:t></w:r></w:hyperlink></w:p>",
++            "<w:p><w:ins><w:r><w:t>The price is ten.</w:t></w:r></w:ins></w:p>",
++        ] {
++            let source = package(body);
++            let failure = apply_text_edits(&source, &edit(&source, "ten", "twenty")).unwrap_err();
++            assert!(["EXISTING_REVISIONS", "UNSUPPORTED_STRUCTURE"].contains(&failure.code));
++        }
++    }
++}
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -47,6 +47,8 @@
+ pub mod document_comparer;
+ /// Conservative body inspection and namespace-aware package facts.
+ pub mod inspect;
++/// Source-guarded conservative plain-text edit transactions.
++pub mod edit;
+ /// Markup simplification (PowerTools `MarkupSimplifier` port).
+ pub mod markup_simplifier;
+ /// WordprocessingML and related namespace / `XName` constants.
+diff --git a/Cargo.toml b/Cargo.toml

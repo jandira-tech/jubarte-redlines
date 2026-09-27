@@ -16,6 +16,7 @@ mod pdf;
 mod preset_geom;
 mod preset_geom_data;
 mod preset_text_rect_data;
+mod raster;
 mod word_subst;
 
 use std::cell::{Cell, RefCell};
@@ -277,6 +278,143 @@ fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Conver
 }
 
 fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, ConvertError> {
+    with_pages(docx, |fonts, pages| pdf::emit(fonts, pages, options))
+}
+
+/// Text painted on one page, in paint order (header first when present).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageText {
+    /// Zero-based page index.
+    pub index: usize,
+    /// One line per baseline.
+    pub text: String,
+}
+
+/// Page facts from one layout pass. `page_count` is the renderer's result,
+/// not a saved `docProps/app.xml` figure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenderReport {
+    /// Pages laid out.
+    pub page_count: usize,
+    /// Per-page painted text.
+    pub pages: Vec<PageText>,
+    /// Distinct font resolutions (requested → physical face).
+    pub fonts: Vec<FontReportEntry>,
+}
+
+impl RenderReport {
+    /// `{"page_count", "pages": [{"index", "text"}], "fonts": [...]}`.
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        let pages: Vec<serde_json::Value> = self
+            .pages
+            .iter()
+            .map(|p| serde_json::json!({"index": p.index, "text": p.text}))
+            .collect();
+        let fonts: serde_json::Value =
+            serde_json::from_str(&font::font_report_json(&self.fonts)).unwrap_or_default();
+        serde_json::json!({
+            "page_count": self.page_count,
+            "pages": pages,
+            "fonts": fonts,
+        })
+        .to_string()
+    }
+}
+
+/// What [`render`] should produce from its single layout pass.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RenderRequest {
+    /// Write the PDF.
+    pub pdf: bool,
+    /// Rasterize every page to PNG at this resolution.
+    pub png_dpi: Option<f32>,
+}
+
+/// Output of [`render`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rendered {
+    /// PDF bytes when requested.
+    pub pdf: Option<Vec<u8>>,
+    /// One PNG per page when requested (page order).
+    pub pngs: Vec<Vec<u8>>,
+    /// Page count, page text and font resolutions.
+    pub report: RenderReport,
+}
+
+/// Lay the document out once and emit any combination of PDF, PNG pages and
+/// the page report.
+pub fn render(
+    docx: &[u8],
+    options: PdfOptions,
+    request: RenderRequest,
+) -> Result<Rendered, ConvertError> {
+    let (result, font_report) = font::with_font_report(|| {
+        let previous = REVISIONS.with(|r| r.replace(options.revisions));
+        let result = with_pages(docx, |fonts, pages| {
+            let pdf = request.pdf.then(|| pdf::emit(fonts, pages, options));
+            let pngs = match request.png_dpi {
+                Some(dpi) => pages
+                    .iter()
+                    .filter_map(|page| raster::paint_page(fonts, page, dpi))
+                    .map(|pixmap| raster::encode_png(&pixmap))
+                    .collect(),
+                None => Vec::new(),
+            };
+            let texts = pages
+                .iter()
+                .enumerate()
+                .map(|(index, page)| PageText {
+                    index,
+                    text: raster::page_text(fonts, page),
+                })
+                .collect();
+            (pdf, pngs, pages.len(), texts)
+        });
+        REVISIONS.with(|r| r.set(previous));
+        result
+    });
+    let (pdf, pngs, page_count, pages) = result?;
+    Ok(Rendered {
+        pdf,
+        pngs,
+        report: RenderReport {
+            page_count,
+            pages,
+            fonts: font_report,
+        },
+    })
+}
+
+/// Rasterize every page to PNG at `dpi` (96 is screen resolution; 150 reads
+/// comfortably; 300 is print).
+pub fn docx_to_png(
+    docx: &[u8],
+    options: PdfOptions,
+    dpi: f32,
+) -> Result<Vec<Vec<u8>>, ConvertError> {
+    Ok(render(
+        docx,
+        options,
+        RenderRequest {
+            pdf: false,
+            png_dpi: Some(dpi),
+        },
+    )?
+    .pngs)
+}
+
+/// Page count, page text and font resolutions without writing PDF or PNG.
+pub fn docx_render_report(docx: &[u8], options: PdfOptions) -> Result<RenderReport, ConvertError> {
+    Ok(render(docx, options, RenderRequest::default())?.report)
+}
+
+/// The shared layout pipeline: open, resolve fonts, lay out, then hand the
+/// pages to `emit`.
+fn with_pages<T>(
+    docx: &[u8],
+    emit: impl FnOnce(&Fonts, &[pdf::Page]) -> T,
+) -> Result<T, ConvertError> {
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
     let pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;
@@ -358,7 +496,7 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
                 display,
             };
             let pages = layout(&fonts, &page, &hf, &blocks, compat_mode, footnotes);
-            Ok(pdf::emit(&fonts, &pages, options))
+            Ok(emit(&fonts, &pages))
         })
     })
 }

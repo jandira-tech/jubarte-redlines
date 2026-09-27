@@ -1,0 +1,100 @@
+diff --git a/examples/adoption/python_docx_pdf.py b/examples/adoption/python_docx_pdf.py
+new file mode 100644
+--- /dev/null
++++ b/examples/adoption/python_docx_pdf.py
+@@ -0,0 +1,34 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++# SPDX-License-Identifier: AGPL-3.0-only
++"""Generate a DOCX with python-docx; render through Jubarte in memory."""
++from io import BytesIO
++from pathlib import Path
++import argparse
++from docx import Document
++from jubarte_redlines import __version__, docx_to_pdf
++
++
++def build_pdf() -> bytes:
++    document = Document()
++    document.add_heading("Delivery confirmation", level=1)
++    document.add_paragraph("Your order has been dispatched.")
++    stream = BytesIO()
++    document.save(stream)
++    return docx_to_pdf(stream.getvalue())
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("output", type=Path)
++    args = parser.parse_args()
++    pdf = build_pdf()
++    if not pdf.startswith(b"%PDF-"):
++        raise RuntimeError("renderer did not return a PDF")
++    # Exclusive creation protects an existing output. Use another path to retry.
++    with args.output.open("xb") as target:
++        target.write(pdf)
++    print(f"jubarte-redlines {__version__}: wrote {len(pdf)} bytes to {args.output}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/examples/adoption/docx_js_pdf.mjs b/examples/adoption/docx_js_pdf.mjs
+new file mode 100644
+--- /dev/null
++++ b/examples/adoption/docx_js_pdf.mjs
+@@ -0,0 +1,19 @@
++// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++// SPDX-License-Identifier: AGPL-3.0-only
++import { Document, Packer, Paragraph } from "docx";
++import { createRequire } from "node:module";
++import { writeFile } from "node:fs/promises";
++const require = createRequire(import.meta.url);
++const { docxToPdf } = require("jubarte-wasm");
++const output = process.argv[2];
++if (!output) throw new Error("Usage: node docx_js_pdf.mjs OUTPUT.pdf");
++const document = new Document({
++  sections: [{ children: [new Paragraph("Your order has been dispatched.")] }],
++});
++const bytes = await Packer.toBuffer(document);
++const pdf = docxToPdf(bytes);
++if (new TextDecoder().decode(pdf.slice(0, 5)) !== "%PDF-") {
++  throw new Error("renderer did not return a PDF");
++}
++await writeFile(output, pdf, { flag: "wx" });
++console.log(`Wrote ${pdf.length} bytes to ${output}`);
+diff --git a/docs/adoption/README.md b/docs/adoption/README.md
+new file mode 100644
+--- /dev/null
++++ b/docs/adoption/README.md
+@@ -0,0 +1,26 @@
++<!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
++<!-- SPDX-License-Identifier: AGPL-3.0-only -->
++# Adoption experiments
++
++The ledger contains only consenting, pseudonymous project observations. Do not
++commit contact details, document contents or customer filenames. No telemetry
++is emitted by the library or recipes.
++
++Run the Python recipe after installing `python-docx` and `jubarte-redlines`:
++
++```sh
++python examples/adoption/python_docx_pdf.py /tmp/jubarte-example.pdf
++```
++
++Run the Node recipe with `docx` and `jubarte-wasm` available to Node resolution:
++
++```sh
++node examples/adoption/docx_js_pdf.mjs /tmp/jubarte-node-example.pdf
++```
++
++Outputs use exclusive creation; choose a fresh output path for each run. A PDF
++signature proves the renderer produced a PDF-shaped result; inspect the PDF and
++run the corpus gates before making any layout or Word-fidelity claim.
++
++Record trial completion, assistance and repeat use at day 14 and day 28.
++A successful local maintainer smoke is not an independent acquired user.
+diff --git a/docs/adoption/experiments.csv b/docs/adoption/experiments.csv
+new file mode 100644
+--- /dev/null
++++ b/docs/adoption/experiments.csv
+@@ -0,0 +1 @@
++project_id,channel,consent_date,job,environment,completed,failure_code,assistance_minutes,integration_committed,repeat_day14,repeat_day28,sharing_permission,owner,next_action

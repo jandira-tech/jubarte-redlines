@@ -173,10 +173,16 @@ impl<'a> Parser<'a> {
         let mut raw_attrs: Vec<(String, String)> = Vec::new();
         loop {
             self.skip_ws();
-            if self.cur() == '/' || self.cur() == '>' {
+            if self.pos >= self.len() || self.cur() == '/' || self.cur() == '>' {
                 break;
             }
+            let before_name = self.pos;
             let aname = self.read_name();
+            if self.pos == before_name {
+                // Malformed delimiter (`<p a='x' ?>`): the permissive parser
+                // must still advance instead of spinning on the same byte.
+                break;
+            }
             self.skip_ws();
             let mut avalue = String::new();
             if self.cur() == '=' {
@@ -402,5 +408,135 @@ fn decode_entity(body: &str) -> Option<String> {
         "quot" => Some("\"".to_string()),
         "apos" => Some("'".to_string()),
         _ => None,
+    }
+}
+
+/// Structural admission for a part before the permissive DOM parser reads it:
+/// well-formed nesting, a single root, no DTD, only the five predefined or
+/// numeric entities, and nesting no deeper than 256. This is not an OOXML
+/// schema check and not a ZIP resource budget.
+pub fn validate_xml(xml: &str) -> Result<(), String> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+
+    const MAX_DEPTH: usize = 256;
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().check_end_names = true;
+    let mut depth = 0usize;
+    let mut roots = 0usize;
+    loop {
+        match reader.read_event().map_err(|e| e.to_string())? {
+            Event::Start(_) | Event::Empty(_) if depth == 0 && roots > 0 => {
+                return Err("multiple XML roots".to_string());
+            }
+            Event::Start(e) => {
+                check_attributes(&e)?;
+                if depth == 0 {
+                    roots += 1;
+                }
+                depth += 1;
+                if depth > MAX_DEPTH {
+                    return Err(format!("XML nesting exceeds {MAX_DEPTH} elements"));
+                }
+            }
+            Event::Empty(e) => {
+                check_attributes(&e)?;
+                if depth == 0 {
+                    roots += 1;
+                }
+            }
+            Event::End(_) => {
+                depth = depth.checked_sub(1).ok_or("unmatched XML end tag")?;
+            }
+            Event::DocType(_) => return Err("DTD declarations are unsupported".to_string()),
+            Event::GeneralRef(reference) => {
+                let name = std::str::from_utf8(reference.as_ref()).map_err(|e| e.to_string())?;
+                if depth == 0 || decode_entity(name).is_none() {
+                    return Err(format!("unsupported XML entity reference: {name}"));
+                }
+            }
+            Event::Text(text) if depth == 0 => {
+                if text.iter().any(|byte| !byte.is_ascii_whitespace()) {
+                    return Err("text outside XML root".to_string());
+                }
+            }
+            Event::CData(_) if depth == 0 => return Err("CDATA outside XML root".to_string()),
+            Event::Eof => {
+                return if roots == 1 && depth == 0 {
+                    Ok(())
+                } else {
+                    Err("missing or incomplete XML root".to_string())
+                };
+            }
+            _ => {}
+        }
+    }
+}
+
+fn check_attributes(start: &quick_xml::events::BytesStart<'_>) -> Result<(), String> {
+    for attribute in start.attributes() {
+        let attribute = attribute.map_err(|e| e.to_string())?;
+        attribute
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod checked_xml_tests {
+    use super::{Dom, parse_xdocument, validate_xml};
+
+    #[test]
+    fn truncated_attribute_input_terminates_in_legacy_parser() {
+        for xml in [
+            "<p",
+            "<p a",
+            "<p a=",
+            "<p a='",
+            "<p a='unfinished",
+            "<p a='x' ?>",
+        ] {
+            let mut dom = Dom::new();
+            let document = parse_xdocument(&mut dom, xml);
+            assert!(dom.root(document).is_some(), "{xml}");
+            assert!(validate_xml(xml).is_err(), "{xml}");
+        }
+    }
+
+    #[test]
+    fn checked_xml_rejects_invalid_or_unbounded_structure() {
+        for xml in [
+            "",
+            "<a><b></a>",
+            "<a>",
+            "<a/><b/>",
+            "<a/><b></b>",
+            "text<a/>",
+            "<a x='1' x='2'/>",
+            "<!DOCTYPE a><a/>",
+            "<a>&unknown;</a>",
+            "&amp;<a/>",
+            "<![CDATA[x]]><a/>",
+            "</a>",
+        ] {
+            assert!(validate_xml(xml).is_err(), "{xml}");
+        }
+        let deep = format!("{}{}", "<a>".repeat(257), "</a>".repeat(257));
+        assert!(validate_xml(&deep).is_err());
+        let ok_deep = format!("{}{}", "<a>".repeat(256), "</a>".repeat(256));
+        assert_eq!(validate_xml(&ok_deep), Ok(()));
+    }
+
+    #[test]
+    fn checked_xml_accepts_normal_documents_and_entities() {
+        for xml in [
+            "<?xml version='1.0'?><a x='&amp;'><b/></a>",
+            "<a>&lt;&#65;&#x1F600;<![CDATA[raw <>]]></a>",
+            "<!--before--><a/> <!--after-->",
+            "<a/>",
+        ] {
+            assert_eq!(validate_xml(xml), Ok(()), "{xml}");
+        }
     }
 }

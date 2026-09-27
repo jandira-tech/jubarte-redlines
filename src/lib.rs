@@ -45,6 +45,10 @@ pub mod comparison_log;
 pub mod convert;
 /// Byte-level package API: compare, list, accept, and reject revisions.
 pub mod document_comparer;
+/// Guarded, uniquely anchored edits applied to a copy and redlined by compare.
+pub mod edit;
+/// Read-only paragraph/package views and the Markdown projection for agents.
+pub mod inspect;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).
 pub mod markup_simplifier;
 /// WordprocessingML and related namespace / `XName` constants.

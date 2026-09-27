@@ -1,0 +1,667 @@
+diff --git a/src/xmllinq/parse.rs b/src/xmllinq/parse.rs
+--- a/src/xmllinq/parse.rs
++++ b/src/xmllinq/parse.rs
+@@ -173,10 +173,14 @@
+         let mut raw_attrs: Vec<(String, String)> = Vec::new();
+         loop {
+             self.skip_ws();
+-            if self.cur() == '/' || self.cur() == '>' {
++            if self.pos >= self.len() || self.cur() == '/' || self.cur() == '>' {
+                 break;
+             }
++            let before_name = self.pos;
+             let aname = self.read_name();
++            if self.pos == before_name {
++                break; // Malformed delimiter: a permissive parser must still advance.
++            }
+             self.skip_ws();
+             let mut avalue = String::new();
+             if self.cur() == '=' {
+@@ -404,3 +408,108 @@
+         _ => None,
+     }
+ }
++
++/// Check XML structure and depth before the legacy DOM parser.
++/// This does not enforce ZIP budgets or full OOXML schema validity.
++pub(crate) fn validate_xml(xml: &str) -> Result<(), String> {
++    use quick_xml::Reader;
++    use quick_xml::events::Event;
++
++    let mut reader = Reader::from_str(xml);
++    reader.config_mut().check_end_names = true;
++    let mut depth = 0usize;
++    let mut roots = 0usize;
++    loop {
++        match reader.read_event().map_err(|e| e.to_string())? {
++            Event::Start(e) | Event::Empty(e) => {
++                if depth == 0 {
++                    roots += 1;
++                    if roots > 1 {
++                        return Err("multiple XML roots".to_string());
++                    }
++                }
++                for attribute in e.attributes() {
++                    let attribute = attribute.map_err(|e| e.to_string())?;
++                    attribute.unescape_value().map_err(|e| e.to_string())?;
++                }
++                // Empty elements have already ended. Reader::buffer_position()
++                // points immediately after the closing '>' in UTF-8 bytes.
++                let position = reader.buffer_position() as usize;
++                if !xml.as_bytes()[..position].ends_with(b"/>") {
++                    depth += 1;
++                    if depth > 256 {
++                        return Err("XML nesting exceeds 256 elements".to_string());
++                    }
++                }
++            }
++            Event::End(_) => {
++                depth = depth.checked_sub(1).ok_or("unmatched XML end tag")?;
++            }
++            Event::DocType(_) => return Err("DTD declarations are unsupported".to_string()),
++            Event::GeneralRef(reference) => {
++                let name = std::str::from_utf8(reference.as_ref()).map_err(|e| e.to_string())?;
++                if depth == 0 || decode_entity(name).is_none() {
++                    return Err(format!("unsupported XML entity reference: {name}"));
++                }
++            }
++            Event::Text(text) if depth == 0 => {
++                if text.as_ref().iter().any(|byte| !byte.is_ascii_whitespace()) {
++                    return Err("text outside XML root".to_string());
++                }
++            }
++            Event::CData(_) if depth == 0 => return Err("CDATA outside XML root".to_string()),
++            Event::Eof => {
++                return if roots == 1 && depth == 0 {
++                    Ok(())
++                } else {
++                    Err("missing or incomplete XML root".to_string())
++                };
++            }
++            _ => {}
++        }
++    }
++}
++
++#[cfg(test)]
++mod checked_xml_tests {
++    use super::{Dom, parse_xdocument, validate_xml};
++
++    #[test]
++    fn truncated_attribute_input_terminates_in_legacy_parser() {
++        for xml in ["<p", "<p a", "<p a=", "<p a='", "<p a='unfinished"] {
++            let mut dom = Dom::new();
++            let document = parse_xdocument(&mut dom, xml);
++            assert!(dom.root(document).is_some(), "{xml}");
++            assert!(validate_xml(xml).is_err(), "{xml}");
++        }
++    }
++
++    #[test]
++    fn checked_xml_rejects_invalid_or_unbounded_structure() {
++        for xml in [
++            "",
++            "<a><b></a>",
++            "<a>",
++            "<a/><b/>",
++            "text<a/>",
++            "<a x='1' x='2'/>",
++            "<!DOCTYPE a><a/>",
++            "<a>&unknown;</a>",
++        ] {
++            assert!(validate_xml(xml).is_err(), "{xml}");
++        }
++        let deep = format!("{}{}", "<a>".repeat(257), "</a>".repeat(257));
++        assert!(validate_xml(&deep).is_err());
++    }
++
++    #[test]
++    fn checked_xml_accepts_normal_documents_and_entities() {
++        for xml in [
++            "<?xml version='1.0'?><a x='&amp;'><b/></a>",
++            "<a>&lt;&#65;&#x1F600;<![CDATA[raw <>]]></a>",
++            "<!--before--><a/> <!--after-->",
++        ] {
++            assert_eq!(validate_xml(xml), Ok(()), "{xml}");
++        }
++    }
++}
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -85,6 +85,7 @@
+ perf-profile = []
+ 
+ [dependencies]
++quick-xml = "0.41" # checked XML admission for new inspection paths
+ rdocx-opc = "0.1" # OPC/zip package layer
+ zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # fallback / direct zip access if rdocx-opc's surface is insufficient
+ sha1 = "0.11"
+@@ -107,7 +108,6 @@
+ criterion = "0.8"
+ # XML assertions in integration tests; production parsing uses xmllinq's
+ # purpose-built scanner instead.
+-quick-xml = "0.41"
+ # Round-trip validation of produced .docx files in integration tests; only the
+ # `parts` feature (= dep:zip) is built.
+ ooxmlsdk = { version = "0.11", default-features = false, features = ["parts"] }
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -45,6 +45,8 @@
+ pub mod convert;
+ /// Byte-level package API: compare, list, accept, and reject revisions.
+ pub mod document_comparer;
++/// Conservative body inspection and namespace-aware package facts.
++pub mod inspect;
+ /// Markup simplification (PowerTools `MarkupSimplifier` port).
+ pub mod markup_simplifier;
+ /// WordprocessingML and related namespace / `XName` constants.
+diff --git a/src/inspect.rs b/src/inspect.rs
+new file mode 100644
+--- /dev/null
++++ b/src/inspect.rs
+@@ -0,0 +1,484 @@
++// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++//
++// SPDX-License-Identifier: AGPL-3.0-only
++
++//! Conservative read-only views. Body paragraph order is XML document order,
++//! including table cells, not rendered page order. Text boxes are separate
++//! stories and are omitted; this API is not an all-stories text dump.
++//!
++//! Text reflects the visible run projection (paragraph deletion marks are not coalesced): deleted and moved-from content is
++//! omitted. Tabs and line breaks remain `\t` and `\n`; explicit page breaks set
++//! `page_break`. Field results are included; field instructions are omitted.
++//! Strict namespaces are normalized in memory only. Unsupported alternative or
++//! externally supplied body content returns an error instead of guessed text.
++
++use std::collections::BTreeSet;
++use std::fmt;
++
++use crate::namespaces::{MC, W};
++use crate::opc::PartFs;
++use crate::xmllinq::{Dom, NodeId};
++
++/// One body paragraph with visible run text; indices are valid only for this snapshot.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct ParagraphInfo {
++    /// Zero-based body paragraph index, including table-cell paragraphs.
++    pub index: usize,
++    /// Text with explicit tabs/newlines, excluding text-box stories.
++    pub text: String,
++    /// Whether this paragraph contains a visible explicit page-break element.
++    pub page_break: bool,
++}
++
++/// An invalid package or content whose visible projection is unsupported.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum InspectError {
++    /// OPC/ZIP load failure.
++    Package(String),
++    /// Missing main document part or body.
++    MissingDocument,
++    /// Invalid XML, encoding, or setting value, including the part name.
++    Invalid(String),
++    /// A construct for which this API cannot promise a visible projection.
++    Unsupported(String),
++}
++
++impl fmt::Display for InspectError {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        match self {
++            Self::Package(message) => write!(f, "opening DOCX: {message}"),
++            Self::MissingDocument => f.write_str("DOCX has no main document part or body"),
++            Self::Invalid(message) => write!(f, "invalid DOCX content: {message}"),
++            Self::Unsupported(message) => write!(f, "unsupported inspection content: {message}"),
++        }
++    }
++}
++
++impl std::error::Error for InspectError {}
++
++/// Package facts. Counts are XML facts, not rendered-page facts.
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub struct Summary {
++    /// Body paragraphs with visible run text, excluding text boxes.
++    pub paragraphs: usize,
++    /// Comment definitions in the related comments part.
++    pub comments: usize,
++    /// Raw revision carrier elements across XML parts, not coalesced changes.
++    pub revisions: usize,
++    /// Footnote definitions excluding separator and continuation-separator notes.
++    pub footnotes: usize,
++    /// Endnote definitions excluding separator and continuation-separator notes.
++    pub endnotes: usize,
++    /// Distinct internally related header parts.
++    pub headers: usize,
++    /// Distinct internally related footer parts.
++    pub footers: usize,
++    /// Parts whose declared content type starts with `image/`.
++    pub images: usize,
++    /// Body table elements (raw XML, including nested tables).
++    pub tables: usize,
++    /// Body simple fields plus complex-field begin markers (raw XML).
++    pub fields: usize,
++    /// Body section-property elements, excluding saved revision properties.
++    pub sections: usize,
++    /// Body or paragraph-style numbering declarations exist. This does not
++    /// establish that every paragraph, or even a used style, is numbered.
++    pub list_numbering: bool,
++    /// Related settings part explicitly enables tracking new revisions.
++    pub track_changes: bool,
++}
++
++/// Read body paragraphs using the documented conservative final-text view.
++pub fn paragraphs(docx: &[u8]) -> Result<Vec<ParagraphInfo>, InspectError> {
++    let pkg = open(docx)?;
++    let main = main_part(&pkg)?;
++    let (dom, root) = parse_part(&pkg, &main)?;
++    let body = dom
++        .element(root, &W::body())
++        .ok_or(InspectError::MissingDocument)?;
++    body_paragraphs(&dom, body)
++}
++
++/// Inspect once per XML part, with namespace-aware counts and OPC relationships.
++/// The function never converts failed inspection into a zero revision count.
++pub fn summary(docx: &[u8]) -> Result<Summary, InspectError> {
++    let pkg = open(docx)?;
++    let main = main_part(&pkg)?;
++    let (dom, root) = parse_part(&pkg, &main)?;
++    let body = dom
++        .element(root, &W::body())
++        .ok_or(InspectError::MissingDocument)?;
++    let mut summary = Summary {
++        paragraphs: body_paragraphs(&dom, body)?.len(),
++        tables: dom.descendants(body, Some(&W::name("tbl"))).len(),
++        fields: dom.descendants(body, Some(&W::name("fldSimple"))).len()
++            + dom
++                .descendants(body, Some(&W::name("fldChar")))
++                .iter()
++                .filter(|&&node| dom.attribute(node, &W::name("fldCharType")) == Some("begin"))
++                .count(),
++        sections: dom
++            .descendants(body, Some(&W::name("sectPr")))
++            .iter()
++            .filter(|&&node| {
++                !has_ancestor(&dom, node, "sectPrChange") && !has_ancestor(&dom, node, "pPrChange")
++            })
++            .count(),
++        list_numbering: !dom.descendants(body, Some(&W::name("numPr"))).is_empty(),
++        ..Summary::default()
++    };
++    for name in pkg.parts() {
++        if pkg
++            .content_type_for(&name)
++            .is_some_and(|mime| mime.starts_with("image/"))
++        {
++            summary.images += 1;
++        }
++        if name.ends_with(".xml") {
++            let (part_dom, part_root) = parse_part(&pkg, &name)?;
++            summary.revisions += revision_count(&part_dom, part_root);
++        }
++    }
++    let related = |kind: &str| -> BTreeSet<String> {
++        pkg.read_rels_for(&main)
++            .into_iter()
++            .flat_map(|rels| &rels.items)
++            .filter(|rel| {
++                rel.target_mode.as_deref() != Some("External")
++                    && rel.rel_type.rsplit('/').next() == Some(kind)
++            })
++            .map(|rel| pkg.resolve_rel_target(&main, &rel.target))
++            .collect()
++    };
++    for (kind, targets) in [
++        ("header", related("header")),
++        ("footer", related("footer")),
++        ("comments", related("comments")),
++        ("footnotes", related("footnotes")),
++        ("endnotes", related("endnotes")),
++        ("settings", related("settings")),
++        ("styles", related("styles")),
++    ] {
++        for target in targets {
++            let (part_dom, part_root) = parse_part(&pkg, &target)?;
++            match kind {
++                "header" => summary.headers += 1,
++                "footer" => summary.footers += 1,
++                "comments" => {
++                    summary.comments += part_dom.descendants(part_root, Some(&W::comment())).len()
++                }
++                "footnotes" => summary.footnotes += note_count(&part_dom, part_root, "footnote"),
++                "endnotes" => summary.endnotes += note_count(&part_dom, part_root, "endnote"),
++                "styles" => {
++                    for style in part_dom.descendants(part_root, Some(&W::name("style"))) {
++                        if part_dom.attribute(style, &W::name("type")) == Some("paragraph")
++                            && !part_dom
++                                .descendants(style, Some(&W::name("numPr")))
++                                .is_empty()
++                        {
++                            summary.list_numbering = true;
++                        }
++                    }
++                }
++                "settings" => {
++                    if let Some(setting) = part_dom.element(part_root, &W::name("trackRevisions")) {
++                        summary.track_changes = match part_dom.attribute(setting, &W::val()) {
++                            None | Some("true" | "1" | "on") => true,
++                            Some("false" | "0" | "off") => false,
++                            Some(value) => {
++                                return Err(InspectError::Invalid(format!(
++                                    "{target}: invalid trackRevisions value {value}"
++                                )));
++                            }
++                        };
++                    }
++                }
++                _ => unreachable!("enumerated relationship kind"),
++            }
++        }
++    }
++    Ok(summary)
++}
++
++fn open(bytes: &[u8]) -> Result<PartFs, InspectError> {
++    let normalized = crate::strict_translation::strict_to_transitional_docx(bytes);
++    PartFs::open(&normalized).map_err(|error| InspectError::Package(error.to_string()))
++}
++
++fn main_part(pkg: &PartFs) -> Result<String, InspectError> {
++    pkg.main_document_part()
++        .or_else(|| {
++            pkg.part_bytes("word/document.xml")
++                .map(|_| "word/document.xml".to_string())
++        })
++        .ok_or(InspectError::MissingDocument)
++}
++
++fn parse_part(pkg: &PartFs, name: &str) -> Result<(Dom, NodeId), InspectError> {
++    let bytes = pkg
++        .part_bytes(name)
++        .ok_or_else(|| InspectError::Invalid(format!("missing related part {name}")))?;
++    let xml = std::str::from_utf8(bytes)
++        .map_err(|error| InspectError::Invalid(format!("{name}: {error}")))?;
++    crate::xmllinq::parse::validate_xml(xml)
++        .map_err(|error| InspectError::Invalid(format!("{name}: {error}")))?;
++    let mut dom = Dom::new();
++    let document = dom.parse_xdocument(xml);
++    let root = dom
++        .root(document)
++        .ok_or_else(|| InspectError::Invalid(format!("{name}: missing XML root")))?;
++    Ok((dom, root))
++}
++
++fn has_ancestor(dom: &Dom, node: NodeId, local: &str) -> bool {
++    dom.ancestors(node, None)
++        .iter()
++        .any(|&ancestor| dom.name_is(ancestor, &W::name(local)))
++}
++
++fn hidden(dom: &Dom, node: NodeId) -> bool {
++    has_ancestor(dom, node, "del") || has_ancestor(dom, node, "moveFrom")
++}
++
++fn body_paragraphs(dom: &Dom, body: NodeId) -> Result<Vec<ParagraphInfo>, InspectError> {
++    for node in dom.descendants(body, None) {
++        if ["altChunk", "subDoc", "contentPart"]
++            .iter()
++            .any(|local| dom.name_is(node, &W::name(local)))
++            || dom.name_is(node, &MC::name("AlternateContent"))
++        {
++            return Err(InspectError::Unsupported(
++                dom.name(node).map_or_else(String::new, |name| name.clark()),
++            ));
++        }
++    }
++    let mut paragraphs = Vec::new();
++    for paragraph in dom.descendants(body, Some(&W::p())) {
++        if hidden(dom, paragraph) || has_ancestor(dom, paragraph, "txbxContent") {
++            continue;
++        }
++        let mut text = String::new();
++        let mut page_break = false;
++        for node in dom.descendants(paragraph, None) {
++            // Only the closest owning paragraph contributes text. A text-box
++            // paragraph must not leak into both its anchor and its own row.
++            let owner = dom.ancestors(node, Some(&W::p())).first().copied();
++            if owner != Some(paragraph) || hidden(dom, node) {
++                continue;
++            }
++            if dom.name_is(node, &W::t()) {
++                for child in dom.nodes(node) {
++                    if let Some(value) = dom.text_value(child) {
++                        text.push_str(value);
++                    }
++                }
++            } else if dom.name_is(node, &W::name("tab")) {
++                text.push('\t');
++            } else if dom.name_is(node, &W::name("cr")) {
++                text.push('\n');
++            } else if dom.name_is(node, &W::name("br")) {
++                match dom.attribute(node, &W::name("type")) {
++                    Some("page") => page_break = true,
++                    Some("column") => {
++                        return Err(InspectError::Unsupported(
++                            "column break text projection".to_string(),
++                        ));
++                    }
++                    _ => text.push('\n'),
++                }
++            } else if dom.name_is(node, &W::name("noBreakHyphen")) {
++                text.push('\u{2011}');
++            } else if dom.name_is(node, &W::name("softHyphen")) {
++                text.push('\u{00ad}');
++            } else if dom.name_is(node, &W::name("sym")) {
++                return Err(InspectError::Unsupported(
++                    "font-dependent symbol text projection".to_string(),
++                ));
++            }
++        }
++        paragraphs.push(ParagraphInfo {
++            index: paragraphs.len(),
++            text,
++            page_break,
++        });
++    }
++    Ok(paragraphs)
++}
++
++fn note_count(dom: &Dom, root: NodeId, local: &str) -> usize {
++    dom.descendants(root, Some(&W::name(local)))
++        .iter()
++        .filter(|&&node| {
++            !matches!(
++                dom.attribute(node, &W::name("type")),
++                Some("separator" | "continuationSeparator")
++            )
++        })
++        .count()
++}
++
++fn revision_count(dom: &Dom, root: NodeId) -> usize {
++    const CARRIERS: &[&str] = &[
++        "ins",
++        "del",
++        "moveFrom",
++        "moveTo",
++        "rPrChange",
++        "pPrChange",
++        "sectPrChange",
++        "tblPrChange",
++        "tblGridChange",
++        "trPrChange",
++        "tcPrChange",
++        "numberingChange",
++        "cellIns",
++        "cellDel",
++        "cellMerge",
++    ];
++    dom.descendants_and_self(root, None)
++        .iter()
++        .filter(|&&node| {
++            dom.name(node).is_some_and(|name| {
++                name.namespace_name() == W::URI && CARRIERS.contains(&name.local_name())
++            })
++        })
++        .count()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::{InspectError, paragraphs, summary};
++    use crate::namespaces::W;
++    use std::io::{Cursor, Write};
++    use zip::write::SimpleFileOptions;
++
++    fn package(body: &str, extras: &[(&str, &str)], relationships: &str) -> Vec<u8> {
++        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
++        let main = format!(
++            "<x:document xmlns:x='{}'><x:body>{body}</x:body></x:document>",
++            W::URI
++        );
++        let main_rels = format!(
++            "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'>{relationships}</Relationships>"
++        );
++        for (name, content) in [
++            ("[Content_Types].xml", "<Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'><Default Extension='xml' ContentType='application/xml'/><Default Extension='rels' ContentType='application/vnd.openxmlformats-package.relationships+xml'/><Default Extension='png' ContentType='image/png'/></Types>"),
++            ("_rels/.rels", "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'><Relationship Id='rId1' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument' Target='word/document.xml'/></Relationships>"),
++            ("word/document.xml", main.as_str()),
++            ("word/_rels/document.xml.rels", main_rels.as_str()),
++        ].into_iter().chain(extras.iter().copied()) {
++            zip.start_file(name, SimpleFileOptions::default()).unwrap();
++            zip.write_all(content.as_bytes()).unwrap();
++        }
++        zip.finish().unwrap().into_inner()
++    }
++
++    #[test]
++    fn final_text_preserves_controls_and_excludes_deleted_and_nested_stories() {
++        let docx = package(
++            "<x:p><x:r><x:t>A</x:t><x:tab/><x:t>B</x:t><x:br/></x:r><x:del><x:r><x:tab/><x:br x:type='page'/></x:r></x:del><x:moveFrom><x:r><x:t>old</x:t></x:r></x:moveFrom><x:ins><x:r><x:t>C</x:t></x:r></x:ins><x:r><x:txbxContent><x:p><x:r><x:t>box</x:t></x:r></x:p></x:txbxContent></x:r></x:p><x:tbl><x:tr><x:tc><x:p><x:r><x:t>cell</x:t><x:br x:type='page'/></x:r></x:p></x:tc></x:tr></x:tbl>",
++            &[],
++            "",
++        );
++        let rows = paragraphs(&docx).unwrap();
++        assert_eq!(rows.len(), 2);
++        assert_eq!(rows[0].text, "A\tB\nC");
++        assert!(!rows[0].page_break);
++        assert_eq!(
++            (rows[1].index, rows[1].text.as_str(), rows[1].page_break),
++            (1, "cell", true)
++        );
++    }
++
++    #[test]
++    fn summary_resolves_nonstandard_related_names_and_prefixes() {
++        let settings = format!(
++            "<s:settings xmlns:s='{}'><s:trackRevisions s:val='on' /></s:settings>",
++            W::URI
++        );
++        let comments = format!(
++            "<s:comments xmlns:s='{}'><s:comment s:id='0'/></s:comments>",
++            W::URI
++        );
++        let notes = format!(
++            "<s:footnotes xmlns:s='{}'><s:footnote s:type='separator'/><s:footnote s:id='1'/></s:footnotes>",
++            W::URI
++        );
++        let header = format!(
++            "<s:hdr xmlns:s='{}'><s:p><s:ins s:id='1'><s:r><s:t>new</s:t></s:r></s:ins></s:p></s:hdr>",
++            W::URI
++        );
++        let rels = "<Relationship Id='s' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings' Target='meta/options.xml'/><Relationship Id='c' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments' Target='notes/comment-data.xml'/><Relationship Id='f' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes' Target='notes/definitions.xml'/><Relationship Id='h' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/header' Target='chrome/top.xml'/>";
++        let docx = package(
++            "<x:p/><x:sectPr><x:sectPrChange/></x:sectPr>",
++            &[
++                ("word/meta/options.xml", &settings),
++                ("word/notes/comment-data.xml", &comments),
++                ("word/notes/definitions.xml", &notes),
++                ("word/chrome/top.xml", &header),
++                ("custom/image.png", "image"),
++            ],
++            rels,
++        );
++        let facts = summary(&docx).unwrap();
++        assert_eq!(
++            (
++                facts.paragraphs,
++                facts.comments,
++                facts.footnotes,
++                facts.headers
++            ),
++            (1, 1, 1, 1)
++        );
++        assert_eq!((facts.images, facts.sections, facts.revisions), (1, 1, 2));
++        assert!(facts.track_changes);
++    }
++
++    #[test]
++    fn inspection_reports_unsupported_and_invalid_content() {
++        assert!(paragraphs(b"not zip").is_err());
++        let alternative = package("<x:altChunk/>", &[], "");
++        assert!(matches!(
++            paragraphs(&alternative),
++            Err(InspectError::Unsupported(_))
++        ));
++        let malformed = package("<x:p", &[], "");
++        assert!(matches!(
++            paragraphs(&malformed),
++            Err(InspectError::Invalid(_))
++        ));
++        let broken_rel = package(
++            "<x:p/>",
++            &[],
++            "<Relationship Id='h' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/header' Target='missing.xml'/>",
++        );
++        assert!(matches!(
++            summary(&broken_rel),
++            Err(InspectError::Invalid(_))
++        ));
++    }
++
++    #[test]
++    fn get_revisions_returns_errors_for_malformed_or_unsupported_main_parts() {
++        let settings = crate::comparer::WmlComparerSettings::default();
++        for body in ["<x:p", "<x:altChunk/>"] {
++            let docx = package(body, &[], "");
++            assert!(crate::document_comparer::get_revisions(&docx, &settings).is_err());
++        }
++        let empty = package("<x:p/>", &[], "");
++        let mut pkg = crate::opc::PartFs::open(&empty).unwrap();
++        for xml in [
++            "",
++            "<x:document xmlns:x='http://schemas.openxmlformats.org/wordprocessingml/2006/main'/>",
++        ] {
++            pkg.set_part("word/document.xml", xml.as_bytes().to_vec());
++            assert!(
++                crate::document_comparer::get_revisions(&pkg.to_zip().unwrap(), &settings).is_err()
++            );
++        }
++        pkg.remove_part("word/document.xml");
++        assert!(
++            crate::document_comparer::get_revisions(&pkg.to_zip().unwrap(), &settings).is_err()
++        );
++    }
++}
+diff --git a/src/document_comparer.rs b/src/document_comparer.rs
+--- a/src/document_comparer.rs
++++ b/src/document_comparer.rs
+@@ -4371,6 +4371,7 @@
+     let xml = pkg
+         .part_string(&main)
+         .ok_or_else(|| OpcError::PartNotFound(main.clone()))?;
++    crate::xmllinq::parse::validate_xml(&xml).map_err(invalid_content)?;
+     let mut dom = Dom::new();
+     let d = dom.parse_xdocument(&xml);
+     let root = dom
+@@ -4388,6 +4389,7 @@
+         (en_part.as_str(), W::endnote()),
+     ] {
+         if let Some(x) = pkg.part_string(part) {
++            crate::xmllinq::parse::validate_xml(&x).map_err(invalid_content)?;
+             let nd = dom.parse_xdocument(&x);
+             if let Some(r) = dom.root(nd) {
+                 preprocess::remove_existing_powertools_markup(&mut dom, r);
