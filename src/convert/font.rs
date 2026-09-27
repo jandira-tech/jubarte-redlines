@@ -1072,6 +1072,10 @@ pub(crate) type EmbeddedFonts = HashMap<(String, bool, bool), Arc<[u8]>>;
 pub(crate) struct Fonts<'a> {
     extra: Vec<Face<'a>>,
     extra_index: HashMap<FaceKey, u16>,
+    /// Where each catalogue face lands: an embedded face of its family or
+    /// the slot its family maps to. Every glyph asks, and answering took
+    /// string matching (a quarter of fixtures_500 88b46971's conversion).
+    catalogue_slots: Mutex<HashMap<FaceId, FaceRef>>,
 }
 
 impl<'a> Fonts<'a> {
@@ -1079,6 +1083,7 @@ impl<'a> Fonts<'a> {
         Self {
             extra: Vec::new(),
             extra_index: HashMap::new(),
+            catalogue_slots: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1117,6 +1122,9 @@ impl<'a> Fonts<'a> {
             return;
         };
         self.extra.push(face);
+        if let Ok(slots) = self.catalogue_slots.get_mut() {
+            slots.clear();
+        }
         self.extra_index.insert(
             FaceKey {
                 family: family.to_ascii_lowercase(),
@@ -1200,7 +1208,13 @@ impl<'a> Fonts<'a> {
 
     pub(crate) fn get(&self, id: impl Into<FaceRef>) -> &Face<'a> {
         match id.into() {
-            FaceRef::Catalogue(id) => self.get_key(&id.key()),
+            FaceRef::Catalogue(id) => match self.catalogue_slot(id) {
+                FaceRef::Catalogue(id) => catalogue().get(id),
+                FaceRef::Embedded(i) => self
+                    .extra
+                    .get(usize::from(i))
+                    .unwrap_or_else(|| catalogue().get(FaceId::CarlitoRegular)),
+            },
             FaceRef::Embedded(i) => self
                 .extra
                 .get(usize::from(i))
@@ -1208,6 +1222,29 @@ impl<'a> Fonts<'a> {
         }
     }
 
+    /// `get_key(&id.key())`'s face, remembered per face.
+    fn catalogue_slot(&self, id: FaceId) -> FaceRef {
+        if let Some(slot) = self
+            .catalogue_slots
+            .lock()
+            .ok()
+            .and_then(|slots| slots.get(&id).copied())
+        {
+            return slot;
+        }
+        let key = id.key();
+        let slot = match self.embedded_index(&key.family, key.bold, key.italic) {
+            Some(idx) => FaceRef::Embedded(idx),
+            None => FaceRef::Catalogue(Self::id_from_key(&key)),
+        };
+        if let Ok(mut slots) = self.catalogue_slots.lock() {
+            slots.insert(id, slot);
+        }
+        slot
+    }
+
+    /// The unremembered lookup `catalogue_slot` must agree with.
+    #[cfg(test)]
     pub(crate) fn get_key(&self, key: &FaceKey) -> &Face<'a> {
         if let Some(idx) = self.embedded_index(&key.family, key.bold, key.italic) {
             return self
