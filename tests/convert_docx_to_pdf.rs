@@ -39002,3 +39002,136 @@ fn a_picture_repeated_on_every_page_is_embedded_once() {
         "one image object"
     );
 }
+
+#[test]
+fn rev_bar_formatting_change_does_not_leak_to_the_next_conversion() {
+    let changed = minimal_docx_body(
+        r#"<w:p><w:pPr><w:pPrChange w:id="1" w:author="A"><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Same text</w:t></w:r></w:p><w:sectPr/>"#,
+    );
+    let clean = minimal_docx_body("<w:p><w:r><w:t>Same text</w:t></w:r></w:p><w:sectPr/>");
+    for (doc, revisions, expected) in [
+        (&changed, RevisionStyle::Word, true),
+        (&clean, RevisionStyle::Word, false),
+        (&changed, RevisionStyle::Conventional, true),
+        (&clean, RevisionStyle::Conventional, false),
+        (&changed, RevisionStyle::Word, true),
+    ] {
+        let pdf = docx_to_pdf_with(
+            doc,
+            PdfOptions {
+                revisions,
+                ..PdfOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(pdf_page_count(&pdf), 1);
+        let bars = pdf_vertical_rule_xs(&pdf);
+        assert_eq!(
+            bars.iter().any(|x| (34.0..38.0).contains(x)),
+            expected,
+            "bars={bars:?}"
+        );
+    }
+}
+
+/// A fresh process gives each conversion its own lazy font index and avoids
+/// mutating environment variables shared by parallel tests.
+fn convert_with_font_index(dir: &std::path::Path, index: Option<&std::ffi::OsStr>) -> Vec<u8> {
+    let input = dir.join("input.docx");
+    let output = dir.join("output.pdf");
+    std::fs::write(&input, minimal_docx_body(
+        r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="PR214MissingFont" w:hAnsi="PR214MissingFont"/></w:rPr><w:t>Font cache regression</w:t></w:r></w:p><w:sectPr/>"#,
+    )).unwrap();
+    let fonts = dir.join("fonts");
+    std::fs::create_dir_all(&fonts).unwrap();
+    let mut command = Command::new(BIN);
+    command
+        .args(["convert", "--force"])
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .env("JUBARTE_FONT_DIR", fonts)
+        .env_remove("JUBARTE_FONT_INDEX");
+    if let Some(index) = index {
+        command.env("JUBARTE_FONT_INDEX", index);
+    }
+    let result = command.output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let pdf = std::fs::read(output).unwrap();
+    assert!(pdf.starts_with(b"%PDF-"));
+    assert_eq!(pdf_page_count(&pdf), 1);
+    pdf
+}
+
+#[test]
+fn font_index_default_location_persists_missing_family_across_processes() {
+    let dir = tempfile::tempdir().unwrap();
+    convert_with_font_index(dir.path(), None);
+    let path = dir.path().join("font-index.tsv");
+    let first = std::fs::read_to_string(&path).unwrap();
+    assert!(first.starts_with(concat!(
+        "jubarte-font-index\t1\t",
+        env!("CARGO_PKG_VERSION"),
+        "\n"
+    )));
+    assert!(
+        first.lines().any(|line| line.contains("PR214MissingFont")),
+        "missing families must also be cached"
+    );
+    convert_with_font_index(dir.path(), None);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), first);
+}
+
+#[test]
+fn font_index_custom_location_recovers_from_stale_or_torn_cache() {
+    for contents in [
+        "old-cache-version\n",
+        "jubarte-font-index\t1\t0.0.0\n",
+        concat!(
+            "jubarte-font-index\t1\t",
+            env!("CARGO_PKG_VERSION"),
+            "\ntruncated-row\n"
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("custom-cache.tsv");
+        std::fs::write(&path, contents).unwrap();
+        convert_with_font_index(dir.path(), Some(path.as_os_str()));
+        let recovered = std::fs::read_to_string(&path).unwrap();
+        assert!(recovered.starts_with(concat!(
+            "jubarte-font-index\t1\t",
+            env!("CARGO_PKG_VERSION"),
+            "\n"
+        )));
+        assert!(recovered.contains("PR214MissingFont"));
+        assert!(!recovered.contains("truncated-row"));
+        assert!(!dir.path().join("font-index.tsv").exists());
+    }
+}
+
+#[test]
+fn font_index_disabled_does_not_create_the_default_cache() {
+    for setting in ["off", ""] {
+        let dir = tempfile::tempdir().unwrap();
+        convert_with_font_index(dir.path(), Some(std::ffi::OsStr::new(setting)));
+        assert!(
+            !dir.path().join("font-index.tsv").exists(),
+            "setting={setting:?}"
+        );
+    }
+}
+
+#[test]
+fn font_index_unwritable_parent_does_not_prevent_conversion() {
+    let dir = tempfile::tempdir().unwrap();
+    let parent = dir.path().join("not-a-directory");
+    std::fs::write(&parent, b"keep me").unwrap();
+    let path = parent.join("font-index.tsv");
+    convert_with_font_index(dir.path(), Some(path.as_os_str()));
+    assert_eq!(std::fs::read(parent).unwrap(), b"keep me");
+    assert!(!path.exists());
+}

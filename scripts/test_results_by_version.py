@@ -142,3 +142,96 @@ def test_jsonl_readers_skip_lines_that_are_not_objects(monkeypatch, tmp_path):
     rv.speed_rows(tmp_path / 'speed.jsonl')
     rv.bench_jsonl()
     assert rv.RUNS == []
+
+
+@pytest.mark.parametrize('stem', [
+    'A_redline_harness', 'A_redline-_harness', 'A_redline-v1_unknown',
+    'A_redline-v1_jobs', 'A_redline-v1_missing', 'Z_unknown-v1_harness', '',
+])
+def test_wordpdf_row_rejects_non_result_names(stem):
+    assert rv.wordpdf_row(stem) is None
+
+
+@pytest.mark.parametrize(('stem', 'expected'), [
+    ('en_C_convert~docxide-0.17.1-rc_2_docxide',
+     ('en_', 'conversion', 'docxide PDF (Word redline)', 'docxide 0.17.1-rc_2', 'docxide')),
+    ('B_convert-fresh0926f_harness',
+     ('', 'conversion', 'jubarte PDF (Word redline)', 'jubarte 0.9.2', 'harness')),
+    ('D_e2e-abc123_harness',
+     ('', 'end to end', 'jubarte redline + jubarte PDF', 'jubarte@abc123', 'harness')),
+])
+def test_wordpdf_row_preserves_version_delimiters_and_resolves_known_tags(stem, expected):
+    assert rv.wordpdf_row(stem) == expected
+
+
+def test_jsonl_objects_recovers_after_bad_records_and_accepts_empty_objects():
+    lines = iter(['{"n": 1}', '{"broken":', '', 'null', '[1]', '"text"', '0', '{}', '{"n": 2}'])
+    assert list(rv.jsonl_objects(lines)) == [{'n': 1}, {}, {'n': 2}]
+
+
+def test_wordpdf_empty_scores_do_not_register_metrics_and_zero_scores_count(monkeypatch, tmp_path):
+    out = _fresh(monkeypatch, tmp_path)
+    (out / 'A_redline-empty_harness.json').write_text('{"bad": null, "text": "90"}')
+    (out / 'B_convert-empty_docxide.json').write_text('[]')
+    (out / 'en_A_redline-zero_harness.json').write_text('{"failed": 0, "good": 100}')
+    (out / 'en_B_convert-zero_docxide.json').write_text('[{}, {"jaccard": 0}, {"jaccard": 0.9}]')
+    rv.redline_wordpdf()
+    by_metric = {r.metric: r for r in rv.RUNS}
+    assert set(rv.METRICS) == set(by_metric) == {
+        'wordpdf:en_:redlining:harness', 'wordpdf:en_:conversion:docxide',
+    }
+    harness = by_metric['wordpdf:en_:redlining:harness']
+    assert (harness.n, harness.mean, harness.median) == (2, 50.0, 50.0)
+    docxide = by_metric['wordpdf:en_:conversion:docxide']
+    assert docxide.n == 3
+    assert docxide.mean == pytest.approx(0.3)
+    assert docxide.median == 0.0
+
+
+@pytest.mark.parametrize(('value', 'unit', 'expected'), [
+    (None, 'ms per document', '—'), (0.0, 'ms per document', '0.00'),
+    (0.125, 'harness score 0-100', '0.12'), (0.125, 'Jaccard 0-1', '0.1250'),
+    (1.0, 'Jaccard 0-1', '1.0000'), (100.0, 'harness score 0-100', '100.00'),
+])
+def test_metric_units_determine_display_precision(value, unit, expected):
+    assert rv.fmt(value, unit) == expected
+
+
+def test_conversion_speed_keeps_competitor_versions_and_unknown_corpus(monkeypatch, tmp_path):
+    _fresh(monkeypatch, tmp_path)
+    speed = tmp_path / 'docx_to_pdf_speed'
+    speed.mkdir()
+    rows = [
+        {'corpus': 'custom_set', 'tool': 'other', 'version': 'other@v2',
+         'n': 0, 'mean': 0, 'median': 0, 'run_ts': '2026-09-27T01-02-03Z'},
+        {'corpus': 'word_redline_en', 'tool': 'jubarte', 'version': 'jubarte 0.9.2',
+         'n': 3, 'mean': 2, 'median': 1, 'run_ts': '2026-09-27T01-02-03Z', 'mode': 'warm'},
+    ]
+    (speed / 'speed.jsonl').write_text('\n'.join(map(json.dumps, rows)))
+    rv.docx_to_pdf_speed()
+    assert [r.version for r in rv.RUNS] == ['other@v2', 'jubarte 0.9.2']
+    assert (rv.RUNS[0].n, rv.RUNS[0].mean, rv.RUNS[0].median) == (0, 0, 0)
+    assert rv.RUNS[0].when.isoformat() == '2026-09-27T01:02:03+00:00'
+    assert rv.METRICS['speed:docx2pdf:custom_set'].docs == 'clean'
+    assert rv.METRICS['speed:docx2pdf:warm:word_redline_en'].docs == 'redlines'
+
+
+def test_render_separates_pipeline_stages_and_ranks_speed_lowest_first(monkeypatch, tmp_path):
+    out = _fresh(monkeypatch, tmp_path)
+    for row in ('D_e2e', 'C_convert', 'A_redline'):
+        (out / f'{row}-abc123_harness.json').write_text('{"one": 80}')
+    rv.redline_wordpdf()
+    key = rv.metric('speed:test', title='Timing', kind='docx->pdf speed', reference='-',
+                    docs='clean', unit='ms per document', lower_is_better=True)
+    for tool, mean in [('slow', 10.0), ('fast', 0.5)]:
+        rv.add(metric=key, tool=tool, version='v1', when=rv.when_of('2026-09-27'),
+               mean=mean, median=mean, n=1)
+    rendered = rv.render()
+    headings = [line for line in rendered.splitlines() if line.startswith('### ')]
+    assert [heading.split(' vs ')[0] for heading in headings[:3]] == [
+        '### Redlining', '### Conversion', '### End to end',
+    ]
+    timing = rendered.split('### Timing\n', 1)[1]
+    rows = [line for line in timing.splitlines() if line.startswith(('| 1 |', '| 2 |'))]
+    assert [line.split(' | ')[1] for line in rows] == ['fast', 'slow']
+    assert '| 0.50 | 0.50 |' in rows[0]

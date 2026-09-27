@@ -228,3 +228,83 @@ fn the_go_back_bookmark_is_not_carried() {
         assert!(names.is_empty(), "{names:?}");
     }
 }
+
+#[test]
+fn a_shared_bookmark_follows_the_revised_range_even_when_its_id_changes() {
+    let a = pkg(&para(
+        &(r#"<w:bookmarkStart w:id="7" w:name="Shared"/>"#.to_string()
+            + &run("alpha")
+            + r#"<w:bookmarkEnd w:id="7"/>"#
+            + &run(" beta")),
+    ));
+    let b = pkg(&para(
+        &(run("alpha ")
+            + r#"<w:bookmarkStart w:id="99" w:name="Shared"/>"#
+            + &run("beta")
+            + r#"<w:bookmarkEnd w:id="99"/>"#),
+    ));
+    for word_mode in [true, false] {
+        let out = compare_documents_with_settings(&a, &b, &settings(word_mode)).unwrap();
+        assert_word_valid_package(&out);
+        let (found, names) = bookmarks(&out);
+        assert_eq!(names, ["Shared"]);
+        assert_eq!(found["Shared"].wraps, "beta");
+    }
+}
+
+#[test]
+fn unicode_and_overlapping_bookmark_ranges_preserve_their_exact_text() {
+    let body = para(
+        &(r#"<w:bookmarkStart w:id="1" w:name="Outer"/>"#.to_string()
+            + &run("ação 🐋 ")
+            + r#"<w:bookmarkStart w:id="2" w:name="Inner"/>"#
+            + &run("東京")
+            + r#"<w:bookmarkEnd w:id="1"/>"#
+            + &run(" fin")
+            + r#"<w:bookmarkEnd w:id="2"/>"#),
+    );
+    let a = pkg(&body);
+    let b = pkg(&(body + &para(&run("Added tail."))));
+    for word_mode in [true, false] {
+        let out = compare_documents_with_settings(&a, &b, &settings(word_mode)).unwrap();
+        assert_word_valid_package(&out);
+        let (found, names) = bookmarks(&out);
+        assert_eq!(names, ["Outer", "Inner"]);
+        assert_eq!(found["Outer"].wraps, "ação 🐋 東京");
+        assert_eq!(found["Inner"].wraps, "東京 fin");
+    }
+}
+
+#[test]
+fn an_empty_leading_bookmark_stays_in_the_following_paragraph_with_column_metadata() {
+    let a = pkg(&(para(&run("Previous paragraph."))
+        + &para(&(r#"<w:bookmarkStart w:id="4" w:name="Point" w:colFirst="2" w:colLast="3"/><w:bookmarkEnd w:id="4"/>"#.to_string()
+            + &run("Following paragraph.")))));
+    for word_mode in [true, false] {
+        let out = compare_documents_with_settings(&a, &a, &settings(word_mode)).unwrap();
+        assert_word_valid_package(&out);
+        let (found, names) = bookmarks(&out);
+        assert_eq!(names, ["Point"]);
+        assert_eq!(found["Point"].wraps, "");
+        let xml = PartFs::open(&out)
+            .unwrap()
+            .part_string("word/document.xml")
+            .unwrap();
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).unwrap();
+        let start = dom.descendants(root, Some(&W::name("bookmarkStart")))[0];
+        assert_eq!(dom.attribute(start, &W::name("colFirst")), Some("2"));
+        assert_eq!(dom.attribute(start, &W::name("colLast")), Some("3"));
+        let p = dom.ancestors(start, Some(&W::p()))[0];
+        let text: String = dom
+            .descendants(p, Some(&W::t()))
+            .iter()
+            .map(|&t| dom.value(t))
+            .collect();
+        assert_eq!(text, "Following paragraph.");
+        let children = dom.elements(p, None);
+        let at = children.iter().position(|&n| n == start).unwrap();
+        assert!(dom.name_is(children[at + 1], &W::name("bookmarkEnd")));
+    }
+}

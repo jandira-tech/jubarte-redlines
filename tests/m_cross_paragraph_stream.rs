@@ -246,3 +246,31 @@ fn a_table_between_the_changed_runs_keeps_the_lcs_pairing() {
         "the shared opening should stay kept: {lines:#?}"
     );
 }
+
+/// Both projections must recover the input paragraph boundaries. In this
+/// direction, accepting currently adds a trailing empty paragraph absent from B.
+#[test]
+fn reverse_cross_paragraph_comparison_restores_each_side_without_extra_paragraphs() {
+    let xml = redline_xml("center_alignment_demo.docx", "center_aligned_bold.docx");
+    let (mut dom, root) = parse(&xml);
+    let accepted = accept_revisions_document(&mut dom, root);
+    let accepted_texts = texts(&dom, accepted);
+    let (mut dom, root) = parse(&xml);
+    let rejected = reject_revisions_document(&mut dom, root);
+    let rejected_texts = texts(&dom, rejected);
+    assert_eq!(
+        (accepted_texts, rejected_texts),
+        (
+            vec![
+                "Center Aligned Bold Text Demo".to_string(),
+                "This text is both centered and bold.".to_string(),
+                "Centered bold text is perfect for document titles.".to_string(),
+            ],
+            vec![
+                "Center Alignment Demo".to_string(),
+                "This document demonstrates center text alignment.".to_string(),
+                "All text in this document is centered on the page.".to_string(),
+            ],
+        ),
+    );
+}

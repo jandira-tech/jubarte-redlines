@@ -401,3 +401,80 @@ fn point_comments_are_carried_as_empty_ranges() {
         "empty range after the text, then the reference: {first}"
     );
 }
+
+#[test]
+fn multiple_point_comments_inside_one_run_preserve_unicode_text_order() {
+    let mut pkg = PartFs::open(&point_comment_docx("unused")).unwrap();
+    let body = r#"<w:p><w:r><w:t>ação 🐋</w:t><w:commentReference w:id="1"/><w:t>東京</w:t><w:commentReference w:id="2"/><w:t>tail</w:t></w:r></w:p>"#;
+    pkg.set_part(
+        "word/document.xml",
+        format!(
+            r#"<w:document xmlns:w="{}"><w:body>{body}<w:sectPr/></w:body></w:document>"#,
+            W::URI
+        )
+        .into_bytes(),
+    );
+    let comments = pkg.part_string("word/comments.xml").unwrap().replace(
+        "</w:comments>",
+        r#"<w:comment w:id="2" w:author="R" w:initials="R"><w:p><w:r><w:t>Second note</w:t></w:r></w:p></w:comment></w:comments>"#,
+    );
+    pkg.set_part("word/comments.xml", comments.into_bytes());
+    let input = pkg.to_zip().unwrap();
+    // Change the tail so the comparer projects anchors instead of returning
+    // an identical document with its original point-comment representation.
+    let revised_xml = pkg
+        .part_string("word/document.xml")
+        .unwrap()
+        .replace("<w:t>tail</w:t>", "<w:t>new tail</w:t>");
+    pkg.set_part("word/document.xml", revised_xml.into_bytes());
+    let revised = pkg.to_zip().unwrap();
+    let out = compare_documents_with_settings(&input, &revised, &word_mode()).unwrap();
+    let pkg = open_valid_output(&out);
+    let (starts, ends, references) = anchor_ids(&pkg);
+    assert_eq!(starts.len(), 2);
+    assert_eq!(starts, ends);
+    assert_eq!(starts, references);
+    assert_eq!(
+        starts.iter().cloned().collect::<HashSet<_>>(),
+        comment_ids(&pkg)
+    );
+    // Ids may be remapped by the comparer; the definition must stay at the
+    // text position belonging to that comment, regardless of its numeric id.
+    let mut comments_dom = Dom::new();
+    let comments_doc = comments_dom.parse_xdocument(&pkg.part_string("word/comments.xml").unwrap());
+    let comments_root = comments_dom.root(comments_doc).unwrap();
+    let notes: std::collections::HashMap<String, String> = comments_dom
+        .descendants(comments_root, Some(&W::name("comment")))
+        .into_iter()
+        .map(|c| {
+            (
+                comments_dom
+                    .attribute(c, &W::name("id"))
+                    .unwrap()
+                    .to_string(),
+                comments_dom.value(c),
+            )
+        })
+        .collect();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+    let root = dom.root(doc).unwrap();
+    let mut text = String::new();
+    let mut positions = Vec::new();
+    for node in dom.descendants(root, None) {
+        if dom.name_is(node, &W::t()) {
+            text.push_str(&dom.value(node));
+        } else if dom.name_is(node, &W::name("commentReference")) {
+            let id = dom.attribute(node, &W::name("id")).unwrap();
+            positions.push((notes[id].as_str(), text.clone()));
+        }
+    }
+    assert_eq!(text, "ação 🐋東京new tail");
+    assert_eq!(
+        positions,
+        [
+            ("Note", "ação 🐋".to_string()),
+            ("Second note", "ação 🐋東京".to_string())
+        ]
+    );
+}

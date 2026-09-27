@@ -114,3 +114,41 @@ fn deleted_table_follows_the_original_document_styles() {
         "deleted table from the style-less original document: {tblpr}"
     );
 }
+
+#[test]
+fn deleted_table_with_original_default_style_does_not_inherit_revised_margin_policy() {
+    let a = docx(
+        &format!("<w:p><w:r><w:t>intro text</w:t></w:r></w:p>{TABLE}"),
+        true,
+    );
+    let b = docx("<w:p><w:r><w:t>intro text</w:t></w:r></w:p>", false);
+    let tblpr = first_tblpr(&a, &b);
+    assert!(!tblpr.contains("tblInd"), "{tblpr}");
+    assert!(!tblpr.contains("tblCellMar"), "{tblpr}");
+}
+
+#[test]
+fn explicit_table_indent_and_margins_survive_without_a_default_style() {
+    let table = TABLE.replace("<w:tblPr>", r#"<w:tblPr><w:tblInd w:w="360" w:type="dxa"/><w:tblCellMar><w:left w:w="240" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tblCellMar>"#);
+    let a = docx("<w:p><w:r><w:t>intro text</w:t></w:r></w:p>", false);
+    let b = docx(
+        &format!("<w:p><w:r><w:t>intro text</w:t></w:r></w:p>{table}"),
+        false,
+    );
+    let tblpr = first_tblpr(&a, &b);
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let doc = dom.parse_xdocument(&format!(
+        r#"<root xmlns:w="{}">{tblpr}</w:tblPr></root>"#,
+        jubarte::namespaces::W::URI
+    ));
+    let root = dom.root(doc).unwrap();
+    for (name, width) in [("tblInd", "360"), ("left", "240"), ("right", "120")] {
+        let nodes = dom.descendants(root, Some(&jubarte::namespaces::W::name(name)));
+        assert_eq!(nodes.len(), 1, "{name}: {tblpr}");
+        assert_eq!(
+            dom.attribute(nodes[0], &jubarte::namespaces::W::name("w")),
+            Some(width),
+            "{tblpr}"
+        );
+    }
+}
