@@ -12,7 +12,7 @@ use jubarte::document_comparer::compare_documents_with_settings;
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
 
-fn paragraphs(a: &str, b: &str) -> Vec<String> {
+fn document_xml(a: &str, b: &str) -> String {
     let root =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/broken_ones_two/sources");
     let out = compare_documents_with_settings(
@@ -27,7 +27,14 @@ fn paragraphs(a: &str, b: &str) -> Vec<String> {
         .unwrap()
         .read_to_string(&mut xml)
         .unwrap();
-    xml.split("</w:p>").map(str::to_string).collect()
+    xml
+}
+
+fn paragraphs(a: &str, b: &str) -> Vec<String> {
+    document_xml(a, b)
+        .split("</w:p>")
+        .map(str::to_string)
+        .collect()
 }
 
 #[test]
@@ -57,4 +64,18 @@ fn laid_out_new_ppr_does_not_inherit_old_micro_spacing() {
     // Word: live pPr is B's jc=both only; after=20 lives in the pPrChange.
     assert!(live.contains("w:val=\"both\""), "{stamp}");
     assert!(!live.contains("w:after=\"20\""), "{stamp}");
+}
+
+#[test]
+fn recorded_old_properties_carry_no_bookkeeping_namespace() {
+    // The old pPr/rPr round-trips through a string; its scratch pt14 Unid
+    // attributes must not leave `xmlns:ns0="…powertools…"` behind in the body.
+    for (a, b) in [
+        ("file_111.docx", "file_112.docx"),
+        ("file_143.docx", "file_144.docx"),
+    ] {
+        let xml = document_xml(a, b);
+        let body = &xml[xml.find("<w:body").unwrap()..];
+        assert!(!body.contains("powertools.codeplex.com"), "{a}: {body}");
+    }
 }

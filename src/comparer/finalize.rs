@@ -406,10 +406,31 @@ fn parse_rpr(dom: &mut Dom, s: Option<&str>) -> NodeId {
         // wrap so the rPr's namespace prefix resolves
         let doc = dom.parse_xdocument(s);
         if let Some(root) = dom.root(doc) {
-            return dom.clone_subtree(root);
+            return drop_pt_bookkeeping(dom, root);
         }
     }
     dom.new_element(W::r_pr())
+}
+
+/// Clone a parsed old-properties element without the scratch `pt14:*`
+/// attributes it was serialized with, nor the `xmlns:ns0` declarations the
+/// standalone serialization bound them to (they would otherwise survive into
+/// the redline).
+fn drop_pt_bookkeeping(dom: &mut Dom, root: NodeId) -> NodeId {
+    let out = dom.clone_subtree(root);
+    for el in dom.descendants_and_self(out, None) {
+        let drop: Vec<XName> = (0..dom.attr_count(el))
+            .map(|i| dom.attr_at(el, i))
+            .filter(|(n, v)| {
+                n.namespace_name() == PT::URI || (dom.is_namespace_declaration(n) && *v == PT::URI)
+            })
+            .map(|(n, _)| n.clone())
+            .collect();
+        for n in drop {
+            dom.set_attribute_value(el, &n, None);
+        }
+    }
+    out
 }
 
 /// Parse an `OldPPr` attribute string into a `w:pPr` element (empty on failure).
@@ -417,7 +438,7 @@ fn parse_ppr(dom: &mut Dom, s: Option<&str>) -> NodeId {
     if let Some(s) = s {
         let doc = dom.parse_xdocument(s);
         if let Some(root) = dom.root(doc) {
-            return dom.clone_subtree(root);
+            return drop_pt_bookkeeping(dom, root);
         }
     }
     dom.new_element(W::p_pr())

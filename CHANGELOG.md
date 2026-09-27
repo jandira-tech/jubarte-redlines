@@ -82,6 +82,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   document_100 × double_spacing_bold 0.48 → 0.85, file_111 × file_112
   0.54 → 0.75. Paragraph-property changes that disagree with Word's count
   fall from 1,784 to 1,420.
+- Recorded old run and paragraph properties no longer carry a stray
+  `xmlns:ns0="http://powertools.codeplex.com/2011"` declaration left over from
+  the comparer's internal bookkeeping (349 of the 1,195 pool and English
+  redlines had one in the body; now none). Rendering is unchanged.
 
 ### Added
 
