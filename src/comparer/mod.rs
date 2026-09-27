@@ -149,6 +149,9 @@ pub fn compare_bodies_faithful_with_notes(
     // pgNumType/formProt/bidi/… changes don't yet emit a record. Extend the
     // list when a benchmark pair shows Word recording one of those.
     const SECT_GEOMETRY: [&str; 6] = ["type", "pgSz", "pgMar", "cols", "titlePg", "docGrid"];
+    // M92 guard: the revised document's own final-paragraph spacing, read
+    // before atomize consumes body2.
+    let revised_tail_spacing = finalize::last_body_para_spacing(dom, body2);
     let saved_sectpr: Option<NodeId> = {
         let last_sect = |dom: &mut Dom, body: NodeId| {
             dom.element(body, &W::sect_pr())
@@ -701,7 +704,13 @@ pub fn compare_bodies_faithful_with_notes(
         // file_69: final empty pure-del → bare trailing empty (Word).
         finalize::strip_trailing_empty_pure_del_mark(dom, root);
         // M92: trailing empty live spacing → pPrChange (file_30).
-        finalize::trailing_empty_spacing_to_pprchange(dom, root, source_root2, settings, &mut id);
+        finalize::trailing_empty_spacing_to_pprchange(
+            dom,
+            root,
+            revised_tail_spacing.as_deref(),
+            settings,
+            &mut id,
+        );
         // M83a: drop B's trailing empty pure-ins before sectPr (file_23).
         finalize::strip_trailing_empty_pure_ins(dom, root);
         // M341: fold whitespace pure-I into pure-D **before** M85a strip so
@@ -765,7 +774,13 @@ pub fn compare_bodies_faithful_with_notes(
         // equal-spacing pPrChange strip, default jc=left strip.
         finalize::cleanup_spacing_and_default_jc(dom, root);
         // M92 after M69 strip path may leave empty with live spacing.
-        finalize::trailing_empty_spacing_to_pprchange(dom, root, source_root2, settings, &mut id);
+        finalize::trailing_empty_spacing_to_pprchange(
+            dom,
+            root,
+            revised_tail_spacing.as_deref(),
+            settings,
+            &mut id,
+        );
         // M98b: mixed+empty trailing — park spacing on empty (file_167).
         finalize::mixed_spacing_to_following_empty(dom, root, settings, &mut id);
         // M221: MIX Heading spacing → last pure-D residual (green_underline×heading_1).

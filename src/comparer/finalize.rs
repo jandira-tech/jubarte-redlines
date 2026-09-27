@@ -2645,12 +2645,13 @@ pub fn strip_trailing_empty_pure_del_mark(dom: &mut Dom, root: NodeId) {
 /// M92 — trailing empty body paragraph: Word records live `w:spacing` under
 /// `w:pPrChange` (file_30 last empty after list residual). After M69 strips
 /// the pure-del mark we often keep live spacing; move it into pPrChange.
-/// Not when the revised document (`revised_root`) ends in a paragraph with
-/// the same spacing: that spacing is its own and Word keeps it live.
+/// Not when the revised document ends in a paragraph with the same spacing
+/// (`revised_tail_spacing`, from [`last_body_para_spacing`]): that spacing is
+/// its own and Word keeps it live.
 pub fn trailing_empty_spacing_to_pprchange(
     dom: &mut Dom,
     root: NodeId,
-    revised_root: NodeId,
+    revised_tail_spacing: Option<&[(String, String, String)]>,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
@@ -2682,7 +2683,7 @@ pub fn trailing_empty_spacing_to_pprchange(
     let Some(sp) = dom.element(ppr, &W::spacing_el()) else {
         return;
     };
-    if last_body_para_spacing(dom, revised_root).is_some_and(|b| same_attributes(dom, b, sp)) {
+    if revised_tail_spacing.is_some_and(|b| b == sorted_attributes(dom, sp)) {
         return;
     }
     // Only when spacing is the sole layout child (ignore empty rPr).
@@ -2716,9 +2717,9 @@ pub fn trailing_empty_spacing_to_pprchange(
     }
 }
 
-/// `w:spacing` of the last body paragraph under `doc_root`, if any.
-fn last_body_para_spacing(dom: &Dom, doc_root: NodeId) -> Option<NodeId> {
-    let body = dom.element(doc_root, &W::body())?;
+/// Sorted `(namespace, local name, value)` attributes of the last body
+/// paragraph's `w:spacing` under `body`, if it has one.
+pub fn last_body_para_spacing(dom: &Dom, body: NodeId) -> Option<Vec<(String, String, String)>> {
     let last = dom
         .elements(body, None)
         .into_iter()
@@ -2727,21 +2728,27 @@ fn last_body_para_spacing(dom: &Dom, doc_root: NodeId) -> Option<NodeId> {
     if !dom.name_is(last, &W::p()) {
         return None;
     }
-    dom.element(dom.element(last, &W::p_pr())?, &W::spacing_el())
+    let sp = dom.element(dom.element(last, &W::p_pr())?, &W::spacing_el())?;
+    Some(sorted_attributes(dom, sp))
 }
 
-/// True when two elements carry the same attribute set, order ignored.
-fn same_attributes(dom: &Dom, a: NodeId, b: NodeId) -> bool {
-    let attrs = |n: NodeId| {
-        let mut v: Vec<(String, String, String)> = dom
-            .attributes(n)
-            .into_iter()
-            .map(|(k, v)| (k.namespace_name().to_string(), k.local_name().to_string(), v))
-            .collect();
-        v.sort();
-        v
-    };
-    attrs(a) == attrs(b)
+/// Sorted `w:` attributes (scratch ids such as `pt:Unid` excluded).
+fn sorted_attributes(dom: &Dom, n: NodeId) -> Vec<(String, String, String)> {
+    let w_ns = W::p().namespace_name().to_string();
+    let mut v: Vec<(String, String, String)> = dom
+        .attributes(n)
+        .into_iter()
+        .filter(|(k, _)| k.namespace_name() == w_ns)
+        .map(|(k, v)| {
+            (
+                k.namespace_name().to_string(),
+                k.local_name().to_string(),
+                v,
+            )
+        })
+        .collect();
+    v.sort();
+    v
 }
 
 /// True when a paragraph has no `w:t` / `w:delText` content.

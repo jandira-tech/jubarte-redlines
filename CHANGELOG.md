@@ -182,6 +182,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   to get no bar. Converting the same redlines, 177 pool PDFs changed:
   +1.41 Jaccard summed, 27 better, 1 worse (-0.026). The worse pair carries a
   `firstLine="0"` paragraph change that Word's compare does not record.
+- A trailing empty paragraph that ends both documents with the same spacing
+  keeps that spacing live, unrevised, as Word does. It used to be moved into
+  a `w:pPrChange` over an empty paragraph, which also drew a change bar Word
+  does not show (super_editor complex2×complexexport1, +0.009).
 
 ### Added
 
