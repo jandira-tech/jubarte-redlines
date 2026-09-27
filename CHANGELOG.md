@@ -150,6 +150,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   recorded. The PDF converter does not yet paint Word's struck-old /
   inserted-new marker pair, so its own proxy scores the pair mixed
   (circle × disc +0.36, disc × square −0.47; +0.05 summed).
+- Redefined paragraph styles now carry the revised document's effective
+  fonts, sizes and spacing as a delta against the output's own chain and
+  docDefaults, which is Word's rule (mined over 4,924 tracked styles in the 747
+  pool redlines; our style values now match Word's on 42,542 of 42,993, up
+  from 33,681). A revised heading that inherited Arial and line 276 from its
+  own docDefaults used to render in the original's theme font and line pitch.
+  +3.73 Jaccard summed over the pool and English pairs (45 better, 15 worse,
+  every loss under 0.04).
 
 ### Added
 
