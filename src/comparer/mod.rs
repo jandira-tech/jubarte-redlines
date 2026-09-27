@@ -763,7 +763,14 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::drop_sectpr_from_deleted_marks(dom, root, &genuine_mid_sectprs);
         finalize::drop_hoisted_sectpr_artifacts(dom, root, &genuine_mid_sectprs);
         finalize::mark_fully_revised_rows(dom, root, settings, &mut id);
-        finalize::synthesize_table_cell_margins(dom, root);
+        let has_default_table_style = |dom: &Dom, r: NodeId| {
+            dom.attribute(r, &crate::namespaces::PT::has_default_table_style()) == Some("1")
+        };
+        let default_table_styles = (
+            has_default_table_style(dom, source_root1),
+            has_default_table_style(dom, source_root2),
+        );
+        finalize::synthesize_table_cell_margins(dom, root, default_table_styles);
         finalize::ensure_default_page_size(dom, root);
         // pPr-only multi-pass peels: warm pure-del/mixed once (no body structure
         // mutation inside — structure folds re-classify after this block).

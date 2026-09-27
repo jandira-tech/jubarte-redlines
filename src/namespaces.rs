@@ -169,4 +169,7 @@ impl PT {
     // Word-mode stamp on the original root: the line pitch the output's
     // default paragraph resolves to (read by the demo-spacing strip).
     cached_xname!(PT::URI, default_line, "DefaultLine");
+    // Word-mode stamp on each source root: "1" when that document's styles
+    // define a default table style (read by the table-margin synthesis).
+    cached_xname!(PT::URI, has_default_table_style, "HasDefaultTableStyle");
 }

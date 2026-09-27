@@ -8783,7 +8783,17 @@ pub fn convert_stamped_predeletes(
 /// effective text columns that over-wrap vs the ground truth. Fill only what
 /// each table's tblPr doesn't define; children are inserted in CT_TblPr
 /// schema order (tblW 70 < tblInd 100 < tblCellMar 140 < tblLook 150).
-pub fn synthesize_table_cell_margins(dom: &mut Dom, root: NodeId) {
+///
+/// Word stamps them only when the table's source document has no default
+/// table style: across the pool corpus, 94 bordered tables from documents with
+/// a `TableNormal` default stay bare. `default_table_styles` says whether the
+/// (original, revised) documents define one. A wholly deleted table comes from
+/// the original and any other table from the revised document.
+pub fn synthesize_table_cell_margins(
+    dom: &mut Dom,
+    root: NodeId,
+    default_table_styles: (bool, bool),
+) {
     fn dxa(dom: &mut Dom, name: &str, w: &str) -> NodeId {
         let e = dom.new_element(W::name(name));
         dom.set_attribute_value(e, &W::name("w"), Some(w));
@@ -8816,6 +8826,21 @@ pub fn synthesize_table_cell_margins(dom: &mut Dom, root: NodeId) {
         // every GT table with w:tblBorders carries mar10/ind10, the one
         // border-less table (24-id_alternate-content) does not.
         if dom.element(tblpr, &W::name("tblBorders")).is_none() {
+            continue;
+        }
+        let rows = dom.elements(tbl, Some(&W::tr()));
+        let wholly_deleted = !rows.is_empty()
+            && rows.iter().all(|&tr| {
+                dom.element(tr, &W::tr_pr())
+                    .and_then(|p| dom.element(p, &W::del()))
+                    .is_some()
+            });
+        let source_has_default = if wholly_deleted {
+            default_table_styles.0
+        } else {
+            default_table_styles.1
+        };
+        if source_has_default {
             continue;
         }
         if dom.element(tblpr, &W::name("tblInd")).is_none() {

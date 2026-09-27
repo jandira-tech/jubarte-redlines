@@ -19,6 +19,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Word-mode table margins follow Word: `tblInd`/`tblCellMar` of 10 twips is
+  stamped on a bordered table only when the document the table comes from
+  (the original for a wholly deleted table) has no default table style. 94
+  bordered tables from `TableNormal` documents stay bare in Word's redlines;
+  stamping them shifted every row below (file_46 × file_47).
+- Synthesized numbering for a dangling `numId` copies Word's level geometry:
+  a `num` tab at the text indent and a full 720-twip hanging indent, so level
+  0 puts its number at the margin.
 - Redlines no longer cross or pack complex fields, which crashed Word
   ("Connection is invalid", English pair 57f96361×3832d290) once field codes
   were kept: a field result only matches text inside a field with the same

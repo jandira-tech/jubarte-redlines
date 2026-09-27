@@ -2185,6 +2185,22 @@ const RPR_METRIC_FONT_SLOTS: [(&str, &str); 4] = [
 /// The line pitch a paragraph with no spacing of its own resolves to under
 /// `styles_xml`: the default paragraph style's chain, then docDefaults, then
 /// Word's single line (240).
+/// Whether a styles part defines a default table style (`TableNormal` in
+/// Word-authored documents; generated documents often ship none).
+fn has_default_table_style(styles_xml: &str) -> bool {
+    let mut dom = Dom::new();
+    let d = dom.parse_xdocument(styles_xml);
+    let Some(root) = dom.root(d) else {
+        return false;
+    };
+    dom.elements(root, Some(&W::name("style")))
+        .into_iter()
+        .any(|s| {
+            dom.attribute(s, &W::name("type")) == Some("table")
+                && matches!(dom.attribute(s, &W::name("default")), Some("1" | "true"))
+        })
+}
+
 fn default_paragraph_line(styles_xml: &str) -> String {
     let mut dom = Dom::new();
     let d = dom.parse_xdocument(styles_xml);
@@ -5098,6 +5114,16 @@ fn compare_documents_impl(
                 .part_string("word/styles.xml")
                 .map_or_else(|| "240".to_string(), |x| default_paragraph_line(&x));
             dom.set_attribute_value(root, &crate::namespaces::PT::default_line(), Some(&line));
+            if pkg
+                .part_string("word/styles.xml")
+                .is_some_and(|x| has_default_table_style(&x))
+            {
+                dom.set_attribute_value(
+                    root,
+                    &crate::namespaces::PT::has_default_table_style(),
+                    Some("1"),
+                );
+            }
         }
     }
     let result_root = crate::comparer::compare_bodies_faithful_with_notes(
@@ -5111,6 +5137,11 @@ fn compare_documents_impl(
     );
     for root in [root1, root2] {
         dom.set_attribute_value(root, &crate::namespaces::PT::default_line(), None);
+        dom.set_attribute_value(
+            root,
+            &crate::namespaces::PT::has_default_table_style(),
+            None,
+        );
     }
 
     // Base the output on the original package, replacing the main document

@@ -459,7 +459,9 @@ pub fn copy_missing_numbering(
 /// (evidence: nested-table-rowspan_numbered-list — the revised fixture's
 /// dangling numId=2 gets a synthesized numbering part; carried verbatim, the
 /// list renders as plain paragraphs). Appends ONE abstractNum (fresh id) and
-/// a `w:num` per dangling id, in schema order.
+/// a `w:num` per dangling id, in schema order. Each level copies Word's
+/// geometry: a `num` tab at the text indent and a full 720-twip hanging, so
+/// level 0 puts its number at the margin.
 pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dangling: &[String]) {
     if dangling.is_empty() {
         return;
@@ -475,7 +477,8 @@ pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dang
         lvls.push_str(&format!(
             "<w:lvl w:ilvl=\"{ilvl}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
              <w:lvlText w:val=\"%{n}.\"/><w:lvlJc w:val=\"left\"/>\
-             <w:pPr><w:ind w:left=\"{left}\" w:hanging=\"360\"/></w:pPr></w:lvl>",
+             <w:pPr><w:tabs><w:tab w:val=\"num\" w:pos=\"{left}\"/></w:tabs>\
+             <w:ind w:left=\"{left}\" w:hanging=\"720\"/></w:pPr></w:lvl>",
             n = ilvl + 1,
             left = 720 * (ilvl + 1),
         ));
