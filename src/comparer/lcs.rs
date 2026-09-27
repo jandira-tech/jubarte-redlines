@@ -146,7 +146,7 @@ fn do_lcs(cul1: &[ComparisonUnitAtom], cul2: &[ComparisonUnitAtom], out: &mut Ve
 use super::atoms::{ComparisonUnit, CorrelatedSequence};
 use super::{ComparisonUnitGroupType, WmlComparerSettings};
 use crate::namespaces::{M, PT, W};
-use crate::xmllinq::Dom;
+use crate::xmllinq::{Dom, NodeId};
 
 // ── para-mark predicates (M4.C.4) ────────────────────────────────────────────
 fn atom_is_ppr(dom: &Dom, a: &ComparisonUnitAtom) -> bool {
@@ -3127,6 +3127,65 @@ pub fn do_lcs_algorithm(
         len = 0;
     }
 
+    // Word never pairs two unrelated paragraphs on a paragraph mark alone
+    // (its replace-gap grammar, decoded by Docxodus 12's IrBlockAligner and
+    // IrMarkupRenderer): a textless run — bare paragraph marks, empty
+    // paragraphs — anchors only beside matched content, where it starts or
+    // ends the window on both sides. Anywhere else the whole region is one
+    // replace, new paragraphs inserted whole and old ones deleted whole
+    // (list_with_table_break × broken_complex_list fused "TWO" into "e" and
+    // "A" into "a"). The two stories' final marks still pair: Word keeps that
+    // structural pair whatever precedes it.
+    //
+    // A run that ends the window short of the story end is Word's interior
+    // pilcrow chain, which holds only as far as `interior_blank_chain_holds`
+    // allows (file_36 × file_37: the blank before the table stays on each
+    // side, since "Contract Review" meets a blank across from it).
+    let starts = i1 == 0 && i2 == 0;
+    let ends = i1 + len == cul1.len() && i2 + len == cul2.len();
+    let blank_head = if len > 0 && settings.merge_replaced_paragraphs && !starts {
+        cul1[i1..i1 + len]
+            .iter()
+            .take_while(|u| unit_is_textless_paragraph_matter(dom, u))
+            .count()
+    } else {
+        0
+    };
+    // The revised story's closing mark facing the mark of the original's
+    // first paragraph, with words, while the original runs on to its own
+    // story end: Word's story-tail fusion, whose revised last paragraph opens
+    // the first deleted one (bullet_list × calibri_bold_italic: "Calibri bold
+    // italic …" into "Apples"; "Bananas" to "Grapes" deleted after it).
+    let story_tail_fusion = i1 > 0
+        && i2 + len == cul2.len()
+        && unit_closes_story(dom, &cul2[cul2.len() - 1])
+        && cul1.last().is_some_and(|u| unit_closes_story(dom, u))
+        && !cul1[..i1].iter().any(|u| unit_is_paragraph_matter(dom, u));
+    if blank_head == len
+        && len > 0
+        && !story_tail_fusion
+        && (!ends
+            || (!unit_closes_story(dom, &cul1[i1 + len - 1])
+                && !interior_blank_chain_holds(dom, &cul1[..i1], &cul2[..i2])))
+    {
+        len = 0;
+        if let (Some(l), Some(r)) = (cul1.last(), cul2.last())
+            && l.sha1() == r.sha1()
+            && unit_is_textless_paragraph_matter(dom, l)
+            && unit_closes_story(dom, l)
+            && unit_closes_story(dom, r)
+        {
+            (i1, i2, len) = (cul1.len() - 1, cul2.len() - 1, 1);
+        }
+    } else if blank_head > 0
+        && blank_head < len
+        && !interior_blank_chain_holds(dom, &cul1[..i1], &cul2[..i2])
+    {
+        // The run's leading blanks close the region before its content:
+        // they pair only through the chain.
+        (i1, i2, len) = (i1 + blank_head, i2 + blank_head, len - blank_head);
+    }
+
     if len == 0 {
         // Step H — structural dispatch (no common run found).
         return step_h(dom, &cul1, &cul2, settings);
@@ -3289,6 +3348,110 @@ fn containing_paragraph_is_duplicated(dom: &Dom, units: &[ComparisonUnit], pos: 
         .iter()
         .enumerate()
         .any(|(i, t)| i != idx_of_pos && t == target)
+}
+
+/// A word unit or paragraph group with no visible text: a bare paragraph
+/// mark, an empty paragraph.
+pub(super) fn unit_is_textless_paragraph_matter(dom: &Dom, u: &ComparisonUnit) -> bool {
+    unit_is_paragraph_matter(dom, u)
+        && u.descendant_atoms().iter().all(|a| {
+            let e = a.content_element;
+            if dom.name_is(e, &W::t()) {
+                return dom.value_str(e).trim().is_empty();
+            }
+            // Visible non-text content is words to Word's chain rule.
+            let visible = [
+                W::name("drawing"),
+                W::pict(),
+                W::name("object"),
+                W::name("sym"),
+            ];
+            !visible.iter().any(|n| dom.name_is(e, n))
+                && dom.name(e).is_none_or(|n| n.namespace_name() != MATH_URI)
+        })
+}
+
+const MATH_URI: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+
+/// A bare paragraph mark or a paragraph group: what Word's pilcrow chain may
+/// pair (tables, rows and text boxes stop it).
+fn unit_is_paragraph_matter(dom: &Dom, u: &ComparisonUnit) -> bool {
+    match as_group(u) {
+        Some(g) => g.group_type == ComparisonUnitGroupType::Paragraph,
+        None => unit_last_atom_is_ppr(dom, u),
+    }
+}
+
+/// Word's interior pilcrow chain (decoded by Docxodus 12's EmitGapArranged):
+/// a blank pair that closes a replace region holds while, walking back over
+/// the region, each original paragraph is blank. An original paragraph with
+/// words facing a blank cancels the chain; two paragraphs with words stop it,
+/// and it holds only if the paragraphs left before them balance. A revised
+/// paragraph with words facing a blank needs a deleted paragraph with words
+/// at the region's head to fuse into.
+fn interior_blank_chain_holds(
+    dom: &Dom,
+    before1: &[ComparisonUnit],
+    before2: &[ComparisonUnit],
+) -> bool {
+    let (mut a, mut b) = (before1.len(), before2.len());
+    let mut fusion = false;
+    while a > 0 && b > 0 {
+        let (u, v) = (&before1[a - 1], &before2[b - 1]);
+        if !unit_is_paragraph_matter(dom, u) || !unit_is_paragraph_matter(dom, v) {
+            break;
+        }
+        if unit_is_textless_paragraph_matter(dom, u) {
+            fusion |= !unit_is_textless_paragraph_matter(dom, v);
+            a -= 1;
+            b -= 1;
+            continue;
+        }
+        if unit_is_textless_paragraph_matter(dom, v) {
+            return false;
+        }
+        let paragraphs = |us: &[ComparisonUnit]| {
+            us.iter()
+                .filter(|u| unit_is_paragraph_matter(dom, u))
+                .count()
+        };
+        if paragraphs(&before1[..a]) != paragraphs(&before2[..b]) {
+            return false;
+        }
+        break;
+    }
+    !fusion
+        || (a > 0
+            && unit_is_paragraph_matter(dom, &before1[0])
+            && !unit_is_textless_paragraph_matter(dom, &before1[0]))
+}
+
+/// The unit's last atom sits in its story's last paragraph: nothing but the
+/// section properties follows that paragraph in the body, cell or textbox.
+pub(super) fn unit_closes_story(dom: &Dom, u: &ComparisonUnit) -> bool {
+    story_closing_paragraph(dom, u).is_some()
+}
+
+/// The story's last paragraph, when the unit's last atom sits in it.
+pub(super) fn story_closing_paragraph(dom: &Dom, u: &ComparisonUnit) -> Option<NodeId> {
+    let atoms = u.descendant_atoms();
+    let last = atoms.last()?;
+    let p = W::p();
+    let para = *last
+        .ancestor_elements
+        .iter()
+        .rev()
+        .find(|&&e| dom.name_is(e, &p))?;
+    let parent = dom.parent(para)?;
+    let story = [W::body(), W::name("tc"), W::name("txbxContent")];
+    let last_in_story = story.iter().any(|n| dom.name_is(parent, n))
+        && dom
+            .elements(parent, None)
+            .into_iter()
+            .skip_while(|&c| c != para)
+            .skip(1)
+            .all(|c| dom.name_is(c, &W::sect_pr()));
+    last_in_story.then_some(para)
 }
 
 /// M4.C.8-C.10 — `DoLcsAlgorithm` Step H: the no-common-run structural dispatch
@@ -8546,6 +8709,23 @@ pub fn find_common_at_beginning_and_end(
     }
     if is_only_paragraph_mark {
         cce = 0; // WC010 guard (:5763)
+    }
+    // The tail's leading blank paragraphs close the replace region before
+    // it: Word pairs them only through its pilcrow chain, or as the story's
+    // final marks (see `do_lcs_algorithm`'s blank-run guard).
+    if settings.merge_replaced_paragraphs && cce > 0 && cce < n1.max(n2) {
+        let tail = &cul1[n1 - cce..];
+        let blank_head = tail
+            .iter()
+            .take_while(|u| unit_is_textless_paragraph_matter(dom, u))
+            .count();
+        let story_final = blank_head == cce && unit_closes_story(dom, &tail[cce - 1]);
+        if blank_head > 0
+            && !story_final
+            && !interior_blank_chain_holds(dom, &cul1[..n1 - cce], &cul2[..n2 - cce])
+        {
+            cce -= blank_head;
+        }
     }
     if cce == 0 {
         return None;

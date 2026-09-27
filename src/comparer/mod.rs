@@ -521,6 +521,12 @@ pub fn compare_bodies_faithful_with_notes(
             cross_para::restream_cross_paragraph_regions(dom, &mut seqs, settings);
         }
     }
+    // Both documents ending on an empty paragraph pair those final marks
+    // whatever the region before them held (list_with_table_break ×
+    // broken_complex_list keeps its trailing empty after the deleted "TWO").
+    if settings.merge_replaced_paragraphs && !story_final_paired {
+        story_final_paired = final_empty_paragraphs_paired(dom, &seqs);
+    }
     // Word skip-ahead moves: Equal after pure A-only deletes → ins early +
     // del late so detect_moves can emit moveTo/moveFrom (page-order parity).
     moves::promote_skip_ahead_equals(&mut seqs, settings);
@@ -1168,4 +1174,26 @@ impl CompareContext {
             log: ComparisonLog::new(),
         }
     }
+}
+
+/// The last sequence pairs the two stories' final paragraphs, both empty.
+fn final_empty_paragraphs_paired(dom: &Dom, seqs: &[atoms::CorrelatedSequence]) -> bool {
+    use crate::namespaces::W;
+    use atoms::ComparisonUnit;
+    let Some(last) = seqs.last() else {
+        return false;
+    };
+    let empty_final = |units: Option<&[ComparisonUnit]>| {
+        units
+            .and_then(<[ComparisonUnit]>::last)
+            .and_then(|u| lcs::story_closing_paragraph(dom, u))
+            .is_some_and(|p| {
+                dom.descendants(p, Some(&W::t()))
+                    .iter()
+                    .all(|&t| dom.value_str(t).trim().is_empty())
+            })
+    };
+    last.correlation_status == CorrelationStatus::Equal
+        && empty_final(last.com_units_1.as_deref())
+        && empty_final(last.com_units_2.as_deref())
 }

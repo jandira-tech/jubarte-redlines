@@ -19,6 +19,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Replaced regions now follow Word's replace-gap grammar, which Docxodus 12 decodes.
+  - **Empty paragraphs.** An empty paragraph found in both documents no longer anchors two unrelated regions. It pairs only as part of Word's pilcrow chain, or as the two stories' final marks. The chain breaks when an original paragraph with words faces an empty one.
+  - **Interior replaces.** Inside the body, a replaced region keeps every old and new paragraph whole: new paragraphs first, each under an inserted mark, then the old ones under deleted marks. Before, "TWO" fused into "e" and "A" into "a" (list_with_table_break × broken_complex_list, docxide 13.2 vs Docxodus 93.3).
+  - **The story's tail.** When the revised document's last paragraph holds text, that text fuses into the first deleted paragraph of the tail, even across a deleted table. That paragraph keeps its own properties and deleted mark, so accepting every change no longer leaves a stray empty paragraph (support_tickets_table × support_tickets_summary, diff_doc2 × numwords). The same holds when the original runs on past it to its own end (bullet_list × calibri_bold_italic: "Calibri bold italic …" opens "Apples", then "Bananas" to "Grapes" deleted). A new title facing an unrelated old one is inserted whole before the old one's deletion (pirates × table_left_indent, as Word does).
+  - **Final empty paragraphs.** When both documents end on an empty paragraph, those two final marks stay paired behind a trailing deletion.
+  - **Result.** Paragraph-structure agreement with Word's own redlines over 747 pool pairs rose from 0.9276 to 0.9331: 50 pairs improved and 9 dropped, none by more than 0.08.
+
 - Redlines keep the bookmarks of both documents, as Word's Compare does. The WmlComparer port dropped every bookmark, so each updated TOC line, `PAGEREF` and `REF` printed "Error! Bookmark not defined." (file_21 × file_22 lost all 582). A bookmark in both documents appears once, at its place in the revised text. A bookmark only in the original stays beside its deleted text. Ids never collide with revision ids, and Word's hidden `_GoBack` is dropped, as Word does. Pool pairs with more broken references than Word's own redline went from 29 to 0. Comment anchors gain two fixes from the same pass: moved text now counts once on each side, and a second anchor inside a run that holds several text pieces no longer reorders that text.
 
 - The redline's Normal style now follows Word's rules for merging the two

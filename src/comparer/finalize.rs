@@ -6572,6 +6572,94 @@ fn should_fold_multi_del_at_document_scale(
     frac + 1e-12 <= MULTI_DEL_GAP_MAX_DOC_FRACTION
 }
 
+/// Only the section properties follow a replace gap: it ends the story.
+fn gap_ends_story(dom: &Dom, rest: &[NodeId]) -> bool {
+    rest.iter().all(|&c| dom.name_is(c, &W::sect_pr()))
+}
+
+/// A replace gap followed by deleted blocks and then the story's final
+/// paragraph, holding nothing live or inserted (empty, or the original's
+/// deleted last words; its mark is the story's final pilcrow, which Word
+/// never deletes, so a later pass restores it), while the final marks are no
+/// empty pair
+/// (`fold_boundary`): the revised last paragraph's mark is that final one,
+/// so its text has no mark of its own inside the gap. Word (Docxodus 12's
+/// structural final pair) fuses that text into the first deleted paragraph,
+/// across deleted tables (diff_before16 × diff_before19,
+/// support_tickets_table × support_tickets_summary).
+fn gap_precedes_live_story_tail(
+    dom: &Dom,
+    rest: &[NodeId],
+    classes: &[Option<bool>],
+    fold_boundary: bool,
+) -> bool {
+    let blocks: Vec<usize> = (0..rest.len())
+        .filter(|&k| !dom.name_is(rest[k], &W::sect_pr()))
+        .collect();
+    let Some((&last, before)) = blocks.split_last() else {
+        return false;
+    };
+    let fin = rest[last];
+    fold_boundary
+        && dom.name_is(fin, &W::p())
+        && !para_mark_revision(dom, fin, &W::ins())
+        && dom.descendants(fin, Some(&W::ins())).is_empty()
+        && dom
+            .descendants(fin, Some(&W::t()))
+            .iter()
+            .all(|&t| dom.value_str(t).trim().is_empty())
+        && before
+            .iter()
+            .all(|&k| classes[k] == Some(false) || table_is_deleted(dom, rest[k]))
+}
+
+/// A page break keeps its paragraph whole: Word never fuses it, so the break
+/// keeps paginating. (The revised tail may still hold the body's final
+/// section properties here; a deleted paragraph's are a real section break.)
+fn para_carries_page_break(dom: &Dom, p: NodeId) -> bool {
+    dom.element(p, &W::p_pr())
+        .is_some_and(|ppr| dom.element(ppr, &W::name("pageBreakBefore")).is_some())
+        || dom
+            .descendants(p, Some(&W::name("br")))
+            .iter()
+            .any(|&b| dom.attribute(b, &W::name("type")) == Some("page"))
+}
+
+/// Word's story-tail fusion: the revised last paragraph's runs open the
+/// first deleted paragraph, which keeps its own properties and deleted mark.
+fn fuse_story_tail_into_deleted(dom: &mut Dom, last_ins: NodeId, first_del: NodeId) {
+    let anchor = dom
+        .elements(first_del, None)
+        .into_iter()
+        .find(|&c| !dom.name_is(c, &W::p_pr()));
+    for c in dom.elements(last_ins, None) {
+        if dom.name_is(c, &W::p_pr()) {
+            continue;
+        }
+        dom.remove(c);
+        match anchor {
+            Some(a) => dom.add_before_self(a, c),
+            None => dom.add(first_del, c),
+        }
+    }
+    dom.remove(last_ins);
+}
+
+/// Every paragraph of the table is deleted, marks included, and nothing in it
+/// is live or inserted (the rows get their deleted marks later, from
+/// `mark_fully_revised_rows`).
+fn table_is_deleted(dom: &Dom, tbl: NodeId) -> bool {
+    let paras = dom.descendants(tbl, Some(&W::p()));
+    dom.name_is(tbl, &W::tbl())
+        && !paras.is_empty()
+        && paras.iter().all(|&p| para_mark_revision(dom, p, &W::del()))
+        && dom.descendants(tbl, Some(&W::ins())).is_empty()
+        && dom
+            .descendants(tbl, Some(&W::t()))
+            .iter()
+            .all(|&t| dom.value_str(t).trim().is_empty())
+}
+
 fn merge_replaced_in_container(
     dom: &mut Dom,
     container: NodeId,
@@ -6686,7 +6774,15 @@ fn merge_replaced_in_container(
                 // later). m44 multi-word sole-del ("Walking on imported air")
                 // still folds. Comment anchors are not yet on the pure-D at
                 // this stage (carry_comments runs after merge_replaced).
-                if let (Some(d), Some(&last_ins)) = (sole_del, inss.last())
+                //
+                // The fold is Word's structural final pair, so it needs the
+                // gap to end the story: inside the body (another block
+                // follows) Word keeps both paragraphs whole under their own
+                // marks (list_with_table_break × broken_complex_list: "e",
+                // "a" inserted, then "TWO" deleted).
+                let story_end = gap_ends_story(dom, &children[i..]);
+                if story_end
+                    && let (Some(d), Some(&last_ins)) = (sole_del, inss.last())
                     && dom.parent(d).is_some()
                     && dom.parent(last_ins).is_some()
                 {
@@ -6847,6 +6943,20 @@ fn merge_replaced_in_container(
                 // pure-D run (class None), so the empty mark is a sole del.
                 if inss.is_empty() || dels.is_empty() {
                     continue;
+                }
+                let tail_ins = inss[inss.len() - 1];
+                if gap_precedes_live_story_tail(dom, &children[j..], &classes[j..], fold_boundary)
+                    && !para_has_no_text(dom, tail_ins)
+                    && para_mark_revision(dom, tail_ins, &W::ins())
+                    && !para_carries_page_break(dom, tail_ins)
+                    && !para_carries_page_break(dom, dels[0])
+                    && dom
+                        .element(dels[0], &W::p_pr())
+                        .is_none_or(|ppr| dom.element(ppr, &W::sect_pr()).is_none())
+                {
+                    fuse_story_tail_into_deleted(dom, tail_ins, dels[0]);
+                    acted = true;
+                    break;
                 }
                 let preceding_has_ins = ins_start > 0 && {
                     let prev = children[ins_start - 1];
@@ -7054,6 +7164,15 @@ fn merge_replaced_in_container(
                 // on its own inserted mark: only a shared-word head junction
                 // folds.
                 if !fold_boundary && !head_junction {
+                    continue;
+                }
+                // Inside the body (another block follows the gap) Word folds
+                // no unrelated pair: the boundary fold is its structural
+                // final pair, which needs the story end.
+                if !head_junction
+                    && !gap_ends_story(dom, &children[j..])
+                    && !should_fold_ins_del_pair(dom, last_ins, d)
+                {
                     continue;
                 }
                 // M311d (image×rtl / rtl_mixed×rtl_page): ≥3 empty pure-I then
