@@ -128,6 +128,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   properties. The table and everything after it no longer sit a line high.
   +0.91 Jaccard summed over the 1,195 pool and English pairs (2 changed, both
   better).
+- Short unrelated documents that both end on an empty paragraph no longer weld
+  the original's first paragraph onto the revised document's last one. Word
+  inserts the revised document whole, deletes the original, and pairs the two
+  final empties (a titled table against an item list). +0.93 Jaccard summed
+  over the 1,195 pool and English pairs (7 changed: 5 better, 2 slightly
+  worse).
 
 ### Added
 

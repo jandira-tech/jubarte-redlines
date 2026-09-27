@@ -6932,7 +6932,26 @@ fn detect_unrelated_sources_word_mode_inner(
             && significant_tokens(tokens_once(&full_tokens_1, dom, cu1))
                 .is_disjoint(&significant_tokens(tokens_once(&full_tokens_2, dom, cu2)))
         {
-            return junction_seam(dom, cu1, cu2, n1, n2);
+            // No seam when both stories end on an empty paragraph: Word
+            // inserts the revised document whole and pairs the final empties
+            // (titled table × item list, auto page break × list enter).
+            // Two tables still mesh cell by cell (project tasks × sales).
+            let empty_last = |cu: &[ComparisonUnit]| {
+                cu.len() > 1
+                    && cu.last().is_some_and(|u| {
+                        matches!(group_contents(u).as_slice(), [m] if unit_is_single_atom_ppr(dom, m))
+                    })
+            };
+            return junction_seam(dom, cu1, cu2, n1, n2).or_else(|| {
+                (empty_last(cu1) && empty_last(cu2) && !(has_table(cu1) && has_table(cu2))).then(
+                    || {
+                        vec![
+                            CorrelatedSequence::inserted(cu2.to_vec()),
+                            CorrelatedSequence::deleted(cu1.to_vec()),
+                        ]
+                    },
+                )
+            });
         }
         return None;
     }
