@@ -7,6 +7,10 @@
 //! center_aligned_bold × center_alignment_2 and right_aligned_italic ×
 //! right_alignment_2: Word free-meshes pure-I intro as
 //! EQ[This ]|INS[…]|EQ[text ]|INS[alignment.]
+//!
+//! The cross-paragraph stream produces it from the original's own "This
+//! text" (the M461 pass that forced it kept words the next paragraph still
+//! deleted, and is gone).
 
 use std::io::Read;
 use std::path::PathBuf;

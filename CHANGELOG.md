@@ -19,6 +19,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Two point comments inside one run now keep their places. An anchor that ended one text piece of a multi-piece run went after the whole run, so "Note" landed after "東京" and behind "Second note". The run now splits between the pieces.
+
+- Rejecting every change in center_alignment × center_aligned_bold now restores the original. A pass forced the inserted "This" and "text" into kept text while the next paragraph still deleted them, so the rejected document read "This text This document …". The cross-paragraph stream already keeps those words where Word does, so the pass is gone. The revised tail now fuses into the sole deleted paragraph and keeps that paragraph's deleted mark, so accepting no longer leaves an empty last paragraph.
+
 - Replaced regions now follow Word's replace-gap grammar, which Docxodus 12 decodes.
   - **Empty paragraphs.** An empty paragraph found in both documents no longer anchors two unrelated regions. It pairs only as part of Word's pilcrow chain, or as the two stories' final marks. The chain breaks when an original paragraph with words faces an empty one.
   - **Interior replaces.** Inside the body, a replaced region keeps every old and new paragraph whole: new paragraphs first, each under an inserted mark, then the old ones under deleted marks. Before, "TWO" fused into "e" and "A" into "a" (list_with_table_break × broken_complex_list, docxide 13.2 vs Docxodus 93.3).

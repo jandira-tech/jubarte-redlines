@@ -890,12 +890,12 @@ pub fn compare_bodies_faithful_with_notes(
         // M460: bookended MIX (EQ `This `…`.`) free-mesh mid shared sig token
         // inside the single ins+del pair (right_align_bold "right").
         finalize::free_mesh_bookended_ins_del(dom, root);
-        // M461: pure-I "This … text …" free-mesh EQ bookends when following
-        // pure-D/MIX del shares this+text (center_aligned_bold / right_align).
-        finalize::free_mesh_pure_i_this_text(dom, root);
-        // M462: coverage-gated wholesale body MIX free-mesh (after M461 so
-        // residual A del still wholesale against B body2). M459 thrash guards
-        // via shared_sig/min_sig ≥ 0.35 + eligible-token LCS.
+        // M462: coverage-gated wholesale body MIX free-mesh. M459 thrash
+        // guards via shared_sig/min_sig ≥ 0.35 + eligible-token LCS.
+        // (M461, which turned a pure-I paragraph's "This"/"text" into kept
+        // text while the next paragraph still deleted them, is gone: rejecting
+        // gave "This text This document …". The cross-paragraph stream keeps
+        // those words where Word does.)
         finalize::free_mesh_wholesale_body_mix(dom, root);
         // M463 (fold bare boiler EQ between consecutive ins, and attach a
         // trailing bare `.` onto the last ins/del) is deliberately absent: it
