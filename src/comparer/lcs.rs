@@ -5624,20 +5624,20 @@ pub fn detect_unrelated_sources_word_mode(
     // The revised document ends on an empty paragraph: Word pairs the two
     // final marks, and the original's last paragraph, if it has content, is
     // deleted into the revised final paragraph (diff_after8 ×
-    // doc_with_spacing), which keeps the revised properties.
+    // doc_with_spacing), which keeps the revised properties. A one-paragraph
+    // original has only that last paragraph (fields_attrs1 × cli_legacy).
     if let [ins, del] = seqs.as_slice()
         && whole(ins, CorrelationStatus::Inserted, cu2)
         && whole(del, CorrelationStatus::Deleted, cu1)
-        && cu1.len() > 1
         && cu2.len() > 1
         && let (Some((body_a, pa)), Some((body_b, pb))) =
             (final_para(cu1.last()), final_para(cu2.last()))
         && body_b.is_empty()
     {
-        seqs = vec![
-            CorrelatedSequence::inserted(cu2[..cu2.len() - 1].to_vec()),
-            CorrelatedSequence::deleted(cu1[..cu1.len() - 1].to_vec()),
-        ];
+        seqs = vec![CorrelatedSequence::inserted(cu2[..cu2.len() - 1].to_vec())];
+        if cu1.len() > 1 {
+            seqs.push(CorrelatedSequence::deleted(cu1[..cu1.len() - 1].to_vec()));
+        }
         if !body_a.is_empty() {
             seqs.push(CorrelatedSequence::deleted(body_a));
         }

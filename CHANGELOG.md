@@ -19,6 +19,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- The final paragraph marks are also paired when the replaced original has a
+  single paragraph: its text is deleted into the revised empty final
+  paragraph. The deleted text had joined the revised document's last content
+  paragraph and the revised final paragraph was dropped, so accepting the
+  redline lost that paragraph (fields_attrs1 × cli_legacy sample: harness
+  23.4, Docxodus 73.1).
 - A paragraph property the revised document adds to a kept paragraph is
   recorded in `w:pPrChange` whatever it is, as Word records it; only added
   alignment or spacing were recorded, so rejecting the redline kept, for

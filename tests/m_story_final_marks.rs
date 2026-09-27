@@ -235,3 +235,47 @@ fn added_paragraph_properties_are_recorded_and_rejected() {
         "rejecting restores the original's properties"
     );
 }
+
+/// A one-paragraph original replaced by a document that ends on an empty
+/// paragraph (fields_attrs1 × cli_legacy sample): Word pairs the final marks
+/// and deletes "bold Enter your full name sentence" into the revised empty
+/// final paragraph; "And there can be empty pages:" keeps its own inserted
+/// mark. Folding the deleted text into that paragraph instead dropped the
+/// revised final paragraph, so accepting the redline lost it and Word's
+/// fourth page (harness 23.4 vs Docxodus 73.1).
+#[test]
+fn one_paragraph_original_pairs_the_final_marks() {
+    let Some((mut dom, root)) = superdoc_redline(
+        "super_editor__fields_attrs1_83837249.docx",
+        "cli_legacy__sample_3a8f1f93.docx",
+    ) else {
+        return;
+    };
+    let last = *dom.descendants(root, Some(&W::p())).last().unwrap();
+    let deleted: String = dom
+        .descendants(last, Some(&W::del_text()))
+        .into_iter()
+        .map(|t| dom.value(t))
+        .collect();
+    assert_eq!(deleted, "bold Enter your full name sentence");
+    assert!(
+        dom.descendants(last, Some(&W::t())).is_empty(),
+        "the final paragraph holds only the deleted text"
+    );
+    let accepted = accept_revisions_document(&mut dom, root);
+    let texts: Vec<String> = dom
+        .descendants(accepted, Some(&W::p()))
+        .into_iter()
+        .map(|p| {
+            dom.descendants(p, Some(&W::t()))
+                .into_iter()
+                .map(|t| dom.value(t))
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        texts[texts.len() - 2..],
+        ["And there can be empty pages:", ""],
+        "accepting keeps the revised final empty paragraph"
+    );
+}
