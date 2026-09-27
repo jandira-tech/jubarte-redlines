@@ -19,6 +19,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- A paragraph property the revised document adds to a kept paragraph is
+  recorded in `w:pPrChange` whatever it is, as Word records it; only added
+  alignment or spacing were recorded, so rejecting the redline kept, for
+  example, an added outline level.
 - When an unrelated document replaces the original and ends on an empty
   paragraph, the two final paragraph marks are paired as Word pairs them:
   the original's last paragraph is deleted into the revised final paragraph,

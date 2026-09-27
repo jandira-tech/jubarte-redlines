@@ -243,16 +243,6 @@ fn is_para_comparison_noise(dom: &Dom, child: NodeId) -> bool {
         || n.namespace_name() == PT::URI
 }
 
-/// True when projected pPr has only `w:jc` (center-alignment addition class).
-fn projected_ppr_is_jc_only(dom: &Dom, ppr: NodeId) -> bool {
-    let kids: Vec<_> = dom
-        .elements(ppr, None)
-        .into_iter()
-        .filter(|&c| !is_para_comparison_noise(dom, c))
-        .collect();
-    kids.len() == 1 && dom.name_is(kids[0], &W::name("jc"))
-}
-
 /// First non-default `w:jc` child of a projected pPr, if any.
 fn projected_ppr_jc(dom: &Dom, ppr: NodeId) -> Option<NodeId> {
     for c in dom.elements(ppr, None) {
@@ -292,18 +282,6 @@ fn normalize_para_properties_without_jc(dom: &mut Dom, ppr: NodeId) -> String {
     }
     parts.sort();
     parts.join("\u{1}")
-}
-
-/// True when projected pPr has only `w:spacing` (bare A → spaced B body class).
-/// M130 (file_165): Word keeps live spacing + `pPrChange(empty old)` on
-/// Verdana bare × Ultimate Demo spaced bodies. Broader addition floods file_8.
-fn projected_ppr_is_spacing_only(dom: &Dom, ppr: NodeId) -> bool {
-    let kids: Vec<_> = dom
-        .elements(ppr, None)
-        .into_iter()
-        .filter(|&c| !is_para_comparison_noise(dom, c))
-        .collect();
-    kids.len() == 1 && dom.name_is(kids[0], &W::name("spacing"))
 }
 
 /// Project old-side pPr children for `w:pPrChange` (CT_PPrBase noise-stripped).
@@ -403,10 +381,10 @@ fn detect_format_changes_impl(
             continue;
         };
         // M81: paragraph-mark format change → w:pPrChange (docxodus :7127).
-        // Removal and change of layout are recorded; addition only for jc- or
-        // spacing-only pPr (M102/M130). The old "~99 pPrChange on file_8"
-        // flood that once forced a removal-only gate came from scratch
-        // `pt14:*` attributes making equal pPr look different, not from Word.
+        // Removal, addition and change of layout are recorded. The old "~99
+        // pPrChange on file_8" flood that once forced a removal-only gate
+        // came from scratch `pt14:*` attributes making equal pPr look
+        // different, not from Word.
         if dom.name_is(atom.content_element, &W::p_pr()) {
             let old_ppr = before.content_element;
             let new_ppr = atom.content_element;
@@ -419,16 +397,13 @@ fn detect_format_changes_impl(
                 // M81: property *removal* (A had layout, B cleared) → pPrChange(old).
                 if !old_sig.is_empty() && new_sig.is_empty() {
                     para_changes.push((i, projected_old));
-                } else if old_sig.is_empty()
-                    && !new_sig.is_empty()
-                    && (projected_ppr_is_jc_only(dom, projected_new)
-                        || projected_ppr_is_spacing_only(dom, projected_new))
-                {
-                    // M102 (file_148): property *addition* of jc only (A bare,
-                    // B center). Word keeps live jc + pPrChange(empty old).
-                    // M130 (file_165): same for spacing-only addition (A bare
-                    // Normal body, B before/after/line spacing). Broader
-                    // addition flooded file_8; jc-only + spacing-only only.
+                } else if old_sig.is_empty() && !new_sig.is_empty() {
+                    // Property *addition* (A bare): Word keeps the new pPr
+                    // live and records `pPrChange(empty old)` for any layout
+                    // it adds — jc (M102, file_148), spacing (M130,
+                    // file_165), outline level (diff_after8 ×
+                    // doc_with_spacing). Without it, rejecting the redline
+                    // kept the revised properties.
                     let empty_old = dom.new_element(W::p_pr());
                     para_changes.push((i, empty_old));
                 } else if projected_ppr_jc(dom, projected_old).is_some()

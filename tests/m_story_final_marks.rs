@@ -206,3 +206,32 @@ fn paired_final_marks_fold_nothing_at_the_replacement_boundary() {
         "no deleted text folds into the inserted paragraph"
     );
 }
+
+/// Word records any paragraph property the revised document adds, not only
+/// alignment or spacing: the paired final paragraph of diff_after8 ×
+/// doc_with_spacing gains outline level 1 and keeps the original's bare
+/// properties in `w:pPrChange`, so rejecting the redline restores them.
+#[test]
+fn added_paragraph_properties_are_recorded_and_rejected() {
+    let Some((mut dom, root)) = superdoc_redline(
+        "super_editor__diff_after8_58e5c288.docx",
+        "super_editor__doc_with_spacing_e3d47bd7.docx",
+    ) else {
+        return;
+    };
+    let last = *dom.descendants(root, Some(&W::p())).last().unwrap();
+    let ppr = dom.element(last, &W::p_pr()).expect("revised properties");
+    assert!(
+        dom.element(ppr, &W::p_pr_change()).is_some(),
+        "pPrChange records the original's properties"
+    );
+    let rejected = reject_revisions_document(&mut dom, root);
+    let last = *dom.descendants(rejected, Some(&W::p())).last().unwrap();
+    let outline = dom
+        .element(last, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::name("outlineLvl")));
+    assert!(
+        outline.is_none(),
+        "rejecting restores the original's properties"
+    );
+}
