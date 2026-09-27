@@ -26,7 +26,15 @@ fn write_fixture(dir: &Path) -> std::path::PathBuf {
 }
 
 fn run(args: &[&str]) -> (i32, String, String) {
-    let out = Command::new(BIN).args(args).output().unwrap();
+    run_in(Path::new("."), args)
+}
+
+fn run_in(dir: &Path, args: &[&str]) -> (i32, String, String) {
+    let out = Command::new(BIN)
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap();
     (
         out.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -245,6 +253,65 @@ fn convert_can_write_png_pages_and_a_page_report() {
     ]);
     assert_eq!(code, 0);
     assert!(dir.path().join("letter.pdf").is_file());
+}
+
+#[test]
+fn convert_checks_every_png_path_before_writing_the_pdf() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_fixture(dir.path());
+    std::fs::write(dir.path().join("letter-page-01.png"), b"keep").unwrap();
+    let (code, _, stderr) = run(&[
+        "convert",
+        file.to_str().unwrap(),
+        "--pdf",
+        "--png",
+        "--dpi",
+        "24",
+    ]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("letter-page-01.png"), "{stderr}");
+    assert!(
+        !dir.path().join("letter.pdf").exists(),
+        "a refused PNG leaves no partial bundle"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("letter-page-01.png")).unwrap(),
+        b"keep"
+    );
+}
+
+#[test]
+fn edit_refuses_the_input_directory_when_the_input_has_no_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_fixture(dir.path());
+    let source = std::fs::read(&file).unwrap();
+    let plan = format!(
+        r#"{{"schema_version":1,"source_sha256":"{}","author":"Claude","operations":[
+            {{"kind":"replace","paragraph":{{"index":1}},"find":"his or her","replacement":"an"}}]}}"#,
+        source_sha256(&source)
+    );
+    std::fs::write(dir.path().join("plan.json"), plan).unwrap();
+    let absolute = dir.path().to_str().unwrap();
+    for out_dir in [".", "./", absolute] {
+        let (code, _, stderr) = run_in(
+            dir.path(),
+            &[
+                "edit",
+                "letter.docx",
+                "--plan",
+                "plan.json",
+                "--out-dir",
+                out_dir,
+                "--force",
+            ],
+        );
+        assert_eq!(code, 1, "{out_dir}: {stderr}");
+        assert!(
+            stderr.contains("input's own directory"),
+            "{out_dir}: {stderr}"
+        );
+        assert!(!dir.path().join("clean.docx").exists(), "{out_dir}");
+    }
 }
 
 #[test]

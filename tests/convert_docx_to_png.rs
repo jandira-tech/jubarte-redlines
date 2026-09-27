@@ -93,3 +93,38 @@ fn malformed_input_is_an_error_not_a_panic() {
     assert!(docx_to_png(b"nope", PdfOptions::default(), 72.0).is_err());
     assert!(docx_render_report(b"nope", PdfOptions::default()).is_err());
 }
+
+#[test]
+fn dpi_outside_the_supported_range_is_an_error() {
+    let bytes = letter_with_pages(1);
+    for dpi in [0.0, -72.0, f32::NAN, f32::INFINITY, 1e9] {
+        let err = docx_to_png(&bytes, PdfOptions::default(), dpi)
+            .expect_err("an unusable dpi must not yield an empty or 1-pixel page set");
+        assert!(err.to_string().contains("dpi"), "{dpi}: {err}");
+    }
+    // The bounds themselves are accepted.
+    assert_eq!(
+        docx_to_png(&bytes, PdfOptions::default(), 1.0)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn a_page_over_the_pixel_budget_is_an_error_not_a_missing_png() {
+    // Word's largest page, 22in square, at 1200 dpi is 26400² pixels: a
+    // 2.8 GB buffer whose failed allocation would abort the process.
+    let big = r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="31680" w:h="31680"/></w:sectPr></w:pPr><w:r><w:t>Big</w:t></w:r></w:p>"#;
+    let bytes = docx(&(big.to_string() + &para("Letter page.")));
+    let err = render(
+        &bytes,
+        PdfOptions::default(),
+        RenderRequest {
+            pdf: false,
+            png_dpi: Some(1200.0),
+        },
+    )
+    .expect_err("an unpaintable page must fail the request");
+    assert!(err.to_string().contains("page 1"), "{err}");
+}

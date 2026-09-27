@@ -21,8 +21,12 @@ use super::pdf::{Op, Page, PdfComment, markup_chrome};
 /// Points per inch.
 const PT_PER_INCH: f32 = 72.0;
 
-/// Paint one laid-out page at `dpi` into RGBA pixels. Returns `None` only
-/// for a degenerate page size.
+/// Largest page raster, in pixels (1 GiB of RGBA): Letter and A4 fit at
+/// 1200 dpi. A failed allocation would abort the process, Python host included.
+const MAX_PAGE_PIXELS: u64 = 1 << 28;
+
+/// Paint one laid-out page at `dpi` into RGBA pixels. Returns `None` for a
+/// degenerate page size or one over [`MAX_PAGE_PIXELS`].
 pub(crate) fn paint_page(fonts: &Fonts<'_>, page: &Page, dpi: f32) -> Option<Pixmap> {
     let scale = dpi / PT_PER_INCH;
     let (out_w, out_h) = if page.vertical {
@@ -32,6 +36,9 @@ pub(crate) fn paint_page(fonts: &Fonts<'_>, page: &Page, dpi: f32) -> Option<Pix
     };
     let width = (out_w * scale).ceil().max(1.0) as u32;
     let height = (out_h * scale).ceil().max(1.0) as u32;
+    if u64::from(width) * u64::from(height) > MAX_PAGE_PIXELS {
+        return None;
+    }
     let mut pixmap = Pixmap::new(width, height)?;
     pixmap.fill(Color::WHITE);
     // PDF user space (origin bottom-left, points) to pixels.

@@ -15,6 +15,16 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Fixed
+
+- PNG rendering refuses a resolution outside 1–1200 dpi and a page over 2^28 pixels with `ConvertError::Raster`, instead of returning 1-pixel images, silently dropping a page, or aborting the process (Python host included) on a multi-gigabyte allocation.
+- `jubarte convert --png` and `python -m jubarte_redlines convert --png` check every PNG path before the first write, so an existing page no longer leaves a PDF and a partial page set behind.
+- `jubarte edit --out-dir .` with an input given without a directory is refused like any other `--out-dir` equal to the input's directory; before, the outputs could overwrite an input named `clean.docx` or `redline.docx`.
+- Edit plans refuse comment text that is empty or holds control characters on every operation that carries one (`comment`, `replace`, `insert`, `insert_paragraph`), so `word/comments.xml` stays valid XML.
+- Several `insert_paragraph` operations with `position: "after"` on one anchor keep plan order (they came out reversed).
+- `inspect` summaries count revisions in WordprocessingML parts only, so a custom XML item the checked reader refuses no longer fails the whole summary.
+- The Python CLI's refusal summary carries the engine detail in `message`, as the `jubarte` binary does; `EditPlanError.message` exposes it.
+
 ## [0.9.2] - 2026-09-26
 
 > **Summary.** A Word-fidelity pass on jubarte convert: layout rules reconstructed from live-Word probes, painted revision marks (--revisions conventional|word|custom), Word's comment balloons and change bars, East Asian layout, and smaller PDFs (--compress averages 0.70x Word's size on 2,102 documents). The redline engine is unchanged from 0.9.0.

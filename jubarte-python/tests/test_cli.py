@@ -97,6 +97,25 @@ def test_edit_failure_exits_3_writes_nothing_and_reports(letter: Path, tmp_path:
     assert "{his or her→an}" in capsys.readouterr().out
 
 
+def test_refusal_summary_message_is_the_engine_detail(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Same shape as the Rust CLI: code and operation have their own keys.
+    plan = {"schema_version": 1, "author": "Claude", "operations": [{"id": "bad", "kind": "replace", "paragraph": {"index": 2}, "find": "nowhere", "replacement": "x"}]}
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan))
+    assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(tmp_path / "review")]) == 3
+    summary = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert (summary["code"], summary["operation"]) == ("ANCHOR_NOT_FOUND", "bad")
+    assert summary["message"] and "ANCHOR_NOT_FOUND" not in summary["message"], summary
+
+
+def test_convert_checks_every_png_path_before_writing_the_pdf(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "letter-page-01.png").write_bytes(b"keep")
+    assert main(["convert", str(letter), "--pdf", "--png", "--dpi", "24"]) == 1
+    assert "letter-page-01.png" in capsys.readouterr().err
+    assert not (tmp_path / "letter.pdf").exists(), "a refused PNG leaves no partial bundle"
+    assert (tmp_path / "letter-page-01.png").read_bytes() == b"keep"
+
+
 def test_convert_pdf_png_and_report(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     report = tmp_path / "pages.json"
     assert main(["convert", str(letter), "--png", "--dpi", "24", "--report", str(report)]) == 0

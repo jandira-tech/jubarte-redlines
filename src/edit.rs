@@ -53,7 +53,6 @@ pub struct EditPlan {
     pub initials: Option<String>,
     /// What to do when the source already holds tracked changes.
     #[serde(default)]
-    /// Policy that was applied.
     pub existing_revisions: ExistingRevisions,
     /// Operations in report order.
     pub operations: Vec<Operation>,
@@ -806,6 +805,9 @@ impl<'p> Transaction<'p> {
                 ..
             } => {
                 check_text(replacement).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                if let Some(note) = comment {
+                    check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                }
                 let (start, end) = self
                     .find_range(projection, find, &mut outcome)
                     .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
@@ -858,6 +860,9 @@ impl<'p> Transaction<'p> {
                 ..
             } => {
                 check_text(new).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                if let Some(note) = comment {
+                    check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                }
                 if new.is_empty() {
                     return Err(fail(
                         "INVALID_EDIT",
@@ -912,13 +917,7 @@ impl<'p> Transaction<'p> {
             OperationKind::Comment {
                 find, text: note, ..
             } => {
-                if note.trim().is_empty() {
-                    return Err(fail(
-                        "INVALID_EDIT",
-                        "comment text must be nonempty".into(),
-                        outcome,
-                    ));
-                }
+                check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 let (start, end) = match find {
                     Some(find) => self
                         .find_range(projection, find, &mut outcome)
@@ -992,6 +991,9 @@ impl<'p> Transaction<'p> {
                 }
                 for r in runs {
                     check_text(&r.text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                }
+                if let Some(note) = comment {
+                    check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 }
                 let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
                 outcome.context = Some(format!("{{+¶ {}}}", excerpt(&joined, 60)));
@@ -1334,6 +1336,9 @@ impl<'p> Transaction<'p> {
             .filter(|(_, r)| matches!(r, Resolved::InsertParagraph { .. }))
             .cloned()
             .collect();
+        // Several paragraphs after one anchor follow it in plan order: each
+        // goes after the one inserted there before it.
+        let mut last_after: BTreeMap<usize, NodeId> = BTreeMap::new();
         for (i, r) in inserts {
             if let Resolved::InsertParagraph {
                 anchor,
@@ -1347,7 +1352,11 @@ impl<'p> Transaction<'p> {
                 let new =
                     build_paragraph(&mut self.opened.dom, anchor_node, &runs, style.as_deref());
                 match side {
-                    Side::After => self.opened.dom.add_after_self(anchor_node, new),
+                    Side::After => {
+                        let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
+                        self.opened.dom.add_after_self(prev, new);
+                        last_after.insert(anchor, new);
+                    }
                     Side::Before => self.opened.dom.add_before_self(anchor_node, new),
                 }
                 if comment.is_some() {
@@ -1493,6 +1502,15 @@ fn check_text(text: &str) -> Result<(), String> {
         return Err("text must be plain, without control characters (tabs and line breaks are not supported inside run text)".into());
     }
     Ok(())
+}
+
+/// Comment text: nonempty, and each line (`\n` starts a new comment
+/// paragraph) plain text that `comments.xml` can carry.
+fn check_comment(text: &str) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err("comment text must be nonempty".into());
+    }
+    text.split('\n').try_for_each(check_text)
 }
 
 /// `before {mark} after` with up to 20 chars of context on either side.

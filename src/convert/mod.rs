@@ -49,6 +49,9 @@ pub enum ConvertError {
     MissingDocument,
     /// PDF object assembly failed.
     Emit(String),
+    /// A PNG resolution outside `1..=MAX_PNG_DPI`, or a page too large to
+    /// rasterize at the requested one.
+    Raster(String),
 }
 
 impl fmt::Display for ConvertError {
@@ -57,6 +60,7 @@ impl fmt::Display for ConvertError {
             Self::OpenPackage(err) => write!(f, "opening DOCX: {err}"),
             Self::MissingDocument => write!(f, "DOCX has no main document part"),
             Self::Emit(err) => write!(f, "emitting PDF: {err}"),
+            Self::Raster(err) => write!(f, "rasterizing PNG: {err}"),
         }
     }
 }
@@ -342,6 +346,9 @@ pub struct Rendered {
     pub report: RenderReport,
 }
 
+/// Highest PNG resolution [`render`] accepts.
+pub const MAX_PNG_DPI: f32 = 1200.0;
+
 /// Lay the document out once and emit any combination of PDF, PNG pages and
 /// the page report.
 pub fn render(
@@ -349,17 +356,33 @@ pub fn render(
     options: PdfOptions,
     request: RenderRequest,
 ) -> Result<Rendered, ConvertError> {
+    if let Some(dpi) = request.png_dpi
+        && !(1.0..=MAX_PNG_DPI).contains(&dpi)
+    {
+        return Err(ConvertError::Raster(format!(
+            "dpi {dpi} is outside 1..={MAX_PNG_DPI}"
+        )));
+    }
     let (result, font_report) = font::with_font_report(|| {
         let previous = REVISIONS.with(|r| r.replace(options.revisions));
         let result = with_pages(docx, |fonts, pages| {
             let pdf = request.pdf.then(|| pdf::emit(fonts, pages, options));
-            let pngs = match request.png_dpi {
+            let pngs: Result<Vec<Vec<u8>>, ConvertError> = match request.png_dpi {
                 Some(dpi) => pages
                     .iter()
-                    .filter_map(|page| raster::paint_page(fonts, page, dpi))
-                    .map(|pixmap| raster::encode_png(&pixmap))
+                    .enumerate()
+                    .map(|(i, page)| {
+                        raster::paint_page(fonts, page, dpi)
+                            .map(|pixmap| raster::encode_png(&pixmap))
+                            .ok_or_else(|| {
+                                ConvertError::Raster(format!(
+                                    "page {} is too large to rasterize at {dpi} dpi",
+                                    i + 1
+                                ))
+                            })
+                    })
                     .collect(),
-                None => Vec::new(),
+                None => Ok(Vec::new()),
             };
             let texts = pages
                 .iter()
@@ -375,6 +398,7 @@ pub fn render(
         result
     });
     let (pdf, pngs, page_count, pages) = result?;
+    let pngs = pngs?;
     Ok(Rendered {
         pdf,
         pngs,

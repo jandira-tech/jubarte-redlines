@@ -207,3 +207,18 @@ fn inspect_json_carries_schema_hash_summary_and_paragraphs() {
     assert_eq!(v["paragraphs"][0]["text"], "hello");
     assert_eq!(v["paragraphs"][0]["runs"][0]["end"], 5);
 }
+
+#[test]
+fn summary_reads_only_wordprocessingml_parts_for_revisions() {
+    // A custom XML item the strict reader refuses (here a DTD) is not part
+    // of the document text; it must not make the whole summary fail.
+    let item = Part {
+        name: "customXml/item1.xml",
+        content_type: "application/xml",
+        rel_type: "",
+        xml: r#"<?xml version="1.0"?><!DOCTYPE vendor [<!ENTITY v "1">]><vendor>&v;</vendor>"#,
+    };
+    let bytes = docx_with(&para("Body"), &[item]);
+    assert_eq!(summary(&bytes).unwrap().revisions, 0);
+    assert!(inspect_json(&bytes).is_ok());
+}

@@ -292,13 +292,18 @@ impl Opened {
             ..Summary::default()
         };
         for name in pkg.parts() {
-            if pkg
-                .content_type_for(&name)
-                .is_some_and(|mime| mime.starts_with("image/"))
-            {
+            let mime = pkg.content_type_for(&name);
+            let mime = mime.as_deref();
+            if mime.is_some_and(|mime| mime.starts_with("image/")) {
                 summary.images += 1;
             }
-            if name.ends_with(".xml") && name != self.main {
+            // Revisions live only in WordprocessingML parts; custom XML items
+            // and vendor parts are not read, so the checked reader cannot
+            // refuse the document over them.
+            let wordprocessing = mime.is_some_and(|mime| {
+                mime.starts_with("application/vnd.openxmlformats-officedocument.wordprocessingml.")
+            });
+            if wordprocessing && name != self.main {
                 let (part_dom, _, part_root) = parse_part(pkg, &name)?;
                 summary.revisions += revision_count(&part_dom, part_root);
             }

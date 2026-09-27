@@ -34,15 +34,17 @@ class EditPlanError(_native.JubarteError):
 
     ``code`` is the stable engine code (``STALE_SOURCE``, ``ANCHOR_NOT_FOUND``,
     ``AMBIGUOUS_ANCHOR``, ``OVERLAPPING_EDITS``, ``UNSUPPORTED_STRUCTURE``,
-    ``EXISTING_REVISIONS``, ``INVALID_PLAN``, ...), ``operation`` the id of the
-    operation that failed, and ``outcomes`` every operation's status at that
-    point, so the caller can see which anchors resolved.
+    ``EXISTING_REVISIONS``, ``INVALID_PLAN``, ...), ``message`` the engine's
+    detail without the code, ``operation`` the id of the operation that
+    failed, and ``outcomes`` every operation's status at that point, so the
+    caller can see which anchors resolved.
     """
 
     def __init__(self, code: str, message: str, operation: str | None, outcomes: tuple[EditOutcome, ...]) -> None:
         where = f" ({operation})" if operation else ""
         super().__init__(f"{code}{where}: {message}")
         self.code = code
+        self.message = message
         self.operation = operation
         self.outcomes = outcomes
 

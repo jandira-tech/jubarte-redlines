@@ -176,6 +176,51 @@ fn ambiguous_anchor_fails_the_whole_plan_and_reports_every_operation() {
 }
 
 #[test]
+fn paragraphs_inserted_after_one_anchor_keep_plan_order() {
+    let source = docx(&(para("Heading") + &para("Tail")));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"insert_paragraph","paragraph":{"index":0},"position":"after","runs":[{"text":"First"}]},
+                {"kind":"insert_paragraph","paragraph":{"index":0},"position":"after","runs":[{"text":"Second"}]},
+                {"kind":"insert_paragraph","paragraph":{"index":1},"position":"before","runs":[{"text":"Third"}]},
+                {"kind":"insert_paragraph","paragraph":{"index":1},"position":"before","runs":[{"text":"Fourth"}]}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        texts(&result.clean),
+        ["Heading", "First", "Second", "Third", "Fourth", "Tail"]
+    );
+}
+
+#[test]
+fn comment_text_must_be_nonempty_xml_safe_text() {
+    let source = docx(&para("Sections 1(g), 2(e), 3 survive."));
+    for ops in [
+        r#"[{"kind":"comment","paragraph":{"index":0},"text":"note\u0001"}]"#,
+        r#"[{"kind":"replace","paragraph":{"index":0},"find":"3","replacement":"4","comment":"bad\u0008"}]"#,
+        r#"[{"kind":"insert","paragraph":{"index":0},"after":"1(g), ","text":"2(c), ","comment":"\u001f"}]"#,
+        r#"[{"kind":"insert_paragraph","paragraph":{"index":0},"position":"after","runs":[{"text":"New"}],"comment":"x￿"}]"#,
+        r#"[{"kind":"replace","paragraph":{"index":0},"find":"3","replacement":"4","comment":"  "}]"#,
+    ] {
+        let err = apply_plan(&source, &plan(&source, ops)).unwrap_err();
+        assert_eq!(err.code, "INVALID_EDIT", "{ops}");
+    }
+    // A line break splits the comment into paragraphs and stays allowed.
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"comment","paragraph":{"index":0},"text":"first line\nsecond line"}]"#,
+        ),
+    )
+    .unwrap();
+    assert_word_valid_package(&result.redline);
+}
+
+#[test]
 fn missing_anchor_and_bad_selectors_are_reported_with_codes() {
     let source = docx(&(para("one") + &para("two") + &para("two again")));
     for (ops, code) in [

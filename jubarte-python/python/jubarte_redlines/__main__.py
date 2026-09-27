@@ -133,7 +133,7 @@ def cmd_edit(args: argparse.Namespace) -> int:
                 if value is not None:
                     row[key] = value
             print(json.dumps(row, ensure_ascii=False))
-        print(json.dumps({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": str(exc)}, ensure_ascii=False))
+        print(json.dumps({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}, ensure_ascii=False))
         print(f"error: plan refused: {exc}", file=sys.stderr)
         return EXIT_PLAN_REFUSED
     lines = result.report.to_jsonl().splitlines()
@@ -180,13 +180,16 @@ def cmd_convert(args: argparse.Namespace) -> int:
         _ensure_writable(output, args.force)
     rendered = doc.render(pdf=want_pdf, png_dpi=args.dpi if args.png else None, options=_pdf_options(args))
     pages = rendered.report.page_count
+    # The page count is known only now; check every PNG path before the first
+    # write so a refused page leaves no partial bundle.
+    png_paths = [output.parent / _png_name(output.stem, i, len(rendered.pngs)) for i in range(len(rendered.pngs))]
+    for path in png_paths:
+        _ensure_writable(path, args.force)
     if rendered.pdf is not None:
         _write(output, rendered.pdf)
         print(f"wrote {output} ({len(rendered.pdf)} bytes, {pages} page{'' if pages == 1 else 's'})")
     if args.png:
-        for i, png in enumerate(rendered.pngs):
-            path = output.parent / _png_name(output.stem, i, len(rendered.pngs))
-            _ensure_writable(path, args.force)
+        for path, png in zip(png_paths, rendered.pngs):
             _write(path, png)
         print(f"wrote {len(rendered.pngs)} PNG page{'' if len(rendered.pngs) == 1 else 's'} ({output.parent / output.stem}-page-NN.png, {args.dpi} dpi)")
     if args.font_report is not None:

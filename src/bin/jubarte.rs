@@ -171,7 +171,7 @@ enum Command {
         /// Rasterize every page to PNG (<stem>-page-NN.png).
         #[arg(long)]
         png: bool,
-        /// PNG resolution in dots per inch.
+        /// PNG resolution in dots per inch (1-1200).
         #[arg(long, default_value_t = 96.0, value_name = "DPI")]
         dpi: f32,
         /// Write a JSON page report (`{page_count, pages:[{index,text}], fonts}`).
@@ -242,7 +242,7 @@ enum Command {
         /// Also write redline-page-NN.png and clean-page-NN.png.
         #[arg(long)]
         png: bool,
-        /// PNG resolution in dots per inch.
+        /// PNG resolution in dots per inch (1-1200).
         #[arg(long, default_value_t = 96.0, value_name = "DPI")]
         dpi: f32,
         /// How tracked changes are painted in the redline PDF/PNG.
@@ -301,6 +301,15 @@ fn same_path(a: &Path, b: &Path) -> bool {
         Some(std::fs::canonicalize(parent).ok()?.join(name))
     }
     a == b || matches!((key(a), key(b)), (Some(x), Some(y)) if x == y)
+}
+
+/// Two directory paths name the same existing directory. `same_path` keys on
+/// the file name, which `.` and `./` do not have.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => same_path(a, b),
+    }
 }
 
 fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
@@ -389,6 +398,14 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
     )
     .map_err(|e| format!("convert failed: {e}"))?;
     let pages = rendered.report.page_count;
+    // The page count is known only now; check every PNG path before the
+    // first write so a refused page leaves no partial bundle.
+    let png_paths: Vec<PathBuf> = (0..rendered.pngs.len())
+        .map(|i| dir.join(png_name(&stem, i, rendered.pngs.len())))
+        .collect();
+    for path in &png_paths {
+        ensure_writable(path, job.force)?;
+    }
     if let Some(pdf) = &rendered.pdf {
         std::fs::write(&output, pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
         println!(
@@ -399,10 +416,8 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
         );
     }
     if job.png {
-        for (i, png) in rendered.pngs.iter().enumerate() {
-            let path = dir.join(png_name(&stem, i, rendered.pngs.len()));
-            ensure_writable(&path, job.force)?;
-            std::fs::write(&path, png).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        for (path, png) in png_paths.iter().zip(&rendered.pngs) {
+            std::fs::write(path, png).map_err(|e| format!("writing {}: {e}", path.display()))?;
         }
         println!(
             "wrote {} PNG page{} ({}-page-NN.png, {} dpi)",
@@ -524,7 +539,12 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
                 job.out_dir.display()
             )));
         }
-        if same_path(job.out_dir, job.file.parent().unwrap_or(Path::new("."))) {
+        let input_dir = job
+            .file
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        if same_dir(job.out_dir, input_dir) {
             return Err(fail(
                 "--out-dir must not be the input's own directory".into(),
             ));
