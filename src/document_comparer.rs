@@ -826,6 +826,45 @@ fn ppr_child_rank(local: &str) -> usize {
 /// Only `w:` attributes are restored: A's working copy carries the
 /// comparer's `pt14:Unid` stamps, which must not come back as `w:Unid`.
 /// Returns the rewritten `out_xml`, or `None` when nothing changed.
+/// Word's redline font table is the union of both documents' tables. Keeping
+/// only the original's leaves fonts that arrive with the revised text without
+/// their charset/panose/family entry, and Word substitutes blind (file_46 ×
+/// file_47: Times New Roman where Word's own redline used Hiragino Mincho for
+/// Liberation Serif / Droid Sans Fallback). B's fonts the output does not name
+/// are appended; embedded-font children stay behind, since their
+/// relationships and obfuscation keys belong to B's package.
+/// Returns the rewritten `out_xml`, or `None` when nothing changed.
+fn merge_revised_font_table(out_xml: &str, b_xml: &str) -> Option<String> {
+    let font = W::name("font");
+    let name = W::name("name");
+    let mut dom = Dom::new();
+    let od = dom.parse_xdocument(out_xml);
+    let bd = dom.parse_xdocument(b_xml);
+    let (out_root, b_root) = (dom.root(od)?, dom.root(bd)?);
+    let known: std::collections::HashSet<String> = dom
+        .elements(out_root, Some(&font))
+        .into_iter()
+        .filter_map(|f| dom.attribute(f, &name).map(str::to_string))
+        .collect();
+    let mut changed = false;
+    for f in dom.elements(b_root, Some(&font)) {
+        if dom.attribute(f, &name).is_none_or(|n| known.contains(n)) {
+            continue;
+        }
+        let copy = dom.clone_subtree(f);
+        for c in dom.elements(copy, None) {
+            if dom.name(c).is_some_and(|n| {
+                n.namespace_name() == W::URI && n.local_name().starts_with("embed")
+            }) {
+                dom.remove(c);
+            }
+        }
+        dom.add(out_root, copy);
+        changed = true;
+    }
+    changed.then(|| dom.serialize_element(out_root))
+}
+
 fn restore_deleted_paragraph_spacing(a_xml: &str, out_xml: &str) -> Option<String> {
     let w14_pid = crate::namespaces::W14::name("paraId");
     let mut a_spacing: std::collections::HashMap<String, Vec<(String, String)>> =
@@ -4967,6 +5006,14 @@ fn compare_documents_impl(
         }
     }
 
+    // The revised text brings its fonts: their table entries come too.
+    if let (Some(out_fonts), Some(b_fonts)) = (
+        out.part_string("word/fontTable.xml"),
+        pkg2.part_string("word/fontTable.xml"),
+    ) && let Some(merged) = merge_revised_font_table(&out_fonts, &b_fonts)
+    {
+        out.set_part("word/fontTable.xml", merged.into_bytes());
+    }
     // Word-mode: adopt B's package chrome (settings/fontTable/theme) when A is
     // thin. When BOTH sides are bare demos (C5 formatting one-pagers), Word
     // still saves factory settings/theme/fontTable — inject if still missing.
@@ -5746,6 +5793,50 @@ mod tests {
         names.sort();
         let w = |l: &str| W::name(l).clark();
         assert_eq!(names, vec![w("line"), w("lineRule")], "{restored}");
+    }
+
+    /// Fonts only the revised document declares join the output's font table
+    /// (file_46 × file_47: without Liberation Serif's entry Word fell back to
+    /// Times New Roman where its own redline used Hiragino Mincho). Fonts the
+    /// output already lists stay as they are, and embedded-font children are
+    /// left behind: their relationships and obfuscation keys belong to B.
+    #[test]
+    fn revised_fonts_join_the_font_table() {
+        let ns = format!("xmlns:w=\"{}\" xmlns:r=\"{}\"", W::URI, R::URI);
+        let out = format!(
+            "<w:fonts {ns}><w:font w:name=\"Calibri\"><w:charset w:val=\"00\"/></w:font></w:fonts>"
+        );
+        let b = format!(
+            "<w:fonts {ns}><w:font w:name=\"Calibri\"><w:charset w:val=\"86\"/></w:font>\
+             <w:font w:name=\"Droid Sans Fallback\"><w:charset w:val=\"86\"/>\
+             <w:family w:val=\"auto\"/><w:embedRegular r:id=\"rId1\" w:fontKey=\"{{0}}\"/></w:font></w:fonts>"
+        );
+        let merged = merge_revised_font_table(&out, &b).expect("B's font added");
+        let mut dom = Dom::new();
+        let d = dom.parse_xdocument(&merged);
+        let root = dom.root(d).unwrap();
+        let fonts: Vec<(String, String)> = dom
+            .elements(root, Some(&W::name("font")))
+            .into_iter()
+            .map(|f| {
+                let cs = dom
+                    .element(f, &W::name("charset"))
+                    .and_then(|c| dom.attribute(c, &W::val()))
+                    .unwrap_or("")
+                    .to_string();
+                (dom.attribute(f, &W::name("name")).unwrap().to_string(), cs)
+            })
+            .collect();
+        assert_eq!(
+            fonts,
+            vec![
+                ("Calibri".to_string(), "00".to_string()),
+                ("Droid Sans Fallback".to_string(), "86".to_string())
+            ],
+            "{merged}"
+        );
+        assert!(!merged.contains("embedRegular"), "{merged}");
+        assert_eq!(merge_revised_font_table(&merged, &b), None, "nothing new");
     }
 
     /// `next_free_revision_id` must be one greater than the max numeric id on
