@@ -176,6 +176,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   line spacing now matches Word's on 8,895 of 8,944 inserted pool paragraphs,
   up from 8,779. +1.03 Jaccard summed (16 better, 5 worse, every loss under
   0.03).
+- `convert --revisions word` now paints the change bar beside paragraphs,
+  including paragraphs in table cells, whose only revision is a formatting
+  change (`w:pPrChange` or `w:rPrChange`), as Word does. Such paragraphs used
+  to get no bar. Converting the same redlines, 177 pool PDFs changed:
+  +1.41 Jaccard summed, 27 better, 1 worse (-0.026). The worse pair carries a
+  `firstLine="0"` paragraph change that Word's compare does not record.
 
 ### Added
 

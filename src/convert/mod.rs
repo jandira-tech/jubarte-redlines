@@ -559,6 +559,9 @@ impl RunStyle {
 
 #[derive(Clone)]
 struct ParaStyle {
+    /// The paragraph carries a tracked formatting change (`w:pPrChange` or a
+    /// `w:rPrChange`): Word bars it like an insertion or deletion.
+    fmt_rev: bool,
     /// The paragraph mark's own run style (pPr/rPr with a size or face):
     /// a picture-only line takes its multiple's leading from it (0023298b).
     mark_run: Option<std::rc::Rc<RunStyle>>,
@@ -1057,6 +1060,7 @@ impl Defaults {
                 ideograph_words: false,
             },
             para: ParaStyle {
+                fmt_rev: false,
                 mark_run: None,
                 hrule: None,
                 align: Align::Left,
@@ -8521,6 +8525,16 @@ fn o_attr<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
 }
 
 /// The paragraph's `v:rect o:hr="t"` (not a Fallback copy), if any.
+/// A tracked formatting change on the paragraph or any of its runs
+/// (`w:pPrChange`, `w:rPrChange`). Word draws the change bar beside such a
+/// paragraph even when no text was inserted or deleted (pool p0016, p0033,
+/// p0111, p0225).
+fn para_formatting_changed(dom: &Dom, para: NodeId) -> bool {
+    [W::p_pr_change(), W::name("rPrChange")]
+        .iter()
+        .any(|n| !dom.descendants(para, Some(n)).is_empty())
+}
+
 fn para_hrule(dom: &Dom, para: NodeId) -> Option<HRule> {
     let rect = descendants_local(dom, para, "rect").into_iter().find(|r| {
         o_attr(dom, *r, "hr") == Some("t")
@@ -8573,6 +8587,7 @@ fn paragraph_block(
     let sheet = ctx.sheet;
     let (mut pstyle, rstyle) = para_base(dom, para, sheet, None);
     pstyle.hrule = para_hrule(dom, para);
+    pstyle.fmt_rev = para_formatting_changed(dom, para);
     let (marker, num_id, ilvl) = list_marker(dom, para, sheet, numbering);
     // numId=0 over a numbered style removes the list and the style's list
     // indent with it (000ebd12 Förslagstext: ind 397/397 renders flush
@@ -9918,6 +9933,7 @@ fn table_block(
                         .map_or([false; 2], |t| [t.sets_space, t.sets_line]),
                 };
                 let (mut pstyle, mut r) = para_base(dom, child, sheet, Some(&table_spacing));
+                pstyle.fmt_rev = para_formatting_changed(dom, child);
                 // An explicit table style's size beats the default paragraph
                 // style's in a paragraph with no pStyle (checked in Word on
                 // 00004116: Normal 12pt, docDefaults 11pt, cells paint 11pt;
@@ -16665,6 +16681,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         return Align::Left;
     };
     let mut style = ParaStyle {
+        fmt_rev: false,
         mark_run: None,
         hrule: None,
         align: Align::Left,
@@ -19750,7 +19767,7 @@ impl<'a> Layout<'a> {
             bdr_top.is_some(),
             bdr_bottom.is_some(),
         );
-        if runs.iter().any(|r| r.rev) {
+        if style.fmt_rev || runs.iter().any(|r| r.rev) {
             self.paint_rev_bar(self.rev_bar_x(), text_bottom, y_top);
         }
         self.y -= style.after;
@@ -23867,7 +23884,10 @@ impl<'a> Layout<'a> {
                         y_line -= used;
                     }
                 }
-                if row.iter().any(|c| c.runs().any(|r| r.rev)) {
+                if row
+                    .iter()
+                    .any(|c| c.paras.iter().any(|p| p.style.fmt_rev) || c.runs().any(|r| r.rev))
+                {
                     self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
                 }
             }

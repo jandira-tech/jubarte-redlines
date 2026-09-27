@@ -27653,6 +27653,40 @@ fn rev_bar_sits_half_an_inch_from_the_page_edge() {
 }
 
 #[test]
+fn rev_bar_marks_a_paragraph_formatting_change() {
+    // Word bars a paragraph whose only revision is a pPrChange (pool
+    // p0033 bullets, p0225's last paragraph): no text was inserted or
+    // deleted, yet the changed-line mark stands beside it.
+    let pdf = docx_to_pdf(&minimal_docx_body(
+        "<w:p><w:pPr><w:jc w:val=\"center\"/>\
+           <w:pPrChange w:id=\"1\" w:author=\"a\"><w:pPr/></w:pPrChange></w:pPr>\
+           <w:r><w:t>recentred paragraph</w:t></w:r></w:p><w:sectPr/>",
+    ))
+    .expect("convert pPrChange rev bar");
+    let xs = pdf_vertical_rule_xs(&pdf);
+    assert!(
+        xs.iter().any(|x| (34.0..38.0).contains(x)),
+        "a pPrChange paragraph carries Word's change bar; xs={xs:?}"
+    );
+}
+
+#[test]
+fn rev_bar_marks_a_run_formatting_change() {
+    // Word bars a run whose only revision is an rPrChange (pool p0016's
+    // bolded demo, p0111's field font).
+    let pdf = docx_to_pdf(&minimal_docx_body(
+        "<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id=\"1\" w:author=\"a\"><w:rPr/></w:rPrChange></w:rPr>\
+           <w:t>newly bold text</w:t></w:r></w:p><w:sectPr/>",
+    ))
+    .expect("convert rPrChange rev bar");
+    let xs = pdf_vertical_rule_xs(&pdf);
+    assert!(
+        xs.iter().any(|x| (34.0..38.0).contains(x)),
+        "an rPrChange run carries Word's change bar; xs={xs:?}"
+    );
+}
+
+#[test]
 fn rev_bar_stands_36pt_out_from_a_wide_margin() {
     // Live Word 2026-09-25 (and CiceroDo): at left=90pt the change bar is at
     // margin_l-36 = 54, not margin_l/2 = 45; half the margin only when that
