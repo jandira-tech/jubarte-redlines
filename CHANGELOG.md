@@ -118,6 +118,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   relationship and content-type attributes no longer gain an `&amp;` per
   round trip, a case-duplicate `Default` extension is merged, and
   relationship targets are relative to the source part's folder (904e989).
+- A deleted text box is deleted whole, as Word's Compare deletes it: every
+  run of its story sits in a `w:del` of its own and its paragraph marks are
+  deleted. A text box is a story of its own, so the `w:del` around its anchor
+  does not reach into it, and a field there kept its field code in a run no
+  deletion wrapped (`w:delInstrText` outside any `w:del`). Word refused both
+  English redlines that had one (30ff840c, bb113e88); the OpenXmlValidator
+  passed them. Both open now and score 0.673 and 0.557 jaccard against Word's
+  own redline, where every other tool scores 0.
 - Scratch `pt:Unid` attributes no longer leak into restored deleted-paragraph
   spacing, and every extension namespace (w14/w15/w16*/wp14) is listed in
   `mc:Ignorable` on each part root (b7fedc7); w16 serializes under Word's 2018

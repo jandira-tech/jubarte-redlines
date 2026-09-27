@@ -8690,6 +8690,151 @@ pub fn wrap_bare_del_text_runs(
         dom.remove(r);
         dom.add(d, r);
     }
+    delete_stories_of_deleted_text_boxes(dom, root, settings, id_gen);
+}
+
+/// A text box's `w:txbxContent` is a story of its own: the `w:del` around its
+/// anchor run does not reach into it. When the anchor is deleted, Word's
+/// Compare deletes the story too — every run in a `w:del` and every paragraph
+/// mark deleted (en bb113e88's FILENAME text box). Runs the diff left without
+/// a status (field chars, a field code: they carry no text) stayed bare, and
+/// the deleted-run rename still turned their `w:instrText` into
+/// `w:delInstrText`. Word refused those files (en 30ff840c, bb113e88); the
+/// OpenXmlValidator passes them. Adjacent bare runs share one `w:del`, as in
+/// Word's output.
+fn delete_stories_of_deleted_text_boxes(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let txbx = W::name("txbxContent");
+    let revision = [W::ins(), W::del(), W::name("moveFrom"), W::name("moveTo")];
+    // Nearest enclosing text box of `n`, or None when a revision wrapper comes
+    // first (the run is already covered) or there is no text box.
+    let bare_in = |dom: &Dom, n: NodeId| -> Option<NodeId> {
+        let mut cur = dom.parent(n);
+        while let Some(p) = cur {
+            match dom.name(p) {
+                Some(nm) if nm == txbx => return Some(p),
+                Some(nm) if revision.contains(&nm) => return None,
+                _ => cur = dom.parent(p),
+            }
+        }
+        None
+    };
+    // The deletion wrapping a text box's anchor in the enclosing story.
+    let anchor_del = |dom: &Dom, tb: NodeId| -> Option<NodeId> {
+        let mut cur = dom.parent(tb);
+        while let Some(p) = cur {
+            match dom.name(p) {
+                Some(nm) if nm == txbx => return None,
+                Some(nm) if nm == W::del() => return Some(p),
+                _ => cur = dom.parent(p),
+            }
+        }
+        None
+    };
+    if dom.descendants(root, Some(&txbx)).is_empty() {
+        return;
+    }
+    // Document order: an outer text box is deleted before a nested one's
+    // anchor is looked up, so nested deleted boxes are found too.
+    for r in dom.descendants(root, Some(&W::r())) {
+        let Some(tb) = bare_in(dom, r) else {
+            continue;
+        };
+        let Some(outer) = anchor_del(dom, tb) else {
+            continue;
+        };
+        let prev = dom
+            .nodes_before_self(r)
+            .into_iter()
+            .rev()
+            .find(|&n| dom.is_element(n));
+        let d = match prev {
+            // Joins the w:del this pass opened for the preceding bare run.
+            Some(p)
+                if dom.name_is(p, &W::del())
+                    && dom.attribute(p, &PT::name("TxbxDel")).is_some() =>
+            {
+                p
+            }
+            _ => {
+                let d = rev_el(dom, W::del(), settings, id_gen);
+                for a in [W::author(), W::date()] {
+                    if let Some(v) = dom.attribute(outer, &a).map(str::to_string) {
+                        dom.set_attribute_value(d, &a, Some(&v));
+                    }
+                }
+                dom.set_attribute_value(d, &PT::name("TxbxDel"), Some("1"));
+                dom.add_before_self(r, d);
+                d
+            }
+        };
+        dom.remove(r);
+        dom.add(d, r);
+    }
+    for d in dom.descendants(root, Some(&W::del())) {
+        dom.set_attribute_value(d, &PT::name("TxbxDel"), None);
+    }
+    for tb in dom.descendants(root, Some(&txbx)) {
+        let Some(outer) = anchor_del(dom, tb) else {
+            continue;
+        };
+        for p in dom.descendants(tb, Some(&W::p())) {
+            if dom.ancestors(p, Some(&txbx)).first() != Some(&tb) {
+                continue; // a nested text box's paragraph: its own anchor decides
+            }
+            mark_paragraph_mark_deleted(dom, p, outer, settings, id_gen);
+        }
+    }
+}
+
+/// Give `p`'s paragraph mark a `w:del` (attribution copied from `like`) unless
+/// the mark already carries a revision. The revision leads `CT_ParaRPr`.
+fn mark_paragraph_mark_deleted(
+    dom: &mut Dom,
+    p: NodeId,
+    like: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let ppr = match dom.element(p, &W::p_pr()) {
+        Some(x) => x,
+        None => {
+            let x = dom.new_element(W::p_pr());
+            dom.add_first(p, x);
+            x
+        }
+    };
+    let rpr = match dom.element(ppr, &W::r_pr()) {
+        Some(x) => x,
+        None => {
+            let x = dom.new_element(W::r_pr());
+            // CT_PPr: rPr follows every paragraph property but sectPr/pPrChange.
+            match dom
+                .elements(ppr, None)
+                .into_iter()
+                .find(|&c| dom.name_is(c, &W::sect_pr()) || dom.name_is(c, &W::p_pr_change()))
+            {
+                Some(tail) => dom.add_before_self(tail, x),
+                None => dom.add(ppr, x),
+            }
+            x
+        }
+    };
+    let revision = [W::ins(), W::del(), W::name("moveFrom"), W::name("moveTo")];
+    if revision.iter().any(|r| dom.element(rpr, r).is_some()) {
+        return;
+    }
+    let d = rev_el(dom, W::del(), settings, id_gen);
+    for a in [W::author(), W::date()] {
+        if let Some(v) = dom.attribute(like, &a).map(str::to_string) {
+            dom.set_attribute_value(d, &a, Some(&v));
+        }
+    }
+    dom.add_first(rpr, d);
 }
 
 /// Which input a [`flatten_tracked_deletions`] pass is running against —

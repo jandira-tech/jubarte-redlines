@@ -524,6 +524,34 @@ fn probe_paraid_overflow_fails() {
     );
 }
 
+/// The outer `w:del` on a text box's anchor run does not reach into the text
+/// box's own story (en 30ff840c/bb113e88: Word refused the file).
+#[test]
+fn probe_del_instr_text_outside_its_story_deletion_fails() {
+    let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            xmlns:v="urn:schemas-microsoft-com:vml">
+  <w:body>
+    <w:p><w:del w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:pict><v:shape><v:textbox><w:txbxContent>
+      <w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:delInstrText xml:space="preserve"> FILENAME </w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:del w:id="2" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>x</w:delText></w:r></w:del><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
+    </w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:del></w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#;
+    let bytes = zip_with_parts(&[("word/document.xml", doc)]);
+    let report = check_word_valid_package(&bytes);
+    assert_eq!(
+        report
+            .errors
+            .iter()
+            .filter(|e| e.contains("w:delInstrText") && e.contains("own story"))
+            .count(),
+        1,
+        "expected exactly the orphan delInstrText, got: {:?}",
+        report.errors
+    );
+}
+
 #[test]
 fn minimal_valid_package_passes() {
     let bytes = zip_with_parts(&[("word/document.xml", MINIMAL_DOC)]);

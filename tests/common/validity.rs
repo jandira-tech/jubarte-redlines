@@ -54,6 +54,7 @@ pub fn check_word_valid_package(bytes: &[u8]) -> ValidityReport {
     check_revision_and_drawing_ids(&pkg, &mut report);
     check_para_text_id_bounds(&pkg, &mut report);
     check_del_text_under_del(&pkg, &mut report);
+    check_deleted_text_has_deletion(&pkg, &mut report);
     check_comment_graph(&pkg, &mut report);
     report
 }
@@ -338,6 +339,49 @@ fn check_del_text_under_del(pkg: &PartFs, report: &mut ValidityReport) {
                 report.fail(format!(
                     "w:delText under w:moveFrom in '{name}' (Word requires w:t)"
                 ));
+            }
+        }
+    }
+}
+
+/// `w:delText` / `w:delInstrText` must sit under a `w:del` (or `w:moveFrom`)
+/// in its OWN story. A text box's `w:txbxContent` is a separate story: the
+/// `w:del` around its anchor run does not cover it. Word refuses a deleted text
+/// box whose field code is `w:delInstrText` in a run no deletion wraps (en
+/// 30ff840c/bb113e88); Word's own redline wraps the whole field in a `w:del`
+/// inside the text box. The OpenXmlValidator passes the file.
+fn check_deleted_text_has_deletion(pkg: &PartFs, report: &mut ValidityReport) {
+    for name in pkg.parts() {
+        if !name.ends_with(".xml") {
+            continue;
+        }
+        let Some(xml) = pkg.part_string(&name) else {
+            continue;
+        };
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(doc) else {
+            continue;
+        };
+        for kind in ["delText", "delInstrText"] {
+            for t in dom.descendants(root, Some(&W::name(kind))) {
+                let mut cur = dom.parent(t);
+                let mut covered = false;
+                while let Some(p) = cur {
+                    match dom.name(p).as_ref().map(|n| n.local_name()) {
+                        Some("del" | "moveFrom") => {
+                            covered = true;
+                            break;
+                        }
+                        Some("txbxContent") => break,
+                        _ => cur = dom.parent(p),
+                    }
+                }
+                if !covered {
+                    report.fail(format!(
+                        "w:{kind} in '{name}' has no w:del in its own story (text boxes are separate stories)"
+                    ));
+                }
             }
         }
     }
