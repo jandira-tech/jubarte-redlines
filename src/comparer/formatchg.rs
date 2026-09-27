@@ -172,12 +172,15 @@ pub fn friendly_property_name(local: &str) -> String {
 
 fn prop_signature(dom: &mut Dom, prop: NodeId) -> String {
     // NormalizePropertyElement: name + non-rsid attrs sorted; compare by serialization.
+    // Scratch `pt14:*` attributes (the comparer's own Unid bookkeeping) are not
+    // properties: an old-side `w:pStyle` carrying one would otherwise never equal
+    // its new-side twin.
     let cn = dom.name(prop).unwrap();
     let pe = dom.new_element(cn);
     let mut attrs: Vec<(XName, String)> = dom
         .attributes(prop)
         .into_iter()
-        .filter(|(an, _)| !is_rsid_attr(an))
+        .filter(|(an, _)| !is_rsid_attr(an) && an.namespace_name() != PT::URI)
         .collect();
     // ALLOC-LEAN-01: compare &str, don't allocate a String key per comparison.
     attrs.sort_by(|(a, _), (b, _)| a.local_name().cmp(b.local_name()));
@@ -400,10 +403,10 @@ fn detect_format_changes_impl(
             continue;
         };
         // M81: paragraph-mark format change → w:pPrChange (docxodus :7127).
-        // Gate: only when B clears properties A had (projected new empty, old
-        // non-empty). Ungated equality fired ~99 pPrChange on file_8 (Word: 0)
-        // and cost −2.8 score — Word emits pPrChange sparingly (file_69 stamp
-        // after=20 → empty is the canonical case).
+        // Removal and change of layout are recorded; addition only for jc- or
+        // spacing-only pPr (M102/M130). The old "~99 pPrChange on file_8"
+        // flood that once forced a removal-only gate came from scratch
+        // `pt14:*` attributes making equal pPr look different, not from Word.
         if dom.name_is(atom.content_element, &W::p_pr()) {
             let old_ppr = before.content_element;
             let new_ppr = atom.content_element;
@@ -440,6 +443,11 @@ fn detect_format_changes_impl(
                     if let Some(jc_old) = project_jc_only_from(dom, projected_old) {
                         para_changes.push((i, jc_old));
                     }
+                } else if !old_sig.is_empty() && !new_sig.is_empty() {
+                    // Both sides carry layout and it differs: Word keeps the
+                    // new pPr live and records the old one (document_100,
+                    // file_111_112).
+                    para_changes.push((i, projected_old));
                 }
             }
             continue;

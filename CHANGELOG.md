@@ -72,6 +72,16 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   Times New Roman. +2.96 Jaccard summed over the 1,195 pool and English pairs
   (126 changed, 26 better, 2 worse); instrtext_angled_brackets_bug ×
   table_merged_cells 0.13 → 0.82.
+- A paragraph whose layout changes on both sides (double spacing replacing
+  heading spacing) now keeps the new layout and records the old one as a
+  paragraph-property change, as Word does. Equal properties had looked
+  different because of the comparer's internal `pt14` bookkeeping attributes;
+  those no longer count. A revised paragraph with layout of its own no longer
+  inherits the original's small `after` spacing. +0.59 Jaccard summed over the
+  1,195 pool and English pairs (197 changed, 0 worse by more than 0.005);
+  document_100 × double_spacing_bold 0.48 → 0.85, file_111 × file_112
+  0.54 → 0.75. Paragraph-property changes that disagree with Word's count
+  fall from 1,784 to 1,420.
 
 ### Added
 

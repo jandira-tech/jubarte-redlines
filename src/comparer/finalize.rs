@@ -339,7 +339,14 @@ pub fn mark_content_transform(
             {
                 dom.set_attribute_value(ppr, &PT::name("OldPPr"), None);
                 let old_ppr = parse_ppr(dom, Some(&old_s));
-                if dom.element(ppr, &W::spacing_el()).is_none()
+                // Only a bare new pPr inherits the micro spacing: when B has
+                // layout of its own (file_143_144 jc=both), Word keeps B's pPr.
+                let new_is_bare = dom
+                    .elements(ppr, None)
+                    .into_iter()
+                    .all(|c| dom.name_is(c, &W::r_pr()));
+                if new_is_bare
+                    && dom.element(ppr, &W::spacing_el()).is_none()
                     && let Some(old_sp) = dom.element(old_ppr, &W::spacing_el())
                 {
                     let after = dom.attribute(old_sp, &W::name("after")).unwrap_or("");
@@ -1981,6 +1988,18 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
             && (para_word_atom_count(dom, p) <= 1 || has_ind);
         if line_ok && after_ok && before_ok && rule_ok && !keep {
             to_remove.push(sp);
+            // The same restatement recorded as the old side of a pPrChange
+            // goes too, or the change would claim a spacing edit that never
+            // happened.
+            if let Some(chg) = dom.element(ppr, &W::p_pr_change())
+                && let Some(old) = dom.element(chg, &W::p_pr())
+                && let Some(old_sp) = dom.element(old, &spacing_name)
+                && ["line", "after", "before", "lineRule"]
+                    .iter()
+                    .all(|a| dom.attribute(old_sp, &W::name(a)) == dom.attribute(sp, &W::name(a)))
+            {
+                to_remove.push(old_sp);
+            }
             continue;
         }
         // M67: Heading residual on pure-del (before+after+line, no pStyle).
@@ -5025,8 +5044,12 @@ pub fn promote_live_jc_from_pprchange_on_body_mix(dom: &mut Dom, root: NodeId) {
         let Some(ppr) = dom.element(p, &W::p_pr()) else {
             continue;
         };
-        // Already live jc — leave alone.
-        if dom.element(ppr, &W::jc_el()).is_some() {
+        // Already live jc — leave alone. A live `w:spacing` means the pair
+        // carries a real layout change, which Word records as a pPrChange over
+        // the old jc rather than promoting it (file_116_117).
+        if dom.element(ppr, &W::jc_el()).is_some()
+            || dom.element(ppr, &W::name("spacing")).is_some()
+        {
             continue;
         }
         let Some(chg) = dom.element(ppr, &W::p_pr_change()) else {
