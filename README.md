@@ -19,10 +19,10 @@ document fixtures — full tables in [RESULTS.md](RESULTS.md).*
 
 `jubarte convert` reconstructs Word's page layout in pure Rust — no Word, no
 LibreOffice — and paints tracked changes the way Word does. Scored against
-Word's own PDF exports, **jubarte 0.9.2 ranks #1 on both pooled corpora**:
-mean Jaccard **0.647 vs 0.335** (LibreOffice 26.8, the next best) across
-2,102 clean documents, and **0.574 vs 0.287** across 3,518 documents
-including redlines ([RESULTS.md](RESULTS.md)).
+Word's own PDF exports, **jubarte 0.9.2 ranks #1 on both pooled corpora**,
+every tool scored on the same documents: mean Jaccard **0.603 vs 0.334**
+(LibreOffice 26.8, the next best) over 1,204 clean documents, and **0.392 vs
+0.214** over 451 redlined ones ([RESULTS.md](RESULTS.md)).
 
 And `jubarte redlines`: compare two `.docx` into a tracked-changes
 document — native `w:ins` / `w:del` / move / format-change markup on the
@@ -285,63 +285,66 @@ benchmark lane); full tables, corpus provenance, and per-version history:
 
 ### docx→pdf — Jaccard vs Word's own export (0–1, higher is better)
 
-docxide-metrics pools the per-document score of every corpus each tool
-converted. **jubarte 0.9.2 ranks #1 on both pools:**
+docxide-metrics pools the per-document score of the corpora every tool
+converted, over the same documents; a document a tool fails scores 0.
+**jubarte 0.9.2 ranks #1 on both pools:**
 
 | corpus pool | docs | jubarte 0.9.2 | best other tool |
 | --- | ---: | --- | --- |
-| clean documents | 2,102 | **0.647** mean · **0.732** median | LibreOffice 26.8 — 0.335 / 0.288 |
-| clean + redlines | 3,518 | **0.574** · **0.606** | LibreOffice 26.8 — 0.287 / 0.246 |
+| clean documents | 1,204 | **0.603** mean · **0.690** median | LibreOffice 26.8 — 0.334 / 0.287 |
+| redlined documents | 451 | **0.392** · **0.383** | LibreOffice 26.8 — 0.214 / 0.185 |
 
-~1.9× LibreOffice's mean and ~3× docxide-pdf 0.17.1's (0.216); the remaining
-converters score ≤ 0.13, and jubarte's own 0.8.0 sits at 0.531 on its smaller
-398-doc pool. `--compress` scores identically — it only deflates finished
-streams. Corpora: docxide's 208-case suite, neurotic's 398 no-redline docs,
-fixtures_500, English parts a+b — the second pool adds the 451- and
-965-document redline corpora.
+~1.8× LibreOffice's mean and ~3.3× docxide-pdf 0.17.1's (0.184) on the clean
+pool; office2pdf, rdocx and minipdf score ≤ 0.13. `--compress` scores the
+same — it only deflates finished streams. The clean pool is English parts
+a+b and docxide's 208-case suite; the redlined pool is the 451 English
+redlines. Corpora only some tools ran (fixtures_500, neurotic's 398, the
+965-document redline set) get their own columns in RESULTS.md and never
+enter the rank.
 
 ### Tracked-changes docs → PDF — neurotic harness (0–100)
 
-428 redline documents vs Word's export:
+428 redline documents vs Word's export (competitors as of their 2026-08-16
+run):
 
 | tool | mean | median |
 | --- | ---: | ---: |
-| **jubarte 0.9.1** | **71.4** | **74.3** |
+| **jubarte 0.9.2** | **84.6** | **88.7** |
 | office2pdf 0.6.7 / pdfitdown 4.0.0 | 60.3 | 57.0 |
 | rdocx 0.7.0 | 50.3 | 48.8 |
 
-### Redline markup — `script_redlines` vs Word (0–100)
+### Redlining — vs Word's own redline (Word truth)
 
-Each tool's redline `.docx` is rendered and scored against Word's rendering
-of its own markup. On the current 763-document corpus the latest stamp
-(2026-08-13) puts **jubarte-rust** at #1:
+Each tool redlines the pair; Word converts that redline to PDF, and it is
+scored against Word's own redline of the same pair, also converted by Word.
+Only the redline differs:
 
-| tool | mean | median |
-| --- | ---: | ---: |
-| **jubarte-rust** (this engine) | **84.5** | **92.7** |
-| jubarte (npm build, same engine) | 82.1 | 91.4 |
-| docxodus 9.8.0 | 80.2 | 91.1 |
-| best of the rest (folio 0.17.1) | 50.8 | 50.3 |
+| pairs | jubarte | Docxodus 12.6.2 |
+| --- | --- | --- |
+| neurotic redline pools (744) | **80.93** harness · **0.787** Jaccard | 76.87 · 0.720 |
+| English redlines (451) | **51.87** · **0.361** | 33.94 · 0.202 |
 
-This engine holds the top three rows of that table.
+The older `script_redlines` tables render each redline with LibreOffice
+before scoring. jubarte-rust's latest run there fell from 84.5 to 75.6 once
+LibreOffice 26.8 began substituting Aptos, while docxodus 9.8.0's 80.2 was
+scored before that switch, so those rows no longer compare; RESULTS.md keeps
+them as superseded history.
 
-Supporting harnesses on the same corpus: `roundtrip` 99.75 mean / 100.0
-median (near-perfect package preservation), `accepted_changes` 84.2 — behind
-docxodus 9.8.0's 88.8 there; on the earlier corpus jubarte-rust led it at
-89.5 / 99.8. A redline's first contract stays **Word-validity** — markup Word
-opens without repair, enforced by the
+A redline's first contract stays **Word-validity** — markup Word opens
+without repair, enforced by the
 [validity rings](#validity-rings-word-valid-output) on every release.
 
 ### Speed — ms per compared pair (lower is better)
 
-Latest stamps (2026-08-15), warm persistent-process lane over 5,000 pairs:
+Latest stamps (2026-08-15), warm persistent-process lane over the same
+5,000 pairs:
 
 | lane | this engine | docxodus equivalent |
 | --- | ---: | ---: |
-| native inproc | **26.0** mean · **6.4** median | 25.8 · 7.9 (csharp-inproc, 4,880 pairs) |
+| native inproc | **26.0** mean · **6.4** median | 27.4 · 8.7 (csharp-inproc, 4,880 pairs timed) |
 | WebAssembly | **41.5** · **9.7** | 428.2 · 74.6 (dotnet-wasm, 5,000 pairs) |
 
-Parity with the fastest .NET in-process lane, and ~10× faster in the browser
+Ahead of the fastest .NET in-process lane, and ~10× faster in the browser
 lane — where the npm package actually runs. (`docx-redline-js` posts 2.8 ms
 on a 90-doc set but scores ~45 on markup fidelity — a different product
 category.)
