@@ -248,8 +248,16 @@ def docx_to_pdf_speed() -> None:
     if not path.exists():
         return
     for row in jsonl_objects(path.read_text().splitlines()):
-        corpus = row.get('corpus')
-        if not isinstance(corpus, str):
+        corpus, tool, version = row.get('corpus'), row.get('tool'), row.get('version')
+        n, mean, median = row.get('n'), row.get('mean'), row.get('median')
+        # An interrupted or hand-edited row lacks a field: skip it, not the report.
+        if not all(isinstance(v, str) for v in (corpus, tool, version)):
+            continue
+        if not (isinstance(n, int) and all(isinstance(v, (int, float)) for v in (mean, median))):
+            continue
+        try:
+            when = datetime.strptime(str(row.get('run_ts')), '%Y-%m-%dT%H-%M-%SZ').replace(tzinfo=timezone.utc)
+        except ValueError:
             continue
         label, docs = D2P_SPEED_CORPORA.get(corpus, (corpus, 'clean'))
         warm = row.get('mode') == 'warm'
@@ -271,18 +279,9 @@ def docx_to_pdf_speed() -> None:
             )
             + 'Failed conversions are excluded from the timing (Docs counts successes).',
         )
-        version = row['version']
-        if row['tool'] == 'jubarte' and '@' in version:
+        if tool == 'jubarte' and '@' in version:
             version = 'jubarte@' + version.rsplit('@', 1)[1]
-        add(
-            metric=key,
-            tool=row['tool'],
-            version=version,
-            when=datetime.strptime(row['run_ts'], '%Y-%m-%dT%H-%M-%SZ').replace(tzinfo=timezone.utc),
-            mean=row['mean'],
-            median=row['median'],
-            n=row['n'],
-        )
+        add(metric=key, tool=tool, version=version, when=when, mean=mean, median=median, n=n)
 
 
 # --- docx -> pdf, neurotic harness -----------------------------------------------------------

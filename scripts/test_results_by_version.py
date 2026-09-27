@@ -98,6 +98,28 @@ def test_docx_to_pdf_speed_skips_a_torn_line_and_splits_warm_from_cold(monkeypat
     assert 'long-lived worker' in rv.METRICS['speed:docx2pdf:warm:fixtures_500'].note
 
 
+def test_docx_to_pdf_speed_skips_incomplete_timing_rows(monkeypatch, tmp_path):
+    _fresh(monkeypatch, tmp_path)
+    (tmp_path / 'docx_to_pdf_speed').mkdir()
+    row = {
+        'tool': 'jubarte',
+        'version': 'jubarte 0.9.2@65ce9de',
+        'corpus': 'fixtures_500',
+        'run_ts': '2026-09-27T00-31-42Z',
+        'n': 2,
+        'mean': 50.0,
+        'median': 40.0,
+    }
+    broken = [
+        {k: v for k, v in row.items() if k != field} for field in ('tool', 'version', 'run_ts', 'n', 'mean', 'median')
+    ]
+    broken += [{**row, 'run_ts': '27/09/2026'}, {**row, 'version': None}, {**row, 'mean': 'fast'}]
+    lines = [json.dumps(r) for r in broken] + [json.dumps(row)]
+    (tmp_path / 'docx_to_pdf_speed' / 'speed.jsonl').write_text('\n'.join(lines) + '\n')
+    rv.docx_to_pdf_speed()
+    assert [(r.tool, r.version, r.median) for r in rv.RUNS] == [('jubarte', 'jubarte@65ce9de', 40.0)]
+
+
 def test_render_ranks_by_mean_and_drops_unranked_runs(monkeypatch, tmp_path):
     _fresh(monkeypatch, tmp_path)
     key = rv.metric('m', title='T', kind='redline markup', reference='Word', docs='redlines', unit='u')
