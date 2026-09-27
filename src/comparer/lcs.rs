@@ -2702,6 +2702,11 @@ pub fn do_lcs_algorithm(
         longest_common_run(&cul1, &cul2)
     };
 
+    // A run that carries a paragraph mark shares a paragraph edge on both
+    // sides (the word starts or ends both paragraphs).
+    let run_has_mark = len > 1
+        && (unit_is_single_atom_ppr(dom, &cul1[i1])
+            || unit_is_single_atom_ppr(dom, &cul1[i1 + len - 1]));
     // Step C — never START a common section with a paragraph mark.
     while len > 1 {
         if !unit_is_single_atom_ppr(dom, &cul1[i1]) {
@@ -2749,6 +2754,24 @@ pub fn do_lcs_algorithm(
         }
     }
 
+    // Word's flat token comparison keeps one shared word that begins or
+    // ends a paragraph on both sides as an anchor even in a long window
+    // ("Second" opening a bullet and a section), so neither the detail
+    // threshold nor the large-window collision guard voids it.
+    let edge_word = run_has_mark && len > 0 && {
+        let mut words = cul1[i1..i1 + len].iter().filter_map(|u| {
+            let mut t = String::new();
+            for a in u.descendant_atoms() {
+                if !dom.name_is(a.content_element, &W::t()) {
+                    return None;
+                }
+                t.push_str(&dom.value_str(a.content_element));
+            }
+            (!t.chars().all(|ch| settings.word_separators.contains(&ch))).then_some(t)
+        });
+        matches!((words.next(), words.next()), (Some(w), None)
+            if w.chars().count() >= 4 && w.chars().all(char::is_alphanumeric))
+    };
     // Step G — DetailThreshold: short pure-word common run → void.
     //
     // Gate on the common RUN being pure words (not on both sides being
@@ -2798,7 +2821,10 @@ pub fn do_lcs_algorithm(
             } else {
                 len
             };
-            if max_len > 0 && (ratio_len as f64) / (max_len as f64) < settings.detail_threshold {
+            if max_len > 0
+                && !edge_word
+                && (ratio_len as f64) / (max_len as f64) < settings.detail_threshold
+            {
                 len = 0;
             }
         }
@@ -2984,6 +3010,7 @@ pub fn do_lcs_algorithm(
         && len <= 2
         && !is_only_paragraph_mark
         && settings.merge_replaced_paragraphs
+        && !edge_word
         && cul1.len().min(cul2.len()) > 32
         && run_real_text_len(dom, &cul1[i1..i1 + len]) < 15
         && !windows_related(&cul1, &cul2)

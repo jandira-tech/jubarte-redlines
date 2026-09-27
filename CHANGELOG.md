@@ -107,6 +107,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   quarterly report table × red bold heading 0.26 → 0.68. The one loss
   (−0.025) is an NDIS footer whose junction now matches Word's redline
   paragraph for paragraph.
+- A single shared word of four or more letters or digits that opens or
+  closes a paragraph on both sides now stays an anchor in a long unrelated
+  window, as in Word's redline ("Second" opening both "Second green
+  underlined item" and "Second page"). The detail threshold had voided it at
+  one word in 54. green underline bullet list × header without relationships
+  +0.09; no other pair of the 1,195 changes. A general lone-word anchor was
+  tried and rejected (−3.07 summed, 30 worse).
 
 ### Added
 
