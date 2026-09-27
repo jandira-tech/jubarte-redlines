@@ -372,9 +372,19 @@ impl PartFs {
         rel_type: &str,
         target: &str,
     ) -> String {
-        self.pkg
-            .get_or_create_part_rels(&norm(source_part))
-            .add(rel_type, target)
+        self.part_rels_mut(source_part).add(rel_type, target)
+    }
+
+    /// A part's relationships, created empty when missing. Created through
+    /// `Relationships::new`, which numbers from `rId1` as Word does; the
+    /// dependency's `get_or_create_part_rels` defaults to `rId0`.
+    fn part_rels_mut(&mut self, source_part: &str) -> &mut Relationships {
+        use std::collections::hash_map::Entry;
+        // Not `or_default()`: the derived `Default` is the rId0 counter.
+        match self.pkg.part_rels.entry(norm(source_part)) {
+            Entry::Occupied(rels) => rels.into_mut(),
+            Entry::Vacant(slot) => slot.insert(Relationships::new()),
+        }
     }
 
     /// Add a relationship with `TargetMode="External"` (absolute-URI targets
@@ -386,7 +396,7 @@ impl PartFs {
         rel_type: &str,
         target: &str,
     ) -> String {
-        let rels = self.pkg.get_or_create_part_rels(&norm(source_part));
+        let rels = self.part_rels_mut(source_part);
         let id = rels.add(rel_type, target);
         if let Some(r) = rels.items.iter_mut().find(|r| r.id == id) {
             r.target_mode = Some("External".to_string());
@@ -396,7 +406,7 @@ impl PartFs {
 
     /// Mark an existing relationship of `source_part` as External (test aid).
     pub fn set_rel_target_mode_external(&mut self, source_part: &str, rel_id: &str) {
-        let rels = self.pkg.get_or_create_part_rels(&norm(source_part));
+        let rels = self.part_rels_mut(source_part);
         if let Some(r) = rels.items.iter_mut().find(|r| r.id == rel_id) {
             r.target_mode = Some("External".to_string());
         }
@@ -639,6 +649,25 @@ mod tests {
         assert_eq!(rels_path_to_part_name("_rels/.rels").as_deref(), Some(""));
         assert_eq!(rels_path_to_part_name("word/header1.xml"), None);
         assert_eq!(rels_path_to_part_name("word/media/odd.rels"), None);
+    }
+
+    /// A part's first relationship is `rId1`, as Word numbers them: the
+    /// dependency's `Default` relationships start from `rId0`.
+    #[test]
+    fn a_new_rels_part_starts_at_rid1() {
+        let mut fs = package_with_header_rels();
+        let id = fs.add_document_relationship(
+            "word/numbering.xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            "media/image1.gif",
+        );
+        assert_eq!(id, "rId1");
+        let external = fs.add_document_relationship_external(
+            "word/footer9.xml",
+            HYPERLINK,
+            "https://c.example/",
+        );
+        assert_eq!(external, "rId1");
     }
 
     #[test]

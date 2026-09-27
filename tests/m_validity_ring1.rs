@@ -479,6 +479,29 @@ fn probe_malformed_xml_part_fails() {
     );
 }
 
+/// Word refuses a package whose numbering level names a picture bullet the
+/// numbering part never defines ("document loaded empty"), repair offer or not.
+#[test]
+fn probe_undefined_picture_bullet_fails() {
+    let numbering = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="0">
+    <w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlPicBulletId w:val="0"/></w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+</w:numbering>"#;
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", MINIMAL_DOC),
+        ("word/numbering.xml", numbering),
+    ]);
+    let report = check_word_valid_package(&bytes);
+    assert!(
+        report.errors.iter().any(|e| e.contains("lvlPicBulletId")),
+        "expected undefined picture bullet error, got: {:?}",
+        report.errors
+    );
+}
+
 #[test]
 fn probe_paraid_overflow_fails() {
     let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

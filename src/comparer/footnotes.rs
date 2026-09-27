@@ -341,11 +341,18 @@ fn normalized_abstract_num_signature(dom: &mut Dom, abstract_num: NodeId) -> Str
 /// destination's same-id definitions — B's decimal lists render with A's
 /// bullet abstractNum (complex_list_def_short × basic_list; Word renumbers
 /// to fresh ids 20/21 → abstract 13/14 and rewrites the content refs).
+///
+/// A copied abstractNum brings the `w:numPicBullet`s its levels name
+/// (`w:lvlPicBulletId`), under a fresh id when the destination already uses
+/// B's: a level naming an undefined picture bullet makes Word refuse the
+/// package. Identical-looking bullets are still copied — their `r:id`s resolve
+/// against different `.rels`, so equal XML can draw different images. The
+/// copied bullets are returned so the caller can carry their relationships.
 pub fn copy_missing_numbering(
     dom: &mut Dom,
     to_root: NodeId,
     from_root: NodeId,
-) -> std::collections::HashMap<String, String> {
+) -> (std::collections::HashMap<String, String>, Vec<NodeId>) {
     let abstract_num = W::name("abstractNum");
     let num = W::name("num");
     let abstract_num_id = W::name("abstractNumId");
@@ -364,6 +371,19 @@ pub fn copy_missing_numbering(
         .map(|e| get_int_attribute(dom, e, &num_id_attr).unwrap_or(0))
         .max()
         .unwrap_or(0);
+
+    let num_pic_bullet = W::name("numPicBullet");
+    let num_pic_bullet_id = W::name("numPicBulletId");
+    let lvl_pic_bullet_id = W::name("lvlPicBulletId");
+    let mut max_pic_id = dom
+        .elements(to_root, Some(&num_pic_bullet))
+        .into_iter()
+        .map(|e| get_int_attribute(dom, e, &num_pic_bullet_id).unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+    // source numPicBulletId → destination numPicBulletId
+    let mut pic_map: std::collections::HashMap<i32, i32> = std::collections::HashMap::new();
+    let mut copied_bullets: Vec<NodeId> = Vec::new();
 
     // source abstractNumId → destination abstractNumId
     let mut abstract_map: std::collections::HashMap<i32, i32> = std::collections::HashMap::new();
@@ -405,6 +425,41 @@ pub fn copy_missing_numbering(
         dom.set_attribute_value(cloned, &abstract_num_id, Some(&target_id.to_string()));
         abstract_map.insert(from_id, target_id);
         add_numbering_child_in_schema_order(dom, to_root, cloned);
+        for pic in dom.descendants(cloned, Some(&lvl_pic_bullet_id)) {
+            let Some(from_pic) = get_int_attribute(dom, pic, &W::val()) else {
+                continue;
+            };
+            let to_pic = match pic_map.get(&from_pic) {
+                Some(&id) => id,
+                None => {
+                    let Some(bullet) = dom
+                        .elements(from_root, Some(&num_pic_bullet))
+                        .into_iter()
+                        .find(|&b| get_int_attribute(dom, b, &num_pic_bullet_id) == Some(from_pic))
+                    else {
+                        continue;
+                    };
+                    let taken = dom
+                        .elements(to_root, Some(&num_pic_bullet))
+                        .into_iter()
+                        .any(|b| get_int_attribute(dom, b, &num_pic_bullet_id) == Some(from_pic));
+                    let id = if taken {
+                        max_pic_id += 1;
+                        max_pic_id
+                    } else {
+                        max_pic_id = max_pic_id.max(from_pic);
+                        from_pic
+                    };
+                    let copy = dom.clone_subtree(bullet);
+                    dom.set_attribute_value(copy, &num_pic_bullet_id, Some(&id.to_string()));
+                    add_numbering_child_in_schema_order(dom, to_root, copy);
+                    copied_bullets.push(copy);
+                    pic_map.insert(from_pic, id);
+                    id
+                }
+            };
+            dom.set_attribute_value(pic, &W::val(), Some(&to_pic.to_string()));
+        }
     }
 
     for n in dom.elements(from_root, Some(&num)) {
@@ -450,7 +505,7 @@ pub fn copy_missing_numbering(
             add_numbering_child_in_schema_order(dom, to_root, cloned);
         }
     }
-    num_remap
+    (num_remap, copied_bullets)
 }
 
 /// Word-mode repair (beyond PowerTools): Word synthesizes a default decimal

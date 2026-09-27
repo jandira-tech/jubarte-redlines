@@ -19,6 +19,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- A list copied from the revised document keeps its picture bullets: the
+  bullet definitions and their images now travel with the list. The list's
+  levels had named a picture bullet the merged numbering never defined, and
+  Word refused to open the redline (italic_rstyle_combos ×
+  paragraph_indent_normal_styles: harness 0 → 53.2; Docxodus 0). When both
+  documents define the same bullet id, the revised bullet takes a fresh id
+  and keeps its own image. A part's first new relationship is now `rId1`, as
+  Word numbers them, not `rId0`.
+
 - The final paragraph marks are also paired when the replaced original has a
   single paragraph: its text is deleted into the revised empty final
   paragraph. The deleted text had joined the revised document's last content

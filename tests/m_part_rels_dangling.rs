@@ -363,3 +363,138 @@ fn footnote_pictures_from_the_revised_document_carry_one_image_part() {
         "{types}"
     );
 }
+
+const V_NS: &str = "urn:schemas-microsoft-com:vml";
+const NUMBERING_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
+
+/// A numbering part: optional picture bullet 0 drawn from relationship `rId1`,
+/// and abstractNum 0 / num 1 whose first level is either that picture bullet
+/// or a decimal number.
+fn numbering(picture_bullet: bool) -> String {
+    let (pic, lvl) = if picture_bullet {
+        (
+            format!(
+                r#"<w:numPicBullet w:numPicBulletId="0"><w:pict><v:shape xmlns:v="{V_NS}" style="width:9pt;height:9pt"><v:imagedata r:id="rId1"/></v:shape></w:pict></w:numPicBullet>"#
+            ),
+            r#"<w:numFmt w:val="bullet"/><w:lvlText w:val=""/><w:lvlPicBulletId w:val="0"/>"#,
+        )
+    } else {
+        (
+            String::new(),
+            r#"<w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>"#,
+        )
+    };
+    format!(
+        r#"<w:numbering xmlns:w="{W_NS}" xmlns:r="{REL_NS}">{pic}<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>{lvl}<w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+    )
+}
+
+/// A document with a numbering part (+ its picture bullet's image when given).
+fn listed_docx(body: &str, picture_bullet: Option<&str>) -> Vec<u8> {
+    let numbering = numbering(picture_bullet.is_some());
+    let rels = format!(
+        r#"<?xml version="1.0"?><Relationships xmlns="{PKG_REL_NS}"><Relationship Id="rId1" Type="{REL_NS}/image" Target="media/image1.gif"/></Relationships>"#
+    );
+    let mut extra = vec![("word/numbering.xml", numbering.as_str())];
+    let mut overrides = vec![("word/numbering.xml", NUMBERING_CT)];
+    if let Some(gif) = picture_bullet {
+        extra.push(("word/_rels/numbering.xml.rels", &rels));
+        extra.push(("word/media/image1.gif", gif));
+        overrides.push(("word/media/image1.gif", "image/gif"));
+    }
+    build_docx(
+        body,
+        &[("rId7", "numbering", "numbering.xml")],
+        &extra,
+        &overrides,
+    )
+}
+
+fn list_item(text: &str) -> String {
+    format!(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+    )
+}
+
+/// `lvlPicBulletId` values of the output numbering part that name no
+/// `numPicBullet`, plus the picture each defined bullet draws (bullet id →
+/// image bytes).
+fn picture_bullets(docx: &[u8]) -> (Vec<String>, HashMap<String, String>) {
+    let numbering = read_part(docx, "word/numbering.xml").expect("numbering part");
+    let rels = read_part(docx, "word/_rels/numbering.xml.rels").unwrap_or_default();
+    let attr = |s: &str, name: &str| {
+        s.split(&format!("{name}=\""))
+            .nth(1)
+            .and_then(|t| t.split('"').next())
+            .map(str::to_string)
+    };
+    let mut images = HashMap::new();
+    for bullet in numbering.split("<w:numPicBullet ").skip(1) {
+        let bullet = bullet.split("</w:numPicBullet>").next().unwrap();
+        let id = attr(bullet, "w:numPicBulletId").expect("bullet id");
+        let rid = attr(bullet, "r:id").expect("bullet image rId");
+        let target = rels
+            .split("<Relationship ")
+            .find(|r| attr(r, "Id").as_deref() == Some(rid.as_str()))
+            .and_then(|r| attr(r, "Target"))
+            .expect("bullet image relationship");
+        images.insert(
+            id,
+            read_part(docx, &format!("word/{target}")).expect("bullet image"),
+        );
+    }
+    let undefined = numbering
+        .split("<w:lvlPicBulletId ")
+        .skip(1)
+        .filter_map(|l| attr(l, "w:val"))
+        .filter(|id| !images.contains_key(id))
+        .collect();
+    (undefined, images)
+}
+
+/// B's list draws a picture bullet the original never had. The merged
+/// numbering copied B's abstractNum (lvlPicBulletId 0) without B's
+/// `numPicBullet`, and Word refused the package ("document loaded empty";
+/// italic_rstyle_combos × paragraph_indent_normal_styles). Word's redline
+/// carries the bullet and its image.
+#[test]
+fn revised_picture_bullets_travel_with_their_list() {
+    let a = listed_docx(&list_item("Shared item."), None);
+    let b = listed_docx(
+        &format!("{}{}", list_item("Shared item."), list_item("New item.")),
+        Some("GIFB"),
+    );
+    let out = compare_documents(&a, &b, "Test").expect("compare ok");
+    let (undefined, images) = picture_bullets(&out);
+    assert_eq!(undefined, Vec::<String>::new());
+    assert_eq!(images.values().collect::<Vec<_>>(), vec!["GIFB"]);
+    assert_eq!(dangling_refs(&out), Vec::<String>::new());
+}
+
+/// Both documents define picture bullet 0 on relationship `rId1`, with
+/// different images. B's bullet takes a fresh id and must keep drawing B's
+/// image, not the original's same-id relationship.
+#[test]
+fn colliding_picture_bullets_keep_their_own_images() {
+    let a = listed_docx(&list_item("Shared item."), Some("GIFA"));
+    let mut b = listed_docx(
+        &format!("{}{}", list_item("Shared item."), list_item("New item.")),
+        Some("GIFB"),
+    );
+    // B's list differs from A's (a wider indent), so it is copied, not merged.
+    let mut pkg = jubarte::opc::PartFs::open(&b).unwrap();
+    let nb = pkg.part_string("word/numbering.xml").unwrap();
+    pkg.set_part(
+        "word/numbering.xml",
+        nb.replace("w:left=\"720\"", "w:left=\"1080\"").into_bytes(),
+    );
+    b = pkg.to_zip().unwrap();
+    let out = compare_documents(&a, &b, "Test").expect("compare ok");
+    let (undefined, images) = picture_bullets(&out);
+    assert_eq!(undefined, Vec::<String>::new());
+    let mut drawn: Vec<&String> = images.values().collect();
+    drawn.sort();
+    assert_eq!(drawn, vec!["GIFA", "GIFB"]);
+    assert_eq!(dangling_refs(&out), Vec::<String>::new());
+}

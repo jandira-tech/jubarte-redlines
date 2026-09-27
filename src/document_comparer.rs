@@ -5257,8 +5257,29 @@ fn compare_documents_impl(
                             style_renames = canonicalize_style_ids(&mut sd, tr);
                         }
                     } else {
-                        let num_remap =
+                        let (num_remap, copied_bullets) =
                             crate::comparer::footnotes::copy_missing_numbering(&mut sd, tr, fr);
+                        // B's picture bullets draw through B's numbering rels;
+                        // give each its own relationships, since the same ids
+                        // may already name A's images here.
+                        for bullet in copied_bullets {
+                            for el in sd.descendants_and_self(bullet, None) {
+                                for (an, rid) in sd.attributes(el) {
+                                    if an.namespace_name() != crate::namespaces::R::URI {
+                                        continue;
+                                    }
+                                    let carried = crate::comparer::parts::carry_relationship(
+                                        &mut out,
+                                        part,
+                                        &pkg2,
+                                        part,
+                                        &rid,
+                                        |_| true,
+                                    );
+                                    sd.set_attribute_value(el, &an, carried.as_deref());
+                                }
+                            }
+                        }
                         // M482: colliding B numIds were renumbered in the
                         // merged numbering part — rewrite the refs inside
                         // B-INSERTED paragraphs (mark rPr carries w:ins) or
