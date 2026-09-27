@@ -21,6 +21,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- A field whose code stayed while its result changed now stays one field, as in Word's redline. Only the result's words are marked. Before, the field's begin, separate and end were glued to the result's first and last words, so "Contaminated Sites Act 2003" against "Firearms Act 1973" (a STYLEREF title) matched only " Act ". That left a deleted and an inserted field whose ends crossed, and Word refused the redline (db433183 × 9377099d).
+
+- A changed table of contents no longer opens inside its replacement. Word mode's head junction folds a short deleted title into the first inserted paragraph when both share a word. When that title was a TOC's first entry, the fold carried the deleted TOC's begin above the inserted TOC's end, and the two fields crossed (98bf5f3d × a3701d36, "Part 1—Preliminary" against "Part 1—Introduction"). A fold that would carry half a field across other fields no longer happens.
+
 - The same input writes the same bytes. Another dependency turns on the `zip` crate's `time` feature, and with it every package entry carried the time of the write, so two runs a second apart gave different files. Entries are now dated 1980-01-01, as Office dates its own.
 
 - Two point comments inside one run now keep their places. An anchor that ended one text piece of a multi-piece run went after the whole run, so "Note" landed after "東京" and behind "Second note". The run now splits between the pieces.

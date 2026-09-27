@@ -64,6 +64,12 @@ pub fn get_comparison_unit_list(
     // filenames (`file_137.docx` ↔ `file_138.docx`) depends on this; PowerTools
     // keeps the whole token as one word (faithful preset unchanged).
     let word_mode = settings.merge_replaced_paragraphs;
+    // Word mode: a field's begin, separate and end are words of their own, as
+    // Word tokenizes them. Glued to the result's first and last words, a field
+    // whose code stayed and whose result changed ("Contaminated Sites Act
+    // 2003" → "Firearms Act 1973", db433183×9377099d) matched only " Act ":
+    // a deleted and an inserted field with crossed ends, which Word refuses.
+    let fld_char = W::name("fldChar");
     let mut next_index: i64 = 0;
     let mut keyed: Vec<(i64, ComparisonUnitAtom)> = Vec::with_capacity(atoms.len());
     let mut prev_t_char: Option<char> = None;
@@ -147,7 +153,7 @@ pub fn get_comparison_unit_list(
                 key = next_index;
                 prev_t_char = Some(ch);
             }
-        } else if is_word_break_element(&cname) {
+        } else if is_word_break_element(&cname) || (word_mode && cname == fld_char) {
             next_index += 1;
             key = next_index;
             next_index += 1;

@@ -5943,6 +5943,33 @@ fn para_mark_revision(dom: &Dom, p: NodeId, rev: &crate::xmllinq::XName) -> bool
         .is_some_and(|rpr| dom.element(rpr, rev).is_some())
 }
 
+/// Folding `d` into `carrier` appends d's body after the carrier's, above
+/// every inserted paragraph between them. A complex field that d opens or
+/// closes without the other half would then cross the fields those
+/// paragraphs hold: Word nests fldChar by position, and a crossed TOC pair
+/// spun it at full CPU (98bf5f3d × a3701d36).
+fn fold_crosses_a_field(dom: &Dom, d: NodeId, carrier: NodeId, inss: &[NodeId]) -> bool {
+    let fld_char = W::name("fldChar");
+    let field_type = W::name("fldCharType");
+    let mut depth = 0i32;
+    let mut balanced = true;
+    for f in dom.descendants(d, Some(&fld_char)) {
+        match dom.attribute(f, &field_type) {
+            Some("begin") => depth += 1,
+            Some("end") => depth -= 1,
+            _ => {}
+        }
+        balanced &= depth >= 0;
+    }
+    if balanced && depth == 0 {
+        return false;
+    }
+    inss.iter()
+        .skip_while(|&&p| p != carrier)
+        .skip(1)
+        .any(|&p| !dom.descendants(p, Some(&fld_char)).is_empty())
+}
+
 /// M474 — a "field residue" paragraph (M360's TOC field-end fragments)
 /// carries fldChar but NO visible text. M470 synthesizes real HYPERLINK
 /// fields inside content-bearing inserted paragraphs; those must not match
@@ -7173,11 +7200,15 @@ fn merge_replaced_in_container(
                 // wrongly MIX-ed the final license line with TIFF (~41). Require
                 // a shared significant token (len≥4) so hummingbird×employment
                 // (no shared token, Word tail MIX only) keeps last-I fold.
+                // Never across a field the title leaves open (98bf5f3d ×
+                // a3701d36: "Part 1—Preliminary" opens the deleted TOC; the
+                // junction lifted that begin above the inserted TOC's end).
                 let mut head_junction = false;
                 if inss.len() >= 5
                     && (1..=6).contains(&para_word_atom_count(dom, d))
                     && let Some(first_ins) =
                         inss.iter().copied().find(|&p| !para_has_no_text(dom, p))
+                    && !fold_crosses_a_field(dom, d, first_ins, inss)
                 {
                     let it = para_revision_body_text(dom, first_ins);
                     let dt = para_revision_body_text(dom, d);
@@ -7185,6 +7216,9 @@ fn merge_replaced_in_container(
                         last_ins = first_ins;
                         head_junction = true;
                     }
+                }
+                if fold_crosses_a_field(dom, d, last_ins, inss) {
+                    continue;
                 }
                 // Paired final marks leave the revised last content paragraph
                 // on its own inserted mark: only a shared-word head junction

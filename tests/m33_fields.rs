@@ -9,6 +9,7 @@
 //! every rendered page shows "Pg  Left aligned…Page  of " with empty numbers
 //! — repeated pixel damage on all pages, visual 45).
 
+use jubarte::comparer::finalize::merge_replaced_paragraphs;
 use jubarte::comparer::{WmlComparerSettings, compare_bodies_faithful};
 use jubarte::namespaces::W;
 use jubarte::xmllinq::{Dom, NodeId};
@@ -272,4 +273,178 @@ fn f6_fldsimple_against_two_complex_fields_keeps_both_fields() {
         .filter(|&e| dom.attribute(e, &W::name("fldCharType")) == Some("separate"))
         .count();
     assert!(separates >= 2, "{}", dom.serialize_element(out));
+}
+
+/// A TOC spanning paragraphs, its begin in the first entry and its end in
+/// the last.
+fn toc(entries: &[&str]) -> String {
+    let mut out = String::from("<w:p><w:r><w:t>Contents</w:t></w:r></w:p>");
+    for (i, entry) in entries.iter().enumerate() {
+        out.push_str("<w:p><w:pPr><w:pStyle w:val=\"TOC1\"/></w:pPr>");
+        if i == 0 {
+            out.push_str(
+                "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+                 <w:r><w:instrText xml:space=\"preserve\"> TOC \\o \"1-9\" </w:instrText></w:r>\
+                 <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>",
+            );
+        }
+        out.push_str(&format!("<w:r><w:t>{entry}</w:t></w:r>"));
+        if i + 1 == entries.len() {
+            out.push_str("<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>");
+        }
+        out.push_str("</w:p>");
+    }
+    out
+}
+
+/// A TOC whose entries all changed, its first entry a short title sharing a
+/// word with the new first entry ("Part 1—Preliminary" against "Part
+/// 1—Introduction", as in English pair 98bf5f3d×a3701d36). Each field's
+/// begin and end must stay in one revision state.
+fn toc_whose_entries_all_changed(word_mode: bool) {
+    let prose = |words: &[&str]| -> String {
+        words
+            .iter()
+            .map(|w| format!("<w:p><w:r><w:t>{w} {w} {w} {w} {w} {w}</w:t></w:r></w:p>"))
+            .collect()
+    };
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(
+        &mut dom,
+        &(toc(&[
+            "Part 1—Preliminary",
+            "Division 1.1—Naming conventions governing competition",
+            "Division 1.2—Consumer data rules registered",
+            "Endnote 1—About abbreviations used throughout",
+        ]) + &prose(&["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"])),
+    );
+    let (r2, b2) = doc_body(
+        &mut dom,
+        &(toc(&[
+            "Part 1—Introduction",
+            "1 Short title",
+            "2 Commencement schedule",
+            "3 Objects pursued",
+            "4 Regulatory policy",
+            "5 Simplified outline",
+            "6 Main index",
+        ]) + &prose(&["golf", "hotel", "india", "juliet", "kilo", "lima"])),
+    );
+    let s = WmlComparerSettings {
+        merge_replaced_paragraphs: word_mode,
+        ..WmlComparerSettings::default()
+    };
+    let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
+    assert_fields_well_formed(&dom, out);
+}
+
+#[test]
+fn f7_conventional_mode_keeps_a_changed_toc_from_crossing_its_replacement() {
+    toc_whose_entries_all_changed(false);
+}
+
+/// A paragraph of a TOC already marked whole, deleted or inserted.
+fn marked_toc(entries: &[&str], rev: &str, first_id: usize) -> String {
+    let text = if rev == "del" { "delText" } else { "t" };
+    let instr = if rev == "del" {
+        "delInstrText"
+    } else {
+        "instrText"
+    };
+    let stamp =
+        |id: usize| format!("w:author=\"Redline\" w:id=\"{id}\" w:date=\"1970-01-01T00:00:00Z\"");
+    let mut out = String::new();
+    for (i, entry) in entries.iter().enumerate() {
+        let id = first_id + 2 * i;
+        out.push_str(&format!(
+            "<w:p><w:pPr><w:pStyle w:val=\"TOC1\"/><w:rPr><w:{rev} {}/></w:rPr></w:pPr><w:{rev} {}>",
+            stamp(id),
+            stamp(id + 1)
+        ));
+        if i == 0 {
+            out.push_str(&format!(
+                "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+                 <w:r><w:{instr} xml:space=\"preserve\"> TOC \\o \"1-9\" </w:{instr}></w:r>\
+                 <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>"
+            ));
+        }
+        out.push_str(&format!("<w:r><w:{text}>{entry}</w:{text}></w:r>"));
+        if i + 1 == entries.len() {
+            out.push_str("<w:r><w:fldChar w:fldCharType=\"end\"/></w:r>");
+        }
+        out.push_str(&format!("</w:{rev}></w:p>"));
+    }
+    out
+}
+
+/// Word mode's M322 head junction folds a short deleted title into the first
+/// inserted paragraph when both share a word. English pair 98bf5f3d×a3701d36
+/// reached it with a deleted TOC ("Part 1—Preliminary", its first entry,
+/// carrying the TOC's begin) after an inserted one ("Part 1—Introduction"):
+/// the fold carried the old TOC's begin up into the new TOC's first entry,
+/// above the new TOC's end, and the two fields crossed. Word spun at full
+/// CPU opening the redline. Word's own redline keeps the old first entry in
+/// its own paragraph after the whole inserted TOC.
+#[test]
+fn f8_head_junction_never_carries_a_field_begin_across_paragraphs() {
+    let mut dom = Dom::new();
+    let (root, _) = doc_body(
+        &mut dom,
+        &format!(
+            "<w:p><w:r><w:t>Contents</w:t></w:r></w:p>{}{}\
+             <w:p><w:r><w:t>The body both documents share.</w:t></w:r></w:p>",
+            marked_toc(
+                &[
+                    "Part 1—Preliminary",
+                    "Division 1.1—Name",
+                    "Endnote 1—About the endnotes",
+                ],
+                "del",
+                100,
+            ),
+            marked_toc(
+                &[
+                    "Part 1—Introduction",
+                    "1 Short title",
+                    "2 Commencement",
+                    "3 Objects",
+                    "4 Regulatory policy",
+                    "5 Simplified outline",
+                ],
+                "ins",
+                200,
+            ),
+        ),
+    );
+    merge_replaced_paragraphs(&mut dom, root, "Redline");
+    assert_fields_well_formed(&dom, root);
+}
+
+/// One field, one code, a changed result that shares a word. English pair
+/// db433183×9377099d, title page: STYLEREF "Name Of Act/Reg" read
+/// "Contaminated Sites Act 2003" and now reads "Firearms Act 1973". Only
+/// " Act " matched, so the redline carried a deleted field and an inserted
+/// one whose ends crossed. Word's own redline keeps begin, code, separate
+/// and end unchanged and marks only the result's words.
+#[test]
+fn f9_same_code_field_keeps_its_shell_and_diffs_its_result() {
+    let code = " STYLEREF \"Name Of Act/Reg\"";
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(
+        &mut dom,
+        &complex_field("", code, "Contaminated Sites Act 2003"),
+    );
+    let (r2, b2) = doc_body(&mut dom, &complex_field("", code, "Firearms Act 1973"));
+    let s = WmlComparerSettings::default();
+    let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
+    assert_fields_well_formed(&dom, out);
+    let x = dom.serialize_element(out);
+    let changed = |e: NodeId| {
+        dom.ancestors(e, None)
+            .into_iter()
+            .any(|a| dom.name(a).is_some_and(|n| n == W::ins() || n == W::del()))
+    };
+    let chars = dom.descendants(out, Some(&W::name("fldChar")));
+    assert_eq!(chars.len(), 3, "{x}");
+    assert!(chars.iter().all(|&c| !changed(c)), "{x}");
 }
