@@ -38,6 +38,8 @@ ROOT = Path(os.environ.get('NEUROTIC_DOCX_BENCH', '/Users/arthrod/temp/T/neuroti
 RES = ROOT / 'results'
 GROK = ROOT / 'grok_run'
 LOOP = Path(os.environ.get('JUBARTE_LOOP', '/Users/arthrod/temp/T/jubarte-loop'))
+# Word-truth A/B runs kept outside the bench (jubarte-loop/word_ab_ext.sh); same file names.
+WORDAB = LOOP / 'wordab' / 'results' / 'redline_wordpdf'
 DXSUITE = Path(os.environ.get('DOCXIDE_SUITE', '/Users/arthrod/temp/T/docxide_suite'))
 
 # Superseded --compress runs, dropped: the writer that embedded whole fonts (23abeb2), and
@@ -646,7 +648,8 @@ def wordpdf_row(stem: str) -> tuple[str, str, str, str, str] | None:
 
 
 def redline_wordpdf() -> None:
-    for path in sorted((RES / 'redline_wordpdf').glob('*.json')):
+    paths = [*(RES / 'redline_wordpdf').glob('*.json'), *WORDAB.glob('*.json')]
+    for path in sorted(paths, key=lambda p: p.name):
         parsed = wordpdf_row(path.stem)
         if parsed is None:
             continue
