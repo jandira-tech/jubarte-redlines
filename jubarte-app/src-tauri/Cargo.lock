@@ -1804,7 +1804,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-app"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "jubarte-redlines",
  "quick-xml 0.41.0",
@@ -1818,9 +1818,10 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "flate2",
+ "foldhash",
  "image",
  "rdocx-opc",
  "rustybuzz",

@@ -241,6 +241,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -388,7 +394,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-python"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "jubarte-redlines",
  "pyo3",
@@ -396,9 +402,10 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "flate2",
+ "foldhash",
  "image",
  "rdocx-opc",
  "rustybuzz",
