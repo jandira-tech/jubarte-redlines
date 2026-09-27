@@ -93,6 +93,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   live mark and the revised styling). +0.86 Jaccard summed over the 1,195
   pool and English pairs (96 changed, 13 better, 4 worse);
   line_break × line_space_table 0.29 → 0.51.
+- A redline no longer invents two empty inserted paragraphs before a deleted
+  title when the table after that title is deleted wholesale. Word adds those
+  spacers only when it pairs the table cell by cell. quarterly report table ×
+  red bold heading demo 0.24 → 0.26; no other pair of the 1,195 changes.
 
 ### Added
 

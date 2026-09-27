@@ -3077,12 +3077,18 @@ pub fn ensure_empty_pure_i_before_short_title_del(
             // pagefair).
             let after = kids.get(i + 2).copied();
             let after2 = kids.get(i + 3).copied();
+            // The spacers come from Word pairing that table; a table deleted
+            // wholesale (quarterly report × red bold heading) gets none.
             let empty_then_tbl = matches!(
                 (after, after2),
                 (Some(e), Some(t))
                     if dom.name_is(e, &W::p())
                         && para_has_no_text(dom, e)
                         && dom.name_is(t, &W::tbl())
+                        && !dom
+                            .descendants(t, Some(&W::p()))
+                            .into_iter()
+                            .all(|q| para_is_pure_deleted(dom, q))
             );
             if !empty_then_tbl {
                 continue;

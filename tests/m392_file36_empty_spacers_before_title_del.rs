@@ -126,3 +126,30 @@ fn file36_x_37_empty_pure_i_spacers_before_contract_review_del() {
         );
     }
 }
+
+/// The spacers are Word's artifact of pairing the table that follows the
+/// title. When that table is deleted wholesale (quarterly report table ×
+/// red bold heading demo, no table in the revised document) Word inserts
+/// no empty paragraphs: every inserted paragraph carries the revised text.
+#[test]
+fn no_invented_spacers_before_title_of_wholly_deleted_table() {
+    let src =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/broken_ones_two/sources");
+    let out = compare_documents_with_settings(
+        &std::fs::read(src.join("file_199.docx")).unwrap(),
+        &std::fs::read(src.join("file_200.docx")).unwrap(),
+        &WmlComparerSettings::default(),
+    )
+    .expect("compare");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out)).unwrap();
+    let mut xml = String::new();
+    zip.by_name("word/document.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    let empty_inserted = xml
+        .split("</w:p>")
+        .filter(|p| p.contains("<w:ins ") && !p.contains("<w:t>") && !p.contains("<w:t "))
+        .count();
+    assert_eq!(empty_inserted, 0, "invented empty inserted paragraphs");
+}
