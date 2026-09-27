@@ -27687,6 +27687,23 @@ fn rev_bar_marks_a_run_formatting_change() {
 }
 
 #[test]
+fn rev_bar_ignores_formatting_markers_in_prior_section_properties() {
+    for marker in ["pPrChange", "rPrChange"] {
+        let body = format!(
+            "<w:p><w:pPr><w:sectPr><w:sectPrChange w:id=\"1\" w:author=\"a\">\
+             <w:sectPr><w:{marker}/></w:sectPr></w:sectPrChange></w:sectPr></w:pPr>\
+             <w:r><w:t>unchanged paragraph</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert prior formatting");
+        let xs = pdf_vertical_rule_xs(&pdf);
+        assert!(
+            xs.is_empty(),
+            "prior {marker} must not paint a change bar: {xs:?}"
+        );
+    }
+}
+
+#[test]
 fn rev_bar_stands_36pt_out_from_a_wide_margin() {
     // Live Word 2026-09-25 (and CiceroDo): at left=90pt the change bar is at
     // margin_l-36 = 54, not margin_l/2 = 45; half the margin only when that

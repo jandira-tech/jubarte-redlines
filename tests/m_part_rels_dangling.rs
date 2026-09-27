@@ -15,6 +15,8 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read, Write};
 
 use jubarte::document_comparer::compare_documents;
+use jubarte::namespaces::W;
+use jubarte::xmllinq::Dom;
 
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -493,8 +495,101 @@ fn colliding_picture_bullets_keep_their_own_images() {
     let out = compare_documents(&a, &b, "Test").expect("compare ok");
     let (undefined, images) = picture_bullets(&out);
     assert_eq!(undefined, Vec::<String>::new());
-    let mut drawn: Vec<&String> = images.values().collect();
-    drawn.sort();
-    assert_eq!(drawn, vec!["GIFA", "GIFB"]);
+    assert_eq!(images.len(), 2);
+    let mut dom = Dom::new();
+    let numbering = read_part(&out, "word/numbering.xml").unwrap();
+    let doc = dom.parse_xdocument(&numbering);
+    let root = dom.root(doc).unwrap();
+    let lists = dom.elements(root, Some(&W::name("abstractNum")));
+    assert_eq!(lists.len(), 2);
+    let mut revised_list = None;
+    for list in lists {
+        let levels = dom.elements(list, Some(&W::name("lvl")));
+        assert_eq!(levels.len(), 1);
+        for level in levels {
+            let indent = dom.descendants(level, Some(&W::name("ind")))[0];
+            let expected = match dom.attribute(indent, &W::name("left")) {
+                Some("720") => "GIFA",
+                Some("1080") => {
+                    revised_list = dom.attribute(list, &W::name("abstractNumId"));
+                    "GIFB"
+                }
+                other => panic!("unexpected list indent: {other:?}"),
+            };
+            let bullet = dom.element(level, &W::name("lvlPicBulletId")).unwrap();
+            let id = dom.attribute(bullet, &W::val()).unwrap();
+            assert_eq!(images.get(id).map(String::as_str), Some(expected));
+        }
+    }
+    let revised_list = revised_list.expect("revised abstract list").to_string();
+    let document = read_part(&out, "word/document.xml").unwrap();
+    let doc = dom.parse_xdocument(&document);
+    let paragraph = dom
+        .descendants(doc, Some(&W::p()))
+        .into_iter()
+        .find(|&p| dom.value(p) == "New item.")
+        .expect("revised paragraph");
+    let ppr = dom.element(paragraph, &W::p_pr()).unwrap();
+    let numpr = dom.element(ppr, &W::name("numPr")).unwrap();
+    let num_id = dom.element(numpr, &W::name("numId")).unwrap();
+    let num_id = dom.attribute(num_id, &W::val()).unwrap();
+    let num = dom
+        .elements(root, Some(&W::name("num")))
+        .into_iter()
+        .find(|&n| dom.attribute(n, &W::name("numId")) == Some(num_id))
+        .unwrap();
+    let abstract_id = dom.element(num, &W::name("abstractNumId")).unwrap();
+    assert_eq!(
+        dom.attribute(abstract_id, &W::val()),
+        Some(revised_list.as_str())
+    );
     assert_eq!(dangling_refs(&out), Vec::<String>::new());
+}
+
+#[test]
+fn revised_picture_bullets_sharing_an_image_reuse_its_relationship() {
+    let a = listed_docx(&list_item("Shared item."), Some("GIFA"));
+    let b = listed_docx(&list_item("New item."), Some("GIFB"));
+    let mut pkg = jubarte::opc::PartFs::open(&b).unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&pkg.part_string("word/numbering.xml").unwrap());
+    let root = dom.root(doc).unwrap();
+    let bullet = dom.element(root, &W::name("numPicBullet")).unwrap();
+    let copy = dom.clone_subtree(bullet);
+    dom.set_attribute_value(copy, &W::name("numPicBulletId"), Some("1"));
+    dom.add_before_self(bullet, copy);
+    let list = dom.element(root, &W::name("abstractNum")).unwrap();
+    let level = dom.element(list, &W::name("lvl")).unwrap();
+    let copy = dom.clone_subtree(level);
+    dom.set_attribute_value(copy, &W::name("ilvl"), Some("1"));
+    let pic = dom.element(copy, &W::name("lvlPicBulletId")).unwrap();
+    dom.set_attribute_value(pic, &W::val(), Some("1"));
+    dom.add_after_self(level, copy);
+    pkg.set_part(
+        "word/numbering.xml",
+        dom.serialize_element(root).into_bytes(),
+    );
+
+    let out = compare_documents(&a, &pkg.to_zip().unwrap(), "Test").expect("compare ok");
+    let (undefined, images) = picture_bullets(&out);
+    assert!(undefined.is_empty());
+    assert_eq!(images.values().filter(|image| *image == "GIFB").count(), 2);
+    let pkg = jubarte::opc::PartFs::open(&out).unwrap();
+    let rels = pkg.read_rels_for("word/numbering.xml").unwrap();
+    assert_eq!(
+        rels.items
+            .iter()
+            .filter(|r| r.rel_type.ends_with("/image"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        pkg.parts()
+            .iter()
+            .filter(|p| p.starts_with("word/media/"))
+            .count(),
+        2
+    );
+    assert_eq!(dangling_refs(&out), Vec::<String>::new());
+    assert_eq!(unresolved_targets(&out), Vec::<String>::new());
 }

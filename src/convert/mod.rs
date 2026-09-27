@@ -8531,7 +8531,7 @@ fn o_attr<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
 /// p0111, p0225).
 fn para_formatting_changed(dom: &Dom, para: NodeId) -> bool {
     [W::p_pr_change(), W::name("rPrChange")].iter().any(|n| {
-        dom.find_descendant_element(para, Some(n), |_| true)
+        dom.find_descendant_element(para, Some(n), |cand| !under_prior_change(dom, para, cand))
             .is_some()
     })
 }
