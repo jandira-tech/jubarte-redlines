@@ -494,6 +494,15 @@ pub fn compare_bodies_faithful_with_notes(
         lcs::detect_unrelated_sources(&cus1, &cus2)
             .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
     };
+    // A wholesale replacement that kept the story-final mark (both documents'
+    // final empty paragraphs paired): the trailing live empty is Word's, not
+    // B's leftover (see M448 below).
+    let story_final_paired = matches!(
+        seqs.as_slice(),
+        [i, d, e] if i.correlation_status == CorrelationStatus::Inserted
+            && d.correlation_status == CorrelationStatus::Deleted
+            && e.correlation_status == CorrelationStatus::Equal
+    );
     // Word skip-ahead moves: Equal after pure A-only deletes → ins early +
     // del late so detect_moves can emit moveTo/moveFrom (page-order parity).
     moves::promote_skip_ahead_equals(&mut seqs, settings);
@@ -783,7 +792,11 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::promote_live_numpr_on_pure_d_from_pprchange(dom, root);
         // M448: pure-I-dominant body + pure-D residual → drop trailing bare
         // empty EQ (diff_after8×doc_with_spacing Word ends IDD not IDDE).
-        finalize::strip_trailing_bare_empty_after_pure_i_dominant(dom, root);
+        // Not when that empty is the paired story-final paragraph
+        // (doc_with_spaces×doc_with_spacing Word ends IDDE).
+        if !story_final_paired {
+            finalize::strip_trailing_bare_empty_after_pure_i_dominant(dom, root);
+        }
         // M469: head title MIX with SHORT ins title + LONG unrelated del →
         // split del into a style-less MARK-DEL paragraph (rfonts_rstyle ×
         // sd_2672_rtl_table: Word renders the deleted opening at body size).

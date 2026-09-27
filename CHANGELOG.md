@@ -86,6 +86,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `xmlns:ns0="http://powertools.codeplex.com/2011"` declaration left over from
   the comparer's internal bookkeeping (349 of the 1,195 pool and English
   redlines had one in the body; now none). Rendering is unchanged.
+- When two unrelated documents both end in an empty paragraph, the wholesale
+  replacement now keeps that story-final paragraph live after the deletions,
+  as Word does, instead of welding the revised document's trailing empty
+  paragraph onto the original's first deleted paragraph (which then kept a
+  live mark and the revised styling). +0.86 Jaccard summed over the 1,195
+  pool and English pairs (96 changed, 13 better, 4 worse);
+  line_break × line_space_table 0.29 → 0.51.
 
 ### Added
 

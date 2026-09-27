@@ -5305,7 +5305,49 @@ fn has_common_run_ge(left: &[ComparisonUnit], right: &[ComparisonUnit], target: 
 
 /// Returns `Some([Inserted, Deleted])` in Word order, or `None` to fall through
 /// to full word-level LCS.
+///
+/// When both stories end in an empty paragraph, a wholesale replacement keeps
+/// that story-final mark: Word pairs the two final pilcrows instead of
+/// inserting B's and deleting A's, and the document ends on the surviving
+/// empty paragraph (line_break × line_space_table). Left unpaired, B's
+/// trailing empty insert is later welded onto A's first deleted paragraph.
 pub fn detect_unrelated_sources_word_mode(
+    dom: &mut Dom,
+    cu1: &[ComparisonUnit],
+    cu2: &[ComparisonUnit],
+    settings: &WmlComparerSettings,
+) -> Option<Vec<CorrelatedSequence>> {
+    let mut seqs = detect_unrelated_sources_word_mode_inner(dom, cu1, cu2, settings)?;
+    let whole = |s: &CorrelatedSequence, status, side: &[ComparisonUnit]| {
+        s.correlation_status == status
+            && [&s.com_units_1, &s.com_units_2]
+                .into_iter()
+                .flatten()
+                .any(|u| u.len() == side.len())
+    };
+    let final_pilcrow = |u: Option<&ComparisonUnit>| {
+        let u = u?;
+        as_group(u).filter(|g| g.group_type == ComparisonUnitGroupType::Paragraph)?;
+        let c = group_contents(u);
+        (c.len() == 1 && unit_is_single_atom_ppr(dom, &c[0])).then(|| c[0].clone())
+    };
+    if let [ins, del] = seqs.as_slice()
+        && whole(ins, CorrelationStatus::Inserted, cu2)
+        && whole(del, CorrelationStatus::Deleted, cu1)
+        && cu1.len() > 1
+        && cu2.len() > 1
+        && let (Some(pa), Some(pb)) = (final_pilcrow(cu1.last()), final_pilcrow(cu2.last()))
+    {
+        seqs = vec![
+            CorrelatedSequence::inserted(cu2[..cu2.len() - 1].to_vec()),
+            CorrelatedSequence::deleted(cu1[..cu1.len() - 1].to_vec()),
+            CorrelatedSequence::paired(CorrelationStatus::Equal, vec![pa], vec![pb]),
+        ];
+    }
+    Some(seqs)
+}
+
+fn detect_unrelated_sources_word_mode_inner(
     dom: &mut Dom,
     cu1: &[ComparisonUnit],
     cu2: &[ComparisonUnit],

@@ -2737,6 +2737,30 @@ fn para_is_visually_blank(dom: &Dom, p: NodeId) -> bool {
         && dom.descendants(p, Some(&W::name("br"))).is_empty()
 }
 
+/// 1 when the body ends on a live, blank paragraph after a pure-D run: the
+/// story-final mark the unrelated-sources pairing kept (A's and B's final
+/// empty paragraphs). The trailing-empty-run gates below were calibrated
+/// when B's final empty was still one of the pure-I empties before the
+/// pure-D run, so they count it back in.
+fn story_final_kept_blank(dom: &Dom, kids: &[NodeId]) -> usize {
+    let [.., prev, last] = kids else {
+        return 0;
+    };
+    let live = |p: NodeId| {
+        dom.descendants(p, Some(&W::ins())).is_empty()
+            && dom.descendants(p, Some(&W::del())).is_empty()
+            && !para_mark_revision(dom, p, &W::ins())
+            && !para_mark_revision(dom, p, &W::del())
+    };
+    usize::from(
+        dom.name_is(*last, &W::p())
+            && para_is_visually_blank(dom, *last)
+            && live(*last)
+            && dom.name_is(*prev, &W::p())
+            && para_is_pure_deleted(dom, *prev),
+    )
+}
+
 /// True when body text repeats a ≥4-word phrase (hummingbird wrap fingerprint).
 ///
 /// M416/M420: distinguish wrap pure-I from generic long titles (project_tasks
@@ -2841,11 +2865,13 @@ pub fn relocate_title_page_last_empty_after_pure_dels(dom: &mut Dom, root: NodeI
     if del_run < 1 {
         return;
     }
-    // No pure-I after pure-D residual.
-    if kids[dj..]
-        .iter()
-        .any(|&k| dom.name_is(k, &W::p()) && para_is_pure_inserted(dom, k))
-    {
+    // No pure-I after pure-D residual, and no story-final paragraph the
+    // comparer already kept live there (the unrelated-sources pairing of
+    // both final empty paragraphs does this move itself).
+    if kids[dj..].iter().any(|&k| {
+        dom.name_is(k, &W::p())
+            && (para_is_pure_inserted(dom, k) || dom.element(k, &W::p_pr()).is_some())
+    }) {
         return;
     }
     // Trailing empty pure-I run immediately before first pure-D.
@@ -3167,7 +3193,7 @@ pub fn strip_empty_pure_ins_before_trailing_pure_dels(dom: &mut Dom, root: NodeI
         return;
     }
     // Wholesale empty next layout (≥3) — Word keeps all (image×rtl).
-    if empty_run >= 3 {
+    if empty_run + story_final_kept_blank(dom, &non_sect) >= 3 {
         return;
     }
     // M389 (file_82×83 −18.9 vs fddb): Word keeps a **single** empty pure-I
@@ -3339,6 +3365,7 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
                 let pure_i_after_del = kids[di + 1..]
                     .iter()
                     .any(|&k| dom.name_is(k, &W::p()) && para_is_pure_inserted(dom, k));
+                let empty_run = empty_run + story_final_kept_blank(dom, &kids);
                 if empty_run >= 3 && !pure_i_after_del && content_pure_i >= 1 {
                     return;
                 }
