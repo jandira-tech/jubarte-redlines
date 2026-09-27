@@ -212,11 +212,15 @@ impl PartFs {
     /// largest WASM self-time frame, 26% of the deflate cluster per the W5
     /// profile) while producing content-identical decompressed bytes — Word
     /// opens any deflate level. ZIP-LEVEL-01 (WASM_PERF_PLAN.md).
+    ///
+    /// Every entry is dated 1980-01-01 00:00, as Office dates its own, so the
+    /// same input writes the same bytes.
     pub fn to_zip(&self) -> Result<Vec<u8>, OpcError> {
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
         let options = SimpleFileOptions::default()
             .compression_method(CompressionMethod::Deflated)
-            .compression_level(Some(1));
+            .compression_level(Some(1))
+            .last_modified_time(zip::DateTime::default());
 
         let ct_xml = self.pkg.content_types.to_xml()?;
         zip.start_file("[Content_Types].xml", options)?;
@@ -473,6 +477,24 @@ mod tests {
             ]
         );
         assert_eq!(fs.to_zip().unwrap(), zip);
+    }
+
+    #[test]
+    fn entries_carry_no_wall_clock_time() {
+        // Another dependency turns on zip's `time` feature, and with it the
+        // default options stamp each entry with the current time: two writes
+        // a second apart gave other bytes. Office writes 1980-01-01 00:00.
+        let zip = package_with_header_rels().to_zip().unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(&zip)).unwrap();
+        for i in 0..archive.len() {
+            let entry = archive.by_index(i).unwrap();
+            assert_eq!(
+                entry.last_modified(),
+                Some(zip::DateTime::default()),
+                "{}",
+                entry.name()
+            );
+        }
     }
 
     #[test]

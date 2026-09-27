@@ -21,6 +21,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- The same input writes the same bytes. Another dependency turns on the `zip` crate's `time` feature, and with it every package entry carried the time of the write, so two runs a second apart gave different files. Entries are now dated 1980-01-01, as Office dates its own.
+
 - Two point comments inside one run now keep their places. An anchor that ended one text piece of a multi-piece run went after the whole run, so "Note" landed after "東京" and behind "Second note". The run now splits between the pieces.
 
 - Rejecting every change in center_alignment × center_aligned_bold now restores the original. A pass forced the inserted "This" and "text" into kept text while the next paragraph still deleted them, so the rejected document read "This text This document …". The cross-paragraph stream already keeps those words where Word does, so the pass is gone. The revised tail now fuses into the sole deleted paragraph and keeps that paragraph's deleted mark, so accepting no longer leaves an empty last paragraph.
