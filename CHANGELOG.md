@@ -65,6 +65,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   whole-inserted and whole-deleted. file_111×file_112 scores 0.108 → 0.538
   Jaccard against Word's redline; +0.35 summed over the 1,195 pool and
   English pairs (8 changed).
+- When the revised document names its default fonts by theme
+  (`w:asciiTheme="minorHAnsi"`, as Word writes them), the redline's Normal
+  style now carries those theme fonts instead of keeping the original's named
+  face, so the text renders in Calibri as Word's redline does rather than in
+  Times New Roman. +2.96 Jaccard summed over the 1,195 pool and English pairs
+  (126 changed, 26 better, 2 worse); instrtext_angled_brackets_bug ×
+  table_merged_cells 0.13 → 0.82.
 
 ### Added
 

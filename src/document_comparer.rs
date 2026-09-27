@@ -2162,9 +2162,16 @@ fn align_paragraph_style_fonts_with_normal(dom: &mut Dom, styles_root: NodeId) -
     changed
 }
 
-/// Run-metric keys the footer merge resolves and compares: rFonts attributes
-/// plus sz/szCs values (the properties that set a footer line's box height).
-const RPR_METRIC_FONT_ATTRS: [&str; 4] = ["ascii", "hAnsi", "eastAsia", "cs"];
+/// Run-metric keys the footer merge resolves and compares: each rFonts slot
+/// as its (explicit, theme) attribute pair, plus sz/szCs values (the
+/// properties that set a footer line's box height). A slot's theme attribute
+/// overrides its explicit one, so the two resolve together.
+const RPR_METRIC_FONT_SLOTS: [(&str, &str); 4] = [
+    ("ascii", "asciiTheme"),
+    ("hAnsi", "hAnsiTheme"),
+    ("eastAsia", "eastAsiaTheme"),
+    ("cs", "cstheme"),
+];
 
 /// A style tree's `docDefaults/rPrDefault/rPr` node, if present.
 fn rpr_default(dom: &Dom, styles_root: NodeId) -> Option<NodeId> {
@@ -2175,25 +2182,31 @@ fn rpr_default(dom: &Dom, styles_root: NodeId) -> Option<NodeId> {
 
 /// Normal's EFFECTIVE run metrics: each value from the style's stored rPr
 /// when present, else from docDefaults' rPrDefault (per-attribute, the way
-/// Word resolves a style chain). Returns [ascii, hAnsi, eastAsia, cs, sz,
-/// szCs], each None when defined nowhere.
+/// Word resolves a style chain). Returns each rFonts slot of
+/// [`RPR_METRIC_FONT_SLOTS`] as (explicit, theme), then [sz, szCs], each None
+/// when defined nowhere. A slot resolves as a pair from the first source that
+/// declares either attribute: a theme font (`w:asciiTheme="minorHAnsi"`, the
+/// usual docDefaults form) is as much a declaration as a named one.
+type FontSlot = (Option<String>, Option<String>);
 fn effective_normal_rpr_metrics(
     dom: &Dom,
     styles_root: NodeId,
     normal: Option<NodeId>,
-) -> [Option<String>; 6] {
+) -> ([FontSlot; 4], [Option<String>; 2]) {
     let stored = normal.and_then(|s| dom.element(s, &W::name("rPr")));
     let default = rpr_default(dom, styles_root);
-    let font_attr = |attr: &str| {
+    let font_slot = |(attr, theme): (&str, &str)| -> FontSlot {
         for src in [stored, default] {
-            if let Some(v) = src
-                .and_then(|r| dom.element(r, &W::name("rFonts")))
-                .and_then(|f| dom.attribute(f, &W::name(attr)))
-            {
-                return Some(v.to_string());
+            let Some(f) = src.and_then(|r| dom.element(r, &W::name("rFonts"))) else {
+                continue;
+            };
+            let named = dom.attribute(f, &W::name(attr)).map(str::to_string);
+            let themed = dom.attribute(f, &W::name(theme)).map(str::to_string);
+            if named.is_some() || themed.is_some() {
+                return (named, themed);
             }
         }
-        None
+        (None, None)
     };
     let sz_val = |name: &str| {
         for src in [stored, default] {
@@ -2206,8 +2219,10 @@ fn effective_normal_rpr_metrics(
         }
         None
     };
-    let [a, h, ea, cs] = RPR_METRIC_FONT_ATTRS.map(font_attr);
-    [a, h, ea, cs, sz_val("sz"), sz_val("szCs")]
+    (
+        RPR_METRIC_FONT_SLOTS.map(font_slot),
+        [sz_val("sz"), sz_val("szCs")],
+    )
 }
 
 /// EG_RPrBase child order (wml.xsd `EG_RPrBase` choice sequence). A new rPr
@@ -3042,7 +3057,7 @@ fn merge_normal_style_rpr(
             r
         }
     };
-    let [ascii, hansi, east_asia, cs, sz, sz_cs] = b_effective;
+    let (font_slots, [sz, sz_cs]) = b_effective;
     let fonts = match dom.element(rpr, &W::name("rFonts")) {
         Some(f) => f,
         None => {
@@ -3051,11 +3066,9 @@ fn merge_normal_style_rpr(
             f
         }
     };
-    for (attr, v) in RPR_METRIC_FONT_ATTRS
-        .iter()
-        .zip([&ascii, &hansi, &east_asia, &cs])
-    {
-        dom.set_attribute_value(fonts, &W::name(attr), v.as_deref());
+    for ((attr, theme), (named, themed)) in RPR_METRIC_FONT_SLOTS.iter().zip(&font_slots) {
+        dom.set_attribute_value(fonts, &W::name(attr), named.as_deref());
+        dom.set_attribute_value(fonts, &W::name(theme), themed.as_deref());
     }
     // sz/szCs must follow EG_RPrBase order (rFonts < b..webHidden < color <
     // spacing < w < kern < position < sz < szCs). Anchoring them to rFonts —
@@ -5983,5 +5996,49 @@ mod tests {
         assert_eq!(word_canonical_style_id("heading 1"), "Heading1");
         assert_eq!(word_canonical_style_id("document title"), "DocumentTitle");
         assert_eq!(word_canonical_style_id("my custom style"), "MyCustomStyle");
+    }
+
+    /// B's docDefaults name their fonts by theme (`w:asciiTheme="minorHAnsi"`,
+    /// the form Word itself writes) and A's name Times New Roman outright.
+    /// Word's live Normal carries B's theme fonts, so the output renders in
+    /// Calibri as B does (instrtext_angled_brackets_bug × table_merged_cells:
+    /// the theme attributes were not read, Normal kept A's Times New Roman and
+    /// the pair scored 0.13 Jaccard against Word, docxodus 0.82).
+    #[test]
+    fn normal_takes_b_theme_fonts_from_its_doc_defaults() {
+        let ns = format!("xmlns:w=\"{}\"", W::URI);
+        let a = format!(
+            "<w:styles {ns}><w:docDefaults><w:rPrDefault><w:rPr>\
+             <w:rFonts w:ascii=\"Times New Roman\" w:eastAsia=\"Times New Roman\" \
+             w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/></w:rPr></w:rPrDefault>\
+             </w:docDefaults><w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+             <w:name w:val=\"Normal\"/><w:rPr><w:sz w:val=\"24\"/></w:rPr></w:style></w:styles>"
+        );
+        let b = format!(
+            "<w:styles {ns}><w:docDefaults><w:rPrDefault><w:rPr>\
+             <w:rFonts w:asciiTheme=\"minorHAnsi\" w:eastAsiaTheme=\"minorHAnsi\" \
+             w:hAnsiTheme=\"minorHAnsi\" w:cstheme=\"minorBidi\"/><w:sz w:val=\"24\"/>\
+             </w:rPr></w:rPrDefault></w:docDefaults>\
+             <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+             <w:name w:val=\"Normal\"/></w:style></w:styles>"
+        );
+        let mut dom = Dom::new();
+        let (out_root, _) = parse(&mut dom, &a);
+        let (b_root, _) = parse(&mut dom, &b);
+        let settings = WmlComparerSettings::default();
+        assert!(merge_normal_style_rpr(
+            &mut dom, out_root, b_root, &settings
+        ));
+        let normal = find_normal_style(&dom, out_root).expect("Normal");
+        let rpr = dom.element(normal, &W::name("rPr")).expect("live rPr");
+        let fonts = dom.element(rpr, &W::name("rFonts")).expect("live rFonts");
+        let attr = |n: &str| dom.attribute(fonts, &W::name(n)).map(str::to_string);
+        assert_eq!(attr("asciiTheme").as_deref(), Some("minorHAnsi"));
+        assert_eq!(attr("hAnsiTheme").as_deref(), Some("minorHAnsi"));
+        assert_eq!(attr("eastAsiaTheme").as_deref(), Some("minorHAnsi"));
+        assert_eq!(attr("cstheme").as_deref(), Some("minorBidi"));
+        // No explicit face left behind to contradict the theme on the page.
+        assert_eq!(attr("ascii"), None);
+        assert_eq!(attr("hAnsi"), None);
     }
 }
