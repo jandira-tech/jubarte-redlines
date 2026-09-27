@@ -1,12 +1,21 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
 
+# Weekly version updates. An empty package-ecosystem is rejected by
+# Dependabot, so each ecosystem the repository ships is named here.
 version: 2
 updates:
-  - package-ecosystem: "" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: "cargo"
+    directories:
+      - "/"
+      - "/jubarte-python"
+      - "/jubarte-wasm"
+      - "/jubarte-rust-inproc"
+      - "/jubarte-app/src-tauri"
     schedule:
       interval: "weekly"
-
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
