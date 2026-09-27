@@ -114,6 +114,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   one word in 54. green underline bullet list × header without relationships
   +0.09; no other pair of the 1,195 changes. A general lone-word anchor was
   tried and rejected (−3.07 summed, 30 worse).
+- A wholesale replacement between unrelated documents now anchors on a word
+  that ends a paragraph on both sides and applies Word's seam on each side of
+  it: "2026" closes both "Product Roadmap 2026" and "Date: February 1, 2026",
+  so that paragraph keeps "2026" and its mark and replaces the words before
+  it. +0.31 Jaccard summed over the 1,195 pool and English pairs (2 changed,
+  both better); product roadmap × project plan +0.28.
 
 ### Added
 

@@ -40,3 +40,39 @@ fn paragraph_opening_word_anchors_across_unrelated_documents() {
     });
     assert!(live_second, "Second is not kept live: {para}");
 }
+
+/// A word that ends a paragraph on both sides anchors a wholesale
+/// replacement, with Word's seam on each side of it: "2026" closes both
+/// "Product Roadmap 2026" and "Date: February 1, 2026", so that paragraph
+/// keeps "2026" and its mark live and replaces the words before it.
+#[test]
+fn paragraph_closing_word_anchors_wholesale_replacement() {
+    let src =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/broken_ones_two/sources");
+    let out = compare_documents_with_settings(
+        &std::fs::read(src.join("file_203.docx")).unwrap(),
+        &std::fs::read(src.join("file_204.docx")).unwrap(),
+        &WmlComparerSettings::default(),
+    )
+    .unwrap();
+    let mut xml = String::new();
+    zip::ZipArchive::new(Cursor::new(out))
+        .unwrap()
+        .by_name("word/document.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    let para = xml
+        .split("</w:p>")
+        .find(|p| p.contains("Product Roadmap"))
+        .expect("original title");
+    assert!(
+        para.contains("Date: February 1,"),
+        "title does not carry the revised date: {para}"
+    );
+    let mark = para.split("</w:pPr>").next().unwrap_or_default();
+    assert!(
+        !mark.contains("<w:del ") && !mark.contains("<w:ins "),
+        "anchored paragraph mark is not live: {para}"
+    );
+}

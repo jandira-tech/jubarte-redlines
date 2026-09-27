@@ -631,6 +631,95 @@ fn looks_like_short_annotation_doc(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
     saw_marker && (1..=6).contains(&contentful)
 }
 
+/// First word, four or more alphanumerics, that ends a paragraph on both
+/// sides with the same text: `(index in left, index in right)`, each index
+/// followed by its paragraph mark.
+fn paragraph_final_anchor(
+    dom: &Dom,
+    left: &[ComparisonUnit],
+    right: &[ComparisonUnit],
+) -> Option<(usize, usize)> {
+    let finals = |cul: &[ComparisonUnit]| -> Vec<(usize, String)> {
+        (0..cul.len().saturating_sub(1))
+            .filter(|&i| {
+                unit_is_single_atom_ppr(dom, &cul[i + 1])
+                    && matches!(cul[i], ComparisonUnit::Word(_))
+            })
+            .filter_map(|i| {
+                let mut t = String::new();
+                for a in cul[i].descendant_atoms() {
+                    if !dom.name_is(a.content_element, &W::t()) {
+                        return None;
+                    }
+                    t.push_str(&dom.value_str(a.content_element));
+                }
+                (t.chars().count() >= 4 && t.chars().all(char::is_alphanumeric)).then_some((i, t))
+            })
+            .collect()
+    };
+    let r = finals(right);
+    finals(left)
+        .into_iter()
+        .find_map(|(ia, t)| r.iter().find(|(_, u)| *u == t).map(|&(ib, _)| (ia, ib)))
+}
+
+/// Word's carrier seam over one region of a wholesale replacement: the
+/// revised paragraphs before its last are inserted, its last paragraph's
+/// words join the original's first paragraph, whose mark is deleted when
+/// more original paragraphs follow, and the rest of the original is deleted.
+fn seam_region(
+    dom: &Dom,
+    a: &[ComparisonUnit],
+    b: &[ComparisonUnit],
+    out: &mut Vec<CorrelatedSequence>,
+) {
+    if a.is_empty() || b.is_empty() {
+        cascade(a.to_vec(), b.to_vec(), out);
+        return;
+    }
+    let first_mark =
+        |cul: &[ComparisonUnit]| cul.iter().position(|cu| unit_is_single_atom_ppr(dom, cu));
+    let last_para_start = |cul: &[ComparisonUnit]| {
+        let body = if cul
+            .last()
+            .is_some_and(|cu| unit_is_single_atom_ppr(dom, cu))
+        {
+            &cul[..cul.len() - 1]
+        } else {
+            cul
+        };
+        body.iter()
+            .rposition(|cu| unit_is_single_atom_ppr(dom, cu))
+            .map_or(0, |i| i + 1)
+    };
+    let cb = last_para_start(b);
+    if cb > 0 {
+        out.push(CorrelatedSequence::inserted(b[..cb].to_vec()));
+    }
+    let b_mark = b.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu));
+    let b_words = &b[cb..b.len() - usize::from(b_mark)];
+    if !b_words.is_empty() {
+        out.push(CorrelatedSequence::inserted(b_words.to_vec()));
+    }
+    let a_end = first_mark(a).unwrap_or(a.len());
+    if a_end > 0 {
+        out.push(CorrelatedSequence::deleted(a[..a_end].to_vec()));
+    }
+    if a_end < a.len() {
+        if a_end + 1 == a.len() && b_mark {
+            out.push(CorrelatedSequence::paired(
+                CorrelationStatus::Equal,
+                vec![a[a_end].clone()],
+                vec![b[b.len() - 1].clone()],
+            ));
+        } else {
+            out.push(CorrelatedSequence::deleted(a[a_end..].to_vec()));
+        }
+    } else if b_mark {
+        out.push(CorrelatedSequence::inserted(vec![b[b.len() - 1].clone()]));
+    }
+}
+
 /// ≥ half of contentful paragraphs (non-empty word stream) carry `numPr`.
 fn mostly_list_paras(dom: &Dom, paras: &[Vec<ComparisonUnit>]) -> bool {
     let contentful: Vec<&Vec<ComparisonUnit>> = paras
@@ -2641,6 +2730,19 @@ pub fn do_lcs_algorithm(
                     {
                         out.push(CorrelatedSequence::inserted(cul2.to_vec()));
                         out.push(CorrelatedSequence::deleted(cul1.to_vec()));
+                        return out;
+                    }
+                    // Word still anchors a word that ends a paragraph on both
+                    // sides ("2026" closing "Product Roadmap 2026" and "Date:
+                    // February 1, 2026") and seams each side of it.
+                    if let Some((ia, ib)) = paragraph_final_anchor(dom, &cul1, &cul2) {
+                        seam_region(dom, &cul1[..ia], &cul2[..ib], &mut out);
+                        out.push(CorrelatedSequence::paired(
+                            CorrelationStatus::Equal,
+                            cul1[ia..ia + 2].to_vec(),
+                            cul2[ib..ib + 2].to_vec(),
+                        ));
+                        seam_region(dom, &cul1[ia + 2..], &cul2[ib + 2..], &mut out);
                         return out;
                     }
                     let lead_b: Vec<ComparisonUnit> = paras_b[..paras_b.len() - 1]
