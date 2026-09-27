@@ -89,6 +89,8 @@ the error is what you initially thought because we get this wrong routinely.
 
 - First confirm the failure is the file's: convert it alone, under a fresh
   name. In a batch, one document that hangs Word fails its neighbours too.
+- `word_pdf.py` answers Word's repair prompt with No, so a repairable file
+  already fails there ("document loaded empty") and scores zero.
 - The ooxml validator is `tools/validate-docx` (OpenXmlValidator, Office
   2019). Its silence is a pass only if it exits 0.
 - Word-validity rules the validator misses become Ring-1 invariants in
