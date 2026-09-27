@@ -2540,7 +2540,9 @@ fn font_index_path() -> Option<PathBuf> {
     }
 }
 
-const FONT_INDEX_HEADER: &str = "jubarte-font-index\t1";
+/// Bump the `1` when the family search's matching rules change; the crate
+/// version drops the answers another release recorded.
+const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t1\t", env!("CARGO_PKG_VERSION"));
 
 /// A modification time in nanoseconds, `None` for a missing path.
 fn mtime_of(path: &Path) -> Option<u128> {
@@ -3133,6 +3135,24 @@ mod tests {
         let text = format_font_index(&entries);
         assert_eq!(parse_font_index(&text), entries);
         assert!(parse_font_index(&text.replacen("\t1", "\t0", 1)).is_empty());
+    }
+
+    #[test]
+    fn another_release_drops_the_font_index() {
+        // The index caches search answers, not only the fonts on disk: a
+        // release that changes the matching rules must not reuse them.
+        let entries = HashMap::from([(
+            "family\u{1f}Poppins\u{1f}/u\u{1f}/c".to_string(),
+            IndexEntry {
+                dirs: vec![(PathBuf::from("/Library/Fonts"), Some(17))],
+                faces: vec![],
+            },
+        )]);
+        let text = format_font_index(&entries);
+        assert_eq!(parse_font_index(&text), entries);
+        let header = text.lines().next().unwrap();
+        assert!(header.ends_with(&format!("\t{}", env!("CARGO_PKG_VERSION"))));
+        assert!(parse_font_index(&text.replace(env!("CARGO_PKG_VERSION"), "0.0.0")).is_empty());
     }
 
     #[test]

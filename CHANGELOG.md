@@ -195,6 +195,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   redlines, 3 better, 2 worse. The larger loss comes from an inserted
   text-box paragraph that we already mixed wrongly, where Word keeps it
   inserted.
+- The installed-font index (`font-index.tsv`) is rebuilt after an upgrade.
+  It stores the answers of the family search, and a new release that changes
+  the matching rules used to keep the old release's faces, or its misses,
+  for as long as the font folders stayed unchanged.
 
 ### Added
 
