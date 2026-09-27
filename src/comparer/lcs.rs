@@ -7600,18 +7600,38 @@ pub fn set_after_unids(dom: &mut Dom, unknown: &CorrelatedSequence) {
             break;
         }
     }
-    let unid_list: Vec<String> = relevant
+    let unid_list: Vec<(crate::xmllinq::NodeId, String)> = relevant
         .iter()
-        .filter_map(|&a| dom.attribute(a, &PT::unid()).map(|s| s.to_string()))
+        .filter_map(|&a| dom.attribute(a, &PT::unid()).map(|s| (a, s.to_string())))
         .collect();
 
     // collect target (ancestor, new-unid) pairs first (avoid borrow conflicts).
+    // The chains are aligned at the `take_thru` element and walked outward
+    // while the element names agree: A's paragraph inside an SDT against B's
+    // bare paragraph zipped from the top gave B's paragraph the sdt's Unid and
+    // every B run the sdtContent's, and coalesce packed the whole paragraph —
+    // text, six field begins, both codes, tabs — into one run (English pair
+    // 1118d92e×26634871 footer).
     let footnotes = W::name("footnotes");
     let endnotes = W::name("endnotes");
     let mut to_set: Vec<(crate::xmllinq::NodeId, String)> = Vec::new();
     for atom in &da2 {
-        for (&anc, unid) in atom.ancestor_elements.iter().zip(unid_list.iter()) {
+        let Some(thru) = atom
+            .ancestor_elements
+            .iter()
+            .position(|&ae| dom.name_is(ae, &take_thru))
+        else {
+            continue;
+        };
+        for (&anc, (src, unid)) in atom.ancestor_elements[..=thru]
+            .iter()
+            .rev()
+            .zip(unid_list.iter().rev())
+        {
             let nm = dom.name(anc);
+            if nm != dom.name(*src) {
+                break;
+            }
             if nm == Some(footnotes.clone()) || nm == Some(endnotes.clone()) {
                 continue;
             }

@@ -15,6 +15,60 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+> **Summary.** Redlines are now scored against Word's own redline of each pair, rendered by Word, and this release fixes what that exposed: redlines Word refused to open, blank field codes, missing fonts, and misplaced equations.
+
+### Fixed
+
+- Redlines no longer cross or pack complex fields, which crashed Word
+  ("Connection is invalid", English pair 57f96361×3832d290) once field codes
+  were kept: a field result only matches text inside a field with the same
+  code, the insert-before-delete swap leaves `fldChar` wrappers in place,
+  and `SetAfterUnids` aligns the two ancestor chains at the paragraph instead
+  of the top (an SDT-wrapped paragraph against a bare one gave every revised
+  run one Unid, packing a footer's text, field begins, codes and tabs into
+  one run).
+- Redlines Word refused to open now open (14 of 19 English failures):
+  relationship and content-type attributes no longer gain an `&amp;` per
+  round trip, a case-duplicate `Default` extension is merged, and
+  relationship targets are relative to the source part's folder (904e989).
+- Scratch `pt:Unid` attributes no longer leak into restored deleted-paragraph
+  spacing, and every extension namespace (w14/w15/w16*/wp14) is listed in
+  `mc:Ignorable` on each part root (b7fedc7); w16 serializes under Word's 2018
+  wordml namespace (722de2a).
+- Changed field codes keep their instruction text. An inserted or deleted
+  `w:instrText` was re-emitted empty, so tracked PAGE, REF and TOC fields
+  rendered blank in Word (8ab1df8).
+- Footnote ids renumbered by the comparer stay clear of the revised
+  document's `continuationNotice` id (fee9411).
+- The revised document's fonts join the output font table. A font used only
+  by B had no `w:font` entry, so Word substituted Times New Roman (2eb24d5).
+- A base made only of display equations counts as content, so an unrelated
+  pair keeps Word's order (inserted text first, deleted equations after)
+  instead of merging the first equation into the first inserted paragraph
+  (e4610b0).
+- `get_revisions` and `compare` return an error on bad input instead of
+  panicking (cb33d11).
+- sha1 0.11 drops the vulnerable block-buffer 0.10.4 (GHSA-qwgh-2vcv-g2f7)
+  from the engine, Python and WASM locks (9cddeb3).
+- convert: a cell holding only a nested table splits without panicking
+  (4dda25e); rotated oval pictures, comments on vertical pages and scaled
+  vertical runs follow Word (832eac9, c8a878e, b41cb35); pie and gear text
+  rectangles follow Word (2e4cd8f); altChunk decodes base64 MHT parts and
+  tolerates omitted end tags (93643b5, 30d595f).
+
+### Added
+
+- convert: Korean page and list number formats (b8a19b1).
+- RESULTS.md tables scored against Word truth: Word's redline of the pair,
+  converted by Word. Rows split redlining (tool redline → Word PDF) from
+  conversion (Word redline → tool PDF) (6b72be2, a6953f1).
+
+### Performance
+
+- LCS keys follow their word hash in one walk; `group_by_key_stable` hashes
+  each key once; move detection counts words and tokens in one walk (3d4ef7f,
+  4a05c21, 241e9ac).
+
 ## [0.9.2] - 2026-09-26
 
 > **Summary.** A Word-fidelity pass on jubarte convert: layout rules reconstructed from live-Word probes, painted revision marks (--revisions conventional|word|custom), Word's comment balloons and change bars, East Asian layout, and smaller PDFs (--compress averages 0.70x Word's size on 2,102 documents). The redline engine is unchanged from 0.9.0.

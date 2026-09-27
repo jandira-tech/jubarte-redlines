@@ -154,7 +154,60 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Atom
     if let Some(h) = dom.attribute(content, &PT::sha1_hash()) {
         return AtomHash::from_hex(h);
     }
+    // A field's begin, separate and end carry no text; without the type they
+    // hash alike and one document's separate can pair with the other's begin.
+    if local == "fldChar"
+        && let Some(ty) = dom.attribute(content, &W::name("fldCharType"))
+    {
+        text.push_str(ty);
+    }
     AtomHash::of_bytes(format!("{local}{text}").as_bytes())
+}
+
+/// Salts every atom of a complex field's result with the field's instruction.
+///
+/// Word replaces a field whose code changed as a whole. Matching the result
+/// text of two different fields (" Act " in `STYLEREF "Name Of Act/Reg"` and in
+/// `STYLEREF "PrincipalAct_Reg`) leaves an inserted and a deleted `begin` side
+/// by side, two `separate`s and crossed `end`s, which crashes Word once the
+/// instructions are present. Results of fields with the same instruction keep
+/// matching. Nested fields salt with their own (innermost) instruction.
+fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
+    let fld_char = W::name("fldChar");
+    let fld_char_type = W::name("fldCharType");
+    let instr = W::name("instrText");
+    let del_instr = W::name("delInstrText");
+    // Open fields, innermost last: (instruction so far, inside the result).
+    let mut open: Vec<(String, bool)> = Vec::new();
+    for atom in list.iter_mut() {
+        let el = atom.content_element;
+        let Some(name) = dom.name(el) else { continue };
+        if name == fld_char {
+            match dom.attribute(el, &fld_char_type) {
+                Some("begin") => open.push((String::new(), false)),
+                Some("separate") => {
+                    if let Some(field) = open.last_mut() {
+                        field.1 = true;
+                    }
+                }
+                Some("end") => {
+                    open.pop();
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if name == instr || name == del_instr {
+            if let Some((code, false)) = open.last_mut() {
+                code.push_str(&dom.value(el));
+            }
+            continue;
+        }
+        if let Some((code, true)) = open.last() {
+            let salted = format!("FIELD|{}|{}", code.trim(), atom.sha1_hash.to_hex_string());
+            atom.sha1_hash = AtomHash::of_bytes(salted.as_bytes());
+        }
+    }
 }
 
 /// `CreateComparisonUnitAtomList(contentParent)` — assign unids, then flatten.
@@ -172,6 +225,7 @@ pub fn create_comparison_unit_atom_list(
     // re-walking `ancestors_and_self` for every character atom.
     let mut path = Vec::new();
     recurse(dom, content_parent, &mut list, settings, &mut path);
+    salt_field_results(dom, &mut list);
     list
 }
 

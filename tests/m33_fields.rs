@@ -172,3 +172,104 @@ fn f4_complex_field_codes_survive_insert_and_delete() {
     assert!(!codes.is_empty(), "{x}");
     assert!(codes.iter().all(|c| c.contains("PAGE")), "{codes:?}\n{x}");
 }
+
+/// Every field reads begin → at most one separate → end, with its begin and
+/// end in the same revision state — the shape Word's own redlines always have.
+fn assert_fields_well_formed(dom: &Dom, out: NodeId) {
+    let x = dom.serialize_element(out);
+    let state = |e: NodeId| -> &'static str {
+        let mut cur = dom.parent(e);
+        while let Some(p) = cur {
+            match dom.name(p) {
+                Some(n) if n == W::ins() => return "ins",
+                Some(n) if n == W::del() => return "del",
+                _ => {}
+            }
+            cur = dom.parent(p);
+        }
+        "eq"
+    };
+    // (begin state, separates seen) per open field.
+    let mut open: Vec<(&str, usize)> = Vec::new();
+    for e in dom.descendants(out, Some(&W::name("fldChar"))) {
+        match dom.attribute(e, &W::name("fldCharType")) {
+            Some("begin") => open.push((state(e), 0)),
+            Some("separate") => {
+                let field = open.last_mut().expect("separate outside a field");
+                field.1 += 1;
+                assert!(field.1 <= 1, "a field with two separates: {x}");
+            }
+            Some("end") => {
+                let (begin, _) = open.pop().expect("end outside a field");
+                assert_eq!(begin, state(e), "begin and end differ in revision: {x}");
+            }
+            _ => {}
+        }
+    }
+    assert!(open.is_empty(), "unclosed field: {x}");
+}
+
+/// Two different fields whose results share a word (" Act ") stay two fields.
+/// English pair 57f96361×3832d290: only " Act " matched, leaving an inserted
+/// and a deleted `begin` side by side, two `separate`s and crossed `end`s —
+/// Word crashed opening the redline once the field codes were kept.
+#[test]
+fn f5_fields_with_different_codes_never_interleave() {
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(
+        &mut dom,
+        &complex_field("", " STYLEREF \"Name Of Act/Reg\"", "Building Act 2011"),
+    );
+    let (r2, b2) = doc_body(
+        &mut dom,
+        &complex_field(
+            "",
+            " STYLEREF \"PrincipalAct_Reg",
+            "Local Government Act 1995",
+        ),
+    );
+    let s = WmlComparerSettings::default();
+    let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
+    assert_fields_well_formed(&dom, out);
+}
+
+/// English pair 1118d92e×26634871 footer: A's `fldSimple` PAGE (in an SDT)
+/// against B's FILENAME and PAGE complex fields. The redline packed every
+/// text, six `begin`s (no separate, no end), both codes and the tabs into one
+/// run.
+#[test]
+fn f6_fldsimple_against_two_complex_fields_keeps_both_fields() {
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(
+        &mut dom,
+        "<w:sdt><w:sdtPr/><w:sdtContent><w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>\
+         <w:fldSimple w:instr=\" PAGE   \\* MERGEFORMAT \"><w:r><w:t>10</w:t></w:r></w:fldSimple></w:p>\
+         </w:sdtContent></w:sdt><w:p/>",
+    );
+    let fld = |instr: &str, result: &str| {
+        format!(
+            "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\">{instr}</w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>{result}</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        )
+    };
+    let next = format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\"> </w:t></w:r>{}\
+         <w:r><w:tab/><w:t xml:space=\"preserve\">Produced by </w:t></w:r><w:r><w:t>Swift</w:t></w:r>\
+         <w:r><w:tab/><w:t xml:space=\"preserve\">Page </w:t></w:r>{}</w:p>\
+         <w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr></w:p>",
+        fld(" FILENAME ", "264_BJ_Swift_Request_v1.docx"),
+        fld(" PAGE ", "2")
+    );
+    let (r2, b2) = doc_body(&mut dom, &next);
+    let s = WmlComparerSettings::default();
+    let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
+    assert_fields_well_formed(&dom, out);
+    let separates = dom
+        .descendants(out, Some(&W::name("fldChar")))
+        .into_iter()
+        .filter(|&e| dom.attribute(e, &W::name("fldCharType")) == Some("separate"))
+        .count();
+    assert!(separates >= 2, "{}", dom.serialize_element(out));
+}

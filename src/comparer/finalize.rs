@@ -5109,9 +5109,14 @@ pub fn strip_last_pure_del_mark_when_pprchange(dom: &mut Dom, root: NodeId) {
 /// same-author/date `w:del` immediately followed by `w:ins` into `w:ins` then
 /// `w:del`, matching Word's order. Text-preserving: each of the delText / ins-text
 /// streams keeps its own order (only their interleaving changes). Recurses.
+///
+/// A wrapper holding a `fldChar` stays put: swapping a deleted field's `end`
+/// with an inserted field's `begin` crosses the two fields, and Word crashed
+/// opening the redline (English pair 57f96361×3832d290).
 pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
     let ins = W::ins();
     let del = W::del();
+    let fld_char = W::name("fldChar");
     let mut i = 0usize;
     loop {
         let kids = dom.nodes(node);
@@ -5126,7 +5131,9 @@ pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
             && dom.attribute(a, &W::author()).map(|s| s.to_string())
                 == dom.attribute(b, &W::author()).map(|s| s.to_string())
             && dom.attribute(a, &W::date()).map(|s| s.to_string())
-                == dom.attribute(b, &W::date()).map(|s| s.to_string());
+                == dom.attribute(b, &W::date()).map(|s| s.to_string())
+            && dom.descendants(a, Some(&fld_char)).is_empty()
+            && dom.descendants(b, Some(&fld_char)).is_empty();
         if is_replacement {
             dom.remove(b);
             dom.add_before_self(a, b); // ins (b) now precedes del (a)
