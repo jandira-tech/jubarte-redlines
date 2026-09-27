@@ -244,19 +244,30 @@ def docx_to_pdf_speed() -> None:
     if not path.exists():
         return
     for line in path.read_text().splitlines():
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
         corpus = row['corpus']
         label, docs = D2P_SPEED_CORPORA.get(corpus, (corpus, 'clean'))
+        warm = row.get('mode') == 'warm'
         key = metric(
-            f'speed:docx2pdf:{corpus}',
-            title=f'docx→pdf speed — ms per document ({label})',
+            f'speed:docx2pdf:{"warm:" if warm else ""}{corpus}',
+            title=f'docx→pdf speed — ms per document, {"warm worker" if warm else "cold CLI"} ({label})',
             kind='docx->pdf speed',
             reference='-',
             docs=docs,
             unit='ms per document (lower is better)',
             lower_is_better=True,
-            note='Sequential, round-robin across tools per document; one CLI call per sample, process '
-            'start included. Failed conversions are excluded from the timing (Docs counts successes).',
+            note=(
+                'Sequential, round-robin across tools per document; one long-lived worker per tool '
+                '(the same library calls as its CLI), read + convert + write timed in-process, start-up '
+                'paid once as a service would. '
+                if warm
+                else 'Sequential, round-robin across tools per document; one CLI call per sample, process '
+                'start included. '
+            )
+            + 'Failed conversions are excluded from the timing (Docs counts successes).',
         )
         version = row['version']
         if row['tool'] == 'jubarte' and '@' in version:
