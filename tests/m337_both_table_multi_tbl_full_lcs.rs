@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! M337 — both-table short next with ≥2 tables (pirates×table_left): full LCS
-//! + multi-del fold recovers e3 pagefair ~70 (MDDD…IIII). Wholesale pure-I/D was ~41.
+//! recovers Word's shape, the new title inserted whole, then the old log
+//! deleted, then the new body (IDDD…IIII). Wholesale pure-I/D was ~41.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -70,15 +71,17 @@ fn pirates_x_table_left_not_wholesale_pure_id() {
     let n_m = cls.iter().filter(|&&c| c == 'M').count();
     let n_i = cls.iter().filter(|&&c| c == 'I').count();
     let n_d = cls.iter().filter(|&&c| c == 'D').count();
-    // Wholesale pure-I/D is I-block then D-block (I≥14 D≥25 MIX=0). e3 full
-    // LCS is M then Ds then Is (MIX≥1, I≈9).
+    // Wholesale pure-I/D is I-block then D-block (I≥14 D≥25 MIX=0). Word
+    // inserts the new title whole before the old one's deletion, then the
+    // new body after the old log: I, 28 D, 9 I, no mixed paragraph. Fusing
+    // the title into "A Simple Captain's Log" (MDDD…) is no Word shape.
     assert!(
-        n_m >= 1 && n_i <= 12 && n_d >= 20,
-        "e3 full-LCS shape MDDD…IIII; got MIX={n_m} I={n_i} D={n_d} seq={seq}"
+        n_m == 0 && n_i <= 12 && n_d >= 20,
+        "Word shape IDDD…IIII; got MIX={n_m} I={n_i} D={n_d} seq={seq}"
     );
     assert!(
-        seq.starts_with('M') || seq.starts_with("ID"),
-        "expected leading M/I then Ds; got {seq}"
+        seq.starts_with("ID"),
+        "expected the title inserted whole, then Ds; got {seq}"
     );
 }
 

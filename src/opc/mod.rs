@@ -23,12 +23,14 @@
 //! `word/document.xml`) and normalizes internally, so the rest of the crate is
 //! oblivious to the difference.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
 use std::io::{Cursor, Write};
 
 use rdocx_opc::OpcPackage;
 pub use rdocx_opc::{OpcError, Relationship, Relationships};
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipWriter};
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 /// Exactly one leading slash: callers build `/{part}` from names that may
 /// already be absolute, and a `//word/…` part name is invalid OPC.
@@ -125,9 +127,18 @@ fn rels_path_to_part_name(name: &str) -> Option<String> {
     })
 }
 
+/// One zip entry `PartFs::to_zip` writes after the two package-level ones.
+enum ZipEntry<'a> {
+    Rels(&'a Relationships),
+    Part(&'a [u8]),
+}
+
 /// Thin adapter over `rdocx_opc::OpcPackage`. Port-equivalent of `PartFS`.
 pub struct PartFs {
     pkg: OpcPackage,
+    /// Each source zip entry's position, so `to_zip` writes the package back
+    /// in the source's order rather than the hash maps' run-to-run order.
+    source_order: HashMap<String, usize>,
 }
 
 impl PartFs {
@@ -138,7 +149,14 @@ impl PartFs {
         pkg.part_rels.values_mut().for_each(unescape_relationships);
         unescape_content_types(&mut pkg.content_types.defaults);
         unescape_content_types(&mut pkg.content_types.overrides);
-        Ok(PartFs { pkg })
+        let source_order = ZipArchive::new(Cursor::new(bytes))
+            .map(|zip| {
+                (0..zip.len())
+                    .filter_map(|i| zip.name_for_index(i).map(|n| (n.to_string(), i)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(PartFs { pkg, source_order })
     }
 
     /// `PartFS.partBytes(name)` — raw bytes of a part.
@@ -208,17 +226,32 @@ impl PartFs {
         zip.start_file("_rels/.rels", options)?;
         zip.write_all(&pkg_rels_xml)?;
 
-        for (part_name, rels) in &self.pkg.part_rels {
-            let rels_path = part_name_to_rels_path(part_name);
-            let rels_xml = rels.to_xml()?;
-            zip.start_file(&rels_path, options)?;
-            zip.write_all(&rels_xml)?;
-        }
-
-        for (name, data) in &self.pkg.parts {
-            let zip_name = name.strip_prefix('/').unwrap_or(name);
-            zip.start_file(zip_name, options)?;
-            zip.write_all(data)?;
+        // Source entries keep their places; added ones follow, by name.
+        let mut entries: Vec<(Cow<str>, ZipEntry)> = self
+            .pkg
+            .part_rels
+            .iter()
+            .map(|(part, rels)| {
+                (
+                    Cow::Owned(part_name_to_rels_path(part)),
+                    ZipEntry::Rels(rels),
+                )
+            })
+            .chain(self.pkg.parts.iter().map(|(name, data)| {
+                let zip_name = name.strip_prefix('/').unwrap_or(name);
+                (Cow::Borrowed(zip_name), ZipEntry::Part(data))
+            }))
+            .collect();
+        entries.sort_by(|(a, _), (b, _)| {
+            let rank = |name: &str| self.source_order.get(name).copied().unwrap_or(usize::MAX);
+            (rank(a), a).cmp(&(rank(b), b))
+        });
+        for (name, entry) in &entries {
+            zip.start_file(name.as_ref(), options)?;
+            match entry {
+                ZipEntry::Rels(rels) => zip.write_all(&rels.to_xml()?)?,
+                ZipEntry::Part(data) => zip.write_all(data)?,
+            }
         }
 
         Ok(zip.finish()?.into_inner())
@@ -339,9 +372,19 @@ impl PartFs {
         rel_type: &str,
         target: &str,
     ) -> String {
-        self.pkg
-            .get_or_create_part_rels(&norm(source_part))
-            .add(rel_type, target)
+        self.part_rels_mut(source_part).add(rel_type, target)
+    }
+
+    /// A part's relationships, created empty when missing. Created through
+    /// `Relationships::new`, which numbers from `rId1` as Word does; the
+    /// dependency's `get_or_create_part_rels` defaults to `rId0`.
+    fn part_rels_mut(&mut self, source_part: &str) -> &mut Relationships {
+        use std::collections::hash_map::Entry;
+        // Not `or_default()`: the derived `Default` is the rId0 counter.
+        match self.pkg.part_rels.entry(norm(source_part)) {
+            Entry::Occupied(rels) => rels.into_mut(),
+            Entry::Vacant(slot) => slot.insert(Relationships::new()),
+        }
     }
 
     /// Add a relationship with `TargetMode="External"` (absolute-URI targets
@@ -353,7 +396,7 @@ impl PartFs {
         rel_type: &str,
         target: &str,
     ) -> String {
-        let rels = self.pkg.get_or_create_part_rels(&norm(source_part));
+        let rels = self.part_rels_mut(source_part);
         let id = rels.add(rel_type, target);
         if let Some(r) = rels.items.iter_mut().find(|r| r.id == id) {
             r.target_mode = Some("External".to_string());
@@ -363,7 +406,7 @@ impl PartFs {
 
     /// Mark an existing relationship of `source_part` as External (test aid).
     pub fn set_rel_target_mode_external(&mut self, source_part: &str, rel_id: &str) {
-        let rels = self.pkg.get_or_create_part_rels(&norm(source_part));
+        let rels = self.part_rels_mut(source_part);
         if let Some(r) = rels.items.iter_mut().find(|r| r.id == rel_id) {
             r.target_mode = Some("External".to_string());
         }
@@ -402,6 +445,34 @@ mod tests {
             z.finish().unwrap();
         }
         PartFs::open(&buf).unwrap()
+    }
+
+    #[test]
+    fn the_package_is_written_in_the_source_order_then_new_parts_by_name() {
+        // Parts and relationships live in hash maps, so the zip entries came
+        // out in a different order on every run: same content, other bytes.
+        let mut fs = package_with_header_rels();
+        fs.set_part("word/b.xml", b"<b/>".to_vec());
+        fs.set_part("word/a.xml", b"<a/>".to_vec());
+        let zip = fs.to_zip().unwrap();
+        let names: Vec<String> = ZipArchive::new(Cursor::new(&zip))
+            .unwrap()
+            .file_names()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "[Content_Types].xml",
+                "_rels/.rels",
+                "word/document.xml",
+                "word/header1.xml",
+                "word/_rels/header1.xml.rels",
+                "word/a.xml",
+                "word/b.xml",
+            ]
+        );
+        assert_eq!(fs.to_zip().unwrap(), zip);
     }
 
     #[test]
@@ -578,6 +649,25 @@ mod tests {
         assert_eq!(rels_path_to_part_name("_rels/.rels").as_deref(), Some(""));
         assert_eq!(rels_path_to_part_name("word/header1.xml"), None);
         assert_eq!(rels_path_to_part_name("word/media/odd.rels"), None);
+    }
+
+    /// A part's first relationship is `rId1`, as Word numbers them: the
+    /// dependency's `Default` relationships start from `rId0`.
+    #[test]
+    fn a_new_rels_part_starts_at_rid1() {
+        let mut fs = package_with_header_rels();
+        let id = fs.add_document_relationship(
+            "word/numbering.xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            "media/image1.gif",
+        );
+        assert_eq!(id, "rId1");
+        let external = fs.add_document_relationship_external(
+            "word/footer9.xml",
+            HYPERLINK,
+            "https://c.example/",
+        );
+        assert_eq!(external, "rId1");
     }
 
     #[test]

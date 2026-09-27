@@ -4,8 +4,9 @@
 
 //! M356 — OOXML property demos with high residual overlap keep flat free-mesh.
 //!
-//! bold_rstyle×vals: residual_j≈0.16, Word DXMDMD… (mesh title×section, match
-//! sample lines). M346 title peel + finalize fold thrash IDDMD… (−42 vs 27c).
+//! bold_rstyle×vals: residual_j≈0.16, Word meshes the revised opening into
+//! the original's second paragraph and matches the sample lines. M346 title
+//! peel + finalize fold thrash IDDMD… (−42 vs 27c).
 //! Only peel titles when residual vocab is sparse (vals×color residual_j≈0.04).
 
 use std::io::Read;
@@ -101,23 +102,21 @@ fn bold_rstyle_x_vals_flat_free_mesh_not_title_peel() {
     assert!(!paras.is_empty(), "expected body paras");
     let seq: String = paras.iter().map(|(c, _)| *c).collect();
 
-    // Word/27c: first contentful is pure-D (base title) then MIX, not a single
-    // ID title-swap of both full titles (M346 peel + finalize fold thrash).
-    let first = &paras[0];
-    assert_eq!(
-        first.0, 'D',
-        "first para must be pure-D base title (Word DX…), not ID title-swap; seq={seq}"
+    // Word (wr0926 reference): the revised opening "This document
+    // demonstrates all valid" lands in the deleted base title, whose mark is
+    // deleted, and the rest streams into the original's "A) ST_OnOff values
+    // for <w:b> on a run:", which keeps "ST_OnOff values for". Pairing the
+    // two titles instead (a title swap) left that paragraph wholly deleted.
+    let (first, second) = (&paras[0], &paras[1]);
+    assert!(
+        first.1.contains("This document demonstrates all valid")
+            && first.1.contains("OOXML w:b (bold) tester")
+            && !first.1.contains("Each line shows"),
+        "the base title should take only the revised opening; seq={seq} first={first:?}"
     );
     assert!(
-        first.1.to_ascii_lowercase().contains("ooxml")
-            || first.1.to_ascii_lowercase().contains("bold"),
-        "first pure-D should be base rstyle title; got {:?}",
-        first.1
-    );
-    // Must not open with ID (ins full next title + del full base title).
-    assert!(
-        !seq.starts_with("MD") && !seq.starts_with('M') || seq.starts_with('D'),
-        "must not start with title MIX/ID swap; seq={seq}"
+        second.0 == 'M' && second.1.contains("ST_OnOff values for"),
+        "the original's second paragraph should keep its words; seq={seq} second={second:?}"
     );
     // Sample lines mesh as MD/E (delete leading dash, match body).
     let n_md_or_e = paras

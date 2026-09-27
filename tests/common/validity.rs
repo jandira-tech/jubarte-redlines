@@ -50,6 +50,7 @@ pub fn check_word_valid_package(bytes: &[u8]) -> ValidityReport {
     };
     check_content_types_and_xml(&pkg, &mut report);
     check_relationship_integrity(&pkg, &mut report);
+    check_picture_bullets(&pkg, &mut report);
     check_revision_and_drawing_ids(&pkg, &mut report);
     check_para_text_id_bounds(&pkg, &mut report);
     check_del_text_under_del(&pkg, &mut report);
@@ -158,6 +159,33 @@ fn check_relationship_integrity(pkg: &PartFs, report: &mut ValidityReport) {
                     break;
                 }
             }
+        }
+    }
+}
+
+/// Every `w:lvlPicBulletId` names a `w:numPicBullet` of the same numbering
+/// part: Word refuses the whole package otherwise ("document loaded empty").
+fn check_picture_bullets(pkg: &PartFs, report: &mut ValidityReport) {
+    let Some(xml) = pkg.part_string("word/numbering.xml") else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return;
+    };
+    let defined: HashSet<&str> = dom
+        .elements(root, Some(&W::name("numPicBullet")))
+        .into_iter()
+        .filter_map(|b| dom.attribute(b, &W::name("numPicBulletId")))
+        .collect();
+    for pic in dom.descendants(root, Some(&W::name("lvlPicBulletId"))) {
+        if let Some(id) = dom.attribute(pic, &W::val())
+            && !defined.contains(id)
+        {
+            report.fail(format!(
+                "lvlPicBulletId '{id}' names no numPicBullet in word/numbering.xml"
+            ));
         }
     }
 }

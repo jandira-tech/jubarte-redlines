@@ -6,7 +6,9 @@
 
 pub mod atomize;
 pub mod atoms;
+pub mod bookmarks;
 pub mod comments;
+pub mod cross_para;
 pub mod finalize;
 pub mod fixups;
 pub mod footnotes;
@@ -149,6 +151,9 @@ pub fn compare_bodies_faithful_with_notes(
     // pgNumType/formProt/bidi/… changes don't yet emit a record. Extend the
     // list when a benchmark pair shows Word recording one of those.
     const SECT_GEOMETRY: [&str; 6] = ["type", "pgSz", "pgMar", "cols", "titlePg", "docGrid"];
+    // M92 guard: the revised document's own final-paragraph spacing, read
+    // before atomize consumes body2.
+    let revised_tail_spacing = finalize::last_body_para_spacing(dom, body2);
     let saved_sectpr: Option<NodeId> = {
         let last_sect = |dom: &mut Dom, body: NodeId| {
             dom.element(body, &W::sect_pr())
@@ -157,8 +162,12 @@ pub fn compare_bodies_faithful_with_notes(
         let sp1 = last_sect(dom, body1);
         // geometry source: revised doc in word mode (falling back to the base
         // when doc B has no sectPr), base doc in PowerTools-faithful mode.
+        // A revised document without any sectPr opens in Word with Word's
+        // default section, and Word's redline makes that section live with
+        // the base's geometry in a sectPrChange (sd_1480 x missing_sectpr:
+        // Letter, one-inch margins, one column over the base's two).
         let sp = if settings.merge_replaced_paragraphs {
-            last_sect(dom, body2).or(sp1)
+            last_sect(dom, body2).or_else(|| sp1.map(|base| word_default_sectpr(dom, base)))
         } else {
             sp1
         };
@@ -221,8 +230,8 @@ pub fn compare_bodies_faithful_with_notes(
             // fix_up_revision_ids), author/date here.
             // Fallback semantics (deliberate asymmetry): body1 without a
             // final sectPr → no base geometry exists → nothing to record;
-            // body2 without one → `sp` collapsed to sp1 above, so
-            // `old_sp != sp` correctly short-circuits the identity case.
+            // body2 without one → `sp` is Word's default section above, so
+            // the base geometry is recorded whenever it differs from it.
             if settings.merge_replaced_paragraphs
                 && let Some(old_sp) = sp1
                 && old_sp != sp
@@ -487,13 +496,37 @@ pub fn compare_bodies_faithful_with_notes(
     // merge_replaced_paragraphs itself. Splitting these into independent
     // knobs would change Word-mode semantics; keep them coupled until a
     // deliberate settings redesign.
+    // A wholesale replacement that kept the story-final mark (both documents'
+    // final empty paragraphs paired): the trailing live empty is Word's, not
+    // B's leftover (see M448 below).
+    let mut story_final_paired = false;
     let mut seqs = if settings.merge_replaced_paragraphs {
-        lcs::detect_unrelated_sources_word_mode(dom, &cus1, &cus2, settings)
-            .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
+        match lcs::detect_unrelated_sources_word_mode(dom, &cus1, &cus2, settings) {
+            Some((seqs, paired)) => {
+                story_final_paired = paired;
+                seqs
+            }
+            None => lcs::lcs(dom, cus1, cus2, settings),
+        }
     } else {
         lcs::detect_unrelated_sources(&cus1, &cus2)
             .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
     };
+    // Word pairs the two final marks behind a trailing deletion.
+    if settings.merge_replaced_paragraphs {
+        lcs::pair_story_final_marks(dom, &mut seqs);
+        // Word streams a run of changed body paragraphs as one word+mark
+        // sequence; header and footer stories keep the paragraph pairing.
+        if dom.name_is(body1, &W::body()) {
+            cross_para::restream_cross_paragraph_regions(dom, &mut seqs, settings);
+        }
+    }
+    // Both documents ending on an empty paragraph pair those final marks
+    // whatever the region before them held (list_with_table_break ×
+    // broken_complex_list keeps its trailing empty after the deleted "TWO").
+    if settings.merge_replaced_paragraphs && !story_final_paired {
+        story_final_paired = final_empty_paragraphs_paired(dom, &seqs);
+    }
     // Word skip-ahead moves: Equal after pure A-only deletes → ins early +
     // del late so detect_moves can emit moveTo/moveFrom (page-order parity).
     moves::promote_skip_ahead_equals(&mut seqs, settings);
@@ -653,7 +686,19 @@ pub fn compare_bodies_faithful_with_notes(
     finalize::move_paragraph_properties_first(dom, root);
     // Word-mode: drop body spacing that only restates demo pPrDefault (line=276).
     if settings.merge_replaced_paragraphs {
-        finalize::strip_redundant_demo_default_spacing(dom, root);
+        let default_line = |dom: &Dom, r: NodeId| {
+            dom.attribute(r, &crate::namespaces::PT::default_line())
+                .map(str::to_string)
+        };
+        let lines = (
+            default_line(dom, source_root1),
+            default_line(dom, source_root2),
+        );
+        finalize::strip_redundant_demo_default_spacing(
+            dom,
+            root,
+            (lines.0.as_deref(), lines.1.as_deref()),
+        );
         // M367: pure-I pStyle=Normal + bidi=0 restates defaults (shape_group);
         // Word omits them on pure-I mark pPr (sdts×shape −4.3 LO thrash).
         finalize::strip_redundant_normal_pstyle_and_bidi(dom, root);
@@ -672,7 +717,13 @@ pub fn compare_bodies_faithful_with_notes(
         // file_69: final empty pure-del → bare trailing empty (Word).
         finalize::strip_trailing_empty_pure_del_mark(dom, root);
         // M92: trailing empty live spacing → pPrChange (file_30).
-        finalize::trailing_empty_spacing_to_pprchange(dom, root, settings, &mut id);
+        finalize::trailing_empty_spacing_to_pprchange(
+            dom,
+            root,
+            revised_tail_spacing.as_deref(),
+            settings,
+            &mut id,
+        );
         // M83a: drop B's trailing empty pure-ins before sectPr (file_23).
         finalize::strip_trailing_empty_pure_ins(dom, root);
         // M341: fold whitespace pure-I into pure-D **before** M85a strip so
@@ -713,7 +764,12 @@ pub fn compare_bodies_faithful_with_notes(
         // M393: coalesce collapses pure-I-all then pure-D-all for list pairs;
         // interleave Word cluster shape **before** merge free-meshes labels.
         finalize::interleave_list_cluster_after_coalesce(dom, root);
-        finalize::merge_replaced_paragraphs(dom, root, &settings.author_for_revisions);
+        finalize::merge_replaced_paragraphs_in(
+            dom,
+            root,
+            &settings.author_for_revisions,
+            story_final_paired,
+        );
         // M159: restore short pure-D before longer pure-I after merge reorder
         // (text_highlight×times Word MIX|DEL|INS|MIX).
         finalize::restore_short_del_before_long_ins(dom, root);
@@ -725,18 +781,35 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::drop_sectpr_from_deleted_marks(dom, root, &genuine_mid_sectprs);
         finalize::drop_hoisted_sectpr_artifacts(dom, root, &genuine_mid_sectprs);
         finalize::mark_fully_revised_rows(dom, root, settings, &mut id);
-        finalize::synthesize_table_cell_margins(dom, root);
+        let has_default_table_style = |dom: &Dom, r: NodeId| {
+            dom.attribute(r, &crate::namespaces::PT::has_default_table_style()) == Some("1")
+        };
+        let default_table_styles = (
+            has_default_table_style(dom, source_root1),
+            has_default_table_style(dom, source_root2),
+        );
+        finalize::synthesize_table_cell_margins(dom, root, default_table_styles);
         finalize::ensure_default_page_size(dom, root);
         // pPr-only multi-pass peels: warm pure-del/mixed once (no body structure
         // mutation inside — structure folds re-classify after this block).
         finalize::begin_para_classification_cache();
         // M83b/M87 after merge_replaced — last pure-del layout → pPrChange.
-        finalize::last_pure_del_spacing_to_pprchange(dom, root, settings, &mut id);
+        // A paired story-final mark already carries the revised properties
+        // live and the original's in pPrChange.
+        if !story_final_paired {
+            finalize::last_pure_del_spacing_to_pprchange(dom, root, settings, &mut id);
+        }
         // M228+M226+M231: one body walk — mid pure-D spacing promote, no-op
         // equal-spacing pPrChange strip, default jc=left strip.
         finalize::cleanup_spacing_and_default_jc(dom, root);
         // M92 after M69 strip path may leave empty with live spacing.
-        finalize::trailing_empty_spacing_to_pprchange(dom, root, settings, &mut id);
+        finalize::trailing_empty_spacing_to_pprchange(
+            dom,
+            root,
+            revised_tail_spacing.as_deref(),
+            settings,
+            &mut id,
+        );
         // M98b: mixed+empty trailing — park spacing on empty (file_167).
         finalize::mixed_spacing_to_following_empty(dom, root, settings, &mut id);
         // M221: MIX Heading spacing → last pure-D residual (green_underline×heading_1).
@@ -775,15 +848,23 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
         // M438: title-page pure-I e×6 DD E — relocate last empty pure-I after
         // pure-D as bare trailing empty (doc_with_spaces×spacing Word shape).
-        finalize::relocate_title_page_last_empty_after_pure_dels(dom, root);
+        // The paired story-final mark is already that trailing paragraph.
+        if !story_final_paired {
+            finalize::relocate_title_page_last_empty_after_pure_dels(dom, root);
+        }
         // M440: short list pure-I label × empty pure-D → MIX del mark (list_spacer).
         finalize::fold_short_list_label_into_empty_pure_del(dom, root);
         // M442: pure-D with pPrChange(numPr) but no live numPr → promote live
         // numPr from first pure-I (list_spacer residual 14.11).
         finalize::promote_live_numpr_on_pure_d_from_pprchange(dom, root);
-        // M448: pure-I-dominant body + pure-D residual → drop trailing bare
-        // empty EQ (diff_after8×doc_with_spacing Word ends IDD not IDDE).
-        finalize::strip_trailing_bare_empty_after_pure_i_dominant(dom, root);
+        // M448: pure-I-dominant body + pure-D residual → drop a trailing bare
+        // empty EQ. Not when the story-final marks are paired: Word then ends
+        // on the revised final paragraph, empty (doc_with_spaces ×
+        // doc_with_spacing, IDDE) or holding the original's deleted last
+        // paragraph (diff_after8 × doc_with_spacing, IDD).
+        if !story_final_paired {
+            finalize::strip_trailing_bare_empty_after_pure_i_dominant(dom, root);
+        }
         // M469: head title MIX with SHORT ins title + LONG unrelated del →
         // split del into a style-less MARK-DEL paragraph (rfonts_rstyle ×
         // sd_2672_rtl_table: Word renders the deleted opening at body size).
@@ -809,12 +890,12 @@ pub fn compare_bodies_faithful_with_notes(
         // M460: bookended MIX (EQ `This `…`.`) free-mesh mid shared sig token
         // inside the single ins+del pair (right_align_bold "right").
         finalize::free_mesh_bookended_ins_del(dom, root);
-        // M461: pure-I "This … text …" free-mesh EQ bookends when following
-        // pure-D/MIX del shares this+text (center_aligned_bold / right_align).
-        finalize::free_mesh_pure_i_this_text(dom, root);
-        // M462: coverage-gated wholesale body MIX free-mesh (after M461 so
-        // residual A del still wholesale against B body2). M459 thrash guards
-        // via shared_sig/min_sig ≥ 0.35 + eligible-token LCS.
+        // M462: coverage-gated wholesale body MIX free-mesh. M459 thrash
+        // guards via shared_sig/min_sig ≥ 0.35 + eligible-token LCS.
+        // (M461, which turned a pure-I paragraph's "This"/"text" into kept
+        // text while the next paragraph still deleted them, is gone: rejecting
+        // gave "This text This document …". The cross-paragraph stream keeps
+        // those words where Word does.)
         finalize::free_mesh_wholesale_body_mix(dom, root);
         // M463 (fold bare boiler EQ between consecutive ins, and attach a
         // trailing bare `.` onto the last ins/del) is deliberately absent: it
@@ -1035,6 +1116,48 @@ impl Default for WmlComparerSettings {
     }
 }
 
+/// Word's default section, as Word writes it for a document that has no
+/// `w:sectPr`: Letter, one-inch margins, half-inch header and footer, one
+/// column, 18pt line pitch. Word states the one column's `w:num` only when
+/// the base section `base` set a column count (pool p0225 vs p0174/p0382).
+fn word_default_sectpr(dom: &mut Dom, base: NodeId) -> NodeId {
+    use crate::namespaces::W;
+    let sp = dom.new_element(W::sect_pr());
+    let children: [(&str, &[(&str, &str)]); 5] = [
+        ("type", &[("val", "nextPage")]),
+        ("pgSz", &[("w", "12240"), ("h", "15840")]),
+        (
+            "pgMar",
+            &[
+                ("top", "1440"),
+                ("right", "1440"),
+                ("bottom", "1440"),
+                ("left", "1440"),
+                ("header", "720"),
+                ("footer", "720"),
+                ("gutter", "0"),
+            ],
+        ),
+        ("cols", &[("space", "720")]),
+        ("docGrid", &[("linePitch", "360")]),
+    ];
+    for (name, attrs) in children {
+        let el = dom.new_element(W::name(name));
+        for (an, av) in attrs {
+            dom.set_attribute_value(el, &W::name(an), Some(av));
+        }
+        dom.add(sp, el);
+    }
+    let num = W::name("num");
+    if let Some(cols) = dom.element(base, &W::name("cols"))
+        && dom.attribute(cols, &num).is_some()
+        && let Some(live) = dom.element(sp, &W::name("cols"))
+    {
+        dom.set_attribute_value(live, &num, Some("1"));
+    }
+    sp
+}
+
 /// Optional log holder used by the comparison pipeline.
 pub struct CompareContext {
     /// `settings`.
@@ -1051,4 +1174,26 @@ impl CompareContext {
             log: ComparisonLog::new(),
         }
     }
+}
+
+/// The last sequence pairs the two stories' final paragraphs, both empty.
+fn final_empty_paragraphs_paired(dom: &Dom, seqs: &[atoms::CorrelatedSequence]) -> bool {
+    use crate::namespaces::W;
+    use atoms::ComparisonUnit;
+    let Some(last) = seqs.last() else {
+        return false;
+    };
+    let empty_final = |units: Option<&[ComparisonUnit]>| {
+        units
+            .and_then(<[ComparisonUnit]>::last)
+            .and_then(|u| lcs::story_closing_paragraph(dom, u))
+            .is_some_and(|p| {
+                dom.descendants(p, Some(&W::t()))
+                    .iter()
+                    .all(|&t| dom.value_str(t).trim().is_empty())
+            })
+    };
+    last.correlation_status == CorrelationStatus::Equal
+        && empty_final(last.com_units_1.as_deref())
+        && empty_final(last.com_units_2.as_deref())
 }

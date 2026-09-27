@@ -294,6 +294,16 @@ fn w10_dangling_numid_gets_synthesized_numbering_part() {
         "abstractNum definition present: {nx}"
     );
     assert!(nx.contains("decimal"), "decimal multilevel default: {nx}");
+    // Word's synthesized levels hang the number a full 720 twips with a num
+    // tab at the text indent (bullet_list_bold_demo vs bullet_list_demo:
+    // Word and docxodus both put "1." at the margin; hanging 360 indented it).
+    assert!(
+        nx.contains(
+            "<w:pPr><w:tabs><w:tab w:val=\"num\" w:pos=\"720\" /></w:tabs>\
+             <w:ind w:left=\"720\" w:hanging=\"720\" /></w:pPr>"
+        ),
+        "level 0 carries Word's num tab and 720 hanging: {nx}"
+    );
 
     // package wiring: content type + document rel
     assert_eq!(

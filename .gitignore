@@ -75,3 +75,4 @@ tools/validate-docx/obj/
 tools/mini_bench/work/
 tools/mini_bench/__pycache__/
 **/__pycache__/
+Claude outputs/

@@ -15,6 +15,8 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read, Write};
 
 use jubarte::document_comparer::compare_documents;
+use jubarte::namespaces::W;
+use jubarte::xmllinq::Dom;
 
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -362,4 +364,232 @@ fn footnote_pictures_from_the_revised_document_carry_one_image_part() {
         types.contains(&format!("/{image}\" ContentType=\"image/png\"")),
         "{types}"
     );
+}
+
+const V_NS: &str = "urn:schemas-microsoft-com:vml";
+const NUMBERING_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
+
+/// A numbering part: optional picture bullet 0 drawn from relationship `rId1`,
+/// and abstractNum 0 / num 1 whose first level is either that picture bullet
+/// or a decimal number.
+fn numbering(picture_bullet: bool) -> String {
+    let (pic, lvl) = if picture_bullet {
+        (
+            format!(
+                r#"<w:numPicBullet w:numPicBulletId="0"><w:pict><v:shape xmlns:v="{V_NS}" style="width:9pt;height:9pt"><v:imagedata r:id="rId1"/></v:shape></w:pict></w:numPicBullet>"#
+            ),
+            r#"<w:numFmt w:val="bullet"/><w:lvlText w:val=""/><w:lvlPicBulletId w:val="0"/>"#,
+        )
+    } else {
+        (
+            String::new(),
+            r#"<w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>"#,
+        )
+    };
+    format!(
+        r#"<w:numbering xmlns:w="{W_NS}" xmlns:r="{REL_NS}">{pic}<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>{lvl}<w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+    )
+}
+
+/// A document with a numbering part (+ its picture bullet's image when given).
+fn listed_docx(body: &str, picture_bullet: Option<&str>) -> Vec<u8> {
+    let numbering = numbering(picture_bullet.is_some());
+    let rels = format!(
+        r#"<?xml version="1.0"?><Relationships xmlns="{PKG_REL_NS}"><Relationship Id="rId1" Type="{REL_NS}/image" Target="media/image1.gif"/></Relationships>"#
+    );
+    let mut extra = vec![("word/numbering.xml", numbering.as_str())];
+    let mut overrides = vec![("word/numbering.xml", NUMBERING_CT)];
+    if let Some(gif) = picture_bullet {
+        extra.push(("word/_rels/numbering.xml.rels", &rels));
+        extra.push(("word/media/image1.gif", gif));
+        overrides.push(("word/media/image1.gif", "image/gif"));
+    }
+    build_docx(
+        body,
+        &[("rId7", "numbering", "numbering.xml")],
+        &extra,
+        &overrides,
+    )
+}
+
+fn list_item(text: &str) -> String {
+    format!(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+    )
+}
+
+/// `lvlPicBulletId` values of the output numbering part that name no
+/// `numPicBullet`, plus the picture each defined bullet draws (bullet id →
+/// image bytes).
+fn picture_bullets(docx: &[u8]) -> (Vec<String>, HashMap<String, String>) {
+    let numbering = read_part(docx, "word/numbering.xml").expect("numbering part");
+    let rels = read_part(docx, "word/_rels/numbering.xml.rels").unwrap_or_default();
+    let attr = |s: &str, name: &str| {
+        s.split(&format!("{name}=\""))
+            .nth(1)
+            .and_then(|t| t.split('"').next())
+            .map(str::to_string)
+    };
+    let mut images = HashMap::new();
+    for bullet in numbering.split("<w:numPicBullet ").skip(1) {
+        let bullet = bullet.split("</w:numPicBullet>").next().unwrap();
+        let id = attr(bullet, "w:numPicBulletId").expect("bullet id");
+        let rid = attr(bullet, "r:id").expect("bullet image rId");
+        let target = rels
+            .split("<Relationship ")
+            .find(|r| attr(r, "Id").as_deref() == Some(rid.as_str()))
+            .and_then(|r| attr(r, "Target"))
+            .expect("bullet image relationship");
+        images.insert(
+            id,
+            read_part(docx, &format!("word/{target}")).expect("bullet image"),
+        );
+    }
+    let undefined = numbering
+        .split("<w:lvlPicBulletId ")
+        .skip(1)
+        .filter_map(|l| attr(l, "w:val"))
+        .filter(|id| !images.contains_key(id))
+        .collect();
+    (undefined, images)
+}
+
+/// B's list draws a picture bullet the original never had. The merged
+/// numbering copied B's abstractNum (lvlPicBulletId 0) without B's
+/// `numPicBullet`, and Word refused the package ("document loaded empty";
+/// italic_rstyle_combos × paragraph_indent_normal_styles). Word's redline
+/// carries the bullet and its image.
+#[test]
+fn revised_picture_bullets_travel_with_their_list() {
+    let a = listed_docx(&list_item("Shared item."), None);
+    let b = listed_docx(
+        &format!("{}{}", list_item("Shared item."), list_item("New item.")),
+        Some("GIFB"),
+    );
+    let out = compare_documents(&a, &b, "Test").expect("compare ok");
+    let (undefined, images) = picture_bullets(&out);
+    assert_eq!(undefined, Vec::<String>::new());
+    assert_eq!(images.values().collect::<Vec<_>>(), vec!["GIFB"]);
+    assert_eq!(dangling_refs(&out), Vec::<String>::new());
+}
+
+/// Both documents define picture bullet 0 on relationship `rId1`, with
+/// different images. B's bullet takes a fresh id and must keep drawing B's
+/// image, not the original's same-id relationship.
+#[test]
+fn colliding_picture_bullets_keep_their_own_images() {
+    let a = listed_docx(&list_item("Shared item."), Some("GIFA"));
+    let mut b = listed_docx(
+        &format!("{}{}", list_item("Shared item."), list_item("New item.")),
+        Some("GIFB"),
+    );
+    // B's list differs from A's (a wider indent), so it is copied, not merged.
+    let mut pkg = jubarte::opc::PartFs::open(&b).unwrap();
+    let nb = pkg.part_string("word/numbering.xml").unwrap();
+    pkg.set_part(
+        "word/numbering.xml",
+        nb.replace("w:left=\"720\"", "w:left=\"1080\"").into_bytes(),
+    );
+    b = pkg.to_zip().unwrap();
+    let out = compare_documents(&a, &b, "Test").expect("compare ok");
+    let (undefined, images) = picture_bullets(&out);
+    assert_eq!(undefined, Vec::<String>::new());
+    assert_eq!(images.len(), 2);
+    let mut dom = Dom::new();
+    let numbering = read_part(&out, "word/numbering.xml").unwrap();
+    let doc = dom.parse_xdocument(&numbering);
+    let root = dom.root(doc).unwrap();
+    let lists = dom.elements(root, Some(&W::name("abstractNum")));
+    assert_eq!(lists.len(), 2);
+    let mut revised_list = None;
+    for list in lists {
+        let levels = dom.elements(list, Some(&W::name("lvl")));
+        assert_eq!(levels.len(), 1);
+        for level in levels {
+            let indent = dom.descendants(level, Some(&W::name("ind")))[0];
+            let expected = match dom.attribute(indent, &W::name("left")) {
+                Some("720") => "GIFA",
+                Some("1080") => {
+                    revised_list = dom.attribute(list, &W::name("abstractNumId"));
+                    "GIFB"
+                }
+                other => panic!("unexpected list indent: {other:?}"),
+            };
+            let bullet = dom.element(level, &W::name("lvlPicBulletId")).unwrap();
+            let id = dom.attribute(bullet, &W::val()).unwrap();
+            assert_eq!(images.get(id).map(String::as_str), Some(expected));
+        }
+    }
+    let revised_list = revised_list.expect("revised abstract list").to_string();
+    let document = read_part(&out, "word/document.xml").unwrap();
+    let doc = dom.parse_xdocument(&document);
+    let paragraph = dom
+        .descendants(doc, Some(&W::p()))
+        .into_iter()
+        .find(|&p| dom.value(p) == "New item.")
+        .expect("revised paragraph");
+    let ppr = dom.element(paragraph, &W::p_pr()).unwrap();
+    let numpr = dom.element(ppr, &W::name("numPr")).unwrap();
+    let num_id = dom.element(numpr, &W::name("numId")).unwrap();
+    let num_id = dom.attribute(num_id, &W::val()).unwrap();
+    let num = dom
+        .elements(root, Some(&W::name("num")))
+        .into_iter()
+        .find(|&n| dom.attribute(n, &W::name("numId")) == Some(num_id))
+        .unwrap();
+    let abstract_id = dom.element(num, &W::name("abstractNumId")).unwrap();
+    assert_eq!(
+        dom.attribute(abstract_id, &W::val()),
+        Some(revised_list.as_str())
+    );
+    assert_eq!(dangling_refs(&out), Vec::<String>::new());
+}
+
+#[test]
+fn revised_picture_bullets_sharing_an_image_reuse_its_relationship() {
+    let a = listed_docx(&list_item("Shared item."), Some("GIFA"));
+    let b = listed_docx(&list_item("New item."), Some("GIFB"));
+    let mut pkg = jubarte::opc::PartFs::open(&b).unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&pkg.part_string("word/numbering.xml").unwrap());
+    let root = dom.root(doc).unwrap();
+    let bullet = dom.element(root, &W::name("numPicBullet")).unwrap();
+    let copy = dom.clone_subtree(bullet);
+    dom.set_attribute_value(copy, &W::name("numPicBulletId"), Some("1"));
+    dom.add_before_self(bullet, copy);
+    let list = dom.element(root, &W::name("abstractNum")).unwrap();
+    let level = dom.element(list, &W::name("lvl")).unwrap();
+    let copy = dom.clone_subtree(level);
+    dom.set_attribute_value(copy, &W::name("ilvl"), Some("1"));
+    let pic = dom.element(copy, &W::name("lvlPicBulletId")).unwrap();
+    dom.set_attribute_value(pic, &W::val(), Some("1"));
+    dom.add_after_self(level, copy);
+    pkg.set_part(
+        "word/numbering.xml",
+        dom.serialize_element(root).into_bytes(),
+    );
+
+    let out = compare_documents(&a, &pkg.to_zip().unwrap(), "Test").expect("compare ok");
+    let (undefined, images) = picture_bullets(&out);
+    assert!(undefined.is_empty());
+    assert_eq!(images.values().filter(|image| *image == "GIFB").count(), 2);
+    let pkg = jubarte::opc::PartFs::open(&out).unwrap();
+    let rels = pkg.read_rels_for("word/numbering.xml").unwrap();
+    assert_eq!(
+        rels.items
+            .iter()
+            .filter(|r| r.rel_type.ends_with("/image"))
+            .count(),
+        2
+    );
+    assert_eq!(
+        pkg.parts()
+            .iter()
+            .filter(|p| p.starts_with("word/media/"))
+            .count(),
+        2
+    );
+    assert_eq!(dangling_refs(&out), Vec::<String>::new());
+    assert_eq!(unresolved_targets(&out), Vec::<String>::new());
 }

@@ -29,12 +29,14 @@ thread_local! {
     /// vocabulary is bounded, so the pool saturates quickly rather than growing
     /// without bound.
     ///
-    /// Uses the default (SipHash) hasher deliberately: a hand-rolled FNV-1a was
-    /// tried and measured a +16% wall regression — FNV's weak low-bit avalanche
-    /// clusters under std's low-bit bucket masking for these short, similar names,
-    /// degrading the pool. Default hashing keeps the measured −4% wall win.
-    static STR_POOL: std::cell::RefCell<std::collections::HashSet<Arc<str>>> =
-        std::cell::RefCell::new(std::collections::HashSet::new());
+    /// Hashed with foldhash: a hand-rolled FNV-1a measured a +16% wall
+    /// regression — its weak low-bit avalanche clusters under the low-bit
+    /// bucket masking for these short, similar names — while SipHash was 11%
+    /// of a one-page conversion (samply, fixtures_500 0081ba58). foldhash
+    /// mixes the low bits and costs a fraction of SipHash; fixed seed, so
+    /// runs stay reproducible.
+    static STR_POOL: std::cell::RefCell<std::collections::HashSet<Arc<str>, foldhash::fast::FixedState>> =
+        std::cell::RefCell::new(std::collections::HashSet::with_hasher(foldhash::fast::FixedState::default()));
 }
 
 /// Cap the intern pool so a pathological host (adversarial inputs) cannot grow
@@ -545,6 +547,21 @@ impl Dom {
         filter: Option<&XName>,
         mut visit: impl FnMut(NodeId),
     ) {
+        self.find_descendant_element(id, filter, |c| {
+            visit(c);
+            false
+        });
+    }
+
+    /// The first descendant element, in [`descendants`] order, that passes
+    /// `filter` and `pred`; the walk stops there instead of listing the
+    /// whole subtree first.
+    pub fn find_descendant_element(
+        &self,
+        id: NodeId,
+        filter: Option<&XName>,
+        mut pred: impl FnMut(NodeId) -> bool,
+    ) -> Option<NodeId> {
         // Iterative stack avoids deep recursion on large bodies.
         let mut stack: Vec<(NodeId, usize)> = vec![(id, 0)];
         while let Some((node, i)) = stack.last_mut() {
@@ -566,11 +583,12 @@ impl Dom {
                 None => true,
                 Some(f) => self.name_is(c, f),
             };
-            if matches {
-                visit(c);
+            if matches && pred(c) {
+                return Some(c);
             }
             stack.push((c, 0));
         }
+        None
     }
 
     /// `DescendantNodes()` — all descendant nodes (not just elements), pre-order.

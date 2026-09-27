@@ -458,6 +458,63 @@ fn has_relationship_attribute(xml: &str) -> bool {
     })
 }
 
+/// Carry `src_part`'s relationship `rid` (when its type `fits`) onto `part` of
+/// `dest` under a fresh id: external targets verbatim, internal targets copied
+/// under a collision-proof name. Images reuse an existing internal relationship
+/// when its target has the same bytes and content type. Returns the id, or `None` when the source
+/// has no such relationship or its target part.
+pub fn carry_relationship(
+    dest: &mut PartFs,
+    part: &str,
+    src: &PartFs,
+    src_part: &str,
+    rid: &str,
+    fits: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let row = src
+        .read_rels_for(src_part)?
+        .items
+        .iter()
+        .find(|r| r.id == rid && fits(&r.rel_type))?
+        .clone();
+    let external = row.target_mode.as_deref() == Some("External")
+        || is_external_relationship(&row.rel_type, &row.target);
+    if external {
+        return Some(dest.add_document_relationship_external(part, &row.rel_type, &row.target));
+    }
+    let target_part = src.resolve_rel_target(src_part, &row.target);
+    let bytes = src.part_bytes(&target_part)?.to_vec();
+    // Distinct picture bullets can share one source image. Reuse the carried
+    // relationship before allocating another media part for that image.
+    if row.rel_type.ends_with("/image")
+        && let Some(existing) = dest.read_rels_for(part).and_then(|rels| {
+            rels.items.iter().find(|r| {
+                if r.rel_type != row.rel_type
+                    || r.target_mode.as_deref() == Some("External")
+                    || is_external_relationship(&r.rel_type, &r.target)
+                {
+                    return false;
+                }
+                let target = dest.resolve_rel_target(part, &r.target);
+                dest.part_bytes(&target) == Some(bytes.as_slice())
+                    && dest.content_type_for(&target) == src.content_type_for(&target_part)
+            })
+        })
+    {
+        return Some(existing.id.clone());
+    }
+    let new_uri = dest_uri_for_reconciled_part(dest, &target_part, &bytes);
+    if let Some(ct) = src.content_type_for(&target_part) {
+        dest.add_content_type_override(&new_uri, &ct);
+    }
+    dest.set_part(&new_uri, bytes);
+    Some(dest.add_document_relationship(
+        part,
+        &row.rel_type,
+        &crate::opc::relative_rel_target(part, &new_uri),
+    ))
+}
+
 fn reconcile_one_part(dest: &mut PartFs, part: &str, a: &PartFs, b: &PartFs) {
     let Some(xml) = dest.part_string(part) else {
         return;
@@ -500,33 +557,7 @@ fn reconcile_one_part(dest: &mut PartFs, part: &str, a: &PartFs, b: &PartFs) {
                 Some(id) => Some(id.clone()),
                 None => {
                     let carried = sources.iter().find_map(|(src, src_part)| {
-                        let row = src
-                            .read_rels_for(src_part)?
-                            .items
-                            .iter()
-                            .find(|r| r.id == rid && fits(&r.rel_type))?
-                            .clone();
-                        let external = row.target_mode.as_deref() == Some("External")
-                            || is_external_relationship(&row.rel_type, &row.target);
-                        if external {
-                            return Some(dest.add_document_relationship_external(
-                                part,
-                                &row.rel_type,
-                                &row.target,
-                            ));
-                        }
-                        let target_part = src.resolve_rel_target(src_part, &row.target);
-                        let bytes = src.part_bytes(&target_part)?.to_vec();
-                        let new_uri = dest_uri_for_reconciled_part(dest, &target_part, &bytes);
-                        if let Some(ct) = src.content_type_for(&target_part) {
-                            dest.add_content_type_override(&new_uri, &ct);
-                        }
-                        dest.set_part(&new_uri, bytes);
-                        Some(dest.add_document_relationship(
-                            part,
-                            &row.rel_type,
-                            &crate::opc::relative_rel_target(part, &new_uri),
-                        ))
+                        carry_relationship(dest, part, src, src_part, &rid, fits)
                     });
                     if let Some(id) = &carried {
                         minted.insert(key, id.clone());

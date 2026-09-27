@@ -333,3 +333,148 @@ fn renumbered_same_text_comments_prefer_b_not_double_union() {
         "carried ids must come from B: {ids:?} not subset of {b_ids:?}"
     );
 }
+
+/// A document whose first paragraph carries comment 1 as a point comment: a
+/// `w:commentReference` with no `commentRangeStart`/`commentRangeEnd`.
+fn point_comment_docx(text: &str) -> Vec<u8> {
+    use std::io::Write;
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let doc = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="{w}"><w:body><w:p><w:r><w:t>{text}</w:t></w:r><w:r><w:commentReference w:id="1"/></w:r></w:p><w:p><w:r><w:t>Tail paragraph.</w:t></w:r></w:p><w:sectPr/></w:body></w:document>"#
+    );
+    let comments = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="{w}"><w:comment w:id="1" w:author="R" w:initials="R"><w:p><w:r><w:t>Note</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    let parts = [
+        (
+            "[Content_Types].xml",
+            r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>"#.to_string(),
+        ),
+        (
+            "_rels/.rels",
+            r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#.to_string(),
+        ),
+        (
+            "word/_rels/document.xml.rels",
+            r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/></Relationships>"#.to_string(),
+        ),
+        ("word/document.xml", doc),
+        ("word/comments.xml", comments),
+    ];
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut z = zip::ZipWriter::new(&mut buf);
+        for (name, body) in parts {
+            z.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(body.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+/// A point comment survives the redline right after the text it follows, as
+/// the empty range Word's redline writes for it (comments.docx comment 2 in
+/// Word's clear_formatting × comments redline). It had no range to map, so
+/// the carryover dropped it and the whole comments part with it.
+#[test]
+fn point_comments_are_carried_as_empty_ranges() {
+    let a = point_comment_docx("Hello world");
+    let b = point_comment_docx("Hello there world");
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
+    let pkg = open_valid_output(&out);
+    assert_eq!(comment_ids(&pkg), HashSet::from(["1".to_string()]));
+    let (s, e, r) = anchor_ids(&pkg);
+    let one = vec!["1".to_string()];
+    assert_eq!((s, e, r), (one.clone(), one.clone(), one));
+    let xml = pkg.part_string("word/document.xml").unwrap();
+    let first = xml.split("</w:p>").next().unwrap();
+    let text_end = first.rfind("world<").expect("text in the first paragraph");
+    let start = first
+        .find("<w:commentRangeStart")
+        .expect("start in the first paragraph");
+    let end = first.find("<w:commentRangeEnd").unwrap();
+    let reference = first.find("<w:commentReference").unwrap();
+    assert!(
+        text_end < start && start < end && end < reference,
+        "empty range after the text, then the reference: {first}"
+    );
+}
+
+#[test]
+fn multiple_point_comments_inside_one_run_preserve_unicode_text_order() {
+    let mut pkg = PartFs::open(&point_comment_docx("unused")).unwrap();
+    let body = r#"<w:p><w:r><w:t>ação 🐋</w:t><w:commentReference w:id="1"/><w:t>東京</w:t><w:commentReference w:id="2"/><w:t>tail</w:t></w:r></w:p>"#;
+    pkg.set_part(
+        "word/document.xml",
+        format!(
+            r#"<w:document xmlns:w="{}"><w:body>{body}<w:sectPr/></w:body></w:document>"#,
+            W::URI
+        )
+        .into_bytes(),
+    );
+    let comments = pkg.part_string("word/comments.xml").unwrap().replace(
+        "</w:comments>",
+        r#"<w:comment w:id="2" w:author="R" w:initials="R"><w:p><w:r><w:t>Second note</w:t></w:r></w:p></w:comment></w:comments>"#,
+    );
+    pkg.set_part("word/comments.xml", comments.into_bytes());
+    let input = pkg.to_zip().unwrap();
+    // Change the tail so the comparer projects anchors instead of returning
+    // an identical document with its original point-comment representation.
+    let revised_xml = pkg
+        .part_string("word/document.xml")
+        .unwrap()
+        .replace("<w:t>tail</w:t>", "<w:t>new tail</w:t>");
+    pkg.set_part("word/document.xml", revised_xml.into_bytes());
+    let revised = pkg.to_zip().unwrap();
+    let out = compare_documents_with_settings(&input, &revised, &word_mode()).unwrap();
+    let pkg = open_valid_output(&out);
+    let (starts, ends, references) = anchor_ids(&pkg);
+    assert_eq!(starts.len(), 2);
+    assert_eq!(starts, ends);
+    assert_eq!(starts, references);
+    assert_eq!(
+        starts.iter().cloned().collect::<HashSet<_>>(),
+        comment_ids(&pkg)
+    );
+    // Ids may be remapped by the comparer; the definition must stay at the
+    // text position belonging to that comment, regardless of its numeric id.
+    let mut comments_dom = Dom::new();
+    let comments_doc = comments_dom.parse_xdocument(&pkg.part_string("word/comments.xml").unwrap());
+    let comments_root = comments_dom.root(comments_doc).unwrap();
+    let notes: std::collections::HashMap<String, String> = comments_dom
+        .descendants(comments_root, Some(&W::name("comment")))
+        .into_iter()
+        .map(|c| {
+            (
+                comments_dom
+                    .attribute(c, &W::name("id"))
+                    .unwrap()
+                    .to_string(),
+                comments_dom.value(c),
+            )
+        })
+        .collect();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+    let root = dom.root(doc).unwrap();
+    let mut text = String::new();
+    let mut positions = Vec::new();
+    for node in dom.descendants(root, None) {
+        if dom.name_is(node, &W::t()) {
+            text.push_str(&dom.value(node));
+        } else if dom.name_is(node, &W::name("commentReference")) {
+            let id = dom.attribute(node, &W::name("id")).unwrap();
+            positions.push((notes[id].as_str(), text.clone()));
+        }
+    }
+    assert_eq!(text, "ação 🐋東京new tail");
+    assert_eq!(
+        positions,
+        [
+            ("Note", "ação 🐋".to_string()),
+            ("Second note", "ação 🐋東京".to_string())
+        ]
+    );
+}

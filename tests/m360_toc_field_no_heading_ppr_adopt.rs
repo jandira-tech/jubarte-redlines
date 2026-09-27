@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M360 — TOC field-end pure-I × Heading pure-D: no Heading pStyle adopt.
+//! M360 — TOC field-end pure-I × Heading pure-D.
 //!
-//! table_border×toc: empty TOC `fldChar` pure-I folded with SD-2343 Heading1
-//! pure-D. M345 structural pPr adopt put Heading1 on the MIX; Word leaves bare
-//! pPr (pagefair −11). Skip full del pPr adopt when pure-I has fldChar and
-//! pure-D is Heading/Title.
+//! table_border×toc: the revised document ends on an empty paragraph, so the
+//! two final marks pair and the empty TOC `fldChar` field end keeps its own
+//! inserted mark; nothing folds into the deleted SD-2343 title. Word's
+//! redline (wr0926) keeps the title's Heading1 style. The M360 guard (no
+//! Heading pStyle on a field-residue × Heading fold) is no longer reached by
+//! this pair.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -16,7 +18,7 @@ use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::compare_documents_with_settings;
 
 #[test]
-fn table_border_x_toc_sd2343_mix_no_heading1() {
+fn table_border_x_toc_sd2343_title_keeps_heading1() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__sd_2343_table_border_widths_b5148e83.docx");
@@ -63,12 +65,12 @@ fn table_border_x_toc_sd2343_mix_no_heading1() {
         }
         found = true;
         assert!(
-            !p.contains("Heading1") && !p.contains("w:val=\"Heading"),
-            "Word leaves SD-2343 MIX without Heading pStyle; got pPr with heading"
+            p.contains("w:val=\"Heading1\"") && !p.contains("fldChar"),
+            "Word keeps the SD-2343 title's Heading1, unfolded; got {p}"
         );
     }
     assert!(found, "expected SD-2343 pure-D title in redline");
-    // TOC titles still keep Heading1 (5 of them) — only the field-end MIX is bare.
+    // TOC titles keep Heading1 too.
     let n_h1 = xml.matches("Heading1").count();
     assert!(
         (4..=6).contains(&n_h1),
