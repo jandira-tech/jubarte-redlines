@@ -7,6 +7,7 @@
 pub mod atomize;
 pub mod atoms;
 pub mod comments;
+pub mod cross_para;
 pub mod finalize;
 pub mod fixups;
 pub mod footnotes;
@@ -513,6 +514,11 @@ pub fn compare_bodies_faithful_with_notes(
     // Word pairs the two final marks behind a trailing deletion.
     if settings.merge_replaced_paragraphs {
         lcs::pair_story_final_marks(dom, &mut seqs);
+        // Word streams a run of changed body paragraphs as one word+mark
+        // sequence; header and footer stories keep the paragraph pairing.
+        if dom.name_is(body1, &W::body()) {
+            cross_para::restream_cross_paragraph_regions(dom, &mut seqs, settings);
+        }
     }
     // Word skip-ahead moves: Equal after pure A-only deletes → ins early +
     // del late so detect_moves can emit moveTo/moveFrom (page-order parity).

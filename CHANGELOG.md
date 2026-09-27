@@ -19,6 +19,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- A run of changed body paragraphs is compared as one stream of words and
+  paragraph marks, as Word does (port of Docxodus's DocxDiff in-gap pairing
+  and cross-paragraph segmenter, `comparer::cross_para`): a kept word may now
+  sit across a paragraph mark, and rejecting the redline restores the
+  original instead of repeating a re-kept phrase. Word-faithful gates keep a
+  gap unpaired where Word does: a region with no paragraph pair streams only
+  when the revised side has no more paragraphs and its first kept word opens
+  a paragraph on both sides; a lopsided same-slot pair needs three shared
+  content words; a window of function words alone carries nothing across a
+  mark; a table between two changed runs keeps the LCS pairing; and the next
+  paragraph takes a same-slot pair when it shares at least twice the content
+  words in order (bold_rstyle × bold_vals).
 - An inserted tail ahead of a deleted tail pairs the two final paragraph
   marks, as Word does: the last inserted paragraph joins the first deleted
   one with a deleted mark, so accepting the redline no longer leaves an
