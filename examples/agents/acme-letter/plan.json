@@ -95,8 +95,8 @@
         "starts_with": "(f) Notices."
       },
       "find": ", with a copy by a nationally recognized overnight courier. A notice takes effect on the business day the recipient receives it.",
-      "replacement": ". A notice under Section 8(c), and a notice of suspension or termination under Section 9(b), also requires a copy by nationally recognized overnight courier, addressed to [LaunchPad postal address] in our case and to the postal address in the heading of this letter in your case. A notice takes effect on the business day the recipient receives it or, if this Section 11(f) requires a courier copy, the business day the recipient receives that copy.",
-      "comment": "The original required a courier copy of every notice but gave no LaunchPad postal address. Courier now applies only to indemnity and termination notices; fill in the address."
+      "replacement": ". A notice under Section 8(c), and a notice of suspension or termination under Section 9(b), also requires a copy by nationally recognized overnight courier, addressed to [Acme postal address] in our case and to the postal address in the heading of this letter in your case. A notice takes effect on the business day the recipient receives it or, if this Section 11(f) requires a courier copy, the business day the recipient receives that copy.",
+      "comment": "The original required a courier copy of every notice but gave no Acme postal address. Courier now applies only to indemnity and termination notices; fill in the address."
     },
     {
       "id": "E6-pronoun",
