@@ -5432,6 +5432,73 @@ fn has_common_run_ge(left: &[ComparisonUnit], right: &[ComparisonUnit], target: 
         .any(|h| right_set.contains(&h))
 }
 
+/// Word pairs the two documents' final paragraph marks and joins the revised
+/// document's last paragraph to the original's first deleted paragraph
+/// (file_58 × file_59: the revised list ends at "Ωω Omega", the original
+/// continues "Meeting Agenda" and a table). Full LCS emits
+/// `[Deleted D, Inserted I¶, Deleted …, Deleted ¶]`; Word's shape is
+/// `[Inserted I, Deleted D, Deleted …, Equal ¶]`, so the joined paragraph
+/// keeps the original's properties and deleted mark, and the story-final
+/// paragraph carries the revised properties.
+pub fn pair_story_final_marks(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) {
+    let n = seqs.len();
+    if n < 4 {
+        return;
+    }
+    fn status(s: &CorrelatedSequence) -> CorrelationStatus {
+        s.correlation_status
+    }
+    fn units1(s: &CorrelatedSequence) -> &[ComparisonUnit] {
+        s.com_units_1.as_deref().unwrap_or_default()
+    }
+    fn units2(s: &CorrelatedSequence) -> &[ComparisonUnit] {
+        s.com_units_2.as_deref().unwrap_or_default()
+    }
+    let last = &seqs[n - 1];
+    if status(last) != CorrelationStatus::Deleted
+        || !matches!(units1(last), [u] if unit_is_single_atom_ppr(dom, u))
+    {
+        return;
+    }
+    let Some(k) = seqs[..n - 1]
+        .iter()
+        .rposition(|s| status(s) != CorrelationStatus::Deleted)
+    else {
+        return;
+    };
+    // [Equal …¶] [Deleted D] [Inserted I¶] [Deleted …]+ [Deleted ¶]
+    if k < 2 || k + 2 > n - 1 {
+        return;
+    }
+    let (prev, del, ins) = (&seqs[k - 2], &seqs[k - 1], &seqs[k]);
+    let ends_para =
+        |v: &[ComparisonUnit]| v.last().is_some_and(|u| unit_is_single_atom_ppr(dom, u));
+    if status(prev) != CorrelationStatus::Equal
+        || !ends_para(units2(prev))
+        || status(del) != CorrelationStatus::Deleted
+        || units1(del)
+            .first()
+            .is_none_or(|u| unit_is_single_atom_ppr(dom, u))
+        || status(ins) != CorrelationStatus::Inserted
+        || units2(ins).len() < 2
+        || !ends_para(units2(ins))
+    {
+        return;
+    }
+    let Some(pb) = seqs[k].com_units_2.as_mut().and_then(Vec::pop) else {
+        return;
+    };
+    let Some(pa) = seqs.pop().and_then(|s| s.com_units_1) else {
+        return;
+    };
+    seqs.swap(k - 1, k);
+    seqs.push(CorrelatedSequence::paired(
+        CorrelationStatus::Equal,
+        pa,
+        vec![pb],
+    ));
+}
+
 /// Returns `Some([Inserted, Deleted])` in Word order, or `None` to fall through
 /// to full word-level LCS.
 ///

@@ -494,6 +494,10 @@ pub fn compare_bodies_faithful_with_notes(
         lcs::detect_unrelated_sources(&cus1, &cus2)
             .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
     };
+    // Word pairs the two final marks behind a trailing deletion.
+    if settings.merge_replaced_paragraphs {
+        lcs::pair_story_final_marks(dom, &mut seqs);
+    }
     // A wholesale replacement that kept the story-final mark (both documents'
     // final empty paragraphs paired): the trailing live empty is Word's, not
     // B's leftover (see M448 below).

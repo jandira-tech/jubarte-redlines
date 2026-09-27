@@ -120,6 +120,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   so that paragraph keeps "2026" and its mark and replaces the words before
   it. +0.31 Jaccard summed over the 1,195 pool and English pairs (2 changed,
   both better); product roadmap × project plan +0.28.
+- When the revised document ends inside a stretch the original continues past
+  (a Greek alphabet list against "Meeting Agenda" and a table), the two final
+  paragraph marks now pair as Word pairs them: the revised last paragraph joins
+  the original's first deleted paragraph under the original's properties with
+  a deleted mark, and the paragraph after the deleted table takes the revised
+  properties. The table and everything after it no longer sit a line high.
+  +0.91 Jaccard summed over the 1,195 pool and English pairs (2 changed, both
+  better).
 
 ### Added
 
