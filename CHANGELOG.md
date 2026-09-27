@@ -139,6 +139,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   (Calibri heading × underline) now take Word's shape: the revised first body
   inserted whole, the revised last body joined to the original's first.
   +0.14 Jaccard on the one pair that changed.
+- Custom style ids derived from style names keep only letters and digits, as
+  Word's do. "Normal (Web)" became `Normal(Web)`, which orphaned the revised
+  document's live `NormalWeb` paragraphs onto a custom style. +0.82 Jaccard
+  summed over the pool and English pairs (8 better, none worse).
 
 ### Added
 

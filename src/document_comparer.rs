@@ -2626,8 +2626,9 @@ fn word_canonical_style_id(name: &str) -> String {
         "toc heading" => return "TOCHeading".into(),
         _ => {}
     }
-    // Generic: drop spaces/underscores/hyphens, PascalCase each token.
-    n.split(|c: char| c.is_whitespace() || c == '_' || c == '-')
+    // Generic: split on anything but letters and digits (Word ids hold no
+    // spaces or punctuation: "Normal (Web)" is NormalWeb), PascalCase each token.
+    n.split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
         .map(|t| {
             let mut cs = t.chars();
@@ -5996,6 +5997,15 @@ mod tests {
         assert_eq!(word_canonical_style_id("heading 1"), "Heading1");
         assert_eq!(word_canonical_style_id("document title"), "DocumentTitle");
         assert_eq!(word_canonical_style_id("my custom style"), "MyCustomStyle");
+    }
+
+    /// Word's style ids hold letters and digits only: "Normal (Web)" is
+    /// `NormalWeb` (evals comments_doc × document). Keeping the parentheses
+    /// renamed B's live `NormalWeb` to a custom `Normal(Web)`.
+    #[test]
+    fn word_canonical_style_id_drops_punctuation() {
+        assert_eq!(word_canonical_style_id("Normal (Web)"), "NormalWeb");
+        assert_eq!(word_canonical_style_id("Body Text 2"), "BodyText2");
     }
 
     /// B's docDefaults name their fonts by theme (`w:asciiTheme="minorHAnsi"`,
