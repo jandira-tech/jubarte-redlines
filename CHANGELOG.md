@@ -15,9 +15,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-09-27
+
 > **Summary.** Redlines are now scored against Word's own redline of each pair, rendered by Word, and this release fixes what that exposed: redlines Word refused to open, blank field codes, missing fonts, and misplaced equations.
 
 ### Fixed
+
+- The same input writes the same bytes. Another dependency turns on the `zip` crate's `time` feature, and with it every package entry carried the time of the write, so two runs a second apart gave different files. Entries are now dated 1980-01-01, as Office dates its own.
 
 - Two point comments inside one run now keep their places. An anchor that ended one text piece of a multi-piece run went after the whole run, so "Note" landed after "東京" and behind "Second note". The run now splits between the pieces.
 
@@ -959,6 +963,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.9.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.3
 [0.9.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.2
 [0.9.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.1
 [0.9.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.0

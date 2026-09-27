@@ -8,6 +8,15 @@ features bump the **minor**, fixes bump the **patch**).
 See [README → Versioning & release](README.md#versioning--release) for how to cut
 a new version.
 
+## [0.9.3] — 2026-09-27
+
+### Changed
+- **Engine upgraded to jubarte-redlines 0.9.3**, a redline release: replaced
+  regions follow Word's replace-gap grammar, comments, bookmarks, field codes
+  and footnotes survive the comparison, rejecting every change restores the
+  original, and redlines Word refused to open now open. Redline output
+  changes from 0.9.2.
+
 ## [0.9.2] — 2026-09-26
 
 ### Changed
