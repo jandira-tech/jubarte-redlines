@@ -131,3 +131,78 @@ fn inserted_tail_ahead_of_deleted_tail_pairs_the_final_marks() {
         ],
     );
 }
+
+/// The super_editor corpus in the sibling benchmark checkout; `None` (skip)
+/// when it is not there.
+fn superdoc_redline(original: &str, revised: &str) -> Option<(Dom, jubarte::xmllinq::NodeId)> {
+    let dir = "../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source";
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(dir);
+    if !src.join(original).exists() || !src.join(revised).exists() {
+        eprintln!("skip: {dir} missing");
+        return None;
+    }
+    let xml = redline_xml_in(dir, original, revised);
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    Some((dom, root))
+}
+
+/// An unrelated replacement whose revised document ends on an empty paragraph
+/// still pairs the two final marks: the original's last paragraph ("I will
+/// add a comment to this one.") is deleted into the revised final paragraph,
+/// which keeps the revised properties (justified, outline level 1, a 16 pt
+/// bold Arial mark). That taller mark line puts Word's redline on two pages;
+/// the original's bare properties kept it on one (harness 2.8 vs Docxodus
+/// 93.9).
+#[test]
+fn unrelated_replacement_pairs_the_final_marks() {
+    let Some((dom, root)) = superdoc_redline(
+        "super_editor__diff_after8_58e5c288.docx",
+        "super_editor__doc_with_spacing_e3d47bd7.docx",
+    ) else {
+        return;
+    };
+    let last = *dom.descendants(root, Some(&W::p())).last().unwrap();
+    let deleted: String = dom
+        .descendants(last, Some(&W::del_text()))
+        .into_iter()
+        .map(|t| dom.value(t))
+        .collect();
+    assert_eq!(deleted, "I will add a comment to this one.");
+    let ppr = dom.element(last, &W::p_pr()).expect("revised properties");
+    let outline = dom
+        .element(ppr, &W::name("outlineLvl"))
+        .expect("outlineLvl");
+    assert_eq!(dom.attribute(outline, &W::val()), Some("1"));
+    let spacing = dom.element(ppr, &W::spacing_el()).expect("live spacing");
+    assert_eq!(dom.attribute(spacing, &W::name("before")), Some("100"));
+}
+
+/// With the final marks paired and the revised document ending on an empty
+/// paragraph, its last content paragraph closes on its own inserted mark:
+/// Word folds nothing across the boundary between the inserted and the
+/// deleted paragraphs ("All image types …" stays whole, "sqrt_degHide :"
+/// keeps its deleted mark).
+#[test]
+fn paired_final_marks_fold_nothing_at_the_replacement_boundary() {
+    let Some((dom, root)) = superdoc_redline(
+        "behavior__math_radical_tests_4c1ce187.docx",
+        "behavior__multi_image_types_b962a2b8.docx",
+    ) else {
+        return;
+    };
+    let para = dom
+        .descendants(root, Some(&W::p()))
+        .into_iter()
+        .find(|&p| {
+            dom.descendants(p, Some(&W::t()))
+                .into_iter()
+                .any(|t| dom.value(t).starts_with("All image types"))
+        })
+        .expect("last inserted content paragraph");
+    assert!(
+        dom.descendants(para, Some(&W::del_text())).is_empty(),
+        "no deleted text folds into the inserted paragraph"
+    );
+}

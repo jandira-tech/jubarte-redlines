@@ -19,6 +19,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- When an unrelated document replaces the original and ends on an empty
+  paragraph, the two final paragraph marks are paired as Word pairs them:
+  the original's last paragraph is deleted into the revised final paragraph,
+  which keeps the revised properties. The redline had given that paragraph
+  the original's bare properties, and Word's taller final line, which moves
+  the redline onto a second page, was missing (diff_after8 ×
+  doc_with_spacing: harness 2.8, Docxodus 93.9). The revised document's last
+  content paragraph keeps its own inserted mark instead of folding into the
+  first deleted paragraph; a head junction on a shared word still folds.
 - A run of changed body paragraphs is compared as one stream of words and
   paragraph marks, as Word does (port of Docxodus's DocxDiff in-gap pairing
   and cross-paragraph segmenter, `comparer::cross_para`): a kept word may now

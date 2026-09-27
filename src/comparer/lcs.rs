@@ -5613,24 +5613,39 @@ pub fn detect_unrelated_sources_word_mode(
                 .flatten()
                 .any(|u| u.len() == side.len())
     };
-    let final_pilcrow = |u: Option<&ComparisonUnit>| {
+    // A final paragraph split into its content and its mark.
+    let final_para = |u: Option<&ComparisonUnit>| {
         let u = u?;
         as_group(u).filter(|g| g.group_type == ComparisonUnitGroupType::Paragraph)?;
-        let c = group_contents(u);
-        (c.len() == 1 && unit_is_single_atom_ppr(dom, &c[0])).then(|| c[0].clone())
+        let mut c = group_contents(u);
+        let mark = c.pop().filter(|m| unit_is_single_atom_ppr(dom, m))?;
+        Some((c, mark))
     };
+    // The revised document ends on an empty paragraph: Word pairs the two
+    // final marks, and the original's last paragraph, if it has content, is
+    // deleted into the revised final paragraph (diff_after8 ×
+    // doc_with_spacing), which keeps the revised properties.
     if let [ins, del] = seqs.as_slice()
         && whole(ins, CorrelationStatus::Inserted, cu2)
         && whole(del, CorrelationStatus::Deleted, cu1)
         && cu1.len() > 1
         && cu2.len() > 1
-        && let (Some(pa), Some(pb)) = (final_pilcrow(cu1.last()), final_pilcrow(cu2.last()))
+        && let (Some((body_a, pa)), Some((body_b, pb))) =
+            (final_para(cu1.last()), final_para(cu2.last()))
+        && body_b.is_empty()
     {
         seqs = vec![
             CorrelatedSequence::inserted(cu2[..cu2.len() - 1].to_vec()),
             CorrelatedSequence::deleted(cu1[..cu1.len() - 1].to_vec()),
-            CorrelatedSequence::paired(CorrelationStatus::Equal, vec![pa], vec![pb]),
         ];
+        if !body_a.is_empty() {
+            seqs.push(CorrelatedSequence::deleted(body_a));
+        }
+        seqs.push(CorrelatedSequence::paired(
+            CorrelationStatus::Equal,
+            vec![pa],
+            vec![pb],
+        ));
         return Some((seqs, true));
     }
     Some((seqs, false))

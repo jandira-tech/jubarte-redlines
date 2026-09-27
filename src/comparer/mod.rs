@@ -757,7 +757,12 @@ pub fn compare_bodies_faithful_with_notes(
         // M393: coalesce collapses pure-I-all then pure-D-all for list pairs;
         // interleave Word cluster shape **before** merge free-meshes labels.
         finalize::interleave_list_cluster_after_coalesce(dom, root);
-        finalize::merge_replaced_paragraphs(dom, root, &settings.author_for_revisions);
+        finalize::merge_replaced_paragraphs_in(
+            dom,
+            root,
+            &settings.author_for_revisions,
+            story_final_paired,
+        );
         // M159: restore short pure-D before longer pure-I after merge reorder
         // (text_highlight×times Word MIX|DEL|INS|MIX).
         finalize::restore_short_del_before_long_ins(dom, root);
@@ -782,7 +787,11 @@ pub fn compare_bodies_faithful_with_notes(
         // mutation inside — structure folds re-classify after this block).
         finalize::begin_para_classification_cache();
         // M83b/M87 after merge_replaced — last pure-del layout → pPrChange.
-        finalize::last_pure_del_spacing_to_pprchange(dom, root, settings, &mut id);
+        // A paired story-final mark already carries the revised properties
+        // live and the original's in pPrChange.
+        if !story_final_paired {
+            finalize::last_pure_del_spacing_to_pprchange(dom, root, settings, &mut id);
+        }
         // M228+M226+M231: one body walk — mid pure-D spacing promote, no-op
         // equal-spacing pPrChange strip, default jc=left strip.
         finalize::cleanup_spacing_and_default_jc(dom, root);
@@ -832,16 +841,20 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
         // M438: title-page pure-I e×6 DD E — relocate last empty pure-I after
         // pure-D as bare trailing empty (doc_with_spaces×spacing Word shape).
-        finalize::relocate_title_page_last_empty_after_pure_dels(dom, root);
+        // The paired story-final mark is already that trailing paragraph.
+        if !story_final_paired {
+            finalize::relocate_title_page_last_empty_after_pure_dels(dom, root);
+        }
         // M440: short list pure-I label × empty pure-D → MIX del mark (list_spacer).
         finalize::fold_short_list_label_into_empty_pure_del(dom, root);
         // M442: pure-D with pPrChange(numPr) but no live numPr → promote live
         // numPr from first pure-I (list_spacer residual 14.11).
         finalize::promote_live_numpr_on_pure_d_from_pprchange(dom, root);
-        // M448: pure-I-dominant body + pure-D residual → drop trailing bare
-        // empty EQ (diff_after8×doc_with_spacing Word ends IDD not IDDE).
-        // Not when that empty is the paired story-final paragraph
-        // (doc_with_spaces×doc_with_spacing Word ends IDDE).
+        // M448: pure-I-dominant body + pure-D residual → drop a trailing bare
+        // empty EQ. Not when the story-final marks are paired: Word then ends
+        // on the revised final paragraph, empty (doc_with_spaces ×
+        // doc_with_spacing, IDDE) or holding the original's deleted last
+        // paragraph (diff_after8 × doc_with_spacing, IDD).
         if !story_final_paired {
             finalize::strip_trailing_bare_empty_after_pure_i_dominant(dom, root);
         }

@@ -5386,15 +5386,30 @@ fn simplify_move_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 /// paragraphs (pairwise, in order; leftovers stay separate) in the body and
 /// inside every table cell / textbox.
 pub fn merge_replaced_paragraphs(dom: &mut Dom, root: NodeId, comparer_author: &str) {
-    let mut containers: Vec<NodeId> = Vec::new();
-    if let Some(b) = dom.element(root, &W::body()) {
-        containers.push(b);
-    }
+    merge_replaced_paragraphs_in(dom, root, comparer_author, false);
+}
+
+/// [`merge_replaced_paragraphs`] for a body whose two final paragraph marks
+/// are paired (`story_final_paired`): the revised document ended on an empty
+/// paragraph, so its last content paragraph closes on its own inserted mark
+/// and Word does not fold it into the first deleted paragraph
+/// (math_radical_tests × multi_image_types). That fold models a revised last
+/// paragraph with content, whose mark is the paired final one. A head
+/// junction on a shared word (M322, tiff_image × h_f_normal) still folds.
+pub fn merge_replaced_paragraphs_in(
+    dom: &mut Dom,
+    root: NodeId,
+    comparer_author: &str,
+    story_final_paired: bool,
+) {
+    let body = dom.element(root, &W::body());
+    let mut containers: Vec<NodeId> = body.into_iter().collect();
     for name in [W::name("tc"), W::name("txbxContent"), W::sdt_content()] {
         containers.extend(dom.descendants(root, Some(&name)));
     }
     for c in containers {
-        merge_replaced_in_container(dom, c, comparer_author);
+        let fold_boundary = !(story_final_paired && Some(c) == body);
+        merge_replaced_in_container(dom, c, comparer_author, fold_boundary);
     }
 }
 
@@ -6557,7 +6572,12 @@ fn should_fold_multi_del_at_document_scale(
     frac + 1e-12 <= MULTI_DEL_GAP_MAX_DOC_FRACTION
 }
 
-fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author: &str) {
+fn merge_replaced_in_container(
+    dom: &mut Dom,
+    container: NodeId,
+    comparer_author: &str,
+    fold_boundary: bool,
+) {
     loop {
         let children: Vec<NodeId> = dom.elements(container, None);
         let classes: Vec<Option<bool>> = children
@@ -7017,6 +7037,7 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                 // wrongly MIX-ed the final license line with TIFF (~41). Require
                 // a shared significant token (len≥4) so hummingbird×employment
                 // (no shared token, Word tail MIX only) keeps last-I fold.
+                let mut head_junction = false;
                 if inss.len() >= 5
                     && (1..=6).contains(&para_word_atom_count(dom, d))
                     && let Some(first_ins) =
@@ -7026,7 +7047,14 @@ fn merge_replaced_in_container(dom: &mut Dom, container: NodeId, comparer_author
                     let dt = para_revision_body_text(dom, d);
                     if short_title_shares_sig_token(&it, &dt) {
                         last_ins = first_ins;
+                        head_junction = true;
                     }
+                }
+                // Paired final marks leave the revised last content paragraph
+                // on its own inserted mark: only a shared-word head junction
+                // folds.
+                if !fold_boundary && !head_junction {
+                    continue;
                 }
                 // M311d (image×rtl / rtl_mixed×rtl_page): ≥3 empty pure-I then
                 // pure-D residual(s). Word keeps pure-I empties. sole_del
