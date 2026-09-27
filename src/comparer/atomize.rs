@@ -164,48 +164,85 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Atom
     AtomHash::of_bytes(format!("{local}{text}").as_bytes())
 }
 
-/// Salts every atom of a complex field's result with the field's instruction.
+/// Salts every atom of a complex field with the codes of the fields around it.
 ///
-/// Word replaces a field whose code changed as a whole. Matching the result
-/// text of two different fields (" Act " in `STYLEREF "Name Of Act/Reg"` and in
-/// `STYLEREF "PrincipalAct_Reg`) leaves an inserted and a deleted `begin` side
-/// by side, two `separate`s and crossed `end`s, which crashes Word once the
-/// instructions are present. Results of fields with the same instruction keep
-/// matching. Nested fields salt with their own (innermost) instruction.
+/// Word replaces a field whose code changed as a whole, nested fields included.
+/// Matching the result text of two different fields (" Act " in `STYLEREF
+/// "Name Of Act/Reg"` and in `STYLEREF "PrincipalAct_Reg`) leaves an inserted
+/// and a deleted `begin` side by side, two `separate`s and crossed `end`s,
+/// which crashes Word once the instructions are present. Matching the begin of
+/// an `IF` whose code lost `\*MERGEFORMAT`, or its unchanged inner fields,
+/// leaves fields half deleted (98bf5f3d×a3701d36). So begin, code, separate,
+/// end and result all carry the whole chain of codes, outermost first: a
+/// field's shell matches only when every enclosing code is the same.
 fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
     let fld_char = W::name("fldChar");
     let fld_char_type = W::name("fldCharType");
     let instr = W::name("instrText");
     let del_instr = W::name("delInstrText");
-    // Open fields, innermost last: (instruction so far, inside the result).
-    let mut open: Vec<(String, bool)> = Vec::new();
-    for atom in list.iter_mut() {
+    let kind = |el: NodeId| -> Option<&str> {
+        if dom.name(el)? == fld_char {
+            dom.attribute(el, &fld_char_type)
+        } else {
+            None
+        }
+    };
+    // Pass 1: each begin's code — every instruction up to its own separate
+    // (or end), nested fields' codes and results included.
+    let mut codes: Vec<String> = Vec::new();
+    let mut code_of: Vec<Option<usize>> = vec![None; list.len()];
+    // Open fields, innermost last: (index into codes, inside the result).
+    let mut open: Vec<(usize, bool)> = Vec::new();
+    for (i, atom) in list.iter().enumerate() {
         let el = atom.content_element;
-        let Some(name) = dom.name(el) else { continue };
-        if name == fld_char {
-            match dom.attribute(el, &fld_char_type) {
-                Some("begin") => open.push((String::new(), false)),
-                Some("separate") => {
-                    if let Some(field) = open.last_mut() {
-                        field.1 = true;
+        match kind(el) {
+            Some("begin") => {
+                code_of[i] = Some(codes.len());
+                open.push((codes.len(), false));
+                codes.push(String::new());
+            }
+            Some("separate") => {
+                if let Some(field) = open.last_mut() {
+                    field.1 = true;
+                }
+            }
+            Some("end") => {
+                open.pop();
+            }
+            _ => {
+                if dom.name(el).is_some_and(|n| n == instr || n == del_instr) {
+                    let text = dom.value(el);
+                    for &(c, _) in open.iter().filter(|(_, in_result)| !in_result) {
+                        codes[c].push_str(&text);
                     }
                 }
-                Some("end") => {
-                    open.pop();
-                }
-                _ => {}
             }
-            continue;
         }
-        if name == instr || name == del_instr {
-            if let Some((code, false)) = open.last_mut() {
-                code.push_str(&dom.value(el));
+    }
+    if codes.is_empty() {
+        return;
+    }
+    // Pass 2: salt every atom inside a field with the chain of open codes.
+    let mut chain: Vec<usize> = Vec::new();
+    for (i, atom) in list.iter_mut().enumerate() {
+        let ty = kind(atom.content_element);
+        if ty == Some("begin")
+            && let Some(c) = code_of[i]
+        {
+            chain.push(c);
+        }
+        if !chain.is_empty() {
+            let mut salted = String::from("FIELD");
+            for &c in &chain {
+                salted.push('|');
+                salted.push_str(codes[c].trim());
             }
-            continue;
-        }
-        if let Some((code, true)) = open.last() {
-            let salted = format!("FIELD|{}|{}", code.trim(), atom.sha1_hash.to_hex_string());
+            salted.push('|');
+            salted.push_str(&atom.sha1_hash.to_hex_string());
             atom.sha1_hash = AtomHash::of_bytes(salted.as_bytes());
+        }
+        if ty == Some("end") {
+            chain.pop();
         }
     }
 }

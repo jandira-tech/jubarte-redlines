@@ -448,3 +448,43 @@ fn f9_same_code_field_keeps_its_shell_and_diffs_its_result() {
     assert_eq!(chars.len(), 3, "{x}");
     assert!(chars.iter().all(|&c| !changed(c)), "{x}");
 }
+
+/// A field whose code changed is replaced whole, nested fields included.
+/// English pair 98bf5f3d×a3701d36: `IF {DOCPROPERTY RegisteredDate} = …
+/// {DOCPROPERTY …} \*MERGEFORMAT` lost its `\*MERGEFORMAT`. Word's redline
+/// inserts the new field and deletes the old one; matching the unchanged
+/// inner fields and the outer begin left fields half deleted.
+#[test]
+fn f10_changed_outer_code_replaces_the_nested_field_whole() {
+    let field = |date: &str, tail: &str| {
+        format!(
+            "<w:p><w:r><w:t>Registered:</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> IF </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> DOCPROPERTY RegisteredDate </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+             <w:r><w:instrText>{date}</w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> = #1/1/1901# \"Unknown\"{tail}</w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+             <w:r><w:t>{date}</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>"
+        )
+    };
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(&mut dom, &field("10 November 2021", " \\*MERGEFORMAT "));
+    let (r2, b2) = doc_body(&mut dom, &field("20 April 2023", " "));
+    let s = WmlComparerSettings::default();
+    let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
+    assert_fields_well_formed(&dom, out);
+    let x = dom.serialize_element(out);
+    let changed = |e: NodeId| {
+        dom.ancestors(e, None)
+            .into_iter()
+            .any(|a| dom.name(a).is_some_and(|n| n == W::ins() || n == W::del()))
+    };
+    let chars = dom.descendants(out, Some(&W::name("fldChar")));
+    assert_eq!(chars.len(), 12, "{x}");
+    assert!(chars.iter().all(|&c| changed(c)), "{x}");
+}
