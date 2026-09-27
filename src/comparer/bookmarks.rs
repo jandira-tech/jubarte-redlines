@@ -17,6 +17,12 @@
 //! by the text around it, searching forward from the previous bookmark so
 //! repeated boilerplate resolves in document order. A bookmark present in
 //! both documents is placed once, from B.
+//!
+//! Text offsets know nothing of content controls, so an endpoint placed inside
+//! a `w:sdt` its source bookmark was not in leaves it: a start before the
+//! control, an end after it. B's body-level `_Toc` bookmarks around a
+//! data-bound title control otherwise land inside it, and Word refuses a
+//! bookmark in a plain-text or dropdown control (en 7b649361, 57c181da).
 
 use std::collections::{HashMap, HashSet};
 
@@ -40,6 +46,8 @@ struct Marker {
     /// `w:colFirst`/`w:colLast`, kept verbatim as Word does (Google Docs
     /// writes them on plain paragraph bookmarks).
     cols: Option<(String, String)>,
+    /// The start sits in a content control in its source.
+    in_sdt: bool,
 }
 
 /// The nearest enclosing paragraph of `node`, if any.
@@ -107,6 +115,7 @@ fn extract(pkg: &PartFs, main: &str) -> (Vec<char>, Vec<Marker>) {
                 end: text.len(),
                 leads: paragraph_of(&dom, n).is_none_or(|p| !with_text.contains(&p)),
                 cols,
+                in_sdt: !dom.ancestors(n, Some(&W::name("sdt"))).is_empty(),
             };
             open.insert(id.to_string(), marker);
         } else if name == end
@@ -154,6 +163,42 @@ fn map_point(src: &[char], merged: &[char], o: usize, hint: usize, after: bool) 
         }
     }
     None
+}
+
+/// The outermost content control around `node`.
+fn outermost_sdt(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    dom.ancestors(node, Some(&W::name("sdt"))).last().copied()
+}
+
+/// Move a placed pair out of the content controls its source bookmark was
+/// not in: the start before its outermost control, the end after its own.
+/// An empty pair moves as one, to the side it belongs to.
+fn leave_foreign_controls(dom: &mut Dom, m: &Marker, start: NodeId, end: NodeId, empty: bool) {
+    if m.in_sdt {
+        return;
+    }
+    if empty {
+        let Some(sdt) = outermost_sdt(dom, start) else {
+            return;
+        };
+        dom.remove(start);
+        dom.remove(end);
+        if m.leads {
+            dom.add_before_self(sdt, start);
+        } else {
+            dom.add_after_self(sdt, start);
+        }
+        dom.add_after_self(start, end);
+        return;
+    }
+    if let Some(sdt) = outermost_sdt(dom, start) {
+        dom.remove(start);
+        dom.add_before_self(sdt, start);
+    }
+    if let Some(sdt) = outermost_sdt(dom, end) {
+        dom.remove(end);
+        dom.add_after_self(sdt, end);
+    }
 }
 
 /// The `w:bookmarkStart`/`w:bookmarkEnd` pair for `m` under `id`.
@@ -221,6 +266,7 @@ fn inject_side(
             place_after_offset(dom, &mut segs, s, end);
             dom.add_before_self(end, start);
         }
+        leave_foreign_controls(dom, m, start, end, s >= e);
     }
 }
 

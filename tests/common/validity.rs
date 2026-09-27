@@ -55,6 +55,7 @@ pub fn check_word_valid_package(bytes: &[u8]) -> ValidityReport {
     check_para_text_id_bounds(&pkg, &mut report);
     check_del_text_under_del(&pkg, &mut report);
     check_deleted_text_has_deletion(&pkg, &mut report);
+    check_bookmarks_outside_single_value_controls(&pkg, &mut report);
     check_comment_graph(&pkg, &mut report);
     report
 }
@@ -381,6 +382,59 @@ fn check_deleted_text_has_deletion(pkg: &PartFs, report: &mut ValidityReport) {
                     report.fail(format!(
                         "w:{kind} in '{name}' has no w:del in its own story (text boxes are separate stories)"
                     ));
+                }
+            }
+        }
+    }
+}
+
+/// Content controls whose content is a single value: Word keeps no bookmark
+/// in them.
+const SINGLE_VALUE_CONTROLS: [&str; 6] = [
+    "text",
+    "dropDownList",
+    "comboBox",
+    "date",
+    "picture",
+    "checkbox",
+];
+
+/// No bookmark start or end in a plain-text, dropdown, combo box, date,
+/// picture or checkbox content control. Jubarte carried B's bookmarks into a
+/// data-bound title control (en 7b649361) and a dropdown cell (en 57c181da);
+/// Word refused both files and opened each once those bookmarks were
+/// dropped. No bookmark in the 1000 English sources sits in such a control.
+/// The OpenXmlValidator passes the files.
+fn check_bookmarks_outside_single_value_controls(pkg: &PartFs, report: &mut ValidityReport) {
+    for name in pkg.parts() {
+        if !name.ends_with(".xml") {
+            continue;
+        }
+        let Some(xml) = pkg.part_string(&name) else {
+            continue;
+        };
+        if !xml.contains("bookmark") || !xml.contains("sdtContent") {
+            continue;
+        }
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(doc) else {
+            continue;
+        };
+        for kind in ["bookmarkStart", "bookmarkEnd"] {
+            for m in dom.descendants(root, Some(&W::name(kind))) {
+                for sdt in dom.ancestors(m, Some(&W::name("sdt"))) {
+                    let control = dom
+                        .element(sdt, &W::name("sdtPr"))
+                        .into_iter()
+                        .flat_map(|pr| dom.elements(pr, None))
+                        .filter_map(|c| dom.name(c).map(|n| n.local_name().to_string()))
+                        .find(|c| SINGLE_VALUE_CONTROLS.contains(&c.as_str()));
+                    if let Some(control) = control {
+                        report.fail(format!(
+                            "w:{kind} in '{name}' sits in a {control} content control (Word keeps no bookmark there)"
+                        ));
+                    }
                 }
             }
         }

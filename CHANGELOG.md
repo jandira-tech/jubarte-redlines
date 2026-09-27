@@ -126,6 +126,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   English redlines that had one (30ff840c, bb113e88); the OpenXmlValidator
   passed them. Both open now and score 0.673 and 0.557 jaccard against Word's
   own redline, where every other tool scores 0.
+- A carried bookmark stays out of a content control its source bookmark was
+  not in. Placement follows the text, so B's body-level `_Toc` bookmarks
+  around a data-bound title control landed inside it (7b649361), and a
+  bookmark landed in a dropdown cell (57c181da). Word refused both redlines
+  and opened each once those bookmarks were dropped. An endpoint now leaves
+  the control: a start before it, an end after it.
 - Scratch `pt:Unid` attributes no longer leak into restored deleted-paragraph
   spacing, and every extension namespace (w14/w15/w16*/wp14) is listed in
   `mc:Ignorable` on each part root (b7fedc7); w16 serializes under Word's 2018

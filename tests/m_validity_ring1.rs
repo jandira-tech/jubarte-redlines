@@ -552,6 +552,39 @@ fn probe_del_instr_text_outside_its_story_deletion_fails() {
     );
 }
 
+/// A bookmark inside a single-value content control (en 7b649361's title
+/// control, en 57c181da's dropdown cell: Word refused both files). A rich-text
+/// control may hold one.
+#[test]
+fn probe_bookmark_in_a_plain_text_content_control_fails() {
+    let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:sdt><w:sdtPr><w:alias w:val="Title"/><w:text/></w:sdtPr><w:sdtContent>
+      <w:p><w:bookmarkStart w:id="0" w:name="_Toc1"/><w:r><w:t>Title</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>
+    </w:sdtContent></w:sdt>
+    <w:sdt><w:sdtPr><w:id w:val="8"/></w:sdtPr><w:sdtContent>
+      <w:p><w:bookmarkStart w:id="1" w:name="_Ref1"/><w:r><w:t>Scope</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>
+    </w:sdtContent></w:sdt>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#;
+    let bytes = zip_with_parts(&[("word/document.xml", doc)]);
+    let report = check_word_valid_package(&bytes);
+    let hits: Vec<_> = report
+        .errors
+        .iter()
+        .filter(|e| e.contains("content control"))
+        .collect();
+    assert_eq!(
+        hits.len(),
+        2,
+        "expected _Toc1's start and end in the text control, got: {:?}",
+        report.errors
+    );
+    assert!(hits.iter().all(|e| e.contains("a text content control")));
+}
+
 #[test]
 fn minimal_valid_package_passes() {
     let bytes = zip_with_parts(&[("word/document.xml", MINIMAL_DOC)]);
