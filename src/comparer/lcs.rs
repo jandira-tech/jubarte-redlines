@@ -1557,7 +1557,14 @@ fn stamp_confetti_then_replace(
         && {
             let covers_body = pairs.iter().any(|&(i, _)| i >= 1);
             let (min_d, avg_d, max_body) = m123_diagonal_stats(dom, &rest1, &rest2);
-            let path_a = !covers_body && max_body + 1e-12 >= 0.09;
+            // Path A needs a body pair sharing a real word: "This" and "."
+            // alone (Calibri heading × underline) leave Word's seam.
+            let shares_word = rest1.iter().zip(rest2.iter()).skip(1).any(|(a, b)| {
+                para_text_tokens_joined(dom, a)
+                    .intersection(&para_text_tokens_joined(dom, b))
+                    .any(|t| t.chars().count() >= 5)
+            });
+            let path_a = !covers_body && shares_word && max_body + 1e-12 >= 0.09;
             // file_129 avg ~0.17 / min ~0.14; file_163 min ~0.125 stays off
             let path_b = min_d + 1e-12 >= 0.14 && avg_d + 1e-12 >= 0.16;
             path_a || path_b

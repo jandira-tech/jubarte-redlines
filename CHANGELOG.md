@@ -134,6 +134,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   final empties (a titled table against an item list). +0.93 Jaccard summed
   over the 1,195 pool and English pairs (7 changed: 5 better, 2 slightly
   worse).
+- Stamped demo bodies zip positionally only when a body pair shares a word of
+  five letters or more. Sentences that share just "This" and a full stop
+  (Calibri heading × underline) now take Word's shape: the revised first body
+  inserted whole, the revised last body joined to the original's first.
+  +0.14 Jaccard on the one pair that changed.
 
 ### Added
 
