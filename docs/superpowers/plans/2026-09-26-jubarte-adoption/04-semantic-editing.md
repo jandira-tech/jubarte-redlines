@@ -106,12 +106,12 @@ A minimal exact plan:
 ```json
 {
   "schema_version": 1,
-  "source_sha256": "4b4dd3c5015e2a62c5cf5c673f04e4a679c188f8ed238b8fce0cc6e81a43d8e937",
+  "source_sha256": "4b4dd3c5015e2a62c5cf5c673f04e4a679c188f8ed238b8fce0cc6e81a43d8e9",
   "author": "Legal review",
   "date": "2026-09-26T14:30:00Z",
-  "existing_revisions": "reject_input",
+  "existing_revisions": "refuse",
   "operations": [
-    {"id":"op-1","kind":"replace","paragraph":"body:p:18","find":"retained experts","replacement":"retained experts and court reporters","expect":1}
+    {"id":"op-1","kind":"replace","paragraph":"body:p:18","find":"retained experts","replacement":"retained experts and court reporters"}
   ]
 }
 ```
@@ -130,7 +130,7 @@ The hash above illustrates the field shape, not the supplied Acme file's hash. P
 - Resolve every operation against the untouched source before mutation. Overlapping replacements/deletions fail; identical offsets for two inserts require explicit ordered grouping, not arbitrary sort order.
 - Paragraph deletion conflicts with every edit/comment anchored inside it. Merge conflicts with edits crossing its deleted boundary unless a single structural group explicitly owns them. An edit inside a field/hyperlink/content-control/bookmark range requires supported span rules; never split an opaque structure accidentally.
 - “First”/“each” are explicit selection modes with report cardinality, not hidden fallbacks. Defer broad `*_all` aliases until repeated user need justifies their semantics. No fuzzy/autocorrected legal edits by default.
-- `existing_revisions="reject_input"` is the new-editor default. Explicit accept/reject creates a new base snapshot with a new hash, records the action, and compares against that chosen base. This is not preservation of old revision history.
+- `existing_revisions="refuse"` is the new-editor default. Explicit accept/reject creates a new base snapshot with a new hash, records the action, and compares against that chosen base. This is not preservation of old revision history.
 
 ## Task E1: implement the conservative source-guarded text core
 

@@ -10,9 +10,13 @@ the paragraphs the plan names; any `.docx` containing them works.
 
 ```bash
 jubarte text letter.docx                       # find the anchors and paragraph ids
-jubarte inspect letter.docx --json | jq -r .source_sha256   # bind the plan
-jubarte edit letter.docx --plan plan.json --out-dir review --pdf --png --dpi 100
+sha=$(jubarte inspect letter.docx --json | jq -r .source_sha256)
+jq --arg sha "$sha" '.source_sha256 = $sha' plan.json > bound.json   # bind the plan
+jubarte edit letter.docx --plan bound.json --out-dir review --pdf --png --dpi 100
 ```
+
+`plan.json` ships with a placeholder hash, so it is refused until it is bound
+to the exact bytes of your `letter.docx`.
 
 `plan.json` carries ten operations: delete Section 4(d) as a paragraph; fold
 its recipients and responsibility rule into 5(a) with a comment; add a new
