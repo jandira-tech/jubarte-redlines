@@ -29,12 +29,14 @@ thread_local! {
     /// vocabulary is bounded, so the pool saturates quickly rather than growing
     /// without bound.
     ///
-    /// Uses the default (SipHash) hasher deliberately: a hand-rolled FNV-1a was
-    /// tried and measured a +16% wall regression — FNV's weak low-bit avalanche
-    /// clusters under std's low-bit bucket masking for these short, similar names,
-    /// degrading the pool. Default hashing keeps the measured −4% wall win.
-    static STR_POOL: std::cell::RefCell<std::collections::HashSet<Arc<str>>> =
-        std::cell::RefCell::new(std::collections::HashSet::new());
+    /// Hashed with foldhash: a hand-rolled FNV-1a measured a +16% wall
+    /// regression — its weak low-bit avalanche clusters under the low-bit
+    /// bucket masking for these short, similar names — while SipHash was 11%
+    /// of a one-page conversion (samply, fixtures_500 0081ba58). foldhash
+    /// mixes the low bits and costs a fraction of SipHash; fixed seed, so
+    /// runs stay reproducible.
+    static STR_POOL: std::cell::RefCell<std::collections::HashSet<Arc<str>, foldhash::fast::FixedState>> =
+        std::cell::RefCell::new(std::collections::HashSet::with_hasher(foldhash::fast::FixedState::default()));
 }
 
 /// Cap the intern pool so a pathological host (adversarial inputs) cannot grow

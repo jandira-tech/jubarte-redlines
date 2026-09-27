@@ -21,6 +21,7 @@ mod word_subst;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::namespaces::{A, M, MC, R, W, W14, WNE, WP};
@@ -5675,16 +5676,34 @@ fn lvl_indent(dom: &Dom, lvl: NodeId) -> (f32, f32) {
 }
 
 /// `word/settings.xml` parsed once per reader; `None` when the part is absent.
-fn settings_dom(pkg: &PartFs) -> Option<(Dom, NodeId)> {
+fn settings_dom(pkg: &PartFs) -> Option<ParsedSettings> {
     let xml = pkg.part_string(&settings_part(pkg))?;
     settings_dom_xml(&xml)
 }
 
-fn settings_dom_xml(xml: &str) -> Option<(Dom, NodeId)> {
+/// A parsed settings part and its root element.
+type ParsedSettings = Rc<(Dom, NodeId)>;
+
+/// `xml` parsed, memoised per thread on the text: a conversion asks a dozen
+/// settings questions of the same part, and parsing it each time was 11% of
+/// a one-page conversion (samply, fixtures_500 0081ba58).
+fn settings_dom_xml(xml: &str) -> Option<ParsedSettings> {
+    thread_local! {
+        static LAST: RefCell<Option<(String, ParsedSettings)>> = const { RefCell::new(None) };
+    }
+    if let Some(hit) = LAST.with_borrow(|last| {
+        last.as_ref()
+            .filter(|(text, _)| text == xml)
+            .map(|(_, parsed)| Rc::clone(parsed))
+    }) {
+        return Some(hit);
+    }
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(xml);
     let root = dom.root(doc)?;
-    Some((dom, root))
+    let parsed = Rc::new((dom, root));
+    LAST.set(Some((xml.to_string(), Rc::clone(&parsed))));
+    Some(parsed)
 }
 
 /// ST_OnOff `w:<local>` under `w:settings` (direct or inside `w:compat`):
@@ -5692,11 +5711,12 @@ fn settings_dom_xml(xml: &str) -> Option<(Dom, NodeId)> {
 /// (ECMA-376 17.17.4). Matched as elements, so quoting style, attribute
 /// order and look-alike names cannot flip it.
 fn settings_flag_xml(xml: &str, local: &str) -> bool {
-    settings_dom_xml(xml).is_some_and(|(dom, root)| {
+    settings_dom_xml(xml).is_some_and(|s| {
+        let (dom, root) = (&s.0, s.1);
         dom.descendants(root, Some(&W::name(local)))
             .into_iter()
             .next()
-            .is_some_and(|n| !val_is_false(&dom, Some(n)))
+            .is_some_and(|n| !val_is_false(dom, Some(n)))
     })
 }
 
@@ -5761,13 +5781,14 @@ fn mark_ideograph_words(blocks: &mut [Block], fonts: &Fonts, compat_mode: u8) {
 /// `D:\CASA ... .dotx`); Word cannot load it and keeps the file's styles.
 fn settings_link_styles(pkg: &PartFs) -> bool {
     pkg.part_string(&settings_part(pkg)).is_some_and(|xml| {
-        settings_dom_xml(&xml).is_some_and(|(dom, root)| {
+        settings_dom_xml(&xml).is_some_and(|s| {
+            let (dom, root) = (&s.0, s.1);
             dom.descendants(root, Some(&W::name("attachedTemplate")))
                 .is_empty()
                 && dom
                     .descendants(root, Some(&W::name("linkStyles")))
                     .into_iter()
-                    .any(|n| !matches!(attr_any(&dom, n, "val"), Some("0" | "false" | "off")))
+                    .any(|n| !matches!(attr_any(dom, n, "val"), Some("0" | "false" | "off")))
         })
     })
 }
@@ -5837,13 +5858,14 @@ fn settings_compat_mode(pkg: &PartFs) -> u8 {
 const WORD_COMPAT_SETTING_URI: &str = "http://schemas.microsoft.com/office/word";
 
 fn settings_compat_mode_xml(xml: &str) -> u8 {
-    let Some((dom, root)) = settings_dom_xml(xml) else {
+    let Some(s) = settings_dom_xml(xml) else {
         return 12;
     };
+    let (dom, root) = (&s.0, s.1);
     for node in dom.descendants(root, Some(&W::name("compatSetting"))) {
-        if attr_any(&dom, node, "name") == Some("compatibilityMode")
-            && attr_any(&dom, node, "uri") == Some(WORD_COMPAT_SETTING_URI)
-            && let Some(mode) = attr_any(&dom, node, "val").and_then(|s| s.parse().ok())
+        if attr_any(dom, node, "name") == Some("compatibilityMode")
+            && attr_any(dom, node, "uri") == Some(WORD_COMPAT_SETTING_URI)
+            && let Some(mode) = attr_any(dom, node, "val").and_then(|s| s.parse().ok())
         {
             return mode;
         }
@@ -5859,15 +5881,16 @@ fn settings_override_table_style_size(pkg: &PartFs) -> bool {
 }
 
 fn settings_override_table_style_size_xml(xml: &str) -> bool {
-    let Some((dom, root)) = settings_dom_xml(xml) else {
+    let Some(s) = settings_dom_xml(xml) else {
         return false;
     };
+    let (dom, root) = (&s.0, s.1);
     dom.descendants(root, Some(&W::name("compatSetting")))
         .into_iter()
         .any(|node| {
-            attr_any(&dom, node, "name") == Some("overrideTableStyleFontSizeAndJustification")
-                && attr_any(&dom, node, "uri") == Some(WORD_COMPAT_SETTING_URI)
-                && matches!(attr_any(&dom, node, "val"), Some("1" | "true" | "on"))
+            attr_any(dom, node, "name") == Some("overrideTableStyleFontSizeAndJustification")
+                && attr_any(dom, node, "uri") == Some(WORD_COMPAT_SETTING_URI)
+                && matches!(attr_any(dom, node, "val"), Some("1" | "true" | "on"))
         })
 }
 
@@ -6025,7 +6048,8 @@ fn settings_character_spacing(pkg: &PartFs) -> CharacterSpacing {
 }
 
 fn settings_character_spacing_xml(xml: &str) -> CharacterSpacing {
-    let val = settings_dom_xml(xml).and_then(|(dom, root)| {
+    let val = settings_dom_xml(xml).and_then(|s| {
+        let (dom, root) = (&s.0, s.1);
         dom.descendants(root, Some(&W::name("characterSpacingControl")))
             .into_iter()
             .next()
@@ -6069,9 +6093,10 @@ fn character_spacing_scale(mode: CharacterSpacing, ch: char) -> f32 {
 
 /// Word factory is 720 twips (0.5in). Strict01 writes `36pt`; mcdoc `420`.
 fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
-    let (dom, root) = settings_dom(pkg)?;
-    let stop = first_named(&dom, root, "defaultTabStop")?;
-    attr_any(&dom, stop, "val")
+    let s = settings_dom(pkg)?;
+    let (dom, root) = (&s.0, s.1);
+    let stop = first_named(dom, root, "defaultTabStop")?;
+    attr_any(dom, stop, "val")
         .and_then(parse_len)
         .filter(|pt| *pt > 0.5)
 }

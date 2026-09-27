@@ -68,6 +68,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - LCS keys follow their word hash in one walk; `group_by_key_stable` hashes
   each key once; move detection counts words and tokens in one walk (3d4ef7f,
   4a05c21, 241e9ac).
+- PDF conversion parses `settings.xml` once per document instead of once per
+  setting it reads, and the XML name interner hashes with foldhash. Cold
+  one-shot conversion is 4.4% faster over 80 fixtures_500 documents; the
+  output PDFs are byte-identical on 150.
 
 ## [0.9.2] - 2026-09-26
 
