@@ -398,6 +398,9 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         ids.push(objs.len());
         objs.len()
     };
+    // The same samples repeat per page (a header logo): deflate them once.
+    type RawImage<'p> = (u32, u32, &'p [u8], Option<&'p [u8]>);
+    let mut rgb_ids: HashMap<u64, Vec<(RawImage<'_>, usize)>> = HashMap::new();
     let mut page_ids = Vec::new();
     for (page_idx, page) in pages.iter().enumerate() {
         let page_enc = &encodings[page_idx];
@@ -425,10 +428,22 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     ..
                 } => {
                     img_n += 1;
-                    let smask = alpha
-                        .as_ref()
-                        .map(|plane| intern(&mut objs, gray_xobject(*width, *height, plane, true)));
-                    let id = intern(&mut objs, rgb_xobject(*width, *height, bytes, true, smask));
+                    let raw: RawImage<'_> = (*width, *height, bytes, alpha.as_deref());
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    raw.hash(&mut h);
+                    let seen = rgb_ids.entry(h.finish()).or_default();
+                    let id = match seen.iter().find(|(r, _)| *r == raw) {
+                        Some((_, id)) => *id,
+                        None => {
+                            let smask = alpha.as_ref().map(|plane| {
+                                intern(&mut objs, gray_xobject(*width, *height, plane, true))
+                            });
+                            let id =
+                                intern(&mut objs, rgb_xobject(*width, *height, bytes, true, smask));
+                            seen.push((raw, id));
+                            id
+                        }
+                    };
                     let _ = write!(xobjects, "/Im{img_n} {id} 0 R ");
                 }
                 Op::Watermark { .. } => has_watermark = true,
