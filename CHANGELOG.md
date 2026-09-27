@@ -97,6 +97,16 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   title when the table after that title is deleted wholesale. Word adds those
   spacers only when it pairs the table cell by cell. quarterly report table ×
   red bold heading demo 0.24 → 0.26; no other pair of the 1,195 changes.
+- Unrelated documents too short for the wholesale shortcut (for example a
+  title and a table against three headings) now get Word's junction when they
+  share no word of four letters or more. The revised document's last
+  paragraph joins the original's first paragraph, whose mark is deleted.
+  Previously full LCS paired a stray digit and kept the two apart. +1.24
+  Jaccard summed over the 1,195 pool and English pairs (33 changed, 4 better,
+  1 worse); sd_1494 table left indent × sdpr title-only 0.22 → 0.84,
+  quarterly report table × red bold heading 0.26 → 0.68. The one loss
+  (−0.025) is an NDIS footer whose junction now matches Word's redline
+  paragraph for paragraph.
 
 ### Added
 

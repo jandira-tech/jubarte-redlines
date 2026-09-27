@@ -6727,6 +6727,17 @@ fn detect_unrelated_sources_word_mode_inner(
         || ((2..=3).contains(&short_n) && long_n > 3 && !has_table(short_cu))
         || (stamped && disjoint && (2..=6).contains(&short_n) && long_n > 6 && n2 == short_n);
     if !ok_counts {
+        // Too few contentful groups for the wholesale shortcut, but sharing
+        // no word of four letters or more: full LCS could only pair empties
+        // and stray digits or glue words, while Word
+        // still joins the revised last paragraph to the original's first
+        // (quarterly report table × red bold heading).
+        if disjoint
+            && significant_tokens(tokens_once(&full_tokens_1, dom, cu1))
+                .is_disjoint(&significant_tokens(tokens_once(&full_tokens_2, dom, cu2)))
+        {
+            return junction_seam(dom, cu1, cu2, n1, n2);
+        }
         return None;
     }
     if !disjoint {
@@ -7012,82 +7023,8 @@ fn detect_unrelated_sources_word_mode_inner(
         residual_settings.detail_threshold = 0.005;
         return Some(lcs(dom, left, right, &residual_settings));
     }
-    // Junction seam (mirrors jubarte-first a9e4a33ac, +831.5 lossless A/B):
-    // even between unrelated documents Word merges the LAST inserted
-    // paragraph with the FIRST deleted one into a single mix paragraph when
-    // the inserted junction paragraph carries text (38/52 wholesale oracles
-    // junction-M; the true-pure cases all have an empty junction). Interior
-    // carrier keeps A's mark deleted; a document-final carrier (no A tail)
-    // keeps the mark live via the Equal pilcrow pair.
-    {
-        let is_para_group = |u: &ComparisonUnit| {
-            as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Paragraph)
-        };
-        let ends_pil =
-            |v: &[ComparisonUnit]| v.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu));
-        let has_text = |v: &[ComparisonUnit]| {
-            v.iter().any(|cu| {
-                cu.descendant_atoms().iter().any(|dca| {
-                    dom.name_is(dca.content_element, &W::t())
-                        && !dom.value_str(dca.content_element).trim().is_empty()
-                })
-            })
-        };
-        // Equal-count unrelated pairs take the m45 paragraph zip instead
-        // (Word: MIX title | pure-I B body | pure-D A body | MIX last —
-        // pinned by m45_equal_count_para_zip; the seam shape starved that
-        // post-pass and dropped blue_underline×bold_italic 99.69→70.56).
-        let counts_differ = n1 != n2;
-        // M323: both-table pairs must not take the junction seam — Word meshes
-        // titles + first-slot tables (H2); seam pure-I/Ds wholesale (MIX=1).
-        // M324: parallel lettered-section demos (rstyle combos) also must not
-        // seam — Word free-meshes line-by-line (MIX≥15); seam pure-I/Ds (~10).
-        let both_tables = has_table(cu1) && has_table(cu2);
-        let parallel_sections = parallel_sectioned_demos(dom, cu1, cu2);
-        let short_prop_demos =
-            short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2);
-        let last_sig_titles = titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50;
-        let ooxml_tbl = ooxml_x_short_table_demo(dom, cu1, cu2);
-        if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last())
-            && counts_differ
-            && !both_tables
-            && !parallel_sections
-            && !short_prop_demos
-            && !last_sig_titles
-            && !ooxml_tbl
-            && is_para_group(first_a)
-            && is_para_group(last_b)
-        {
-            let carrier_a = group_contents(first_a);
-            let carrier_b = group_contents(last_b);
-            if ends_pil(&carrier_a) && ends_pil(&carrier_b) && has_text(&carrier_b) {
-                let mut out = Vec::new();
-                if cu2.len() > 1 {
-                    out.push(CorrelatedSequence::inserted(cu2[..cu2.len() - 1].to_vec()));
-                }
-                let b_words = carrier_b[..carrier_b.len() - 1].to_vec();
-                if !b_words.is_empty() {
-                    out.push(CorrelatedSequence::inserted(b_words));
-                }
-                let a_words = carrier_a[..carrier_a.len() - 1].to_vec();
-                if !a_words.is_empty() {
-                    out.push(CorrelatedSequence::deleted(a_words));
-                }
-                if cu1.len() > 1 {
-                    out.push(CorrelatedSequence::deleted(vec![
-                        carrier_a.last().unwrap().clone(),
-                    ]));
-                    out.push(CorrelatedSequence::deleted(cu1[1..].to_vec()));
-                } else {
-                    out.push(CorrelatedSequence::paired(
-                        CorrelationStatus::Equal,
-                        vec![carrier_a.last().unwrap().clone()],
-                        vec![carrier_b.last().unwrap().clone()],
-                    ));
-                }
-                return Some(out);
-            }
-        }
+    if let Some(out) = junction_seam(dom, cu1, cu2, n1, n2) {
+        return Some(out);
     }
     // M310/M324: parallel lettered-section demos — free-mesh already handled
     // above (M328). If we reach here, free-mesh was not eligible; refuse
@@ -7129,6 +7066,95 @@ fn detect_unrelated_sources_word_mode_inner(
         CorrelatedSequence::inserted(cu2.to_vec()),
         CorrelatedSequence::deleted(cu1.to_vec()),
     ])
+}
+
+/// Junction seam (mirrors jubarte-first a9e4a33ac, +831.5 lossless A/B):
+/// even between unrelated documents Word merges the LAST inserted
+/// paragraph with the FIRST deleted one into a single mix paragraph when
+/// the inserted junction paragraph carries text (38/52 wholesale oracles
+/// junction-M; the true-pure cases all have an empty junction). Interior
+/// carrier keeps A's mark deleted; a document-final carrier (no A tail)
+/// keeps the mark live via the Equal pilcrow pair.
+fn junction_seam(
+    dom: &Dom,
+    cu1: &[ComparisonUnit],
+    cu2: &[ComparisonUnit],
+    n1: usize,
+    n2: usize,
+) -> Option<Vec<CorrelatedSequence>> {
+    let has_table = |cu: &[ComparisonUnit]| {
+        cu.iter()
+            .any(|u| as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Table))
+    };
+    let is_para_group = |u: &ComparisonUnit| {
+        as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Paragraph)
+    };
+    let ends_pil =
+        |v: &[ComparisonUnit]| v.last().is_some_and(|cu| unit_is_single_atom_ppr(dom, cu));
+    let has_text = |v: &[ComparisonUnit]| {
+        v.iter().any(|cu| {
+            cu.descendant_atoms().iter().any(|dca| {
+                dom.name_is(dca.content_element, &W::t())
+                    && !dom.value_str(dca.content_element).trim().is_empty()
+            })
+        })
+    };
+    // Equal-count unrelated pairs take the m45 paragraph zip instead
+    // (Word: MIX title | pure-I B body | pure-D A body | MIX last —
+    // pinned by m45_equal_count_para_zip; the seam shape starved that
+    // post-pass and dropped blue_underline×bold_italic 99.69→70.56).
+    let counts_differ = n1 != n2;
+    // M323: both-table pairs must not take the junction seam — Word meshes
+    // titles + first-slot tables (H2); seam pure-I/Ds wholesale (MIX=1).
+    // M324: parallel lettered-section demos (rstyle combos) also must not
+    // seam — Word free-meshes line-by-line (MIX≥15); seam pure-I/Ds (~10).
+    let both_tables = has_table(cu1) && has_table(cu2);
+    let parallel_sections = parallel_sectioned_demos(dom, cu1, cu2);
+    let short_prop_demos =
+        short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2);
+    let last_sig_titles = titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50;
+    let ooxml_tbl = ooxml_x_short_table_demo(dom, cu1, cu2);
+    if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last())
+        && counts_differ
+        && !both_tables
+        && !parallel_sections
+        && !short_prop_demos
+        && !last_sig_titles
+        && !ooxml_tbl
+        && is_para_group(first_a)
+        && is_para_group(last_b)
+    {
+        let carrier_a = group_contents(first_a);
+        let carrier_b = group_contents(last_b);
+        if ends_pil(&carrier_a) && ends_pil(&carrier_b) && has_text(&carrier_b) {
+            let mut out = Vec::new();
+            if cu2.len() > 1 {
+                out.push(CorrelatedSequence::inserted(cu2[..cu2.len() - 1].to_vec()));
+            }
+            let b_words = carrier_b[..carrier_b.len() - 1].to_vec();
+            if !b_words.is_empty() {
+                out.push(CorrelatedSequence::inserted(b_words));
+            }
+            let a_words = carrier_a[..carrier_a.len() - 1].to_vec();
+            if !a_words.is_empty() {
+                out.push(CorrelatedSequence::deleted(a_words));
+            }
+            if cu1.len() > 1 {
+                out.push(CorrelatedSequence::deleted(vec![
+                    carrier_a.last().unwrap().clone(),
+                ]));
+                out.push(CorrelatedSequence::deleted(cu1[1..].to_vec()));
+            } else {
+                out.push(CorrelatedSequence::paired(
+                    CorrelationStatus::Equal,
+                    vec![carrier_a.last().unwrap().clone()],
+                    vec![carrier_b.last().unwrap().clone()],
+                ));
+            }
+            return Some(out);
+        }
+    }
+    None
 }
 
 /// Lettered section headers at contentful para starts: `A)`, `B)`, …
