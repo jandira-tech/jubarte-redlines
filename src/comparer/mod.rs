@@ -670,7 +670,19 @@ pub fn compare_bodies_faithful_with_notes(
     finalize::move_paragraph_properties_first(dom, root);
     // Word-mode: drop body spacing that only restates demo pPrDefault (line=276).
     if settings.merge_replaced_paragraphs {
-        finalize::strip_redundant_demo_default_spacing(dom, root);
+        let default_line = |dom: &Dom, r: NodeId| {
+            dom.attribute(r, &crate::namespaces::PT::default_line())
+                .map(str::to_string)
+        };
+        let lines = (
+            default_line(dom, source_root1),
+            default_line(dom, source_root2),
+        );
+        finalize::strip_redundant_demo_default_spacing(
+            dom,
+            root,
+            (lines.0.as_deref(), lines.1.as_deref()),
+        );
         // M367: pure-I pStyle=Normal + bidi=0 restates defaults (shape_group);
         // Word omits them on pure-I mark pPr (sdts×shape −4.3 LO thrash).
         finalize::strip_redundant_normal_pstyle_and_bidi(dom, root);

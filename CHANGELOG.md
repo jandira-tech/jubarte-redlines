@@ -167,6 +167,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   × missing_sectpr now paginates like Word, but the converter's proxy scores
   it −0.07 because it does not yet paint Word's formatting change bar on the
   second page).
+- Direct `line=276` spacing is dropped as a restated default only when the
+  paragraph's own source document (the original for deleted paragraphs, the
+  revised one otherwise) resolves line 276 for an unstyled paragraph. A 276
+  over a single-spaced Normal is a real value and Word keeps it; the strip
+  used to remove it regardless (sd_2517_localized_heading_styles: 30 inserted
+  paragraphs in each of four pool pairs lost their line pitch). Our paragraph
+  line spacing now matches Word's on 8,895 of 8,944 inserted pool paragraphs,
+  up from 8,779. +1.03 Jaccard summed (16 better, 5 worse, every loss under
+  0.03).
 
 ### Added
 

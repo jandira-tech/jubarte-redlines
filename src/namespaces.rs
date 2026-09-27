@@ -166,4 +166,7 @@ impl PT {
     // NAME-01c: accept strip / annotate attrs.
     cached_xname!(PT::URI, unique_id, "UniqueId");
     cached_xname!(PT::URI, run_ids, "RunIds");
+    // Word-mode stamp on the original root: the line pitch the output's
+    // default paragraph resolves to (read by the demo-spacing strip).
+    cached_xname!(PT::URI, default_line, "DefaultLine");
 }

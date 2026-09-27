@@ -2,12 +2,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M358 — pure-I + pStyle strips demo-default line=276 (LO pagefair).
-//!
-//! fields×localized: wholesale pure-I of DocumentTitle/Heading paras. Word
-//! keeps line=276, but LO pagefair thrash (−20 vs 27c). Strip pure-I+pStyle
-//! demo-default spacing; bare pure-I without pStyle still keeps (M352
-//! line_break×line_space).
+//! M358 — fields×localized: the revised document's heading and title
+//! paragraphs carry `line=276` over a single-spaced Normal, so the 276 is a
+//! real value and Word's redline keeps it (67 in the pool truth, p0368). M358
+//! had stripped them to suit LibreOffice pagination; Word is the oracle.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -16,7 +14,7 @@ use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::compare_documents_with_settings;
 
 #[test]
-fn fields_x_localized_strips_pure_i_pstyle_line276() {
+fn fields_x_localized_keeps_line276_over_single_spaced_normal() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__fields_test_4a8ffd8c.docx");
@@ -40,11 +38,9 @@ fn fields_x_localized_strips_pure_i_pstyle_line276() {
     let mut xml = String::new();
     f.read_to_string(&mut xml).unwrap();
     let n_line276 = xml.matches("line=\"276\"").count();
-    // Pre-M352/M353 (27c) had 1; M352+M353 thrash had 66. M358 should strip
-    // pure-I+pStyle demo defaults back near 27c (≤5 residual non-demo).
     assert!(
-        n_line276 <= 12,
-        "pure-I+pStyle demo line=276 must strip (LO pagefair); got {n_line276}"
+        n_line276 >= 60,
+        "Word keeps the revised 276 lines (67 in its redline); got {n_line276}"
     );
 }
 

@@ -1957,7 +1957,13 @@ pub fn normalize_incomplete_spacing(dom: &mut Dom, root: NodeId) {
 /// Word Compare omits body-level `w:spacing` that only restates the common
 /// demo-doc default (line=276, optional after=200 / lineRule=auto). Keeping it
 /// shifts line box height vs Word's redline (center_alignment demos ~79 vs 100).
-/// Strip such spacing elements; leave non-default spacing alone.
+/// Strip such spacing elements; leave non-default spacing alone. The line only
+/// restates a default when the paragraph's source document resolves line 276
+/// for an unstyled paragraph: `default_lines` holds that line for the original
+/// (pure-deleted paragraphs) and the revised document (the rest). Under any
+/// other source default Word keeps it (sd_2517_localized_heading_styles'
+/// 276 over its single-spaced Normal). `None` (no stylesheet context) strips
+/// as before.
 ///
 /// **M67** (narrow re-landing of M61): pure-deleted paragraphs with no `pStyle`
 /// that carry a **Heading residual** spacing pattern — `before≥360` **and**
@@ -1965,7 +1971,11 @@ pub fn normalize_incomplete_spacing(dom: &mut Dom, root: NodeId) {
 /// line=240 from stripped Heading1 on file_33) — drop the whole `w:spacing`.
 /// Word leaves those pure-dels bare. Does **not** strip bare `before=800`
 /// (file_196 Word keeps it) or `before≤300` (file_14 winners).
-pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
+pub fn strip_redundant_demo_default_spacing(
+    dom: &mut Dom,
+    root: NodeId,
+    default_lines: (Option<&str>, Option<&str>),
+) {
     let spacing_name = W::spacing_el();
     let mut to_remove = Vec::new();
     for p in dom.descendants(root, Some(&W::p())) {
@@ -1987,16 +1997,21 @@ pub fn strip_redundant_demo_default_spacing(dom: &mut Dom, root: NodeId) {
         // Demo", 3 words) — Word omits line=276 on pure-I mark pPr; keep was
         // retaining B's demo default and thrash LO. Strip when ≥2 word-atoms.
         // M358: strip all other demo-default line=276 — pure-I+pStyle /
-        // pure-I after=200 (fields×localized −20 LO pagefair) and pure-D
-        // Heading line=276-only (loc×ul −14). Word keeps many of those, but
-        // LO PDF thrash vs Word-rendered oracle; pre-M353 (27c) stripped them.
+        // pure-I after=200 and pure-D Heading line=276-only — but only where
+        // the source's unstyled line is 276 (`source_default`): Word keeps the
+        // fields×localized 276s, which sit over a single-spaced Normal.
         // M353 pStyle keep is superseded for pure demo-default (before empty
         // is required to enter this strip path anyway).
         //
         // M391 (missing_sectpr×fields_test −16.3 residual): Word keeps pure-I
         // line=276 when the para also has non-default `w:ind` (Product line
         // right=-30). Old M370 strip dropped it with multi-word body.
-        let line_ok = line == "276";
+        let source_default = if para_is_pure_deleted(dom, p) {
+            default_lines.0
+        } else {
+            default_lines.1
+        };
+        let line_ok = line == "276" && source_default.is_none_or(|d| d == "276");
         let after_ok = after.is_empty() || after == "200";
         let before_ok = before.is_empty();
         let rule_ok = rule.is_empty() || rule == "auto";

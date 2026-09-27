@@ -2174,6 +2174,49 @@ const RPR_METRIC_FONT_SLOTS: [(&str, &str); 4] = [
 ];
 
 /// A style tree's `docDefaults/rPrDefault/rPr` node, if present.
+/// The line pitch a paragraph with no spacing of its own resolves to under
+/// `styles_xml`: the default paragraph style's chain, then docDefaults, then
+/// Word's single line (240).
+fn default_paragraph_line(styles_xml: &str) -> String {
+    let mut dom = Dom::new();
+    let d = dom.parse_xdocument(styles_xml);
+    let Some(root) = dom.root(d) else {
+        return "240".to_string();
+    };
+    let style_nm = W::name("style");
+    let styles = dom.elements(root, Some(&style_nm));
+    let by_id = |id: &str| {
+        styles
+            .iter()
+            .copied()
+            .find(|&s| dom.attribute(s, &W::name("styleId")) == Some(id))
+    };
+    let line_of = |ppr: Option<NodeId>| {
+        ppr.and_then(|p| dom.element(p, &W::name("spacing")))
+            .and_then(|sp| dom.attribute(sp, &W::name("line")))
+            .map(str::to_string)
+    };
+    let mut cur = styles.iter().copied().find(|&s| {
+        dom.attribute(s, &W::name("type")) == Some("paragraph")
+            && matches!(dom.attribute(s, &W::name("default")), Some("1" | "true"))
+    });
+    for _ in 0..12 {
+        let Some(s) = cur else { break };
+        if let Some(line) = line_of(dom.element(s, &W::p_pr())) {
+            return line;
+        }
+        cur = dom
+            .element(s, &W::name("basedOn"))
+            .and_then(|b| dom.attribute(b, &W::val()))
+            .and_then(by_id);
+    }
+    let dd = dom
+        .element(root, &W::name("docDefaults"))
+        .and_then(|d| dom.element(d, &W::name("pPrDefault")))
+        .and_then(|d| dom.element(d, &W::p_pr()));
+    line_of(dd).unwrap_or_else(|| "240".to_string())
+}
+
 fn rpr_default(dom: &Dom, styles_root: NodeId) -> Option<NodeId> {
     let dd = dom.element(styles_root, &W::name("docDefaults"))?;
     let rd = dom.element(dd, &W::name("rPrDefault"))?;
@@ -5034,6 +5077,16 @@ fn compare_documents_impl(
         en_with_revisions: parse_part_root(&mut dom, &pkg1, &en1),
     };
 
+    // Word mode: each side's unstyled-paragraph line pitch, for the
+    // demo-default spacing strip.
+    if settings.merge_replaced_paragraphs {
+        for (pkg, root) in [(&pkg1, root1), (&pkg2, root2)] {
+            let line = pkg
+                .part_string("word/styles.xml")
+                .map_or_else(|| "240".to_string(), |x| default_paragraph_line(&x));
+            dom.set_attribute_value(root, &crate::namespaces::PT::default_line(), Some(&line));
+        }
+    }
     let result_root = crate::comparer::compare_bodies_faithful_with_notes(
         &mut dom,
         root1,
@@ -5043,6 +5096,9 @@ fn compare_documents_impl(
         settings,
         Some(&mut notes_ctx),
     );
+    for root in [root1, root2] {
+        dom.set_attribute_value(root, &crate::namespaces::PT::default_line(), None);
+    }
 
     // Base the output on the original package, replacing the main document
     // part. When PreProcessMarkup rewrote parts (notes renumbering), base it
