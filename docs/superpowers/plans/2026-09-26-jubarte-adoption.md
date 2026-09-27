@@ -127,6 +127,7 @@ Parallelize documentation, facade design, release plumbing and rights inventory 
 
 ## Implementation subplans
 
+0. [Assessment and corrections (2026-09-26 implementation)](2026-09-26-jubarte-adoption/00-ASSESSMENT.md): read first; it records which parts of 01, 02, 04 and 06 landed on branch `feat/agent-adoption`, which corrections were applied to the patches, and what remains open.
 1. [Safe core, inspection, and fidelity](2026-09-26-jubarte-adoption/01-core-and-fidelity.md)
 2. [Python API and examples](2026-09-26-jubarte-adoption/02-python-api.md)
 3. [JavaScript/TypeScript API and concurrency](2026-09-26-jubarte-adoption/03-typescript-api.md)

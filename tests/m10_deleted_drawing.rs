@@ -69,13 +69,11 @@ fn w_t_under_w_del(docx: &[u8]) -> (usize, Vec<String>) {
                 b"t" => in_offending_t = false,
                 _ => {}
             },
-            Ok((_, Event::Text(t))) if in_offending_t => {
-                if samples.len() < 5 {
-                    let raw = t.into_inner();
-                    let s = String::from_utf8_lossy(&raw).trim().to_string();
-                    if !s.is_empty() {
-                        samples.push(s);
-                    }
+            Ok((_, Event::Text(t))) if in_offending_t && samples.len() < 5 => {
+                let raw = t.into_inner();
+                let s = String::from_utf8_lossy(&raw).trim().to_string();
+                if !s.is_empty() {
+                    samples.push(s);
                 }
             }
             Ok((_, Event::Eof)) => break,

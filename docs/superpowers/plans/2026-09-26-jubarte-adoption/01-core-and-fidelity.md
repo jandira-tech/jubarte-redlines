@@ -10,6 +10,19 @@
 
 ---
 
+> **Status 2026-09-26 (branch `feat/agent-adoption`):** implemented with
+> corrections; see [00-ASSESSMENT.md](00-ASSESSMENT.md) §3. Landed:
+> parser progress guard and `validate_xml` (`src/xmllinq/parse.rs`), and
+> `src/inspect.rs` with a richer read model than patch 0001 proposed:
+> `Paragraph { index, id, text, style, numbered, in_table, page_break, runs,
+> limitations }`, `summary`, `markdown`, `inspect_json`, `source_sha256`.
+> Correction applied: `mc:AlternateContent`, `w:sym`, column breaks, fields,
+> hyperlinks and content controls are per-paragraph **limitations**, not
+> refusals (patch 0001 refused the document). Task C2 (ZIP admission limits)
+> remains open and is still required before untrusted-upload use.
+> Verified: `tests/inspect_paragraphs.rs` (13), module unit tests, clippy
+> `-D warnings`.
+
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 

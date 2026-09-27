@@ -10,6 +10,29 @@
 
 ---
 
+> **Status 2026-09-26 (branch `feat/agent-adoption`):** E1 and the core of
+> E2/E3/E5 implemented in `src/edit.rs` with corrections; see
+> [00-ASSESSMENT.md](00-ASSESSMENT.md) §3. Shipped plan schema v1:
+> `replace`, `insert` (`after`/`before`/`position`), `delete`, `comment`,
+> `insert_paragraph` (runs with `bold`/`italic`/`underline`/`highlight`,
+> anchor `pPr` copied minus section break and revision marks),
+> `delete_paragraph`; selectors `id`/`index`/`starts_with`/`contains`;
+> `source_sha256` guard; `existing_revisions: refuse|accept|reject`;
+> overlap detection; per-operation report with `to_jsonl()`.
+> Corrections applied: (1) comments, including on text an earlier operation
+> inserted, are authored in the clean copy and carried by the comparer
+> (m35), so E5's provenance mapping is unnecessary; verified by
+> `comments_on_source_text_and_on_inserted_text_survive_compare`;
+> (2) patch 0005's "plain paragraph only" rule is replaced by a projection
+> that ignores zero-width markers and refuses only ranges crossing opaque
+> structures; (3) `expected_text` dropped in favor of the hash guard plus
+> unique anchors. Not implemented: `merge_paragraphs`, `format_paragraph`
+> (E4 paragraph formatting), rich formatting on inline `insert`/`replace`,
+> `Preview.build`/`write_new_directory` (the CLI's `--out-dir` bundle covers
+> the atomic-write need for now). Known renderer gap: balloons for comments
+> anchored inside inserted runs are not painted (the comments are in the
+> file). Verified: `tests/edit_plan.rs` (18), module unit tests.
+
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 

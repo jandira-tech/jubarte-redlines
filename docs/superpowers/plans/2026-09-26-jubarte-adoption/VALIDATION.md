@@ -91,3 +91,26 @@ This is a substantially expanded working plan, written incrementally. Before cal
 5. Re-run the author self-review for type/signature consistency, complete patch dependencies, stale source facts and every local artifact link after those additions.
 
 The active goal remains open while these gaps are being addressed. The planning work is not blocked by pending publication, outreach, or licensing authority: those are execution gates, and useful preparation can continue.
+
+
+## Implementation record, 2026-09-26 (branch `feat/agent-adoption`)
+
+Implemented in a git worktree of `892ddbc` (user instruction; overrides the
+canonical-checkout note above), Rust 1.95, in an 8 GB container with Cargo
+serialized (`-j1`) and `ooxmlsdk` built without debuginfo through an
+uncommitted local `.cargo/config.toml`. Everything below was compiled and
+run there; see [00-ASSESSMENT.md](00-ASSESSMENT.md) §7 for the numbers.
+
+| Patch | Disposition |
+|---|---|
+| 0001 | superseded by `src/xmllinq/parse.rs` (guard + `validate_xml`) and `src/inspect.rs` (richer, non-refusing read model) |
+| 0002 | applied, then extended (`document.py`, `models.py`, `__main__.py`, stubs) |
+| 0005 | superseded by `src/edit.rs` (plan schema v1, selectors, comments, paragraph operations, report) |
+| 0006 | superseded by `skills/jubarte-documents/SKILL.md` |
+| 0003, 0004, 0007 | untouched (TypeScript, recipes, playground: out of this scope) |
+
+Gates run: `cargo fmt --check`; `cargo clippy --all-targets --all-features
+-- -D warnings`; `cargo test` for the library, the binary and the suites
+`inspect_paragraphs`, `edit_plan`, `convert_docx_to_png`, `m_cli_agent`,
+`m7_cli`, `m_cli_no_panic`, `convert_docx_to_pdf`, `convert_revision_palette`;
+`jubarte --help`; `pytest --cov=jubarte_redlines --cov-branch`.

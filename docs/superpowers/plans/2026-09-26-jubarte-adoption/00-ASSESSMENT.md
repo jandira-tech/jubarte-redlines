@@ -224,3 +224,53 @@ on the inspection tests added here, not on RESULTS.md. Say so.
 
 Filled in at the end of the implementation session; see the bottom of this
 file.
+
+### Verification record (2026-09-26, worktree `feat/agent-adoption` on `892ddbc`)
+
+Environment: Rust 1.95.0, Python 3.11.15, maturin 1.15.0, 2 CPUs, 8 GB memory
+cgroup; Cargo serialized (`-j1`); `ooxmlsdk` (dev-dependency) built without
+debuginfo through an uncommitted `.cargo/config.toml` because it exceeds the
+cgroup with debuginfo. No agents were used.
+
+| Gate | Result |
+|---|---|
+| `cargo fmt --check` | clean |
+| `cargo clippy --all-targets --all-features -- -D warnings` | clean (after fixing three pre-existing sites the 1.95 lint set flagged: `altchunk.rs` end(), `convert/mod.rs` stroke boolean, `tests/m10_deleted_drawing.rs`) |
+| `cargo test --lib` | 568 passed, 1 ignored (perf timing) |
+| `cargo test --bin jubarte` | 25 passed |
+| `tests/inspect_paragraphs.rs` | 13 passed |
+| `tests/edit_plan.rs` | 18 passed (includes comments on inserted text surviving compare, accept(redline) == clean for every operation kind) |
+| `tests/convert_docx_to_png.rs` | 4 passed |
+| `tests/m_cli_agent.rs` | 7 passed |
+| Existing `m7_cli`, `m_cli_no_panic` | 15 + 10 passed |
+| Regression around the render refactor: `convert_docx_to_pdf` | 1234 passed, 3 ignored |
+| `convert_revision_palette`, `m10_deleted_drawing`, `m11_f1_roundtrip`, `m22_alternate_content_resolve`, `m35_comments`, `m4h_parts` | 7 + 1 + 2 + 6 + 5 + 8 passed |
+| `jubarte --help` | exit 0 |
+| Python `pytest --cov=jubarte_redlines --cov-branch` against the rebuilt binding | 48 passed; 98% lines (660 statements, 9 missed); 160 of 166 branches |
+| Acme walkthrough (`examples/agents/acme-letter/`) | 10 of 10 operations ok, 4 comments, 15 revision records, PDF and PNG rendered, page inspected visually |
+
+Not measured: Rust line/branch coverage. `cargo llvm-cov` needs an
+instrumented rebuild of every crate, and the instrumented `ooxmlsdk` does not
+fit this container; run it on the canonical machine
+(`cargo +nightly llvm-cov --branch --lib inspect:: edit:: capabilities:: convert::raster::`).
+The full `cargo test` over all 150+ suites was likewise not run here; the
+suites above were chosen to cover every file the branch touches.
+
+Known gaps found while verifying, left open on purpose:
+
+- The PDF/PNG layout paints comment balloons for comments on inserted
+  paragraphs but not for comments anchored inside inserted runs (the
+  comparer places `commentRangeStart` inside `w:ins`, which Word accepts).
+  The comments are in the DOCX; `jubarte inspect` counts them. Renderer work,
+  not edit work.
+- Compare-based redlines show a long replacement as a word-level diff, as
+  Word Compare does. Agents that need a "delete whole clause, insert whole
+  clause" presentation need a direct-authoring mode, which does not exist.
+- `merge_paragraphs`, `format_paragraph`, formatting on inline
+  `insert`/`replace`, headers/footers/notes/text boxes as editable stories,
+  ZIP admission limits (01 C2).
+- `RESULTS.md`'s `accepted_changes` tables score compare output after
+  acceptance; they are not a test of the accept operation on arbitrary
+  redlines. The claim "toss LibreOffice for accept" rests on the
+  RevisionProcessor port and on `accept(redline) == clean` in
+  `tests/edit_plan.rs`, not on RESULTS.md.
