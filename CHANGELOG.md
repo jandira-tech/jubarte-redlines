@@ -19,6 +19,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Point comments (a comment reference with no range markers) survive the
+  redline. The carryover only mapped ranges, so a point comment was dropped,
+  and with it the whole comments part when it was the only one. It is now
+  written as an empty range right after the text it follows, the form
+  Word's own redline uses (comments.docx comment 2, in comments ×
+  complex_style_attr and clear_formatting × comments). An empty range is
+  written as one group: a lone start used to land in the next paragraph.
+
 - A list copied from the revised document keeps its picture bullets: the
   bullet definitions and their images now travel with the list. The list's
   levels had named a picture bullet the merged numbering never defined, and

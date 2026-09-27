@@ -333,3 +333,71 @@ fn renumbered_same_text_comments_prefer_b_not_double_union() {
         "carried ids must come from B: {ids:?} not subset of {b_ids:?}"
     );
 }
+
+/// A document whose first paragraph carries comment 1 as a point comment: a
+/// `w:commentReference` with no `commentRangeStart`/`commentRangeEnd`.
+fn point_comment_docx(text: &str) -> Vec<u8> {
+    use std::io::Write;
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let doc = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="{w}"><w:body><w:p><w:r><w:t>{text}</w:t></w:r><w:r><w:commentReference w:id="1"/></w:r></w:p><w:p><w:r><w:t>Tail paragraph.</w:t></w:r></w:p><w:sectPr/></w:body></w:document>"#
+    );
+    let comments = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="{w}"><w:comment w:id="1" w:author="R" w:initials="R"><w:p><w:r><w:t>Note</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    let parts = [
+        (
+            "[Content_Types].xml",
+            r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>"#.to_string(),
+        ),
+        (
+            "_rels/.rels",
+            r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#.to_string(),
+        ),
+        (
+            "word/_rels/document.xml.rels",
+            r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/></Relationships>"#.to_string(),
+        ),
+        ("word/document.xml", doc),
+        ("word/comments.xml", comments),
+    ];
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut z = zip::ZipWriter::new(&mut buf);
+        for (name, body) in parts {
+            z.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(body.as_bytes()).unwrap();
+        }
+        z.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+/// A point comment survives the redline right after the text it follows, as
+/// the empty range Word's redline writes for it (comments.docx comment 2 in
+/// Word's clear_formatting × comments redline). It had no range to map, so
+/// the carryover dropped it and the whole comments part with it.
+#[test]
+fn point_comments_are_carried_as_empty_ranges() {
+    let a = point_comment_docx("Hello world");
+    let b = point_comment_docx("Hello there world");
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).unwrap();
+    let pkg = open_valid_output(&out);
+    assert_eq!(comment_ids(&pkg), HashSet::from(["1".to_string()]));
+    let (s, e, r) = anchor_ids(&pkg);
+    let one = vec!["1".to_string()];
+    assert_eq!((s, e, r), (one.clone(), one.clone(), one));
+    let xml = pkg.part_string("word/document.xml").unwrap();
+    let first = xml.split("</w:p>").next().unwrap();
+    let text_end = first.rfind("world<").expect("text in the first paragraph");
+    let start = first
+        .find("<w:commentRangeStart")
+        .expect("start in the first paragraph");
+    let end = first.find("<w:commentRangeEnd").unwrap();
+    let reference = first.find("<w:commentReference").unwrap();
+    assert!(
+        text_end < start && start < end && end < reference,
+        "empty range after the text, then the reference: {first}"
+    );
+}

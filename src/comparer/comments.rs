@@ -221,6 +221,9 @@ fn b_covers_comment_identities_of_a(
 enum Kind {
     Start,
     End,
+    /// An empty range: start, end and reference together, at the end's place
+    /// (a start placed on its own would land in the next paragraph).
+    Point,
 }
 
 struct Event {
@@ -247,6 +250,8 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
     let body = dom.element(root, &W::body())?;
     let start = W::name("commentRangeStart");
     let end = W::name("commentRangeEnd");
+    let reference = W::name("commentReference");
+    let mut references: Vec<(String, usize)> = Vec::new();
     let mut text = String::new();
     let mut offset = 0usize;
     let mut starts: HashMap<String, usize> = HashMap::new();
@@ -267,6 +272,10 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
                     start: *s,
                     end: offset,
                 });
+            } else if name == reference
+                && let Some(id) = dom.attribute(n, &W::name("id"))
+            {
+                references.push((id.to_string(), offset));
             }
         } else if dom.is_text(n)
             && dom
@@ -277,6 +286,17 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
             let t = dom.text_value(n).unwrap_or("");
             text.push_str(t);
             offset += t.chars().count();
+        }
+    }
+    // A reference with no range markers is a point comment: an empty range
+    // where the reference sits, which is how Word's redline writes it.
+    for (id, at) in references {
+        if !starts.contains_key(&id) && !ranges.iter().any(|r| r.id == id) {
+            ranges.push(Range {
+                id,
+                start: at,
+                end: at,
+            });
         }
     }
     Some((text, ranges))
@@ -442,10 +462,11 @@ fn split_seg(dom: &mut Dom, segs: &mut Vec<Seg>, i: usize, k: usize) {
     );
 }
 
-fn new_anchor(dom: &mut Dom, kind: Kind, id: &str) -> NodeId {
-    let name = match kind {
-        Kind::Start => W::name("commentRangeStart"),
-        Kind::End => W::name("commentRangeEnd"),
+fn new_anchor(dom: &mut Dom, start: bool, id: &str) -> NodeId {
+    let name = if start {
+        W::name("commentRangeStart")
+    } else {
+        W::name("commentRangeEnd")
     };
     let e = dom.new_element(name);
     dom.set_attribute_value(e, &W::name("id"), Some(id));
@@ -509,6 +530,14 @@ fn inject_side(
         };
         let out_id = id_map.get(&r.id).cloned().unwrap_or_else(|| r.id.clone());
         anchored_ranges.insert(out_id, (s, e));
+        if s == e {
+            events.push(Event {
+                offset: e,
+                kind: Kind::Point,
+                id: r.id.clone(),
+            });
+            continue;
+        }
         events.push(Event {
             offset: s,
             kind: Kind::Start,
@@ -529,7 +558,7 @@ fn inject_side(
         let o = ev.offset;
         match ev.kind {
             Kind::Start => {
-                let anchor = new_anchor(dom, Kind::Start, &out_id);
+                let anchor = new_anchor(dom, true, &out_id);
                 match segs.iter().position(|s| s.start + s.len > o) {
                     None => {
                         if let Some(last) = segs.last() {
@@ -546,8 +575,8 @@ fn inject_side(
                     }
                 }
             }
-            Kind::End => {
-                let anchor = new_anchor(dom, Kind::End, &out_id);
+            Kind::End | Kind::Point => {
+                let anchor = new_anchor(dom, false, &out_id);
                 match segs.iter().rposition(|s| s.start < o) {
                     None => {
                         if let Some(first) = segs.first() {
@@ -562,6 +591,10 @@ fn inject_side(
                         split_seg(dom, &mut segs, i, k);
                         dom.add_after_self(segs[i].run, anchor);
                     }
+                }
+                if ev.kind == Kind::Point {
+                    let start = new_anchor(dom, true, &out_id);
+                    dom.add_before_self(anchor, start);
                 }
                 let refrun = new_reference_run(dom, &out_id);
                 dom.add_after_self(anchor, refrun);
