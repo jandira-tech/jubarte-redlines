@@ -104,3 +104,55 @@ fn m92_file_23_last_del_still_spacing_pprchange() {
     }
     assert!(found);
 }
+
+fn docx(body: &str) -> Vec<u8> {
+    use std::io::Write;
+    let doc = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}<w:sectPr/></w:body></w:document>"#
+    );
+    let ct = br#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    let rels = br#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+    let mut buf = Cursor::new(Vec::new());
+    {
+        let mut z = zip::ZipWriter::new(&mut buf);
+        let opt = zip::write::SimpleFileOptions::default();
+        for (name, body) in [
+            ("[Content_Types].xml", &ct[..]),
+            ("_rels/.rels", &rels[..]),
+            ("word/document.xml", doc.as_bytes()),
+        ] {
+            z.start_file(name, opt).unwrap();
+            z.write_all(body).unwrap();
+        }
+        z.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+/// Both documents end in the same spaced empty paragraph, so that spacing is
+/// the revised document's own and Word keeps it live, unrevised
+/// (super_editor complex2×complexexport1). M92 moved it into a pPrChange,
+/// which also painted a change bar Word does not show.
+#[test]
+fn equal_trailing_empty_keeps_live_spacing() {
+    let tail = r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:p>"#;
+    let a = docx(&format!(
+        "<w:p><w:r><w:t>Old words here.</w:t></w:r></w:p>{tail}"
+    ));
+    let b = docx(&format!(
+        "<w:p><w:r><w:t>New words here.</w:t></w:r></w:p>{tail}"
+    ));
+    let settings = jubarte::comparer::WmlComparerSettings {
+        merge_replaced_paragraphs: true,
+        ..Default::default()
+    };
+    let out =
+        jubarte::document_comparer::compare_documents_with_settings(&a, &b, &settings).unwrap();
+    let doc = document_xml(&out);
+    let last = doc.rsplit("<w:p>").next().unwrap();
+    assert!(
+        !last.contains("pPrChange") && last.contains("w:line=\"240\""),
+        "trailing empty must keep its own spacing live: {last}"
+    );
+}

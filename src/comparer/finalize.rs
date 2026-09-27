@@ -2645,9 +2645,12 @@ pub fn strip_trailing_empty_pure_del_mark(dom: &mut Dom, root: NodeId) {
 /// M92 — trailing empty body paragraph: Word records live `w:spacing` under
 /// `w:pPrChange` (file_30 last empty after list residual). After M69 strips
 /// the pure-del mark we often keep live spacing; move it into pPrChange.
+/// Not when the revised document (`revised_root`) ends in a paragraph with
+/// the same spacing: that spacing is its own and Word keeps it live.
 pub fn trailing_empty_spacing_to_pprchange(
     dom: &mut Dom,
     root: NodeId,
+    revised_root: NodeId,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
@@ -2679,6 +2682,9 @@ pub fn trailing_empty_spacing_to_pprchange(
     let Some(sp) = dom.element(ppr, &W::spacing_el()) else {
         return;
     };
+    if last_body_para_spacing(dom, revised_root).is_some_and(|b| same_attributes(dom, b, sp)) {
+        return;
+    }
     // Only when spacing is the sole layout child (ignore empty rPr).
     for c in dom.elements(ppr, None) {
         let Some(n) = dom.name(c) else {
@@ -2708,6 +2714,34 @@ pub fn trailing_empty_spacing_to_pprchange(
     {
         dom.remove(rpr);
     }
+}
+
+/// `w:spacing` of the last body paragraph under `doc_root`, if any.
+fn last_body_para_spacing(dom: &Dom, doc_root: NodeId) -> Option<NodeId> {
+    let body = dom.element(doc_root, &W::body())?;
+    let last = dom
+        .elements(body, None)
+        .into_iter()
+        .rev()
+        .find(|&k| !dom.name_is(k, &W::sect_pr()))?;
+    if !dom.name_is(last, &W::p()) {
+        return None;
+    }
+    dom.element(dom.element(last, &W::p_pr())?, &W::spacing_el())
+}
+
+/// True when two elements carry the same attribute set, order ignored.
+fn same_attributes(dom: &Dom, a: NodeId, b: NodeId) -> bool {
+    let attrs = |n: NodeId| {
+        let mut v: Vec<(String, String, String)> = dom
+            .attributes(n)
+            .into_iter()
+            .map(|(k, v)| (k.namespace_name().to_string(), k.local_name().to_string(), v))
+            .collect();
+        v.sort();
+        v
+    };
+    attrs(a) == attrs(b)
 }
 
 /// True when a paragraph has no `w:t` / `w:delText` content.
