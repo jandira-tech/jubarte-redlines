@@ -72,6 +72,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   setting it reads, and the XML name interner hashes with foldhash. Cold
   one-shot conversion is 4.4% faster over 80 fixtures_500 documents; the
   output PDFs are byte-identical on 150.
+- A font face looks its glyphs up in the cmap when asked instead of listing
+  every mapped codepoint when it loads: a further 4.2% off cold conversion
+  over 80 documents, PDFs byte-identical on all 500 fixtures_500 documents.
 
 ## [0.9.2] - 2026-09-26
 

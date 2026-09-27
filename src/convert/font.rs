@@ -650,7 +650,10 @@ pub(crate) struct Face<'a> {
     east_asian: bool,
     pub bbox: [i16; 4],
     pub widths: Vec<u16>,
-    cmap: HashMap<u32, u16>,
+    /// The cmap's Unicode subtables, asked per character: the first one
+    /// that maps it wins. Enumerating every mapped codepoint up front was
+    /// a tenth of a one-page conversion (samply, fixtures_500 0081ba58).
+    cmap: Vec<ttf_parser::cmap::Subtable<'a>>,
     /// Shape plans by segment (direction, script, language) and kerning:
     /// building one was a fifth of a conversion when every run built its
     /// own (redline 0006f790: 21% of samples in `ShapePlan::new`).
@@ -777,19 +780,17 @@ impl<'a> Face<'a> {
             let glyph = ttf_parser::GlyphId(gid as u16);
             *slot = face.glyph_hor_advance(glyph).unwrap_or(0);
         }
-        let mut cmap = HashMap::new();
-        if let Some(table) = face.tables().cmap {
-            for sub in table.subtables {
-                if !sub.is_unicode() {
-                    continue;
-                }
-                sub.codepoints(|cp| {
-                    if let Some(gid) = sub.glyph_index(cp) {
-                        cmap.entry(cp).or_insert(gid.0);
-                    }
-                });
-            }
-        }
+        let cmap = face
+            .tables()
+            .cmap
+            .map(|table| {
+                table
+                    .subtables
+                    .into_iter()
+                    .filter(|sub| sub.is_unicode())
+                    .collect()
+            })
+            .unwrap_or_default();
         let bbox = face.global_bounding_box();
         let buzz = rustybuzz::Face::from_slice(bytes, 0);
         Some(Self {
@@ -811,7 +812,10 @@ impl<'a> Face<'a> {
     }
 
     pub(crate) fn glyph(&self, ch: char) -> u16 {
-        self.cmap.get(&(ch as u32)).copied().unwrap_or(0)
+        self.cmap
+            .iter()
+            .find_map(|sub| sub.glyph_index(u32::from(ch)))
+            .map_or(0, |gid| gid.0)
     }
 
     pub(crate) fn advance_pt(&self, ch: char, size: f32) -> f32 {
