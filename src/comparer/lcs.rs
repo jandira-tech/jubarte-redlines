@@ -5506,20 +5506,22 @@ pub fn pair_story_final_marks(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) {
     ));
 }
 
-/// Returns `Some([Inserted, Deleted])` in Word order, or `None` to fall through
-/// to full word-level LCS.
+/// Returns `Some(([Inserted, Deleted], paired))` in Word order, or `None` to
+/// fall through to full word-level LCS.
 ///
 /// When both stories end in an empty paragraph, a wholesale replacement keeps
 /// that story-final mark: Word pairs the two final pilcrows instead of
 /// inserting B's and deleting A's, and the document ends on the surviving
 /// empty paragraph (line_break × line_space_table). Left unpaired, B's
 /// trailing empty insert is later welded onto A's first deleted paragraph.
+/// `paired` reports that pairing; a junction seam ends on the same
+/// Inserted/Deleted/Equal shape without it.
 pub fn detect_unrelated_sources_word_mode(
     dom: &mut Dom,
     cu1: &[ComparisonUnit],
     cu2: &[ComparisonUnit],
     settings: &WmlComparerSettings,
-) -> Option<Vec<CorrelatedSequence>> {
+) -> Option<(Vec<CorrelatedSequence>, bool)> {
     let mut seqs = detect_unrelated_sources_word_mode_inner(dom, cu1, cu2, settings)?;
     let whole = |s: &CorrelatedSequence, status, side: &[ComparisonUnit]| {
         s.correlation_status == status
@@ -5546,8 +5548,9 @@ pub fn detect_unrelated_sources_word_mode(
             CorrelatedSequence::deleted(cu1[..cu1.len() - 1].to_vec()),
             CorrelatedSequence::paired(CorrelationStatus::Equal, vec![pa], vec![pb]),
         ];
+        return Some((seqs, true));
     }
-    Some(seqs)
+    Some((seqs, false))
 }
 
 fn detect_unrelated_sources_word_mode_inner(

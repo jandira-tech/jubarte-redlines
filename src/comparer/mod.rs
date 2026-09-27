@@ -494,9 +494,18 @@ pub fn compare_bodies_faithful_with_notes(
     // merge_replaced_paragraphs itself. Splitting these into independent
     // knobs would change Word-mode semantics; keep them coupled until a
     // deliberate settings redesign.
+    // A wholesale replacement that kept the story-final mark (both documents'
+    // final empty paragraphs paired): the trailing live empty is Word's, not
+    // B's leftover (see M448 below).
+    let mut story_final_paired = false;
     let mut seqs = if settings.merge_replaced_paragraphs {
-        lcs::detect_unrelated_sources_word_mode(dom, &cus1, &cus2, settings)
-            .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
+        match lcs::detect_unrelated_sources_word_mode(dom, &cus1, &cus2, settings) {
+            Some((seqs, paired)) => {
+                story_final_paired = paired;
+                seqs
+            }
+            None => lcs::lcs(dom, cus1, cus2, settings),
+        }
     } else {
         lcs::detect_unrelated_sources(&cus1, &cus2)
             .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
@@ -505,15 +514,6 @@ pub fn compare_bodies_faithful_with_notes(
     if settings.merge_replaced_paragraphs {
         lcs::pair_story_final_marks(dom, &mut seqs);
     }
-    // A wholesale replacement that kept the story-final mark (both documents'
-    // final empty paragraphs paired): the trailing live empty is Word's, not
-    // B's leftover (see M448 below).
-    let story_final_paired = matches!(
-        seqs.as_slice(),
-        [i, d, e] if i.correlation_status == CorrelationStatus::Inserted
-            && d.correlation_status == CorrelationStatus::Deleted
-            && e.correlation_status == CorrelationStatus::Equal
-    );
     // Word skip-ahead moves: Equal after pure A-only deletes → ins early +
     // del late so detect_moves can emit moveTo/moveFrom (page-order parity).
     moves::promote_skip_ahead_equals(&mut seqs, settings);
