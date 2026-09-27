@@ -3005,6 +3005,301 @@ fn bake_bothsides_dd_disabling_neutralizers(
     changed
 }
 
+/// Word's redefined paragraph styles hold B's effective metrics as a delta
+/// against the output context. Mined from the 747 pool redlines (4,924 tracked
+/// paragraph styles present in B): for each rFonts slot, `sz`, `szCs` and the
+/// spacing `before`/`after`/`line`, Word writes B's effective value exactly
+/// when it differs from what the output style's parent chain and docDefaults
+/// resolve, and writes nothing otherwise (rFonts 4,922, sz/szCs/before/after
+/// 4,924, line 4,898 of 4,924). B's value resolves through B's own chain and
+/// docDefaults, then the factory defaults (sz 20, spacing 0/0/240 auto). A
+/// font slot resolves from the nearest rFonts declaring its concrete or theme
+/// name. Parents run first, so a child reads its parent's resolved values.
+/// `renames` maps B's style ids to the output's canonical ids.
+fn resolve_redefined_style_metrics(
+    dom: &mut Dom,
+    out_root: NodeId,
+    b_root: NodeId,
+    renames: &std::collections::HashMap<String, String>,
+) -> bool {
+    let style_nm = W::name("style");
+    let index = |dom: &Dom, root: NodeId| -> std::collections::HashMap<String, NodeId> {
+        dom.elements(root, Some(&style_nm))
+            .into_iter()
+            .filter_map(|s| Some((dom.attribute(s, &W::name("styleId"))?.to_string(), s)))
+            .collect()
+    };
+    let out_idx = index(dom, out_root);
+    let mut b_idx = index(dom, b_root);
+    for (old, new) in renames {
+        if let Some(&n) = b_idx.get(old) {
+            b_idx.entry(new.clone()).or_insert(n);
+        }
+    }
+    let parent = |dom: &Dom, idx: &std::collections::HashMap<String, NodeId>, s: NodeId| {
+        dom.element(s, &W::name("basedOn"))
+            .and_then(|b| dom.attribute(b, &W::val()))
+            .and_then(|v| idx.get(v).copied())
+    };
+    // Chain from `start` (inclusive) up to 12 styles, then docDefaults.
+    let chain = |dom: &Dom,
+                 idx: &std::collections::HashMap<String, NodeId>,
+                 start: Option<NodeId>|
+     -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let mut cur = start;
+        while let Some(c) = cur {
+            if out.len() >= 12 || out.contains(&c) {
+                break;
+            }
+            out.push(c);
+            cur = parent(dom, idx, c);
+        }
+        out
+    };
+    let dd_ppr = |dom: &Dom, root: NodeId| {
+        dom.element(root, &W::name("docDefaults"))
+            .and_then(|d| dom.element(d, &W::name("pPrDefault")))
+            .and_then(|d| dom.element(d, &W::p_pr()))
+    };
+    // Each holder is a style (reads its pPr/rPr) or a docDefaults pPr/rPr.
+    let rpr_of = |dom: &Dom, n: NodeId, is_style: bool| {
+        if is_style {
+            dom.element(n, &W::r_pr())
+        } else {
+            Some(n)
+        }
+    };
+    let ppr_of = |dom: &Dom, n: NodeId, is_style: bool| {
+        if is_style {
+            dom.element(n, &W::p_pr())
+        } else {
+            Some(n)
+        }
+    };
+    let holders = |dom: &Dom, styles: Vec<NodeId>, root: NodeId, para: bool| {
+        let mut h: Vec<(NodeId, bool)> = styles.into_iter().map(|s| (s, true)).collect();
+        let d = if para {
+            dd_ppr(dom, root)
+        } else {
+            rpr_default(dom, root)
+        };
+        if let Some(d) = d {
+            h.push((d, false));
+        }
+        h
+    };
+    let font_slot = |dom: &Dom, hs: &[(NodeId, bool)], c: &str, t: &str| -> FontSlot {
+        for &(n, st) in hs {
+            if let Some(f) = rpr_of(dom, n, st).and_then(|r| dom.element(r, &W::name("rFonts"))) {
+                let cv = dom.attribute(f, &W::name(c)).map(str::to_string);
+                let tv = dom.attribute(f, &W::name(t)).map(str::to_string);
+                if cv.is_some() || tv.is_some() {
+                    return (cv, tv);
+                }
+            }
+        }
+        (None, None)
+    };
+    let slot_key = |v: &FontSlot| match v {
+        (_, Some(t)) => Some(format!("t:{t}")),
+        (Some(c), None) => Some(format!("c:{c}")),
+        _ => None,
+    };
+    let run_val = |dom: &Dom, hs: &[(NodeId, bool)], local: &str| -> String {
+        hs.iter()
+            .find_map(|&(n, st)| {
+                rpr_of(dom, n, st)
+                    .and_then(|r| dom.element(r, &W::name(local)))
+                    .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string))
+            })
+            .unwrap_or_else(|| "20".to_string())
+    };
+    let spacing_val = |dom: &Dom, hs: &[(NodeId, bool)], attr: &str, default: &str| -> String {
+        hs.iter()
+            .find_map(|&(n, st)| {
+                ppr_of(dom, n, st)
+                    .and_then(|p| dom.element(p, &W::name("spacing")))
+                    .and_then(|e| dom.attribute(e, &W::name(attr)).map(str::to_string))
+            })
+            .unwrap_or_else(|| default.to_string())
+    };
+    // (line, lineRule) resolve together from the nearest declaring `line`.
+    let line_val = |dom: &Dom, hs: &[(NodeId, bool)]| -> (String, String) {
+        hs.iter()
+            .find_map(|&(n, st)| {
+                let sp = ppr_of(dom, n, st).and_then(|p| dom.element(p, &W::name("spacing")))?;
+                let line = dom.attribute(sp, &W::name("line"))?.to_string();
+                let rule = dom
+                    .attribute(sp, &W::name("lineRule"))
+                    .unwrap_or("auto")
+                    .to_string();
+                Some((line, rule))
+            })
+            .unwrap_or_else(|| ("240".to_string(), "auto".to_string()))
+    };
+
+    let mut styles: Vec<(usize, NodeId)> = dom
+        .elements(out_root, Some(&style_nm))
+        .into_iter()
+        .map(|s| (chain(dom, &out_idx, Some(s)).len(), s))
+        .collect();
+    styles.sort_by_key(|&(d, _)| d);
+    let mut changed = false;
+    for (_, style) in styles {
+        if dom.attribute(style, &W::name("type")) != Some("paragraph")
+            || dom
+                .attribute(style, &W::name("default"))
+                .is_some_and(|v| v == "1" || v == "true")
+        {
+            continue;
+        }
+        let tracked = dom
+            .element(style, &W::p_pr())
+            .is_some_and(|p| dom.element(p, &W::name("pPrChange")).is_some())
+            || dom
+                .element(style, &W::r_pr())
+                .is_some_and(|r| dom.element(r, &W::name("rPrChange")).is_some());
+        let Some(sid) = dom
+            .attribute(style, &W::name("styleId"))
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let Some(&b_style) = b_idx.get(&sid) else {
+            continue;
+        };
+        if !tracked {
+            continue;
+        }
+        let b_chain = chain(dom, &b_idx, Some(b_style));
+        let o_chain = chain(dom, &out_idx, parent(dom, &out_idx, style));
+        let b_r = holders(dom, b_chain.clone(), b_root, false);
+        let o_r = holders(dom, o_chain.clone(), out_root, false);
+        let b_p = holders(dom, b_chain, b_root, true);
+        let o_p = holders(dom, o_chain, out_root, true);
+
+        // --- run metrics ---
+        let fonts: Vec<(FontSlot, bool)> = RPR_METRIC_FONT_SLOTS
+            .iter()
+            .map(|(c, t)| {
+                let bv = font_slot(dom, &b_r, c, t);
+                let differs = slot_key(&bv) != slot_key(&font_slot(dom, &o_r, c, t));
+                (bv, differs)
+            })
+            .collect();
+        let sizes: Vec<(&str, String, bool)> = ["sz", "szCs"]
+            .into_iter()
+            .map(|l| {
+                let bv = run_val(dom, &b_r, l);
+                let differs = bv != run_val(dom, &o_r, l);
+                (l, bv, differs)
+            })
+            .collect();
+        let need_rpr =
+            fonts.iter().any(|f| f.1 && slot_key(&f.0).is_some()) || sizes.iter().any(|s| s.2);
+        let rpr = match dom.element(style, &W::r_pr()) {
+            Some(r) => Some(r),
+            None if need_rpr => {
+                let r = dom.new_element(W::r_pr());
+                insert_child_by_rank(dom, style, r, "rPr", &style_child_rank);
+                Some(r)
+            }
+            None => None,
+        };
+        if let Some(rpr) = rpr {
+            let rf = match dom.element(rpr, &W::name("rFonts")) {
+                Some(f) => f,
+                None => {
+                    let f = dom.new_element(W::name("rFonts"));
+                    dom.add_first(rpr, f);
+                    f
+                }
+            };
+            for ((c, t), (bv, differs)) in RPR_METRIC_FONT_SLOTS.iter().zip(&fonts) {
+                let before = (
+                    dom.attribute(rf, &W::name(c)).map(str::to_string),
+                    dom.attribute(rf, &W::name(t)).map(str::to_string),
+                );
+                let want = if *differs { bv.clone() } else { (None, None) };
+                if before != want {
+                    dom.set_attribute_value(rf, &W::name(c), want.0.as_deref());
+                    dom.set_attribute_value(rf, &W::name(t), want.1.as_deref());
+                    changed = true;
+                }
+            }
+            if dom.attributes(rf).is_empty() {
+                dom.remove(rf);
+            }
+            for (local, bv, differs) in sizes {
+                let existing = dom.element(rpr, &W::name(local));
+                match (existing, differs) {
+                    (Some(e), false) => {
+                        dom.remove(e);
+                        changed = true;
+                    }
+                    (Some(e), true) => {
+                        if dom.attribute(e, &W::val()) != Some(bv.as_str()) {
+                            dom.set_attribute_value(e, &W::val(), Some(&bv));
+                            changed = true;
+                        }
+                    }
+                    (None, true) => {
+                        let e = dom.new_element(W::name(local));
+                        dom.set_attribute_value(e, &W::val(), Some(&bv));
+                        add_rpr_child_in_order(dom, rpr, e, local);
+                        changed = true;
+                    }
+                    (None, false) => {}
+                }
+            }
+        }
+
+        // --- spacing ---
+        let mut want: Vec<(&str, Option<String>)> = Vec::new();
+        for (attr, default) in [("before", "0"), ("after", "0")] {
+            let bv = spacing_val(dom, &b_p, attr, default);
+            let differs = bv != spacing_val(dom, &o_p, attr, default);
+            want.push((attr, differs.then_some(bv)));
+        }
+        let (bl, br) = line_val(dom, &b_p);
+        let line_differs = (bl.clone(), br.clone()) != line_val(dom, &o_p);
+        want.push(("line", line_differs.then(|| bl.clone())));
+        want.push(("lineRule", line_differs.then(|| br.clone())));
+        let need_spacing = want.iter().any(|w| w.1.is_some());
+        let ppr = match dom.element(style, &W::p_pr()) {
+            Some(p) => Some(p),
+            None if need_spacing => {
+                let p = dom.new_element(W::p_pr());
+                insert_child_by_rank(dom, style, p, "pPr", &style_child_rank);
+                Some(p)
+            }
+            None => None,
+        };
+        let Some(ppr) = ppr else { continue };
+        let sp = match dom.element(ppr, &W::name("spacing")) {
+            Some(sp) => Some(sp),
+            None if need_spacing => {
+                let sp = dom.new_element(W::name("spacing"));
+                insert_child_by_rank(dom, ppr, sp, "spacing", &ppr_child_rank);
+                Some(sp)
+            }
+            None => None,
+        };
+        let Some(sp) = sp else { continue };
+        for (attr, v) in want {
+            if dom.attribute(sp, &W::name(attr)) != v.as_deref() {
+                dom.set_attribute_value(sp, &W::name(attr), v.as_deref());
+                changed = true;
+            }
+        }
+        if dom.attributes(sp).is_empty() {
+            dom.remove(sp);
+        }
+    }
+    changed
+}
+
 fn merge_normal_style_rpr(
     dom: &mut Dom,
     out_root: NodeId,
@@ -5308,6 +5603,10 @@ fn compare_documents_impl(
             changed |= normalize_word_paragraph_style_line(&mut sd, or);
             // M80: Title/ListParagraph/Highlighted Arial + Heading Latin inherit.
             changed |= align_paragraph_style_fonts_with_normal(&mut sd, or);
+            // Redefined styles take B's effective metrics as a delta against
+            // the output context (Word's rule, mined over 4,924 styles). Runs
+            // last so it settles what the heuristic passes above wrote.
+            changed |= resolve_redefined_style_metrics(&mut sd, or, br, &style_renames);
             // M483: re-cache themed color hexes against the shipped theme —
             // must run AFTER the merge writes B's blocks (their w:val hexes
             // were cached under B's theme).

@@ -105,11 +105,12 @@ class Run:
 class Metric:
     key: str
     title: str
-    kind: str  # "redline markup", "redline speed", "docx->pdf", "pdf->docx"
+    kind: str  # "redline markup", "redline speed", "docx->pdf", "docx->pdf speed", "pdf->docx"
     reference: str
     docs: str  # "clean", "redlines", or "-"
     unit: str
     lower_is_better: bool = False
+    note: str = ''
 
 
 METRICS: dict[str, Metric] = {}
@@ -225,6 +226,50 @@ def speed() -> None:
     speed_rows(RES / 'speed.jsonl')
     for path in sorted((RES / 'redline_speed_bench').rglob('speed.jsonl')):
         speed_rows(path)
+    docx_to_pdf_speed()
+
+
+# corpus -> (title label, Documents cell)
+D2P_SPEED_CORPORA = {
+    'all': ('every document pooled', 'clean + redlines'),
+    'fixtures_500': ('fixtures_500, clean', 'clean'),
+    'word_redline_pools': ("Word's redlines of the neurotic pools", 'redlines'),
+    'word_redline_en': ("Word's redlines of the English pairs", 'redlines'),
+}
+
+
+def docx_to_pdf_speed() -> None:
+    """results/docx_to_pdf_speed/speed.jsonl (scripts/docx_to_pdf_speed.py): ms per document."""
+    path = RES / 'docx_to_pdf_speed' / 'speed.jsonl'
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        row = json.loads(line)
+        corpus = row['corpus']
+        label, docs = D2P_SPEED_CORPORA.get(corpus, (corpus, 'clean'))
+        key = metric(
+            f'speed:docx2pdf:{corpus}',
+            title=f'docx→pdf speed — ms per document ({label})',
+            kind='docx->pdf speed',
+            reference='-',
+            docs=docs,
+            unit='ms per document (lower is better)',
+            lower_is_better=True,
+            note='Sequential, round-robin across tools per document; one CLI call per sample, process '
+            'start included. Failed conversions are excluded from the timing (Docs counts successes).',
+        )
+        version = row['version']
+        if row['tool'] == 'jubarte' and '@' in version:
+            version = 'jubarte@' + version.rsplit('@', 1)[1]
+        add(
+            metric=key,
+            tool=row['tool'],
+            version=version,
+            when=datetime.strptime(row['run_ts'], '%Y-%m-%dT%H-%M-%SZ').replace(tzinfo=timezone.utc),
+            mean=row['mean'],
+            median=row['median'],
+            n=row['n'],
+        )
 
 
 # --- docx -> pdf, neurotic harness -----------------------------------------------------------
@@ -505,27 +550,41 @@ def docx_to_pdf_pooled() -> None:
 # by Word (word_pdf.py). Files: results/redline_wordpdf/[en_]<row>[~<maker>]-<version>_<scorer>.json,
 # <scorer> = harness (`bench compare`, {stem: 0-100}) or docxide (docxide-metrics rows). Each row
 # swaps one side of the pipeline, so its score isolates what that side does.
-WORDPDF_SETS = {'': 'neurotic redline pools (803 pairs)', 'en_': 'English redlines (451 pairs)'}
+WORDPDF_SETS = {'': 'neurotic redline pools', 'en_': 'English redlines'}
+# row -> (stage, tool label). Rows rank only against rows of the same stage: a redliner is
+# never ranked against a converter.
 WORDPDF_ROWS = {
-    'A_redline': '{maker} redline (Word PDF)',
-    'B_convert': 'jubarte PDF (Word redline)',
-    'C_soffice': 'soffice PDF (Word redline)',
-    'D_e2e': 'jubarte redline + jubarte PDF',
-    'E_e2e_soffice': 'jubarte redline + soffice PDF',
+    'A_redline': ('redlining', '{maker} redline (Word PDF)'),
+    'B_convert': ('conversion', 'jubarte PDF (Word redline)'),
+    'C_soffice': ('conversion', 'soffice PDF (Word redline)'),
+    'C_convert': ('conversion', '{maker} PDF (Word redline)'),
+    'D_e2e': ('end to end', 'jubarte redline + jubarte PDF'),
+    'E_e2e_soffice': ('end to end', 'jubarte redline + soffice PDF'),
 }
+WORDPDF_STAGES = ['redlining', 'conversion', 'end to end']
+WORDPDF_NOTES = {
+    'redlining': 'Each tool redlines the pair; Word converts that redline to PDF. Only the redline differs.',
+    'conversion': "Word redlines the pair; each tool converts Word's redline to PDF. Only the renderer differs.",
+    'end to end': 'One tool redlines and converts, as a user without Word would.',
+}
+WORDPDF_SKIPS = (
+    'A pair Word itself could not redline or convert is skipped, so Docs counts the scored pairs. '
+    'A tool that fails or refuses a pair scores zero there (superdoc refuses most pairs: '
+    'header/footer topology, shared definitions, numbering replay).'
+)
 
 
-def wordpdf_row(stem: str) -> tuple[str, str, str, str] | None:
-    """`[en_]<row>[~<maker>]-<version>_<scorer>` -> (set, tool, version, scorer)."""
+def wordpdf_row(stem: str) -> tuple[str, str, str, str, str] | None:
+    """`[en_]<row>[~<maker>]-<version>_<scorer>` -> (set, stage, tool, version, scorer)."""
     name, _, rest = stem.partition('-')
     version, _, scorer = rest.rpartition('_')
     if scorer not in ('harness', 'docxide') or not version:
         return None
     corpus = 'en_' if name.startswith('en_') else ''
     row, _, maker = name.removeprefix(corpus).partition('~')
-    label = WORDPDF_ROWS.get(row)
-    if label is None:
+    if row not in WORDPDF_ROWS:
         return None
+    stage, label = WORDPDF_ROWS[row]
     maker = maker or 'jubarte'
     tool = label.format(maker=maker)
     if tool.startswith('jubarte'):
@@ -534,7 +593,7 @@ def wordpdf_row(stem: str) -> tuple[str, str, str, str] | None:
         version = EN_COMPETITORS['soffice']
     else:
         version = f'{maker} {version}'
-    return corpus, tool, version, scorer
+    return corpus, stage, tool, version, scorer
 
 
 def redline_wordpdf() -> None:
@@ -542,7 +601,7 @@ def redline_wordpdf() -> None:
         parsed = wordpdf_row(path.stem)
         if parsed is None:
             continue
-        corpus, tool, version, scorer = parsed
+        corpus, stage, tool, version, scorer = parsed
         doc = json.loads(path.read_text())
         if scorer == 'harness':
             scores = [float(v) for v in doc.values() if isinstance(v, (int, float))]
@@ -553,12 +612,13 @@ def redline_wordpdf() -> None:
         if not scores:
             continue
         key = metric(
-            f'wordpdf:{corpus}:{scorer}',
-            title=f'redlines vs Word truth — {WORDPDF_SETS[corpus]} ({unit.split(" ")[0]})',
+            f'wordpdf:{corpus}:{stage}:{scorer}',
+            title=f'{stage.capitalize()} vs Word truth — {WORDPDF_SETS[corpus]} ({unit.split(" ")[0]})',
             kind='redline markup',
             reference='Word (Word redline, Word PDF)',
             docs='redlines',
             unit=unit,
+            note=f'{WORDPDF_NOTES[stage]} {WORDPDF_SKIPS}',
         )
         mean, median = stats(scores)
         add(
@@ -608,23 +668,34 @@ def short_version(v: str) -> str:
     return v if len(v) <= VERSION_WIDTH else v[: VERSION_WIDTH - 1] + '…'
 
 
-def fmt(v: float | None) -> str:
+def fmt(v: float | None, unit: str) -> str:
+    """Jaccard (0-1) keeps four decimals; scores and milliseconds keep two."""
     if v is None:
         return '—'
-    return f'{v:.4f}' if abs(v) < 2 else f'{v:.2f}'
+    return f'{v:.4f}' if 'Jaccard' in unit else f'{v:.2f}'
 
 
-KIND_ORDER = ['docx->pdf', 'redline markup', 'redline speed', 'pdf->docx']
-# Reference groups, in page order: Word exports first, then soffice renders, then the rest.
+KIND_ORDER = ['docx->pdf', 'redline markup', 'docx->pdf speed', 'redline speed', 'pdf->docx']
+# Reference groups, in page order: Word truth first, then speed, then the superseded soffice truth.
 GROUPS = [
-    ('Microsoft Word® reference PDFs', lambda m: m.reference.startswith('Word') and 'soffice' not in m.reference),
-    ('soffice-rendered PDFs', lambda m: 'soffice' in m.reference),
-    ('No reference PDFs (speed, pdf→docx)', lambda m: True),
+    (
+        'Microsoft Word® reference PDFs',
+        lambda m: m.reference.startswith('Word') and 'rendered by' not in m.reference,
+        '',
+    ),
+    ('No reference PDFs (speed, pdf→docx)', lambda m: not m.reference.startswith('Word'), ''),
+    (
+        'Superseded: tool output rendered by soffice, playwright or passthrough',
+        lambda m: True,
+        "Kept for history only. These tables render each tool's redline with LibreOffice, playwright or "
+        'the passthrough renderer before scoring against Word, so they measure the renderer as much as '
+        'the redline. The Word-truth tables above replace them; new runs are not added here.',
+    ),
 ]
 
 
 def group_of(m: Metric) -> int:
-    return next(i for i, (_, test) in enumerate(GROUPS) if test(m))
+    return next(i for i, (_, test, _) in enumerate(GROUPS) if test(m))
 
 
 def render() -> str:
@@ -647,32 +718,44 @@ def render() -> str:
         'per corpus; the Corpora column shows which corpora (and how many documents) each row covers,',
         'so a row missing a corpus is averaged over fewer documents.',
         '',
-        'The "redlines vs Word truth" tables score every row against Word\'s own redline of the pair',
-        '(word_redline.py), converted to PDF by Word (word_pdf.py). Each row swaps one side: a',
-        '"<tool> redline (Word PDF)" row measures redlining alone, a "<tool> PDF (Word redline)" row',
-        'measures conversion alone, and "jubarte redline + <converter> PDF" is end to end. A pair Word',
-        'could not redline is skipped; a tool that produced no PDF for a pair scores 0 on it.',
+        'The "vs Word truth" tables score every row against Word\'s own redline of the pair',
+        '(word_redline.py), converted to PDF by Word (word_pdf.py). Each row swaps one side, and each',
+        'stage has its own table: Redlining ("<tool> redline (Word PDF)"), Conversion ("<tool> PDF',
+        '(Word redline)") and End to end ("jubarte redline + <converter> PDF"). A pair Word could not',
+        'redline or convert is skipped; a tool that produced no PDF for a pair scores 0 on it. jubarte',
+        "converts with `--revisions word` (Word's revision colours) so its PDF is comparable to Word's.",
         '',
         '| Metric | Kind | Reference PDFs | Documents | Unit |',
         '| --- | --- | --- | --- | --- |',
     ]
     ordered = sorted(
         METRICS.values(),
-        key=lambda m: (group_of(m), KIND_ORDER.index(m.kind), not m.key.startswith('pool:'), m.docs, m.title),
+        key=lambda m: (
+            group_of(m),
+            KIND_ORDER.index(m.kind),
+            not m.key.startswith('pool:'),
+            m.docs,
+            WORDPDF_STAGES.index(m.key.split(':')[2]) if m.key.startswith('wordpdf:') else -1,
+            m.title,
+        ),
     )
     lines.extend(
         f'| [{m.title}](#{anchor(m.title)}) | {m.kind} | {m.reference} | {m.docs} | {m.unit} |' for m in ordered
     )
-    for gi, (heading, _) in enumerate(GROUPS):
+    for gi, (heading, _, blurb) in enumerate(GROUPS):
         mets = [m for m in ordered if group_of(m) == gi]
         if not mets:
             continue
         lines += ['', f'## {heading}']
+        if blurb:
+            lines += ['', blurb]
         for m in mets:
             lines += ['', f'### {m.title}', '']
             lines.append(
                 f'Kind: {m.kind}. Reference PDFs: **{m.reference}**. Documents: **{m.docs}**. Unit: {m.unit}.'
             )
+            if m.note:
+                lines += ['', m.note]
             runs = [r for r in RUNS if r.metric == m.key]
             if not m.key.startswith('pool:'):  # pooled runs are already one per week
                 runs = best_per_window(runs, m.lower_is_better)
@@ -686,8 +769,11 @@ def render() -> str:
             head = '| Rank | Tool | Version | Date | Docs | Mean | Median |' + (' Corpora |' if pool else '')
             lines += ['', head, '|' + ' --- |' * (8 if pool else 7)]
             for i, r in enumerate(runs, 1):
-                mean = fmt(r.mean) if r.mean is not None else f'{fmt(r.rank_value)} (avg)'
-                row = f'| {i} | {r.tool} | {short_version(r.version)} | {r.when.strftime("%Y-%m-%d")} | {r.n} | {mean} | {fmt(r.median)} |'
+                mean = fmt(r.mean, m.unit) if r.mean is not None else f'{fmt(r.rank_value, m.unit)} (avg)'
+                row = (
+                    f'| {i} | {r.tool} | {short_version(r.version)} | {r.when.strftime("%Y-%m-%d")} | {r.n} '
+                    f'| {mean} | {fmt(r.median, m.unit)} |'
+                )
                 lines.append(row + (f' {r.corpora} |' if pool else ''))
     return '\n'.join(lines) + '\n'
 
