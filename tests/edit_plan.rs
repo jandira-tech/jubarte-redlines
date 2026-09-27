@@ -624,3 +624,223 @@ fn report_serializes_to_json_lines_an_agent_can_log() {
     assert_eq!(lines.last().unwrap()["ev"], "summary");
     assert_eq!(lines.last().unwrap()["status"], "ok");
 }
+
+#[test]
+fn unicode_replacement_across_runs_preserves_surrounding_text_and_formatting() {
+    let source = docx(&format!(
+        "<w:p>{}{}{}</w:p>",
+        run("Pré 😀 ca", true, false, None),
+        run("fé fin", false, true, None),
+        run(" 尾", false, false, None),
+    ));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[
+        {"kind":"replace","paragraph":{"index":0},"find":"café","replacement":"茶 & <tea>"},
+        {"kind":"insert","paragraph":{"index":0},"before":"尾","text":"新"}
+    ]"#,
+        ),
+    )
+    .unwrap();
+    let clean = paragraphs(&result.clean).unwrap();
+    assert_eq!(clean[0].text, "Pré 😀 茶 & <tea> fin 新尾");
+    let slices: Vec<_> = clean[0]
+        .runs
+        .iter()
+        .map(|span| {
+            let text: String = clean[0]
+                .text
+                .chars()
+                .skip(span.start)
+                .take(span.end - span.start)
+                .collect();
+            (text, span.bold, span.italic)
+        })
+        .collect();
+    assert_eq!(
+        slices,
+        [
+            ("Pré 😀 茶 & <tea>".to_string(), true, false),
+            (" fin".to_string(), false, true),
+            (" 新尾".to_string(), false, false),
+        ]
+    );
+    assert_eq!(
+        texts(&accept_revisions(&result.redline).unwrap()),
+        texts(&result.clean)
+    );
+    assert_eq!(
+        texts(&jubarte::document_comparer::reject_revisions(&result.redline).unwrap()),
+        texts(&source)
+    );
+    assert_word_valid_package(&result.clean);
+    assert_word_valid_package(&result.redline);
+}
+
+#[test]
+fn operations_resolve_against_the_source_even_when_prior_replacements_change_length() {
+    let source = docx(&para("alpha beta gamma"));
+    let result = apply_plan(&source, &plan(&source, r#"[
+        {"kind":"replace","paragraph":{"index":0},"find":"alpha","replacement":"a much longer prefix"},
+        {"kind":"replace","paragraph":{"index":0},"find":"gamma","replacement":"終"},
+        {"kind":"delete","paragraph":{"index":0},"find":"beta "}
+    ]"#)).unwrap();
+    assert_eq!(texts(&result.clean), ["a much longer prefix 終"]);
+    let invalid = plan(
+        &source,
+        r#"[
+        {"id":"create","kind":"replace","paragraph":{"index":0},"find":"alpha","replacement":"new anchor"},
+        {"id":"reuse","kind":"delete","paragraph":{"index":0},"find":"new anchor"}
+    ]"#,
+    );
+    let error = apply_plan(&source, &invalid).unwrap_err();
+    assert_eq!(error.code, "ANCHOR_NOT_FOUND");
+    assert_eq!(error.operation.as_deref(), Some("reuse"));
+    assert_eq!(error.outcomes[0].status, "ok");
+    assert_eq!(error.outcomes[1].matches, 0);
+}
+
+#[test]
+fn adjacent_replacements_are_allowed_but_an_insertion_inside_a_replacement_is_refused() {
+    let source = docx(&para("abcdef"));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[
+        {"kind":"replace","paragraph":{"index":0},"find":"abc","replacement":"X"},
+        {"kind":"replace","paragraph":{"index":0},"find":"def","replacement":"Y"}
+    ]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean), ["XY"]);
+    let error = preview_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[
+        {"kind":"replace","paragraph":{"index":0},"find":"abc","replacement":"X"},
+        {"id":"inside","kind":"insert","paragraph":{"index":0},"after":"a","text":"!"}
+    ]"#,
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "OVERLAPPING_EDITS");
+    assert_eq!(error.operation.as_deref(), Some("inside"));
+}
+
+#[test]
+fn simple_field_and_content_control_anchors_are_refused_by_preview_and_apply() {
+    for inner in [
+        r#"<w:fldSimple w:instr="PAGE"><w:r><w:t>target</w:t></w:r></w:fldSimple>"#,
+        r#"<w:sdt><w:sdtContent><w:r><w:t>target</w:t></w:r></w:sdtContent></w:sdt>"#,
+    ] {
+        let source = docx(&format!("<w:p>{inner}</w:p>"));
+        let edit = plan(
+            &source,
+            r#"[{"id":"opaque","kind":"replace","paragraph":{"index":0},"find":"target","replacement":"new"}]"#,
+        );
+        for error in [
+            preview_plan(&source, &edit).unwrap_err(),
+            apply_plan(&source, &edit).unwrap_err(),
+        ] {
+            assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{inner}");
+            assert_eq!(error.operation.as_deref(), Some("opaque"));
+        }
+    }
+}
+
+#[test]
+fn insertion_requires_one_position_and_nonempty_plain_text() {
+    let source = docx(&para("anchor"));
+    for extra in [
+        serde_json::json!({"text":"x"}),
+        serde_json::json!({"after":"anchor","before":"anchor","text":"x"}),
+        serde_json::json!({"position":"start","after":"anchor","text":"x"}),
+        serde_json::json!({"position":"end","text":""}),
+        serde_json::json!({"position":"end","text":"a\nb"}),
+        serde_json::json!({"position":"end","text":"a\tb"}),
+    ] {
+        let mut op = extra;
+        op["kind"] = serde_json::json!("insert");
+        op["paragraph"] = serde_json::json!({"index":0});
+        let ops = serde_json::json!([op]).to_string();
+        let edit = plan(&source, &ops);
+        assert_eq!(
+            preview_plan(&source, &edit).unwrap_err().code,
+            "INVALID_EDIT",
+            "{ops}"
+        );
+    }
+}
+
+#[test]
+fn new_comments_preserve_existing_comments_and_allocate_after_the_highest_id() {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{}"><w:comment w:id="7" w:author="Original" w:date="2020-01-01T00:00:00Z">{}</w:comment></w:comments>"#,
+        common::docx::W_NS,
+        para("Existing note"),
+    );
+    let source = common::docx::docx_with(
+        &para("Contract text"),
+        &[common::docx::Part {
+            name: "word/reviewer-notes.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[
+        {"kind":"comment","paragraph":{"index":0},"find":"Contract","text":"New note"}
+    ]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(result.report.comments_added, 1);
+    assert_eq!(result.report.operations[0].comment_id, Some(8));
+    assert_eq!(summary(&result.clean).unwrap().comments, 2);
+    let xml = part_string(&result.clean, "word/reviewer-notes.xml").unwrap();
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let document = jubarte::xmllinq::parse::parse_xdocument(&mut dom, &xml);
+    let root = dom.root(document).unwrap();
+    let nodes = dom.descendants(root, Some(&jubarte::namespaces::W::name("comment")));
+    let ids: Vec<_> = nodes
+        .iter()
+        .map(|&node| dom.attribute(node, &jubarte::namespaces::W::id()).unwrap())
+        .collect();
+    assert_eq!(ids, ["7", "8"]);
+    assert!(xml.contains("Existing note") && xml.contains("New note"));
+    assert_eq!(texts(&result.clean), texts(&source));
+}
+
+#[test]
+fn edits_crossing_complex_field_boundaries_are_refused() {
+    // fldChar markers are siblings of the result runs, unlike fldSimple.
+    // Replacing across them must not silently rewrite a generated field result.
+    let source = docx(
+        r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>3</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> after</w:t></w:r></w:p>"#,
+    );
+    let edit = plan(
+        &source,
+        r#"[{"id":"field","kind":"replace","paragraph":{"index":0},"find":"Before 3 after","replacement":"New text"}]"#,
+    );
+    let preview = preview_plan(&source, &edit);
+    let applied = apply_plan(&source, &edit);
+    assert!(
+        preview.is_err() && applied.is_err(),
+        "both preview and apply must refuse edits crossing a complex field; preview refused: {}, apply refused: {}",
+        preview.is_err(),
+        applied.is_err()
+    );
+    for error in [preview.unwrap_err(), applied.unwrap_err()] {
+        assert_eq!(error.code, "UNSUPPORTED_STRUCTURE");
+        assert_eq!(error.operation.as_deref(), Some("field"));
+    }
+}

@@ -128,3 +128,72 @@ fn a_page_over_the_pixel_budget_is_an_error_not_a_missing_png() {
     .expect_err("an unpaintable page must fail the request");
     assert!(err.to_string().contains("page 1"), "{err}");
 }
+
+#[test]
+fn fractional_dpi_rounds_dimensions_up_and_png_contains_painted_text() {
+    let source = docx(&para("Visible ink"));
+    let out = render(
+        &source,
+        PdfOptions::default(),
+        RenderRequest {
+            pdf: false,
+            png_dpi: Some(24.5),
+        },
+    )
+    .unwrap();
+    assert!(out.pdf.is_none());
+    assert_eq!(out.pngs.len(), 1);
+    let pixels = image::load_from_memory(&out.pngs[0]).unwrap().to_rgba8();
+    assert_eq!(pixels.dimensions(), (209, 270));
+    assert!(
+        pixels.pixels().all(|p| p[3] == 255),
+        "the page background is opaque"
+    );
+    assert_eq!(pixels.get_pixel(0, 0).0, [255; 4]);
+    assert!(
+        pixels
+            .pixels()
+            .any(|p| p[0] < 128 && p[1] < 128 && p[2] < 128),
+        "a valid PNG must also contain the rendered text"
+    );
+    assert!(out.report.pages[0].text.contains("Visible ink"));
+}
+
+#[test]
+fn report_is_independent_of_requested_output_formats() {
+    let source = letter_with_pages(2);
+    let report_only = render(
+        &source,
+        PdfOptions::default(),
+        RenderRequest {
+            pdf: false,
+            png_dpi: None,
+        },
+    )
+    .unwrap();
+    let png_only = render(
+        &source,
+        PdfOptions::default(),
+        RenderRequest {
+            pdf: false,
+            png_dpi: Some(12.0),
+        },
+    )
+    .unwrap();
+    let pdf_only = render(
+        &source,
+        PdfOptions::default(),
+        RenderRequest {
+            pdf: true,
+            png_dpi: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(report_only.report.to_json(), png_only.report.to_json());
+    assert_eq!(report_only.report.to_json(), pdf_only.report.to_json());
+    assert!(report_only.pdf.is_none() && report_only.pngs.is_empty());
+    assert!(png_only.pdf.is_none());
+    assert_eq!(png_only.pngs.len(), 2);
+    assert!(pdf_only.pngs.is_empty());
+    assert_eq!(jubarte::convert::pdf_page_count(&pdf_only.pdf.unwrap()), 2);
+}

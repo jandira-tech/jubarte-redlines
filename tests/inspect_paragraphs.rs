@@ -222,3 +222,78 @@ fn summary_reads_only_wordprocessingml_parts_for_revisions() {
     assert_eq!(summary(&bytes).unwrap().revisions, 0);
     assert!(inspect_json(&bytes).is_ok());
 }
+
+#[test]
+fn explicit_off_run_properties_merge_with_unformatted_unicode_runs() {
+    let body = r#"<w:p><w:r><w:rPr><w:b w:val="0"/><w:i w:val="off"/><w:u w:val="none"/><w:highlight w:val="none"/></w:rPr><w:t>é😀</w:t></w:r><w:r><w:t>尾</w:t></w:r><w:r><w:rPr><w:b/><w:i/><w:u w:val="single"/></w:rPr><w:t>Z</w:t></w:r></w:p>"#;
+    let rows = paragraphs(&docx(body)).unwrap();
+    let p = &rows[0];
+    assert_eq!(p.text, "é😀尾Z");
+    assert_eq!(p.runs.len(), 2);
+    let plain = &p.runs[0];
+    assert_eq!((plain.start, plain.end), (0, 3));
+    assert!(!plain.bold && !plain.italic && !plain.underline);
+    assert_eq!(plain.highlight, None);
+    let styled = &p.runs[1];
+    assert_eq!((styled.start, styled.end), (3, 4));
+    assert!(styled.bold && styled.italic && styled.underline);
+}
+
+#[test]
+fn tracking_settings_support_ooxml_boolean_spellings_and_reject_invalid_values() {
+    for (attribute, expected) in [
+        ("", true),
+        (r#" w:val="true""#, true),
+        (r#" w:val="1""#, true),
+        (r#" w:val="on""#, true),
+        (r#" w:val="false""#, false),
+        (r#" w:val="0""#, false),
+        (r#" w:val="off""#, false),
+    ] {
+        let xml = format!(
+            r#"<w:settings xmlns:w="{}"><w:trackRevisions{attribute}/></w:settings>"#,
+            common::docx::W_NS
+        );
+        let source = docx_with(
+            &para("body"),
+            &[Part {
+                name: "word/custom-settings.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings",
+                xml: &xml,
+            }],
+        );
+        assert_eq!(
+            summary(&source).unwrap().track_changes,
+            expected,
+            "{attribute}"
+        );
+    }
+    let xml = format!(
+        r#"<w:settings xmlns:w="{}"><w:trackRevisions w:val="maybe"/></w:settings>"#,
+        common::docx::W_NS
+    );
+    let source = docx_with(
+        &para("body"),
+        &[Part {
+            name: "word/settings.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings",
+            xml: &xml,
+        }],
+    );
+    assert!(
+        matches!(summary(&source), Err(InspectError::Invalid(message)) if message.contains("trackRevisions"))
+    );
+}
+
+#[test]
+fn empty_body_has_no_phantom_paragraphs_or_markdown() {
+    let source = docx("");
+    assert!(paragraphs(&source).unwrap().is_empty());
+    assert_eq!(markdown(&source).unwrap(), "");
+    let facts = summary(&source).unwrap();
+    assert_eq!(facts.paragraphs, 0);
+    assert_eq!(facts.sections, 1);
+    assert!(!facts.list_numbering);
+}

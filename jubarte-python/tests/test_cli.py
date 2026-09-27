@@ -172,3 +172,25 @@ def test_capabilities_and_errors(tmp_path: Path, capsys: pytest.CaptureFixture[s
         main(["--help"])
     with pytest.raises(SystemExit):
         main([])
+
+
+@pytest.mark.parametrize("flag", ["--report", "--font-report"])
+@pytest.mark.parametrize("target", ["input", "output"])
+def test_convert_refuses_report_aliases_without_modifying_files(letter, tmp_path, capsys, flag, target):
+    output = tmp_path / "result.pdf"
+    original = letter.read_bytes()
+    side = letter if target == "input" else output
+    assert main(["convert", str(letter), "-o", str(output), flag, str(side), "--force"]) == 1
+    assert "same file" in capsys.readouterr().err
+    assert letter.read_bytes() == original
+    assert not output.exists()
+
+
+def test_invalid_png_dpi_leaves_no_partial_outputs(letter, tmp_path, capsys):
+    output = tmp_path / "result.pdf"
+    report = tmp_path / "report.json"
+    assert main(["convert", str(letter), "--pdf", "--png", "--dpi", "0", "-o", str(output), "--report", str(report)]) == 1
+    assert "dpi" in capsys.readouterr().err
+    assert not output.exists()
+    assert not report.exists()
+    assert not (tmp_path / "result-page-01.png").exists()

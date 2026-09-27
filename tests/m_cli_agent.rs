@@ -339,3 +339,53 @@ fn capabilities_describe_the_built_binary() {
     assert!(kinds.iter().any(|k| k == "insert_paragraph"));
     assert_eq!(v["limits"]["stories"], serde_json::json!(["body"]));
 }
+
+#[test]
+fn convert_refuses_report_aliases_before_writing_any_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_fixture(dir.path());
+    let original = std::fs::read(&file).unwrap();
+    let output = dir.path().join("result.pdf");
+    for flag in ["--report", "--font-report"] {
+        for target in [&file, &output] {
+            let (code, _, stderr) = run(&[
+                "convert",
+                file.to_str().unwrap(),
+                "-o",
+                output.to_str().unwrap(),
+                flag,
+                target.to_str().unwrap(),
+                "--force",
+            ]);
+            assert_eq!(code, 1, "{flag}: {stderr}");
+            assert!(stderr.contains("same file"), "{stderr}");
+            assert_eq!(std::fs::read(&file).unwrap(), original);
+            assert!(!output.exists());
+        }
+    }
+}
+
+#[test]
+fn invalid_png_dpi_leaves_no_partial_pdf_or_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_fixture(dir.path());
+    let output = dir.path().join("result.pdf");
+    let report = dir.path().join("report.json");
+    let (code, _, stderr) = run(&[
+        "convert",
+        file.to_str().unwrap(),
+        "--pdf",
+        "--png",
+        "--dpi",
+        "0",
+        "-o",
+        output.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stderr.contains("dpi"), "{stderr}");
+    assert!(!output.exists());
+    assert!(!report.exists());
+    assert!(!dir.path().join("result-page-01.png").exists());
+}
