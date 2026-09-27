@@ -474,6 +474,37 @@ fn split_seg(dom: &mut Dom, segs: &mut Vec<Seg>, i: usize, k: usize) {
     );
 }
 
+/// Start a fresh run (cloned rPr) at `segs[i]`'s leaf when an earlier
+/// sibling shares its run, so a node placed before that run sits between
+/// the two leaves ("ação 🐋" and "東京" of one run, each followed by its own
+/// point comment).
+fn split_run_before_leaf(dom: &mut Dom, segs: &mut [Seg], i: usize) {
+    let (leaf, run) = (segs[i].leaf, segs[i].run);
+    let has_earlier = dom
+        .nodes(run)
+        .into_iter()
+        .take_while(|&c| c != leaf)
+        .any(|c| !dom.name_is(c, &W::r_pr()));
+    if !has_earlier {
+        return;
+    }
+    let new_run = dom.new_element(W::r());
+    if let Some(rpr) = dom.element(run, &W::r_pr()) {
+        let c = dom.clone_subtree(rpr);
+        dom.add(new_run, c);
+    }
+    for c in dom.nodes(run).into_iter().skip_while(|&c| c != leaf) {
+        dom.remove(c);
+        dom.add(new_run, c);
+    }
+    dom.add_after_self(run, new_run);
+    for later in &mut segs[i..] {
+        if later.run == run {
+            later.run = new_run;
+        }
+    }
+}
+
 /// Put `node` just before the character at merged offset `o`, splitting the
 /// run that holds it; past the last character, after the last run.
 pub(super) fn place_before_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, node: NodeId) {
@@ -485,7 +516,10 @@ pub(super) fn place_before_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, 
                 dom.add_after_self(last.run, node);
             }
         }
-        Some(i) if segs[i].start >= o => dom.add_before_self(segs[i].run, node),
+        Some(i) if segs[i].start >= o => {
+            split_run_before_leaf(dom, segs, i);
+            dom.add_before_self(segs[i].run, node);
+        }
         Some(i) => {
             let k = o - segs[i].start;
             split_seg(dom, segs, i, k);
@@ -503,7 +537,15 @@ pub(super) fn place_after_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, n
                 dom.add_before_self(first.run, node);
             }
         }
-        Some(i) if segs[i].start + segs[i].len <= o => dom.add_after_self(segs[i].run, node),
+        Some(i) if segs[i].start + segs[i].len <= o => {
+            // A later leaf of the same run starts after `o`: split there.
+            if segs.get(i + 1).is_some_and(|n| n.run == segs[i].run) {
+                split_run_before_leaf(dom, segs, i + 1);
+                dom.add_before_self(segs[i + 1].run, node);
+            } else {
+                dom.add_after_self(segs[i].run, node);
+            }
+        }
         Some(i) => {
             let k = o - segs[i].start;
             split_seg(dom, segs, i, k);
