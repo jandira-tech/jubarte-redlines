@@ -158,6 +158,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   own docDefaults used to render in the original's theme font and line pitch.
   +3.73 Jaccard summed over the pool and English pairs (45 better, 15 worse,
   every loss under 0.04).
+- A revised document without any `w:sectPr` now gets Word's default section
+  (Letter, one-inch margins, one column) as the live body section, with the
+  original's section recorded in a `w:sectPrChange`. Word's redline does the
+  same in all six such pool pairs. The body used to keep the original's
+  section with no change record, so a two-column original stayed two columns
+  and 0.5-inch margins stayed narrow (invalid_list_def × tiff +0.08; sd_1480
+  × missing_sectpr now paginates like Word, but the converter's proxy scores
+  it −0.07 because it does not yet paint Word's formatting change bar on the
+  second page).
 
 ### Added
 

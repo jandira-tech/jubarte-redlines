@@ -157,8 +157,12 @@ pub fn compare_bodies_faithful_with_notes(
         let sp1 = last_sect(dom, body1);
         // geometry source: revised doc in word mode (falling back to the base
         // when doc B has no sectPr), base doc in PowerTools-faithful mode.
+        // A revised document without any sectPr opens in Word with Word's
+        // default section, and Word's redline makes that section live with
+        // the base's geometry in a sectPrChange (sd_1480 x missing_sectpr:
+        // Letter, one-inch margins, one column over the base's two).
         let sp = if settings.merge_replaced_paragraphs {
-            last_sect(dom, body2).or(sp1)
+            last_sect(dom, body2).or_else(|| sp1.map(|base| word_default_sectpr(dom, base)))
         } else {
             sp1
         };
@@ -221,8 +225,8 @@ pub fn compare_bodies_faithful_with_notes(
             // fix_up_revision_ids), author/date here.
             // Fallback semantics (deliberate asymmetry): body1 without a
             // final sectPr → no base geometry exists → nothing to record;
-            // body2 without one → `sp` collapsed to sp1 above, so
-            // `old_sp != sp` correctly short-circuits the identity case.
+            // body2 without one → `sp` is Word's default section above, so
+            // the base geometry is recorded whenever it differs from it.
             if settings.merge_replaced_paragraphs
                 && let Some(old_sp) = sp1
                 && old_sp != sp
@@ -1050,6 +1054,48 @@ impl Default for WmlComparerSettings {
             in_stamp_residual: false,
         }
     }
+}
+
+/// Word's default section, as Word writes it for a document that has no
+/// `w:sectPr`: Letter, one-inch margins, half-inch header and footer, one
+/// column, 18pt line pitch. Word states the one column's `w:num` only when
+/// the base section `base` set a column count (pool p0225 vs p0174/p0382).
+fn word_default_sectpr(dom: &mut Dom, base: NodeId) -> NodeId {
+    use crate::namespaces::W;
+    let sp = dom.new_element(W::sect_pr());
+    let children: [(&str, &[(&str, &str)]); 5] = [
+        ("type", &[("val", "nextPage")]),
+        ("pgSz", &[("w", "12240"), ("h", "15840")]),
+        (
+            "pgMar",
+            &[
+                ("top", "1440"),
+                ("right", "1440"),
+                ("bottom", "1440"),
+                ("left", "1440"),
+                ("header", "720"),
+                ("footer", "720"),
+                ("gutter", "0"),
+            ],
+        ),
+        ("cols", &[("space", "720")]),
+        ("docGrid", &[("linePitch", "360")]),
+    ];
+    for (name, attrs) in children {
+        let el = dom.new_element(W::name(name));
+        for (an, av) in attrs {
+            dom.set_attribute_value(el, &W::name(an), Some(av));
+        }
+        dom.add(sp, el);
+    }
+    let num = W::name("num");
+    if let Some(cols) = dom.element(base, &W::name("cols"))
+        && dom.attribute(cols, &num).is_some()
+        && let Some(live) = dom.element(sp, &W::name("cols"))
+    {
+        dom.set_attribute_value(live, &num, Some("1"));
+    }
+    sp
 }
 
 /// Optional log holder used by the comparison pipeline.

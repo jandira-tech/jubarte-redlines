@@ -2271,13 +2271,12 @@ fn w9d_scratch_markup_and_rsid_differences_emit_no_sectprchange() {
     );
 }
 
-/// When the REVISED document has no `sectPr` at all, word-mode's geometry
-/// selection (`last_sect(body2).or(sp1)`) must fall back to the BASE
-/// document's geometry rather than dropping page setup — and because the
-/// live geometry IS the base's in that case, no `sectPrChange` is emitted
-/// (there is nothing genuinely different to record).
+/// When the REVISED document has no `sectPr` at all, Word opens it with its
+/// default section (Letter, one-inch margins) and its redline makes that
+/// section live, recording the base's geometry in a `sectPrChange` (all six
+/// sectPr-less revised pool pairs, e.g. p0225 and p0382).
 #[test]
-fn w9e_revised_doc_missing_sectpr_falls_back_to_base_geometry() {
+fn w9e_revised_doc_missing_sectpr_takes_word_default_section() {
     let mut dom = Dom::new();
     let (r1, b1) = doc_body(
         &mut dom,
@@ -2298,17 +2297,19 @@ fn w9e_revised_doc_missing_sectpr_falls_back_to_base_geometry() {
     let body = dom.element(out, &W::body()).unwrap();
     let sectpr = dom
         .element(body, &W::name("sectPr"))
-        .expect("falls back to the base sectPr when the revised doc has none");
+        .expect("the body keeps a sectPr");
     let pgsz = dom.element(sectpr, &W::name("pgSz")).expect("pgSz present");
     assert_eq!(
         dom.attribute(pgsz, &W::name("w")),
-        Some("11906"),
-        "fallback geometry is the BASE doc's (A4)"
+        Some("12240"),
+        "live geometry is Word's default Letter section"
     );
-    assert!(
-        dom.element(sectpr, &W::name("sectPrChange")).is_none(),
-        "no change record when the live geometry IS the base's (fallback, not a real diff)"
-    );
+    let change = dom
+        .element(sectpr, &W::name("sectPrChange"))
+        .expect("the base's A4 section is recorded");
+    let old = dom.element(change, &W::name("sectPr")).unwrap();
+    let old_pgsz = dom.element(old, &W::name("pgSz")).unwrap();
+    assert_eq!(dom.attribute(old_pgsz, &W::name("w")), Some("11906"));
 }
 
 /// Prior-behavior regression: header/footer references in the live `sectPr`
