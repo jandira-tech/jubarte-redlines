@@ -4869,6 +4869,10 @@ fn compare_documents_impl(
                         // B-INSERTED paragraphs (mark rPr carries w:ins) or
                         // they resolve against A's same-id definitions
                         // (bullets where B's decimals should render).
+                        // Word mode also moves unchanged paragraphs to B's
+                        // list and records A's numId in a pPrChange: the
+                        // circle bullet struck, the disc inserted (native
+                        // bullet circle × disc).
                         if !num_remap.is_empty()
                             && let Some(doc_xml) = out.part_string(&main1)
                         {
@@ -4876,14 +4880,27 @@ fn compare_documents_impl(
                             let dd = pd.parse_xdocument(&doc_xml);
                             if let Some(droot) = pd.root(dd) {
                                 let mut changed = false;
+                                // Comment anchors keep their source ids; stay clear
+                                // of them as fix_up_revision_ids does.
+                                let mut next_id = pd
+                                    .descendants(droot, Some(&W::name("commentRangeStart")))
+                                    .into_iter()
+                                    .filter_map(|c| pd.attribute(c, &W::id())?.parse::<u32>().ok())
+                                    .map(|n| n + 1)
+                                    .fold(next_free_revision_id(&pd, droot), u32::max);
                                 for p in pd.descendants(droot, Some(&W::name("p"))) {
                                     let Some(ppr) = pd.element(p, &W::p_pr()) else {
                                         continue;
                                     };
-                                    let mark_inserted = pd
-                                        .element(ppr, &W::r_pr())
-                                        .is_some_and(|r| pd.element(r, &W::name("ins")).is_some());
-                                    if !mark_inserted {
+                                    let mark = pd.element(ppr, &W::r_pr());
+                                    let mark_has = |n: &str| {
+                                        mark.is_some_and(|r| pd.element(r, &W::name(n)).is_some())
+                                    };
+                                    let mark_inserted = mark_has("ins");
+                                    let unchanged = settings.merge_replaced_paragraphs
+                                        && !mark_inserted
+                                        && !mark_has("del");
+                                    if !mark_inserted && !unchanged {
                                         continue;
                                     }
                                     let Some(nid) = pd
@@ -4893,13 +4910,45 @@ fn compare_documents_impl(
                                         continue;
                                     };
                                     let cur = pd.attribute(nid, &W::val()).map(str::to_string);
-                                    if let Some(new_id) =
-                                        cur.as_deref().and_then(|c| num_remap.get(c))
+                                    let Some(new_id) =
+                                        cur.as_deref().and_then(|c| num_remap.get(c)).cloned()
+                                    else {
+                                        continue;
+                                    };
+                                    if unchanged && pd.element(ppr, &W::name("pPrChange")).is_none()
                                     {
-                                        let new_id = new_id.clone();
-                                        pd.set_attribute_value(nid, &W::val(), Some(&new_id));
-                                        changed = true;
+                                        let old_ppr = pd.new_element(W::p_pr());
+                                        for c in pd.elements(ppr, None) {
+                                            if pd.name(c).is_some_and(|n| {
+                                                n == W::r_pr() || n == W::name("sectPr")
+                                            }) {
+                                                continue;
+                                            }
+                                            let clone = pd.clone_subtree(c);
+                                            pd.add(old_ppr, clone);
+                                        }
+                                        let chg = pd.new_element(W::name("pPrChange"));
+                                        pd.set_attribute_value(
+                                            chg,
+                                            &W::name("id"),
+                                            Some(&next_id.to_string()),
+                                        );
+                                        next_id += 1;
+                                        pd.set_attribute_value(
+                                            chg,
+                                            &W::name("author"),
+                                            Some(&settings.author_for_revisions),
+                                        );
+                                        pd.set_attribute_value(
+                                            chg,
+                                            &W::name("date"),
+                                            Some(&settings.date_time_for_revisions),
+                                        );
+                                        pd.add(chg, old_ppr);
+                                        pd.add(ppr, chg);
                                     }
+                                    pd.set_attribute_value(nid, &W::val(), Some(&new_id));
+                                    changed = true;
                                 }
                                 if changed {
                                     out.set_part(&main1, pd.serialize_element(droot).into_bytes());

@@ -143,6 +143,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   Word's do. "Normal (Web)" became `Normal(Web)`, which orphaned the revised
   document's live `NormalWeb` paragraphs onto a custom style. +0.82 Jaccard
   summed over the pool and English pairs (8 better, none worse).
+- A list whose `numId` both documents use but define differently (a circle
+  bullet against a disc) now moves the unchanged items to the revised
+  definition and records the original `numId` in a `w:pPrChange`, as Word's
+  own redline does. They used to keep the original's bullet with no change
+  recorded. The PDF converter does not yet paint Word's struck-old /
+  inserted-new marker pair, so its own proxy scores the pair mixed
+  (circle × disc +0.36, disc × square −0.47; +0.05 summed).
 
 ### Added
 
