@@ -8524,7 +8524,6 @@ fn o_attr<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
     )
 }
 
-/// The paragraph's `v:rect o:hr="t"` (not a Fallback copy), if any.
 /// A tracked formatting change on the paragraph or any of its runs
 /// (`w:pPrChange`, `w:rPrChange`). Word draws the change bar beside such a
 /// paragraph even when no text was inserted or deleted (pool p0016, p0033,
@@ -8536,6 +8535,7 @@ fn para_formatting_changed(dom: &Dom, para: NodeId) -> bool {
     })
 }
 
+/// The paragraph's `v:rect o:hr="t"` (not a Fallback copy), if any.
 fn para_hrule(dom: &Dom, para: NodeId) -> Option<HRule> {
     let rect = descendants_local(dom, para, "rect").into_iter().find(|r| {
         o_attr(dom, *r, "hr") == Some("t")
