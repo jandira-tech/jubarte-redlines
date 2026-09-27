@@ -455,10 +455,8 @@ pub fn validate_xml(xml: &str) -> Result<(), String> {
                     return Err(format!("unsupported XML entity reference: {name}"));
                 }
             }
-            Event::Text(text) if depth == 0 => {
-                if text.iter().any(|byte| !byte.is_ascii_whitespace()) {
-                    return Err("text outside XML root".to_string());
-                }
+            Event::Text(text) if depth == 0 && text.iter().any(|b| !b.is_ascii_whitespace()) => {
+                return Err("text outside XML root".to_string());
             }
             Event::CData(_) if depth == 0 => return Err("CDATA outside XML root".to_string()),
             Event::Eof => {

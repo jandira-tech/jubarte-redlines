@@ -153,17 +153,30 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Convert a .docx to PDF (independent of LibreOffice).
+    /// Convert a .docx to PDF and/or PNG pages (independent of LibreOffice).
     Convert {
         /// The document (.docx) to convert.
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Output path [default: <stem>.pdf next to the input].
+        /// Output path [default: <stem>.pdf next to the input]. PNG pages
+        /// are named <stem>-page-NN.png beside it.
         #[arg(short = 'o', long, value_name = "FILE")]
         output: Option<PathBuf>,
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
+        /// Write the PDF (the default when neither --pdf nor --png is given).
+        #[arg(long)]
+        pdf: bool,
+        /// Rasterize every page to PNG (<stem>-page-NN.png).
+        #[arg(long)]
+        png: bool,
+        /// PNG resolution in dots per inch.
+        #[arg(long, default_value_t = 96.0, value_name = "DPI")]
+        dpi: f32,
+        /// Write a JSON page report (`{page_count, pages:[{index,text}], fonts}`).
+        #[arg(long, value_name = "FILE")]
+        report: Option<PathBuf>,
         /// Deflate the PDF's streams (`/FlateDecode`). Much smaller output;
         /// the trade is that the page content is no longer plain text, so it
         /// cannot be read with `strings` or `grep`.
@@ -185,6 +198,65 @@ enum Command {
         /// keep their conventional mark.
         #[arg(long, value_name = "SPEC")]
         revision_palette: Option<String>,
+    },
+    /// Read a .docx: body paragraphs with ids, style, formatting spans and
+    /// limitations, plus package facts.
+    Inspect {
+        /// The document (.docx) to read.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Emit the snapshot as JSON (`schema_version`, `source_sha256`,
+        /// `summary`, `paragraphs`) instead of a human summary.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the body as Markdown with a `[body:p:N]` id before every
+    /// paragraph: the coordinates an edit plan uses.
+    Text {
+        /// The document (.docx) to read.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+    },
+    /// Apply an edit plan: write the clean copy, the Word redline and a
+    /// per-operation report (optionally PDF and PNG pages) into a new
+    /// directory. A refused plan writes nothing and exits 3.
+    Edit {
+        /// The source document (.docx). Never modified.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Edit plan JSON (see `jubarte capabilities --json` for the kinds).
+        #[arg(long, value_name = "PLAN.json")]
+        plan: PathBuf,
+        /// Directory to create for clean.docx, redline.docx, report.jsonl.
+        #[arg(long, value_name = "DIR")]
+        out_dir: PathBuf,
+        /// Resolve and report only; write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Replace an existing output directory's files.
+        #[arg(long)]
+        force: bool,
+        /// Also write redline.pdf and clean.pdf.
+        #[arg(long)]
+        pdf: bool,
+        /// Also write redline-page-NN.png and clean-page-NN.png.
+        #[arg(long)]
+        png: bool,
+        /// PNG resolution in dots per inch.
+        #[arg(long, default_value_t = 96.0, value_name = "DPI")]
+        dpi: f32,
+        /// How tracked changes are painted in the redline PDF/PNG.
+        #[arg(long, value_enum, default_value_t = Revisions::Conventional)]
+        revisions: Revisions,
+        /// Marks for --revisions custom (see `convert --help`).
+        #[arg(long, value_name = "SPEC")]
+        revision_palette: Option<String>,
+    },
+    /// What this binary can do, for agents choosing an operation.
+    Capabilities {
+        /// Emit JSON (the default output is JSON too; the flag documents intent).
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -258,54 +330,344 @@ fn run_resolution<E: std::fmt::Debug>(
     std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
 }
 
-fn run_convert(
-    file: &Path,
-    output: Option<&Path>,
+/// Which artifacts `convert` writes and where.
+struct ConvertJob<'a> {
+    file: &'a Path,
+    output: Option<&'a Path>,
     force: bool,
     compress: bool,
-    font_report: Option<&Path>,
+    font_report: Option<&'a Path>,
     revisions: jubarte::convert::RevisionStyle,
-) -> Result<(), String> {
-    let output = output
+    pdf: bool,
+    png: bool,
+    dpi: f32,
+    report: Option<&'a Path>,
+}
+
+fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
+    let output = job
+        .output
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| file.with_extension("pdf"));
-    if let Some(report) = font_report {
-        // The report is written after the PDF (or the input is read first),
-        // so a shared path would silently replace one with the other.
-        for (other, what) in [(output.as_path(), "PDF output"), (file, "input")] {
-            if same_path(report, other) {
-                return Err(format!(
-                    "--font-report '{}' is the same file as the {what}",
-                    report.display()
-                ));
+        .unwrap_or_else(|| job.file.with_extension("pdf"));
+    let want_pdf = job.pdf || !job.png;
+    for (side, what) in [(job.font_report, "--font-report"), (job.report, "--report")] {
+        if let Some(side) = side {
+            // Side files are written after the PDF (or the input is read
+            // first), so a shared path would silently replace one with the other.
+            for (other, name) in [(output.as_path(), "PDF output"), (job.file, "input")] {
+                if same_path(side, other) {
+                    return Err(format!(
+                        "{what} '{}' is the same file as the {name}",
+                        side.display()
+                    ));
+                }
             }
+            ensure_writable(side, job.force)?;
         }
     }
-    ensure_writable(&output, force)?;
-    if let Some(report) = font_report {
-        ensure_writable(report, force)?;
+    if want_pdf {
+        ensure_writable(&output, job.force)?;
     }
-    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    let stem = output
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "page".to_string());
+    let dir = output.parent().map(Path::to_path_buf).unwrap_or_default();
+    let bytes =
+        std::fs::read(job.file).map_err(|e| format!("reading {}: {e}", job.file.display()))?;
     let options = jubarte::convert::PdfOptions {
-        compress,
-        revisions,
+        compress: job.compress,
+        revisions: job.revisions,
     };
-    let converted = jubarte::convert::docx_to_pdf_report(&bytes, options)
-        .map_err(|e| format!("convert failed: {e}"))?;
-    std::fs::write(&output, &converted.pdf)
-        .map_err(|e| format!("writing {}: {e}", output.display()))?;
-    if let Some(report) = font_report {
-        let json = jubarte::convert::font_report_json(&converted.font_report);
+    let rendered = jubarte::convert::render(
+        &bytes,
+        options,
+        jubarte::convert::RenderRequest {
+            pdf: want_pdf,
+            png_dpi: job.png.then_some(job.dpi),
+        },
+    )
+    .map_err(|e| format!("convert failed: {e}"))?;
+    let pages = rendered.report.page_count;
+    if let Some(pdf) = &rendered.pdf {
+        std::fs::write(&output, pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
+        println!(
+            "wrote {} ({} bytes, {pages} page{})",
+            output.display(),
+            pdf.len(),
+            if pages == 1 { "" } else { "s" }
+        );
+    }
+    if job.png {
+        for (i, png) in rendered.pngs.iter().enumerate() {
+            let path = dir.join(png_name(&stem, i, rendered.pngs.len()));
+            ensure_writable(&path, job.force)?;
+            std::fs::write(&path, png).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        }
+        println!(
+            "wrote {} PNG page{} ({}-page-NN.png, {} dpi)",
+            rendered.pngs.len(),
+            if rendered.pngs.len() == 1 { "" } else { "s" },
+            dir.join(&stem).display(),
+            job.dpi
+        );
+    }
+    if let Some(report) = job.font_report {
+        let json = jubarte::convert::font_report_json(&rendered.report.fonts);
         std::fs::write(report, json).map_err(|e| format!("writing {}: {e}", report.display()))?;
     }
-    let pages = jubarte::convert::pdf_page_count(&converted.pdf);
+    if let Some(report) = job.report {
+        std::fs::write(report, rendered.report.to_json())
+            .map_err(|e| format!("writing {}: {e}", report.display()))?;
+    }
+    Ok(())
+}
+
+/// `<stem>-page-NN.png`, zero-padded to the page count's width (at least 2).
+fn png_name(stem: &str, index: usize, count: usize) -> String {
+    let width = count.to_string().len().max(2);
+    format!("{stem}-page-{:0width$}.png", index + 1)
+}
+
+fn run_inspect(file: &Path, json: bool) -> Result<(), String> {
+    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    if json {
+        println!(
+            "{}",
+            jubarte::inspect::inspect_json(&bytes).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    let summary = jubarte::inspect::summary(&bytes).map_err(|e| e.to_string())?;
+    let paragraphs = jubarte::inspect::paragraphs(&bytes).map_err(|e| e.to_string())?;
     println!(
-        "wrote {} ({} bytes, {pages} page{})",
-        output.display(),
-        converted.pdf.len(),
-        if pages == 1 { "" } else { "s" }
+        "sha256: {}\nparagraphs: {}  tables: {}  fields: {}  sections: {}  comments: {}  revisions: {}  footnotes: {}  endnotes: {}  headers: {}  footers: {}  images: {}  numbering: {}  track_changes: {}",
+        jubarte::inspect::source_sha256(&bytes),
+        summary.paragraphs,
+        summary.tables,
+        summary.fields,
+        summary.sections,
+        summary.comments,
+        summary.revisions,
+        summary.footnotes,
+        summary.endnotes,
+        summary.headers,
+        summary.footers,
+        summary.images,
+        summary.list_numbering,
+        summary.track_changes
+    );
+    for p in &paragraphs {
+        let mut flags = Vec::new();
+        if let Some(style) = &p.style {
+            flags.push(style.clone());
+        }
+        if p.numbered {
+            flags.push("numbered".into());
+        }
+        if p.in_table {
+            flags.push("table".into());
+        }
+        if p.page_break {
+            flags.push("page-break".into());
+        }
+        flags.extend(p.limitations.iter().cloned());
+        let preview: String = p.text.chars().take(80).collect();
+        let more = if p.text.chars().count() > 80 {
+            "…"
+        } else {
+            ""
+        };
+        println!("{}\t[{}]\t{preview}{more}", p.id, flags.join(","));
+    }
+    Ok(())
+}
+
+fn run_text(file: &Path) -> Result<(), String> {
+    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    print!(
+        "{}",
+        jubarte::inspect::markdown(&bytes).map_err(|e| e.to_string())?
     );
     Ok(())
+}
+
+/// Options for `edit`.
+struct EditJob<'a> {
+    file: &'a Path,
+    plan: &'a Path,
+    out_dir: &'a Path,
+    dry_run: bool,
+    force: bool,
+    pdf: bool,
+    png: bool,
+    dpi: f32,
+    revisions: jubarte::convert::RevisionStyle,
+}
+
+/// Exit 3: the plan was refused (stale source, ambiguous anchor, ...); the
+/// per-operation report is on stdout and nothing was written.
+const EXIT_PLAN_REFUSED: u8 = 3;
+
+fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
+    let fail = |m: String| (1u8, m);
+    let source = std::fs::read(job.file)
+        .map_err(|e| fail(format!("reading {}: {e}", job.file.display())))?;
+    let plan_json = std::fs::read_to_string(job.plan)
+        .map_err(|e| fail(format!("reading {}: {e}", job.plan.display())))?;
+    let plan = jubarte::edit::EditPlan::from_json(&plan_json)
+        .map_err(|e| (EXIT_PLAN_REFUSED, e.to_string()))?;
+    if !job.dry_run {
+        if job.out_dir.exists() && !job.force {
+            return Err(fail(format!(
+                "output directory '{}' already exists (use --force to replace its files)",
+                job.out_dir.display()
+            )));
+        }
+        if same_path(job.out_dir, job.file.parent().unwrap_or(Path::new("."))) {
+            return Err(fail(
+                "--out-dir must not be the input's own directory".into(),
+            ));
+        }
+    }
+    if job.dry_run {
+        let report = jubarte::edit::preview_plan(&source, &plan).map_err(|e| refused(&e))?;
+        print!("{}", report.to_jsonl());
+        return Ok(());
+    }
+    let result = jubarte::edit::apply_plan(&source, &plan).map_err(|e| refused(&e))?;
+    let mut jsonl = result.report.to_jsonl();
+    // Render (one layout pass per document) before creating the directory,
+    // so a failed render leaves no partial bundle.
+    let options = jubarte::convert::PdfOptions {
+        compress: true,
+        revisions: job.revisions,
+    };
+    let request = jubarte::convert::RenderRequest {
+        pdf: job.pdf,
+        png_dpi: job.png.then_some(job.dpi),
+    };
+    let mut renders = Vec::new();
+    if job.pdf || job.png {
+        for (name, bytes) in [("redline", &result.redline), ("clean", &result.clean)] {
+            let rendered = jubarte::convert::render(bytes, options, request)
+                .map_err(|e| fail(format!("rendering {name}: {e}")))?;
+            renders.push((name, rendered));
+        }
+        let mut pages = serde_json::Map::new();
+        let mut starts = serde_json::Map::new();
+        for (name, rendered) in &renders {
+            pages.insert((*name).into(), rendered.report.page_count.into());
+            let firsts: Vec<serde_json::Value> = rendered
+                .report
+                .pages
+                .iter()
+                .map(|p| {
+                    p.text
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(60)
+                        .collect::<String>()
+                        .into()
+                })
+                .collect();
+            starts.insert((*name).into(), firsts.into());
+        }
+        let render_line = serde_json::json!({
+            "ev": "render",
+            "engine": format!("jubarte {}", env!("CARGO_PKG_VERSION")),
+            "pages": pages,
+            "page_starts": starts,
+        });
+        insert_before_summary(&mut jsonl, &render_line.to_string());
+    }
+    std::fs::create_dir_all(job.out_dir)
+        .map_err(|e| fail(format!("creating {}: {e}", job.out_dir.display())))?;
+    let mut outputs: Vec<(String, Vec<u8>)> = vec![
+        ("clean.docx".into(), result.clean.clone()),
+        ("redline.docx".into(), result.redline.clone()),
+    ];
+    for (name, rendered) in renders {
+        if let Some(pdf) = rendered.pdf {
+            outputs.push((format!("{name}.pdf"), pdf));
+        }
+        let count = rendered.pngs.len();
+        for (i, png) in rendered.pngs.into_iter().enumerate() {
+            outputs.push((png_name(name, i, count), png));
+        }
+    }
+    let mut saved = Vec::new();
+    for (name, bytes) in &outputs {
+        let path = job.out_dir.join(name);
+        std::fs::write(&path, bytes)
+            .map_err(|e| fail(format!("writing {}: {e}", path.display())))?;
+        saved.push(serde_json::json!({"f": name, "bytes": bytes.len(), "sha256": jubarte::inspect::source_sha256(bytes)}));
+    }
+    let save_line = serde_json::json!({"ev": "save", "dir": job.out_dir.display().to_string(), "outputs": saved});
+    insert_before_summary(&mut jsonl, &save_line.to_string());
+    std::fs::write(job.out_dir.join("report.jsonl"), &jsonl)
+        .map_err(|e| fail(format!("writing report.jsonl: {e}")))?;
+    let summary = jsonl.lines().last().unwrap_or("").to_string();
+    println!("{summary}");
+    println!(
+        "wrote {} ({} file{}: clean.docx, redline.docx, report.jsonl{})",
+        job.out_dir.display(),
+        outputs.len() + 1,
+        if outputs.is_empty() { "" } else { "s" },
+        if outputs.len() > 2 { ", …" } else { "" }
+    );
+    Ok(())
+}
+
+/// A refused plan: its report goes to stdout, the error to stderr, exit 3.
+fn refused(e: &jubarte::edit::EditError) -> (u8, String) {
+    let report_lines: String = e
+        .outcomes
+        .iter()
+        .enumerate()
+        .map(|(i, o)| {
+            let mut v = serde_json::json!({"ev": "op", "i": i + 1, "id": o.id, "op": o.kind, "status": o.status, "matches": o.matches});
+            let m = v.as_object_mut().expect("object");
+            if let Some(p) = &o.paragraph {
+                m.insert("at".into(), p.clone().into());
+            }
+            if let Some(c) = &o.context {
+                m.insert("ctx".into(), c.clone().into());
+            }
+            if let Some(c) = &o.code {
+                m.insert("code".into(), c.clone().into());
+            }
+            if let Some(msg) = &o.message {
+                m.insert("message".into(), msg.clone().into());
+            }
+            v.to_string() + "\n"
+        })
+        .collect();
+    let summary = serde_json::json!({
+        "ev": "summary",
+        "status": "failed",
+        "code": e.code,
+        "operation": e.operation,
+        "message": e.message,
+    });
+    println!("{report_lines}{summary}");
+    (EXIT_PLAN_REFUSED, format!("plan refused: {e}"))
+}
+
+/// Insert `line` before the trailing `summary` line of a JSONL report.
+fn insert_before_summary(jsonl: &mut String, line: &str) {
+    let trimmed = jsonl.trim_end_matches('\n');
+    let (head, summary) = match trimmed.rfind('\n') {
+        Some(i) => (&trimmed[..i], &trimmed[i + 1..]),
+        None => ("", trimmed),
+    };
+    *jsonl = if head.is_empty() {
+        format!("{line}\n{summary}\n")
+    } else {
+        format!("{head}\n{line}\n{summary}\n")
+    };
 }
 
 fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
@@ -479,6 +841,10 @@ fn main() -> ExitCode {
             file,
             output,
             force,
+            pdf,
+            png,
+            dpi,
+            report,
             compress,
             font_report,
             revisions,
@@ -488,14 +854,58 @@ fn main() -> ExitCode {
                 Ok(style) => style,
                 Err(e) => return exit_code(Err(e)),
             };
-            return exit_code(run_convert(
-                &file,
-                output.as_deref(),
+            return exit_code(run_convert(&ConvertJob {
+                file: &file,
+                output: output.as_deref(),
                 force,
                 compress,
-                font_report.as_deref(),
-                style,
-            ));
+                font_report: font_report.as_deref(),
+                revisions: style,
+                pdf,
+                png,
+                dpi,
+                report: report.as_deref(),
+            }));
+        }
+        Some(Command::Inspect { file, json }) => return exit_code(run_inspect(&file, json)),
+        Some(Command::Text { file }) => return exit_code(run_text(&file)),
+        Some(Command::Edit {
+            file,
+            plan,
+            out_dir,
+            dry_run,
+            force,
+            pdf,
+            png,
+            dpi,
+            revisions,
+            revision_palette,
+        }) => {
+            let style = match revision_style(revisions, revision_palette.as_deref()) {
+                Ok(style) => style,
+                Err(e) => return exit_code(Err(e)),
+            };
+            return match run_edit(&EditJob {
+                file: &file,
+                plan: &plan,
+                out_dir: &out_dir,
+                dry_run,
+                force,
+                pdf,
+                png,
+                dpi,
+                revisions: style,
+            }) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err((code, message)) => {
+                    eprintln!("error: {message}");
+                    ExitCode::from(code)
+                }
+            };
+        }
+        Some(Command::Capabilities { .. }) => {
+            println!("{}", jubarte::capabilities::capabilities_json("cli"));
+            return ExitCode::SUCCESS;
         }
         None => {}
     }
@@ -793,6 +1203,10 @@ mod tests {
                 force,
                 revisions,
                 revision_palette,
+                pdf,
+                png,
+                dpi,
+                report,
             }) => {
                 assert_eq!(revisions, Revisions::Conventional);
                 assert!(revision_palette.is_none());
@@ -800,6 +1214,8 @@ mod tests {
                 assert_eq!(output.as_deref(), Some(Path::new("out.pdf")));
                 assert_eq!(font_report.as_deref(), Some(Path::new("out.json")));
                 assert!(!compress && !force);
+                assert!(!pdf && !png && report.is_none());
+                assert_eq!(dpi, 96.0);
             }
             other => panic!("expected convert subcommand, got {other:?}"),
         }
@@ -838,25 +1254,33 @@ mod tests {
         let pdf = dir.path().join("out.pdf");
         std::fs::write(&docx, tiny_docx_bytes("Calibri")).expect("docx");
         let same = dir.path().join(".").join("out.pdf");
-        let err = run_convert(
-            &docx,
-            Some(&pdf),
-            false,
-            false,
-            Some(&same),
-            RevisionStyle::Word,
-        )
+        let err = run_convert(&ConvertJob {
+            file: &docx,
+            output: Some(&pdf),
+            force: false,
+            compress: false,
+            font_report: Some(&same),
+            revisions: RevisionStyle::Word,
+            pdf: false,
+            png: false,
+            dpi: 96.0,
+            report: None,
+        })
         .expect_err("report over the PDF must be refused");
         assert!(err.contains("same file as the PDF output"), "{err}");
         assert!(!pdf.exists(), "nothing is written when the paths collide");
-        let err = run_convert(
-            &docx,
-            Some(&pdf),
-            false,
-            false,
-            Some(&docx),
-            RevisionStyle::Word,
-        )
+        let err = run_convert(&ConvertJob {
+            file: &docx,
+            output: Some(&pdf),
+            force: false,
+            compress: false,
+            font_report: Some(&docx),
+            revisions: RevisionStyle::Word,
+            pdf: false,
+            png: false,
+            dpi: 96.0,
+            report: None,
+        })
         .expect_err("report over the input must be refused");
         assert!(err.contains("same file as the input"), "{err}");
         assert!(std::fs::read(&docx).expect("docx").starts_with(b"PK"));
@@ -869,14 +1293,18 @@ mod tests {
         let pdf = dir.path().join("out.pdf");
         let report = dir.path().join("fonts.json");
         std::fs::write(&docx, tiny_docx_bytes("DefinitelyNotAFont")).expect("docx");
-        run_convert(
-            &docx,
-            Some(&pdf),
-            false,
-            false,
-            Some(&report),
-            RevisionStyle::Word,
-        )
+        run_convert(&ConvertJob {
+            file: &docx,
+            output: Some(&pdf),
+            force: false,
+            compress: false,
+            font_report: Some(&report),
+            revisions: RevisionStyle::Word,
+            pdf: false,
+            png: false,
+            dpi: 96.0,
+            report: None,
+        })
         .expect("convert");
         assert!(pdf.exists());
         let json = std::fs::read_to_string(&report).expect("report");

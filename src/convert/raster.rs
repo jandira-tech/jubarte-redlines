@@ -74,8 +74,8 @@ pub(crate) fn encode_png(pixmap: &Pixmap) -> Vec<u8> {
 /// x. The layout paints one glyph per op, so a space is written only where
 /// the pen jumps by more than a fifth of the font size.
 pub(crate) fn page_text(fonts: &Fonts<'_>, page: &Page) -> String {
-    // (baseline key, pieces: (x, advance, size, text))
-    let mut lines: Vec<(i64, Vec<(f32, f32, f32, String)>)> = Vec::new();
+    // (baseline key, pieces)
+    let mut lines: Vec<(i64, Vec<Piece>)> = Vec::new();
     for op in &page.ops {
         let (face, size, x, y, glyphs, hscale, text) = match op {
             Op::Text {
@@ -111,7 +111,12 @@ pub(crate) fn page_text(fonts: &Fonts<'_>, page: &Page) -> String {
             })
             .sum();
         let key = (y * 4.0).round() as i64;
-        let piece = (x, advance, size, text.clone());
+        let piece = Piece {
+            x,
+            advance,
+            size,
+            text: text.clone(),
+        };
         match lines.iter_mut().find(|(k, _)| *k == key) {
             Some((_, pieces)) => pieces.push(piece),
             None => lines.push((key, vec![piece])),
@@ -119,24 +124,32 @@ pub(crate) fn page_text(fonts: &Fonts<'_>, page: &Page) -> String {
     }
     let mut out = String::new();
     for (_, mut pieces) in lines {
-        pieces.sort_by(|a, b| a.0.total_cmp(&b.0));
+        pieces.sort_by(|a, b| a.x.total_cmp(&b.x));
         let mut line = String::new();
         let mut pen: Option<f32> = None;
-        for (x, advance, size, piece) in pieces {
+        for piece in pieces {
             if let Some(pen) = pen
-                && x - pen > size * 0.2
+                && piece.x - pen > piece.size * 0.2
                 && !line.ends_with(char::is_whitespace)
-                && !piece.starts_with(char::is_whitespace)
+                && !piece.text.starts_with(char::is_whitespace)
             {
                 line.push(' ');
             }
-            line.push_str(&piece);
-            pen = Some(x + advance);
+            line.push_str(&piece.text);
+            pen = Some(piece.x + piece.advance);
         }
         out.push_str(line.trim_end());
         out.push('\n');
     }
     out
+}
+
+/// One painted glyph string on a baseline.
+struct Piece {
+    x: f32,
+    advance: f32,
+    size: f32,
+    text: String,
 }
 
 fn color(c: [f32; 3]) -> Color {
@@ -588,8 +601,10 @@ fn paint_image(
             Some(mask)
         })
     };
-    let mut paint = PixmapPaint::default();
-    paint.quality = tiny_skia::FilterQuality::Bilinear;
+    let paint = PixmapPaint {
+        quality: tiny_skia::FilterQuality::Bilinear,
+        ..PixmapPaint::default()
+    };
     pixmap.draw_pixmap(0, 0, src.as_ref(), &paint, image_ts, mask.as_ref());
 }
 

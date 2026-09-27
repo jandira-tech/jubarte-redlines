@@ -12633,9 +12633,9 @@ fn collect_textboxes_styled(
             // Distinct from mini 511 a:ln/@w width (still 0.6 when stroking).
             // Chart-bearing boxes still stroke 0.6 black (mini 568):
             // skipping it dropped RL clones −0.03 to −0.07.
-            stroke: !diagram
-                && !(vml_slot.is_some() && vml_unstroked)
-                && !shape_ln_is_nofill(dom, shape)
+            stroke: !(diagram
+                || (vml_slot.is_some() && vml_unstroked)
+                || shape_ln_is_nofill(dom, shape))
                 && (vml_slot.is_some() || !(fill.is_some() && line.is_none())),
             fill,
             // A text-bearing preset polygon still outlines in its own line

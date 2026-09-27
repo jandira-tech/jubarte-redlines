@@ -324,7 +324,7 @@ impl Opened {
                             .len();
                     }
                     "footnotes" => {
-                        summary.footnotes += note_count(&part_dom, part_root, "footnote")
+                        summary.footnotes += note_count(&part_dom, part_root, "footnote");
                     }
                     "endnotes" => summary.endnotes += note_count(&part_dom, part_root, "endnote"),
                     "styles" => {

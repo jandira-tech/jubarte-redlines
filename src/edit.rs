@@ -553,6 +553,10 @@ fn revision_counts(redline: &[u8], settings: &WmlComparerSettings) -> RevisionCo
     counts
 }
 
+/// A text edit scheduled on one paragraph: `(start, end, op, replacement,
+/// attach_before, comment)` in source projection bytes.
+type ScheduledEdit = (usize, usize, usize, String, bool, Option<String>);
+
 /// A resolved operation, in source coordinates (bytes of the projection).
 #[derive(Clone, Debug)]
 enum Resolved {
@@ -734,7 +738,8 @@ impl<'p> Transaction<'p> {
                     self.outcomes.push(outcome);
                     self.resolved.push((i, resolved));
                 }
-                Err((mut e, outcome)) => {
+                Err(boxed) => {
+                    let (mut e, outcome) = *boxed;
                     e.operation = Some(id.clone());
                     self.outcomes.push(EditOutcome {
                         id,
@@ -760,7 +765,7 @@ impl<'p> Transaction<'p> {
         &self,
         id: &str,
         kind: &OperationKind,
-    ) -> Result<(Resolved, EditOutcome), (EditError, EditOutcome)> {
+    ) -> Result<(Resolved, EditOutcome), Box<(EditError, EditOutcome)>> {
         let mut outcome = EditOutcome {
             id: id.to_string(),
             kind: String::new(),
@@ -772,8 +777,9 @@ impl<'p> Transaction<'p> {
             code: None,
             message: None,
         };
-        let fail =
-            |code: &str, msg: String, outcome: EditOutcome| (err(code, Some(id), msg), outcome);
+        let fail = |code: &str, msg: String, outcome: EditOutcome| {
+            Box::new((err(code, Some(id), msg), outcome))
+        };
         let selector = match kind {
             OperationKind::Replace { paragraph, .. }
             | OperationKind::Insert { paragraph, .. }
@@ -1246,8 +1252,7 @@ impl<'p> Transaction<'p> {
             self.outcomes[i].comment_id = Some(id);
         }
         // 1. Text edits and their comments, paragraph by paragraph.
-        let mut by_para: BTreeMap<usize, Vec<(usize, usize, usize, String, bool, Option<String>)>> =
-            BTreeMap::new();
+        let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
         let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize, String)>> =
             BTreeMap::new();
         for (i, r) in &self.resolved {
@@ -1276,7 +1281,7 @@ impl<'p> Transaction<'p> {
                     comment_ranges
                         .entry(*para)
                         .or_default()
-                        .push((*start, *end, *i, text.clone()))
+                        .push((*start, *end, *i, text.clone()));
                 }
                 _ => {}
             }
@@ -1516,12 +1521,7 @@ fn excerpt(text: &str, max: usize) -> String {
 /// Position `pos` of the source projection after `edits` were applied.
 /// `inclusive` shifts past insertions sitting exactly at `pos`; `own` is the
 /// operation whose own insertion must not shift its comment start.
-fn new_position(
-    edits: &[(usize, usize, usize, String, bool, Option<String>)],
-    pos: usize,
-    inclusive: bool,
-    own: Option<usize>,
-) -> usize {
+fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Option<usize>) -> usize {
     let mut delta: i64 = 0;
     for (start, end, i, replacement, ..) in edits {
         if Some(*i) == own {
@@ -1854,14 +1854,10 @@ fn rank(local: &str) -> usize {
 /// Insert `child` into `rpr` at its schema position.
 fn insert_rpr_child(dom: &mut Dom, rpr: NodeId, child: NodeId) {
     let my_rank = dom.name(child).map_or(usize::MAX, |n| rank(n.local_name()));
-    let after = dom
-        .elements(rpr, None)
-        .into_iter()
-        .filter(|&c| {
-            dom.name(c)
-                .is_some_and(|n| n.namespace_name() == W::URI && rank(n.local_name()) <= my_rank)
-        })
-        .last();
+    let after = dom.elements(rpr, None).into_iter().rev().find(|&c| {
+        dom.name(c)
+            .is_some_and(|n| n.namespace_name() == W::URI && rank(n.local_name()) <= my_rank)
+    });
     match after {
         Some(after) => dom.add_after_self(after, child),
         None => dom.add_first(rpr, child),
