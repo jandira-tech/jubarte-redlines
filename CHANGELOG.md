@@ -19,6 +19,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- An inserted tail ahead of a deleted tail pairs the two final paragraph
+  marks, as Word does: the last inserted paragraph joins the first deleted
+  one with a deleted mark, so accepting the redline no longer leaves an
+  empty paragraph the revised document never had (bullet_list_bold ×
+  bullet_list).
 - Word-mode table margins follow Word: `tblInd`/`tblCellMar` of 10 twips is
   stamped on a bordered table only when the document the table comes from
   (the original for a wholly deleted table) has no default table style. 94

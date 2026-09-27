@@ -5448,6 +5448,9 @@ fn has_common_run_ge(left: &[ComparisonUnit], right: &[ComparisonUnit], target: 
 /// keeps the original's properties and deleted mark, and the story-final
 /// paragraph carries the revised properties.
 pub fn pair_story_final_marks(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) {
+    if pair_final_marks_behind_inserted_tail(dom, seqs) {
+        return;
+    }
     let n = seqs.len();
     if n < 4 {
         return;
@@ -5504,6 +5507,86 @@ pub fn pair_story_final_marks(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) {
         pa,
         vec![pb],
     ));
+}
+
+/// A replaced tail with the inserted paragraphs ahead of the deleted ones,
+/// `[Equal …¶] [Inserted …¶]+ [Deleted …¶]+` (bullet_list_bold ×
+/// bullet_list): Word still pairs the two final marks, so the last inserted
+/// paragraph joins the first deleted one under its deleted mark, and the
+/// original's last mark stands for the revised one. Left unpaired, that last
+/// mark stayed live and accepting the redline kept an empty paragraph the
+/// revised document never had.
+fn pair_final_marks_behind_inserted_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) -> bool {
+    let n = seqs.len();
+    let status = |i: usize| seqs[i].correlation_status;
+    if n < 3 || status(n - 1) != CorrelationStatus::Deleted {
+        return false;
+    }
+    let Some(k) = (0..n)
+        .rev()
+        .find(|&i| status(i) != CorrelationStatus::Deleted)
+    else {
+        return false;
+    };
+    if status(k) != CorrelationStatus::Inserted {
+        return false;
+    }
+    let Some(prev) = (0..k)
+        .rev()
+        .find(|&i| status(i) != CorrelationStatus::Inserted)
+    else {
+        return false;
+    };
+    let ends_para = |v: &[ComparisonUnit]| {
+        v.last().is_some_and(|u| {
+            unit_is_single_atom_ppr(dom, u)
+                || as_group(u).is_some_and(|g| {
+                    g.group_type == ComparisonUnitGroupType::Paragraph
+                        && g.contents
+                            .last()
+                            .is_some_and(|c| unit_is_single_atom_ppr(dom, c))
+                })
+        })
+    };
+    if status(prev) != CorrelationStatus::Equal
+        || !ends_para(seqs[prev].com_units_2.as_deref().unwrap_or_default())
+        || !ends_para(seqs[k].com_units_2.as_deref().unwrap_or_default())
+        || !ends_para(seqs[n - 1].com_units_1.as_deref().unwrap_or_default())
+    {
+        return false;
+    }
+    // Split the paragraph mark off a side's last paragraph.
+    let split_mark = |units: &mut Vec<ComparisonUnit>| -> Option<ComparisonUnit> {
+        let last = units.pop()?;
+        if unit_is_single_atom_ppr(dom, &last) {
+            return Some(last);
+        }
+        let mut contents = group_contents(&last);
+        let mark = contents.pop();
+        units.extend(contents);
+        mark
+    };
+    let (Some(pb), Some(pa)) = (
+        seqs[k].com_units_2.as_mut().and_then(split_mark),
+        seqs[n - 1].com_units_1.as_mut().and_then(split_mark),
+    ) else {
+        return false;
+    };
+    seqs.push(CorrelatedSequence::paired(
+        CorrelationStatus::Equal,
+        vec![pa],
+        vec![pb],
+    ));
+    for i in [n - 1, k] {
+        let empty = [&seqs[i].com_units_1, &seqs[i].com_units_2]
+            .into_iter()
+            .flatten()
+            .all(Vec::is_empty);
+        if empty {
+            seqs.remove(i);
+        }
+    }
+    true
 }
 
 /// Returns `Some(([Inserted, Deleted], paired))` in Word order, or `None` to
