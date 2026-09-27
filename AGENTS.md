@@ -92,7 +92,11 @@ the error is what you initially thought because we get this wrong routinely.
 - `word_pdf.py` answers Word's repair prompt with No, so a repairable file
   already fails there ("document loaded empty") and scores zero.
 - The ooxml validator is `tools/validate-docx` (OpenXmlValidator, Office
-  2019). Its silence is a pass only if it exits 0.
+  2019); run its build, `tools/validate-docx/bin/Release/net8.0/validate-docx
+  FILE`. Its silence is a pass only if it exits 0.
+- `jubarte debug FILE` triages what the validator misses; `jubarte debug
+  OLD NEW` prints only what changed between two builds. Build clones and
+  variants from its findings instead of ad-hoc scripts.
 - Word-validity rules the validator misses become Ring-1 invariants in
   `tests/common/validity.rs`, with a broken probe in
   `tests/m_validity_ring1.rs`.

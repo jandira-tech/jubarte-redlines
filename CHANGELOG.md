@@ -303,6 +303,20 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `jubarte debug FILE [FILE2]`: a short Word-validity triage of a redline,
+  for the shapes Word refuses and the OpenXmlValidator passes. It prints
+  counts by kind with a few examples (`-n`), and with two files only what
+  differs. Checks (`-c`): `orphans` (deleted text outside its story's
+  deletion), `fields` (nesting per story, partly deleted fields),
+  `bookmarks` (unpaired, duplicate, crossing a control, cell, text box or
+  revision, or inside a plain-text or list control), `package` (content
+  types, relationships, dangling references, undeclared `mc:Ignorable`
+  prefixes), `structure` (blank field codes, cells not ending in a
+  paragraph, nested same-kind revisions), `ids` (revision and `docPr` ids
+  used twice; Word opens such files, so it is opt-in), `chains`, `elements`
+  and `textbox`. `--list` lists the entries, or with two files the ones that
+  differ. On the 450 English redlines of c6307ac, orphaned field codes and
+  bookmarks in single-value controls flag only files Word refused.
 - convert: Korean page and list number formats (b8a19b1).
 - RESULTS.md tables scored against Word truth: Word's redline of the pair,
   converted by Word. Rows split redlining (tool redline → Word PDF) from

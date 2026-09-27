@@ -186,6 +186,83 @@ enum Command {
         #[arg(long, value_name = "SPEC")]
         revision_palette: Option<String>,
     },
+    /// Triage a .docx Word refuses, or compare two builds of one. Short
+    /// output: counts by kind, a few examples each; with two files, only
+    /// what differs.
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte debug out.docx                    orphans, fields, bookmarks, package, structure\n  \
+        jubarte debug out.docx --list             the package's entries\n  \
+        jubarte debug old.docx new.docx --list    entries that differ\n  \
+        jubarte debug old.docx new.docx -c elements -p document.xml\n  \
+        jubarte debug out.docx -c ids             revision/docPr ids used twice\n  \
+        jubarte debug out.docx -c textbox -g FILENAME")]
+    Debug {
+        /// One package, or two to compare (A then B).
+        #[arg(value_name = "FILE", num_args = 1..=2, required = true)]
+        files: Vec<PathBuf>,
+        /// List the package's entries (sizes); with two files, the entries
+        /// that differ.
+        #[arg(short = 'l', long)]
+        list: bool,
+        /// Reports to run [default: orphans, fields, bookmarks, package,
+        /// structure].
+        #[arg(short = 'c', long = "check", value_enum, value_delimiter = ',')]
+        checks: Vec<DebugCheck>,
+        /// Only parts whose name contains this (e.g. document.xml).
+        #[arg(short = 'p', long, value_name = "NAME")]
+        part: Option<String>,
+        /// textbox: only stories whose text contains this.
+        #[arg(short = 'g', long, value_name = "TEXT")]
+        grep: Option<String>,
+        /// Examples per finding kind.
+        #[arg(short = 'n', long, value_name = "N", default_value_t = 5)]
+        limit: usize,
+    },
+}
+
+/// `jubarte debug --check`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum DebugCheck {
+    /// Deleted text outside its story's w:del; live text inside one; bare runs
+    /// in a text box whose anchor is deleted.
+    Orphans,
+    /// Field nesting per story; fields partly deleted.
+    Fields,
+    /// Duplicate/unpaired bookmarks; start and end in different sdt, cell,
+    /// text box or revision; bookmarks in plain-text or list controls.
+    Bookmarks,
+    /// Content types, relationship ids and targets, dangling note/comment
+    /// references, undeclared mc:Ignorable prefixes.
+    Package,
+    /// Empty field codes, cells not ending in a paragraph, rows without cells,
+    /// nested same-kind revisions, a body sectPr that is not last.
+    Structure,
+    /// Revision and docPr ids used twice (not in the default triage: Word
+    /// opens such files).
+    Ids,
+    /// Where bookmark starts and ends sit (parent chains, tallied).
+    Chains,
+    /// Element counts.
+    Elements,
+    /// Text box stories as XML (see --grep).
+    Textbox,
+}
+
+impl From<DebugCheck> for jubarte::debug::Check {
+    fn from(c: DebugCheck) -> Self {
+        use jubarte::debug::Check;
+        match c {
+            DebugCheck::Orphans => Check::Orphans,
+            DebugCheck::Fields => Check::Fields,
+            DebugCheck::Bookmarks => Check::Bookmarks,
+            DebugCheck::Package => Check::Package,
+            DebugCheck::Structure => Check::Structure,
+            DebugCheck::Ids => Check::Ids,
+            DebugCheck::Chains => Check::Chains,
+            DebugCheck::Elements => Check::Elements,
+            DebugCheck::Textbox => Check::Textbox,
+        }
+    }
 }
 
 /// `jubarte convert --revisions`.
@@ -443,6 +520,36 @@ fn exit_code(r: Result<(), String>) -> ExitCode {
     }
 }
 
+/// `jubarte debug`: print the report for one package, or two compared.
+fn run_debug(
+    files: &[PathBuf],
+    list: bool,
+    checks: Vec<DebugCheck>,
+    part: Option<String>,
+    grep: Option<String>,
+    limit: usize,
+) -> Result<(), String> {
+    let read = |p: &PathBuf| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
+    let a = read(&files[0])?;
+    let b = files.get(1).map(read).transpose()?;
+    let mut opts = jubarte::debug::Options {
+        part,
+        grep,
+        limit,
+        ..Default::default()
+    };
+    if !checks.is_empty() {
+        opts.checks = checks.into_iter().map(Into::into).collect();
+    }
+    let out = if list {
+        jubarte::debug::list(&a, b.as_deref(), &opts)?
+    } else {
+        jubarte::debug::report(&a, b.as_deref(), &opts)?
+    };
+    print!("{out}");
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
@@ -496,6 +603,16 @@ fn main() -> ExitCode {
                 font_report.as_deref(),
                 style,
             ));
+        }
+        Some(Command::Debug {
+            files,
+            list,
+            checks,
+            part,
+            grep,
+            limit,
+        }) => {
+            return exit_code(run_debug(&files, list, checks, part, grep, limit));
         }
         None => {}
     }
