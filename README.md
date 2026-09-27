@@ -84,6 +84,12 @@ They go to `$JUBARTE_FONT_DIR`, else `~/Library/Application Support/jubarte/font
 (macOS), `$XDG_DATA_HOME/jubarte/fonts` or `~/.local/share/jubarte/fonts` (Linux),
 `%APPDATA%\jubarte\fonts` (Windows).
 
+The first conversion that looks a font family up records where its files are
+in `font-index.tsv`, beside that folder. Later runs read those files directly
+and search the system, Word and cloud-font folders again only for a family the
+index lacks or whose folder or file changed. `JUBARTE_FONT_INDEX` names another
+index file; set it to `off` to disable the index.
+
 **Library** (skip clap if you only need the API)
 
 ```sh

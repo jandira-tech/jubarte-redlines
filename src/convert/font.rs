@@ -1810,6 +1810,25 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
     if !stems.is_empty() {
         return cjk_family_faces(family, stems);
     }
+    let user = user_font_dir();
+    let cloud_root = std::env::var_os("HOME")
+        .and_then(|home| cloud_font_dir(Path::new(&home), "x"))
+        .and_then(|d| d.parent().map(Path::to_path_buf));
+    let key = format!(
+        "family\u{1f}{family}\u{1f}{}\u{1f}{}",
+        user.as_deref().unwrap_or(Path::new("")).display(),
+        cloud_root.as_deref().unwrap_or(Path::new("")).display()
+    );
+    indexed_faces(&FONT_INDEX, &key, || {
+        let (faces, mut dirs) = scan_family_faces(family, user.as_deref());
+        dirs.extend(cloud_root.clone());
+        (faces, dirs)
+    })
+}
+
+/// `family`'s faces from the system, Word and cloud-font folders and
+/// jubarte's own, with the folders the search listed.
+fn scan_family_faces(family: &str, user: Option<&Path>) -> (SourcedFaces, Vec<PathBuf>) {
     const DIRS: &[&str] = &[
         "/System/Library/Fonts/Supplemental",
         "/Library/Fonts",
@@ -1834,10 +1853,12 @@ pub(crate) fn installed_family_faces(family: &str) -> Vec<((bool, bool), Vec<u8>
         Vec::new()
     };
     dirs.extend(cloud_font_dirs(family));
+    let mut listed: Vec<PathBuf> = dirs.iter().map(|(d, _)| d.clone()).collect();
+    listed.extend(user.map(Path::to_path_buf));
     if dirs.is_empty() {
-        return Vec::new();
+        return (Vec::new(), listed);
     }
-    faces_with_user_fonts(family, &dirs, user_font_dir().as_deref())
+    (faces_with_user_fonts(family, &dirs, user), listed)
 }
 
 /// Word's cloud-font folders that may hold `family`, each a whole-family
@@ -1930,7 +1951,7 @@ fn faces_with_user_fonts(
     family: &str,
     dirs: &[(PathBuf, bool)],
     user: Option<&Path>,
-) -> Vec<((bool, bool), Vec<u8>)> {
+) -> SourcedFaces {
     let mut all = dirs.to_vec();
     if let Some(user) = user {
         all.push((user.to_path_buf(), false));
@@ -1956,7 +1977,7 @@ fn open_stand_in(family: &str) -> Option<&'static str> {
 }
 
 /// `family`'s faces in `dirs` ((folder, whole folder is the family)).
-fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool), Vec<u8>)> {
+fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> SourcedFaces {
     let norm = |s: &str| -> String {
         s.chars()
             .filter(|c| c.is_ascii_alphanumeric())
@@ -1970,11 +1991,11 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
     if !latin && dirs.iter().all(|(_, family_folder)| !family_folder) {
         return Vec::new();
     }
-    let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
+    let mut found: Vec<(u8, (bool, bool), SourcedBytes)> = Vec::new();
     // Faces from collections rank after single-face files: Word draws its
     // own DFonts Rockwell (hhea 1.174em) over macOS's Rockwell.ttc (1.0em
     // plus a gap), fixtures_500 0071d504's 15.6pt sidebar lines.
-    let mut collected: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
+    let mut collected: Vec<(u8, (bool, bool), SourcedBytes)> = Vec::new();
     for (dir, family_folder) in dirs {
         let family_folder = *family_folder;
         for path in sorted_dir_listing(dir).iter() {
@@ -1999,7 +2020,7 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
                         continue;
                     };
                     if let Some((pass, style)) = face_family_style(&data, family) {
-                        collected.push((pass, style, data));
+                        collected.push((pass, style, (FaceSource::new(&path, Some(index)), data)));
                     }
                 }
                 continue;
@@ -2023,7 +2044,7 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
             let Some((pass, style)) = face_family_style(&bytes, family) else {
                 continue;
             };
-            found.push((pass, style, bytes));
+            found.push((pass, style, (FaceSource::new(&path, None), bytes)));
         }
     }
     found.append(&mut collected);
@@ -2040,12 +2061,12 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> Vec<((bool, bool),
                     continue;
                 };
                 if let Some((pass, style)) = face_family_style(&bytes, family) {
-                    found.push((pass, style, bytes));
+                    found.push((pass, style, (FaceSource::new(path, None), bytes)));
                 }
             }
         }
     }
-    pick_ranked_faces(found)
+    sourced(pick_ranked_faces(found))
 }
 
 /// Font files with their normalised family names.
@@ -2268,14 +2289,25 @@ fn face_family_names(face: &ttf_parser::Face<'_>, id: u16) -> Vec<String> {
 /// typographic ID 16 (Yu Gothic Medium is ID 1 "Yu Gothic Medium"). A name
 /// no face carries (FangSong_GB2312) takes the group's first face.
 fn cjk_family_faces(family: &str, stems: &[&str]) -> Vec<((bool, bool), Vec<u8>)> {
-    const DIRS: &[&str] = &[
-        "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
-        "/Library/Fonts/Microsoft",
-        "/Library/Fonts",
-    ];
+    let key = format!("east-asian\u{1f}{family}\u{1f}{}", stems.join(","));
+    indexed_faces(&FONT_INDEX, &key, || {
+        let dirs = CJK_DIRS.iter().map(PathBuf::from).collect();
+        (scan_cjk_family_faces(family, stems), dirs)
+    })
+}
+
+/// The folders Word's East Asian faces live in.
+const CJK_DIRS: &[&str] = &[
+    "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
+    "/Library/Fonts/Microsoft",
+    "/Library/Fonts",
+];
+
+/// `cjk_family_faces` read from disk.
+fn scan_cjk_family_faces(family: &str, stems: &[&str]) -> SourcedFaces {
     let want = fold_family(family);
     let mut files: Vec<(usize, PathBuf)> = Vec::new();
-    for dir in DIRS {
+    for dir in CJK_DIRS {
         let Ok(entries) = fs::read_dir(dir) else {
             continue;
         };
@@ -2296,7 +2328,7 @@ fn cjk_family_faces(family: &str, stems: &[&str]) -> Vec<((bool, bool), Vec<u8>)
     }
     files.sort();
     // (pass, style, bytes): pass 0 = ID 1 match, 1 = ID 16, 2 = fallback.
-    let mut found: Vec<(u8, (bool, bool), Vec<u8>)> = Vec::new();
+    let mut found: Vec<(u8, (bool, bool), SourcedBytes)> = Vec::new();
     for (rank, path) in &files {
         let Ok(bytes) = fs::read(path) else {
             continue;
@@ -2321,18 +2353,18 @@ fn cjk_family_faces(family: &str, stems: &[&str]) -> Vec<((bool, bool), Vec<u8>)
                 continue;
             };
             let style = (face.is_bold(), face.is_italic());
-            let data = if count > 1 {
+            let (data, at) = if count > 1 {
                 match ttc_face_bytes(&bytes, index) {
-                    Some(data) => data,
+                    Some(data) => (data, Some(index)),
                     None => continue,
                 }
             } else {
-                bytes.clone()
+                (bytes.clone(), None)
             };
-            found.push((pass, style, data));
+            found.push((pass, style, (FaceSource::new(path, at), data)));
         }
     }
-    pick_ranked_faces(found)
+    sourced(pick_ranked_faces(found))
 }
 
 /// One face of a TrueType collection as a standalone sfnt: the face's
@@ -2419,6 +2451,308 @@ fn cached_faces(key: &str, load: impl FnOnce() -> Vec<((bool, bool), Vec<u8>)>) 
         cache.insert(key.to_string(), faces.clone());
     }
     faces
+}
+
+/// Where an installed face came from: its file and, inside a collection,
+/// its index.
+#[derive(Clone, Debug, PartialEq)]
+struct FaceSource {
+    path: PathBuf,
+    index: Option<u32>,
+}
+
+impl FaceSource {
+    fn new(path: &Path, index: Option<u32>) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            index,
+        }
+    }
+}
+
+/// A face's bytes with the file they came from.
+type SourcedBytes = (FaceSource, Vec<u8>);
+
+/// Picked faces with their files.
+type SourcedFaces = Vec<((bool, bool), FaceSource, Vec<u8>)>;
+
+fn sourced(picked: Vec<((bool, bool), SourcedBytes)>) -> SourcedFaces {
+    picked
+        .into_iter()
+        .map(|(style, (source, bytes))| (style, source, bytes))
+        .collect()
+}
+
+/// The on-disk font index: every family a conversion looked up, with the
+/// files its faces came from. A later process reads those files directly
+/// instead of listing and opening every candidate in the system, Word and
+/// cloud-font folders; the full search runs only for a family the index
+/// does not hold or whose folders or files changed since.
+static FONT_INDEX: LazyLock<Mutex<FontIndex>> =
+    LazyLock::new(|| Mutex::new(FontIndex::load(font_index_path())));
+
+/// `$JUBARTE_FONT_INDEX` (empty or `off` disables it), else
+/// `font-index.tsv` beside jubarte's font folder.
+fn font_index_path() -> Option<PathBuf> {
+    match std::env::var_os("JUBARTE_FONT_INDEX") {
+        Some(path) if path.is_empty() || path == "off" => None,
+        Some(path) => Some(PathBuf::from(path)),
+        None => user_font_dir()?
+            .parent()
+            .map(|dir| dir.join("font-index.tsv")),
+    }
+}
+
+const FONT_INDEX_HEADER: &str = "jubarte-font-index\t1";
+
+/// A modification time in nanoseconds, `None` for a missing path.
+fn mtime_of(path: &Path) -> Option<u128> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    Some(
+        modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos(),
+    )
+}
+
+/// A file's (length, modification time).
+fn file_stamp(path: &Path) -> Option<(u64, u128)> {
+    let meta = fs::metadata(path).ok()?;
+    let modified = meta.modified().ok()?;
+    let nanos = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some((meta.len(), nanos))
+}
+
+/// Faces by (bold, italic), read from their files.
+type LoadedFaces = Vec<((bool, bool), Vec<u8>)>;
+
+#[derive(Clone, Debug, PartialEq)]
+struct IndexedFace {
+    style: (bool, bool),
+    source: FaceSource,
+    stamp: Option<(u64, u128)>,
+}
+
+/// One looked-up family: the folders its search listed, stamped, and the
+/// faces it found (none is an answer too).
+#[derive(Clone, Debug, PartialEq)]
+struct IndexEntry {
+    dirs: Vec<(PathBuf, Option<u128>)>,
+    faces: Vec<IndexedFace>,
+}
+
+impl IndexEntry {
+    /// The faces, when no listed folder and no face file changed.
+    fn load(&self) -> Option<LoadedFaces> {
+        if self.dirs.iter().any(|(dir, mtime)| mtime_of(dir) != *mtime) {
+            return None;
+        }
+        let mut out = Vec::with_capacity(self.faces.len());
+        for face in &self.faces {
+            if face.stamp.is_none() || file_stamp(&face.source.path) != face.stamp {
+                return None;
+            }
+            let bytes = fs::read(&face.source.path).ok()?;
+            let bytes = match face.source.index {
+                Some(index) => ttc_face_bytes(&bytes, index)?,
+                None => bytes,
+            };
+            out.push((face.style, bytes));
+        }
+        Some(out)
+    }
+}
+
+#[derive(Debug, Default)]
+struct FontIndex {
+    path: Option<PathBuf>,
+    entries: HashMap<String, IndexEntry>,
+}
+
+impl FontIndex {
+    fn load(path: Option<PathBuf>) -> Self {
+        let entries = path
+            .as_deref()
+            .and_then(|p| fs::read_to_string(p).ok())
+            .map(|text| parse_font_index(&text))
+            .unwrap_or_default();
+        Self { path, entries }
+    }
+
+    fn record(&mut self, key: &str, dirs: &[PathBuf], faces: &SourcedFaces) {
+        let entry = IndexEntry {
+            dirs: dirs
+                .iter()
+                .map(|dir| (dir.clone(), mtime_of(dir)))
+                .collect(),
+            faces: faces
+                .iter()
+                .map(|(style, source, _)| IndexedFace {
+                    style: *style,
+                    source: source.clone(),
+                    stamp: file_stamp(&source.path),
+                })
+                .collect(),
+        };
+        self.entries.insert(key.to_string(), entry);
+        self.save();
+    }
+
+    /// Writes the index, merged over what other processes wrote since it
+    /// was read, through a rename so a reader never sees half a file.
+    fn save(&self) {
+        let Some(path) = self.path.as_deref() else {
+            return;
+        };
+        let mut merged = fs::read_to_string(path)
+            .map(|text| parse_font_index(&text))
+            .unwrap_or_default();
+        merged.extend(self.entries.iter().map(|(k, v)| (k.clone(), v.clone())));
+        let text = format_font_index(&merged);
+        let tmp = path.with_extension(format!("tsv.{}.tmp", std::process::id()));
+        let written = path
+            .parent()
+            .is_some_and(|dir| fs::create_dir_all(dir).is_ok())
+            && fs::write(&tmp, text).is_ok()
+            && fs::rename(&tmp, path).is_ok();
+        if !written {
+            let _ = fs::remove_file(&tmp);
+        }
+    }
+}
+
+/// `key`'s faces from the index when still current, else from `scan`
+/// (faces and the folders it listed), which the index then records.
+fn indexed_faces(
+    index: &Mutex<FontIndex>,
+    key: &str,
+    scan: impl FnOnce() -> (SourcedFaces, Vec<PathBuf>),
+) -> Vec<((bool, bool), Vec<u8>)> {
+    let entry = index.lock().ok().and_then(|i| i.entries.get(key).cloned());
+    if let Some(faces) = entry.and_then(|e| e.load()) {
+        return faces;
+    }
+    let (faces, dirs) = scan();
+    if let Ok(mut index) = index.lock() {
+        index.record(key, &dirs, &faces);
+    }
+    faces
+        .into_iter()
+        .map(|(style, _, bytes)| (style, bytes))
+        .collect()
+}
+
+// The index file: a header line, then one family per line, tab-separated
+// key, folders and faces; list items split by U+001E, fields by U+001F.
+const ITEM_SEP: char = '\u{1e}';
+const FIELD_SEP: char = '\u{1f}';
+
+fn opt_text<T: ToString>(v: Option<T>) -> String {
+    v.map_or_else(|| "-".to_string(), |v| v.to_string())
+}
+
+fn format_font_index(entries: &HashMap<String, IndexEntry>) -> String {
+    let clean = |s: &str| !s.contains(['\t', '\n', '\r', ITEM_SEP]);
+    let mut lines: Vec<String> = Vec::with_capacity(entries.len());
+    for (key, entry) in entries {
+        let mut paths = entry
+            .dirs
+            .iter()
+            .map(|(d, _)| d)
+            .chain(entry.faces.iter().map(|f| &f.source.path))
+            .map(|p| p.to_str());
+        if !clean(key) || !paths.all(|p| p.is_some_and(|p| clean(p) && !p.contains(FIELD_SEP))) {
+            continue;
+        }
+        let dirs: Vec<String> = entry
+            .dirs
+            .iter()
+            .map(|(d, m)| format!("{}{FIELD_SEP}{}", d.display(), opt_text(*m)))
+            .collect();
+        let faces: Vec<String> = entry
+            .faces
+            .iter()
+            .map(|f| {
+                let (len, mtime) = f.stamp.unzip();
+                [
+                    f.source.path.display().to_string(),
+                    opt_text(f.source.index),
+                    u8::from(f.style.0).to_string(),
+                    u8::from(f.style.1).to_string(),
+                    opt_text(len),
+                    opt_text(mtime),
+                ]
+                .join(&FIELD_SEP.to_string())
+            })
+            .collect();
+        lines.push(format!(
+            "{key}\t{}\t{}",
+            dirs.join(&ITEM_SEP.to_string()),
+            faces.join(&ITEM_SEP.to_string())
+        ));
+    }
+    lines.sort();
+    let mut text = String::from(FONT_INDEX_HEADER);
+    for line in lines {
+        text.push('\n');
+        text.push_str(&line);
+    }
+    text.push('\n');
+    text
+}
+
+fn parse_font_index(text: &str) -> HashMap<String, IndexEntry> {
+    let mut lines = text.lines();
+    if lines.next() != Some(FONT_INDEX_HEADER) {
+        return HashMap::new();
+    }
+    let opt = |s: &str| (s != "-").then(|| s.parse().ok()).flatten();
+    let items = |s: &'_ str| -> Vec<Vec<String>> {
+        s.split(ITEM_SEP)
+            .filter(|i| !i.is_empty())
+            .map(|i| i.split(FIELD_SEP).map(str::to_string).collect())
+            .collect()
+    };
+    let mut out = HashMap::new();
+    for line in lines {
+        let mut cols = line.split('\t');
+        let (Some(key), Some(dirs), Some(faces), None) =
+            (cols.next(), cols.next(), cols.next(), cols.next())
+        else {
+            continue;
+        };
+        let dirs: Option<Vec<(PathBuf, Option<u128>)>> = items(dirs)
+            .into_iter()
+            .map(|f| match f.as_slice() {
+                [d, m] => Some((PathBuf::from(d), opt(m))),
+                _ => None,
+            })
+            .collect();
+        let faces: Option<Vec<IndexedFace>> = items(faces)
+            .into_iter()
+            .map(|f| match f.as_slice() {
+                [path, index, bold, italic, len, mtime] => Some(IndexedFace {
+                    style: (bold == "1", italic == "1"),
+                    source: FaceSource {
+                        path: PathBuf::from(path),
+                        index: opt(index).and_then(|i: u128| u32::try_from(i).ok()),
+                    },
+                    stamp: opt(len)
+                        .and_then(|l: u128| u64::try_from(l).ok())
+                        .zip(opt(mtime)),
+                }),
+                _ => None,
+            })
+            .collect();
+        if let (Some(dirs), Some(faces)) = (dirs, faces) {
+            out.insert(key.to_string(), IndexEntry { dirs, faces });
+        }
+    }
+    out
 }
 
 /// Loads Word's East Asian fallback faces (YaHei, Yu Gothic) for a
@@ -2528,9 +2862,9 @@ fn catalogue_paints_family(family: &str) -> bool {
 /// One face per (bold, italic): the best-ranked candidate (lower pass),
 /// path order breaking ties. A typographic-family (ID 16) match never
 /// takes a style an ID 1 match fills (Roboto Black vs Roboto Regular).
-fn pick_ranked_faces(mut found: Vec<(u8, (bool, bool), Vec<u8>)>) -> Vec<((bool, bool), Vec<u8>)> {
+fn pick_ranked_faces<T>(mut found: Vec<(u8, (bool, bool), T)>) -> Vec<((bool, bool), T)> {
     found.sort_by_key(|(pass, _, _)| *pass);
-    let mut out: Vec<((bool, bool), Vec<u8>)> = Vec::new();
+    let mut out: Vec<((bool, bool), T)> = Vec::new();
     for (_, style, bytes) in found {
         if out.iter().all(|(s, _)| *s != style) {
             out.push((style, bytes));
@@ -2685,6 +3019,84 @@ fn entry_describes(entry: &super::font_table::FontEntry) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_font_index_reads_recorded_files_until_a_folder_or_file_changes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let fonts = tmp.path().join("fonts");
+        fs::create_dir(&fonts).expect("fonts dir");
+        let carlito = fonts.join("Carlito-Regular.ttf");
+        fs::write(
+            &carlito,
+            include_bytes!("../../assets/fonts/Carlito-Regular.ttf"),
+        )
+        .expect("font");
+        let index_path = tmp.path().join("font-index.tsv");
+        let scans = std::cell::Cell::new(0);
+        let scan = || {
+            scans.set(scans.get() + 1);
+            let bytes = fs::read(&carlito).expect("read");
+            (
+                vec![((false, false), FaceSource::new(&carlito, None), bytes)],
+                vec![fonts.clone()],
+            )
+        };
+        let first = indexed_faces(
+            &Mutex::new(FontIndex::load(Some(index_path.clone()))),
+            "k",
+            scan,
+        );
+        assert_eq!(scans.get(), 1);
+        // A new process: the file index answers without a scan.
+        let index = Mutex::new(FontIndex::load(Some(index_path.clone())));
+        assert_eq!(indexed_faces(&index, "k", scan), first);
+        assert_eq!(scans.get(), 1, "an indexed family is not searched again");
+        // A family nobody has: the empty answer is indexed too.
+        let none = || {
+            scans.set(scans.get() + 1);
+            (Vec::new(), vec![fonts.clone()])
+        };
+        assert!(indexed_faces(&index, "absent", none).is_empty());
+        let index = Mutex::new(FontIndex::load(Some(index_path.clone())));
+        assert!(indexed_faces(&index, "absent", none).is_empty());
+        assert_eq!(scans.get(), 2);
+        // A face file rewritten in place, then a font added to the folder:
+        // each sends the family back to the search.
+        fs::write(
+            &carlito,
+            include_bytes!("../../assets/fonts/Carlito-Bold.ttf"),
+        )
+        .expect("font");
+        let index = Mutex::new(FontIndex::load(Some(index_path.clone())));
+        indexed_faces(&index, "k", scan);
+        assert_eq!(scans.get(), 3);
+        fs::write(fonts.join("New.ttf"), b"x").expect("new font");
+        let index = Mutex::new(FontIndex::load(Some(index_path)));
+        indexed_faces(&index, "absent", none);
+        assert_eq!(scans.get(), 4);
+    }
+
+    #[test]
+    fn the_font_index_file_round_trips_and_rejects_other_versions() {
+        let mut entries = HashMap::new();
+        entries.insert(
+            "family\u{1f}Poppins\u{1f}/u\u{1f}/c".to_string(),
+            IndexEntry {
+                dirs: vec![
+                    (PathBuf::from("/Library/Fonts"), Some(17)),
+                    (PathBuf::from("/nope"), None),
+                ],
+                faces: vec![IndexedFace {
+                    style: (true, false),
+                    source: FaceSource::new(Path::new("/f/a b.ttc"), Some(2)),
+                    stamp: Some((10, 20)),
+                }],
+            },
+        );
+        let text = format_font_index(&entries);
+        assert_eq!(parse_font_index(&text), entries);
+        assert!(parse_font_index(&text.replacen("\t1", "\t0", 1)).is_empty());
+    }
 
     #[test]
     fn an_east_asian_face_takes_word_s_taller_line() {
@@ -3078,7 +3490,7 @@ mod tests {
         let faces = faces_with_user_fonts("Roboto Condensed", &[], Some(&repo_font_dir()));
         for style in [(false, false), (true, false)] {
             assert!(
-                faces.iter().any(|(s, _)| *s == style),
+                faces.iter().any(|(s, _, _)| *s == style),
                 "Roboto Condensed {style:?} face"
             );
         }
@@ -3090,7 +3502,7 @@ mod tests {
         // Cambria. Selawik is Microsoft's open Segoe UI stand-in.
         let faces = faces_with_user_fonts("Segoe UI", &[], Some(&repo_font_dir()));
         assert!(
-            faces.iter().any(|(s, _)| *s == (false, false)),
+            faces.iter().any(|(s, _, _)| *s == (false, false)),
             "a regular Selawik for Segoe UI"
         );
     }
@@ -3915,7 +4327,11 @@ mod tests {
             let found = family_faces_in("Liberation Sans", &dirs);
             assert_eq!(found.len(), 1);
             assert_eq!(found[0].0, (false, false));
-            assert_eq!(found[0].1, bytes);
+            assert_eq!(
+                found[0].1,
+                FaceSource::new(&dir.path().join("Liberation.ttf"), None)
+            );
+            assert_eq!(found[0].2, bytes);
             assert!(family_faces_in("Liberation Serif", &dirs).is_empty());
         }
 
@@ -3935,12 +4351,12 @@ mod tests {
             assert!(
                 found
                     .iter()
-                    .any(|(style, bytes)| *style == (false, false) && bytes == regular)
+                    .any(|(style, _, bytes)| *style == (false, false) && bytes == regular)
             );
             assert!(
                 found
                     .iter()
-                    .any(|(style, bytes)| *style == (false, true) && bytes == italic)
+                    .any(|(style, _, bytes)| *style == (false, true) && bytes == italic)
             );
         }
 

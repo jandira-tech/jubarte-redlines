@@ -75,6 +75,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - A font face looks its glyphs up in the cmap when asked instead of listing
   every mapped codepoint when it loads: a further 4.2% off cold conversion
   over 80 documents, PDFs byte-identical on all 500 fixtures_500 documents.
+- An on-disk font index (`font-index.tsv` beside jubarte's font folder)
+  remembers which files each font family resolved to. Later processes read
+  those files directly instead of listing and opening every candidate in the
+  system, Word and cloud-font folders; a changed folder or file sends the
+  family back to the full search. Cold conversion median 46.9 → 21.4 ms over
+  80 fixtures_500 documents, PDFs byte-identical on all 500.
+  `JUBARTE_FONT_INDEX` moves it, `off` disables it.
 
 ## [0.9.2] - 2026-09-26
 
