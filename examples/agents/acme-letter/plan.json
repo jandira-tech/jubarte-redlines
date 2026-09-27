@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "source_sha256": "<sha256 of your source .docx, from `jubarte inspect --json`>",
+  "author": "Claude",
+  "date": "2026-09-25T12:00:00Z",
+  "operations": [
+    {
+      "id": "E1-delete-4d",
+      "kind": "delete_paragraph",
+      "paragraph": {
+        "starts_with": "(d) Onward Disclosure."
+      }
+    },
+    {
+      "id": "E1-recipients",
+      "kind": "insert",
+      "paragraph": {
+        "starts_with": "(a) Confidentiality."
+      },
+      "after": "retained experts, ",
+      "text": "court reporters, litigation-support vendors, ",
+      "comment": "Former 4(d) folded in here. Its first clause duplicated 5(a)'s 'only to' list; its responsibility rule now sits at the end of 5(a), with the same breadth."
+    },
+    {
+      "id": "E1-defined-term",
+      "kind": "insert",
+      "paragraph": {
+        "starts_with": "(a) Confidentiality."
+      },
+      "after": "process servers who need it to pursue the Permitted Purpose",
+      "text": " (each, an “Authorized Recipient”)"
+    },
+    {
+      "id": "E1-responsibility",
+      "kind": "insert",
+      "paragraph": {
+        "starts_with": "(a) Confidentiality."
+      },
+      "position": "end",
+      "text": " You remain responsible for every act or omission, with respect to the Information, of any person to whom you disclose it, including an Authorized Recipient, as though it were your own."
+    },
+    {
+      "id": "E2-automated-tools",
+      "kind": "insert_paragraph",
+      "paragraph": {
+        "starts_with": "(f) Notice of Inability to Comply."
+      },
+      "position": "after",
+      "runs": [
+        {
+          "text": "(g) "
+        },
+        {
+          "text": "Automated Tools. ",
+          "bold": true
+        },
+        {
+          "text": "You will not input, upload, or otherwise submit the Information to any artificial intelligence, machine learning, or large language model service unless the provider of that service is contractually prohibited from retaining the Information beyond the session in which you submit it and from using it to train, fine-tune, or improve any model."
+        }
+      ],
+      "comment": "New. Not required by 11 CCR 7053; added because requesters routinely paste data into consumer AI tools that retain inputs. Delete if too aggressive for the relationship."
+    },
+    {
+      "id": "E3-survival-2c",
+      "kind": "insert",
+      "paragraph": {
+        "starts_with": "(e) Survival."
+      },
+      "after": "1(g), ",
+      "text": "2(c), ",
+      "comment": "Added 2(c) (post-disclosure minor deletion duty), 7(b) (no-objection waiver) and 7(c) (rights-request duty). Without them these arguably lapse if we terminate under 9(b)."
+    },
+    {
+      "id": "E3-survival-7bc",
+      "kind": "insert",
+      "paragraph": {
+        "starts_with": "(e) Survival."
+      },
+      "after": "3, 4, 5, 6, ",
+      "text": "7(b), 7(c), "
+    },
+    {
+      "id": "E4-email",
+      "kind": "insert",
+      "paragraph": {
+        "starts_with": "(f) Notices."
+      },
+      "before": "address in the heading of this letter",
+      "text": "email "
+    },
+    {
+      "id": "E4-courier",
+      "kind": "replace",
+      "paragraph": {
+        "starts_with": "(f) Notices."
+      },
+      "find": ", with a copy by a nationally recognized overnight courier. A notice takes effect on the business day the recipient receives it.",
+      "replacement": ". A notice under Section 8(c), and a notice of suspension or termination under Section 9(b), also requires a copy by nationally recognized overnight courier, addressed to [LaunchPad postal address] in our case and to the postal address in the heading of this letter in your case. A notice takes effect on the business day the recipient receives it or, if this Section 11(f) requires a courier copy, the business day the recipient receives that copy.",
+      "comment": "The original required a courier copy of every notice but gave no LaunchPad postal address. Courier now applies only to indemnity and termination notices; fill in the address."
+    },
+    {
+      "id": "E6-pronoun",
+      "kind": "replace",
+      "paragraph": {
+        "contains": "signs in his or her individual capacity"
+      },
+      "find": "his or her",
+      "replacement": "an"
+    }
+  ]
+}
