@@ -60,7 +60,7 @@ fn revised_without_sectpr_takes_word_default_section() {
     let body_sect = &xml[xml.rfind("<w:sectPr").expect("body sectPr")..];
     // rfind lands on the nested old sectPr when a change exists; take the
     // outer one instead.
-    let outer = xml[..xml.rfind("<w:sectPrChange").map_or(xml.len(), |i| i)]
+    let outer = xml[..xml.rfind("<w:sectPrChange").unwrap_or(xml.len())]
         .rfind("<w:sectPr")
         .map(|i| &xml[i..])
         .unwrap_or(body_sect);
