@@ -3259,28 +3259,33 @@ fn resolve_redefined_style_metrics(
             None => None,
         };
         if let Some(rpr) = rpr {
-            let rf = match dom.element(rpr, &W::name("rFonts")) {
-                Some(f) => f,
-                None => {
-                    let f = dom.new_element(W::name("rFonts"));
-                    dom.add_first(rpr, f);
-                    f
+            // A missing rFonts is created only when a slot will be written.
+            let rf = dom.element(rpr, &W::name("rFonts")).or_else(|| {
+                fonts
+                    .iter()
+                    .any(|(bv, differs)| *differs && (bv.0.is_some() || bv.1.is_some()))
+                    .then(|| {
+                        let f = dom.new_element(W::name("rFonts"));
+                        dom.add_first(rpr, f);
+                        f
+                    })
+            });
+            if let Some(rf) = rf {
+                for ((c, t), (bv, differs)) in RPR_METRIC_FONT_SLOTS.iter().zip(&fonts) {
+                    let before = (
+                        dom.attribute(rf, &W::name(c)).map(str::to_string),
+                        dom.attribute(rf, &W::name(t)).map(str::to_string),
+                    );
+                    let want = if *differs { bv.clone() } else { (None, None) };
+                    if before != want {
+                        dom.set_attribute_value(rf, &W::name(c), want.0.as_deref());
+                        dom.set_attribute_value(rf, &W::name(t), want.1.as_deref());
+                        changed = true;
+                    }
                 }
-            };
-            for ((c, t), (bv, differs)) in RPR_METRIC_FONT_SLOTS.iter().zip(&fonts) {
-                let before = (
-                    dom.attribute(rf, &W::name(c)).map(str::to_string),
-                    dom.attribute(rf, &W::name(t)).map(str::to_string),
-                );
-                let want = if *differs { bv.clone() } else { (None, None) };
-                if before != want {
-                    dom.set_attribute_value(rf, &W::name(c), want.0.as_deref());
-                    dom.set_attribute_value(rf, &W::name(t), want.1.as_deref());
-                    changed = true;
+                if dom.attributes(rf).is_empty() {
+                    dom.remove(rf);
                 }
-            }
-            if dom.attributes(rf).is_empty() {
-                dom.remove(rf);
             }
             for (local, bv, differs) in sizes {
                 let existing = dom.element(rpr, &W::name(local));
