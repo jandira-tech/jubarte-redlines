@@ -58,6 +58,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - Redline and other rewritten packages are byte-reproducible: zip entries are
   written in the source package's order, added parts after them by name,
   instead of in hash-map order that changed on every run.
+- Changed paragraphs that all correspond position by position (each shares a
+  content word with its counterpart, docxodus's same-slot rule decoded from
+  Word) are paired in place, as Word pairs them, instead of one body pairing
+  with the next on a shared trailing word and the rest falling out
+  whole-inserted and whole-deleted. file_111×file_112 scores 0.108 → 0.538
+  Jaccard against Word's redline; +0.35 summed over the 1,195 pool and
+  English pairs (8 changed).
 
 ### Added
 

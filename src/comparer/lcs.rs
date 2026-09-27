@@ -1235,6 +1235,16 @@ fn stamp_residual_pairs(
     rest1: &[ComparisonUnit],
     rest2: &[ComparisonUnit],
 ) -> Vec<(usize, usize)> {
+    // A full diagonal of Word's same-slot pairs (every paragraph paired with
+    // its counterpart) is taken whole; anything short of that keeps the
+    // tuned candidates below. Partial same-slot pairs, alone or mixed with
+    // the candidates, lost to them on Word's redlines (47 of 85 changed pool
+    // and English pairs worse, mean -0.076 Jaccard): a lone paired title
+    // pulled the residual off Word's pure insert / delete shape.
+    let slot_pairs = same_slot_pairs(dom, rest1, rest2);
+    if rest1.len() == rest2.len() && slot_pairs.len() == rest1.len() && !slot_pairs.is_empty() {
+        return slot_pairs;
+    }
     // Guard: short base residual only (file_33 has 3 content paras after stamp).
     // Long residuals stay pure insert-all / delete-all (file_134 confetti).
     if rest1.is_empty() || rest2.is_empty() || rest1.len() > 6 {
@@ -7909,6 +7919,105 @@ fn process_correlated_hashes_owned(
     }
     cascade(after1, after2, &mut out);
     Ok(out)
+}
+
+/// English closed-class words: shared scaffolding ("with", "this"), not
+/// evidence that two paragraphs correspond (docxodus `FunctionWords`).
+const SAME_SLOT_FUNCTION_WORDS: &[&str] = &[
+    "a", "an", "the", "and", "or", "but", "nor", "so", "yet", "of", "in", "on", "at", "by", "for",
+    "with", "to", "from", "as", "into", "over", "under", "up", "down", "out", "off", "about",
+    "after", "before", "between", "during", "through", "per", "via", "is", "are", "was", "were",
+    "be", "been", "being", "am", "do", "does", "did", "have", "has", "had", "will", "would", "can",
+    "could", "shall", "should", "may", "might", "must", "this", "that", "these", "those", "it",
+    "its", "he", "she", "they", "them", "his", "her", "their", "we", "us", "our", "you", "your",
+    "i", "me", "my", "not", "no", "if", "then", "than", "there", "here", "when", "where", "which",
+    "who", "whom", "what", "why", "how", "all", "each", "both", "some", "any", "such", "same",
+    "other", "another", "more", "most", "only", "just", "also", "too", "very", "own",
+];
+
+/// A paragraph's words as the same-slot pass weighs them: its word count, and
+/// the distinct case-sensitive words holding a letter that are not function
+/// words.
+fn same_slot_words(dom: &Dom, u: &ComparisonUnit) -> (usize, std::collections::HashSet<String>) {
+    let mut text = String::new();
+    for a in u.descendant_atoms() {
+        if dom.name_is(a.content_element, &W::t()) {
+            text.push_str(&dom.value_str(a.content_element));
+        }
+    }
+    let words: Vec<&str> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    let content = words
+        .iter()
+        .filter(|t| t.chars().any(char::is_alphabetic))
+        .filter(|t| {
+            !SAME_SLOT_FUNCTION_WORDS
+                .iter()
+                .any(|f| t.eq_ignore_ascii_case(f))
+        })
+        .map(|t| t.to_string())
+        .collect();
+    (words.len(), content)
+}
+
+/// Word's replace-gap matcher is positional first (decoded from Word's
+/// compare output; docxodus `IrBlockAligner.SameSlotPair`): in a gap of
+/// changed paragraphs, the k-th old paragraph pairs with the k-th new one
+/// when they share a content word, and each pair is then diffed on its own.
+///
+/// Slot k counts paragraphs only. It pairs when its paragraphs share at least
+/// one content word (a lone shared word also needs the shorter paragraph to
+/// hold at least a third of the longer's words) and no still-unpaired
+/// paragraph shares more content words with either member. Nothing pairs
+/// when one side has over three times the other's paragraphs: then k-th to
+/// k-th carries no signal. Returns `(left, right)` unit indices, ascending.
+fn same_slot_pairs(
+    dom: &Dom,
+    left: &[ComparisonUnit],
+    right: &[ComparisonUnit],
+) -> Vec<(usize, usize)> {
+    let paragraphs = |units: &[ComparisonUnit]| -> Vec<usize> {
+        (0..units.len())
+            .filter(|&i| {
+                matches!(&units[i], ComparisonUnit::Group(g)
+                    if g.group_type == ComparisonUnitGroupType::Paragraph)
+            })
+            .collect()
+    };
+    let (ls, rs) = (paragraphs(left), paragraphs(right));
+    let slots = ls.len().min(rs.len());
+    if slots == 0 || 3 * slots < ls.len().max(rs.len()) {
+        return Vec::new();
+    }
+    let lw: Vec<_> = ls.iter().map(|&i| same_slot_words(dom, &left[i])).collect();
+    let rw: Vec<_> = rs
+        .iter()
+        .map(|&j| same_slot_words(dom, &right[j]))
+        .collect();
+    let shared = |a: usize, b: usize| lw[a].1.intersection(&rw[b].1).count();
+    let (mut left_paired, mut right_paired) = (vec![false; ls.len()], vec![false; rs.len()]);
+    let mut pairs = Vec::new();
+    for k in 0..slots {
+        let evidence = shared(k, k);
+        if evidence == 0 {
+            continue;
+        }
+        let (wl, wr) = (lw[k].0, rw[k].0);
+        if evidence < 2 && 3 * wl.min(wr) < wl.max(wr) {
+            continue;
+        }
+        let outbid = (0..ls.len()).any(|a| a != k && !left_paired[a] && shared(a, k) > evidence)
+            || (0..rs.len()).any(|b| b != k && !right_paired[b] && shared(k, b) > evidence);
+        if outbid {
+            continue;
+        }
+        left_paired[k] = true;
+        right_paired[k] = true;
+        pairs.push((ls[k], rs[k]));
+    }
+    pairs
 }
 
 /// First DIRECT atom of a unit (Word→contents[0]; Group→None). The TS back-path
