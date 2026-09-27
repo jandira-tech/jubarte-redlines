@@ -1145,6 +1145,15 @@ impl<'p> Transaction<'p> {
         if covered < end {
             return Err("the text is not addressable".into());
         }
+        if projection
+            .field_marks
+            .iter()
+            .any(|&mark| start < mark && mark < end)
+        {
+            return Err(
+                "the text sits inside a hyperlink, field, content control or revision".into(),
+            );
+        }
         Ok(())
     }
 

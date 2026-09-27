@@ -512,6 +512,9 @@ pub(crate) struct Projection {
     pub(crate) spans: Vec<Span>,
     pub(crate) page_break: bool,
     pub(crate) limitations: BTreeSet<String>,
+    /// Byte offsets of complex-field `w:fldChar` markers. A field with an
+    /// empty result adds no text, so its markers are the only trace of it.
+    pub(crate) field_marks: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -526,15 +529,27 @@ struct Format {
 pub(crate) fn project_paragraph(dom: &Dom, paragraph: NodeId) -> Projection {
     let mut projection = Projection::default();
     let mut formats: Vec<(usize, usize, Format)> = Vec::new();
-    walk_container(dom, paragraph, true, &mut projection, &mut formats);
+    let mut fields = 0;
+    walk_container(
+        dom,
+        paragraph,
+        true,
+        &mut fields,
+        &mut projection,
+        &mut formats,
+    );
     projection.spans = merge_spans(&projection.text, formats);
     projection
 }
 
+/// `fields` counts the complex fields open at this point of the paragraph:
+/// their `begin`/`end` runs are siblings of the result runs, so a result run
+/// is direct by position yet belongs to the field.
 fn walk_container(
     dom: &Dom,
     container: NodeId,
     direct: bool,
+    fields: &mut usize,
     out: &mut Projection,
     formats: &mut Vec<(usize, usize, Format)>,
 ) {
@@ -549,7 +564,7 @@ fn walk_container(
             if local == "AlternateContent"
                 && let Some(choice) = dom.element(child, &MC::name("Choice"))
             {
-                walk_container(dom, choice, false, out, formats);
+                walk_container(dom, choice, false, fields, out, formats);
             }
             continue;
         }
@@ -566,25 +581,25 @@ fn walk_container(
             }
             "ins" | "moveTo" => {
                 out.limitations.insert("revision".into());
-                walk_container(dom, child, false, out, formats);
+                walk_container(dom, child, false, fields, out, formats);
             }
-            "r" => walk_run(dom, child, direct, out, formats),
+            "r" => walk_run(dom, child, direct, fields, out, formats),
             "hyperlink" => {
                 out.limitations.insert("hyperlink".into());
-                walk_container(dom, child, false, out, formats);
+                walk_container(dom, child, false, fields, out, formats);
             }
             "fldSimple" => {
                 out.limitations.insert("field".into());
-                walk_container(dom, child, false, out, formats);
+                walk_container(dom, child, false, fields, out, formats);
             }
             "sdt" => {
                 out.limitations.insert("content_control".into());
                 if let Some(content) = dom.element(child, &W::sdt_content()) {
-                    walk_container(dom, content, false, out, formats);
+                    walk_container(dom, content, false, fields, out, formats);
                 }
             }
             "smartTag" | "customXml" | "dir" | "bdo" => {
-                walk_container(dom, child, false, out, formats);
+                walk_container(dom, child, false, fields, out, formats);
             }
             _ => {
                 out.limitations.insert(format!("unknown:{local}"));
@@ -597,6 +612,7 @@ fn walk_run(
     dom: &Dom,
     run: NodeId,
     direct: bool,
+    fields: &mut usize,
     out: &mut Projection,
     formats: &mut Vec<(usize, usize, Format)>,
 ) {
@@ -611,6 +627,7 @@ fn walk_run(
                 .insert(format!("unknown:{}", name.local_name()));
             continue;
         }
+        let direct = direct && *fields == 0;
         let glyph = |out: &mut Projection, ch: char| {
             let s = out.text.len();
             out.text.push(ch);
@@ -653,6 +670,12 @@ fn walk_run(
             }
             "fldChar" => {
                 out.limitations.insert("field".into());
+                out.field_marks.push(out.text.len());
+                match dom.attribute(child, &W::name("fldCharType")) {
+                    Some("begin") => *fields += 1,
+                    Some("end") => *fields = fields.saturating_sub(1),
+                    _ => {}
+                }
             }
             "drawing" | "pict" | "object" => {
                 out.limitations.insert("drawing".into());

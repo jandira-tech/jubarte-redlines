@@ -844,3 +844,29 @@ fn edits_crossing_complex_field_boundaries_are_refused() {
         assert_eq!(error.operation.as_deref(), Some("field"));
     }
 }
+
+#[test]
+fn edits_crossing_an_empty_complex_field_are_refused_but_text_beside_it_stays_editable() {
+    // A field with no result leaves no text of its own, so the words on
+    // either side meet in the projection; the markers still sit between them.
+    let source = docx(
+        r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> after</w:t></w:r></w:p>"#,
+    );
+    let across = plan(
+        &source,
+        r#"[{"id":"field","kind":"replace","paragraph":{"index":0},"find":"Before  after","replacement":"New text"}]"#,
+    );
+    for error in [
+        preview_plan(&source, &across).unwrap_err(),
+        apply_plan(&source, &across).unwrap_err(),
+    ] {
+        assert_eq!(error.code, "UNSUPPORTED_STRUCTURE");
+        assert_eq!(error.operation.as_deref(), Some("field"));
+    }
+    let beside = plan(
+        &source,
+        r#"[{"id":"word","kind":"replace","paragraph":{"index":0},"find":"Before","replacement":"Prior"}]"#,
+    );
+    let result = apply_plan(&source, &beside).unwrap();
+    assert!(texts(&result.clean).iter().any(|t| t.contains("Prior")));
+}
