@@ -292,6 +292,24 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   converted by Word. Rows split redlining (tool redline → Word PDF) from
   conversion (Word redline → tool PDF) (6b72be2, a6953f1).
 
+### Changed
+
+- RESULTS.md applies one rule to every tool. Each table keeps a tool's
+  latest run: jubarte no longer shows its best run of each week. The pooled
+  docx→pdf tables rank only on the corpora every ranked tool converted, over
+  the same documents, and a document a tool has no score for counts 0. Each
+  corpus gets its own column, so jubarte's clean ranking now covers 1,204
+  documents (English a + b and docxide's suite) instead of 2,102.
+  - Competitors join fixtures_500 from their 2026-09-22 run: docxide 0.2673,
+    soffice 0.3365, jubarte 0.6524.
+  - A run over 7 days older than its table's newest is marked †.
+  - Harness Docs counts every attempted document; failures already scored 0.
+  - Redline speed is split by pair set, so a 5,000-pair run is never ranked
+    against a 90-pair one, and 2-pair probes are dropped.
+  - `--compress` is listed unranked.
+  - Tables with no jubarte-redlines run, and the retired TypeScript ports
+    (jubarte-first, -native, -lossless, dist/jubarte-final), are left out.
+
 ### Performance
 
 - LCS keys follow their word hash in one walk; `group_by_key_stable` hashes

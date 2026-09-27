@@ -26,6 +26,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import statistics
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -92,6 +93,9 @@ class Run:
     n: int
     scores: list[float] | None = None
     corpora: str = ''
+    # Pooled tables: one cell per corpus ('mean (docs)' or '—'); a variant row is listed unranked.
+    cells: dict[str, str] | None = None
+    ranked: bool = True
 
     @property
     def rank_value(self) -> float | None:
@@ -112,6 +116,7 @@ class Metric:
     unit: str
     lower_is_better: bool = False
     note: str = ''
+    columns: list[str] | None = None  # extra per-corpus columns (pooled tables)
 
 
 METRICS: dict[str, Metric] = {}
@@ -135,8 +140,18 @@ def when_of(value: str | None, path: Path | None = None) -> datetime:
     return datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
+# Retired TypeScript ports that shared the jubarte name. RESULTS.md reports jubarte-redlines,
+# so their runs are left out here (the bench keeps them).
+RETIRED = re.compile(r'^jubarte-(first|native|lossless|second|third|final)\b')
+
+
+def retired(tool: str, version: str = '') -> bool:
+    return bool(RETIRED.match(tool) or RETIRED.match(version))
+
+
 def add(**kw) -> None:
-    RUNS.append(Run(**kw))
+    if not retired(kw['tool'], str(kw.get('version') or '')):
+        RUNS.append(Run(**kw))
 
 
 def jsonl_objects(lines) -> Iterator[dict]:
@@ -182,11 +197,14 @@ def bench_jsonl() -> None:
                 unit='score 0-100',
             )
             version = row.get('tool_version') or (runs[0].get('package') if runs else None) or 'unversioned'
+            vendor = row.get('vendor') or '?'
+            if ours(vendor) and 'jubarte-final' in str(runs[0].get('dist') if runs else ''):
+                continue  # the retired TypeScript port (dist/jubarte-final), not jubarte-redlines
             mean = row.get('itt_mean') if row.get('itt_mean') is not None else row.get('overall_mean')
             median = row.get('itt_median') if row.get('itt_median') is not None else row.get('overall_median')
             add(
                 metric=key,
-                tool=row.get('vendor') or '?',
+                tool=vendor,
                 version=str(version),
                 when=when_of(row.get('timestamp')),
                 mean=mean,
@@ -202,16 +220,21 @@ def speed_rows(path: Path) -> None:
     if not path.exists():
         return
     for row in jsonl_objects(path.read_text().splitlines()):
-        if row.get('unit') != 'ms_per_redline':
-            continue
+        if row.get('unit') != 'ms_per_redline' or (row.get('n') or 0) < 20:
+            continue  # smoke runs (2-document probes) time nothing comparable
+        # Only runs over the same pair set are comparable: one table per set.
+        pairs, fixtures = row.get('pair_count'), row.get('fixture_count')
+        pair_set = f'{pairs}x{fixtures}' if pairs and fixtures else str(row.get('n'))
+        label = f'{pairs} pairs of {fixtures} fixtures' if pairs and fixtures else f'{row.get("n")} pairs'
         key = metric(
-            'speed:redlines',
-            title='Redline speed — ms per redline',
+            f'speed:redlines:{pair_set}',
+            title=f'Redline speed — ms per redline ({label})',
             kind='redline speed',
             reference='-',
             docs='redlines',
             unit='ms per redline (lower is better)',
             lower_is_better=True,
+            note='Docs counts the pairs timed: a pair the tool failed on is excluded from its timing.',
         )
         dist = row.get('dist') or ''
         version = Path(dist).name if dist else (row.get('engine') or 'unversioned')
@@ -316,7 +339,8 @@ def harness_docx_to_pdf() -> None:
                 when=when_of(doc.get('generated_at'), path),
                 mean=t.get('mean'),
                 median=t.get('median'),
-                n=t.get('n_scored') or n_docs,
+                # A failed document scores 0 inside the mean, so Docs counts every attempt.
+                n=len(per_doc) or n_docs,
                 scores=scores or None,
             )
 
@@ -384,7 +408,7 @@ def jub(tag: str) -> str:
 
 def sample(corpus: str, tool: str, version: str, when: datetime, scores: dict[str, float]) -> None:
     scores = {k: float(v) for k, v in scores.items() if isinstance(v, (int, float))}
-    if scores and version != SUPERSEDED:
+    if scores and version != SUPERSEDED and not retired(tool, version):
         SAMPLES.append(Sample(corpus, TOOL_NAMES.get(tool, tool), version, when, scores))
 
 
@@ -410,21 +434,18 @@ def english_corpus() -> None:
                 sample(corpus, tool, EN_COMPETITORS.get(tool, tool), when_of(None, comp), rows)
 
 
+# The competitors' fixtures_500 run of 2026-09-22 (same Word references, same scorer), kept
+# per file in jubarte-loop/baseline.json; its jubarte column is an old build and is not read.
+F500_COMPETITORS = {'docxide': 'docxide-pdf 261618a9 (0.17.1+)', 'soffice': 'soffice 26.8.0.3'}
+
+
 def fixtures_500() -> None:
-    report = GROK / 'docxide_metrics' / 'report.json'
-    if report.exists():
-        doc = json.loads(report.read_text())
-        for tool, t in (doc.get('tools') or {}).items():
-            per_doc = {
-                k: v['jaccard'] / 100 for k, v in (t.get('per_doc') or {}).items() if v.get('jaccard') is not None
-            }
-            sample(
-                'fixtures_500',
-                tool,
-                str(t.get('version') or 'unversioned'),
-                when_of(doc.get('generated_at'), report),
-                per_doc,
-            )
+    base = LOOP / 'baseline.json'
+    if base.exists():
+        rows = json.loads(base.read_text())
+        for tool, version in F500_COMPETITORS.items():
+            scores = {k: r[tool] for k, r in rows.items() if isinstance(r, dict) and r.get(tool) is not None}
+            sample('fixtures_500', tool, version, when_of('2026-09-22T21:52:00Z'), scores)
     for path in sorted((LOOP / 'runs').glob('full_*/result.json')):
         rows = json.loads(path.read_text())
         scores = {k: r['new'] for k, r in rows.items() if isinstance(r, dict) and r.get('new') is not None}
@@ -492,56 +513,72 @@ def ours(tool: str) -> bool:
     return tool.startswith('jubarte')
 
 
+# A flag variant of jubarte (convert --compress) is listed but never takes a rank.
+VARIANT = re.compile(r'^jubarte-compressed\b')
+
+
+def variant(tool: str) -> bool:
+    return bool(VARIANT.match(tool))
+
+
+def engine(tool: str) -> bool:
+    """A row of this repository's engine (jubarte-redlines), in any runtime or flag, not a retired port."""
+    return ours(tool) and not retired(tool)
+
+
 def pooled(corpora: dict[str, str], key: str, title: str, docs: str) -> None:
-    """One table over every corpus in `corpora`: a run's per-document scores pooled across them.
+    """One table over every corpus in `corpora`, the same rule for every tool.
 
-    A competitor pools its best run per corpus. Jubarte gets one row per 7-day window: per
-    corpus, its best run inside the window, else its latest run before it.
+    Each tool takes its latest run per corpus. The ranked mean covers only the corpora every
+    ranked tool ran, over the same documents: those any tool scored there, a document a tool
+    has no score for counting 0. One column per corpus shows each tool's own mean there.
     """
-    metric(key, title=title, kind='docx->pdf', reference='Word', docs=docs, unit='docxide-metrics Jaccard 0-1')
-    mine = [s for s in SAMPLES if s.corpus in corpora]
-
-    def emit(tool: str, picks: dict[str, Sample]) -> None:
-        scores = [v for s in picks.values() for v in s.scores.values()]
-        if not scores:
-            return
-        mean, median = stats(scores)
-        versions = sorted({s.version for s in picks.values()})
-        cover = ', '.join(f'{corpora[c]} {len(picks[c].scores)}' for c in corpora if c in picks)
+    metric(
+        key,
+        title=title,
+        kind='docx->pdf',
+        reference='Word',
+        docs=docs,
+        unit='docxide-metrics Jaccard 0-1',
+        columns=list(corpora.values()),
+    )
+    picks: dict[str, dict[str, Sample]] = {}
+    for s in SAMPLES:
+        if s.corpus in corpora:
+            mine = picks.setdefault(s.tool, {})
+            if s.corpus not in mine or s.when > mine[s.corpus].when:
+                mine[s.corpus] = s
+    universe: dict[str, set[str]] = {}
+    for mine in picks.values():
+        for c, s in mine.items():
+            universe.setdefault(c, set()).update(s.scores)
+    ranked = [tool for tool in picks if not variant(tool)]
+    common = [c for c in corpora if ranked and all(c in picks[tool] for tool in ranked)]
+    for tool in sorted(picks):
+        mine = picks[tool]
+        cells = {}
+        for c, label in corpora.items():
+            if c in mine:
+                cells[label] = (
+                    f'{statistics.mean(mine[c].scores.get(d, 0.0) for d in universe[c]):.4f} ({len(universe[c])})'
+                )
+            else:
+                cells[label] = '—'
+        on_common = all(c in mine for c in common) and common
+        scores = [mine[c].scores.get(d, 0.0) for c in common for d in sorted(universe[c])] if on_common else []
+        mean, median = stats(scores) if scores else (None, None)
         add(
             metric=key,
             tool=tool,
-            version='; '.join(versions),
-            when=max(s.when for s in picks.values()),
+            version='; '.join(sorted({s.version for s in mine.values()})),
+            when=max(s.when for s in mine.values()),
             mean=mean,
             median=median,
             n=len(scores),
-            corpora=cover,
+            corpora=', '.join(corpora[c] for c in common),
+            cells=cells,
+            ranked=not variant(tool) and bool(scores),
         )
-
-    for tool in sorted({s.tool for s in mine if not ours(s.tool)}):
-        picks: dict[str, Sample] = {}
-        for s in mine:
-            if s.tool == tool and (s.corpus not in picks or s.mean > picks[s.corpus].mean):
-                picks[s.corpus] = s
-        emit(tool, picks)
-    for tool in sorted({s.tool for s in mine if ours(s.tool)}):
-        jub = sorted((s for s in mine if s.tool == tool), key=lambda s: s.when, reverse=True)
-        end = jub[0].when
-        oldest = jub[-1].when
-        while end >= oldest:
-            start = end - timedelta(days=7)
-            picks = {}
-            for c in corpora:
-                inside = [s for s in jub if s.corpus == c and start < s.when <= end]
-                before = [s for s in jub if s.corpus == c and s.when <= start]
-                if inside:
-                    picks[c] = max(inside, key=lambda s: s.mean)
-                elif before:
-                    picks[c] = before[0]
-            if any(start < s.when <= end for s in picks.values()):
-                emit(tool, picks)
-            end = start
 
 
 def stats(values: list[float]) -> tuple[float, float]:
@@ -652,24 +689,17 @@ def pdf_to_docx() -> None:
 # --- report ----------------------------------------------------------------------------------
 
 
-def best_per_window(runs: list[Run], lower: bool) -> list[Run]:
-    """Best run per 7-day window (windows counted back from the newest run): per tool for
-    jubarte, whatever its version; per tool and version for a competitor."""
-    out: list[Run] = []
-    groups: dict[tuple[str, str], list[Run]] = {}
+def latest_per_tool(runs: list[Run]) -> list[Run]:
+    """Each tool's latest run, jubarte and competitors alike: no best-of-week pick."""
+    out: dict[str, Run] = {}
     for r in runs:
-        if r.rank_value is None:
-            continue
-        groups.setdefault((r.tool, '' if ours(r.tool) else r.version), []).append(r)
-    for group in groups.values():
-        group.sort(key=lambda r: r.when, reverse=True)
-        while group:
-            start = group[0].when - timedelta(days=7)
-            window = [r for r in group if r.when > start]
-            group = [r for r in group if r.when <= start]
-            pick = min if lower else max
-            out.append(pick(window, key=lambda r: r.rank_value))
-    return out
+        if r.rank_value is not None and (r.tool not in out or r.when > out[r.tool].when):
+            out[r.tool] = r
+    return list(out.values())
+
+
+# A run this much older than its table's newest is flagged: the tool may have moved since.
+STALE = timedelta(days=7)
 
 
 VERSION_WIDTH = 20
@@ -719,16 +749,21 @@ def render() -> str:
         '<!-- Generated by scripts/results_by_version.py — do not edit by hand. -->',
         '# Results by tool version',
         '',
-        f'Generated {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}. Jubarte keeps one row per',
-        '7-day window (newest first): its best run of that week, whatever the version. A competitor',
-        'keeps one row per version. Rows rank by mean (speed: lowest first); a row without a mean',
-        'ranks by the average of its per-document scores. Scores are only comparable inside one table.',
+        f'Generated {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}. One rule for every tool,',
+        "jubarte included: each table keeps a tool's latest run, never its best one. Rows rank by mean",
+        '(speed: lowest first); a row without a mean ranks by the average of its per-document scores. A',
+        'failed document scores 0 in every score table. A date marked † is over 7 days older than the',
+        "table's newest run: that tool may have released since. jubarte's `--compress` variant is",
+        'listed under the ranked rows with no rank. Only jubarte-redlines is reported: a table without',
+        'a jubarte-redlines run, and the retired TypeScript ports (jubarte-first, -native, -lossless),',
+        'are left out. Scores are only comparable inside one table.',
         '',
         'The docx→pdf docxide-metrics tables pool the per-document Jaccard of every corpus the tools',
         'converted, each scored against the Microsoft Word® PDF export of the same document: one table',
-        'for the clean corpora, one for the redlined documents only. A competitor pools its best run',
-        'per corpus; the Corpora column shows which corpora (and how many documents) each row covers,',
-        'so a row missing a corpus is averaged over fewer documents.',
+        'for the clean corpora, one for the redlined documents only. The ranked Mean and Median cover',
+        'only the corpora every ranked tool ran, over the same documents (Docs is equal for every',
+        'ranked row); a corpus only some tools ran shows in its own column, never in the rank. Each',
+        "corpus column is that tool's mean there, with the documents counted in parentheses.",
         '',
         'The "vs Word truth" tables score every row against Word\'s own redline of the pair',
         '(word_redline.py), converted to PDF by Word (word_pdf.py). Each row swaps one side, and each',
@@ -740,8 +775,10 @@ def render() -> str:
         '| Metric | Kind | Reference PDFs | Documents | Unit |',
         '| --- | --- | --- | --- | --- |',
     ]
+    # A table no jubarte-redlines run is in compares other vendors only: not ours to publish.
+    shown = {r.metric for r in RUNS if engine(r.tool)}
     ordered = sorted(
-        METRICS.values(),
+        (m for m in METRICS.values() if m.key in shown),
         key=lambda m: (
             group_of(m),
             KIND_ORDER.index(m.kind),
@@ -768,25 +805,36 @@ def render() -> str:
             )
             if m.note:
                 lines += ['', m.note]
-            runs = [r for r in RUNS if r.metric == m.key]
-            if not m.key.startswith('pool:'):  # pooled runs are already one per week
-                runs = best_per_window(runs, m.lower_is_better)
+            runs = all_runs = [r for r in RUNS if r.metric == m.key]
+            if not m.key.startswith('pool:'):  # a pooled row already is its tool's latest runs
+                runs = latest_per_tool(runs)
             ranked = [(v, r) for r in runs if (v := r.rank_value) is not None]
             if not ranked:
                 lines += ['', '_No run measured yet._']
                 continue
             ranked.sort(key=lambda vr: vr[0], reverse=not m.lower_is_better)
-            runs = [r for _, r in ranked]
-            pool = m.key.startswith('pool:')
-            head = '| Rank | Tool | Version | Date | Docs | Mean | Median |' + (' Corpora |' if pool else '')
-            lines += ['', head, '|' + ' --- |' * (8 if pool else 7)]
-            for i, r in enumerate(runs, 1):
-                mean = fmt(r.mean, m.unit) if r.mean is not None else f'{fmt(r.rank_value, m.unit)} (avg)'
+            # Unranked: variants, then pooled rows off the common corpora (their columns still show).
+            for _, r in ranked:
+                r.ranked = r.ranked and not variant(r.tool)
+            runs = [r for _, r in ranked if r.ranked] + [r for _, r in ranked if not r.ranked]
+            runs += [r for r in all_runs if r.rank_value is None and r.cells]
+            newest = max(r.when for r in runs)
+            extra = m.columns or []
+            head = '| Rank | Tool | Version | Date | Docs | Mean | Median |' + ''.join(f' {c} |' for c in extra)
+            lines += ['', head, '|' + ' --- |' * (7 + len(extra))]
+            place = 0
+            for r in runs:
+                place += r.ranked
+                if r.mean is not None or r.rank_value is None:
+                    mean = fmt(r.mean, m.unit)
+                else:
+                    mean = f'{fmt(r.rank_value, m.unit)} (avg)'
+                date = r.when.strftime('%Y-%m-%d') + (' †' if newest - r.when > STALE else '')
                 row = (
-                    f'| {i} | {r.tool} | {short_version(r.version)} | {r.when.strftime("%Y-%m-%d")} | {r.n} '
+                    f'| {place if r.ranked else "—"} | {r.tool} | {short_version(r.version)} | {date} | {r.n} '
                     f'| {mean} | {fmt(r.median, m.unit)} |'
                 )
-                lines.append(row + (f' {r.corpora} |' if pool else ''))
+                lines.append(row + ''.join(f' {(r.cells or {}).get(c, "—")} |' for c in extra))
     return '\n'.join(lines) + '\n'
 
 
