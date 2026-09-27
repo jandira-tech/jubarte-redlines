@@ -547,6 +547,21 @@ impl Dom {
         filter: Option<&XName>,
         mut visit: impl FnMut(NodeId),
     ) {
+        self.find_descendant_element(id, filter, |c| {
+            visit(c);
+            false
+        });
+    }
+
+    /// The first descendant element, in [`descendants`] order, that passes
+    /// `filter` and `pred`; the walk stops there instead of listing the
+    /// whole subtree first.
+    pub fn find_descendant_element(
+        &self,
+        id: NodeId,
+        filter: Option<&XName>,
+        mut pred: impl FnMut(NodeId) -> bool,
+    ) -> Option<NodeId> {
         // Iterative stack avoids deep recursion on large bodies.
         let mut stack: Vec<(NodeId, usize)> = vec![(id, 0)];
         while let Some((node, i)) = stack.last_mut() {
@@ -568,11 +583,12 @@ impl Dom {
                 None => true,
                 Some(f) => self.name_is(c, f),
             };
-            if matches {
-                visit(c);
+            if matches && pred(c) {
+                return Some(c);
             }
             stack.push((c, 0));
         }
+        None
     }
 
     /// `DescendantNodes()` — all descendant nodes (not just elements), pre-order.

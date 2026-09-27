@@ -55,6 +55,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   vertical runs follow Word (832eac9, c8a878e, b41cb35); pie and gear text
   rectangles follow Word (2e4cd8f); altChunk decodes base64 MHT parts and
   tolerates omitted end tags (93643b5, 30d595f).
+- Redline and other rewritten packages are byte-reproducible: zip entries are
+  written in the source package's order, added parts after them by name,
+  instead of in hash-map order that changed on every run.
 
 ### Added
 
@@ -90,6 +93,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - An image repeated across pages (a header logo) is compressed once, not once
   per page before its duplicates were dropped: 2.1% off cold conversion over
   80 documents, PDFs byte-identical on all 500.
+- The first-descendant lookups style and run-property reads make stop at the
+  first match instead of walking the rest of the subtree: 1.6% off cold
+  conversion over 80 documents, PDFs byte-identical on all 500 and redlines
+  identical on 300 pool pairs.
 
 ## [0.9.2] - 2026-09-26
 

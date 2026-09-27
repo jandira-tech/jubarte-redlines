@@ -3204,9 +3204,9 @@ fn first_named(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {
     // w:pPrChange / rPrChange / tblPrChange hold the *previous* pPr.
     // file_146 live pPr is pBdr+spacing; ListParagraph hanging lives
     // only in pPrChange. Stealing that ghost indented Hello at 90.
-    dom.descendants(node, Some(&W::name(local)))
-        .into_iter()
-        .find(|&cand| !under_prior_change(dom, node, cand))
+    dom.find_descendant_element(node, Some(&W::name(local)), |cand| {
+        !under_prior_change(dom, node, cand)
+    })
 }
 
 /// The body's section properties in document order, without the old
@@ -15499,7 +15499,7 @@ fn first_named_any(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {
         A::name(local),
         WNE::name(local),
     ] {
-        if let Some(found) = dom.descendants(node, Some(&idx_walk)).into_iter().next() {
+        if let Some(found) = dom.find_descendant_element(node, Some(&idx_walk), |_| true) {
             return Some(found);
         }
     }
