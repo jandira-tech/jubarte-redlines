@@ -1,0 +1,1375 @@
+From e3878df4d053418d7f186989a8c09e2bead27d79 Mon Sep 17 00:00:00 2001
+From: Arthur Souza Rodrigues <arthursrodrigues@gmail.com>
+Date: Sat, 26 Sep 2026 21:03:17 -0400
+Subject: [PATCH 2/5] feat(cli): inspect, text, edit, convert --png/--report,
+ capabilities
+
+- jubarte inspect FILE [--json]: paragraph ids, style, flags, limitations,
+  package facts, source SHA-256.
+- jubarte text FILE: Markdown with [body:p:N] ids (the reading tool).
+- jubarte edit FILE --plan P --out-dir D [--dry-run|--force] [--pdf] [--png
+  --dpi N]: clean.docx, redline.docx, report.jsonl (load/op/render/save/
+  summary events), optional PDFs and PNG pages; a refused plan prints its
+  per-operation report and exits 3 without writing.
+- jubarte convert: --pdf/--png/--dpi/--report from one layout pass;
+  default remains PDF.
+- jubarte capabilities --json: manifest derived from the build.
+- capabilities module in the library so Python reports the same manifest.
+- clippy 1.95 -D warnings clean, including two pre-existing sites
+  (altchunk end(), shape stroke boolean) that the newer lint set flagged.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01XSguJyaPYNYbKNxFYkEmvV
+---
+ src/bin/jubarte.rs      | 558 +++++++++++++++++++++++++++++++++++-----
+ src/capabilities.rs     | 134 ++++++++++
+ src/convert/altchunk.rs |   7 +-
+ src/convert/mod.rs      |   6 +-
+ src/convert/raster.rs   |  37 ++-
+ src/edit.rs             |  38 ++-
+ src/inspect.rs          |   2 +-
+ src/lib.rs              |   2 +
+ src/xmllinq/parse.rs    |   6 +-
+ tests/m_cli_agent.rs    | 274 ++++++++++++++++++++
+ 10 files changed, 954 insertions(+), 110 deletions(-)
+ create mode 100644 src/capabilities.rs
+ create mode 100644 tests/m_cli_agent.rs
+
+diff --git a/src/bin/jubarte.rs b/src/bin/jubarte.rs
+index 3ea01c3..b86f48d 100644
+--- a/src/bin/jubarte.rs
++++ b/src/bin/jubarte.rs
+@@ -153,17 +153,30 @@ enum Command {
+         #[arg(long)]
+         force: bool,
+     },
+-    /// Convert a .docx to PDF (independent of LibreOffice).
++    /// Convert a .docx to PDF and/or PNG pages (independent of LibreOffice).
+     Convert {
+         /// The document (.docx) to convert.
+         #[arg(value_name = "FILE")]
+         file: PathBuf,
+-        /// Output path [default: <stem>.pdf next to the input].
++        /// Output path [default: <stem>.pdf next to the input]. PNG pages
++        /// are named <stem>-page-NN.png beside it.
+         #[arg(short = 'o', long, value_name = "FILE")]
+         output: Option<PathBuf>,
+         /// Overwrite the output file if it already exists.
+         #[arg(long)]
+         force: bool,
++        /// Write the PDF (the default when neither --pdf nor --png is given).
++        #[arg(long)]
++        pdf: bool,
++        /// Rasterize every page to PNG (<stem>-page-NN.png).
++        #[arg(long)]
++        png: bool,
++        /// PNG resolution in dots per inch.
++        #[arg(long, default_value_t = 96.0, value_name = "DPI")]
++        dpi: f32,
++        /// Write a JSON page report (`{page_count, pages:[{index,text}], fonts}`).
++        #[arg(long, value_name = "FILE")]
++        report: Option<PathBuf>,
+         /// Deflate the PDF's streams (`/FlateDecode`). Much smaller output;
+         /// the trade is that the page content is no longer plain text, so it
+         /// cannot be read with `strings` or `grep`.
+@@ -186,6 +199,65 @@ enum Command {
+         #[arg(long, value_name = "SPEC")]
+         revision_palette: Option<String>,
+     },
++    /// Read a .docx: body paragraphs with ids, style, formatting spans and
++    /// limitations, plus package facts.
++    Inspect {
++        /// The document (.docx) to read.
++        #[arg(value_name = "FILE")]
++        file: PathBuf,
++        /// Emit the snapshot as JSON (`schema_version`, `source_sha256`,
++        /// `summary`, `paragraphs`) instead of a human summary.
++        #[arg(long)]
++        json: bool,
++    },
++    /// Print the body as Markdown with a `[body:p:N]` id before every
++    /// paragraph: the coordinates an edit plan uses.
++    Text {
++        /// The document (.docx) to read.
++        #[arg(value_name = "FILE")]
++        file: PathBuf,
++    },
++    /// Apply an edit plan: write the clean copy, the Word redline and a
++    /// per-operation report (optionally PDF and PNG pages) into a new
++    /// directory. A refused plan writes nothing and exits 3.
++    Edit {
++        /// The source document (.docx). Never modified.
++        #[arg(value_name = "FILE")]
++        file: PathBuf,
++        /// Edit plan JSON (see `jubarte capabilities --json` for the kinds).
++        #[arg(long, value_name = "PLAN.json")]
++        plan: PathBuf,
++        /// Directory to create for clean.docx, redline.docx, report.jsonl.
++        #[arg(long, value_name = "DIR")]
++        out_dir: PathBuf,
++        /// Resolve and report only; write nothing.
++        #[arg(long)]
++        dry_run: bool,
++        /// Replace an existing output directory's files.
++        #[arg(long)]
++        force: bool,
++        /// Also write redline.pdf and clean.pdf.
++        #[arg(long)]
++        pdf: bool,
++        /// Also write redline-page-NN.png and clean-page-NN.png.
++        #[arg(long)]
++        png: bool,
++        /// PNG resolution in dots per inch.
++        #[arg(long, default_value_t = 96.0, value_name = "DPI")]
++        dpi: f32,
++        /// How tracked changes are painted in the redline PDF/PNG.
++        #[arg(long, value_enum, default_value_t = Revisions::Conventional)]
++        revisions: Revisions,
++        /// Marks for --revisions custom (see `convert --help`).
++        #[arg(long, value_name = "SPEC")]
++        revision_palette: Option<String>,
++    },
++    /// What this binary can do, for agents choosing an operation.
++    Capabilities {
++        /// Emit JSON (the default output is JSON too; the flag documents intent).
++        #[arg(long)]
++        json: bool,
++    },
+ }
+ 
+ /// `jubarte convert --revisions`.
+@@ -258,56 +330,346 @@ fn run_resolution<E: std::fmt::Debug>(
+     std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
+ }
+ 
+-fn run_convert(
+-    file: &Path,
+-    output: Option<&Path>,
++/// Which artifacts `convert` writes and where.
++struct ConvertJob<'a> {
++    file: &'a Path,
++    output: Option<&'a Path>,
+     force: bool,
+     compress: bool,
+-    font_report: Option<&Path>,
++    font_report: Option<&'a Path>,
+     revisions: jubarte::convert::RevisionStyle,
+-) -> Result<(), String> {
+-    let output = output
++    pdf: bool,
++    png: bool,
++    dpi: f32,
++    report: Option<&'a Path>,
++}
++
++fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
++    let output = job
++        .output
+         .map(Path::to_path_buf)
+-        .unwrap_or_else(|| file.with_extension("pdf"));
+-    if let Some(report) = font_report {
+-        // The report is written after the PDF (or the input is read first),
+-        // so a shared path would silently replace one with the other.
+-        for (other, what) in [(output.as_path(), "PDF output"), (file, "input")] {
+-            if same_path(report, other) {
+-                return Err(format!(
+-                    "--font-report '{}' is the same file as the {what}",
+-                    report.display()
+-                ));
++        .unwrap_or_else(|| job.file.with_extension("pdf"));
++    let want_pdf = job.pdf || !job.png;
++    for (side, what) in [(job.font_report, "--font-report"), (job.report, "--report")] {
++        if let Some(side) = side {
++            // Side files are written after the PDF (or the input is read
++            // first), so a shared path would silently replace one with the other.
++            for (other, name) in [(output.as_path(), "PDF output"), (job.file, "input")] {
++                if same_path(side, other) {
++                    return Err(format!(
++                        "{what} '{}' is the same file as the {name}",
++                        side.display()
++                    ));
++                }
+             }
++            ensure_writable(side, job.force)?;
+         }
+     }
+-    ensure_writable(&output, force)?;
+-    if let Some(report) = font_report {
+-        ensure_writable(report, force)?;
++    if want_pdf {
++        ensure_writable(&output, job.force)?;
+     }
+-    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
++    let stem = output
++        .file_stem()
++        .map(|s| s.to_string_lossy().into_owned())
++        .unwrap_or_else(|| "page".to_string());
++    let dir = output.parent().map(Path::to_path_buf).unwrap_or_default();
++    let bytes =
++        std::fs::read(job.file).map_err(|e| format!("reading {}: {e}", job.file.display()))?;
+     let options = jubarte::convert::PdfOptions {
+-        compress,
+-        revisions,
++        compress: job.compress,
++        revisions: job.revisions,
+     };
+-    let converted = jubarte::convert::docx_to_pdf_report(&bytes, options)
+-        .map_err(|e| format!("convert failed: {e}"))?;
+-    std::fs::write(&output, &converted.pdf)
+-        .map_err(|e| format!("writing {}: {e}", output.display()))?;
+-    if let Some(report) = font_report {
+-        let json = jubarte::convert::font_report_json(&converted.font_report);
++    let rendered = jubarte::convert::render(
++        &bytes,
++        options,
++        jubarte::convert::RenderRequest {
++            pdf: want_pdf,
++            png_dpi: job.png.then_some(job.dpi),
++        },
++    )
++    .map_err(|e| format!("convert failed: {e}"))?;
++    let pages = rendered.report.page_count;
++    if let Some(pdf) = &rendered.pdf {
++        std::fs::write(&output, pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
++        println!(
++            "wrote {} ({} bytes, {pages} page{})",
++            output.display(),
++            pdf.len(),
++            if pages == 1 { "" } else { "s" }
++        );
++    }
++    if job.png {
++        for (i, png) in rendered.pngs.iter().enumerate() {
++            let path = dir.join(png_name(&stem, i, rendered.pngs.len()));
++            ensure_writable(&path, job.force)?;
++            std::fs::write(&path, png).map_err(|e| format!("writing {}: {e}", path.display()))?;
++        }
++        println!(
++            "wrote {} PNG page{} ({}-page-NN.png, {} dpi)",
++            rendered.pngs.len(),
++            if rendered.pngs.len() == 1 { "" } else { "s" },
++            dir.join(&stem).display(),
++            job.dpi
++        );
++    }
++    if let Some(report) = job.font_report {
++        let json = jubarte::convert::font_report_json(&rendered.report.fonts);
+         std::fs::write(report, json).map_err(|e| format!("writing {}: {e}", report.display()))?;
+     }
+-    let pages = jubarte::convert::pdf_page_count(&converted.pdf);
++    if let Some(report) = job.report {
++        std::fs::write(report, rendered.report.to_json())
++            .map_err(|e| format!("writing {}: {e}", report.display()))?;
++    }
++    Ok(())
++}
++
++/// `<stem>-page-NN.png`, zero-padded to the page count's width (at least 2).
++fn png_name(stem: &str, index: usize, count: usize) -> String {
++    let width = count.to_string().len().max(2);
++    format!("{stem}-page-{:0width$}.png", index + 1)
++}
++
++fn run_inspect(file: &Path, json: bool) -> Result<(), String> {
++    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
++    if json {
++        println!(
++            "{}",
++            jubarte::inspect::inspect_json(&bytes).map_err(|e| e.to_string())?
++        );
++        return Ok(());
++    }
++    let summary = jubarte::inspect::summary(&bytes).map_err(|e| e.to_string())?;
++    let paragraphs = jubarte::inspect::paragraphs(&bytes).map_err(|e| e.to_string())?;
+     println!(
+-        "wrote {} ({} bytes, {pages} page{})",
+-        output.display(),
+-        converted.pdf.len(),
+-        if pages == 1 { "" } else { "s" }
++        "sha256: {}\nparagraphs: {}  tables: {}  fields: {}  sections: {}  comments: {}  revisions: {}  footnotes: {}  endnotes: {}  headers: {}  footers: {}  images: {}  numbering: {}  track_changes: {}",
++        jubarte::inspect::source_sha256(&bytes),
++        summary.paragraphs,
++        summary.tables,
++        summary.fields,
++        summary.sections,
++        summary.comments,
++        summary.revisions,
++        summary.footnotes,
++        summary.endnotes,
++        summary.headers,
++        summary.footers,
++        summary.images,
++        summary.list_numbering,
++        summary.track_changes
+     );
++    for p in &paragraphs {
++        let mut flags = Vec::new();
++        if let Some(style) = &p.style {
++            flags.push(style.clone());
++        }
++        if p.numbered {
++            flags.push("numbered".into());
++        }
++        if p.in_table {
++            flags.push("table".into());
++        }
++        if p.page_break {
++            flags.push("page-break".into());
++        }
++        flags.extend(p.limitations.iter().cloned());
++        let preview: String = p.text.chars().take(80).collect();
++        let more = if p.text.chars().count() > 80 {
++            "…"
++        } else {
++            ""
++        };
++        println!("{}\t[{}]\t{preview}{more}", p.id, flags.join(","));
++    }
+     Ok(())
+ }
+ 
++fn run_text(file: &Path) -> Result<(), String> {
++    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
++    print!(
++        "{}",
++        jubarte::inspect::markdown(&bytes).map_err(|e| e.to_string())?
++    );
++    Ok(())
++}
++
++/// Options for `edit`.
++struct EditJob<'a> {
++    file: &'a Path,
++    plan: &'a Path,
++    out_dir: &'a Path,
++    dry_run: bool,
++    force: bool,
++    pdf: bool,
++    png: bool,
++    dpi: f32,
++    revisions: jubarte::convert::RevisionStyle,
++}
++
++/// Exit 3: the plan was refused (stale source, ambiguous anchor, ...); the
++/// per-operation report is on stdout and nothing was written.
++const EXIT_PLAN_REFUSED: u8 = 3;
++
++fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
++    let fail = |m: String| (1u8, m);
++    let source = std::fs::read(job.file)
++        .map_err(|e| fail(format!("reading {}: {e}", job.file.display())))?;
++    let plan_json = std::fs::read_to_string(job.plan)
++        .map_err(|e| fail(format!("reading {}: {e}", job.plan.display())))?;
++    let plan = jubarte::edit::EditPlan::from_json(&plan_json)
++        .map_err(|e| (EXIT_PLAN_REFUSED, e.to_string()))?;
++    if !job.dry_run {
++        if job.out_dir.exists() && !job.force {
++            return Err(fail(format!(
++                "output directory '{}' already exists (use --force to replace its files)",
++                job.out_dir.display()
++            )));
++        }
++        if same_path(job.out_dir, job.file.parent().unwrap_or(Path::new("."))) {
++            return Err(fail(
++                "--out-dir must not be the input's own directory".into(),
++            ));
++        }
++    }
++    if job.dry_run {
++        let report = jubarte::edit::preview_plan(&source, &plan).map_err(|e| refused(&e))?;
++        print!("{}", report.to_jsonl());
++        return Ok(());
++    }
++    let result = jubarte::edit::apply_plan(&source, &plan).map_err(|e| refused(&e))?;
++    let mut jsonl = result.report.to_jsonl();
++    // Render (one layout pass per document) before creating the directory,
++    // so a failed render leaves no partial bundle.
++    let options = jubarte::convert::PdfOptions {
++        compress: true,
++        revisions: job.revisions,
++    };
++    let request = jubarte::convert::RenderRequest {
++        pdf: job.pdf,
++        png_dpi: job.png.then_some(job.dpi),
++    };
++    let mut renders = Vec::new();
++    if job.pdf || job.png {
++        for (name, bytes) in [("redline", &result.redline), ("clean", &result.clean)] {
++            let rendered = jubarte::convert::render(bytes, options, request)
++                .map_err(|e| fail(format!("rendering {name}: {e}")))?;
++            renders.push((name, rendered));
++        }
++        let mut pages = serde_json::Map::new();
++        let mut starts = serde_json::Map::new();
++        for (name, rendered) in &renders {
++            pages.insert((*name).into(), rendered.report.page_count.into());
++            let firsts: Vec<serde_json::Value> = rendered
++                .report
++                .pages
++                .iter()
++                .map(|p| {
++                    p.text
++                        .lines()
++                        .next()
++                        .unwrap_or("")
++                        .chars()
++                        .take(60)
++                        .collect::<String>()
++                        .into()
++                })
++                .collect();
++            starts.insert((*name).into(), firsts.into());
++        }
++        let render_line = serde_json::json!({
++            "ev": "render",
++            "engine": format!("jubarte {}", env!("CARGO_PKG_VERSION")),
++            "pages": pages,
++            "page_starts": starts,
++        });
++        insert_before_summary(&mut jsonl, &render_line.to_string());
++    }
++    std::fs::create_dir_all(job.out_dir)
++        .map_err(|e| fail(format!("creating {}: {e}", job.out_dir.display())))?;
++    let mut outputs: Vec<(String, Vec<u8>)> = vec![
++        ("clean.docx".into(), result.clean.clone()),
++        ("redline.docx".into(), result.redline.clone()),
++    ];
++    for (name, rendered) in renders {
++        if let Some(pdf) = rendered.pdf {
++            outputs.push((format!("{name}.pdf"), pdf));
++        }
++        let count = rendered.pngs.len();
++        for (i, png) in rendered.pngs.into_iter().enumerate() {
++            outputs.push((png_name(name, i, count), png));
++        }
++    }
++    let mut saved = Vec::new();
++    for (name, bytes) in &outputs {
++        let path = job.out_dir.join(name);
++        std::fs::write(&path, bytes)
++            .map_err(|e| fail(format!("writing {}: {e}", path.display())))?;
++        saved.push(serde_json::json!({"f": name, "bytes": bytes.len(), "sha256": jubarte::inspect::source_sha256(bytes)}));
++    }
++    let save_line = serde_json::json!({"ev": "save", "dir": job.out_dir.display().to_string(), "outputs": saved});
++    insert_before_summary(&mut jsonl, &save_line.to_string());
++    std::fs::write(job.out_dir.join("report.jsonl"), &jsonl)
++        .map_err(|e| fail(format!("writing report.jsonl: {e}")))?;
++    let summary = jsonl.lines().last().unwrap_or("").to_string();
++    println!("{summary}");
++    println!(
++        "wrote {} ({} file{}: clean.docx, redline.docx, report.jsonl{})",
++        job.out_dir.display(),
++        outputs.len() + 1,
++        if outputs.is_empty() { "" } else { "s" },
++        if outputs.len() > 2 { ", …" } else { "" }
++    );
++    Ok(())
++}
++
++/// A refused plan: its report goes to stdout, the error to stderr, exit 3.
++fn refused(e: &jubarte::edit::EditError) -> (u8, String) {
++    let report_lines: String = e
++        .outcomes
++        .iter()
++        .enumerate()
++        .map(|(i, o)| {
++            let mut v = serde_json::json!({"ev": "op", "i": i + 1, "id": o.id, "op": o.kind, "status": o.status, "matches": o.matches});
++            let m = v.as_object_mut().expect("object");
++            if let Some(p) = &o.paragraph {
++                m.insert("at".into(), p.clone().into());
++            }
++            if let Some(c) = &o.context {
++                m.insert("ctx".into(), c.clone().into());
++            }
++            if let Some(c) = &o.code {
++                m.insert("code".into(), c.clone().into());
++            }
++            if let Some(msg) = &o.message {
++                m.insert("message".into(), msg.clone().into());
++            }
++            v.to_string() + "\n"
++        })
++        .collect();
++    let summary = serde_json::json!({
++        "ev": "summary",
++        "status": "failed",
++        "code": e.code,
++        "operation": e.operation,
++        "message": e.message,
++    });
++    println!("{report_lines}{summary}");
++    (EXIT_PLAN_REFUSED, format!("plan refused: {e}"))
++}
++
++/// Insert `line` before the trailing `summary` line of a JSONL report.
++fn insert_before_summary(jsonl: &mut String, line: &str) {
++    let trimmed = jsonl.trim_end_matches('\n');
++    let (head, summary) = match trimmed.rfind('\n') {
++        Some(i) => (&trimmed[..i], &trimmed[i + 1..]),
++        None => ("", trimmed),
++    };
++    *jsonl = if head.is_empty() {
++        format!("{line}\n{summary}\n")
++    } else {
++        format!("{head}\n{line}\n{summary}\n")
++    };
++}
++
+ fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
+     let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+     let settings = jubarte::comparer::WmlComparerSettings::default();
+@@ -479,6 +841,10 @@ fn main() -> ExitCode {
+             file,
+             output,
+             force,
++            pdf,
++            png,
++            dpi,
++            report,
+             compress,
+             font_report,
+             revisions,
+@@ -488,14 +854,58 @@ fn main() -> ExitCode {
+                 Ok(style) => style,
+                 Err(e) => return exit_code(Err(e)),
+             };
+-            return exit_code(run_convert(
+-                &file,
+-                output.as_deref(),
++            return exit_code(run_convert(&ConvertJob {
++                file: &file,
++                output: output.as_deref(),
+                 force,
+                 compress,
+-                font_report.as_deref(),
+-                style,
+-            ));
++                font_report: font_report.as_deref(),
++                revisions: style,
++                pdf,
++                png,
++                dpi,
++                report: report.as_deref(),
++            }));
++        }
++        Some(Command::Inspect { file, json }) => return exit_code(run_inspect(&file, json)),
++        Some(Command::Text { file }) => return exit_code(run_text(&file)),
++        Some(Command::Edit {
++            file,
++            plan,
++            out_dir,
++            dry_run,
++            force,
++            pdf,
++            png,
++            dpi,
++            revisions,
++            revision_palette,
++        }) => {
++            let style = match revision_style(revisions, revision_palette.as_deref()) {
++                Ok(style) => style,
++                Err(e) => return exit_code(Err(e)),
++            };
++            return match run_edit(&EditJob {
++                file: &file,
++                plan: &plan,
++                out_dir: &out_dir,
++                dry_run,
++                force,
++                pdf,
++                png,
++                dpi,
++                revisions: style,
++            }) {
++                Ok(()) => ExitCode::SUCCESS,
++                Err((code, message)) => {
++                    eprintln!("error: {message}");
++                    ExitCode::from(code)
++                }
++            };
++        }
++        Some(Command::Capabilities { .. }) => {
++            println!("{}", jubarte::capabilities::capabilities_json("cli"));
++            return ExitCode::SUCCESS;
+         }
+         None => {}
+     }
+@@ -793,6 +1203,10 @@ mod tests {
+                 force,
+                 revisions,
+                 revision_palette,
++                pdf,
++                png,
++                dpi,
++                report,
+             }) => {
+                 assert_eq!(revisions, Revisions::Conventional);
+                 assert!(revision_palette.is_none());
+@@ -800,6 +1214,8 @@ mod tests {
+                 assert_eq!(output.as_deref(), Some(Path::new("out.pdf")));
+                 assert_eq!(font_report.as_deref(), Some(Path::new("out.json")));
+                 assert!(!compress && !force);
++                assert!(!pdf && !png && report.is_none());
++                assert_eq!(dpi, 96.0);
+             }
+             other => panic!("expected convert subcommand, got {other:?}"),
+         }
+@@ -838,25 +1254,33 @@ mod tests {
+         let pdf = dir.path().join("out.pdf");
+         std::fs::write(&docx, tiny_docx_bytes("Calibri")).expect("docx");
+         let same = dir.path().join(".").join("out.pdf");
+-        let err = run_convert(
+-            &docx,
+-            Some(&pdf),
+-            false,
+-            false,
+-            Some(&same),
+-            RevisionStyle::Word,
+-        )
++        let err = run_convert(&ConvertJob {
++            file: &docx,
++            output: Some(&pdf),
++            force: false,
++            compress: false,
++            font_report: Some(&same),
++            revisions: RevisionStyle::Word,
++            pdf: false,
++            png: false,
++            dpi: 96.0,
++            report: None,
++        })
+         .expect_err("report over the PDF must be refused");
+         assert!(err.contains("same file as the PDF output"), "{err}");
+         assert!(!pdf.exists(), "nothing is written when the paths collide");
+-        let err = run_convert(
+-            &docx,
+-            Some(&pdf),
+-            false,
+-            false,
+-            Some(&docx),
+-            RevisionStyle::Word,
+-        )
++        let err = run_convert(&ConvertJob {
++            file: &docx,
++            output: Some(&pdf),
++            force: false,
++            compress: false,
++            font_report: Some(&docx),
++            revisions: RevisionStyle::Word,
++            pdf: false,
++            png: false,
++            dpi: 96.0,
++            report: None,
++        })
+         .expect_err("report over the input must be refused");
+         assert!(err.contains("same file as the input"), "{err}");
+         assert!(std::fs::read(&docx).expect("docx").starts_with(b"PK"));
+@@ -869,14 +1293,18 @@ mod tests {
+         let pdf = dir.path().join("out.pdf");
+         let report = dir.path().join("fonts.json");
+         std::fs::write(&docx, tiny_docx_bytes("DefinitelyNotAFont")).expect("docx");
+-        run_convert(
+-            &docx,
+-            Some(&pdf),
+-            false,
+-            false,
+-            Some(&report),
+-            RevisionStyle::Word,
+-        )
++        run_convert(&ConvertJob {
++            file: &docx,
++            output: Some(&pdf),
++            force: false,
++            compress: false,
++            font_report: Some(&report),
++            revisions: RevisionStyle::Word,
++            pdf: false,
++            png: false,
++            dpi: 96.0,
++            report: None,
++        })
+         .expect("convert");
+         assert!(pdf.exists());
+         let json = std::fs::read_to_string(&report).expect("report");
+diff --git a/src/capabilities.rs b/src/capabilities.rs
+new file mode 100644
+index 0000000..99843ac
+--- /dev/null
++++ b/src/capabilities.rs
+@@ -0,0 +1,134 @@
++// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++//
++// SPDX-License-Identifier: AGPL-3.0-only
++
++//! What this build can do, derived from the compiled feature set rather than
++//! from documentation. Agents read it before choosing an operation:
++//! `jubarte capabilities --json`, `jubarte_redlines.capabilities()`.
++
++use serde::{Deserialize, Serialize};
++
++/// Machine-readable capability manifest (`schema_version` 1).
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++pub struct Capabilities {
++    /// Manifest schema version.
++    pub schema_version: u32,
++    /// Engine crate version.
++    pub engine_version: String,
++    /// `cli`, `python`, `rust`, ...: the surface reporting.
++    pub runtime: String,
++    /// Operation name to availability in this build.
++    pub operations: Operations,
++    /// Edit plan schema versions this build accepts.
++    pub edit_plan_versions: Vec<u32>,
++    /// Operation kinds an edit plan may contain.
++    pub edit_operations: Vec<String>,
++    /// Scope limits an agent must plan around.
++    pub limits: Limits,
++}
++
++/// Availability per operation.
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++pub struct Operations {
++    /// Two documents into a Word tracked-changes document.
++    pub compare: bool,
++    /// Accept every revision.
++    pub accept_revisions: bool,
++    /// Reject every revision.
++    pub reject_revisions: bool,
++    /// List revision records.
++    pub revision_records: bool,
++    /// DOCX to PDF.
++    pub pdf: bool,
++    /// DOCX pages to PNG.
++    pub png: bool,
++    /// Body paragraph inspection.
++    pub inspect_body: bool,
++    /// Markdown projection with paragraph ids.
++    pub markdown: bool,
++    /// Edit plans (clean copy, redline, report).
++    pub edit: bool,
++    /// Comments authored by an edit plan.
++    pub comments: bool,
++}
++
++/// Documented scope limits.
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++pub struct Limits {
++    /// Stories `inspect` and `edit` address (`body` only: headers, footers,
++    /// notes and text boxes are reported in `summary` but not editable).
++    pub stories: Vec<String>,
++    /// Inserted run text is plain: no tabs or line breaks inside runs.
++    pub plain_text_runs: bool,
++    /// Edits refuse ranges crossing fields, hyperlinks, content controls,
++    /// revisions, tabs, breaks and symbols.
++    pub refuses_opaque_ranges: bool,
++    /// Legacy `.doc` input is not read.
++    pub reads_legacy_doc: bool,
++}
++
++/// The manifest for `runtime`.
++#[must_use]
++pub fn capabilities(runtime: &str) -> Capabilities {
++    Capabilities {
++        schema_version: 1,
++        engine_version: env!("CARGO_PKG_VERSION").to_string(),
++        runtime: runtime.to_string(),
++        operations: Operations {
++            compare: true,
++            accept_revisions: true,
++            reject_revisions: true,
++            revision_records: true,
++            pdf: true,
++            png: true,
++            inspect_body: true,
++            markdown: true,
++            edit: true,
++            comments: true,
++        },
++        edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
++        edit_operations: [
++            "replace",
++            "insert",
++            "delete",
++            "comment",
++            "insert_paragraph",
++            "delete_paragraph",
++        ]
++        .iter()
++        .map(|s| (*s).to_string())
++        .collect(),
++        limits: Limits {
++            stories: vec!["body".to_string()],
++            plain_text_runs: true,
++            refuses_opaque_ranges: true,
++            reads_legacy_doc: false,
++        },
++    }
++}
++
++/// [`capabilities`] as JSON.
++#[must_use]
++pub fn capabilities_json(runtime: &str) -> String {
++    serde_json::to_string_pretty(&capabilities(runtime)).expect("manifest serializes")
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn manifest_reports_the_crate_version_and_every_edit_kind() {
++        let c = capabilities("rust");
++        assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
++        assert_eq!(c.runtime, "rust");
++        assert_eq!(c.edit_plan_versions, [1]);
++        assert_eq!(c.edit_operations.len(), 6);
++        let json: serde_json::Value = serde_json::from_str(&capabilities_json("cli")).unwrap();
++        assert_eq!(json["runtime"], "cli");
++        assert_eq!(json["operations"]["png"], true);
++        assert_eq!(json["limits"]["reads_legacy_doc"], false);
++        let back: Capabilities = serde_json::from_value(json).unwrap();
++        assert_eq!(back.limits.stories, ["body"]);
++    }
++}
+diff --git a/src/convert/altchunk.rs b/src/convert/altchunk.rs
+index f48b04d..0808f76 100644
+--- a/src/convert/altchunk.rs
++++ b/src/convert/altchunk.rs
+@@ -585,11 +585,8 @@ impl Builder {
+         }
+         match tag {
+             t if BLOCKS.contains(&t) => self.flush(),
+-            "td" | "th" => {
+-                if self.in_open_cell() {
+-                    self.end_cell();
+-                }
+-            }
++            "td" | "th" if self.in_open_cell() => self.end_cell(),
++            "td" | "th" => {}
+             "table" => self.end_table(),
+             _ => {}
+         }
+diff --git a/src/convert/mod.rs b/src/convert/mod.rs
+index b302a80..c45b2fd 100644
+--- a/src/convert/mod.rs
++++ b/src/convert/mod.rs
+@@ -12633,9 +12633,9 @@ fn collect_textboxes_styled(
+             // Distinct from mini 511 a:ln/@w width (still 0.6 when stroking).
+             // Chart-bearing boxes still stroke 0.6 black (mini 568):
+             // skipping it dropped RL clones −0.03 to −0.07.
+-            stroke: !diagram
+-                && !(vml_slot.is_some() && vml_unstroked)
+-                && !shape_ln_is_nofill(dom, shape)
++            stroke: !(diagram
++                || (vml_slot.is_some() && vml_unstroked)
++                || shape_ln_is_nofill(dom, shape))
+                 && (vml_slot.is_some() || !(fill.is_some() && line.is_none())),
+             fill,
+             // A text-bearing preset polygon still outlines in its own line
+diff --git a/src/convert/raster.rs b/src/convert/raster.rs
+index 3cc1ddc..2341fb2 100644
+--- a/src/convert/raster.rs
++++ b/src/convert/raster.rs
+@@ -74,8 +74,8 @@ pub(crate) fn encode_png(pixmap: &Pixmap) -> Vec<u8> {
+ /// x. The layout paints one glyph per op, so a space is written only where
+ /// the pen jumps by more than a fifth of the font size.
+ pub(crate) fn page_text(fonts: &Fonts<'_>, page: &Page) -> String {
+-    // (baseline key, pieces: (x, advance, size, text))
+-    let mut lines: Vec<(i64, Vec<(f32, f32, f32, String)>)> = Vec::new();
++    // (baseline key, pieces)
++    let mut lines: Vec<(i64, Vec<Piece>)> = Vec::new();
+     for op in &page.ops {
+         let (face, size, x, y, glyphs, hscale, text) = match op {
+             Op::Text {
+@@ -111,7 +111,12 @@ pub(crate) fn page_text(fonts: &Fonts<'_>, page: &Page) -> String {
+             })
+             .sum();
+         let key = (y * 4.0).round() as i64;
+-        let piece = (x, advance, size, text.clone());
++        let piece = Piece {
++            x,
++            advance,
++            size,
++            text: text.clone(),
++        };
+         match lines.iter_mut().find(|(k, _)| *k == key) {
+             Some((_, pieces)) => pieces.push(piece),
+             None => lines.push((key, vec![piece])),
+@@ -119,19 +124,19 @@ pub(crate) fn page_text(fonts: &Fonts<'_>, page: &Page) -> String {
+     }
+     let mut out = String::new();
+     for (_, mut pieces) in lines {
+-        pieces.sort_by(|a, b| a.0.total_cmp(&b.0));
++        pieces.sort_by(|a, b| a.x.total_cmp(&b.x));
+         let mut line = String::new();
+         let mut pen: Option<f32> = None;
+-        for (x, advance, size, piece) in pieces {
++        for piece in pieces {
+             if let Some(pen) = pen
+-                && x - pen > size * 0.2
++                && piece.x - pen > piece.size * 0.2
+                 && !line.ends_with(char::is_whitespace)
+-                && !piece.starts_with(char::is_whitespace)
++                && !piece.text.starts_with(char::is_whitespace)
+             {
+                 line.push(' ');
+             }
+-            line.push_str(&piece);
+-            pen = Some(x + advance);
++            line.push_str(&piece.text);
++            pen = Some(piece.x + piece.advance);
+         }
+         out.push_str(line.trim_end());
+         out.push('\n');
+@@ -139,6 +144,14 @@ pub(crate) fn page_text(fonts: &Fonts<'_>, page: &Page) -> String {
+     out
+ }
+ 
++/// One painted glyph string on a baseline.
++struct Piece {
++    x: f32,
++    advance: f32,
++    size: f32,
++    text: String,
++}
++
+ fn color(c: [f32; 3]) -> Color {
+     Color::from_rgba(
+         c[0].clamp(0.0, 1.0),
+@@ -588,8 +601,10 @@ fn paint_image(
+             Some(mask)
+         })
+     };
+-    let mut paint = PixmapPaint::default();
+-    paint.quality = tiny_skia::FilterQuality::Bilinear;
++    let paint = PixmapPaint {
++        quality: tiny_skia::FilterQuality::Bilinear,
++        ..PixmapPaint::default()
++    };
+     pixmap.draw_pixmap(0, 0, src.as_ref(), &paint, image_ts, mask.as_ref());
+ }
+ 
+diff --git a/src/edit.rs b/src/edit.rs
+index 0184b97..2496d7c 100644
+--- a/src/edit.rs
++++ b/src/edit.rs
+@@ -553,6 +553,10 @@ fn revision_counts(redline: &[u8], settings: &WmlComparerSettings) -> RevisionCo
+     counts
+ }
+ 
++/// A text edit scheduled on one paragraph: `(start, end, op, replacement,
++/// attach_before, comment)` in source projection bytes.
++type ScheduledEdit = (usize, usize, usize, String, bool, Option<String>);
++
+ /// A resolved operation, in source coordinates (bytes of the projection).
+ #[derive(Clone, Debug)]
+ enum Resolved {
+@@ -734,7 +738,8 @@ impl<'p> Transaction<'p> {
+                     self.outcomes.push(outcome);
+                     self.resolved.push((i, resolved));
+                 }
+-                Err((mut e, outcome)) => {
++                Err(boxed) => {
++                    let (mut e, outcome) = *boxed;
+                     e.operation = Some(id.clone());
+                     self.outcomes.push(EditOutcome {
+                         id,
+@@ -760,7 +765,7 @@ impl<'p> Transaction<'p> {
+         &self,
+         id: &str,
+         kind: &OperationKind,
+-    ) -> Result<(Resolved, EditOutcome), (EditError, EditOutcome)> {
++    ) -> Result<(Resolved, EditOutcome), Box<(EditError, EditOutcome)>> {
+         let mut outcome = EditOutcome {
+             id: id.to_string(),
+             kind: String::new(),
+@@ -772,8 +777,9 @@ impl<'p> Transaction<'p> {
+             code: None,
+             message: None,
+         };
+-        let fail =
+-            |code: &str, msg: String, outcome: EditOutcome| (err(code, Some(id), msg), outcome);
++        let fail = |code: &str, msg: String, outcome: EditOutcome| {
++            Box::new((err(code, Some(id), msg), outcome))
++        };
+         let selector = match kind {
+             OperationKind::Replace { paragraph, .. }
+             | OperationKind::Insert { paragraph, .. }
+@@ -1246,8 +1252,7 @@ impl<'p> Transaction<'p> {
+             self.outcomes[i].comment_id = Some(id);
+         }
+         // 1. Text edits and their comments, paragraph by paragraph.
+-        let mut by_para: BTreeMap<usize, Vec<(usize, usize, usize, String, bool, Option<String>)>> =
+-            BTreeMap::new();
++        let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
+         let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize, String)>> =
+             BTreeMap::new();
+         for (i, r) in &self.resolved {
+@@ -1276,7 +1281,7 @@ impl<'p> Transaction<'p> {
+                     comment_ranges
+                         .entry(*para)
+                         .or_default()
+-                        .push((*start, *end, *i, text.clone()))
++                        .push((*start, *end, *i, text.clone()));
+                 }
+                 _ => {}
+             }
+@@ -1516,12 +1521,7 @@ fn excerpt(text: &str, max: usize) -> String {
+ /// Position `pos` of the source projection after `edits` were applied.
+ /// `inclusive` shifts past insertions sitting exactly at `pos`; `own` is the
+ /// operation whose own insertion must not shift its comment start.
+-fn new_position(
+-    edits: &[(usize, usize, usize, String, bool, Option<String>)],
+-    pos: usize,
+-    inclusive: bool,
+-    own: Option<usize>,
+-) -> usize {
++fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Option<usize>) -> usize {
+     let mut delta: i64 = 0;
+     for (start, end, i, replacement, ..) in edits {
+         if Some(*i) == own {
+@@ -1854,14 +1854,10 @@ fn rank(local: &str) -> usize {
+ /// Insert `child` into `rpr` at its schema position.
+ fn insert_rpr_child(dom: &mut Dom, rpr: NodeId, child: NodeId) {
+     let my_rank = dom.name(child).map_or(usize::MAX, |n| rank(n.local_name()));
+-    let after = dom
+-        .elements(rpr, None)
+-        .into_iter()
+-        .filter(|&c| {
+-            dom.name(c)
+-                .is_some_and(|n| n.namespace_name() == W::URI && rank(n.local_name()) <= my_rank)
+-        })
+-        .last();
++    let after = dom.elements(rpr, None).into_iter().rev().find(|&c| {
++        dom.name(c)
++            .is_some_and(|n| n.namespace_name() == W::URI && rank(n.local_name()) <= my_rank)
++    });
+     match after {
+         Some(after) => dom.add_after_self(after, child),
+         None => dom.add_first(rpr, child),
+diff --git a/src/inspect.rs b/src/inspect.rs
+index b3ee799..2325085 100644
+--- a/src/inspect.rs
++++ b/src/inspect.rs
+@@ -324,7 +324,7 @@ impl Opened {
+                             .len();
+                     }
+                     "footnotes" => {
+-                        summary.footnotes += note_count(&part_dom, part_root, "footnote")
++                        summary.footnotes += note_count(&part_dom, part_root, "footnote");
+                     }
+                     "endnotes" => summary.endnotes += note_count(&part_dom, part_root, "endnote"),
+                     "styles" => {
+diff --git a/src/lib.rs b/src/lib.rs
+index ff2ced0..cc35fdb 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -37,6 +37,8 @@
+ //! (MIT). The repository itself is AGPL-3.0-only; `LICENSES/` preserves those
+ //! upstream attribution texts without changing the repository license.
+ 
++/// Machine-readable manifest of what this build can do.
++pub mod capabilities;
+ /// Core WmlComparer engine (atomize → LCS → produce → finalize).
+ pub mod comparer;
+ /// Structured comparison log (info / warning / error entries).
+diff --git a/src/xmllinq/parse.rs b/src/xmllinq/parse.rs
+index 983c1c8..feb7cec 100644
+--- a/src/xmllinq/parse.rs
++++ b/src/xmllinq/parse.rs
+@@ -455,10 +455,8 @@ pub fn validate_xml(xml: &str) -> Result<(), String> {
+                     return Err(format!("unsupported XML entity reference: {name}"));
+                 }
+             }
+-            Event::Text(text) if depth == 0 => {
+-                if text.iter().any(|byte| !byte.is_ascii_whitespace()) {
+-                    return Err("text outside XML root".to_string());
+-                }
++            Event::Text(text) if depth == 0 && text.iter().any(|b| !b.is_ascii_whitespace()) => {
++                return Err("text outside XML root".to_string());
+             }
+             Event::CData(_) if depth == 0 => return Err("CDATA outside XML root".to_string()),
+             Event::Eof => {
+diff --git a/tests/m_cli_agent.rs b/tests/m_cli_agent.rs
+new file mode 100644
+index 0000000..3bdc65e
+--- /dev/null
++++ b/tests/m_cli_agent.rs
+@@ -0,0 +1,274 @@
++// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++//
++// SPDX-License-Identifier: AGPL-3.0-only
++
++//! The agent-facing CLI surface: `inspect`, `text`, `edit`, `convert --png`,
++//! `capabilities`. Every command here has a Python twin with the same names
++//! and JSON shapes (`python -m jubarte_redlines`).
++
++mod common;
++
++use std::path::Path;
++use std::process::Command;
++
++use common::docx::{docx, para};
++use jubarte::inspect::source_sha256;
++
++const BIN: &str = env!("CARGO_BIN_EXE_jubarte");
++
++fn write_fixture(dir: &Path) -> std::path::PathBuf {
++    let body = para("Heading")
++        + &para("The individual signs in his or her individual capacity.")
++        + &para("Sections 1(g), 2(e), 3 survive.");
++    let path = dir.join("letter.docx");
++    std::fs::write(&path, docx(&body)).unwrap();
++    path
++}
++
++fn run(args: &[&str]) -> (i32, String, String) {
++    let out = Command::new(BIN).args(args).output().unwrap();
++    (
++        out.status.code().unwrap_or(-1),
++        String::from_utf8_lossy(&out.stdout).into_owned(),
++        String::from_utf8_lossy(&out.stderr).into_owned(),
++    )
++}
++
++#[test]
++fn inspect_prints_json_snapshot_or_a_human_table() {
++    let dir = tempfile::tempdir().unwrap();
++    let file = write_fixture(dir.path());
++    let (code, stdout, _) = run(&["inspect", file.to_str().unwrap(), "--json"]);
++    assert_eq!(code, 0);
++    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
++    assert_eq!(v["schema_version"], 1);
++    assert_eq!(v["summary"]["paragraphs"], 3);
++    assert_eq!(v["paragraphs"][1]["id"], "body:p:1");
++    let (code, stdout, _) = run(&["inspect", file.to_str().unwrap()]);
++    assert_eq!(code, 0);
++    assert!(stdout.contains("body:p:2"), "{stdout}");
++    assert!(stdout.contains("paragraphs: 3"), "{stdout}");
++}
++
++#[test]
++fn text_prints_markdown_with_paragraph_ids() {
++    let dir = tempfile::tempdir().unwrap();
++    let file = write_fixture(dir.path());
++    let (code, stdout, _) = run(&["text", file.to_str().unwrap()]);
++    assert_eq!(code, 0);
++    assert!(
++        stdout.starts_with("[body:p:0] Heading\n\n[body:p:1] The individual"),
++        "{stdout}"
++    );
++}
++
++#[test]
++fn edit_writes_clean_redline_and_report_and_refuses_an_existing_output_dir() {
++    let dir = tempfile::tempdir().unwrap();
++    let file = write_fixture(dir.path());
++    let source = std::fs::read(&file).unwrap();
++    let plan = format!(
++        r#"{{"schema_version":1,"source_sha256":"{}","author":"Claude","date":"2026-09-25T12:00:00Z","operations":[
++            {{"id":"pronoun","kind":"replace","paragraph":{{"index":1}},"find":"his or her","replacement":"an"}},
++            {{"id":"survival","kind":"insert","paragraph":{{"starts_with":"Sections 1(g), "}},"after":"1(g), ","text":"2(c), ","comment":"post-disclosure duty"}}]}}"#,
++        source_sha256(&source)
++    );
++    let plan_path = dir.path().join("plan.json");
++    std::fs::write(&plan_path, plan).unwrap();
++    let out_dir = dir.path().join("review");
++    let (code, stdout, stderr) = run(&[
++        "edit",
++        file.to_str().unwrap(),
++        "--plan",
++        plan_path.to_str().unwrap(),
++        "--out-dir",
++        out_dir.to_str().unwrap(),
++        "--pdf",
++        "--png",
++        "--dpi",
++        "24",
++    ]);
++    assert_eq!(code, 0, "stdout={stdout}\nstderr={stderr}");
++    for name in [
++        "clean.docx",
++        "redline.docx",
++        "report.jsonl",
++        "redline.pdf",
++        "clean.pdf",
++        "redline-page-01.png",
++        "clean-page-01.png",
++    ] {
++        assert!(out_dir.join(name).is_file(), "{name} written");
++    }
++    let report = std::fs::read_to_string(out_dir.join("report.jsonl")).unwrap();
++    let lines: Vec<serde_json::Value> = report
++        .lines()
++        .map(|l| serde_json::from_str(l).unwrap())
++        .collect();
++    assert_eq!(lines[0]["ev"], "load");
++    assert_eq!(lines[1]["ev"], "op");
++    assert_eq!(lines[1]["id"], "pronoun");
++    assert_eq!(lines[2]["comment_id"], 0);
++    let render = lines
++        .iter()
++        .find(|l| l["ev"] == "render")
++        .expect("render event");
++    assert_eq!(render["pages"]["redline"], 1);
++    assert_eq!(render["pages"]["clean"], 1);
++    let save = lines
++        .iter()
++        .find(|l| l["ev"] == "save")
++        .expect("save event");
++    assert!(
++        save["outputs"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .any(|o| o["f"] == "redline.docx")
++    );
++    assert_eq!(lines.last().unwrap()["ev"], "summary");
++    assert_eq!(lines.last().unwrap()["status"], "ok");
++    // The summary line also goes to stdout.
++    assert!(stdout.contains("\"ev\":\"summary\""), "{stdout}");
++    // Existing destination is refused without --force.
++    let (code, _, stderr) = run(&[
++        "edit",
++        file.to_str().unwrap(),
++        "--plan",
++        plan_path.to_str().unwrap(),
++        "--out-dir",
++        out_dir.to_str().unwrap(),
++    ]);
++    assert_eq!(code, 1);
++    assert!(stderr.contains("already exists"), "{stderr}");
++    let (code, _, _) = run(&[
++        "edit",
++        file.to_str().unwrap(),
++        "--plan",
++        plan_path.to_str().unwrap(),
++        "--out-dir",
++        out_dir.to_str().unwrap(),
++        "--force",
++    ]);
++    assert_eq!(code, 0);
++}
++
++#[test]
++fn edit_failure_writes_nothing_and_reports_every_operation() {
++    let dir = tempfile::tempdir().unwrap();
++    let file = write_fixture(dir.path());
++    let plan = r#"{"schema_version":1,"author":"Claude","operations":[
++        {"id":"ok","kind":"replace","paragraph":{"index":1},"find":"his or her","replacement":"an"},
++        {"id":"bad","kind":"replace","paragraph":{"index":2},"find":"nowhere","replacement":"x"}]}"#;
++    let plan_path = dir.path().join("plan.json");
++    std::fs::write(&plan_path, plan).unwrap();
++    let out_dir = dir.path().join("review");
++    let (code, stdout, stderr) = run(&[
++        "edit",
++        file.to_str().unwrap(),
++        "--plan",
++        plan_path.to_str().unwrap(),
++        "--out-dir",
++        out_dir.to_str().unwrap(),
++    ]);
++    assert_eq!(code, 3, "stdout={stdout}\nstderr={stderr}");
++    assert!(!out_dir.exists(), "no output directory on failure");
++    assert!(stderr.contains("ANCHOR_NOT_FOUND"), "{stderr}");
++    let lines: Vec<serde_json::Value> = stdout
++        .lines()
++        .map(|l| serde_json::from_str(l).unwrap())
++        .collect();
++    let ops: Vec<(&str, &str)> = lines
++        .iter()
++        .filter(|l| l["ev"] == "op")
++        .map(|l| (l["id"].as_str().unwrap(), l["status"].as_str().unwrap()))
++        .collect();
++    assert_eq!(ops, [("ok", "ok"), ("bad", "failed")]);
++    assert_eq!(lines.last().unwrap()["status"], "failed");
++}
++
++#[test]
++fn edit_dry_run_prints_the_report_and_writes_nothing() {
++    let dir = tempfile::tempdir().unwrap();
++    let file = write_fixture(dir.path());
++    let plan = r#"{"schema_version":1,"author":"Claude","operations":[{"kind":"delete","paragraph":{"index":0},"find":"Heading"}]}"#;
++    let plan_path = dir.path().join("plan.json");
++    std::fs::write(&plan_path, plan).unwrap();
++    let out_dir = dir.path().join("review");
++    let (code, stdout, _) = run(&[
++        "edit",
++        file.to_str().unwrap(),
++        "--plan",
++        plan_path.to_str().unwrap(),
++        "--out-dir",
++        out_dir.to_str().unwrap(),
++        "--dry-run",
++    ]);
++    assert_eq!(code, 0);
++    assert!(!out_dir.exists());
++    assert!(stdout.contains(r#""ctx":"{-Heading}""#), "{stdout}");
++}
++
++#[test]
++fn convert_can_write_png_pages_and_a_page_report() {
++    let dir = tempfile::tempdir().unwrap();
++    let file = write_fixture(dir.path());
++    let report = dir.path().join("pages.json");
++    let (code, stdout, stderr) = run(&[
++        "convert",
++        file.to_str().unwrap(),
++        "--png",
++        "--dpi",
++        "24",
++        "--report",
++        report.to_str().unwrap(),
++    ]);
++    assert_eq!(code, 0, "stdout={stdout}\nstderr={stderr}");
++    assert!(dir.path().join("letter-page-01.png").is_file());
++    assert!(
++        !dir.path().join("letter.pdf").exists(),
++        "--png alone writes no PDF"
++    );
++    let v: serde_json::Value =
++        serde_json::from_str(&std::fs::read_to_string(&report).unwrap()).unwrap();
++    assert_eq!(v["page_count"], 1);
++    assert!(v["pages"][0]["text"].as_str().unwrap().contains("Heading"));
++    // PDF and PNG together, from one layout.
++    let (code, _, _) = run(&[
++        "convert",
++        file.to_str().unwrap(),
++        "--pdf",
++        "--png",
++        "--dpi",
++        "24",
++        "--force",
++    ]);
++    assert_eq!(code, 0);
++    assert!(dir.path().join("letter.pdf").is_file());
++}
++
++#[test]
++fn capabilities_describe_the_built_binary() {
++    let (code, stdout, _) = run(&["capabilities", "--json"]);
++    assert_eq!(code, 0);
++    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
++    assert_eq!(v["schema_version"], 1);
++    assert_eq!(v["engine_version"], env!("CARGO_PKG_VERSION"));
++    for op in [
++        "compare",
++        "accept_revisions",
++        "reject_revisions",
++        "revision_records",
++        "pdf",
++        "png",
++        "inspect_body",
++        "markdown",
++        "edit",
++    ] {
++        assert_eq!(v["operations"][op], true, "{op}");
++    }
++    assert_eq!(v["edit_plan_versions"], serde_json::json!([1]));
++    let kinds = v["edit_operations"].as_array().unwrap();
++    assert!(kinds.iter().any(|k| k == "insert_paragraph"));
++    assert_eq!(v["limits"]["stories"], serde_json::json!(["body"]));
++}
+-- 
+2.43.0
+

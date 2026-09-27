@@ -1,0 +1,2885 @@
+From 58d40c96e0e61f864bcd4181ba374910ae7cd098 Mon Sep 17 00:00:00 2001
+From: Arthur Souza Rodrigues <arthursrodrigues@gmail.com>
+Date: Sat, 26 Sep 2026 21:11:18 -0400
+Subject: [PATCH 3/5] feat(python): Document facade, edit plans, PNG/render,
+ module CLI with binary parity
+
+- Applies the proposed 0002 facade (immutable Document, CompareOptions,
+  PdfOptions, typed Revision) and extends it: sha256(), inspect() ->
+  Snapshot, markdown(), edit(plan) -> EditResult, preview(plan),
+  to_png(dpi), render(pdf, png_dpi) -> Rendered; EditPlan builder that
+  serializes the engine's wire schema; EditPlanError carries code,
+  operation and per-operation outcomes; capabilities().
+- Native exports: docx_to_png, render, source_sha256, inspect_json,
+  markdown, edit_json, preview_json, report_jsonl, capabilities_json; all
+  compute detached from the interpreter; structured results cross as the
+  engine's own JSON.
+- python -m jubarte_redlines: inspect, text, edit, convert, compare,
+  revisions, accept, reject, capabilities with the binary's flags, output
+  names and exit codes (3 = plan refused).
+- 48 tests against the rebuilt binding: 98% lines, 160/166 branches.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01XSguJyaPYNYbKNxFYkEmvV
+---
+ jubarte-python/.coverage                      | Bin 0 -> 90112 bytes
+ jubarte-python/Cargo.lock                     | 121 +++-
+ jubarte-python/Cargo.toml                     |   1 +
+ jubarte-python/pytest.ini                     |   5 +
+ .../python/jubarte_redlines/__init__.py       |  48 ++
+ .../python/jubarte_redlines/__main__.py       | 337 +++++++++++
+ .../python/jubarte_redlines/_native.pyi       |  21 +
+ .../python/jubarte_redlines/document.py       | 233 ++++++++
+ .../python/jubarte_redlines/models.py         | 554 ++++++++++++++++++
+ jubarte-python/src/lib.rs                     | 163 +++++-
+ jubarte-python/tests/docx_fixture.py          |  66 +++
+ jubarte-python/tests/test_agent_api.py        | 239 ++++++++
+ jubarte-python/tests/test_cli.py              | 155 +++++
+ jubarte-python/tests/test_document.py         | 151 +++++
+ jubarte-python/tests/test_models.py           | 130 ++++
+ 15 files changed, 2209 insertions(+), 15 deletions(-)
+ create mode 100644 jubarte-python/.coverage
+ create mode 100644 jubarte-python/pytest.ini
+ create mode 100644 jubarte-python/python/jubarte_redlines/__main__.py
+ create mode 100644 jubarte-python/python/jubarte_redlines/document.py
+ create mode 100644 jubarte-python/python/jubarte_redlines/models.py
+ create mode 100644 jubarte-python/tests/docx_fixture.py
+ create mode 100644 jubarte-python/tests/test_agent_api.py
+ create mode 100644 jubarte-python/tests/test_cli.py
+ create mode 100644 jubarte-python/tests/test_document.py
+ create mode 100644 jubarte-python/tests/test_models.py
+
+diff --git a/jubarte-python/.coverage b/jubarte-python/.coverage
+new file mode 100644
+index 0000000000000000000000000000000000000000..d32bf3faa7ac6a0150e896a87bd4380c3065ff6b
+GIT binary patch
+literal 90112
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/jubarte-python/Cargo.lock b/jubarte-python/Cargo.lock
+index 366b1c7..3c8e664 100644
+--- a/jubarte-python/Cargo.lock
++++ b/jubarte-python/Cargo.lock
+@@ -19,12 +19,30 @@ dependencies = [
+  "cpufeatures",
+ ]
+ 
++[[package]]
++name = "arrayref"
++version = "0.3.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
++
++[[package]]
++name = "arrayvec"
++version = "0.7.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
++
+ [[package]]
+ name = "autocfg"
+ version = "1.5.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
+ 
++[[package]]
++name = "bitflags"
++version = "1.3.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
++
+ [[package]]
+ name = "bitflags"
+ version = "2.13.1"
+@@ -340,7 +358,7 @@ dependencies = [
+  "gif",
+  "moxcms",
+  "num-traits",
+- "png",
++ "png 0.18.1",
+  "tiff",
+  "zune-core",
+  "zune-jpeg",
+@@ -365,6 +383,12 @@ dependencies = [
+  "hybrid-array",
+ ]
+ 
++[[package]]
++name = "itoa"
++version = "1.0.18"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
++
+ [[package]]
+ name = "jobserver"
+ version = "0.1.35"
+@@ -392,6 +416,7 @@ version = "0.9.2"
+ dependencies = [
+  "jubarte-redlines",
+  "pyo3",
++ "serde_json",
+ ]
+ 
+ [[package]]
+@@ -400,9 +425,14 @@ version = "0.9.2"
+ dependencies = [
+  "flate2",
+  "image",
++ "quick-xml 0.41.0",
+  "rdocx-opc",
+  "rustybuzz",
++ "serde",
++ "serde_json",
+  "sha1",
++ "sha2",
++ "tiny-skia",
+  "ttf-parser",
+  "zip",
+ ]
+@@ -509,13 +539,26 @@ version = "0.3.34"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
+ 
++[[package]]
++name = "png"
++version = "0.17.16"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "82151a2fc869e011c153adc57cf2789ccb8d9906ce52c0b39a6b5697749d7526"
++dependencies = [
++ "bitflags 1.3.2",
++ "crc32fast",
++ "fdeflate",
++ "flate2",
++ "miniz_oxide",
++]
++
+ [[package]]
+ name = "png"
+ version = "0.18.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61"
+ dependencies = [
+- "bitflags",
++ "bitflags 2.13.1",
+  "crc32fast",
+  "fdeflate",
+  "flate2",
+@@ -627,6 +670,15 @@ dependencies = [
+  "memchr",
+ ]
+ 
++[[package]]
++name = "quick-xml"
++version = "0.41.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
++dependencies = [
++ "memchr",
++]
++
+ [[package]]
+ name = "quote"
+ version = "1.0.47"
+@@ -648,7 +700,7 @@ version = "0.1.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "3d926e2bb96a4e53ec395b4e50e474cf54dacaf939fc2ce6427897c83b7c26a6"
+ dependencies = [
+- "quick-xml",
++ "quick-xml 0.37.5",
+  "thiserror",
+  "zip",
+ ]
+@@ -665,7 +717,7 @@ version = "0.20.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "fd3c7c96f8a08ee34eff8857b11b49b07d71d1c3f4e88f8a88d4c9e9f90b1702"
+ dependencies = [
+- "bitflags",
++ "bitflags 2.13.1",
+  "bytemuck",
+  "core_maths",
+  "log",
+@@ -677,6 +729,16 @@ dependencies = [
+  "unicode-script",
+ ]
+ 
++[[package]]
++name = "serde"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
++dependencies = [
++ "serde_core",
++ "serde_derive",
++]
++
+ [[package]]
+ name = "serde_core"
+ version = "1.0.229"
+@@ -697,6 +759,19 @@ dependencies = [
+  "syn 3.0.3",
+ ]
+ 
++[[package]]
++name = "serde_json"
++version = "1.0.151"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
++dependencies = [
++ "itoa",
++ "memchr",
++ "serde",
++ "serde_core",
++ "zmij",
++]
++
+ [[package]]
+ name = "sha1"
+ version = "0.11.0"
+@@ -743,6 +818,12 @@ version = "1.15.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+ 
++[[package]]
++name = "strict-num"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
++
+ [[package]]
+ name = "syn"
+ version = "2.0.119"
+@@ -825,6 +906,32 @@ version = "0.1.9"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9e1c906769ad99c88eaa54e728060edef082f8e358ff32030cb7c7d315e81109"
+ 
++[[package]]
++name = "tiny-skia"
++version = "0.11.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "83d13394d44dae3207b52a326c0c85a8bf87f1541f23b0d143811088497b09ab"
++dependencies = [
++ "arrayref",
++ "arrayvec",
++ "bytemuck",
++ "cfg-if",
++ "log",
++ "png 0.17.16",
++ "tiny-skia-path",
++]
++
++[[package]]
++name = "tiny-skia-path"
++version = "0.11.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9c9e7fc0c2e86a30b117d0462aa261b72b7a99b7ebd7deb3a14ceda95c5bdc93"
++dependencies = [
++ "arrayref",
++ "bytemuck",
++ "strict-num",
++]
++
+ [[package]]
+ name = "ttf-parser"
+ version = "0.25.1"
+@@ -986,6 +1093,12 @@ version = "0.6.7"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12"
+ 
++[[package]]
++name = "zmij"
++version = "1.0.23"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
++
+ [[package]]
+ name = "zopfli"
+ version = "0.8.3"
+diff --git a/jubarte-python/Cargo.toml b/jubarte-python/Cargo.toml
+index bddccaf..cf63654 100644
+--- a/jubarte-python/Cargo.toml
++++ b/jubarte-python/Cargo.toml
+@@ -30,6 +30,7 @@ crate-type = ["cdylib"]
+ jubarte-redlines = { path = "..", default-features = false }
+ # abi3-py310: one wheel per platform covers every CPython >= 3.10.
+ pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }
++serde_json = "1" # structured results cross the boundary as engine-produced JSON
+ 
+ [profile.release]
+ opt-level = 3
+diff --git a/jubarte-python/pytest.ini b/jubarte-python/pytest.ini
+new file mode 100644
+index 0000000..eab5cf5
+--- /dev/null
++++ b/jubarte-python/pytest.ini
+@@ -0,0 +1,5 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++# SPDX-License-Identifier: AGPL-3.0-only
++[pytest]
++markers =
++    integration: installed native library, filesystem or environment integration
+diff --git a/jubarte-python/python/jubarte_redlines/__init__.py b/jubarte-python/python/jubarte_redlines/__init__.py
+index 961da43..25c25c2 100644
+--- a/jubarte-python/python/jubarte_redlines/__init__.py
++++ b/jubarte-python/python/jubarte_redlines/__init__.py
+@@ -53,3 +53,51 @@ def get_revisions(docx: bytes) -> list[dict[str, Any]]:
+     ``formatChange``/``text``).
+     """
+     return json.loads(get_revisions_json(docx))
++
++
++# Additive ergonomic surface; low-level functions above keep their contracts.
++from .document import Document, EditPlanError, EditResult, capabilities, read
++from .models import (
++    CompareOptions,
++    EditOutcome,
++    EditPlan,
++    EditReport,
++    FontResolution,
++    FormatChange,
++    PageText,
++    Paragraph,
++    ParagraphDelta,
++    PdfOptions,
++    Rendered,
++    RenderReport,
++    Revision,
++    RevisionCounts,
++    Snapshot,
++    Span,
++    Summary,
++)
++
++__all__ += [
++    "Document",
++    "read",
++    "capabilities",
++    "CompareOptions",
++    "FormatChange",
++    "PdfOptions",
++    "Revision",
++    "EditPlan",
++    "EditPlanError",
++    "EditResult",
++    "EditOutcome",
++    "EditReport",
++    "RevisionCounts",
++    "ParagraphDelta",
++    "Snapshot",
++    "Summary",
++    "Paragraph",
++    "Span",
++    "Rendered",
++    "RenderReport",
++    "PageText",
++    "FontResolution",
++]
+diff --git a/jubarte-python/python/jubarte_redlines/__main__.py b/jubarte-python/python/jubarte_redlines/__main__.py
+new file mode 100644
+index 0000000..356b6a0
+--- /dev/null
++++ b/jubarte-python/python/jubarte_redlines/__main__.py
+@@ -0,0 +1,337 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++"""``python -m jubarte_redlines``: the ``jubarte`` binary's commands over the
++installed wheel, with the same names, flags, output files and exit codes.
++
++    python -m jubarte_redlines inspect letter.docx --json
++    python -m jubarte_redlines text letter.docx
++    python -m jubarte_redlines edit letter.docx --plan plan.json --out-dir review --pdf --png
++    python -m jubarte_redlines convert letter.docx --png --dpi 150 --report pages.json
++    python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author Legal
++    python -m jubarte_redlines accept redline.docx -o clean.docx
++    python -m jubarte_redlines capabilities --json
++
++Exit codes: 0 success, 1 error (I/O, engine, existing output), 2 usage, 3 edit
++plan refused (its per-operation report is on stdout; nothing was written).
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import sys
++from dataclasses import asdict
++from collections.abc import Sequence
++from pathlib import Path
++
++from . import __version__, capabilities
++from .document import Document, EditPlanError
++from .models import PdfOptions
++
++EXIT_OK = 0
++EXIT_ERROR = 1
++EXIT_PLAN_REFUSED = 3
++
++
++class CliError(Exception):
++    """A user-facing failure; the message is printed as ``error: ...``."""
++
++
++def _read(path: Path) -> Document:
++    try:
++        return Document.read(path)
++    except OSError as exc:
++        raise CliError(f"reading {path}: {exc}") from exc
++
++
++def _ensure_writable(path: Path, force: bool) -> None:
++    if path.exists() and not force:
++        raise CliError(f"output '{path}' already exists (use --force to overwrite)")
++
++
++def _write(path: Path, data: bytes | str) -> None:
++    try:
++        if isinstance(data, str):
++            path.write_text(data, encoding="utf-8")
++        else:
++            path.write_bytes(data)
++    except OSError as exc:
++        raise CliError(f"writing {path}: {exc}") from exc
++
++
++def _pdf_options(args: argparse.Namespace) -> PdfOptions:
++    revisions = getattr(args, "revisions", "conventional")
++    palette = getattr(args, "revision_palette", None)
++    compress = getattr(args, "compress", False)
++    if revisions == "custom" and palette is None:
++        raise CliError("--revisions custom needs --revision-palette")
++    if revisions != "custom" and palette is not None:
++        raise CliError("--revision-palette needs --revisions custom")
++    return PdfOptions(compress=compress, revisions=revisions, revision_palette=palette)
++
++
++def _png_name(stem: str, index: int, count: int) -> str:
++    width = max(2, len(str(count)))
++    return f"{stem}-page-{index + 1:0{width}d}.png"
++
++
++# -- commands -----------------------------------------------------------------
++
++
++def cmd_inspect(args: argparse.Namespace) -> int:
++    doc = _read(args.file)
++    if args.json:
++        from . import _native
++
++        print(_native.inspect_json(doc.to_bytes()))
++        return EXIT_OK
++    snap = doc.inspect()
++    s = snap.summary
++    print(f"sha256: {snap.source_sha256}")
++    print(
++        f"paragraphs: {s.paragraphs}  tables: {s.tables}  fields: {s.fields}  sections: {s.sections}  "
++        f"comments: {s.comments}  revisions: {s.revisions}  footnotes: {s.footnotes}  endnotes: {s.endnotes}  "
++        f"headers: {s.headers}  footers: {s.footers}  images: {s.images}  numbering: {str(s.list_numbering).lower()}  "
++        f"track_changes: {str(s.track_changes).lower()}"
++    )
++    for p in snap.paragraphs:
++        flags = [f for f in (p.style, "numbered" if p.numbered else None, "table" if p.in_table else None, "page-break" if p.page_break else None) if f]
++        flags.extend(p.limitations)
++        preview = p.text[:80] + ("…" if len(p.text) > 80 else "")
++        print(f"{p.id}\t[{','.join(flags)}]\t{preview}")
++    return EXIT_OK
++
++
++def cmd_text(args: argparse.Namespace) -> int:
++    sys.stdout.write(_read(args.file).markdown())
++    return EXIT_OK
++
++
++def cmd_edit(args: argparse.Namespace) -> int:
++    doc = _read(args.file)
++    try:
++        plan_text = Path(args.plan).read_text(encoding="utf-8")
++    except OSError as exc:
++        raise CliError(f"reading {args.plan}: {exc}") from exc
++    out_dir: Path = args.out_dir
++    if not args.dry_run:
++        if out_dir.exists() and not args.force:
++            raise CliError(f"output directory '{out_dir}' already exists (use --force to replace its files)")
++        if out_dir.resolve() == args.file.resolve().parent:
++            raise CliError("--out-dir must not be the input's own directory")
++    try:
++        if args.dry_run:
++            sys.stdout.write(doc.preview(plan_text).to_jsonl())
++            return EXIT_OK
++        result = doc.edit(plan_text)
++    except EditPlanError as exc:
++        for i, o in enumerate(exc.outcomes, start=1):
++            row: dict[str, object] = {"ev": "op", "i": i, "id": o.id, "op": o.kind, "status": o.status, "matches": o.matches}
++            for key, value in (("at", o.paragraph), ("ctx", o.context), ("code", o.code), ("message", o.message)):
++                if value is not None:
++                    row[key] = value
++            print(json.dumps(row, ensure_ascii=False))
++        print(json.dumps({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": str(exc)}, ensure_ascii=False))
++        print(f"error: plan refused: {exc}", file=sys.stderr)
++        return EXIT_PLAN_REFUSED
++    lines = result.report.to_jsonl().splitlines()
++    summary = lines.pop()
++    outputs: list[tuple[str, bytes]] = [("clean.docx", result.clean.to_bytes()), ("redline.docx", result.redline.to_bytes())]
++    if args.pdf or args.png:
++        options = PdfOptions(compress=True, revisions=args.revisions, revision_palette=args.revision_palette)
++        pages: dict[str, int] = {}
++        starts: dict[str, list[str]] = {}
++        for name, document in (("redline", result.redline), ("clean", result.clean)):
++            rendered = document.render(pdf=args.pdf, png_dpi=args.dpi if args.png else None, options=options)
++            pages[name] = rendered.report.page_count
++            starts[name] = [(p.text.splitlines() or [""])[0][:60] for p in rendered.report.pages]
++            if rendered.pdf is not None:
++                outputs.append((f"{name}.pdf", rendered.pdf))
++            for i, png in enumerate(rendered.pngs):
++                outputs.append((_png_name(name, i, len(rendered.pngs)), png))
++        lines.append(json.dumps({"ev": "render", "engine": f"jubarte {__version__}", "pages": pages, "page_starts": starts}, ensure_ascii=False))
++    from . import _native
++
++    out_dir.mkdir(parents=True, exist_ok=True)
++    saved = []
++    for name, data in outputs:
++        _write(out_dir / name, data)
++        saved.append({"f": name, "bytes": len(data), "sha256": _native.source_sha256(data)})
++    lines.append(json.dumps({"ev": "save", "dir": str(out_dir), "outputs": saved}, ensure_ascii=False))
++    lines.append(summary)
++    _write(out_dir / "report.jsonl", "\n".join(lines) + "\n")
++    print(summary)
++    print(f"wrote {out_dir} ({len(outputs) + 1} files: clean.docx, redline.docx, report.jsonl{', …' if len(outputs) > 2 else ''})")
++    return EXIT_OK
++
++
++def cmd_convert(args: argparse.Namespace) -> int:
++    doc = _read(args.file)
++    output: Path = args.output or args.file.with_suffix(".pdf")
++    want_pdf = args.pdf or not args.png
++    for side, what in ((args.font_report, "--font-report"), (args.report, "--report")):
++        if side is not None:
++            if side.resolve() in (output.resolve(), args.file.resolve()):
++                raise CliError(f"{what} '{side}' is the same file as the PDF output or the input")
++            _ensure_writable(side, args.force)
++    if want_pdf:
++        _ensure_writable(output, args.force)
++    rendered = doc.render(pdf=want_pdf, png_dpi=args.dpi if args.png else None, options=_pdf_options(args))
++    pages = rendered.report.page_count
++    if rendered.pdf is not None:
++        _write(output, rendered.pdf)
++        print(f"wrote {output} ({len(rendered.pdf)} bytes, {pages} page{'' if pages == 1 else 's'})")
++    if args.png:
++        for i, png in enumerate(rendered.pngs):
++            path = output.parent / _png_name(output.stem, i, len(rendered.pngs))
++            _ensure_writable(path, args.force)
++            _write(path, png)
++        print(f"wrote {len(rendered.pngs)} PNG page{'' if len(rendered.pngs) == 1 else 's'} ({output.parent / output.stem}-page-NN.png, {args.dpi} dpi)")
++    if args.font_report is not None:
++        _write(args.font_report, json.dumps([asdict(f) for f in rendered.report.fonts]))
++    if args.report is not None:
++        report = {"page_count": pages, "pages": [asdict(p) for p in rendered.report.pages], "fonts": [asdict(f) for f in rendered.report.fonts]}
++        _write(args.report, json.dumps(report, ensure_ascii=False))
++    return EXIT_OK
++
++
++def cmd_compare(args: argparse.Namespace) -> int:
++    original = _read(args.original)
++    modified = _read(args.modified)
++    output: Path = args.output or args.original.with_name(f"{args.original.stem}_v_{args.modified.stem}.docx")
++    _ensure_writable(output, args.force)
++    from . import _native
++
++    redline = _native.compare_documents(original.to_bytes(), modified.to_bytes(), author=args.author, date=args.date)
++    _write(output, redline)
++    print(f"wrote {output} ({len(redline)} bytes)")
++    return EXIT_OK
++
++
++def cmd_revisions(args: argparse.Namespace) -> int:
++    from . import get_revisions
++
++    rows = get_revisions(_read(args.file).to_bytes())
++    if args.json:
++        for row in rows:
++            print(json.dumps(row, ensure_ascii=False))
++    else:
++        for row in rows:
++            print(f"{row['type']}\t{row.get('author') or '-'}\t{row.get('part')}\t{(row.get('text') or '')[:60]!r}")
++        print(f"{len(rows)} revision(s)")
++    return EXIT_OK
++
++
++def _resolution(args: argparse.Namespace, accept: bool) -> int:
++    doc = _read(args.file)
++    _ensure_writable(args.output, args.force)
++    result = doc.accept() if accept else doc.reject()
++    _write(args.output, result.to_bytes())
++    print(f"wrote {args.output} ({len(result.to_bytes())} bytes)")
++    return EXIT_OK
++
++
++def cmd_accept(args: argparse.Namespace) -> int:
++    return _resolution(args, accept=True)
++
++
++def cmd_reject(args: argparse.Namespace) -> int:
++    return _resolution(args, accept=False)
++
++
++def cmd_capabilities(_args: argparse.Namespace) -> int:
++    print(json.dumps(capabilities(), indent=2))
++    return EXIT_OK
++
++
++# -- parser -------------------------------------------------------------------
++
++
++def _add_revision_flags(p: argparse.ArgumentParser) -> None:
++    p.add_argument("--revisions", choices=["conventional", "word", "custom"], default="conventional", help="how tracked changes are painted")
++    p.add_argument("--revision-palette", metavar="SPEC", help="marks for --revisions custom, e.g. deleted=#AA0000:strike,...")
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(prog="python -m jubarte_redlines", description="DOCX compare, tracked editing, inspection and rendering (the jubarte engine).")
++    parser.add_argument("--version", action="version", version=f"jubarte-redlines {__version__}")
++    sub = parser.add_subparsers(dest="command", required=True)
++
++    p = sub.add_parser("inspect", help="paragraph ids, formatting spans, limitations and package facts")
++    p.add_argument("file", type=Path)
++    p.add_argument("--json", action="store_true", help="emit the JSON snapshot")
++    p.set_defaults(func=cmd_inspect)
++
++    p = sub.add_parser("text", help="Markdown with [body:p:N] ids, the coordinates an edit plan uses")
++    p.add_argument("file", type=Path)
++    p.set_defaults(func=cmd_text)
++
++    p = sub.add_parser("edit", help="apply an edit plan: clean.docx, redline.docx, report.jsonl (+ PDF/PNG)")
++    p.add_argument("file", type=Path)
++    p.add_argument("--plan", type=Path, required=True, metavar="PLAN.json")
++    p.add_argument("--out-dir", type=Path, required=True, metavar="DIR")
++    p.add_argument("--dry-run", action="store_true", help="resolve and report only; write nothing")
++    p.add_argument("--force", action="store_true", help="replace an existing output directory's files")
++    p.add_argument("--pdf", action="store_true", help="also write redline.pdf and clean.pdf")
++    p.add_argument("--png", action="store_true", help="also write redline-page-NN.png and clean-page-NN.png")
++    p.add_argument("--dpi", type=float, default=96.0)
++    _add_revision_flags(p)
++    p.set_defaults(func=cmd_edit)
++
++    p = sub.add_parser("convert", help="DOCX to PDF and/or PNG pages, with an optional page report")
++    p.add_argument("file", type=Path)
++    p.add_argument("-o", "--output", type=Path, help="PDF path [default: <stem>.pdf beside the input]")
++    p.add_argument("--force", action="store_true")
++    p.add_argument("--pdf", action="store_true", help="write the PDF (default when --png is absent)")
++    p.add_argument("--png", action="store_true", help="rasterize pages to <stem>-page-NN.png")
++    p.add_argument("--dpi", type=float, default=96.0)
++    p.add_argument("--compress", action="store_true", help="deflate PDF streams")
++    p.add_argument("--font-report", type=Path, metavar="FILE", help="JSON font-resolution report")
++    p.add_argument("--report", type=Path, metavar="FILE", help="JSON page report ({page_count, pages, fonts})")
++    _add_revision_flags(p)
++    p.set_defaults(func=cmd_convert)
++
++    p = sub.add_parser("compare", help="two documents into a Word tracked-changes document")
++    p.add_argument("original", type=Path)
++    p.add_argument("modified", type=Path)
++    p.add_argument("-o", "--output", type=Path, help="[default: <original>_v_<modified>.docx]")
++    p.add_argument("--author", default="jubarte")
++    p.add_argument("--date", help="ISO-8601 revision timestamp (default: fixed epoch)")
++    p.add_argument("--force", action="store_true")
++    p.set_defaults(func=cmd_compare)
++
++    p = sub.add_parser("revisions", help="list tracked revisions")
++    p.add_argument("file", type=Path)
++    p.add_argument("--json", action="store_true", help="one JSON object per line")
++    p.set_defaults(func=cmd_revisions)
++
++    for name, func, help_text in (("accept", cmd_accept, "accept every revision"), ("reject", cmd_reject, "reject every revision")):
++        p = sub.add_parser(name, help=help_text)
++        p.add_argument("file", type=Path)
++        p.add_argument("-o", "--output", type=Path, required=True)
++        p.add_argument("--force", action="store_true")
++        p.set_defaults(func=func)
++
++    p = sub.add_parser("capabilities", help="what this build can do")
++    p.add_argument("--json", action="store_true", help="(the output is JSON either way)")
++    p.set_defaults(func=cmd_capabilities)
++    return parser
++
++
++def main(argv: Sequence[str] | None = None) -> int:
++    """Run the CLI; returns the exit code (``SystemExit`` only for usage errors)."""
++    args = build_parser().parse_args(argv)
++    try:
++        return int(args.func(args))
++    except CliError as exc:
++        print(f"error: {exc}", file=sys.stderr)
++        return EXIT_ERROR
++    except Exception as exc:  # engine errors (JubarteError) and I/O surprises
++        print(f"error: {exc}", file=sys.stderr)
++        return EXIT_ERROR
++
++
++if __name__ == "__main__":  # pragma: no cover
++    sys.exit(main())
+diff --git a/jubarte-python/python/jubarte_redlines/_native.pyi b/jubarte-python/python/jubarte_redlines/_native.pyi
+index c1502a2..2ba3a70 100644
+--- a/jubarte-python/python/jubarte_redlines/_native.pyi
++++ b/jubarte-python/python/jubarte_redlines/_native.pyi
+@@ -22,3 +22,24 @@ def docx_to_pdf(
+     revisions: str = "conventional",
+     revision_palette: str | None = None,
+ ) -> bytes: ...
++def docx_to_png(
++    docx: bytes,
++    dpi: float = 96.0,
++    revisions: str = "conventional",
++    revision_palette: str | None = None,
++) -> list[bytes]: ...
++def render(
++    docx: bytes,
++    pdf: bool = True,
++    png_dpi: float | None = None,
++    compress: bool = False,
++    revisions: str = "conventional",
++    revision_palette: str | None = None,
++) -> tuple[bytes | None, list[bytes], str]: ...
++def source_sha256(docx: bytes) -> str: ...
++def inspect_json(docx: bytes) -> str: ...
++def markdown(docx: bytes) -> str: ...
++def edit_json(docx: bytes, plan_json: str) -> tuple[bool, bytes | None, bytes | None, str]: ...
++def preview_json(docx: bytes, plan_json: str) -> tuple[bool, str]: ...
++def report_jsonl(report_json: str) -> str: ...
++def capabilities_json() -> str: ...
+diff --git a/jubarte-python/python/jubarte_redlines/document.py b/jubarte-python/python/jubarte_redlines/document.py
+new file mode 100644
+index 0000000..6151ab0
+--- /dev/null
++++ b/jubarte-python/python/jubarte_redlines/document.py
+@@ -0,0 +1,233 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++"""Bytes-first document operations with explicit path I/O at ``read``."""
++
++from __future__ import annotations
++
++import os
++from dataclasses import dataclass, field
++from pathlib import Path
++
++from . import _native
++from .models import (
++    CompareOptions,
++    EditOutcome,
++    EditPlan,
++    EditReport,
++    PdfOptions,
++    Rendered,
++    Revision,
++    Snapshot,
++    _decode_outcomes,
++    _decode_render_report,
++    _decode_report,
++    _decode_revisions,
++    _decode_snapshot,
++    plan_json,
++)
++
++
++class EditPlanError(_native.JubarteError):
++    """A plan was refused; nothing was written.
++
++    ``code`` is the stable engine code (``STALE_SOURCE``, ``ANCHOR_NOT_FOUND``,
++    ``AMBIGUOUS_ANCHOR``, ``OVERLAPPING_EDITS``, ``UNSUPPORTED_STRUCTURE``,
++    ``EXISTING_REVISIONS``, ``INVALID_PLAN``, ...), ``operation`` the id of the
++    operation that failed, and ``outcomes`` every operation's status at that
++    point, so the caller can see which anchors resolved.
++    """
++
++    def __init__(self, code: str, message: str, operation: str | None, outcomes: tuple[EditOutcome, ...]) -> None:
++        where = f" ({operation})" if operation else ""
++        super().__init__(f"{code}{where}: {message}")
++        self.code = code
++        self.operation = operation
++        self.outcomes = outcomes
++
++    @classmethod
++    def _from_json(cls, payload: str) -> EditPlanError:
++        import json
++
++        data = json.loads(payload)
++        return cls(
++            code=data["code"],
++            message=data["message"],
++            operation=data.get("operation"),
++            outcomes=_decode_outcomes(data.get("outcomes", [])),
++        )
++
++
++@dataclass(frozen=True, slots=True)
++class EditResult:
++    """Clean copy, Word redline and per-operation report of one plan."""
++
++    clean: Document
++    redline: Document
++    report: EditReport
++
++
++@dataclass(frozen=True, slots=True)
++class Document:
++    """An immutable DOCX byte snapshot.
++
++    Loading is cheap and does not parse or validate the package. Operations
++    validate it through the native engine and preserve ``JubarteError``.
++    No operation modifies an input document or writes output files.
++    """
++
++    _data: bytes = field(repr=False)
++
++    def __post_init__(self) -> None:
++        if not isinstance(self._data, bytes):
++            raise TypeError("Document requires bytes; use Document.read(path) for files")
++
++    def __repr__(self) -> str:
++        return f"Document(size={len(self._data)})"
++
++    @classmethod
++    def from_bytes(cls, data: bytes) -> Document:
++        """Hold immutable package bytes; paths and mutable buffers are rejected."""
++        return cls(data)
++
++    @classmethod
++    def read(cls, path: str | os.PathLike[str]) -> Document:
++        """Read a local file; normal FileNotFoundError/PermissionError propagate."""
++        return cls.from_bytes(Path(path).read_bytes())
++
++    def to_bytes(self) -> bytes:
++        """Return the immutable DOCX snapshot."""
++        return self._data
++
++    def compare(
++        self,
++        modified: Document,
++        *,
++        author: str,
++        options: CompareOptions | None = None,
++    ) -> Document:
++        """Compare this original with ``modified``, producing tracked changes.
++
++        Existing comparison semantics, including handling of pre-existing
++        revisions, are unchanged. This is not the semantic edit transaction.
++        """
++        if not isinstance(modified, Document):
++            raise TypeError("modified must be a Document")
++        if not isinstance(author, str):
++            raise TypeError("author must be a string")
++        if not author.strip():
++            raise ValueError("author must not be empty")
++        if options is None:
++            options = CompareOptions()
++        elif not isinstance(options, CompareOptions):
++            raise TypeError("options must be CompareOptions or None")
++        return Document.from_bytes(
++            _native.compare_documents(
++                self._data,
++                modified._data,
++                author=author,
++                date=options.native_date(),
++            )
++        )
++
++    def accept(self) -> Document:
++        """Return a new document accepting all tracked revisions."""
++        return Document.from_bytes(_native.accept_revisions(self._data))
++
++    def reject(self) -> Document:
++        """Return a new document rejecting all tracked revisions."""
++        return Document.from_bytes(_native.reject_revisions(self._data))
++
++    def revisions(self) -> tuple[Revision, ...]:
++        """Return immutable metadata for the revisions listed by the engine."""
++        return _decode_revisions(_native.get_revisions_json(self._data))
++
++    def to_pdf(self, *, options: PdfOptions | None = None) -> bytes:
++        """Render a PDF in memory, preserving the current renderer defaults."""
++        options = _pdf_options(options)
++        return _native.docx_to_pdf(
++            self._data,
++            compress=options.compress,
++            revisions=options.revisions,
++            revision_palette=options.revision_palette,
++        )
++
++    # -- agent surface -----------------------------------------------------
++
++    def sha256(self) -> str:
++        """SHA-256 of the snapshot: the guard an ``EditPlan`` binds to."""
++        return _native.source_sha256(self._data)
++
++    def inspect(self) -> Snapshot:
++        """Body paragraphs with ids, formatting spans and limitations, plus package facts."""
++        return _decode_snapshot(_native.inspect_json(self._data))
++
++    def markdown(self) -> str:
++        """The body as Markdown with a ``[body:p:N]`` id before each paragraph."""
++        return _native.markdown(self._data)
++
++    def edit(self, plan: EditPlan | dict[str, object] | str) -> EditResult:
++        """Apply a plan: clean copy, Word redline and report, or ``EditPlanError``.
++
++        Every operation is resolved against this snapshot before anything is
++        changed; a refused plan produces no documents. Comments in the plan
++        are anchored in the clean copy and carried through the redline.
++        """
++        ok, clean, redline, payload = _native.edit_json(self._data, plan_json(plan))
++        if not ok:
++            raise EditPlanError._from_json(payload)
++        assert clean is not None and redline is not None
++        return EditResult(Document.from_bytes(clean), Document.from_bytes(redline), _decode_report(payload))
++
++    def preview(self, plan: EditPlan | dict[str, object] | str) -> EditReport:
++        """Resolve every operation and report, without producing documents."""
++        ok, payload = _native.preview_json(self._data, plan_json(plan))
++        if not ok:
++            raise EditPlanError._from_json(payload)
++        return _decode_report(payload)
++
++    def to_png(self, *, dpi: float = 96.0, options: PdfOptions | None = None) -> tuple[bytes, ...]:
++        """One PNG per page, straight from the layout (no PDF round trip)."""
++        options = _pdf_options(options)
++        return tuple(
++            _native.docx_to_png(
++                self._data,
++                dpi=float(dpi),
++                revisions=options.revisions,
++                revision_palette=options.revision_palette,
++            )
++        )
++
++    def render(self, *, pdf: bool = True, png_dpi: float | None = None, options: PdfOptions | None = None) -> Rendered:
++        """One layout pass: optional PDF, optional PNG pages, and the page report."""
++        options = _pdf_options(options)
++        pdf_bytes, pngs, report = _native.render(
++            self._data,
++            pdf=pdf,
++            png_dpi=None if png_dpi is None else float(png_dpi),
++            compress=options.compress,
++            revisions=options.revisions,
++            revision_palette=options.revision_palette,
++        )
++        return Rendered(pdf=pdf_bytes, pngs=tuple(pngs), report=_decode_render_report(report))
++
++
++def _pdf_options(options: PdfOptions | None) -> PdfOptions:
++    if options is None:
++        return PdfOptions()
++    if not isinstance(options, PdfOptions):
++        raise TypeError("options must be PdfOptions or None")
++    return options
++
++
++def capabilities() -> dict[str, object]:
++    """What this build can do (``runtime: "python"``), as a plain dict."""
++    import json
++
++    return json.loads(_native.capabilities_json())
++
++
++def read(path: str | os.PathLike[str]) -> Document:
++    """Load a local DOCX snapshot; equivalent to ``Document.read(path)``."""
++    return Document.read(path)
+diff --git a/jubarte-python/python/jubarte_redlines/models.py b/jubarte-python/python/jubarte_redlines/models.py
+new file mode 100644
+index 0000000..e6e9d3e
+--- /dev/null
++++ b/jubarte-python/python/jubarte_redlines/models.py
+@@ -0,0 +1,554 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++"""Immutable options and revision records for the Python document facade."""
++
++from __future__ import annotations
++
++import json
++from collections.abc import Mapping, Sequence
++from dataclasses import dataclass, field, replace
++from datetime import datetime, timezone
++from typing import Literal, TypedDict
++
++RevisionKind = Literal["Inserted", "Deleted", "Moved", "FormatChanged"]
++RevisionStyle = Literal["conventional", "word", "custom"]
++
++
++@dataclass(frozen=True, slots=True)
++class CompareOptions:
++    """Comparison metadata; ``None`` preserves the engine's fixed timestamp.
++
++    Explicit timestamps must include an offset. They are normalized to UTC.
++    Low-level ``compare_documents`` retains its existing permissive signature.
++    """
++
++    date: str | datetime | None = None
++
++    def __post_init__(self) -> None:
++        if self.date is None:
++            return
++        if isinstance(self.date, datetime):
++            value = self.date
++        elif isinstance(self.date, str):
++            try:
++                value = datetime.fromisoformat(self.date.replace("Z", "+00:00"))
++            except ValueError as exc:
++                raise ValueError("date must be an ISO-8601 timestamp with an offset") from exc
++        else:
++            raise TypeError("date must be a datetime, an ISO-8601 string, or None")
++        if value.utcoffset() is None:
++            raise ValueError("date must include a UTC offset")
++        normalized = value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
++        object.__setattr__(self, "date", normalized)
++
++    def native_date(self) -> str | None:
++        """Return the timestamp accepted by the existing native function."""
++        # __post_init__ turns every datetime into str.
++        assert self.date is None or isinstance(self.date, str)
++        return self.date
++
++
++@dataclass(frozen=True, slots=True)
++class PdfOptions:
++    """PDF options with the same defaults as the current byte API."""
++
++    compress: bool = False
++    revisions: RevisionStyle = "conventional"
++    revision_palette: str | None = None
++
++    def __post_init__(self) -> None:
++        if not isinstance(self.compress, bool):
++            raise TypeError("compress must be a bool")
++        if self.revisions not in ("conventional", "word", "custom"):
++            raise ValueError("revisions must be conventional, word, or custom")
++        if self.revision_palette is not None and not isinstance(self.revision_palette, str):
++            raise TypeError("revision_palette must be a string or None")
++        if self.revisions == "custom" and self.revision_palette is None:
++            raise ValueError("custom revisions require revision_palette")
++        if self.revisions != "custom" and self.revision_palette is not None:
++            raise ValueError("revision_palette requires custom revisions")
++
++
++@dataclass(frozen=True, slots=True)
++class FormatChange:
++    """Names of run or paragraph properties changed by a revision."""
++
++    changed_properties: tuple[str, ...]
++
++
++@dataclass(frozen=True, slots=True)
++class Revision:
++    """A read-only revision record; no implied stable edit identifier.
++
++    ``date`` is preserved as document text instead of rejecting old documents
++    whose producers emitted a nonstandard timestamp. Missing author/date/text
++    remain empty strings, matching the existing JSON API.
++    """
++
++    kind: RevisionKind
++    author: str
++    date: str
++    part: str
++    text: str
++    move_group_id: int | None
++    is_move_source: bool | None
++    format_change: FormatChange | None
++
++
++class _FormatChangeRecord(TypedDict):
++    changedProperties: list[str]
++
++
++class _RevisionRecord(TypedDict):
++    type: RevisionKind
++    author: str
++    date: str
++    part: str
++    text: str
++    moveGroupId: int | None
++    isMoveSource: bool | None
++    formatChange: _FormatChangeRecord | None
++
++
++def _decode_revisions(payload: str) -> tuple[Revision, ...]:
++    """Project this version's native JSON records into immutable objects.
++
++    This is an internal same-version adapter, not a parser for external JSON.
++    Unexpected native schemas propagate an error instead of hiding it.
++    """
++    records: list[_RevisionRecord] = json.loads(payload)
++    return tuple(
++        Revision(
++            kind=row["type"],
++            author=row["author"],
++            date=row["date"],
++            part=row["part"],
++            text=row["text"],
++            move_group_id=row["moveGroupId"],
++            is_move_source=row["isMoveSource"],
++            format_change=(
++                FormatChange(tuple(row["formatChange"]["changedProperties"]))
++                if row["formatChange"] is not None
++                else None
++            ),
++        )
++        for row in records
++    )
++
++
++# ---------------------------------------------------------------------------
++# Inspection snapshot (jubarte inspect --json)
++# ---------------------------------------------------------------------------
++
++
++@dataclass(frozen=True, slots=True)
++class Span:
++    """Direct run formatting over ``Paragraph.text`` in char offsets."""
++
++    start: int
++    end: int
++    bold: bool
++    italic: bool
++    underline: bool
++    highlight: str | None
++
++
++@dataclass(frozen=True, slots=True)
++class Paragraph:
++    """One body paragraph; ``index``/``id`` are valid for this snapshot only."""
++
++    index: int
++    id: str
++    text: str
++    style: str | None
++    numbered: bool
++    in_table: bool
++    page_break: bool
++    runs: tuple[Span, ...]
++    limitations: tuple[str, ...]
++
++
++@dataclass(frozen=True, slots=True)
++class Summary:
++    """Package facts (XML facts, not rendered-page facts)."""
++
++    paragraphs: int
++    tables: int
++    fields: int
++    sections: int
++    comments: int
++    revisions: int
++    footnotes: int
++    endnotes: int
++    headers: int
++    footers: int
++    images: int
++    list_numbering: bool
++    track_changes: bool
++
++
++@dataclass(frozen=True, slots=True)
++class Snapshot:
++    """What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses."""
++
++    schema_version: int
++    source_sha256: str
++    summary: Summary
++    paragraphs: tuple[Paragraph, ...]
++
++    def paragraph(self, id_or_index: str | int) -> Paragraph:
++        """The paragraph with this id (``body:p:N``) or index."""
++        for p in self.paragraphs:
++            if p.id == id_or_index or p.index == id_or_index:
++                return p
++        raise LookupError(f"no paragraph {id_or_index!r} in this snapshot")
++
++    def unique(self, *, starts_with: str | None = None, contains: str | None = None) -> Paragraph:
++        """Exactly one paragraph matching the selector; zero or several raise."""
++        if (starts_with is None) == (contains is None):
++            raise ValueError("give exactly one of starts_with or contains")
++        hits = [
++            p
++            for p in self.paragraphs
++            if (starts_with is not None and p.text.startswith(starts_with))
++            or (contains is not None and contains in p.text)
++        ]
++        if len(hits) != 1:
++            wanted = starts_with if starts_with is not None else contains
++            raise LookupError(f"{len(hits)} paragraphs match {wanted!r}; need exactly one")
++        return hits[0]
++
++
++def _decode_snapshot(payload: str) -> Snapshot:
++    data = json.loads(payload)
++    return Snapshot(
++        schema_version=data["schema_version"],
++        source_sha256=data["source_sha256"],
++        summary=Summary(**data["summary"]),
++        paragraphs=tuple(
++            Paragraph(
++                index=p["index"],
++                id=p["id"],
++                text=p["text"],
++                style=p["style"],
++                numbered=p["numbered"],
++                in_table=p["in_table"],
++                page_break=p["page_break"],
++                runs=tuple(Span(**s) for s in p["runs"]),
++                limitations=tuple(p["limitations"]),
++            )
++            for p in data["paragraphs"]
++        ),
++    )
++
++
++# ---------------------------------------------------------------------------
++# Edit plans (schema_version 1) and reports
++# ---------------------------------------------------------------------------
++
++Selector = str | int | dict[str, str | int]
++"""A paragraph id (``body:p:N``), an index, or ``{"starts_with"|"contains"|"id"|"index": ...}``."""
++
++ExistingRevisions = Literal["refuse", "accept", "reject"]
++
++
++def _selector(value: Selector) -> dict[str, str | int]:
++    if isinstance(value, bool):
++        raise TypeError("paragraph selector must be an id, an index or a dict")
++    if isinstance(value, int):
++        return {"index": value}
++    if isinstance(value, str):
++        return {"id": value}
++    if isinstance(value, dict) and len(value) == 1:
++        key, inner = next(iter(value.items()))
++        if key in ("id", "starts_with", "contains") and isinstance(inner, str):
++            return {key: inner}
++        if key == "index" and isinstance(inner, int) and not isinstance(inner, bool):
++            return {key: inner}
++    raise TypeError("paragraph selector must be an id, an index or one of {id|index|starts_with|contains: ...}")
++
++
++def _run_specs(runs: Sequence[Mapping[str, object] | str]) -> tuple[dict[str, object], ...]:
++    out: list[dict[str, object]] = []
++    for r in runs:
++        if isinstance(r, str):
++            out.append({"text": r})
++            continue
++        spec = dict(r)
++        if not isinstance(spec.get("text"), str):
++            raise ValueError("every run needs a text string")
++        unknown = set(spec) - {"text", "bold", "italic", "underline", "highlight"}
++        if unknown:
++            raise ValueError(f"unknown run fields: {sorted(unknown)}")
++        out.append(spec)
++    if not out:
++        raise ValueError("insert_paragraph needs at least one run")
++    return tuple(out)
++
++
++@dataclass(frozen=True, slots=True)
++class EditPlan:
++    """Immutable builder for the engine's edit plan (wire schema version 1).
++
++    Every builder method returns a new plan. ``for_document`` binds the plan to
++    a snapshot's SHA-256 so a changed file is refused with ``STALE_SOURCE``.
++    ``to_json`` is exactly what ``jubarte edit --plan`` reads.
++    """
++
++    author: str
++    date: str | None = None
++    initials: str | None = None
++    existing_revisions: ExistingRevisions = "refuse"
++    source_sha256: str | None = None
++    operations: tuple[dict[str, object], ...] = ()
++
++    def __post_init__(self) -> None:
++        if not isinstance(self.author, str) or not self.author.strip():
++            raise ValueError("author must be a nonempty string")
++        if self.existing_revisions not in ("refuse", "accept", "reject"):
++            raise ValueError("existing_revisions must be refuse, accept or reject")
++
++    def _with(self, op: dict[str, object]) -> EditPlan:
++        return replace(self, operations=(*self.operations, op))
++
++    def for_document(self, document: object) -> EditPlan:
++        """Bind to ``document`` (a ``Document`` or a snapshot's hash string)."""
++        digest = document if isinstance(document, str) else document.sha256()  # type: ignore[attr-defined]
++        return replace(self, source_sha256=digest)
++
++    def replace(self, paragraph: Selector, *, find: str, replacement: str, comment: str | None = None, id: str | None = None) -> EditPlan:
++        """Replace the unique occurrence of ``find`` in the paragraph."""
++        op: dict[str, object] = {"kind": "replace", "paragraph": _selector(paragraph), "find": find, "replacement": replacement}
++        return self._with(_with_optional(op, id=id, comment=comment))
++
++    def insert(
++        self,
++        paragraph: Selector,
++        *,
++        text: str,
++        after: str | None = None,
++        before: str | None = None,
++        position: Literal["start", "end"] | None = None,
++        comment: str | None = None,
++        id: str | None = None,
++    ) -> EditPlan:
++        """Insert ``text`` after/before a unique anchor or at the paragraph edge."""
++        given = [k for k, v in (("after", after), ("before", before), ("position", position)) if v is not None]
++        if len(given) != 1:
++            raise ValueError("insert needs exactly one of after, before, position")
++        op: dict[str, object] = {"kind": "insert", "paragraph": _selector(paragraph), "text": text}
++        if after is not None:
++            op["after"] = after
++        if before is not None:
++            op["before"] = before
++        if position is not None:
++            op["position"] = position
++        return self._with(_with_optional(op, id=id, comment=comment))
++
++    def delete(self, paragraph: Selector, *, find: str, id: str | None = None) -> EditPlan:
++        """Delete the unique occurrence of ``find``."""
++        op: dict[str, object] = {"kind": "delete", "paragraph": _selector(paragraph), "find": find}
++        return self._with(_with_optional(op, id=id))
++
++    def comment(self, paragraph: Selector, *, text: str, find: str | None = None, id: str | None = None) -> EditPlan:
++        """Comment on the unique occurrence of ``find`` or on the whole paragraph."""
++        op: dict[str, object] = {"kind": "comment", "paragraph": _selector(paragraph), "text": text}
++        if find is not None:
++            op["find"] = find
++        return self._with(_with_optional(op, id=id))
++
++    def insert_paragraph(
++        self,
++        paragraph: Selector,
++        *,
++        runs: Sequence[Mapping[str, object] | str],
++        position: Literal["before", "after"] = "after",
++        style: str | None = None,
++        comment: str | None = None,
++        id: str | None = None,
++    ) -> EditPlan:
++        """Insert a new paragraph next to the anchor, copying its properties."""
++        op: dict[str, object] = {"kind": "insert_paragraph", "paragraph": _selector(paragraph), "position": position, "runs": list(_run_specs(runs))}
++        if style is not None:
++            op["style"] = style
++        return self._with(_with_optional(op, id=id, comment=comment))
++
++    def delete_paragraph(self, paragraph: Selector, *, id: str | None = None) -> EditPlan:
++        """Delete a whole paragraph, mark included."""
++        op: dict[str, object] = {"kind": "delete_paragraph", "paragraph": _selector(paragraph)}
++        return self._with(_with_optional(op, id=id))
++
++    def to_dict(self) -> dict[str, object]:
++        """The wire form."""
++        wire: dict[str, object] = {"schema_version": 1, "author": self.author}
++        if self.source_sha256 is not None:
++            wire["source_sha256"] = self.source_sha256
++        if self.date is not None:
++            wire["date"] = self.date
++        if self.initials is not None:
++            wire["initials"] = self.initials
++        if self.existing_revisions != "refuse":
++            wire["existing_revisions"] = self.existing_revisions
++        wire["operations"] = [dict(op) for op in self.operations]
++        return wire
++
++    def to_json(self) -> str:
++        """The wire form as JSON (what ``jubarte edit --plan`` reads)."""
++        return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
++
++
++def _with_optional(op: dict[str, object], **extra: str | None) -> dict[str, object]:
++    for key, value in extra.items():
++        if value is not None:
++            op[key] = value
++    if "id" in op:
++        # Keep the id first for readable plans.
++        op = {"id": op.pop("id"), **op}
++    return op
++
++
++def plan_json(plan: EditPlan | Mapping[str, object] | str) -> str:
++    """Wire JSON for a builder, a plain dict plan, or already-serialized JSON."""
++    if isinstance(plan, EditPlan):
++        return plan.to_json()
++    if isinstance(plan, str):
++        return plan
++    if isinstance(plan, Mapping):
++        return json.dumps(plan, ensure_ascii=False)
++    raise TypeError("plan must be an EditPlan, a dict, or a JSON string")
++
++
++@dataclass(frozen=True, slots=True)
++class EditOutcome:
++    """One operation's result."""
++
++    id: str
++    kind: str
++    status: Literal["ok", "failed", "skipped"]
++    matches: int
++    paragraph: str | None = None
++    context: str | None = None
++    comment_id: int | None = None
++    code: str | None = None
++    message: str | None = None
++
++
++@dataclass(frozen=True, slots=True)
++class RevisionCounts:
++    """Comparer revision records in the redline."""
++
++    inserted: int
++    deleted: int
++    moved: int
++    format_changed: int
++    total: int
++
++
++@dataclass(frozen=True, slots=True)
++class ParagraphDelta:
++    """Body paragraph count before and after."""
++
++    from_: int
++    to: int
++
++
++@dataclass(frozen=True, slots=True)
++class EditReport:
++    """What happened, per operation and overall."""
++
++    schema_version: int
++    ok: bool
++    source_sha256: str
++    base_sha256: str
++    guarded: bool
++    author: str
++    date: str
++    existing_revisions: str
++    paragraphs: ParagraphDelta
++    operations: tuple[EditOutcome, ...]
++    comments_added: int
++    revisions: RevisionCounts
++    _json: str = field(repr=False, compare=False, default="")
++
++    def to_jsonl(self) -> str:
++        """JSON lines (``load``, one ``op`` per operation, ``summary``)."""
++        from . import _native
++
++        return _native.report_jsonl(self._json)
++
++
++def _decode_outcomes(rows: list[dict[str, object]]) -> tuple[EditOutcome, ...]:
++    return tuple(EditOutcome(**row) for row in rows)  # type: ignore[arg-type]
++
++
++def _decode_report(payload: str) -> EditReport:
++    data = json.loads(payload)
++    return EditReport(
++        schema_version=data["schema_version"],
++        ok=data["ok"],
++        source_sha256=data["source_sha256"],
++        base_sha256=data["base_sha256"],
++        guarded=data["guarded"],
++        author=data["author"],
++        date=data["date"],
++        existing_revisions=data["existing_revisions"],
++        paragraphs=ParagraphDelta(from_=data["paragraphs"]["from"], to=data["paragraphs"]["to"]),
++        operations=_decode_outcomes(data["operations"]),
++        comments_added=data["comments_added"],
++        revisions=RevisionCounts(**data["revisions"]),
++        _json=payload,
++    )
++
++
++# ---------------------------------------------------------------------------
++# Rendering
++# ---------------------------------------------------------------------------
++
++
++@dataclass(frozen=True, slots=True)
++class FontResolution:
++    """One requested family/style and the physical face that painted it."""
++
++    requested: str
++    step: str
++    physical: str
++    bold: bool
++    italic: bool
++    synthetic: bool
++
++
++@dataclass(frozen=True, slots=True)
++class PageText:
++    """Text painted on one page, one line per baseline."""
++
++    index: int
++    text: str
++
++
++@dataclass(frozen=True, slots=True)
++class RenderReport:
++    """Page count, page text and font resolutions from one layout pass."""
++
++    page_count: int
++    pages: tuple[PageText, ...]
++    fonts: tuple[FontResolution, ...]
++
++
++@dataclass(frozen=True, slots=True)
++class Rendered:
++    """Output of ``Document.render``."""
++
++    pdf: bytes | None
++    pngs: tuple[bytes, ...]
++    report: RenderReport
++
++
++def _decode_render_report(payload: str) -> RenderReport:
++    data = json.loads(payload)
++    return RenderReport(
++        page_count=data["page_count"],
++        pages=tuple(PageText(**p) for p in data["pages"]),
++        fonts=tuple(FontResolution(**f) for f in data["fonts"]),
++    )
+diff --git a/jubarte-python/src/lib.rs b/jubarte-python/src/lib.rs
+index a428eee..54bd7ba 100644
+--- a/jubarte-python/src/lib.rs
++++ b/jubarte-python/src/lib.rs
+@@ -2,14 +2,17 @@
+ //
+ // SPDX-License-Identifier: AGPL-3.0-only
+ 
+-//! Python bindings for the canonical **jubarte-redlines** Word-mode compare.
++//! Python bindings for the canonical **jubarte-redlines** engine.
+ //!
+ //! Built with **PyO3** + **maturin** as the `jubarte_redlines._native`
+-//! extension module; the public Python surface (including `get_revisions`
+-//! returning parsed objects) lives in `python/jubarte_redlines/__init__.py`.
++//! extension module; the public Python surface (typed `Document`, edit plans,
++//! the `python -m jubarte_redlines` CLI) lives in `python/jubarte_redlines/`.
+ //!
+-//! Every entry point copies nothing extra and detaches from the interpreter for the whole
+-//! pure-Rust compute, so long compares don't block other Python threads.
++//! Every entry point detaches from the interpreter for the whole pure-Rust
++//! compute, so long operations don't block other Python threads. Structured
++//! results cross the boundary as JSON strings produced by the engine's own
++//! serializers; the Python layer turns them into frozen dataclasses and never
++//! interprets OOXML itself.
+ 
+ use pyo3::create_exception;
+ use pyo3::exceptions::PyException;
+@@ -27,6 +30,19 @@ fn err(e: impl std::fmt::Display) -> PyErr {
+     JubarteError::new_err(e.to_string())
+ }
+ 
++fn pdf_options(
++    compress: bool,
++    revisions: &str,
++    revision_palette: Option<&str>,
++) -> PyResult<jubarte::convert::PdfOptions> {
++    let revisions = jubarte::convert::RevisionStyle::from_choice(revisions, revision_palette)
++        .map_err(JubarteError::new_err)?;
++    Ok(jubarte::convert::PdfOptions {
++        compress,
++        revisions,
++    })
++}
++
+ /// Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
+ ///
+ /// Mirrors `jubarte::document_comparer::compare_documents`; `date` (ISO-8601
+@@ -100,18 +116,134 @@ fn docx_to_pdf(
+     revisions: &str,
+     revision_palette: Option<&str>,
+ ) -> PyResult<Py<PyBytes>> {
+-    let revisions = jubarte::convert::RevisionStyle::from_choice(revisions, revision_palette)
+-        .map_err(JubarteError::new_err)?;
+-    let options = jubarte::convert::PdfOptions {
+-        compress,
+-        revisions,
+-    };
++    let options = pdf_options(compress, revisions, revision_palette)?;
+     let out = py
+         .detach(|| jubarte::convert::docx_to_pdf_with(docx, options))
+         .map_err(err)?;
+     Ok(PyBytes::new(py, &out).unbind())
+ }
+ 
++/// Rasterize every page to PNG at `dpi` → list of PNG bytes, page order.
++#[pyfunction]
++#[pyo3(signature = (docx, dpi = 96.0, revisions = "conventional", revision_palette = None))]
++fn docx_to_png(
++    py: Python<'_>,
++    docx: &[u8],
++    dpi: f32,
++    revisions: &str,
++    revision_palette: Option<&str>,
++) -> PyResult<Vec<Py<PyBytes>>> {
++    let options = pdf_options(false, revisions, revision_palette)?;
++    let pages = py
++        .detach(|| jubarte::convert::docx_to_png(docx, options, dpi))
++        .map_err(err)?;
++    Ok(pages
++        .iter()
++        .map(|png| PyBytes::new(py, png).unbind())
++        .collect())
++}
++
++/// One layout pass → `(pdf_bytes | None, [png_bytes, ...], report_json)`.
++///
++/// `report_json` is `{"page_count", "pages": [{"index", "text"}], "fonts": [...]}`.
++#[pyfunction]
++#[pyo3(signature = (docx, pdf = true, png_dpi = None, compress = false, revisions = "conventional", revision_palette = None))]
++fn render(
++    py: Python<'_>,
++    docx: &[u8],
++    pdf: bool,
++    png_dpi: Option<f32>,
++    compress: bool,
++    revisions: &str,
++    revision_palette: Option<&str>,
++) -> PyResult<(Option<Py<PyBytes>>, Vec<Py<PyBytes>>, String)> {
++    let options = pdf_options(compress, revisions, revision_palette)?;
++    let request = jubarte::convert::RenderRequest { pdf, png_dpi };
++    let rendered = py
++        .detach(|| jubarte::convert::render(docx, options, request))
++        .map_err(err)?;
++    Ok((
++        rendered.pdf.map(|b| PyBytes::new(py, &b).unbind()),
++        rendered
++            .pngs
++            .iter()
++            .map(|png| PyBytes::new(py, png).unbind())
++            .collect(),
++        rendered.report.to_json(),
++    ))
++}
++
++/// SHA-256 (lowercase hex) of the bytes: the snapshot guard of edit plans.
++#[pyfunction]
++fn source_sha256(docx: &[u8]) -> String {
++    jubarte::inspect::source_sha256(docx)
++}
++
++/// The inspection snapshot as JSON (`schema_version`, `source_sha256`,
++/// `summary`, `paragraphs`).
++#[pyfunction]
++fn inspect_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
++    py.detach(|| jubarte::inspect::inspect_json(docx))
++        .map_err(err)
++}
++
++/// Body paragraphs as Markdown with `[body:p:N]` ids.
++#[pyfunction]
++fn markdown(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
++    py.detach(|| jubarte::inspect::markdown(docx)).map_err(err)
++}
++
++/// Apply an edit plan (JSON) → `(ok, clean | None, redline | None, json)`.
++///
++/// On success `json` is the report; on refusal it is the structured error
++/// (`code`, `operation`, `message`, `outcomes`) and both documents are `None`.
++/// Refusals are data, not exceptions: the Python layer raises
++/// `EditPlanError` from them so the outcomes stay attached.
++#[pyfunction]
++fn edit_json(
++    py: Python<'_>,
++    docx: &[u8],
++    plan_json: &str,
++) -> PyResult<(bool, Option<Py<PyBytes>>, Option<Py<PyBytes>>, String)> {
++    let result = py.detach(|| jubarte::edit::apply_plan_json(docx, plan_json));
++    Ok(match result {
++        Ok(r) => (
++            true,
++            Some(PyBytes::new(py, &r.clean).unbind()),
++            Some(PyBytes::new(py, &r.redline).unbind()),
++            serde_json::to_string(&r.report).map_err(err)?,
++        ),
++        Err(e) => (false, None, None, serde_json::to_string(&e).map_err(err)?),
++    })
++}
++
++/// Resolve an edit plan without producing documents → `(ok, json)`; `json`
++/// is the report or the structured error.
++#[pyfunction]
++fn preview_json(py: Python<'_>, docx: &[u8], plan_json: &str) -> PyResult<(bool, String)> {
++    let result = py.detach(|| {
++        let plan = jubarte::edit::EditPlan::from_json(plan_json)?;
++        jubarte::edit::preview_plan(docx, &plan)
++    });
++    Ok(match result {
++        Ok(report) => (true, serde_json::to_string(&report).map_err(err)?),
++        Err(e) => (false, serde_json::to_string(&e).map_err(err)?),
++    })
++}
++
++/// The JSON-lines form of a report JSON (`load`, `op`..., `summary`).
++#[pyfunction]
++fn report_jsonl(report_json: &str) -> PyResult<String> {
++    let report: jubarte::edit::EditReport = serde_json::from_str(report_json).map_err(err)?;
++    Ok(report.to_jsonl())
++}
++
++/// What this build can do (`runtime: "python"`).
++#[pyfunction]
++fn capabilities_json() -> String {
++    jubarte::capabilities::capabilities_json("python")
++}
++
+ #[pymodule]
+ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+@@ -121,5 +253,14 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+     m.add_function(wrap_pyfunction!(reject_revisions, m)?)?;
+     m.add_function(wrap_pyfunction!(get_revisions_json, m)?)?;
+     m.add_function(wrap_pyfunction!(docx_to_pdf, m)?)?;
++    m.add_function(wrap_pyfunction!(docx_to_png, m)?)?;
++    m.add_function(wrap_pyfunction!(render, m)?)?;
++    m.add_function(wrap_pyfunction!(source_sha256, m)?)?;
++    m.add_function(wrap_pyfunction!(inspect_json, m)?)?;
++    m.add_function(wrap_pyfunction!(markdown, m)?)?;
++    m.add_function(wrap_pyfunction!(edit_json, m)?)?;
++    m.add_function(wrap_pyfunction!(preview_json, m)?)?;
++    m.add_function(wrap_pyfunction!(report_jsonl, m)?)?;
++    m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
+     Ok(())
+ }
+diff --git a/jubarte-python/tests/docx_fixture.py b/jubarte-python/tests/docx_fixture.py
+new file mode 100644
+index 0000000..6fe400c
+--- /dev/null
++++ b/jubarte-python/tests/docx_fixture.py
+@@ -0,0 +1,66 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++"""In-memory DOCX builder for tests (mirrors tests/common/docx.rs)."""
++
++from __future__ import annotations
++
++from io import BytesIO
++from xml.sax.saxutils import escape
++from zipfile import ZIP_DEFLATED, ZipFile
++
++W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
++R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
++
++
++def para(text: str) -> str:
++    return f'<w:p><w:r><w:t xml:space="preserve">{escape(text)}</w:t></w:r></w:p>'
++
++
++def run(text: str, bold: bool, italic: bool, highlight: str | None) -> str:
++    rpr = ""
++    if bold:
++        rpr += "<w:b/>"
++    if italic:
++        rpr += "<w:i/>"
++    if highlight:
++        rpr += f'<w:highlight w:val="{highlight}"/>'
++    if rpr:
++        rpr = f"<w:rPr>{rpr}</w:rPr>"
++    return f'<w:r>{rpr}<w:t xml:space="preserve">{escape(text)}</w:t></w:r>'
++
++
++def docx(body_xml: str) -> bytes:
++    document = (
++        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
++        f'<w:document xmlns:w="{W_NS}" xmlns:r="{R_NS}"><w:body>{body_xml}'
++        '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
++        '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>'
++        "</w:sectPr></w:body></w:document>"
++    )
++    content_types = (
++        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
++        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
++        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
++        '<Default Extension="xml" ContentType="application/xml"/>'
++        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
++        "</Types>"
++    )
++    rels = (
++        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
++        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
++        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
++        "</Relationships>"
++    )
++    doc_rels = (
++        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
++        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
++    )
++    buffer = BytesIO()
++    with ZipFile(buffer, "w", ZIP_DEFLATED) as zf:
++        zf.writestr("[Content_Types].xml", content_types)
++        zf.writestr("_rels/.rels", rels)
++        zf.writestr("word/document.xml", document)
++        zf.writestr("word/_rels/document.xml.rels", doc_rels)
++    return buffer.getvalue()
+diff --git a/jubarte-python/tests/test_agent_api.py b/jubarte-python/tests/test_agent_api.py
+new file mode 100644
+index 0000000..2aabd6f
+--- /dev/null
++++ b/jubarte-python/tests/test_agent_api.py
+@@ -0,0 +1,239 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++"""The agent-facing Python surface: inspect, markdown, edit plans, PNG pages,
++render reports and the capability manifest. Every test runs against the
++rebuilt native module with in-memory documents; nothing is mocked."""
++
++from __future__ import annotations
++
++import json
++
++import pytest
++
++import jubarte_redlines as jubarte
++from jubarte_redlines import (
++    Document,
++    EditPlan,
++    EditPlanError,
++    EditReport,
++    Paragraph,
++    Snapshot,
++)
++
++from docx_fixture import docx, para, run
++
++
++def letter() -> Document:
++    body = (
++        para("Heading")
++        + "<w:p>"
++        + run("(a) ", False, False, None)
++        + run("Confidentiality. ", True, False, None)
++        + run("You may disclose it only to your attorneys, retained experts, and process servers.", False, False, None)
++        + "</w:p>"
++        + para("The individual signs in his or her individual capacity.")
++        + para("Sections 1(g), 2(e), 3 survive.")
++    )
++    return Document.from_bytes(docx(body))
++
++
++def test_inspect_returns_typed_snapshot_with_ids_spans_and_summary() -> None:
++    snap = letter().inspect()
++    assert isinstance(snap, Snapshot)
++    assert snap.schema_version == 1
++    assert len(snap.source_sha256) == 64
++    assert snap.summary.paragraphs == 4
++    assert snap.summary.tables == 0
++    p = snap.paragraphs[1]
++    assert isinstance(p, Paragraph)
++    assert p.id == "body:p:1"
++    assert p.text.startswith("(a) Confidentiality. You may")
++    assert p.runs[1].bold and p.runs[1].start == 4
++    assert p.limitations == ()
++    assert snap.paragraph("body:p:2").text.startswith("The individual")
++    assert snap.unique(starts_with="Sections").index == 3
++    with pytest.raises(LookupError):
++        snap.unique(contains="nowhere")
++    with pytest.raises(LookupError):
++        snap.paragraph("body:p:99")
++
++
++def test_markdown_carries_paragraph_ids_and_formatting() -> None:
++    md = letter().markdown()
++    assert md.startswith("[body:p:0] Heading\n\n[body:p:1] (a) **Confidentiality.** You may")
++
++
++def test_sha256_matches_the_snapshot_guard() -> None:
++    doc = letter()
++    assert doc.sha256() == doc.inspect().source_sha256
++
++
++def test_edit_plan_builder_serializes_the_wire_schema() -> None:
++    plan = (
++        EditPlan(author="Claude", date="2026-09-25T12:00:00Z")
++        .replace("body:p:2", find="his or her", replacement="an", id="pronoun")
++        .insert({"starts_with": "Sections 1(g), "}, after="1(g), ", text="2(c), ", comment="survival")
++        .delete(3, find="2(e), ")
++        .comment(0, text="Heading note")
++        .insert_paragraph(1, runs=[{"text": "(g) "}, {"text": "Automated Tools. ", "bold": True}], position="after")
++        .delete_paragraph(0)
++    )
++    wire = json.loads(plan.to_json())
++    assert wire["schema_version"] == 1
++    assert wire["author"] == "Claude"
++    assert "source_sha256" not in wire
++    ops = wire["operations"]
++    assert ops[0] == {"id": "pronoun", "kind": "replace", "paragraph": {"id": "body:p:2"}, "find": "his or her", "replacement": "an"}
++    assert ops[1]["paragraph"] == {"starts_with": "Sections 1(g), "}
++    assert ops[1]["comment"] == "survival"
++    assert ops[2] == {"kind": "delete", "paragraph": {"index": 3}, "find": "2(e), "}
++    assert ops[4]["runs"][1] == {"text": "Automated Tools. ", "bold": True}
++    assert ops[5] == {"kind": "delete_paragraph", "paragraph": {"index": 0}}
++    # Builders return new plans; the original is untouched.
++    base = EditPlan(author="A")
++    extended = base.delete_paragraph(0)
++    assert base.operations == () and len(extended.operations) == 1
++    bound = plan.for_document(letter())
++    assert json.loads(bound.to_json())["source_sha256"] == letter().sha256()
++    with pytest.raises(ValueError):
++        EditPlan(author="  ")
++    with pytest.raises(ValueError):
++        EditPlan(author="A").insert(0, text="x")
++    with pytest.raises(ValueError):
++        EditPlan(author="A").insert(0, after="a", before="b", text="x")
++
++
++def test_edit_applies_plan_and_returns_clean_redline_and_report() -> None:
++    doc = letter()
++    plan = (
++        EditPlan(author="Claude", date="2026-09-25T12:00:00Z")
++        .for_document(doc)
++        .replace("body:p:2", find="his or her", replacement="an")
++        .insert({"starts_with": "Sections 1(g), "}, after="1(g), ", text="2(c), ", comment="post-disclosure duty")
++    )
++    result = doc.edit(plan)
++    assert isinstance(result.clean, Document) and isinstance(result.redline, Document)
++    texts = [p.text for p in result.clean.inspect().paragraphs]
++    assert texts[2] == "The individual signs in an individual capacity."
++    assert texts[3] == "Sections 1(g), 2(c), 2(e), 3 survive."
++    accepted = [p.text for p in result.redline.accept().inspect().paragraphs]
++    assert accepted == texts
++    report = result.report
++    assert isinstance(report, EditReport)
++    assert report.ok and report.guarded
++    assert report.source_sha256 == doc.sha256()
++    assert [o.status for o in report.operations] == ["ok", "ok"]
++    assert report.operations[0].context == "individual signs in {his or her→an} individual capacity"
++    assert report.operations[1].comment_id == 0
++    assert report.comments_added == 1
++    assert report.revisions.inserted >= 1 and report.revisions.deleted >= 1
++    assert result.redline.inspect().summary.comments == 1
++    lines = [json.loads(line) for line in report.to_jsonl().splitlines()]
++    assert lines[0]["ev"] == "load" and lines[-1]["ev"] == "summary"
++    assert lines[1]["at"] == "body:p:2"
++    # The source is untouched.
++    assert doc.sha256() == report.source_sha256
++
++
++def test_edit_accepts_a_plain_dict_plan_and_refusals_carry_outcomes() -> None:
++    doc = letter()
++    plan = {
++        "schema_version": 1,
++        "author": "Claude",
++        "operations": [
++            {"id": "ok", "kind": "delete", "paragraph": {"index": 0}, "find": "Heading"},
++            {"id": "bad", "kind": "replace", "paragraph": {"index": 3}, "find": "nowhere", "replacement": "x"},
++        ],
++    }
++    with pytest.raises(EditPlanError) as info:
++        doc.edit(plan)
++    e = info.value
++    assert isinstance(e, jubarte.JubarteError)
++    assert e.code == "ANCHOR_NOT_FOUND"
++    assert e.operation == "bad"
++    assert [(o.id, o.status) for o in e.outcomes] == [("ok", "ok"), ("bad", "failed")]
++    assert "ANCHOR_NOT_FOUND" in str(e)
++    # Stale guard.
++    stale = dict(plan, source_sha256="0" * 64, operations=plan["operations"][:1])
++    with pytest.raises(EditPlanError) as info:
++        doc.edit(stale)
++    assert info.value.code == "STALE_SOURCE"
++    # Preview resolves without producing documents.
++    report = doc.preview(dict(plan, operations=plan["operations"][:1]))
++    assert report.ok and report.operations[0].context == "{-Heading}"
++    assert report.revisions.total == 0
++    with pytest.raises(EditPlanError) as info:
++        doc.preview(plan)
++    assert info.value.code == "ANCHOR_NOT_FOUND"
++    # A string is JSON pass-through (the CLI's plan file); anything else is a type error.
++    with pytest.raises(EditPlanError) as info:
++        doc.edit("not a plan")
++    assert info.value.code == "INVALID_PLAN"
++    with pytest.raises(TypeError):
++        doc.edit(42)  # type: ignore[arg-type]
++
++
++def test_png_pages_and_render_report_come_from_one_layout() -> None:
++    doc = letter()
++    pngs = doc.to_png(dpi=24)
++    assert len(pngs) == 1
++    assert pngs[0][1:4] == b"PNG"
++    rendered = doc.render(pdf=True, png_dpi=24)
++    assert rendered.pdf is not None and rendered.pdf.startswith(b"%PDF")
++    assert len(rendered.pngs) == 1
++    assert rendered.report.page_count == 1
++    assert "Heading" in rendered.report.pages[0].text
++    assert all(f.requested for f in rendered.report.fonts)
++    only_report = doc.render(pdf=False)
++    assert only_report.pdf is None and only_report.pngs == ()
++    assert only_report.report.page_count == 1
++    with pytest.raises(jubarte.JubarteError):
++        Document.from_bytes(b"nope").to_png()
++
++
++def test_capabilities_manifest_reports_python_runtime() -> None:
++    caps = jubarte.capabilities()
++    assert caps["schema_version"] == 1
++    assert caps["runtime"] == "python"
++    assert caps["engine_version"] == jubarte.__version__
++    assert caps["operations"]["edit"] is True
++    assert "insert_paragraph" in caps["edit_operations"]
++
++
++def test_plan_builder_validates_selectors_runs_and_options() -> None:
++    plan = EditPlan(author="A", initials="AA", existing_revisions="accept")
++    wire = plan.to_dict()
++    assert wire["initials"] == "AA" and wire["existing_revisions"] == "accept"
++    p = (
++        plan.insert({"contains": "x"}, before="y", text="z")
++        .insert({"index": 2}, position="start", text="q")
++        .comment({"id": "body:p:1"}, text="n", find="f")
++        .insert_paragraph(0, runs=["plain", {"text": "b", "bold": True}], style="Sub")
++    )
++    ops = p.to_dict()["operations"]
++    assert ops[0]["paragraph"] == {"contains": "x"} and ops[0]["before"] == "y"
++    assert ops[1]["position"] == "start"
++    assert ops[2]["find"] == "f"
++    assert ops[3]["style"] == "Sub" and ops[3]["runs"][0] == {"text": "plain"}
++    with pytest.raises(ValueError):
++        EditPlan(author="A", existing_revisions="maybe")  # type: ignore[arg-type]
++    for bad in (True, 1.5, {"index": "1"}, {"id": 1}, {"index": 1, "id": "x"}, {"nope": "x"}):
++        with pytest.raises(TypeError):
++            EditPlan(author="A").delete_paragraph(bad)  # type: ignore[arg-type]
++    with pytest.raises(ValueError):
++        EditPlan(author="A").insert_paragraph(0, runs=[])
++    with pytest.raises(ValueError):
++        EditPlan(author="A").insert_paragraph(0, runs=[{"bold": True}])
++    with pytest.raises(ValueError):
++        EditPlan(author="A").insert_paragraph(0, runs=[{"text": "t", "size": 12}])
++    snap = letter().inspect()
++    with pytest.raises(ValueError):
++        snap.unique(starts_with="a", contains="b")
++    with pytest.raises(ValueError):
++        snap.unique()
++    from jubarte_redlines.models import plan_json
++
++    with pytest.raises(TypeError):
++        plan_json(3.0)  # type: ignore[arg-type]
+diff --git a/jubarte-python/tests/test_cli.py b/jubarte-python/tests/test_cli.py
+new file mode 100644
+index 0000000..cef8258
+--- /dev/null
++++ b/jubarte-python/tests/test_cli.py
+@@ -0,0 +1,155 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++"""``python -m jubarte_redlines``: the same commands, flags, file names and
++exit codes as the ``jubarte`` binary, driven in-process."""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++import pytest
++
++from jubarte_redlines.__main__ import main
++
++from docx_fixture import docx, para
++
++
++@pytest.fixture
++def letter(tmp_path: Path) -> Path:
++    body = para("Heading") + para("The individual signs in his or her individual capacity.") + para("Sections 1(g), 2(e), 3 survive.")
++    path = tmp_path / "letter.docx"
++    path.write_bytes(docx(body))
++    return path
++
++
++def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> None:
++    assert main(["inspect", str(letter), "--json"]) == 0
++    snapshot = json.loads(capsys.readouterr().out)
++    assert snapshot["summary"]["paragraphs"] == 3
++    assert main(["inspect", str(letter)]) == 0
++    out = capsys.readouterr().out
++    assert "paragraphs: 3" in out and "body:p:2" in out
++    assert main(["text", str(letter)]) == 0
++    assert capsys.readouterr().out.startswith("[body:p:0] Heading\n\n[body:p:1] The individual")
++
++
++def test_edit_writes_bundle_and_refuses_existing_dir(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
++    plan = {
++        "schema_version": 1,
++        "author": "Claude",
++        "date": "2026-09-25T12:00:00Z",
++        "operations": [
++            {"id": "pronoun", "kind": "replace", "paragraph": {"index": 1}, "find": "his or her", "replacement": "an"},
++            {"id": "survival", "kind": "insert", "paragraph": {"starts_with": "Sections 1(g), "}, "after": "1(g), ", "text": "2(c), ", "comment": "duty"},
++        ],
++    }
++    plan_path = tmp_path / "plan.json"
++    plan_path.write_text(json.dumps(plan))
++    out_dir = tmp_path / "review"
++    code = main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir), "--pdf", "--png", "--dpi", "24"])
++    assert code == 0, capsys.readouterr()
++    for name in ["clean.docx", "redline.docx", "report.jsonl", "redline.pdf", "clean.pdf", "redline-page-01.png", "clean-page-01.png"]:
++        assert (out_dir / name).is_file(), name
++    lines = [json.loads(l) for l in (out_dir / "report.jsonl").read_text().splitlines()]
++    assert lines[0]["ev"] == "load"
++    assert lines[1]["id"] == "pronoun"
++    assert lines[2]["comment_id"] == 0
++    render = next(l for l in lines if l["ev"] == "render")
++    assert render["pages"] == {"redline": 1, "clean": 1}
++    save = next(l for l in lines if l["ev"] == "save")
++    assert any(o["f"] == "redline.docx" for o in save["outputs"])
++    assert lines[-1] == {**lines[-1], "ev": "summary", "status": "ok"}
++    stdout = capsys.readouterr().out
++    assert '"ev":"summary"' in stdout or '"ev": "summary"' in stdout
++    # Existing directory refused without --force, accepted with it.
++    assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir)]) == 1
++    assert "already exists" in capsys.readouterr().err
++    assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir), "--force"]) == 0
++
++
++def test_edit_failure_exits_3_writes_nothing_and_reports(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
++    plan = {
++        "schema_version": 1,
++        "author": "Claude",
++        "operations": [
++            {"id": "ok", "kind": "replace", "paragraph": {"index": 1}, "find": "his or her", "replacement": "an"},
++            {"id": "bad", "kind": "replace", "paragraph": {"index": 2}, "find": "nowhere", "replacement": "x"},
++        ],
++    }
++    plan_path = tmp_path / "plan.json"
++    plan_path.write_text(json.dumps(plan))
++    out_dir = tmp_path / "review"
++    assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir)]) == 3
++    captured = capsys.readouterr()
++    assert not out_dir.exists()
++    assert "ANCHOR_NOT_FOUND" in captured.err
++    lines = [json.loads(l) for l in captured.out.splitlines()]
++    assert [(l["id"], l["status"]) for l in lines if l["ev"] == "op"] == [("ok", "ok"), ("bad", "failed")]
++    assert lines[-1]["status"] == "failed"
++    # Dry run reports and writes nothing.
++    plan["operations"] = plan["operations"][:1]
++    plan_path.write_text(json.dumps(plan))
++    assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir), "--dry-run"]) == 0
++    assert not out_dir.exists()
++    assert "{his or her→an}" in capsys.readouterr().out
++
++
++def test_convert_pdf_png_and_report(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
++    report = tmp_path / "pages.json"
++    assert main(["convert", str(letter), "--png", "--dpi", "24", "--report", str(report)]) == 0
++    assert (tmp_path / "letter-page-01.png").is_file()
++    assert not (tmp_path / "letter.pdf").exists()
++    data = json.loads(report.read_text())
++    assert data["page_count"] == 1 and "Heading" in data["pages"][0]["text"]
++    assert main(["convert", str(letter)]) == 0
++    assert (tmp_path / "letter.pdf").is_file()
++    assert main(["convert", str(letter)]) == 1, "no clobber without --force"
++    assert "already exists" in capsys.readouterr().err
++    assert main(["convert", str(letter), "--force", "-o", str(tmp_path / "out.pdf")]) == 0
++    assert (tmp_path / "out.pdf").is_file()
++
++
++def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
++    a = tmp_path / "a.docx"
++    b = tmp_path / "b.docx"
++    a.write_bytes(docx(para("alpha beta")))
++    b.write_bytes(docx(para("alpha gamma")))
++    redline = tmp_path / "redline.docx"
++    assert main(["compare", str(a), str(b), "-o", str(redline), "--author", "Legal"]) == 0
++    assert redline.is_file()
++    assert "wrote" in capsys.readouterr().out
++    assert main(["revisions", str(redline), "--json"]) == 0
++    rows = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
++    assert {r["type"] for r in rows} >= {"Inserted", "Deleted"}
++    assert all(r["author"] == "Legal" for r in rows)
++    assert main(["revisions", str(redline)]) == 0
++    assert "revision(s)" in capsys.readouterr().out
++    clean = tmp_path / "clean.docx"
++    assert main(["accept", str(redline), "-o", str(clean)]) == 0
++    assert main(["text", str(clean)]) == 0
++    assert "alpha gamma" in capsys.readouterr().out
++    base = tmp_path / "base.docx"
++    assert main(["reject", str(redline), "-o", str(base)]) == 0
++    assert main(["text", str(base)]) == 0
++    assert "alpha beta" in capsys.readouterr().out
++    assert main(["accept", str(redline), "-o", str(clean)]) == 1, "no clobber"
++
++
++def test_capabilities_and_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
++    assert main(["capabilities", "--json"]) == 0
++    caps = json.loads(capsys.readouterr().out)
++    assert caps["runtime"] == "python" and caps["operations"]["png"] is True
++    missing = tmp_path / "missing.docx"
++    assert main(["inspect", str(missing)]) == 1
++    assert "missing.docx" in capsys.readouterr().err
++    bad = tmp_path / "bad.docx"
++    bad.write_bytes(b"not a zip")
++    assert main(["text", str(bad)]) == 1
++    assert "error" in capsys.readouterr().err
++    with pytest.raises(SystemExit):
++        main(["--help"])
++    with pytest.raises(SystemExit):
++        main([])
+diff --git a/jubarte-python/tests/test_document.py b/jubarte-python/tests/test_document.py
+new file mode 100644
+index 0000000..fc191d0
+--- /dev/null
++++ b/jubarte-python/tests/test_document.py
+@@ -0,0 +1,151 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++"""All unit fixtures stay in memory; filesystem reads are integration tests."""
++
++from dataclasses import FrozenInstanceError
++from io import BytesIO
++from xml.etree import ElementTree
++from xml.sax.saxutils import escape
++from zipfile import ZipFile, ZipInfo
++
++import pytest
++
++import jubarte_redlines as jubarte
++
++W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
++
++
++def make_document(text: str) -> bytes:
++    parts = {
++        "[Content_Types].xml": (
++            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
++            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
++            '<Default Extension="xml" ContentType="application/xml"/>'
++            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
++            '</Types>'
++        ),
++        "_rels/.rels": (
++            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
++            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
++            '</Relationships>'
++        ),
++        "word/document.xml": (
++            f'<w:document xmlns:w="{W}"><w:body><w:p><w:r><w:t>'
++            f'{escape(text)}</w:t></w:r></w:p><w:sectPr/></w:body></w:document>'
++        ),
++    }
++    data = BytesIO()
++    with ZipFile(data, "w") as package:
++        for path, content in parts.items():
++            # ZipInfo's fixed DOS epoch avoids the wall clock in unit fixtures.
++            package.writestr(ZipInfo(path), content)
++    return data.getvalue()
++
++
++def visible_text(data: bytes) -> str:
++    with ZipFile(BytesIO(data)) as package:
++        root = ElementTree.fromstring(package.read("word/document.xml"))
++    return "".join(node.text or "" for node in root.iter(f"{{{W}}}t"))
++
++
++def test_document_is_an_immutable_snapshot_with_safe_repr():
++    data = make_document("private contract")
++    document = jubarte.Document.from_bytes(data)
++    assert document.to_bytes() is data
++    assert repr(document) == f"Document(size={len(data)})"
++    assert "private contract" not in repr(document)
++    with pytest.raises(FrozenInstanceError):
++        document._data = b"different"
++
++
++@pytest.mark.parametrize("value", ["contract.docx", bytearray(b"zip"), memoryview(b"zip")])
++def test_document_rejects_paths_and_mutable_buffers_as_bytes(value):
++    with pytest.raises(TypeError, match="requires bytes"):
++        jubarte.Document.from_bytes(value)
++
++
++def test_compare_round_trip_preserves_both_inputs_and_revision_metadata():
++    old = jubarte.Document.from_bytes(make_document("The price is ten dollars."))
++    new = jubarte.Document.from_bytes(make_document("The price is twenty dollars."))
++    old_bytes, new_bytes = old.to_bytes(), new.to_bytes()
++    redline = old.compare(
++        new, author="Reviewer", options=jubarte.CompareOptions(date="2026-09-26T14:30:00Z")
++    )
++    assert visible_text(redline.accept().to_bytes()) == "The price is twenty dollars."
++    assert visible_text(redline.reject().to_bytes()) == "The price is ten dollars."
++    revisions = redline.revisions()
++    assert {row.kind for row in revisions} >= {"Inserted", "Deleted"}
++    assert {row.author for row in revisions} == {"Reviewer"}
++    assert {row.date for row in revisions} == {"2026-09-26T14:30:00Z"}
++    assert old.to_bytes() == old_bytes
++    assert new.to_bytes() == new_bytes
++
++
++def test_compare_default_is_repeatable_and_keeps_legacy_fixed_date():
++    old = jubarte.Document.from_bytes(make_document("The payment is due today."))
++    new = jubarte.Document.from_bytes(make_document("The payment is due tomorrow."))
++    first = old.compare(new, author="Reviewer")
++    second = old.compare(new, author="Reviewer")
++    with ZipFile(BytesIO(first.to_bytes())) as left, ZipFile(BytesIO(second.to_bytes())) as right:
++        assert {name: left.read(name) for name in left.namelist()} == {
++            name: right.read(name) for name in right.namelist()
++        }
++    assert first.revisions() == second.revisions()
++    assert {row.date for row in first.revisions()} == {"1970-01-01T00:00:00Z"}
++
++
++@pytest.mark.parametrize(
++    ("kwargs", "error", "message"),
++    [
++        ({"modified": b"not a Document", "author": "A"}, TypeError, "Document"),
++        ({"author": None}, TypeError, "author"),
++        ({"author": "  "}, ValueError, "author"),
++        ({"author": "A", "options": {}}, TypeError, "CompareOptions"),
++    ],
++)
++def test_compare_rejects_bad_arguments_before_computing(kwargs, error, message):
++    document = jubarte.Document.from_bytes(make_document("unchanged"))
++    args = {"modified": document, **kwargs}
++    with pytest.raises(error, match=message):
++        document.compare(**args)
++
++
++@pytest.mark.integration
++def test_pdf_uses_native_renderer_without_writing_a_file():
++    document = jubarte.Document.from_bytes(make_document("A PDF rendered in memory."))
++    assert document.to_pdf().startswith(b"%PDF-")
++    assert document.to_pdf(options=jubarte.PdfOptions(compress=True, revisions="word")).startswith(b"%PDF-")
++    with pytest.raises(TypeError, match="PdfOptions"):
++        document.to_pdf(options={})
++
++
++def test_native_document_errors_keep_the_public_exception():
++    document = jubarte.Document.from_bytes(b"not an OPC package")
++    with pytest.raises(jubarte.JubarteError):
++        document.accept()
++    with pytest.raises(jubarte.JubarteError):
++        document.to_pdf()
++
++
++@pytest.mark.integration
++def test_legacy_byte_and_dictionary_api_remains_available():
++    data = make_document("unchanged")
++    assert isinstance(jubarte.accept_revisions(data), bytes)
++    assert isinstance(jubarte.reject_revisions(data), bytes)
++    assert jubarte.get_revisions(data) == []
++    assert jubarte.get_revisions_json(data) == "[]"
++    assert isinstance(jubarte.compare_documents(data, data), bytes)
++    assert jubarte.docx_to_pdf(data).startswith(b"%PDF-")
++
++
++@pytest.mark.integration
++def test_read_path_and_top_level_read(tmp_path):
++    data = make_document("Read me.")
++    source = tmp_path / "input.docx"
++    source.write_bytes(data)
++    assert jubarte.Document.read(source).to_bytes() == data
++    assert jubarte.read(str(source)).to_bytes() == data
++    with pytest.raises(FileNotFoundError):
++        jubarte.read(tmp_path / "missing.docx")
+diff --git a/jubarte-python/tests/test_models.py b/jubarte-python/tests/test_models.py
+new file mode 100644
+index 0000000..18cbdd3
+--- /dev/null
++++ b/jubarte-python/tests/test_models.py
+@@ -0,0 +1,130 @@
++# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++#
++# SPDX-License-Identifier: AGPL-3.0-only
++
++import json
++from dataclasses import FrozenInstanceError
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from jubarte_redlines import CompareOptions, FormatChange, PdfOptions, Revision
++from jubarte_redlines.models import _decode_revisions
++
++
++def test_compare_defaults_keep_engine_timestamp():
++    assert CompareOptions().native_date() is None
++
++
++@pytest.mark.parametrize(
++    "value",
++    [
++        "2026-09-26T10:30:00-04:00",
++        "2026-09-26T14:30:00Z",
++        datetime(2026, 9, 26, 10, 30, tzinfo=timezone(timedelta(hours=-4))),
++    ],
++)
++def test_explicit_dates_are_normalized_without_reading_the_clock(value):
++    options = CompareOptions(date=value)
++    assert options.native_date() == "2026-09-26T14:30:00Z"
++
++
++def test_timestamp_preserves_fractional_seconds():
++    assert CompareOptions(date="2026-09-26T14:30:00.123456Z").native_date() == (
++        "2026-09-26T14:30:00.123456Z"
++    )
++
++
++@pytest.mark.parametrize("value", ["yesterday", "2026-02-30T12:00:00Z"])
++def test_bad_timestamp_is_value_error(value):
++    with pytest.raises(ValueError, match="ISO-8601"):
++        CompareOptions(date=value)
++
++
++@pytest.mark.parametrize("value", ["2026-09-26", datetime(2026, 9, 26)])
++def test_naive_timestamp_is_rejected(value):
++    with pytest.raises(ValueError, match="offset"):
++        CompareOptions(date=value)
++
++
++def test_non_timestamp_is_type_error():
++    with pytest.raises(TypeError, match="date"):
++        CompareOptions(date=123)
++
++
++def test_options_are_frozen():
++    options = CompareOptions()
++    with pytest.raises(FrozenInstanceError):
++        options.date = "2026-09-26T14:30:00Z"
++    pdf = PdfOptions()
++    with pytest.raises(FrozenInstanceError):
++        pdf.compress = True
++
++
++def test_pdf_defaults_preserve_current_behavior():
++    assert PdfOptions() == PdfOptions(compress=False, revisions="conventional")
++    assert PdfOptions(revisions="word").revision_palette is None
++    assert PdfOptions(revisions="custom", revision_palette="deleted=#AA0000:strike").revisions == "custom"
++
++
++@pytest.mark.parametrize(
++    ("options", "error", "message"),
++    [
++        ({"compress": 1}, TypeError, "compress"),
++        ({"revisions": "hidden"}, ValueError, "revisions"),
++        ({"revision_palette": 1}, TypeError, "revision_palette"),
++        ({"revisions": "custom"}, ValueError, "require"),
++        ({"revision_palette": "deleted=#AA0000:strike"}, ValueError, "requires"),
++    ],
++)
++def test_pdf_options_fail_before_native_work(options, error, message):
++    with pytest.raises(error, match=message):
++        PdfOptions(**options)
++
++
++def test_revision_decoding_preserves_metadata_and_freezes_nested_properties():
++    payload = json.dumps([
++        {
++            "type": "FormatChanged",
++            "author": "Reviewer",
++            "date": "producer-specific-date",
++            "part": "word/document.xml",
++            "text": "changed\ttext\n\"quoted\"",
++            "moveGroupId": None,
++            "isMoveSource": None,
++            "formatChange": {"changedProperties": ["bold", "spacing"]},
++        },
++        {
++            "type": "Moved",
++            "author": "",
++            "date": "",
++            "part": "word/footnotes.xml",
++            "text": "moved",
++            "moveGroupId": 7,
++            "isMoveSource": False,
++            "formatChange": None,
++        },
++    ])
++    records = _decode_revisions(payload)
++    assert records == (
++        Revision(
++            kind="FormatChanged", author="Reviewer", date="producer-specific-date",
++            part="word/document.xml", text="changed\ttext\n\"quoted\"",
++            move_group_id=None, is_move_source=None,
++            format_change=FormatChange(("bold", "spacing")),
++        ),
++        Revision(
++            kind="Moved", author="", date="", part="word/footnotes.xml", text="moved",
++            move_group_id=7, is_move_source=False, format_change=None,
++        ),
++    )
++    with pytest.raises(FrozenInstanceError):
++        records[0].author = "Other"
++    with pytest.raises(FrozenInstanceError):
++        records[0].format_change.changed_properties = ()
++    assert _decode_revisions("[]") == ()
++
++
++def test_native_schema_mismatch_is_not_silently_dropped():
++    with pytest.raises(KeyError):
++        _decode_revisions('[{"type":"Inserted"}]')
+-- 
+2.43.0
+

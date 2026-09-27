@@ -1,0 +1,264 @@
+From a732b84edcd4455cb9e53d4add3c8d85f30176ec Mon Sep 17 00:00:00 2001
+From: Arthur Souza Rodrigues <arthursrodrigues@gmail.com>
+Date: Sat, 26 Sep 2026 21:34:59 -0400
+Subject: [PATCH 5/5] docs(plans): status and corrections per subplan,
+ verification record, lint fix in m10 test
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01XSguJyaPYNYbKNxFYkEmvV
+---
+ .../plans/2026-09-26-jubarte-adoption.md      |  1 +
+ .../00-ASSESSMENT.md                          | 50 +++++++++++++++++++
+ .../01-core-and-fidelity.md                   | 13 +++++
+ .../02-python-api.md                          | 26 ++++++++++
+ .../04-semantic-editing.md                    | 23 +++++++++
+ .../06-agent-adoption.md                      | 12 +++++
+ .../2026-09-26-jubarte-adoption/VALIDATION.md | 23 +++++++++
+ tests/m10_deleted_drawing.rs                  | 12 ++---
+ 8 files changed, 153 insertions(+), 7 deletions(-)
+
+diff --git a/docs/superpowers/plans/2026-09-26-jubarte-adoption.md b/docs/superpowers/plans/2026-09-26-jubarte-adoption.md
+index 66b7d71..d231b00 100644
+--- a/docs/superpowers/plans/2026-09-26-jubarte-adoption.md
++++ b/docs/superpowers/plans/2026-09-26-jubarte-adoption.md
+@@ -127,6 +127,7 @@ Parallelize documentation, facade design, release plumbing and rights inventory
+ 
+ ## Implementation subplans
+ 
++0. [Assessment and corrections (2026-09-26 implementation)](2026-09-26-jubarte-adoption/00-ASSESSMENT.md): read first; it records which parts of 01, 02, 04 and 06 landed on branch `feat/agent-adoption`, which corrections were applied to the patches, and what remains open.
+ 1. [Safe core, inspection, and fidelity](2026-09-26-jubarte-adoption/01-core-and-fidelity.md)
+ 2. [Python API and examples](2026-09-26-jubarte-adoption/02-python-api.md)
+ 3. [JavaScript/TypeScript API and concurrency](2026-09-26-jubarte-adoption/03-typescript-api.md)
+diff --git a/docs/superpowers/plans/2026-09-26-jubarte-adoption/00-ASSESSMENT.md b/docs/superpowers/plans/2026-09-26-jubarte-adoption/00-ASSESSMENT.md
+index 3106465..c4dbb6f 100644
+--- a/docs/superpowers/plans/2026-09-26-jubarte-adoption/00-ASSESSMENT.md
++++ b/docs/superpowers/plans/2026-09-26-jubarte-adoption/00-ASSESSMENT.md
+@@ -224,3 +224,53 @@ on the inspection tests added here, not on RESULTS.md. Say so.
+ 
+ Filled in at the end of the implementation session; see the bottom of this
+ file.
++
++### Verification record (2026-09-26, worktree `feat/agent-adoption` on `892ddbc`)
++
++Environment: Rust 1.95.0, Python 3.11.15, maturin 1.15.0, 2 CPUs, 8 GB memory
++cgroup; Cargo serialized (`-j1`); `ooxmlsdk` (dev-dependency) built without
++debuginfo through an uncommitted `.cargo/config.toml` because it exceeds the
++cgroup with debuginfo. No agents were used.
++
++| Gate | Result |
++|---|---|
++| `cargo fmt --check` | clean |
++| `cargo clippy --all-targets --all-features -- -D warnings` | clean (after fixing three pre-existing sites the 1.95 lint set flagged: `altchunk.rs` end(), `convert/mod.rs` stroke boolean, `tests/m10_deleted_drawing.rs`) |
++| `cargo test --lib` | 568 passed, 1 ignored (perf timing) |
++| `cargo test --bin jubarte` | 25 passed |
++| `tests/inspect_paragraphs.rs` | 13 passed |
++| `tests/edit_plan.rs` | 18 passed (includes comments on inserted text surviving compare, accept(redline) == clean for every operation kind) |
++| `tests/convert_docx_to_png.rs` | 4 passed |
++| `tests/m_cli_agent.rs` | 7 passed |
++| Existing `m7_cli`, `m_cli_no_panic` | 15 + 10 passed |
++| Regression around the render refactor: `convert_docx_to_pdf` | 1234 passed, 3 ignored |
++| `convert_revision_palette`, `m10_deleted_drawing`, `m11_f1_roundtrip`, `m22_alternate_content_resolve`, `m35_comments`, `m4h_parts` | 7 + 1 + 2 + 6 + 5 + 8 passed |
++| `jubarte --help` | exit 0 |
++| Python `pytest --cov=jubarte_redlines --cov-branch` against the rebuilt binding | 48 passed; 98% lines (660 statements, 9 missed); 160 of 166 branches |
++| Acme walkthrough (`examples/agents/acme-letter/`) | 10 of 10 operations ok, 4 comments, 15 revision records, PDF and PNG rendered, page inspected visually |
++
++Not measured: Rust line/branch coverage. `cargo llvm-cov` needs an
++instrumented rebuild of every crate, and the instrumented `ooxmlsdk` does not
++fit this container; run it on the canonical machine
++(`cargo +nightly llvm-cov --branch --lib inspect:: edit:: capabilities:: convert::raster::`).
++The full `cargo test` over all 150+ suites was likewise not run here; the
++suites above were chosen to cover every file the branch touches.
++
++Known gaps found while verifying, left open on purpose:
++
++- The PDF/PNG layout paints comment balloons for comments on inserted
++  paragraphs but not for comments anchored inside inserted runs (the
++  comparer places `commentRangeStart` inside `w:ins`, which Word accepts).
++  The comments are in the DOCX; `jubarte inspect` counts them. Renderer work,
++  not edit work.
++- Compare-based redlines show a long replacement as a word-level diff, as
++  Word Compare does. Agents that need a "delete whole clause, insert whole
++  clause" presentation need a direct-authoring mode, which does not exist.
++- `merge_paragraphs`, `format_paragraph`, formatting on inline
++  `insert`/`replace`, headers/footers/notes/text boxes as editable stories,
++  ZIP admission limits (01 C2).
++- `RESULTS.md`'s `accepted_changes` tables score compare output after
++  acceptance; they are not a test of the accept operation on arbitrary
++  redlines. The claim "toss LibreOffice for accept" rests on the
++  RevisionProcessor port and on `accept(redline) == clean` in
++  `tests/edit_plan.rs`, not on RESULTS.md.
+diff --git a/docs/superpowers/plans/2026-09-26-jubarte-adoption/01-core-and-fidelity.md b/docs/superpowers/plans/2026-09-26-jubarte-adoption/01-core-and-fidelity.md
+index 68e62ac..83f7fd3 100644
+--- a/docs/superpowers/plans/2026-09-26-jubarte-adoption/01-core-and-fidelity.md
++++ b/docs/superpowers/plans/2026-09-26-jubarte-adoption/01-core-and-fidelity.md
+@@ -10,6 +10,19 @@
+ 
+ ---
+ 
++> **Status 2026-09-26 (branch `feat/agent-adoption`):** implemented with
++> corrections; see [00-ASSESSMENT.md](00-ASSESSMENT.md) §3. Landed:
++> parser progress guard and `validate_xml` (`src/xmllinq/parse.rs`), and
++> `src/inspect.rs` with a richer read model than patch 0001 proposed:
++> `Paragraph { index, id, text, style, numbered, in_table, page_break, runs,
++> limitations }`, `summary`, `markdown`, `inspect_json`, `source_sha256`.
++> Correction applied: `mc:AlternateContent`, `w:sym`, column breaks, fields,
++> hyperlinks and content controls are per-paragraph **limitations**, not
++> refusals (patch 0001 refused the document). Task C2 (ZIP admission limits)
++> remains open and is still required before untrusted-upload use.
++> Verified: `tests/inspect_paragraphs.rs` (13), module unit tests, clippy
++> `-D warnings`.
++
+ <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
+ <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+ 
+diff --git a/docs/superpowers/plans/2026-09-26-jubarte-adoption/02-python-api.md b/docs/superpowers/plans/2026-09-26-jubarte-adoption/02-python-api.md
+index cf8ae18..aca7807 100644
+--- a/docs/superpowers/plans/2026-09-26-jubarte-adoption/02-python-api.md
++++ b/docs/superpowers/plans/2026-09-26-jubarte-adoption/02-python-api.md
+@@ -10,6 +10,32 @@
+ 
+ ---
+ 
++> **Status 2026-09-26 (branch `feat/agent-adoption`):** patch 0002 applied
++> and extended; see [00-ASSESSMENT.md](00-ASSESSMENT.md) §3. `Document` also
++> has `sha256()`, `inspect() -> Snapshot`, `markdown()`, `edit(plan) ->
++> EditResult`, `preview(plan)`, `to_png(dpi)` and `render(pdf, png_dpi) ->
++> Rendered`; `EditPlan` is an immutable builder emitting the engine's wire
++> schema; `EditPlanError` carries `code`, `operation`, `outcomes`;
++> `capabilities()` mirrors `jubarte capabilities --json`. New in this plan:
++> **`python -m jubarte_redlines`** exposes every binary command with the same
++> flags, file names and exit codes (PY3 below). PY2's thin
++> `Paragraph(index, text, page_break)` is superseded by the `Snapshot` types.
++> Verified against the rebuilt binding (`maturin develop`): 48 tests, 98%
++> lines, 160/166 branches (`pytest --cov --cov-branch`).
++
++## Task PY3: CLI parity (added)
++
++**Files:** `jubarte-python/python/jubarte_redlines/__main__.py`,
++`jubarte-python/tests/test_cli.py`.
++
++`python -m jubarte_redlines {inspect,text,edit,convert,compare,revisions,
++accept,reject,capabilities}` accepts the `jubarte` binary's flags and writes
++the same files (`clean.docx`, `redline.docx`, `report.jsonl`, `<stem>.pdf`,
++`<stem>-page-NN.png`). Exit codes: 0, 1 (I/O, engine, existing output),
++2 (usage), 3 (plan refused; report on stdout, nothing written). No third-party
++dependency: the wheel stays dependency-free, so `argparse` rather than
++`typer`.
++
+ <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
+ <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+ 
+diff --git a/docs/superpowers/plans/2026-09-26-jubarte-adoption/04-semantic-editing.md b/docs/superpowers/plans/2026-09-26-jubarte-adoption/04-semantic-editing.md
+index 312fac1..9da941b 100644
+--- a/docs/superpowers/plans/2026-09-26-jubarte-adoption/04-semantic-editing.md
++++ b/docs/superpowers/plans/2026-09-26-jubarte-adoption/04-semantic-editing.md
+@@ -10,6 +10,29 @@
+ 
+ ---
+ 
++> **Status 2026-09-26 (branch `feat/agent-adoption`):** E1 and the core of
++> E2/E3/E5 implemented in `src/edit.rs` with corrections; see
++> [00-ASSESSMENT.md](00-ASSESSMENT.md) §3. Shipped plan schema v1:
++> `replace`, `insert` (`after`/`before`/`position`), `delete`, `comment`,
++> `insert_paragraph` (runs with `bold`/`italic`/`underline`/`highlight`,
++> anchor `pPr` copied minus section break and revision marks),
++> `delete_paragraph`; selectors `id`/`index`/`starts_with`/`contains`;
++> `source_sha256` guard; `existing_revisions: refuse|accept|reject`;
++> overlap detection; per-operation report with `to_jsonl()`.
++> Corrections applied: (1) comments, including on text an earlier operation
++> inserted, are authored in the clean copy and carried by the comparer
++> (m35), so E5's provenance mapping is unnecessary; verified by
++> `comments_on_source_text_and_on_inserted_text_survive_compare`;
++> (2) patch 0005's "plain paragraph only" rule is replaced by a projection
++> that ignores zero-width markers and refuses only ranges crossing opaque
++> structures; (3) `expected_text` dropped in favor of the hash guard plus
++> unique anchors. Not implemented: `merge_paragraphs`, `format_paragraph`
++> (E4 paragraph formatting), rich formatting on inline `insert`/`replace`,
++> `Preview.build`/`write_new_directory` (the CLI's `--out-dir` bundle covers
++> the atomic-write need for now). Known renderer gap: balloons for comments
++> anchored inside inserted runs are not painted (the comments are in the
++> file). Verified: `tests/edit_plan.rs` (18), module unit tests.
++
+ <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
+ <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+ 
+diff --git a/docs/superpowers/plans/2026-09-26-jubarte-adoption/06-agent-adoption.md b/docs/superpowers/plans/2026-09-26-jubarte-adoption/06-agent-adoption.md
+index d8cef83..780c632 100644
+--- a/docs/superpowers/plans/2026-09-26-jubarte-adoption/06-agent-adoption.md
++++ b/docs/superpowers/plans/2026-09-26-jubarte-adoption/06-agent-adoption.md
+@@ -10,6 +10,18 @@
+ 
+ ---
+ 
++> **Status 2026-09-26 (branch `feat/agent-adoption`):** A1 and A2 done with
++> corrections; see [00-ASSESSMENT.md](00-ASSESSMENT.md) §3. The skill at
++> `skills/jubarte-documents/SKILL.md` supersedes patch 0006: it covers read
++> (`jubarte text`/`inspect`), edit (plans with comments), verify (`convert
++> --png --report`, accept-equals-clean check) and compare/accept/reject, and
++> keeps the docx-js creation footguns, so it replaces the `docx` skill's
++> pandoc/soffice/pdftoppm paths rather than sitting beside them.
++> `jubarte capabilities --json` and `jubarte_redlines.capabilities()` derive
++> from `src/capabilities.rs`. `examples/agents/acme-letter/` holds the
++> hand-rolled workflow as one plan with its actual report and rendered page.
++> A3 (API reference pages) and A4 (evaluation protocol) remain open.
++
+ <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
+ <!-- SPDX-License-Identifier: AGPL-3.0-only -->
+ 
+diff --git a/docs/superpowers/plans/2026-09-26-jubarte-adoption/VALIDATION.md b/docs/superpowers/plans/2026-09-26-jubarte-adoption/VALIDATION.md
+index 8ed9fa7..4b75443 100644
+--- a/docs/superpowers/plans/2026-09-26-jubarte-adoption/VALIDATION.md
++++ b/docs/superpowers/plans/2026-09-26-jubarte-adoption/VALIDATION.md
+@@ -91,3 +91,26 @@ This is a substantially expanded working plan, written incrementally. Before cal
+ 5. Re-run the author self-review for type/signature consistency, complete patch dependencies, stale source facts and every local artifact link after those additions.
+ 
+ The active goal remains open while these gaps are being addressed. The planning work is not blocked by pending publication, outreach, or licensing authority: those are execution gates, and useful preparation can continue.
++
++
++## Implementation record, 2026-09-26 (branch `feat/agent-adoption`)
++
++Implemented in a git worktree of `892ddbc` (user instruction; overrides the
++canonical-checkout note above), Rust 1.95, in an 8 GB container with Cargo
++serialized (`-j1`) and `ooxmlsdk` built without debuginfo through an
++uncommitted local `.cargo/config.toml`. Everything below was compiled and
++run there; see [00-ASSESSMENT.md](00-ASSESSMENT.md) §7 for the numbers.
++
++| Patch | Disposition |
++|---|---|
++| 0001 | superseded by `src/xmllinq/parse.rs` (guard + `validate_xml`) and `src/inspect.rs` (richer, non-refusing read model) |
++| 0002 | applied, then extended (`document.py`, `models.py`, `__main__.py`, stubs) |
++| 0005 | superseded by `src/edit.rs` (plan schema v1, selectors, comments, paragraph operations, report) |
++| 0006 | superseded by `skills/jubarte-documents/SKILL.md` |
++| 0003, 0004, 0007 | untouched (TypeScript, recipes, playground: out of this scope) |
++
++Gates run: `cargo fmt --check`; `cargo clippy --all-targets --all-features
++-- -D warnings`; `cargo test` for the library, the binary and the suites
++`inspect_paragraphs`, `edit_plan`, `convert_docx_to_png`, `m_cli_agent`,
++`m7_cli`, `m_cli_no_panic`, `convert_docx_to_pdf`, `convert_revision_palette`;
++`jubarte --help`; `pytest --cov=jubarte_redlines --cov-branch`.
+diff --git a/tests/m10_deleted_drawing.rs b/tests/m10_deleted_drawing.rs
+index c5db9d5..5e542b7 100644
+--- a/tests/m10_deleted_drawing.rs
++++ b/tests/m10_deleted_drawing.rs
+@@ -69,13 +69,11 @@ fn w_t_under_w_del(docx: &[u8]) -> (usize, Vec<String>) {
+                 b"t" => in_offending_t = false,
+                 _ => {}
+             },
+-            Ok((_, Event::Text(t))) if in_offending_t => {
+-                if samples.len() < 5 {
+-                    let raw = t.into_inner();
+-                    let s = String::from_utf8_lossy(&raw).trim().to_string();
+-                    if !s.is_empty() {
+-                        samples.push(s);
+-                    }
++            Ok((_, Event::Text(t))) if in_offending_t && samples.len() < 5 => {
++                let raw = t.into_inner();
++                let s = String::from_utf8_lossy(&raw).trim().to_string();
++                if !s.is_empty() {
++                    samples.push(s);
+                 }
+             }
+             Ok((_, Event::Eof)) => break,
+-- 
+2.43.0
+
