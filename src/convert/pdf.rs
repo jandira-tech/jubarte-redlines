@@ -493,6 +493,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         // The pen is kept in hundredths as printed, so each next glyph moves
         // by an exact relative `Td` (lines are one glyph per op).
         let mut open_text: Option<(String, i64, i64)> = None;
+        let mut last_state: Option<(String, TextStateBits, String)> = None;
         for (op_idx, op) in page.ops.iter().enumerate() {
             let plain_text = matches!(op, Op::Text { .. }) && !page.vertical;
             if !plain_text && open_text.take().is_some() {
@@ -569,8 +570,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let lit = if let Some(bytes) = encoded {
                         pdf_literal(bytes)
                     } else {
-                        let hex: String = glyphs.iter().map(|g| format!("{g:04X}")).collect();
-                        format!("<{hex}>")
+                        hex_glyphs(glyphs)
                     };
                     let (r, g, b) = (color[0], color[1], color[2]);
                     // A `w:w` scale squeezes the glyphs themselves about
@@ -607,12 +607,31 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         } else {
                             String::new()
                         };
-                        let state = format!("/{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {tc_op}");
+                        // Consecutive runs mostly share their state: the same
+                        // bits print the same text, so skip formatting it.
+                        let bits = (
+                            size.to_bits(),
+                            [r.to_bits(), g.to_bits(), b.to_bits()],
+                            tc.to_bits(),
+                        );
+                        let state = match &last_state {
+                            Some((seen_name, seen, text)) if seen_name == name && *seen == bits => {
+                                text.clone()
+                            }
+                            _ => {
+                                let text =
+                                    format!("/{name} {size:.2} Tf {r:.3} {g:.3} {b:.3} rg {tc_op}");
+                                last_state = Some((name.to_string(), bits, text.clone()));
+                                text
+                            }
+                        };
                         let (hx, hy) = (hundredths(*x), hundredths(*y));
                         match open_text.as_mut() {
                             Some((open, px, py)) if *open == state => {
-                                let (dx, dy) = (fmt_hundredths(hx - *px), fmt_hundredths(hy - *py));
-                                let _ = writeln!(stream, "{dx} {dy} Td {lit} Tj");
+                                push_hundredths(&mut stream, hx - *px);
+                                stream.push(' ');
+                                push_hundredths(&mut stream, hy - *py);
+                                let _ = writeln!(stream, " Td {lit} Tj");
                                 (*px, *py) = (hx, hy);
                             }
                             _ => {
@@ -647,8 +666,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                     let lit = if let Some(bytes) = encoded {
                         pdf_literal(bytes)
                     } else {
-                        let hex: String = glyphs.iter().map(|g| format!("{g:04X}")).collect();
-                        format!("<{hex}>")
+                        hex_glyphs(glyphs)
                     };
                     let Some((_, name)) = res_for(*face, encoded.is_some()) else {
                         continue;
@@ -1139,6 +1157,12 @@ fn subset_keep_gids(ttf: &[u8], used: &BTreeSet<u16>) -> Option<Vec<u8>> {
 /// `v` in hundredths exactly as `{v:.2}` prints it, so relative moves add
 /// back up to the printed absolute position.
 fn hundredths(v: f32) -> i64 {
+    // v·100 is exact in f64 (24 + 7 bits), and `{:.2}` rounds that exact
+    // value half to even: the same integer for every f32 under 1e7
+    // (checked against the printed form over all of them).
+    if v.abs() < 1.0e7 {
+        return (f64::from(v) * 100.0).round_ties_even() as i64;
+    }
     let printed = format!("{v:.2}");
     let (whole, frac) = printed.split_once('.').unwrap_or((&printed, "0"));
     let negative = whole.starts_with('-');
@@ -1148,14 +1172,44 @@ fn hundredths(v: f32) -> i64 {
 }
 
 /// Hundredths as the shortest decimal: `0`, `6`, `-12.5`, `0.07`.
+#[cfg(test)]
 fn fmt_hundredths(h: i64) -> String {
-    let sign = if h < 0 { "-" } else { "" };
-    let (whole, frac) = (h.abs() / 100, h.abs() % 100);
-    match frac {
-        0 => format!("{sign}{whole}"),
-        f if f % 10 == 0 => format!("{sign}{whole}.{}", f / 10),
-        f => format!("{sign}{whole}.{f:02}"),
+    let mut out = String::new();
+    push_hundredths(&mut out, h);
+    out
+}
+
+/// Appends `h` hundredths as the shortest decimal (`fmt_hundredths`).
+fn push_hundredths(out: &mut String, h: i64) {
+    if h < 0 {
+        out.push('-');
     }
+    let (whole, frac) = (h.unsigned_abs() / 100, h.unsigned_abs() % 100);
+    let _ = write!(out, "{whole}");
+    if frac != 0 {
+        out.push('.');
+        out.push(char::from(b'0' + (frac / 10) as u8));
+        if frac % 10 != 0 {
+            out.push(char::from(b'0' + (frac % 10) as u8));
+        }
+    }
+}
+
+/// A text operator's size, colour and tracking as bits.
+type TextStateBits = (u32, [u32; 3], u32);
+
+/// Glyph ids as a PDF hex string, four digits each: `<0041002A>`.
+fn hex_glyphs(glyphs: &[u16]) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(glyphs.len() * 4 + 2);
+    out.push('<');
+    for g in glyphs {
+        for shift in [12, 8, 4, 0] {
+            out.push(char::from(HEX[usize::from((g >> shift) & 0xF)]));
+        }
+    }
+    out.push('>');
+    out
 }
 
 /// A `cmap` of one format 4 subtable mapping only the characters whose

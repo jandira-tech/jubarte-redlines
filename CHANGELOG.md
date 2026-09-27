@@ -82,6 +82,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   family back to the full search. Cold conversion median 46.9 → 21.4 ms over
   80 fixtures_500 documents, PDFs byte-identical on all 500.
   `JUBARTE_FONT_INDEX` moves it, `off` disables it.
+- Each document remembers which face a catalogue font lands on instead of
+  string-matching the family for every glyph, and the PDF writer prints glyph
+  ids, pen moves and text state without per-glyph allocation. Together they cut
+  another 9.5% off cold conversion (median 22.1 → 18.0 ms over 80 documents);
+  PDFs byte-identical on all 500 fixtures_500 documents.
 
 ## [0.9.2] - 2026-09-26
 
