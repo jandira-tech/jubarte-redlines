@@ -53,3 +53,51 @@ def get_revisions(docx: bytes) -> list[dict[str, Any]]:
     ``formatChange``/``text``).
     """
     return json.loads(get_revisions_json(docx))
+
+
+# Additive ergonomic surface; low-level functions above keep their contracts.
+from .document import Document, EditPlanError, EditResult, capabilities, read
+from .models import (
+    CompareOptions,
+    EditOutcome,
+    EditPlan,
+    EditReport,
+    FontResolution,
+    FormatChange,
+    PageText,
+    Paragraph,
+    ParagraphDelta,
+    PdfOptions,
+    Rendered,
+    RenderReport,
+    Revision,
+    RevisionCounts,
+    Snapshot,
+    Span,
+    Summary,
+)
+
+__all__ += [
+    "Document",
+    "read",
+    "capabilities",
+    "CompareOptions",
+    "FormatChange",
+    "PdfOptions",
+    "Revision",
+    "EditPlan",
+    "EditPlanError",
+    "EditResult",
+    "EditOutcome",
+    "EditReport",
+    "RevisionCounts",
+    "ParagraphDelta",
+    "Snapshot",
+    "Summary",
+    "Paragraph",
+    "Span",
+    "Rendered",
+    "RenderReport",
+    "PageText",
+    "FontResolution",
+]
