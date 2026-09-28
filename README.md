@@ -1,3 +1,6 @@
+> **See every page side by side: [jandira-tech.github.io/jubarte-redlines](https://jandira-tech.github.io/jubarte-redlines/)**  
+> jubarte vs Microsoft Word, docxide-pdf, LibreOffice, PyMuPDF Pro, MiniPdf, rdocx and office2pdf on 808 documents, DOCX to PDF, scored per page.
+
 # jubarte-redlines — #1 DOCX → PDF & #1 DOCX-vs-DOCX Comparison (Redlines) Rust Tool
 
 *Benchmarked against Microsoft Word®'s own output across an aggregate of 3,500+
