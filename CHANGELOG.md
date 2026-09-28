@@ -359,6 +359,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - PowerTools-faithful compares no longer receive Word's table look, row
   margin exceptions, or the other Word-visual cleanup. That preset's
   contract is that those passes stay off.
+- A paragraph whose deleted mark also holds inserted text keeps its
+  `line=276`, as Word's redline keeps it (simple_ordered_list ×
+  sublist_issue, "Lvl 1 – a"). Only a paragraph that inserts nothing drops
+  that restated Normal spacing.
 
 ### Added
 

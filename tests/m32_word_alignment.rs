@@ -2501,3 +2501,38 @@ fn nonzero_table_vertical_margins_are_not_zeroed_on_rows() {
         tables[1]
     );
 }
+
+/// `line=276` alone on a deleted mark restates Normal only when the paragraph
+/// inserts nothing. A paragraph that also holds inserted text keeps it, as
+/// Word's redline of simple_ordered_list × sublist_issue keeps it on
+/// "Lvl 1 – a".
+#[test]
+fn line_276_on_deleted_mark_stays_when_paragraph_inserts_text() {
+    use jubarte::comparer::finalize::strip_unrecorded_word_defaults;
+
+    let mut dom = Dom::new();
+    let (root, _) = doc_body(
+        &mut dom,
+        "<w:p><w:pPr><w:spacing w:line=\"276\" w:lineRule=\"auto\"/>\
+         <w:rPr><w:del w:id=\"1\" w:author=\"R\"/></w:rPr></w:pPr>\
+         <w:del w:id=\"2\" w:author=\"R\"><w:r><w:delText>Lvl 1</w:delText></w:r></w:del>\
+         <w:ins w:id=\"3\" w:author=\"R\"><w:r><w:t>One</w:t></w:r></w:ins></w:p>\
+         <w:p><w:pPr><w:spacing w:line=\"276\" w:lineRule=\"auto\"/>\
+         <w:rPr><w:del w:id=\"4\" w:author=\"R\"/></w:rPr></w:pPr>\
+         <w:del w:id=\"5\" w:author=\"R\"><w:r><w:delText>Item 4</w:delText></w:r></w:del></w:p>",
+    );
+    strip_unrecorded_word_defaults(&mut dom, root);
+    let xml = dom.serialize_element(root);
+    let paras = xml.split("<w:p>").skip(1).collect::<Vec<_>>();
+    assert_eq!(paras.len(), 2, "{xml}");
+    assert!(
+        paras[0].contains("w:line=\"276\""),
+        "a mixed paragraph keeps its line=276: {}",
+        paras[0]
+    );
+    assert!(
+        !paras[1].contains("w:spacing"),
+        "a pure deletion's line=276 restates Normal: {}",
+        paras[1]
+    );
+}

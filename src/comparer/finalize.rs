@@ -5115,7 +5115,10 @@ pub(crate) fn pg_num_type_is_implicit_decimal(dom: &Dom, n: NodeId) -> bool {
 /// Default table `w:jc` left/start
 /// is omitted. `w:pgNumType` that is only `fmt=decimal` is omitted.
 /// `w:spacing` that is only `line=276` on a deleted paragraph mark restates
-/// Normal; pure insertions keep that spacing. An inserted pilcrow
+/// Normal when the paragraph inserts nothing. Pure insertions keep that
+/// spacing, and so does a paragraph that also holds inserted text: Word's
+/// redline keeps `line=276` there (simple_ordered_list × sublist_issue,
+/// "Lvl 1 – a"). An inserted pilcrow
 /// (`w:pPr/w:rPr/w:ins` and nothing else) on a paragraph that already
 /// contains both inserted and deleted text is not in Word's redline of
 /// italic-and-underline × italic-subscript.
@@ -5162,10 +5165,11 @@ pub fn strip_unrecorded_word_defaults(dom: &mut Dom, root: NodeId) {
             && dom.element(rpr, &W::del()).is_some()
             && let Some(sp) = dom.element(ppr, &W::spacing_el())
             && spacing_is_only_line_276(dom, sp)
+            && !content_revision_marks(dom, p, ppr).0
         {
             drop_nodes.push(sp);
         }
-        if pilcrow_ins_only(dom, ppr) && paragraph_has_content_ins_and_del(dom, p, ppr) {
+        if pilcrow_ins_only(dom, ppr) && content_revision_marks(dom, p, ppr) == (true, true) {
             drop_ppr.push(ppr);
         }
     }
@@ -5210,7 +5214,9 @@ fn pilcrow_ins_only(dom: &Dom, ppr: NodeId) -> bool {
     marks.len() == 1 && dom.name_is(marks[0], &W::ins())
 }
 
-fn paragraph_has_content_ins_and_del(dom: &Dom, p: NodeId, ppr: NodeId) -> bool {
+/// Whether the paragraph's content, outside its `w:pPr`, holds `w:ins` and
+/// `w:del`.
+fn content_revision_marks(dom: &Dom, p: NodeId, ppr: NodeId) -> (bool, bool) {
     let inside: std::collections::HashSet<NodeId> =
         dom.descendants_and_self(ppr, None).into_iter().collect();
     let mut has_ins = false;
@@ -5225,7 +5231,7 @@ fn paragraph_has_content_ins_and_del(dom: &Dom, p: NodeId, ppr: NodeId) -> bool 
             has_del = true;
         }
     }
-    has_ins && has_del
+    (has_ins, has_del)
 }
 
 /// Table and comment-reference chrome Word writes on every matching redline
