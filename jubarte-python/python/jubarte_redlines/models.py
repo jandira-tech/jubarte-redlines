@@ -339,12 +339,19 @@ class EditPlan:
         replacement: str,
         format: Mapping[str, object] | None = None,
         comment: str | None = None,
+        whole: bool = False,
         id: str | None = None,
     ) -> EditPlan:
-        """Replace the unique occurrence of ``find``; ``format`` styles only the new text."""
+        """Replace the unique occurrence of ``find``; ``format`` styles only the new text.
+
+        ``whole=True`` shows the change as all of ``find`` deleted, then all of
+        ``replacement`` inserted, instead of Word Compare's word-level diff.
+        """
         op: dict[str, object] = {"kind": "replace", "paragraph": _selector(paragraph), "find": find, "replacement": replacement}
         if format is not None:
             op["format"] = _format(format)
+        if whole:
+            op["whole"] = True
         return self._with(_with_optional(op, id=id, comment=comment))
 
     def insert(

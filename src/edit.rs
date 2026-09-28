@@ -27,6 +27,8 @@ use crate::inspect::{Opened, Piece, Projection, SCHEMA_VERSION, project_paragrap
 use crate::namespaces::{R, W};
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
+mod whole;
+
 const COMMENTS_REL: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
 const COMMENTS_CT: &str =
@@ -100,6 +102,10 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Comment text anchored to the changed text.
         comment: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        /// Show the change as all of `find` deleted, then all of
+        /// `replacement` inserted, instead of Word Compare's word-level diff.
+        whole: bool,
     },
     /// Insert `text` after/before exactly one occurrence of an anchor, or at
     /// the paragraph's start/end. Exactly one of `after`, `before`,
@@ -403,7 +409,8 @@ pub struct EditOutcome {
     /// Error code when failed.
     pub code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Error message when failed.
+    /// Error message when failed; on an `ok` operation, a note that it
+    /// could not be shown as asked (a `whole` replacement kept word-level).
     pub message: Option<String>,
 }
 
@@ -629,7 +636,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
         };
         let kind = map.get("kind").and_then(|k| k.as_str()).unwrap_or("");
         let allowed: &[&str] = match kind {
-            "replace" => &["find", "replacement", "format", "comment"],
+            "replace" => &["find", "replacement", "format", "comment", "whole"],
             "insert" => &["after", "before", "position", "text", "format", "comment"],
             "delete" => &["find"],
             "comment" => &["find", "text"],
@@ -674,15 +681,24 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
     tx.apply()?;
-    let clean = tx.finish_clean()?;
+    let (clean, marked) = tx.finish()?;
     let settings = WmlComparerSettings {
         author_for_revisions: plan.author.clone(),
         date_time_for_revisions: tx.date.clone(),
         ..WmlComparerSettings::default()
     };
-    let redline =
-        crate::document_comparer::compare_documents_with_settings(&tx.base, &clean, &settings)
+    let revised = marked.as_deref().unwrap_or(&clean);
+    let mut redline =
+        crate::document_comparer::compare_documents_with_settings(&tx.base, revised, &settings)
             .map_err(|e| err("COMPARE_FAILED", None, e.to_string()))?;
+    if marked.is_some() {
+        let (rewritten, fallbacks) =
+            whole::rewrite(&redline, &tx.whole_marks, &plan.author, &tx.date)?;
+        redline = rewritten;
+        for (op, reason) in fallbacks {
+            tx.outcomes[op].message = Some(format!("shown as a word-level diff: {reason}"));
+        }
+    }
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
@@ -809,6 +825,8 @@ struct Transaction<'p> {
     /// One past the highest source comment id; u64 so it cannot overflow.
     next_comment_id: u64,
     comments_added: usize,
+    /// Helper bookmarks around `whole` replacements, one per operation.
+    whole_marks: Vec<whole::Mark>,
 }
 
 impl<'p> Transaction<'p> {
@@ -899,6 +917,7 @@ impl<'p> Transaction<'p> {
             comments: Vec::new(),
             next_comment_id,
             comments_added: 0,
+            whole_marks: Vec::new(),
         })
     }
 
@@ -1857,6 +1876,31 @@ impl<'p> Transaction<'p> {
                     );
                 }
             }
+            // Helper bookmarks around `whole` replacements. Comment ranges
+            // placed below land inside them, on the inserted text.
+            let plan = self.plan;
+            for edit in &edits {
+                let OperationKind::Replace {
+                    find, whole: true, ..
+                } = &plan.operations[edit.op].kind
+                else {
+                    continue;
+                };
+                if edit.replacement.is_empty() {
+                    continue;
+                }
+                let s = new_position(&edits, edit.start, true, Some(edit.op));
+                let end = s + edit.replacement.len();
+                if let Some(mark) = whole::mark(
+                    &mut self.opened.dom,
+                    node,
+                    (s, end),
+                    edit.op,
+                    (find, &edit.replacement),
+                ) {
+                    self.whole_marks.push(mark);
+                }
+            }
             // Comment ranges, in new coordinates.
             let mut pending: Vec<(usize, usize, usize, String)> = Vec::new();
             for edit in &edits {
@@ -1969,17 +2013,34 @@ impl<'p> Transaction<'p> {
         id
     }
 
-    fn finish_clean(&mut self) -> Result<Vec<u8>, EditError> {
-        let xml = self.opened.dom.serialize_document(self.opened.document);
-        let main = self.opened.main.clone();
-        self.opened.pkg.set_part(&main, xml.into_bytes());
+    /// The clean copy, and the copy the comparer reads when `whole`
+    /// replacements carry helper bookmarks (the clean copy never does).
+    fn finish(&mut self) -> Result<(Vec<u8>, Option<Vec<u8>>), EditError> {
         if !self.comments.is_empty() {
             self.write_comments_part()?;
         }
-        self.opened
+        let main = self.opened.main.clone();
+        let marked = if self.whole_marks.is_empty() {
+            None
+        } else {
+            let xml = self.opened.dom.serialize_document(self.opened.document);
+            self.opened.pkg.set_part(&main, xml.into_bytes());
+            let bytes = self
+                .opened
+                .pkg
+                .to_zip()
+                .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))?;
+            whole::strip(&mut self.opened.dom, self.opened.body);
+            Some(bytes)
+        };
+        let xml = self.opened.dom.serialize_document(self.opened.document);
+        self.opened.pkg.set_part(&main, xml.into_bytes());
+        let clean = self
+            .opened
             .pkg
             .to_zip()
-            .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))
+            .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))?;
+        Ok((clean, marked))
     }
 
     fn write_comments_part(&mut self) -> Result<(), EditError> {
@@ -2276,6 +2337,35 @@ fn split_run_at(dom: &mut Dom, seg: &crate::inspect::Segment, at: usize) {
 /// Wrap the projection range `[start, end)` of `paragraph` in comment
 /// markers for comment `id`, splitting runs at the boundaries as needed.
 fn anchor_comment(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, id: u32) {
+    let id_str = id.to_string();
+    let range_start = dom.new_element(W::name("commentRangeStart"));
+    dom.set_attribute_value(range_start, &W::id(), Some(&id_str));
+    let range_end = dom.new_element(W::name("commentRangeEnd"));
+    dom.set_attribute_value(range_end, &W::id(), Some(&id_str));
+    let reference_run = dom.new_element(W::r());
+    let reference = dom.new_element(W::name("commentReference"));
+    dom.set_attribute_value(reference, &W::id(), Some(&id_str));
+    dom.add(reference_run, reference);
+    if wrap_range(dom, paragraph, start, end, range_start, range_end) {
+        dom.add_after_self(range_end, reference_run);
+    } else {
+        dom.add(paragraph, range_start);
+        dom.add(paragraph, range_end);
+        dom.add(paragraph, reference_run);
+    }
+}
+
+/// Put `open` right before the run holding projection offset `start` and
+/// `close` right after the run ending at `end`, splitting runs at both
+/// offsets first. False, with nothing placed, when the range holds no run.
+fn wrap_range(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    start: usize,
+    end: usize,
+    open: NodeId,
+    close: NodeId,
+) -> bool {
     let projection = project_paragraph(dom, paragraph);
     if let Some(seg) = projection
         .segments
@@ -2306,26 +2396,13 @@ fn anchor_comment(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, id
         .rev()
         .find(|s| s.end <= end && s.end > start)
         .map(|s| run_of(&s.piece));
-    let id_str = id.to_string();
-    let range_start = dom.new_element(W::name("commentRangeStart"));
-    dom.set_attribute_value(range_start, &W::id(), Some(&id_str));
-    let range_end = dom.new_element(W::name("commentRangeEnd"));
-    dom.set_attribute_value(range_end, &W::id(), Some(&id_str));
-    let reference_run = dom.new_element(W::r());
-    let reference = dom.new_element(W::name("commentReference"));
-    dom.set_attribute_value(reference, &W::id(), Some(&id_str));
-    dom.add(reference_run, reference);
     match (first, last) {
         (Some(first), Some(last)) if start < end => {
-            dom.add_before_self(first, range_start);
-            dom.add_after_self(last, range_end);
-            dom.add_after_self(range_end, reference_run);
+            dom.add_before_self(first, open);
+            dom.add_after_self(last, close);
+            true
         }
-        _ => {
-            dom.add(paragraph, range_start);
-            dom.add(paragraph, range_end);
-            dom.add(paragraph, reference_run);
-        }
+        _ => false,
     }
 }
 

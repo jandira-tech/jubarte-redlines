@@ -15,6 +15,8 @@ use common::validity::assert_word_valid_package;
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
 use jubarte::edit::{EditPlan, apply_plan, apply_plan_json, preview_plan};
 use jubarte::inspect::{paragraphs, source_sha256, summary};
+use jubarte::namespaces::W;
+use jubarte::xmllinq::Dom;
 
 fn texts(bytes: &[u8]) -> Vec<String> {
     paragraphs(bytes)
@@ -1477,4 +1479,154 @@ fn format_paragraph_sets_spacing_in_points_and_multiples() {
     let json = r#"{"schema_version":1,"author":"a","operations":[{"kind":"format_paragraph","paragraph":{"index":0},"line_spacing":1.15,"space_after":7.5}]}"#;
     let parsed = EditPlan::from_json(json).unwrap();
     assert_eq!(EditPlan::from_json(&parsed.to_json()).unwrap(), parsed);
+}
+
+/// Body paragraphs of a redline as `kept[-deleted-]{+inserted+}`.
+fn marked_paragraphs(docx: &[u8]) -> Vec<String> {
+    let xml = part_string(docx, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.descendants(root, Some(&W::p()))
+        .into_iter()
+        .map(|p| {
+            let mut segs: Vec<(char, String)> = Vec::new();
+            for t in dom.descendants(p, None) {
+                let kind = if dom.name_is(t, &W::del_text()) {
+                    '-'
+                } else if dom.name_is(t, &W::t()) {
+                    let inserted = dom
+                        .ancestors(t, None)
+                        .into_iter()
+                        .take_while(|&a| a != p)
+                        .any(|a| dom.name_is(a, &W::ins()));
+                    if inserted { '+' } else { '=' }
+                } else {
+                    continue;
+                };
+                match segs.last_mut() {
+                    Some((k, s)) if *k == kind => s.push_str(&dom.value(t)),
+                    _ => segs.push((kind, dom.value(t))),
+                }
+            }
+            segs.into_iter()
+                .map(|(k, s)| match k {
+                    '+' => format!("{{+{s}+}}"),
+                    '-' => format!("[-{s}-]"),
+                    _ => s,
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// `whole: true` shows a replacement the way typing over a selection with
+/// Track Changes on does: all of `find` deleted, then all of the replacement
+/// inserted. Without it the comparer shows Word Compare's word-level diff,
+/// which keeps shared words ("within", "days") as unchanged text.
+#[test]
+fn whole_replace_deletes_the_find_text_then_inserts_the_replacement() {
+    let body = [
+        "You will notify us within five business days of any breach.",
+        "You will promptly notify us of any breach.",
+    ];
+    let source = docx(&(para("Heading") + &para(body[0]) + &para(body[1])));
+    let ops = |whole: &str| {
+        format!(
+            r#"[{{"kind":"replace","paragraph":{{"index":1}},"find":"within five business days","replacement":"within ten days"{whole}}},
+                {{"kind":"replace","paragraph":{{"index":2}},"find":"promptly notify","replacement":"notify"{whole}}}]"#
+        )
+    };
+    let word_level = apply_plan(&source, &plan(&source, &ops(""))).unwrap();
+    let marked = marked_paragraphs(&word_level.redline);
+    assert!(
+        marked[1].contains("within {+ten+}[-five business-] days")
+            || marked[1].contains("within [-five business-]{+ten+} days"),
+        "default stays word-level: {}",
+        marked[1]
+    );
+
+    let whole = apply_plan(&source, &plan(&source, &ops(r#","whole":true"#))).unwrap();
+    assert_eq!(
+        marked_paragraphs(&whole.redline)[1..],
+        [
+            "You will notify us [-within five business days-]{+within ten days+} of any breach.",
+            "You will [-promptly notify-]{+notify+} us of any breach.",
+        ]
+    );
+    // Same edit, same clean text; the redline still round-trips.
+    assert_eq!(texts(&whole.clean), texts(&word_level.clean));
+    assert_eq!(
+        texts(&accept_revisions(&whole.redline).unwrap()),
+        texts(&whole.clean)
+    );
+    assert_eq!(
+        texts(&reject_revisions(&whole.redline).unwrap()),
+        texts(&source)
+    );
+    for doc in [&whole.clean, &whole.redline] {
+        let xml = part_string(doc, "word/document.xml").unwrap();
+        assert!(!xml.contains("_jubarte_whole"), "no helper bookmark left");
+        assert_word_valid_package(doc);
+    }
+    assert!(whole.report.ok);
+    assert!(whole.report.operations.iter().all(|o| o.message.is_none()));
+    assert_eq!(
+        (
+            whole.report.revisions.deleted,
+            whole.report.revisions.inserted
+        ),
+        (2, 2)
+    );
+}
+
+/// A whole replacement across runs keeps each run's formatting on its side
+/// of the change and keeps its comment.
+#[test]
+fn whole_replace_across_runs_keeps_formatting_and_comment() {
+    let source = docx(&format!(
+        "<w:p>{}{}</w:p>",
+        run("Notices. Send notices by ", false, false, None),
+        run("email to legal@acme.example", true, false, None)
+            + &run(" within two days.", false, false, None)
+    ));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"replace","paragraph":{"index":0},"find":"by email to legal","replacement":"by courier to legal","whole":true,"comment":"Courier only."}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        marked_paragraphs(&result.redline),
+        [
+            "Notices. Send notices [-by email to legal-]{+by courier to legal+}@acme.example within two days."
+        ]
+    );
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    assert_eq!(xml.matches("<w:commentReference ").count(), 1);
+    // "email to legal" was bold in the source; its deleted copy stays bold.
+    let del = &xml[xml.find("<w:del ").unwrap()..xml.find("</w:del>").unwrap()];
+    assert!(del.contains("<w:b/>") || del.contains("<w:b />"), "{del}");
+    assert_word_valid_package(&result.redline);
+}
+
+/// `whole` is part of the replace wire schema only.
+#[test]
+fn whole_is_a_replace_field() {
+    let source = docx(&para(SIGNATURE));
+    let json =
+        |op: &str| format!(r#"{{"schema_version":1,"author":"Claude","operations":[{op}]}}"#);
+    let bad = EditPlan::from_json(&json(
+        r#"{"kind":"delete","paragraph":{"index":0},"find":"his","whole":true}"#,
+    ))
+    .unwrap_err();
+    assert_eq!(bad.code, "INVALID_PLAN");
+    let good = EditPlan::from_json(&json(
+        r#"{"kind":"replace","paragraph":{"index":0},"find":"his or her","replacement":"an","whole":true}"#,
+    ))
+    .unwrap();
+    assert!(good.to_json().contains(r#""whole": true"#));
+    assert!(apply_plan(&source, &good).unwrap().report.ok);
 }

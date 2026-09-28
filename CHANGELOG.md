@@ -70,6 +70,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   comment ranges between the two move to the join. `replace` and `insert`
   take a `format` (bold, italic, underline, a Word highlight colour) for the
   new text only. The Python `EditPlan` gains the matching builders.
+- `replace` takes `"whole": true` (Python `whole=True`): the redline shows
+  all of `find` deleted, then all of the replacement inserted, as typing
+  over a selection with Track Changes on does, instead of Word Compare's
+  word-level diff that keeps shared words. Deletions the comparer placed
+  just outside the change are gathered in, formatting stays on each side,
+  and a comment on the change stays on the inserted text. When the diff
+  cannot be regrouped the operation keeps the word-level redline and its
+  report line carries a `message` saying why.
 - Adoption guides, workflow examples and a document-operations agent skill.
   The Acme letter example now ships `make_letter.py`, which writes its
   source letter byte for byte, and its plan runs all twelve edits.

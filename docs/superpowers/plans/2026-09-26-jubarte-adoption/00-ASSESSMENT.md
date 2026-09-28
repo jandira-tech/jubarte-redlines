@@ -266,8 +266,10 @@ Known gaps found while verifying, left open on purpose:
   The comments are in the DOCX; `jubarte inspect` counts them. Renderer work,
   not edit work.
 - Compare-based redlines show a long replacement as a word-level diff, as
-  Word Compare does. Agents that need a "delete whole clause, insert whole
-  clause" presentation need a direct-authoring mode, which does not exist.
+  Word Compare does. (Closed on release/0.10: `replace` takes
+  `"whole": true`, which shows the whole old clause deleted and then the
+  whole new clause inserted; a diff that cannot be regrouped stays
+  word-level and the report says why.)
 - Headers/footers/notes/text boxes as editable stories. (`merge_paragraphs`,
   `format_paragraph`, formatting on inline `insert`/`replace` and the ZIP
   admission limits of 01 C2 landed on release/0.10.)

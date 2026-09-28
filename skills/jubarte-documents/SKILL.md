@@ -104,7 +104,8 @@ paragraph), `insert_paragraph` (`runs` with `bold`/`italic`/`underline`/
 `space_before`/`space_after` in points), `merge_paragraphs` (joins the next
 paragraph onto this one; optional `separator`, usually `" "`). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
-that applies to the new text only.
+that applies to the new text only. `replace` takes `"whole": true` to show
+the change as the whole old text deleted, then the whole new text inserted.
 Paragraph selectors: `"body:p:N"`, `{"index": N}`, `{"starts_with": "..."}`,
 `{"contains": "..."}`; the last two must match exactly one paragraph.
 
@@ -125,8 +126,12 @@ Gotchas:
   the only paragraph of a table cell.
 - The redline is produced by comparing the source with the clean copy, the
   way Word Compare does. A long replacement therefore appears as a
-  word-level diff against the old text, not as one deletion plus one
-  insertion. The `ctx` field in the report shows exactly what you asked for.
+  word-level diff against the old text. Give the `replace` `"whole": true`
+  to show one deletion followed by one insertion instead, as typing over
+  the selection with Track Changes on would; if the comparer's diff cannot
+  be regrouped, the operation stays word-level and its report line carries
+  a `message` saying why. The `ctx` field in the report shows exactly what
+  you asked for.
 - Comments on inserted text sit inside the insertion in the redline (Word
   shows them normally). The current PDF/PNG renderer paints balloons for
   comments on inserted paragraphs but not yet for comments inside inserted

@@ -12,7 +12,7 @@ use serde_json::json;
 #[test]
 fn every_advertised_edit_kind_accepts_its_wire_representation() {
     let operations = [
-        json!({"kind":"replace", "paragraph":{"index":0}, "find":"a", "replacement":"b"}),
+        json!({"kind":"replace", "paragraph":{"index":0}, "find":"a", "replacement":"b", "whole":true}),
         json!({"kind":"insert", "paragraph":{"index":0}, "before":"a", "text":"b"}),
         json!({"kind":"delete", "paragraph":{"index":0}, "find":"a"}),
         json!({"kind":"comment", "paragraph":{"index":0}, "text":"note"}),
